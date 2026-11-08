@@ -3365,8 +3365,16 @@
       "inbox": "Access requests",
       "inboxLead": "People asking to read an Endpoint of this space, and pipelines of other spaces asking to read or write it. Approving proposes the grant as a change of this project; another person approves that change.",
       "inboxEmpty": "Nobody has asked for access to this space.",
+      "inboxRefused": "No access request of this project is yours to decide: {reason}",
+      "grantChange": "Its grant is change {change}; access starts once another person approves it.",
+      "inboxEmptyProject": "Nobody waits for your decision on access to a space of this project.",
+      "inboxFailed": "The access requests did not load: {reason}",
+      "inSpace": "· in space {space}",
       "on": "on {endpoint}, asked by {who}",
       "decisionReason": "Reason for the requester",
+      "decision": {
+        "reasonHelp": "Needed to decline or revoke; the requester reads it, for example: Granted for the pilot until June; ask again for write access."
+      },
       "approve": "Approve",
       "approveOf": "Approve access for {account}",
       "decline": "Decline",
@@ -6658,6 +6666,13 @@
       "stale": "The draft changed since the last check; run the check again."
     },
     "laxWarning": "Lax validation: check has not run or passed.",
+    "discard": {
+      "ask": "Discard the draft",
+      "confirm": "Throw away the saved draft? Your other windows and the assistant lose it too.",
+      "yes": "Discard",
+      "keep": "Keep it",
+      "refused": "The draft was not discarded: {reason}"
+    },
     "findings": "Findings",
     "saveRefused": "The draft was not saved: {reason}",
     "elsewhere": {
@@ -7492,6 +7507,7 @@
     },
     "title": "Administration",
     "adminOnly": "This page is for organization administrators. Ask one of them for what you need here.",
+    "installationOnly": "This section belongs to the installation: only its administrators open it.",
     "lead": "What is the same in every project: the organization's settings, its members, roles, groups and service accounts, and its projects. Every change here is proposed and approved.",
     "tab": {
       "settings": "Settings",
@@ -10141,9 +10157,10 @@
   },
   "inbox": {
     "title": "Inbox",
-    "lead": "What waits for you: the changes you may decide in every project, and the comments that mention you.",
+    "lead": "What waits for you: the changes you may decide in every project, the access asked of this project's spaces, and the comments that mention you.",
     "decisions": "Waiting for your decision",
     "decisionsHint": "Approving a red-lane change asks for its name, as on its own page.",
+    "accessLead": "People and pipelines asking to read or write a space of {project}. Approving proposes the grant as a change that another person approves.",
     "noDecisions": "Nothing waits for your decision.",
     "listFailed": "The changes of {project} did not load, so this list may be incomplete: {reason} The inbox tries again in 30 seconds.",
     "by": "proposed by {author} in {project}",
@@ -11624,6 +11641,10 @@
   },
   "askAdmins": {
     "title": "Ask an organization administrator",
+    "installationTitle": "Ask the installation's administrators",
+    "ownSections": "Open your Organization's members",
+    "installationContacts": "The installation's contacts",
+    "noInstallationContacts": "The installation publishes no contact yet.",
     "contacts": "Your organization's contacts",
     "back": "Back to your projects"
   },

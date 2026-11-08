@@ -3365,8 +3365,16 @@
       "inbox": "Žiadosti o prístup",
       "inboxLead": "Ľudia, ktorí žiadajú čítať endpoint tohto priestoru, a pipeline iných priestorov, ktoré žiadajú čítať alebo zapisovať tento priestor. Schválenie navrhne oprávnenie ako zmenu tohto projektu; túto zmenu schváli iná osoba.",
       "inboxEmpty": "O prístup k tomuto priestoru zatiaľ nikto nepožiadal.",
+      "inboxRefused": "O žiadnej žiadosti o prístup v tomto projekte nerozhodujete: {reason}",
+      "grantChange": "Jeho oprávnenie je zmena {change}; prístup začne, keď ju schváli iná osoba.",
+      "inboxEmptyProject": "Na vaše rozhodnutie o prístupe k priestoru tohto projektu nikto nečaká.",
+      "inboxFailed": "Žiadosti o prístup sa nenačítali: {reason}",
+      "inSpace": "· v priestore {space}",
       "on": "na {endpoint}, žiada {who}",
       "decisionReason": "Dôvod pre žiadateľa",
+      "decision": {
+        "reasonHelp": "Potrebný na zamietnutie alebo odvolanie; žiadateľ si ho prečíta, napríklad: Povolené na pilot do júna; o zápis požiadajte znova."
+      },
       "approve": "Schváliť",
       "approveOf": "Schváliť prístup pre {account}",
       "decline": "Zamietnuť",
@@ -6658,6 +6666,13 @@
       "stale": "Koncept sa od poslednej kontroly zmenil; spustite kontrolu znova."
     },
     "laxWarning": "Mierne overenie: kontrola neprebehla alebo neuspela.",
+    "discard": {
+      "ask": "Zahodiť koncept",
+      "confirm": "Zahodiť uložený koncept? Stratia ho aj vaše ďalšie okná a asistent.",
+      "yes": "Zahodiť",
+      "keep": "Ponechať",
+      "refused": "Koncept sa nezahodil: {reason}"
+    },
     "findings": "Zistenia",
     "saveRefused": "Koncept sa neuložil: {reason}",
     "elsewhere": {
@@ -7492,6 +7507,7 @@
     },
     "title": "Administrácia",
     "adminOnly": "Táto stránka je pre administrátorov organizácie. O to, čo tu potrebujete, požiadajte niektorého z nich.",
+    "installationOnly": "Táto časť patrí inštalácii: otvárajú ju iba jej správcovia.",
     "lead": "Čo je rovnaké v každom projekte: nastavenia organizácie, jej členovia, roly, skupiny a servisné účty a jej projekty. Každá zmena sa tu navrhuje a schvaľuje.",
     "tab": {
       "settings": "Nastavenia",
@@ -10141,9 +10157,10 @@
   },
   "inbox": {
     "title": "Doručené",
-    "lead": "Čo na vás čaká: zmeny, o ktorých smiete rozhodnúť v každom projekte, a komentáre, ktoré vás spomínajú.",
+    "lead": "Čo na vás čaká: zmeny, o ktorých smiete rozhodnúť v každom projekte, žiadosti o prístup k priestorom tohto projektu a komentáre, ktoré vás spomínajú.",
     "decisions": "Čaká na vaše rozhodnutie",
     "decisionsHint": "Schválenie zmeny v červenom pruhu si pýta jej názov, ako na jej vlastnej stránke.",
+    "accessLead": "Ľudia a pipeline, ktorí žiadajú čítať alebo zapisovať do priestoru projektu {project}. Schválenie navrhne oprávnenie ako zmenu, ktorú schváli iná osoba.",
     "noDecisions": "Nič nečaká na vaše rozhodnutie.",
     "listFailed": "Zmeny projektu {project} sa nenačítali, zoznam preto nemusí byť úplný: {reason} Schránka to skúsi znova o 30 sekúnd.",
     "by": "navrhol {author} v {project}",
@@ -11624,6 +11641,10 @@
   },
   "askAdmins": {
     "title": "Obráťte sa na administrátora organizácie",
+    "installationTitle": "Opýtajte sa správcov inštalácie",
+    "ownSections": "Otvoriť členov vašej organizácie",
+    "installationContacts": "Kontakty inštalácie",
+    "noInstallationContacts": "Inštalácia zatiaľ nezverejňuje žiadny kontakt.",
     "contacts": "Kontakty vašej organizácie",
     "back": "Späť na vaše projekty"
   },

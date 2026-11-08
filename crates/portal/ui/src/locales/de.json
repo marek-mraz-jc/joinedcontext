@@ -3365,8 +3365,16 @@
       "inbox": "Zugriffsanfragen",
       "inboxLead": "Personen, die einen Endpunkt dieses Bereichs lesen möchten, und Pipelines anderer Bereiche, die ihn lesen oder schreiben möchten. Eine Genehmigung schlägt die Berechtigung als Änderung dieses Projekts vor; eine andere Person genehmigt diese Änderung.",
       "inboxEmpty": "Noch niemand hat Zugriff auf diesen Bereich angefragt.",
+      "inboxRefused": "Über keine Zugriffsanfrage dieses Projekts entscheiden Sie: {reason}",
+      "grantChange": "Die Berechtigung ist die Änderung {change}; der Zugriff beginnt, sobald eine andere Person sie genehmigt.",
+      "inboxEmptyProject": "Niemand wartet auf Ihre Entscheidung über den Zugriff auf einen Raum dieses Projekts.",
+      "inboxFailed": "Die Zugriffsanfragen wurden nicht geladen: {reason}",
+      "inSpace": "· im Raum {space}",
       "on": "auf {endpoint}, angefragt von {who}",
       "decisionReason": "Begründung für den Anfragenden",
+      "decision": {
+        "reasonHelp": "Nötig zum Ablehnen oder Widerrufen; die anfragende Person liest sie, zum Beispiel: Für das Pilotprojekt bis Juni gewährt; für Schreibzugriff bitte erneut anfragen."
+      },
       "approve": "Genehmigen",
       "approveOf": "Zugriff für {account} genehmigen",
       "decline": "Ablehnen",
@@ -6658,6 +6666,13 @@
       "stale": "Der Entwurf hat sich seit der letzten Prüfung geändert; führen Sie die Prüfung erneut aus."
     },
     "laxWarning": "Verhaltene Validierung: Prüfung wurde nicht ausgeführt oder ist fehlgeschlagen.",
+    "discard": {
+      "ask": "Entwurf verwerfen",
+      "confirm": "Den gespeicherten Entwurf verwerfen? Auch Ihre anderen Fenster und der Assistent verlieren ihn.",
+      "yes": "Verwerfen",
+      "keep": "Behalten",
+      "refused": "Der Entwurf wurde nicht verworfen: {reason}"
+    },
     "findings": "Befunde",
     "saveRefused": "Der Entwurf wurde nicht gespeichert: {reason}",
     "elsewhere": {
@@ -7492,6 +7507,7 @@
     },
     "title": "Verwaltung",
     "adminOnly": "Diese Seite ist für die Administratoren der Organisation. Bitten Sie einen von ihnen um das, was Sie hier brauchen.",
+    "installationOnly": "Dieser Bereich gehört der Installation: Nur ihre Administratoren öffnen ihn.",
     "lead": "Was in jedem Projekt gleich ist: die Einstellungen der Organisation, ihre Mitglieder, Rollen, Gruppen und Dienstkonten und ihre Projekte. Jede Änderung hier wird vorgeschlagen und genehmigt.",
     "tab": {
       "settings": "Einstellungen",
@@ -10141,9 +10157,10 @@
   },
   "inbox": {
     "title": "Eingang",
-    "lead": "Was auf Sie wartet: die Änderungen, über die Sie in jedem Projekt entscheiden dürfen, und die Kommentare, die Sie erwähnen.",
+    "lead": "Was auf Sie wartet: die Änderungen, über die Sie in jedem Projekt entscheiden dürfen, die Zugriffsanfragen an die Räume dieses Projekts und die Kommentare, die Sie erwähnen.",
     "decisions": "Wartet auf Ihre Entscheidung",
     "decisionsHint": "Eine Änderung der roten Spur verlangt zur Genehmigung ihren Namen, wie auf ihrer eigenen Seite.",
+    "accessLead": "Personen und Pipelines, die einen Raum von {project} lesen oder schreiben möchten. Eine Zustimmung schlägt die Berechtigung als Änderung vor, die eine andere Person genehmigt.",
     "noDecisions": "Nichts wartet auf Ihre Entscheidung.",
     "listFailed": "Die Änderungen von {project} wurden nicht geladen, die Liste kann daher unvollständig sein: {reason} Der Posteingang versucht es in 30 Sekunden erneut.",
     "by": "vorgeschlagen von {author} in {project}",
@@ -11624,6 +11641,10 @@
   },
   "askAdmins": {
     "title": "Fragen Sie einen Administrator der Organisation",
+    "installationTitle": "Fragen Sie die Administratoren der Installation",
+    "ownSections": "Mitglieder Ihrer Organisation öffnen",
+    "installationContacts": "Kontakte der Installation",
+    "noInstallationContacts": "Die Installation veröffentlicht noch keinen Kontakt.",
     "contacts": "Kontakte Ihrer Organisation",
     "back": "Zurück zu Ihren Projekten"
   },

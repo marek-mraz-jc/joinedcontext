@@ -356,7 +356,8 @@ mod tests {
         );
         assert_eq!(v["JC_OIDC_ISSUER"], "https://city.example/id/realms/jc");
         assert_eq!(v["JC_KEYCLOAK_ADMIN_URL"], "http://127.0.0.1:8443");
-        assert_eq!(v["JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID"], "portal-admin");
+        assert_eq!(v["JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID"], "portal-reconciler");
+        assert_eq!(v["JC_OIDC_CLIENT_ID"], "portal-api");
     }
 
     #[test]

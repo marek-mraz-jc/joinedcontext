@@ -10,6 +10,7 @@ import { useProjects } from "../../api/projects";
 import { PlanDiffViewer } from "../../components/diff/PlanDiffViewer";
 import { LifecycleBadge } from "../../components/status/LifecycleBadge";
 import { Alert, Button, Card, Field, Input, PageHeader, Textarea, safeHref } from "../../components/ui";
+import { AccessRequestInbox } from "../pipelines/AccessRequests";
 import { NOTIFICATIONS_KEY, notificationHref, notificationText } from "../spaces/Comments";
 
 type ChangeProposal = components["schemas"]["ChangeProposal"];
@@ -153,7 +154,8 @@ type Notification = components["schemas"]["Notification"];
 
 /**
  * What waits for this person (T-3273): every change of every project they may decide, each
- * decided where it is listed with its diff, and the comments that mention them.
+ * decided where it is listed with its diff, the access asked of this project's spaces, and the
+ * comments that mention them.
  */
 export function InboxPage({ project }: { project: string }): JSX.Element {
   const { t } = useTranslation();
@@ -187,6 +189,15 @@ export function InboxPage({ project }: { project: string }): JSX.Element {
         {/* How to approve, only while something waits: the list holds only what this person may
             decide, so a viewer never reads a hint about an action they cannot take (T-4165). */}
         <p className="text-caption text-fg-muted peer-empty:hidden">{t("inbox.decisionsHint")}</p>
+      </section>
+      {/* The access asked of this project's spaces (PL-91), the list `jc_access_request_list`
+          reads: approving proposes the grant as a change, so the four-eyes rule still holds. */}
+      <section aria-labelledby="inbox-access" className="space-y-3">
+        <h2 id="inbox-access" className="text-title font-semibold text-fg">
+          {t("pipelines.access.inbox")}
+        </h2>
+        <p className="text-caption text-fg-muted">{t("inbox.accessLead", { project })}</p>
+        <AccessRequestInbox project={project} />
       </section>
       <section aria-labelledby="inbox-connectors" className="space-y-3">
         <h2 id="inbox-connectors" className="text-title font-semibold text-fg">

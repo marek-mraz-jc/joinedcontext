@@ -5063,6 +5063,7 @@ version = "0.1.0"
 dependencies = [
  "antares-broker",
  "axum",
+ "base64 0.22.1",
  "clap",
  "daiya-model",
  "daiya-server",
@@ -5695,6 +5696,7 @@ dependencies = [
  "ipnet",
  "jc-router",
  "jsonwebtoken 11.1.0",
+ "jsonwebtoken 9.3.1",
  "kaisatsu-admin",
  "kaisatsu-core",
  "kaisatsu-crypto",

@@ -16,12 +16,10 @@ use std::path::{Path, PathBuf};
 
 /// The realm the Portal signs in through when kaisatsu runs beside it.
 pub const PORTAL_REALM: &str = "jc";
-/// The Portal's sign-in client (confidential, code + PKCE, service account for client writes).
-pub const PORTAL_CLIENT: &str = "portal";
-/// The Portal's silent sign-in check client (public, PKCE).
-pub const PORTAL_UI_CLIENT: &str = "portal-ui";
+/// The Portal's sign-in client in kaisatsu's shipped realm file (confidential, code + PKCE).
+pub const PORTAL_CLIENT: &str = "portal-api";
 /// The Portal's people-administration client (service account only).
-pub const PORTAL_ADMIN_CLIENT: &str = "portal-admin";
+pub const PORTAL_ADMIN_CLIENT: &str = "portal-reconciler";
 /// The first person, a member of the Portal's bootstrap group.
 pub const FIRST_ADMIN: &str = "admin";
 /// The Portal's default bootstrap group (`JC_PORTAL_BOOTSTRAP_ADMINS`).
@@ -231,13 +229,13 @@ impl Setup {
     }
 }
 
-/// The importer variables the generated realm file names (`$(env:NAME)`), filled from memory.
+/// The importer variables the realm files name (`$(NAME)`), filled from memory.
 #[must_use]
 pub fn realm_env(setup: &Setup) -> BTreeMap<String, String> {
     [
-        ("JC_SETUP_PORTAL_CLIENT_SECRET", Secret::PortalClientSecret),
+        ("CLIENT_SECRET_PORTAL_API", Secret::PortalClientSecret),
         (
-            "JC_SETUP_PORTAL_ADMIN_CLIENT_SECRET",
+            "CLIENT_SECRET_PORTAL_RECONCILER",
             Secret::PortalAdminClientSecret,
         ),
         ("JC_SETUP_FIRST_ADMIN_PASSWORD", Secret::FirstAdminPassword),
@@ -247,97 +245,42 @@ pub fn realm_env(setup: &Setup) -> BTreeMap<String, String> {
     .collect()
 }
 
-/// The kaisatsu realm the Portal signs in through, as a Keycloak realm file. `portal_base` is the
-/// Portal's public base with a trailing slash (`https://city.example/portal/`).
-///
-/// Least privilege (kaisatsu `core/src/authz.rs`, Portal `config.rs` on the admin client):
-/// - `portal-admin` holds `manage-users` and `query-groups` of `realm-management`, nothing else;
-/// - `portal` (sign-in) holds `view-clients`, which kaisatsu narrows to the clients the Portal
-///   manages (`managed-by: joinedcontext`, K3); no realm-admin anywhere.
-#[must_use]
-pub fn portal_realm(portal_base: &str) -> Value {
-    let groups_mapper = json!({
-        "name": "groups",
-        "protocol": "openid-connect",
-        "protocolMapper": "oidc-group-membership-mapper",
-        "config": {
-            "claim.name": "groups",
-            "full.path": "true",
-            "id.token.claim": "true",
-            "access.token.claim": "true",
-            "userinfo.token.claim": "true"
-        }
-    });
-    json!({
+/// kaisatsu's shipped realm file for the Portal (`crates/kaisatsu/import/realms/jc-portal.json`).
+const SHIPPED_REALM: &str = include_str!("../../../crates/kaisatsu/import/realms/jc-portal.json");
+/// The Portal base the shipped realm file is written for.
+const SHIPPED_HOST: &str = "https://portal.jc.localhost";
+
+/// The realm files the Portal signs in through: kaisatsu's shipped `jc-portal.json` with its
+/// placeholder host turned into `portal_base` (the Portal's public base with a trailing slash),
+/// and the first administrator, a member of the bootstrap group. The shipped file holds the least
+/// privilege the Portal needs: `portal-reconciler` has `manage-users` and `query-groups`,
+/// `portal-api` `view-clients`, `query-users` and `query-groups`, no realm-admin.
+pub fn portal_realm_files(portal_base: &str) -> Result<Vec<(String, Value)>, serde_json::Error> {
+    let shipped = SHIPPED_REALM.replace(SHIPPED_HOST, portal_base.trim_end_matches('/'));
+    let first_admin = json!({
         "realm": PORTAL_REALM,
-        "enabled": true,
-        "displayName": "joinedcontext",
-        "groups": [{"name": BOOTSTRAP_GROUP}],
-        "clients": [
-            {
-                "clientId": PORTAL_CLIENT,
-                "enabled": true,
-                "protocol": "openid-connect",
-                "publicClient": false,
-                "standardFlowEnabled": true,
-                "serviceAccountsEnabled": true,
-                "secret": "$(env:JC_SETUP_PORTAL_CLIENT_SECRET)",
-                "redirectUris": [format!("{portal_base}api/v1/auth/callback")],
-                "attributes": {
-                    "pkce.code.challenge.method": "S256",
-                    "post.logout.redirect.uris": portal_base,
-                    "standard.token.exchange.enabled": "true"
-                },
-                "protocolMappers": [groups_mapper]
-            },
-            {
-                "clientId": PORTAL_UI_CLIENT,
-                "enabled": true,
-                "protocol": "openid-connect",
-                "publicClient": true,
-                "standardFlowEnabled": true,
-                "redirectUris": [format!("{portal_base}api/v1/auth/sso-check/done")],
-                "attributes": {"pkce.code.challenge.method": "S256"}
-            },
-            {
-                "clientId": PORTAL_ADMIN_CLIENT,
-                "enabled": true,
-                "protocol": "openid-connect",
-                "publicClient": false,
-                "standardFlowEnabled": false,
-                "serviceAccountsEnabled": true,
-                "secret": "$(env:JC_SETUP_PORTAL_ADMIN_CLIENT_SECRET)"
-            }
-        ],
-        "users": [
-            {
-                "username": format!("service-account-{PORTAL_ADMIN_CLIENT}"),
-                "enabled": true,
-                "serviceAccountClientId": PORTAL_ADMIN_CLIENT,
-                "clientRoles": {"realm-management": ["manage-users", "query-groups"]}
-            },
-            {
-                "username": format!("service-account-{PORTAL_CLIENT}"),
-                "enabled": true,
-                "serviceAccountClientId": PORTAL_CLIENT,
-                "clientRoles": {"realm-management": ["view-clients"]}
-            },
-            {
-                "username": FIRST_ADMIN,
-                "enabled": true,
-                "email": "admin@jc.invalid",
-                "emailVerified": true,
-                "firstName": "First",
-                "lastName": "Administrator",
-                "groups": [format!("/{BOOTSTRAP_GROUP}")],
-                "credentials": [{
-                    "type": "password",
-                    "value": "$(env:JC_SETUP_FIRST_ADMIN_PASSWORD)",
-                    "temporary": false
-                }]
-            }
-        ]
-    })
+        "users": [{
+            "username": FIRST_ADMIN,
+            "enabled": true,
+            "email": "admin@jc.invalid",
+            "emailVerified": true,
+            "firstName": "First",
+            "lastName": "Administrator",
+            "groups": [format!("/{BOOTSTRAP_GROUP}")],
+            "credentials": [{
+                "type": "password",
+                "value": "$(env:JC_SETUP_FIRST_ADMIN_PASSWORD)",
+                "temporary": false
+            }]
+        }]
+    });
+    Ok(vec![
+        (
+            "10-jc-portal.json".to_owned(),
+            serde_json::from_str(&shipped)?,
+        ),
+        ("20-jc-first-admin.json".to_owned(), first_admin),
+    ])
 }
 
 #[cfg(test)]
@@ -412,23 +355,39 @@ mod tests {
 
     #[test]
     fn the_realm_holds_no_literal_secret_and_least_privilege_roles() {
-        let realm = portal_realm("https://city.example/portal/");
-        let text = realm.to_string();
+        let files = portal_realm_files("https://city.example/").unwrap();
+        let text = serde_json::to_string(&files).unwrap();
         assert!(!text.contains("realm-admin"), "no realm-admin");
-        assert!(text.contains("https://city.example/portal/api/v1/auth/callback"));
+        assert!(
+            !text.contains(SHIPPED_HOST),
+            "the placeholder host is replaced"
+        );
+        assert!(text.contains("https://city.example/api/v1/auth/callback"));
+        let realm = &files[0].1;
         for client in realm["clients"].as_array().unwrap() {
             if let Some(secret) = client.get("secret") {
-                assert!(secret.as_str().unwrap().starts_with("$(env:"));
+                assert!(secret.as_str().unwrap().starts_with("$("), "{client}");
             }
         }
-        let admin = &realm["users"][0]["clientRoles"]["realm-management"];
-        assert_eq!(admin, &json!(["manage-users", "query-groups"]));
+        let reconciler = realm["users"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|u| u["serviceAccountClientId"] == PORTAL_ADMIN_CLIENT)
+            .expect("the reconciler's service account");
+        assert_eq!(
+            reconciler["clientRoles"]["realm-management"],
+            json!(["manage-users", "query-groups"])
+        );
         let tmp = tempfile::tempdir().unwrap();
         let setup = Setup::prepare(tmp.path(), &[Module::Kaisatsu, Module::Portal]).unwrap();
         let env = realm_env(&setup);
         assert_eq!(env.len(), 3);
         for name in env.keys() {
-            assert!(text.contains(&format!("$(env:{name})")), "{name}");
+            assert!(
+                text.contains(&format!("$({name})")) || text.contains(&format!("$(env:{name})")),
+                "{name}"
+            );
         }
     }
 }
