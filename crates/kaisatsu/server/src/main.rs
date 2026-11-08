@@ -66,6 +66,13 @@ enum Commands {
         /// Seconds between sweeps of expired session rows (PostgreSQL store).
         #[arg(long, default_value_t = 60)]
         sweep_interval_secs: u64,
+        /// File in the secrets mount holding the SMTP password used with each realm's
+        /// `smtpServer`. Without it queued e-mails stay pending (K9).
+        #[arg(long)]
+        smtp_password_file: Option<PathBuf>,
+        /// Seconds between e-mail outbox dispatch passes (K9).
+        #[arg(long, default_value_t = 10)]
+        outbox_interval_secs: u64,
         #[command(flatten)]
         db: DbArgs,
     },
@@ -359,6 +366,8 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
             path_prefix,
             trusted_proxy,
             sweep_interval_secs,
+            smtp_password_file,
+            outbox_interval_secs,
             db,
         } => {
             let kek = Kek::from_file(&kek_file).map_err(fail(EXIT_INVALID_INPUT))?;
@@ -420,6 +429,24 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                         }
                     }
                 });
+            }
+            if let Some(pw_file) = smtp_password_file {
+                let sender = Arc::new(kaisatsu_login::RealmSmtpSender::new(store.clone(), pw_file));
+                let dispatcher =
+                    kaisatsu_login::OutboxDispatcher::new(store.clone(), kek.clone(), sender);
+                let mail_mount = mount.clone();
+                let interval = std::time::Duration::from_secs(outbox_interval_secs.max(1));
+                tokio::spawn(async move {
+                    let mut tick = tokio::time::interval(interval);
+                    loop {
+                        tick.tick().await;
+                        if let Err(e) = dispatcher.dispatch_all_realms(&mail_mount).await {
+                            tracing::warn!(error = %e.public_detail(), "kaisatsu outbox");
+                        }
+                    }
+                });
+            } else {
+                tracing::warn!("no --smtp-password-file: queued e-mails stay pending");
             }
             let state = KaisatsuState::new(
                 store,
