@@ -37,3 +37,18 @@ test.describe("Grafana visualizations", () => {
     await expect(saved).toHaveCount(0);
   });
 });
+
+test.describe("Project dashboards drawn in the Portal", () => {
+  // Item 15: the helsinki dashboard of the project's daiya, its panels drawn from their saved
+  // queries. Without the dashboards service the Grafana page says why and the journey stops there.
+  test("a person opens the project's helsinki dashboard and sees its panels", async ({ page }) => {
+    test.setTimeout(120_000);
+    await goSignedIn(page, EDITOR, "/projects/helsinki/grafana/dashboards/project-helsinki");
+    const heading = page.getByRole("heading", { level: 1, name: "Helsinki live" });
+    const refused = page.getByRole("alert");
+    await expect(heading.or(refused).first()).toBeVisible();
+    if (!(await heading.isVisible())) return;
+    await expect(page.getByRole("region", { name: "Cyclists per day, by counting station" })).toBeVisible();
+    await expect(page.getByRole("status", { name: /^Reading / })).toHaveCount(0, { timeout: 30_000 });
+  });
+});

@@ -37,6 +37,11 @@
       "lines": 10,
       "group": "ui-parts",
       "reason": "The map's palette, and the only colour values left in the dashboards folder. Four of the eight are the YlOrRd ramp the Layer manifests name - a data scale that must read the same in both themes and must not move when an installation changes its primary. The other four are what a renderer with no stylesheet falls back to; a browser resolves the token every time. Two more turn a token written in CSS a map style cannot parse (color-mix, oklab) into the plain rgb the style can (T-3256): computed from the token, not a colour chosen here."
+    },
+    "src/components/panels/palette.ts": {
+      "lines": 37,
+      "group": "ui-parts",
+      "reason": "Grafana's named colours (green, red, semi-dark-blue ...) as the hex values Grafana gives them: a dashboard's thresholds, mappings and fixedColor name these words, so they are data the dashboard JSON carries, not colours chosen here. The four FALLBACK values are what a canvas paints before the page's tokens resolve; VegaChart reads the tokens every time."
     }
   },
   "focus_is_not_stolen": {
@@ -95,6 +100,16 @@
       "lines": 1,
       "group": "ui-parts",
       "reason": "the LinkML source runs down to near the page bottom, the viewport less the header and tabs above it: a computed size, commented on the line (owner 2026-10-31)."
+    },
+    "src/components/panels/VegaChart.tsx": {
+      "lines": 2,
+      "group": "ui-parts",
+      "reason": "computed sizes: the chart host is the panel's gridPos height in px, and the tooltip sits at the pointer's position inside the chart"
+    },
+    "src/components/panels/paint.tsx": {
+      "lines": 1,
+      "group": "ui-parts",
+      "reason": "a threshold or mapping colour from the dashboard JSON painted as a swatch, a bar's fill and a tinted value, and the bar's length as the value's share of min to max: computed values, one component per use, so no other panel file writes a style"
     }
   },
   "panel_is_a_card": {

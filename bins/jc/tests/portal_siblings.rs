@@ -857,7 +857,199 @@ async fn the_portal_runs_on_its_sibling_modules() {
         .await
         .unwrap();
     assert_eq!(held.status(), StatusCode::OK, "G5 finds the dashboard");
-    gaps.push("f jc: nothing runs provision.sh's steps per project (POST /dashboards/api/orgs, POST /api/folders); the e2e makes them as the Portal's server administrator".into());
+
+    // g. Item 6: a project opened in the config repository gets its daiya organization and its
+    // folder from the Portal's provisioning loop, provision.sh's per-project steps. The commit
+    // stands in for an approved project change (jc-portal-integrate's open item).
+    let clone = tempfile::tempdir().unwrap();
+    let repo = clone.path().join("config");
+    let out = git_clone(&jc, &repo);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let org_yaml = std::fs::read_to_string(repo.join("org.yaml")).unwrap();
+    let org_name = org_yaml
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("name:"))
+        .map(|n| n.trim().trim_matches('"').to_owned())
+        .expect("the Organization's name");
+    std::fs::create_dir_all(repo.join("projects/e2edash")).unwrap();
+    std::fs::write(
+        repo.join("projects/e2edash/project.yaml"),
+        format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: e2edash\n  namespace: org\nspec:\n  organizationRef: {org_name}\n"
+        ),
+    )
+    .unwrap();
+    let token = jc.secret("shako-token");
+    for args in [
+        vec!["add", "projects/e2edash/project.yaml"],
+        vec![
+            "-c",
+            "user.name=e2e",
+            "-c",
+            "user.email=e2e@jc.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "Open project e2edash",
+        ],
+    ] {
+        let out = Command::new("git")
+            .args(&args)
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let pushed = Command::new("git")
+        .args([
+            "-c",
+            &format!("http.extraHeader=Authorization: token {token}"),
+            "push",
+            "--quiet",
+            "origin",
+            "HEAD:main",
+        ])
+        .current_dir(&repo)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .unwrap();
+    assert!(
+        pushed.status.success(),
+        "push: {}",
+        String::from_utf8_lossy(&pushed.stderr)
+    );
+    let project_org = eventually("daiya's organization e2edash", 120, || {
+        let jc = &jc;
+        async move {
+            let found = admin(Client::new().get(jc.url("/dashboards/api/orgs/name/e2edash")))
+                .send()
+                .await
+                .ok()?;
+            if found.status() != StatusCode::OK {
+                return None;
+            }
+            found.json::<Value>().await.ok()?["id"].as_i64()
+        }
+    })
+    .await;
+    let folder = admin(Client::new().get(jc.url("/dashboards/api/folders/project-e2edash")))
+        .header("x-grafana-org-id", project_org.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(folder.status(), StatusCode::OK, "the project's folder");
+
+    // h. Item 15: the deployment's context-broker and helsinki dashboards, imported the way
+    // provision.sh imports them, drawn through the Portal's dashboard routes: the queries stay
+    // in jc, each panel answers frames or the reason it has none.
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/portal/ui/tests/fixtures/dashboards");
+    for (file, org, project, folder_uid) in [
+        ("context-broker.json", 1, "org", None),
+        (
+            "helsinki.json",
+            project_org,
+            "e2edash",
+            Some("project-e2edash"),
+        ),
+    ] {
+        let board: Value =
+            serde_json::from_str(&std::fs::read_to_string(fixtures.join(file)).unwrap()).unwrap();
+        let uid = board["uid"].as_str().unwrap().to_owned();
+        let panels = board["panels"].as_array().unwrap().len();
+        let mut body = json!({"dashboard": board, "overwrite": true, "message": "e2e import"});
+        if let Some(f) = folder_uid {
+            body["folderUid"] = json!(f);
+        }
+        let saved = admin(Client::new().post(jc.url("/dashboards/api/dashboards/db")))
+            .header("x-grafana-org-id", org.to_string())
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            saved.status().is_success(),
+            "import {file}: {}",
+            saved.status()
+        );
+        let base = format!("/api/v1/projects/{project}/grafana/dashboards");
+        let listed = browser.send(Method::GET, &jc.url(&base), None, false).await;
+        assert_eq!(
+            listed.status,
+            StatusCode::OK,
+            "{file} list: {}",
+            listed.text
+        );
+        assert!(listed.text.contains(&uid), "{file} listed: {}", listed.text);
+        let view = browser
+            .send(Method::GET, &jc.url(&format!("{base}/{uid}")), None, false)
+            .await;
+        assert_eq!(view.status, StatusCode::OK, "{file} view: {}", view.text);
+        let view = view.json();
+        assert_eq!(
+            view["panels"].as_array().map(Vec::len),
+            Some(panels),
+            "{file}"
+        );
+        assert!(
+            !view.to_string().contains("\"targets\""),
+            "{file}: the queries left the server"
+        );
+        for panel in view["panels"].as_array().unwrap() {
+            let id = panel["id"].as_i64().unwrap();
+            let read = browser
+                .send(
+                    Method::GET,
+                    &jc.url(&format!("{base}/{uid}/panels/{id}?from=now-6h&to=now")),
+                    None,
+                    false,
+                )
+                .await;
+            assert_eq!(
+                read.status,
+                StatusCode::OK,
+                "{file} panel {id}: {}",
+                read.text
+            );
+            let data = read.json();
+            assert!(
+                data["frames"].is_array()
+                    && (data.get("error").is_some()
+                        || data.get("accessDenied").is_some()
+                        || !data["frames"].as_array().unwrap().is_empty()),
+                "{file} panel {id}: {data}"
+            );
+            println!(
+                "{file} panel {id}: {}",
+                data.get("error")
+                    .or(data.get("accessDenied"))
+                    .map(Value::to_string)
+                    .unwrap_or_else(|| "frames".into())
+            );
+        }
+    }
+    let outsider = Client::new()
+        .get(jc.url("/api/v1/projects/e2edash/grafana/dashboards/project-helsinki/panels/1"))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            outsider.status(),
+            StatusCode::UNAUTHORIZED | StatusCode::FOUND | StatusCode::SEE_OTHER
+        ),
+        "a request without a session reads no panel: {}",
+        outsider.status()
+    );
+    gaps.push("h jc: no Prometheus and no NGSI-LD datasource in jc, so the context-broker and helsinki panels answer their error state, not frames".into());
 
     println!("GAPS:\n{}", gaps.join("\n"));
     std::fs::write(

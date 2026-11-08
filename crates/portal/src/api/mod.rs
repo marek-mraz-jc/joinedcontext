@@ -55,6 +55,7 @@ pub mod feedback;
 pub mod flow_map;
 pub mod forms;
 pub mod grafana;
+pub mod grafana_dashboards;
 pub mod health;
 pub mod health_checks;
 pub mod if_match;
@@ -183,6 +184,7 @@ pub fn router() -> Router<AppState> {
         .merge(entity_comments::router())
         .merge(alerts::router())
         .merge(grafana::router())
+        .merge(grafana_dashboards::router())
         .merge(knowledge::router())
         .merge(knowledge_usage::router())
         .merge(live::router())
