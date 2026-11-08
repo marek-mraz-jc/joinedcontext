@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 description = "One binary hosting the joinedcontext modules behind one mount router"
+publish = false
 
 [lib]
 name = "jc"
@@ -19,6 +20,7 @@ shako = [
   "dep:shako-server",
   "dep:shako-core",
   "dep:shako-store-memory",
+  "dep:shako-store-pg",
 ]
 kaisatsu = [
   "dep:kaisatsu-server",
@@ -34,11 +36,13 @@ dataroom = [
   "dep:dataroom-api",
   "dep:dataroom-core",
   "dep:dataroom-store-memory",
+  "dep:dataroom-store-pg",
 ]
 daiya = [
   "dep:daiya-server",
   "dep:daiya-model",
   "dep:daiya-store-memory",
+  "dep:daiya-store-pg",
 ]
 ekiben = ["dep:ekiben-server", "dep:ekiben-core"]
 antares = ["dep:antares-broker"]
@@ -63,6 +67,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"]
 tikv-jemallocator = { version = "0.7", optional = true }
 getrandom = "0.3"
 hex = "0.4"
+base64 = "0.22"
+age = { version = "0.12", default-features = false }
 serde_json = "1"
 tower = { version = "0.5", features = ["util"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -79,10 +85,12 @@ dataroom-server = { path = "../../crates/dataroom/server", optional = true }
 dataroom-api = { path = "../../crates/dataroom/api", optional = true }
 dataroom-core = { path = "../../crates/dataroom/core", optional = true }
 dataroom-store-memory = { path = "../../crates/dataroom/store-memory", optional = true }
+dataroom-store-pg = { path = "../../crates/dataroom/store-pg", optional = true }
 
 daiya-server = { path = "../../crates/daiya/server", optional = true }
 daiya-model = { path = "../../crates/daiya/model", optional = true }
 daiya-store-memory = { path = "../../crates/daiya/store-memory", optional = true }
+daiya-store-pg = { path = "../../crates/daiya/store-pg", optional = true }
 
 ekiben-server = { path = "../../crates/ekiben/crates/ekiben-server", optional = true }
 ekiben-core = { path = "../../crates/ekiben/crates/ekiben-core", optional = true }
@@ -94,9 +102,13 @@ joinedcontext-portal = { path = "../../crates/portal", optional = true }
 shako-server = { path = "../../crates/shako/server", optional = true }
 shako-core = { path = "../../crates/shako/core", optional = true }
 shako-store-memory = { path = "../../crates/shako/store-memory", optional = true }
+shako-store-pg = { path = "../../crates/shako/store-pg", optional = true }
+
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs"] }
 
 [dev-dependencies]
 jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core", features = ["outbound"] }
 http-body-util = "0.1"
 tempfile = "3"
-sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs"] }
+zeroize = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

@@ -8,7 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
-import { endpointSchema } from "../src/schemas/kinds";
+import { CKAN_DATASET, endpointSchema, TYPE_NAME } from "../src/schemas/kinds";
 import { toEnvelope, toForm } from "../src/routes/EndpointsPage";
 import { CatalogSection } from "../src/pages/endpoints/CatalogSection";
 import {
@@ -128,6 +128,98 @@ describe("the catalogue description in the endpoint form", () => {
     }
     for (const bad of ["sk032", "Somewhere", "https://x/a b"]) {
       expect(spatial.test(bad), bad).toBe(false);
+    }
+  });
+});
+
+/** Two narrowed datasets of one Endpoint, Slovak beside English, and a member the form never shows. */
+const LISTING: CatalogManifest = {
+  license: "CC_BY_4_0",
+  harvest: true,
+  visualizations: [{ name: "map", kind: "map" }],
+  datasets: [
+    {
+      name: "stops-bus",
+      title: { sk: "Autobusové zastávky", en: "Bus stops" },
+      description: { sk: "Iba autobusy", en: "Buses only" },
+      types: ["Stop"],
+      q: 'mode=="bus"',
+      keywords: { sk: ["autobus"], en: ["bus"] },
+    },
+    {
+      name: "stops-tram",
+      title: { en: "Tram stops" },
+      description: { en: "Trams only" },
+      types: ["Stop", "Platform"],
+      license: "CC0",
+    },
+  ],
+};
+
+describe("the datasets of one endpoint in the form (EP-174, EP-175)", () => {
+  it("round-trips a list of datasets and a member the form does not show", () => {
+    const form = toForm(endpoint(LISTING));
+    const next = toEnvelope("city", form, SLUG, [], undefined, endpoint(LISTING), "en");
+    const { harvest, ...rest } = LISTING;
+    void harvest;
+    // `harvest: true` is the default, so the form writes the block without it.
+    expect((next.spec as { catalog?: CatalogManifest }).catalog).toEqual(rest);
+  });
+
+  it("keeps the stored members it does not show when the form holds nothing", () => {
+    expect(catalogOf(undefined, { visualizations: ["map"], license: "CC0" }, "en")).toEqual({
+      visualizations: ["map"],
+    });
+  });
+
+  it("writes an edited dataset title over its entry and keeps the other languages", () => {
+    const form = catalogForm(LISTING);
+    const datasets = form?.datasets?.map((dataset) =>
+      dataset.name === "stops-bus" ? { ...dataset, title: "Every bus stop", keywords: ["bus", "coach"] } : dataset,
+    );
+    const next = catalogOf({ ...form, datasets }, LISTING, "en");
+    expect(next?.datasets?.[0]?.title).toEqual({ sk: "Autobusové zastávky", en: "Every bus stop" });
+    expect(next?.datasets?.[0]?.keywords).toEqual({ sk: ["autobus"], en: ["bus", "coach"] });
+  });
+
+  it("removing one entry keeps the other, and an entry with no name is not written", () => {
+    const form = catalogForm(LISTING);
+    const next = catalogOf(
+      { ...form, datasets: [form?.datasets?.[1] ?? {}, { title: "Half typed" }] },
+      LISTING,
+      "en",
+    );
+    expect(next?.datasets?.map((dataset) => dataset.name)).toEqual(["stops-tram"]);
+  });
+
+  it("writes harvest only when unchecked, which opts the endpoint out", () => {
+    expect(catalogOf({ harvest: true }, undefined, "en")).toBeUndefined();
+    expect(catalogOf({ harvest: false }, undefined, "en")).toEqual({ harvest: false });
+  });
+
+  it("offers the types of the space as a list, and free type names without one", () => {
+    const listed = endpointSchema(t, ["transport"], [], undefined, [], [], ["Stop", "Platform"]);
+    const item = (schema: typeof listed) =>
+      (
+        (schema.properties as Record<string, { properties: Record<string, { items: { properties: Record<string, { items: unknown }> } }> }>)
+          .catalog.properties.datasets.items.properties.types
+      ).items;
+    expect(item(listed)).toEqual({ type: "string", enum: ["Stop", "Platform"] });
+    expect(item(endpointSchema(t, ["transport"]))).toMatchObject({ pattern: TYPE_NAME });
+  });
+
+  it("checks a dataset name and a type name the way the platform does", () => {
+    const name = new RegExp(CKAN_DATASET);
+    for (const ok of ["ab", "stops-bus", "bbsk_skoly", "a".repeat(100)]) {
+      expect(name.test(ok), ok).toBe(true);
+    }
+    for (const bad of ["a", "-stops", "stops_", "Stops", "a".repeat(101), "stops bus"]) {
+      expect(name.test(bad), bad).toBe(false);
+    }
+    const type = new RegExp(TYPE_NAME);
+    expect(type.test("AirQualityObserved")).toBe(true);
+    for (const bad of ["9Type", "a-b", "x:y", ""]) {
+      expect(type.test(bad), bad).toBe(false);
     }
   });
 });

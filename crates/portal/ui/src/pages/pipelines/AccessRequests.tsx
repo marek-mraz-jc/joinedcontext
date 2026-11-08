@@ -157,7 +157,7 @@ function problem(err: unknown, fallback: string): string {
 
 export function StateBadge({ state }: { state: AccessRequestView["state"] }): JSX.Element {
   const { t } = useTranslation();
-  const tone = state === "approved" ? "success" : state === "pending" ? "warning" : "neutral";
+  const tone = state === "approved" ? "success" : state === "pending" ? "info" : "neutral";
   return <Badge tone={tone}>{t(`pipelines.access.state.${state}`)}</Badge>;
 }
 
@@ -491,8 +491,13 @@ export function useAccessAsk(project: string, pipeline: string | undefined, want
   return { ask, form };
 }
 
-/** The requests into one space of this project, for its owners (PL-91, PL-93). */
-export function AccessRequestInbox({ project, space }: { project: string; space: string }): JSX.Element | null {
+/**
+ * The requests into one space of this project, for its owners (PL-91, PL-93), or, without
+ * `space`, into every space of the project the person decides (the Inbox, the same list the
+ * `jc_access_request_list` operation reads). The server lists only the spaces the person owns and
+ * re-checks every decision; this list is never the guard.
+ */
+export function AccessRequestInbox({ project, space }: { project: string; space?: string }): JSX.Element | null {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [change, setChange] = useState<Change | null>(null);
@@ -517,9 +522,29 @@ export function AccessRequestInbox({ project, space }: { project: string; space:
       void queryClient.invalidateQueries({ queryKey: [KEY, "in", project] });
     },
   });
-  const items = (list.data?.items ?? []).filter((request) => request.space === space);
-  if (list.isError || (list.isSuccess && items.length === 0)) {
-    return list.isError ? null : <p className="text-caption text-fg-muted">{t("pipelines.access.inboxEmpty")}</p>;
+  const whole = space === undefined;
+  const items = (list.data?.items ?? []).filter((request) => whole || request.space === space);
+  if (list.isError) {
+    // On an Endpoint's page the section is one of many and stays quiet; the Inbox says why.
+    if (!whole) return null;
+    // A refusal is "not yours to decide", said as a notice; anything else is a failure.
+    const refused = list.error instanceof ApiError && (list.error.status === 403 || list.error.status === 404);
+    const reason = problem(list.error, t("app.error.generic"));
+    return (
+      <Alert tone={refused ? "info" : "danger"} role="alert" data-testid="access-inbox-failed">
+        {t(refused ? "pipelines.access.inboxRefused" : "pipelines.access.inboxFailed", { reason })}
+      </Alert>
+    );
+  }
+  if (list.isPending && whole) {
+    return <p role="status" className="text-body text-fg-muted">{t("app.loading")}</p>;
+  }
+  if (list.isSuccess && items.length === 0) {
+    return (
+      <p className={whole ? "text-body text-fg-muted" : "text-caption text-fg-muted"}>
+        {t(whole ? "pipelines.access.inboxEmptyProject" : "pipelines.access.inboxEmpty")}
+      </p>
+    );
   }
   return (
     <div className="flex flex-col gap-2" data-testid="access-inbox">
@@ -540,13 +565,20 @@ export function AccessRequestInbox({ project, space }: { project: string; space:
                 <span className="text-caption text-fg-muted">
                   {t("pipelines.access.on", { endpoint: request.endpoint.name, who: request.requestedBy })}
                 </span>
+                {whole && request.space ? (
+                  <span className="text-caption text-fg-muted">{t("pipelines.access.inSpace", { space: request.space })}</span>
+                ) : null}
                 <StateBadge state={request.state} />
               </div>
               <Grant request={request} />
+              {request.state === "approved" && request.change ? (
+                // Approving proposes the grant; access starts once that change is approved (PL-91).
+                <p className="text-caption text-fg-muted">{t("pipelines.access.grantChange", { change: request.change })}</p>
+              ) : null}
               <p className="text-caption text-fg">{request.reason}</p>
               {decidable ? (
-                <div className="flex flex-wrap items-end gap-2">
-                  <Field id={reasonId} label={t("pipelines.access.decisionReason")}>
+                <div className="flex max-w-prose flex-col gap-2">
+                  <Field id={reasonId} label={t("pipelines.access.decisionReason")} help={t("pipelines.access.decision.reasonHelp")}>
                     <Input
                       id={reasonId}
                       value={reasons[request.id] ?? ""}
@@ -554,40 +586,39 @@ export function AccessRequestInbox({ project, space }: { project: string; space:
                       onChange={(e) => setReasons({ ...reasons, [request.id]: e.target.value })}
                     />
                   </Field>
-                  {request.state === "pending" ? (
-                    <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {request.state === "pending" ? (
+                      <>
+                        <Button
+                          disabled={act.isPending}
+                          disabledReason={t("app.busyReason")}
+                          aria-label={t("pipelines.access.approveOf", { account: request.account })}
+                          onClick={() => act.mutate({ id: request.id, verb: "approve" })}
+                        >
+                          {t("pipelines.access.approve")}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          disabled={act.isPending || !(reasons[request.id] ?? "").trim()}
+                          disabledReason={t("pipelines.access.reasonFirst")}
+                          aria-label={t("pipelines.access.declineOf", { account: request.account })}
+                          onClick={() => act.mutate({ id: request.id, verb: "decline" })}
+                        >
+                          {t("pipelines.access.decline")}
+                        </Button>
+                      </>
+                    ) : (
                       <Button
-                        size="sm"
-                        disabled={act.isPending}
-                        disabledReason={t("app.busyReason")}
-                        aria-label={t("pipelines.access.approveOf", { account: request.account })}
-                        onClick={() => act.mutate({ id: request.id, verb: "approve" })}
-                      >
-                        {t("pipelines.access.approve")}
-                      </Button>
-                      <Button
-                        size="sm"
                         variant="secondary"
                         disabled={act.isPending || !(reasons[request.id] ?? "").trim()}
                         disabledReason={t("pipelines.access.reasonFirst")}
-                        aria-label={t("pipelines.access.declineOf", { account: request.account })}
-                        onClick={() => act.mutate({ id: request.id, verb: "decline" })}
+                        aria-label={t("pipelines.access.revokeOf", { account: request.account })}
+                        onClick={() => act.mutate({ id: request.id, verb: "revoke" })}
                       >
-                        {t("pipelines.access.decline")}
+                        {t("pipelines.access.revoke")}
                       </Button>
-                    </>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={act.isPending || !(reasons[request.id] ?? "").trim()}
-                      disabledReason={t("pipelines.access.reasonFirst")}
-                      aria-label={t("pipelines.access.revokeOf", { account: request.account })}
-                      onClick={() => act.mutate({ id: request.id, verb: "revoke" })}
-                    >
-                      {t("pipelines.access.revoke")}
-                    </Button>
-                  )}
+                    )}
+                  </div>
                 </div>
               ) : null}
             </li>

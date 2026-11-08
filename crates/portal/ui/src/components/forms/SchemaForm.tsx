@@ -172,7 +172,8 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
             {progress.total > 0 ? (
               <span
                 data-testid="required-count"
-                className="text-caption text-fg-muted"
+                // The form's left edge, whatever wraps beside it: the footer's lines end flush right.
+                className="mr-auto text-caption text-fg-muted"
               >
                 {t("form.requiredCount", {
                   filled: progress.filled,

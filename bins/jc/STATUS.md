@@ -191,7 +191,7 @@ turns it all off.
 | `JC_GITEA_*` | shako | `URL`, `PUBLIC_URL`, `OWNER=jc`, `REPO=config`, `TOKEN`, `APPS_OWNER=jc-apps`, `APPS_TOKEN`, `WEBHOOK_SECRET` | works: proposal commits, approval merges, sync reads them back |
 | pipeline runner | ekiben | `JC_PIPELINE_RUNNER_URL` | wired, refused: no runner credential (gap d) |
 | CKAN | dataroom | `JC_CKAN_URL`, `JC_CKAN_API_URL`, only when the public URL is https (EP-67) | wired for https installs; the http e2e leaves it unset (gap e) |
-| Grafana | daiya | `JC_GRAFANA_URL`, `_PUBLIC_URL`, `_USER=portal`, `_PASSWORD` | wired; no org per project (gap f) |
+| Grafana | daiya | `JC_GRAFANA_URL`, `_PUBLIC_URL`, `_USER=portal`, `_PASSWORD` | works as server admin; nothing creates the org per project (gap f) |
 | broker | antares | `JC_BROKER_URL`, `JC_BROKER_ADMIN_TOKEN_FILE` | wired; the gateway between Portal and broker is no jc module (gap d) |
 
 The Portal's forge client reads its `JC_GITEA_*` through `Config::forge_var` (environment first, then the values jc
@@ -207,8 +207,11 @@ filled), so the process environment is never written.
   (service account, `manage-users` + `query-groups`, no realm-admin), group `platform-admins`, user `admin` in it.
 - shako: token file; the repository `jc/config` created after serve through `POST /api/v1/orgs/jc/repos`
   (idempotent: GET first, 409 accepted).
-- ekiben, Antares admin, daiya (`portal` Basic credential bound as Admin of org 1), dataroom (`portal` token bound as
-  Admin of the default catalogue), the webhook secret and the Portal cookie key: one file each.
+- shako also gets `org.yaml` (the installation's Organization, domain = the Portal's host or `jc.invalid`) and
+  `users/roles/steward.yaml` (the role a project's opener is bound to), each written only when absent.
+- ekiben, Antares admin, daiya (the Portal's Grafana user is daiya's server administrator,
+  `DaiyaState::with_server_admin`), dataroom (`dataroom_api::portal_publisher`: Read + Propose on the default
+  catalogue only), the webhook secret and the Portal cookie key: one file each.
 - The Portal is built after jc serves (a `LateRouter` answers 503 until then), because its discovery calls kaisatsu
   on jc's own listener.
 - The Portal is mounted at the root (`[mounts.portal] path_prefix = ""`): its UI and redirects assume `/`.
@@ -239,19 +242,19 @@ set (run both ways). `JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false` is a test-on
 | b. person created through the Portal, read back from kaisatsu | pass |
 | c. Group proposed (dry run, propose), approved by a second admin with confirm, commit read back with `git clone`, group read back from kaisatsu | pass |
 | d. Pipeline on ekiben writes Entities to Antares | gap: runner refuses the Portal |
-| e. public Endpoint in the dataroom catalogue | partial: dataroom accepts the Portal's token; the Portal does not sync to an http CKAN |
-| f. dashboard in daiya | partial: daiya accepts the Portal's credential; no org per project |
+| e. public Endpoint in the dataroom catalogue | partial: the Portal's W2 + W5 calls with its token, dataset read back anonymously; the Portal's own sync needs https |
+| f. dashboard in daiya | partial: provision.sh's org, folder and dashboard made as the Portal's server admin, read back with G1 and G5; jc does not run those steps per project |
 
 ### Compat gaps (refused calls)
 
 - d, ekiben: `GET/PUT/POST/DELETE /streams/streams[/{id}]` without Authorization -> 401. The Portal has no runner
   credential setting (owner: jc-ekiben-portal).
-- d, Antares: `PUT /broker/q/views/{id}` -> 404; jc builds Antares without `views` and `jc-policy`. The Portal's
-  Endpoint writes go through context-gateway, which is not a jc module.
+- d, Antares: jc builds Antares without the `views` and `jc-policy` features, so `/broker/q/views` is not served.
+  The Portal's Endpoint writes go through context-gateway, which is not a jc module.
 - e, Portal: the CKAN URL must be https (EP-67); a CkanInstance token comes only from a `CKAN_*` env var named by
   `apiTokenRef` (no file). dataroom answers `help`/`uri` links with https on an http install.
-- f, daiya: `GET /dashboards/api/orgs/name/{project}` with the Portal's Basic credential -> 404
-  `{"error":{"code":"cr.not_found","message":"Organization not found"}}`.
+- f, jc: nothing runs provision.sh's per-project steps (`POST /dashboards/api/orgs`, `POST /api/folders`), so the
+  Portal's `GET /dashboards/api/orgs/name/{project}` answers 404 `Organization not found` until they run.
 - shako: hooks take Gitea's body but shako refuses loopback targets, so the Portal polls (`JC_PORTAL_SYNC_INTERVAL`);
   the webhook secret store has no API; the mergeRequest link points at `/git/user/oauth2/keycloak?redirect_to=...`,
   which shako does not serve (owner: jc-shako-portal).
@@ -260,6 +263,19 @@ set (run both ways). `JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false` is a test-on
 - Audience-bound tokens: the Portal's admin calls use kaisatsu `client_credentials` tokens of `portal-admin`. shako,
   ekiben, daiya, dataroom and the Antares admin still take static credentials from setup files: none of them
   verifies kaisatsu tokens in jc yet.
+
+- Portal, fixed here: `POST /api/v1/projects` wrote the creator RoleBinding with the opener's e-mail, which
+  jc-core refuses (PF-126); the reconciler dropped it (`api/projects.rs`, test in `project_open_layout_tests.rs`,
+  red with the old line).
+- Portal + shako: after `POST /api/v1/projects` (202) and its approval by a second administrator (202), the
+  project's repository `jc/{project}` is absent (`GET /git/api/v1/repos/jc/{project}` -> 404) and
+  `GET /api/v1/projects` lists no project. The UI shots therefore show the `org` namespace (owner:
+  jc-shako-portal / jc-mcp-admin).
+
+### Merged module branches
+
+jc-shako-portal (473e07e), jc-catalog-dash-portal (144a1fb), jc-mcp-admin (e7e7bd1), merged without conflict; jc
+uses `dataroom_api::portal_publisher` and `DaiyaState::with_server_admin` from them.
 
 ### Not verified
 
@@ -272,19 +288,40 @@ set (run both ways). `JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false` is a test-on
 `cargo build --release -p jc` (default release profile, no LTO, all default features incl. the Portal's embedded UI):
 196,455,176 bytes, 151,883,704 bytes stripped. Built in 9 min.
 
-## Dependency checks (once, root lockfile = everything `jc` links)
+## Dependency checks (root lockfile = everything `jc` links; 2026-11-08, jc-ship)
 
-- `cargo audit`: 4 vulnerabilities, none introduced by `jc` code, none ignored:
-  - `quick-xml 0.37.5`: RUSTSEC-2026-0194 and -0195. It comes through `oxrdfxml 0.1.7` from `dataroom-rdf`, which was
-    already in the base. The fix needs quick-xml 0.41, i.e. a newer oxrdfxml.
-  - `crypto-bigint 0.5.5` (RUSTSEC-2026-0387, through `age` -> `jcctl`/Portal): the fix is 0.7.6, a different
-    major version used by elliptic-curve 0.13.
-  - `rsa 0.9.10` (RUSTSEC-2023-0071, through `openidconnect` -> Portal): no fixed version exists.
-  - Warnings for unmaintained crates: `atomic-polyfill`, `basic-toml`, `paste`.
-- `cargo deny check`: the root has no `deny.toml`; with `crates/portal/deny.toml` the result is licenses ok,
-  advisories FAILED (the vulnerabilities above plus `paste`), bans FAILED (wildcard path dependencies in every
-  monorepo crate, e.g. `daiya-api`, `jc`), sources FAILED (`odata-*` from an Antares git rev in
-  `crates/daiya/model/Cargo.toml:11`, already in the base). No root policy was added to make it pass.
+Root `deny.toml` and `cargo audit` carry no ignore. Fixed on branch `jc-ship`:
+
+- Wildcard path dependencies: every root workspace crate has `publish = false`.
+- `quick-xml 0.37.5` (RUSTSEC-2026-0194, -0195, CVSS 7.5): `vendor/oxrdfxml` is oxrdfxml 0.1.7 ported to
+  quick-xml 0.42 (`vendor/SOURCES.md`).
+- `basic-toml` through askama: askama without its `config` feature.
+- `paste` (RUSTSEC-2024-0436): `vendor/tikv-jemalloc-ctl`, upstream commit 66b124bdf4 without paste.
+- `crypto-bigint 0.5.5` through shako-core: p256 0.14 (crypto-bigint 0.7.10).
+
+Still red, with no fixed release to take:
+
+- RUSTSEC-2026-0387 `crypto-bigint 0.5.5` <- `elliptic-curve 0.13.8` <- `p256 0.13.2` (and `hpke 0.12.0`,
+  `ecdsa`, `primeorder`) <- `age-core 0.12.0` / `age 0.12.1` <- `jcctl` (vendor/joinedcontext-platform) and
+  `joinedcontext-portal` <- `jc`. age 0.12.1 (2026-07-14) is the newest release and requires hpke 0.12 with p256;
+  rage main is on p256 0.14 / hpke 0.14, unreleased; age 0.11.5 fails deny on proc-macro-error2. jcctl
+  (`src/secrets/sops.rs`) and the Portal (`src/secret_files.rs`) use only `age::x25519::Identity`,
+  `age::armor::ArmoredReader` and `age::Decryptor`; an x25519 identity unwraps only X25519 stanzas, so no p256
+  code runs when they decrypt. Take the next age release.
+- RUSTSEC-2026-0374 `basic-toml 0.1.10` (unmaintained) <- `i18n-config 0.4.8` <- `i18n-embed-fl 0.10.1`
+  (proc-macro, unconditional dependency of age) <- `age 0.12.1` <- the same chain. Build time only.
+- RUSTSEC-2023-0071 `rsa 0.9.10` (Marvin, no fixed release) <- `openidconnect 4.1.0` <- `joinedcontext-portal`
+  <- `jc`. The timing leak is in RSA private-key operations. openidconnect calls rsa for signature
+  verification with the issuer's public key (`core/crypto.rs` `verify_rsa_signature`, `BigUint` n and e) and,
+  in `CoreRsaPrivateSigningKey` (`core/jwk/mod.rs:541`), for signing with a private key. It has no RSA
+  decryption: an encrypted ID token is refused as `Unsupported` (`verification/mod.rs:303`). The Portal never
+  constructs `CoreRsaPrivateSigningKey`; the only `RsaPrivateKey` in our sources is the test key of
+  `crates/portal/src/auth/bearer.rs:1106` inside `#[cfg(test)]`. The vulnerable path is unreachable; the
+  advisory stays red until openidconnect moves to rsa 0.10 or drops it. kaisatsu keeps openidconnect out for
+  this reason (`crates/kaisatsu/server/Cargo.toml:51`).
+- `cargo audit` also warns on `atomic-polyfill` (unmaintained, RUSTSEC-2023-0089) from a `heapless 0.7.17` lock
+  entry that no target of the graph builds (`cargo tree -i heapless@0.7.17 --target all` prints nothing); a
+  warning, not a failure.
 
 ## Security review of the diff
 
@@ -343,7 +380,7 @@ Read once over `daiya-argon-1..HEAD`, excluding the squashed imports and `vendor
   (`crates/ekiben/crates/ekiben-server/src/main.rs:204`).
 - `zip` requirement relaxed to `^9.2` for the cooldown (`crates/ekiben/Cargo.toml:64`); back to `^9.3` from
   2026-11-09.
-- The vulnerable dependencies and `cargo deny` findings above.
+- The three advisories still open in the dependency checks above.
 - gitleaks over the branch reports 73 findings, all in upstream test fixtures and docs of the imported trees and
   `vendor/` (JWT/PEM test vectors, sample keys), none in `bins/jc`. These repositories have their own allow-lists
   upstream.

@@ -16,8 +16,10 @@
 use axum::extract::{Path, State};
 use axum::Json;
 use jc_core::kinds::ckan::CkanInstanceSpec;
+use jc_core::kinds::EndpointSpec;
+use jcctl::catalogue::{self, Catalogues, Door, Planned};
 use jcctl::loader::{RawManifest, RawMetadata};
-use jcctl::publish::ckan::{package, Settings};
+use jcctl::publish::ckan::{package_of, Settings};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -34,7 +36,9 @@ use crate::store::ListOptions;
 pub struct CkanStatus {
     /// Every catalogue this project can publish to.
     pub instances: Vec<InstanceSummary>,
-    /// One entry per endpoint that declares `spec.publish.ckan`.
+    /// One entry per dataset the project's endpoints publish: each public endpoint's one dataset
+    /// or each of its `spec.catalog.datasets`, and each closed endpoint declaring
+    /// `spec.publish.ckan` (EP-174, EP-175).
     pub publications: Vec<PublicationStatus>,
 }
 
@@ -126,13 +130,9 @@ pub async fn get_status(
         .collect();
 
     let settings = Settings::new(host_of(&state));
-    let publications = state
-        .mirror
-        .list(&project, "Endpoint", &opts)
-        .items
-        .into_iter()
-        .filter_map(|env| publication(env, &project, &instances, &settings))
-        .collect();
+    let apps = state.mirror.list(&project, "App", &opts).items;
+    let endpoints = state.mirror.list(&project, "Endpoint", &opts).items;
+    let publications = publications(endpoints, &apps, &project, &instances, &settings);
 
     Ok(Json(CkanStatus {
         instances: instances
@@ -159,71 +159,133 @@ fn host_of(state: &AppState) -> String {
         .to_owned()
 }
 
-/// The status of one endpoint, or `None` when it publishes nowhere.
-fn publication(
-    env: ResourceEnvelope,
+/// One status per dataset the endpoints publish, as the publisher plans them, and one per
+/// endpoint whose `spec.publish.ckan` names an instance the project lacks.
+fn publications(
+    endpoints: Vec<ResourceEnvelope>,
+    apps: &[ResourceEnvelope],
     project: &str,
     instances: &[(String, CkanInstanceSpec)],
     settings: &Settings,
+) -> Vec<PublicationStatus> {
+    let catalogues = Catalogues {
+        instances: [(project.to_owned(), instances.iter().cloned().collect())].into(),
+        apps: apps
+            .iter()
+            .map(|app| (project.to_owned(), app.metadata.name.clone()))
+            .collect(),
+        ..Catalogues::default()
+    };
+    let specs: Vec<(ResourceEnvelope, EndpointSpec)> = endpoints
+        .into_iter()
+        .filter_map(|env| {
+            let spec = serde_json::from_value(env.spec.clone()).ok()?;
+            Some((env, spec))
+        })
+        .collect();
+    let (planned, _) = catalogue::datasets(
+        specs.iter().map(|(env, spec)| Door {
+            project,
+            name: &env.metadata.name,
+            spec,
+        }),
+        &catalogues,
+    );
+    let mut out = Vec::new();
+    for (env, _) in &specs {
+        let phase = env
+            .status
+            .as_ref()
+            .map(|status| crate::resource::phase_str(status.phase).to_owned());
+        let mine: Vec<&Planned> = planned
+            .iter()
+            .filter(|dataset| dataset.endpoint == env.metadata.name)
+            .collect();
+        if mine.is_empty() {
+            out.extend(missing(env, phase, instances));
+            continue;
+        }
+        for dataset in mine {
+            out.extend(publication(env, phase.clone(), project, dataset, settings));
+        }
+    }
+    out
+}
+
+/// The status of an endpoint whose `spec.publish.ckan` names an instance the project lacks, or
+/// `None` when it publishes nowhere. Without the instance there is no organization and no
+/// catalogue URL, but the endpoint still says where it wants to go: a dangling reference is
+/// what this view has to show.
+fn missing(
+    env: &ResourceEnvelope,
+    phase: Option<String>,
+    instances: &[(String, CkanInstanceSpec)],
 ) -> Option<PublicationStatus> {
-    let declared = env.spec.get("publish")?.get("ckan")?.clone();
+    let declared = env.spec.get("publish")?.get("ckan")?;
     let instance_name = declared
         .get("instanceRef")
         .and_then(crate::resource::reference_name)
         .unwrap_or_default()
         .to_owned();
-    let instance = instances.iter().find(|(name, _)| name == &instance_name);
-    let phase = env
-        .status
-        .as_ref()
-        .map(|status| crate::resource::phase_str(status.phase).to_owned());
+    if instances.iter().any(|(name, _)| name == &instance_name) {
+        return None;
+    }
+    Some(PublicationStatus {
+        endpoint: env.metadata.name.clone(),
+        phase,
+        instance: instance_name,
+        instance_missing: true,
+        organization: None,
+        dataset: declared
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        dataset_url: None,
+        resources: Vec::new(),
+    })
+}
 
-    // Without the instance there is no organization and no catalogue URL, but the endpoint
-    // still says where it wants to go: a dangling reference is what this view has to show.
-    let Some((_, spec)) = instance else {
-        return Some(PublicationStatus {
-            endpoint: env.metadata.name,
-            phase,
-            instance: instance_name,
-            instance_missing: true,
-            organization: None,
-            dataset: declared
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            dataset_url: None,
-            resources: Vec::new(),
-        });
-    };
-
-    // The same rendering the publisher uses, so what the monitor lists is what will be
-    // written: an empty DCAT record is enough, only the resources and the names are read here.
+/// The status of one planned dataset, rendered by the publisher itself so what the monitor
+/// lists is what will be written: an empty DCAT record is enough, only the resources and the
+/// names are read here.
+fn publication(
+    env: &ResourceEnvelope,
+    phase: Option<String>,
+    project: &str,
+    dataset: &Planned,
+    settings: &Settings,
+) -> Option<PublicationStatus> {
     let manifest = RawManifest {
-        api_version: env.api_version,
-        kind: env.kind,
+        api_version: env.api_version.clone(),
+        kind: env.kind.clone(),
         metadata: RawMetadata {
             name: env.metadata.name.clone(),
             namespace: Some(project.to_owned()),
             rest: serde_json::Map::new(),
         },
-        spec: env.spec,
+        spec: env.spec.clone(),
         status: None,
     };
-    let dataset = package(&manifest, spec, &Value::Null, settings)
-        .ok()
-        .flatten()?;
-
-    let name = dataset["name"].as_str().unwrap_or_default().to_owned();
+    let rendered = package_of(
+        &manifest,
+        &dataset.publication,
+        dataset.slice.as_ref(),
+        &dataset.instance,
+        &Value::Null,
+        settings,
+    )
+    .ok()?;
+    let name = rendered["name"].as_str().unwrap_or_default().to_owned();
     Some(PublicationStatus {
-        endpoint: env.metadata.name,
+        endpoint: env.metadata.name.clone(),
         phase,
-        instance: instance_name,
+        instance: dataset.instance_name.clone(),
         instance_missing: false,
-        organization: dataset["owner_org"].as_str().map(str::to_owned),
-        dataset_url: Some(format!("{}/dataset/{name}", spec.base_url())),
+        organization: rendered["owner_org"].as_str().map(str::to_owned),
+        dataset_url: Some(format!("{}/dataset/{name}", dataset.instance.base_url())),
         dataset: name,
-        resources: dataset["resources"]
+        resources: rendered["resources"]
             .as_array()
             .map(|items| items.iter().map(link).collect())
             .unwrap_or_default(),

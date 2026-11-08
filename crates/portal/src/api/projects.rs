@@ -580,11 +580,10 @@ pub(crate) fn open_project_files(
         "spec": { "organizationRef": organization },
     });
 
-    // The opener gets `steward` on their own project and nothing anywhere else (PF-66, PF-52).
-    let who = identity
-        .email
-        .clone()
-        .unwrap_or_else(|| identity.username.clone());
+    // The opener gets `steward` on their own project and nothing anywhere else (PF-66, PF-52),
+    // named by their Keycloak user id: a binding naming an e-mail fails validation and the
+    // reconciler drops it (PF-126).
+    let who = identity.subject.clone();
     let binding = json!({
         "apiVersion": API_VERSION,
         "kind": "RoleBinding",

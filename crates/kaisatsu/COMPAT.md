@@ -3,6 +3,8 @@
 Every `/admin/realms/{realm}/...` call made by the Portal (`joinedcontext-portal`), deployment Jobs
 (`joinedcontext-deployment`), and `keycloak-config-cli`, with its caller `file:line`, status codes,
 query parameters, and test coverage in `crates/kaisatsu/admin/tests/compat_tests.rs`.
+[PORTAL-CALLS.md](PORTAL-CALLS.md) lists the Portal's calls (OIDC and admin) with the identity
+each uses and the answer it parses, replayed by `server/tests/portal_contract.rs`.
 
 | # | Method | Path | Query Parameters | Status | Caller `file:line` | Test in `compat_tests.rs` |
 |---|---|---|---|---|---|---|
@@ -11,7 +13,7 @@ query parameters, and test coverage in `crates/kaisatsu/admin/tests/compat_tests
 | 3 | `PUT` | `/admin/realms/{realm}` | — | `204` | `keycloak-config-cli` | `row_01_02_03_realms_and_partial_import` |
 | 4 | `POST` | `/admin/realms/{realm}/partialImport` | — (`ifResourceExists`: `FAIL`/`SKIP`/`OVERWRITE`) | `200`, `409` | `charts/people/files/ensure-user-ids.sh:99` | `row_01_02_03_realms_and_partial_import` |
 | 5 | `GET` | `/admin/realms/{realm}/users` | `search`, `first`, `max`, `briefRepresentation`, `email`, `username`, `exact` | `200` | `POR src/people.rs:285`, `:332`, `src/reconciler/app_clients.rs:584`, `charts/people/files/ensure-user-ids.sh:45` | `row_05_to_17_users_lifecycle_and_subresources` |
-| 6 | `POST` | `/admin/realms/{realm}/users` | — | `201 + Location`, `409` | `POR src/people.rs:319` | `row_05_to_17_users_lifecycle_and_subresources` |
+| 6 | `POST` | `/admin/realms/{realm}/users` | body `groups` (paths): the person joins each, as Keycloak does; an unknown or invisible path is `404`, a group the caller may not manage members of is refused as on row 19, both before the person exists | `201 + Location`, `404`, `403`, `409` | `POR src/people.rs:319` | `row_05_to_17_users_lifecycle_and_subresources`, `create_user_joins_the_groups_its_body_names` |
 | 7 | `GET` | `/admin/realms/{realm}/users/{id}` | — | `200`, `404` | `POR src/people.rs:298`, `src/reconciler/groups.rs:475`, `src/reconciler/app_clients.rs:572` | `row_05_to_17_users_lifecycle_and_subresources` |
 | 8 | `PUT` | `/admin/realms/{realm}/users/{id}` | — | `204`, `404`, `409` | `POR src/people.rs:351` | `row_05_to_17_users_lifecycle_and_subresources` |
 | 9 | `DELETE` | `/admin/realms/{realm}/users/{id}` | — | `204`, `404` | `POR src/people.rs:515` | `row_05_to_17_users_lifecycle_and_subresources` |
@@ -50,5 +52,5 @@ query parameters, and test coverage in `crates/kaisatsu/admin/tests/compat_tests
 | 42 | `GET` | `/admin/realms/{realm}/clients/{uuid}/protocol-mappers/models` | — | `200` | `POR src/reconciler/app_clients.rs:463` | `row_35_to_46_clients_secrets_mappers_and_scopes` |
 | 43 | `POST` / `PUT` / `DELETE` | `/admin/realms/{realm}/clients/{uuid}/protocol-mappers/models[/{id}]` | — | `201`, `204` | `POR src/reconciler/app_clients.rs:479`, `:502`, `:520` | `row_35_to_46_clients_secrets_mappers_and_scopes` |
 | 44 | `GET` / `PUT` / `DELETE` | `/admin/realms/{realm}/clients/{uuid}/{default,optional}-client-scopes[/{scope_id}]` | — | `200`, `204` | `POR src/reconciler/app_clients.rs:431`, `workload_clients.rs:622`, `hub_scopes.rs:247`, `charts/admin-permissions/files/sync-admin-permissions.sh:151` | `row_35_to_46_clients_secrets_mappers_and_scopes` |
-| 45 | `GET` / `POST` / `PUT` / `DELETE` | `/admin/realms/{realm}/client-scopes[/{id}]` | — | `200`, `201`, `204` | `POR src/reconciler/hub_scopes.rs:146`, `:162`, `:198`, `:228`, `workload_clients.rs:648`, `charts/admin-permissions/files/sync-admin-permissions.sh:104` | `row_35_to_46_clients_secrets_mappers_and_scopes` |
+| 45 | `GET` / `POST` / `PUT` / `DELETE` | `/admin/realms/{realm}/client-scopes[/{id}]` | — | `200`, `201`, `204`, `409` (name in use) | `POR src/reconciler/hub_scopes.rs:146`, `:162`, `:198`, `:228`, `workload_clients.rs:648`, `charts/admin-permissions/files/sync-admin-permissions.sh:104` | `row_35_to_46_clients_secrets_mappers_and_scopes` |
 | 46 | `DELETE` | `/admin/realms/{realm}/attack-detection/brute-force/users/{user_id}` | — | `204` | `components/keycloak/README.md:54` (break-glass) | `row_35_to_46_clients_secrets_mappers_and_scopes` |

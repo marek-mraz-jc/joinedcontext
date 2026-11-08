@@ -1,0 +1,23 @@
+# oxrdfxml 0.1.7 (crates.io, MIT OR Apache-2.0, https://github.com/oxigraph/oxigraph lib/oxrdfxml)
+# ported to quick-xml 0.42: every oxrdfxml release up to 0.2.5 takes quick-xml ^0.37, which has
+# RUSTSEC-2026-0194 and RUSTSEC-2026-0195 (CVSS 7.5, patched in quick-xml >= 0.41). See
+# vendor/SOURCES.md. Drop this copy when an oxrdfxml release takes quick-xml >= 0.41.
+[package]
+name = "oxrdfxml"
+version = "0.1.7"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+description = "Parser and serializer for the RDF/XML format (oxrdfxml 0.1.7 on quick-xml 0.42)"
+publish = false
+
+[dependencies]
+oxilangtag = "0.1"
+oxiri = "0.2.11"
+oxrdf = "=0.2.4"
+quick-xml = "0.42"
+thiserror = "2"
+tokio = { version = "1.29", features = ["io-util"], optional = true }
+
+[features]
+async-tokio = ["dep:tokio", "quick-xml/async-tokio"]

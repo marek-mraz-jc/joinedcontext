@@ -156,6 +156,16 @@ async fn a_project_opens_into_a_repository_of_its_own() {
         !paths.contains(&"projects/doprava/project.yaml"),
         "{paths:?}"
     );
+    let creator = &files
+        .iter()
+        .find(|(path, _)| path == "users/assignments/doprava-creator.yaml")
+        .expect("creator binding")
+        .1;
+    let creator: Value = serde_norway::from_str(creator).expect("the binding is YAML");
+    assert_eq!(
+        creator["spec"]["subjects"][0]["user"], "sub-nobody",
+        "the opener is named by their user id (PF-126): {creator}"
+    );
     let entry = &files
         .iter()
         .find(|(path, _)| path == "projects/doprava.yaml")

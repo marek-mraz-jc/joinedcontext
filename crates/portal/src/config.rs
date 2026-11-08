@@ -925,7 +925,8 @@ fn ckan_api_route(
         Ok(url)
     };
     let public = parse("JC_PORTAL_CKAN_URL", &public)?;
-    if public.scheme() != "https" {
+    let rehearsal = ckan_allows_http(lookup);
+    if public.scheme() != "https" && !rehearsal {
         return Err(ConfigError::Invalid {
             var: "JC_PORTAL_CKAN_URL",
             reason: "the public catalogue URL is https://, as every CkanInstance URL (EP-67)"
@@ -936,7 +937,7 @@ fn ckan_api_route(
     let in_cluster = api
         .host_str()
         .is_some_and(|host| host.ends_with(".svc") || host.ends_with(".svc.cluster.local"));
-    if api.scheme() != "https" && !in_cluster {
+    if api.scheme() != "https" && !in_cluster && !rehearsal {
         return Err(ConfigError::Invalid {
             var: "JC_PORTAL_CKAN_API_URL",
             reason:
@@ -946,6 +947,19 @@ fn ckan_api_route(
         });
     }
     Ok(Some((public, api)))
+}
+
+/// `JC_PORTAL_CKAN_ALLOW_HTTP` (a local rehearsal on one machine, e.g. `jc --scheme http`): only
+/// the literal `true` lets both catalogue URLs be plain http, so a typo keeps EP-67 in force.
+fn ckan_allows_http(lookup: &impl Fn(&str) -> Option<String>) -> bool {
+    let on = lookup("JC_PORTAL_CKAN_ALLOW_HTTP").as_deref() == Some("true");
+    if on {
+        tracing::warn!(
+            "JC_PORTAL_CKAN_ALLOW_HTTP is true: the catalogue URLs may be plain http and the \
+             CKAN token crosses the network in the clear (EP-67 off, local rehearsal only)"
+        );
+    }
+    on
 }
 
 /// Where build pods run (AP-130): nothing when `JC_PORTAL_BUILD_NAMESPACE` is unset, and every
@@ -2185,6 +2199,56 @@ mod tests {
                 other => panic!("{public:?} {api:?}: {other:?}"),
             }
         }
+    }
+
+    /// EP-67 holds unless `JC_PORTAL_CKAN_ALLOW_HTTP` is the literal `true`: then, and only then,
+    /// an http catalogue on a loopback address passes (a one-machine rehearsal). https passes
+    /// either way, and credentials in the URL stay refused.
+    #[test]
+    fn an_http_catalogue_needs_the_rehearsal_switch() {
+        let route = |public: &'static str, api: &'static str, switch: Option<&'static str>| {
+            ckan_api_route(&move |name: &str| match name {
+                "JC_PORTAL_CKAN_URL" => Some(public.to_owned()),
+                "JC_PORTAL_CKAN_API_URL" => Some(api.to_owned()),
+                "JC_PORTAL_CKAN_ALLOW_HTTP" => switch.map(str::to_owned),
+                _ => None,
+            })
+        };
+        let http = (
+            "http://localhost:42081/opendata",
+            "http://127.0.0.1:42081/opendata",
+        );
+        for switch in [None, Some("false"), Some("TRUE"), Some("1"), Some("")] {
+            assert!(
+                matches!(
+                    route(http.0, http.1, switch),
+                    Err(ConfigError::Invalid {
+                        var: "JC_PORTAL_CKAN_URL",
+                        ..
+                    })
+                ),
+                "{switch:?}"
+            );
+        }
+        let (public, api) = route(http.0, http.1, Some("true"))
+            .unwrap()
+            .expect("a route");
+        assert_eq!(public.as_str(), "http://localhost:42081/opendata");
+        assert_eq!(api.as_str(), "http://127.0.0.1:42081/opendata");
+        for switch in [None, Some("true")] {
+            assert!(
+                route("https://o.example.org", "https://c.example.org", switch)
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        assert!(matches!(
+            route(http.0, "http://u:p@127.0.0.1:42081/opendata", Some("true")),
+            Err(ConfigError::Invalid {
+                var: "JC_PORTAL_CKAN_API_URL",
+                ..
+            })
+        ));
     }
 
     /// T-4470: the parts `Config::from_vars` was cut into, each on its own input.

@@ -1,0 +1,13 @@
+# The jc image build context is the repository root (bins/jc/Dockerfile). Only sources and
+# manifests go in: build output, local installs and git history stay out, so a rebuild's
+# context is small and `COPY . .` is invalidated only by source changes.
+.git
+**/target
+**/node_modules
+**/.pnpm-store
+**/ui/dist
+**/sdk/dist
+**/.cg
+**/.codegraph
+**/test-results
+**/playwright-report

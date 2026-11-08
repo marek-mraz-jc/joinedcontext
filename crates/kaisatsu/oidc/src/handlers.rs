@@ -1129,6 +1129,67 @@ fn select_signing_key<'a>(
         .ok_or_else(|| KaisatsuError::Crypto("no active signing key in realm".into()))
 }
 
+/// `user` with the roles of every group they are in, the groups' ancestors included (Keycloak
+/// hands a parent group's role mappings down to its subgroups): the roles a group carries and
+/// the realm role and `client` role mappings the admin API wrote for it. A user's own mappings
+/// are on the user already (the stores copy them there).
+/// ponytail: a group's mappings to roles of other clients stay out of `resource_access` (one
+/// store query per client and group otherwise); copy group mappings onto the group in the
+/// stores, as user ones are, when a reader needs them.
+pub(crate) async fn with_group_roles(
+    store: &dyn Store,
+    realm_id: &str,
+    user: &UserRepresentation,
+    user_groups: &[GroupRepresentation],
+    client: &ClientRepresentation,
+) -> Result<UserRepresentation> {
+    let mut merged = user.clone();
+    let add = |list: &mut Vec<String>, role: &str| {
+        if !list.iter().any(|r| r == role) {
+            list.push(role.to_owned());
+        }
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    let mut pending: Vec<GroupRepresentation> = user_groups.to_vec();
+    while let Some(group) = pending.pop() {
+        if !seen.insert(group.id.clone()) {
+            continue;
+        }
+        for role in &group.realm_roles {
+            add(&mut merged.realm_roles, role);
+        }
+        for (client, roles) in &group.client_roles {
+            for role in roles {
+                add(merged.client_roles.entry(client.clone()).or_default(), role);
+            }
+        }
+        for mapping in store
+            .list_role_mappings_for_principal(realm_id, "group", &group.id, None)
+            .await?
+        {
+            add(&mut merged.realm_roles, &mapping.role_name);
+        }
+        for mapping in store
+            .list_role_mappings_for_principal(realm_id, "group", &group.id, Some(&client.id))
+            .await?
+        {
+            add(
+                merged
+                    .client_roles
+                    .entry(client.client_id.clone())
+                    .or_default(),
+                &mapping.role_name,
+            );
+        }
+        if let Some(parent) = group.parent_id.as_deref()
+            && !seen.contains(parent)
+        {
+            pending.extend(store.get_group(realm_id, None, parent).await?);
+        }
+    }
+    Ok(merged)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn mint_tokens_for_principal(
     state: &OidcState,
@@ -1152,6 +1213,8 @@ async fn mint_tokens_for_principal(
     let keys = state.store.list_signing_keys(&realm.id).await?;
     let user_groups = state.store.list_user_groups(&realm.id, &user.id).await?;
     let all_realm_roles = state.store.list_roles(&realm.id, None).await?;
+    let user =
+        &with_group_roles(state.store.as_ref(), &realm.id, user, &user_groups, client).await?;
 
     let now = Utc::now().timestamp();
     let access_ttl = client
@@ -2742,6 +2805,14 @@ async fn userinfo_inner(
     }
     let user_groups = state.store.list_user_groups(&realm.id, &user.id).await?;
     let all_roles = state.store.list_roles(&realm.id, None).await?;
+    let user = with_group_roles(
+        state.store.as_ref(),
+        &realm.id,
+        &user,
+        &user_groups,
+        &client,
+    )
+    .await?;
 
     let ctx = MapperContext {
         realm: &realm,
@@ -2820,7 +2891,9 @@ pub async fn dispatch_backchannel_logout(
                 "http://schemas.openid.net/event/backchannel-logout": {}
             }
         });
-        let logout_token = sign_jwt(key, &state.kek, Some("Logout"), &logout_claims)?;
+        // The header says `JWT`, as Keycloak's does: the `Logout` type is the claim's. A relying
+        // party on `openidconnect` (the Portal) refuses any other header type.
+        let logout_token = sign_jwt(key, &state.kek, Some("JWT"), &logout_claims)?;
         let _ = state
             .guard
             .post_form(logout_url, &[("logout_token", &logout_token)])

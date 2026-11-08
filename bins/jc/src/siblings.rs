@@ -97,7 +97,7 @@ fn origin(url: &str) -> String {
 /// | `JC_OIDC_ISSUER`, `JC_OIDC_CLIENT_*`, `JC_KEYCLOAK_ADMIN_URL`, `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_*`, `JC_PORTAL_COOKIE_KEY` | kaisatsu |
 /// | `JC_GITEA_URL`, `_PUBLIC_URL`, `_OWNER`, `_REPO`, `_TOKEN`, `_APPS_OWNER`, `_APPS_TOKEN`, `_WEBHOOK_SECRET` | shako |
 /// | `JC_PORTAL_PIPELINE_RUNNER_URL` | ekiben |
-/// | `JC_PORTAL_CKAN_URL`, `JC_PORTAL_CKAN_API_URL` (only when the public scheme is https, EP-67) | dataroom |
+/// | `JC_PORTAL_CKAN_URL`, `JC_PORTAL_CKAN_API_URL` (https, EP-67; http only with `JC_PORTAL_CKAN_ALLOW_HTTP=true`) | dataroom |
 /// | `JC_PORTAL_GRAFANA_URL`, `_PUBLIC_URL`, `_USER`, `_PASSWORD` | daiya |
 /// | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | antares |
 #[must_use]
@@ -182,14 +182,25 @@ pub fn portal_vars(
         );
     }
     if let Some(catalogue) = siblings.get(Module::Dataroom) {
-        // The Portal holds the public catalogue URL to https (EP-67); an http installation
-        // leaves the route unset rather than failing the Portal's start.
-        if catalogue.public.starts_with("https://") {
+        // The Portal holds both catalogue URLs to https (EP-67; plain http only to a cluster
+        // Service), so an https installation calls the API at its public URL too. An http
+        // installation fills the route only with the operator's explicit
+        // `JC_PORTAL_CKAN_ALLOW_HTTP=true` (a local rehearsal), else leaves it unset rather than
+        // failing the Portal's start.
+        let rehearsal = env("JC_PORTAL_CKAN_ALLOW_HTTP").as_deref() == Some("true");
+        let api = if catalogue.public.starts_with("https://") {
+            Some(catalogue.public.clone())
+        } else if rehearsal {
+            Some(catalogue.internal.clone())
+        } else {
+            None
+        };
+        if let Some(api) = api {
             group(
                 "JC_PORTAL_CKAN_URL",
                 vec![
                     ("JC_PORTAL_CKAN_URL", Some(catalogue.public.clone())),
-                    ("JC_PORTAL_CKAN_API_URL", Some(catalogue.internal.clone())),
+                    ("JC_PORTAL_CKAN_API_URL", Some(api)),
                 ],
             );
         }
@@ -223,6 +234,17 @@ pub fn portal_vars(
                         .map(|p| p.display().to_string()),
                 ),
             ],
+        );
+    }
+    // The Portal's own secret backend (SOPS + age, its identity a setup file) unless the
+    // environment names a backend.
+    if unset("JC_PORTAL_SOPS_AGE_KEY_FILE")
+        && unset("JC_PORTAL_OPENBAO_ADDR")
+        && let Some(path) = setup.path(Secret::PortalAgeKey)
+    {
+        out.insert(
+            "JC_PORTAL_SOPS_AGE_KEY_FILE".to_owned(),
+            path.display().to_string(),
         );
     }
     out
@@ -356,7 +378,8 @@ mod tests {
         );
         assert_eq!(v["JC_OIDC_ISSUER"], "https://city.example/id/realms/jc");
         assert_eq!(v["JC_KEYCLOAK_ADMIN_URL"], "http://127.0.0.1:8443");
-        assert_eq!(v["JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID"], "portal-admin");
+        assert_eq!(v["JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID"], "portal-reconciler");
+        assert_eq!(v["JC_OIDC_CLIENT_ID"], "portal-api");
     }
 
     #[test]
@@ -415,12 +438,31 @@ mod tests {
             "https",
         );
         assert_eq!(v["JC_PORTAL_CKAN_URL"], "https://city.example/opendata");
+        // The Portal refuses a plain http API outside a cluster Service (EP-67).
+        assert_eq!(v["JC_PORTAL_CKAN_API_URL"], "https://city.example/opendata");
+        let (siblings, setup, _d) = fixture("http");
+        assert!(!portal_vars(&siblings, &setup, none).contains_key("JC_PORTAL_CKAN_URL"));
+        for typo in ["TRUE", "1", "yes", ""] {
+            let v = portal_vars(&siblings, &setup, |k: &str| {
+                (k == "JC_PORTAL_CKAN_ALLOW_HTTP").then(|| typo.to_owned())
+            });
+            assert!(!v.contains_key("JC_PORTAL_CKAN_URL"), "{typo}");
+        }
+    }
+
+    /// A one-machine rehearsal over http fills the catalogue only on the operator's explicit
+    /// `JC_PORTAL_CKAN_ALLOW_HTTP=true`, which the Portal reads too.
+    #[test]
+    fn an_http_catalogue_needs_the_rehearsal_switch() {
+        let (siblings, setup, _d) = fixture("http");
+        let v = portal_vars(&siblings, &setup, |k: &str| {
+            (k == "JC_PORTAL_CKAN_ALLOW_HTTP").then(|| "true".to_owned())
+        });
+        assert_eq!(v["JC_PORTAL_CKAN_URL"], "http://city.example/opendata");
         assert_eq!(
             v["JC_PORTAL_CKAN_API_URL"],
             "http://127.0.0.1:8443/opendata"
         );
-        let (siblings, setup, _d) = fixture("http");
-        assert!(!portal_vars(&siblings, &setup, none).contains_key("JC_PORTAL_CKAN_URL"));
     }
 
     #[test]
@@ -466,5 +508,17 @@ mod tests {
         assert_eq!(origin("http://127.0.0.1:1/id"), "http://127.0.0.1:1");
         assert_eq!(origin("https://a.example"), "https://a.example");
         assert_eq!(origin("nope"), "nope");
+    }
+
+    #[test]
+    fn the_portal_resolves_secrets_with_its_setup_identity_unless_a_backend_is_named() {
+        let (siblings, setup, _d) = fixture("https");
+        let v = portal_vars(&siblings, &setup, none);
+        let key = setup.path(Secret::PortalAgeKey).unwrap();
+        assert_eq!(v["JC_PORTAL_SOPS_AGE_KEY_FILE"], key.display().to_string());
+        let bao = portal_vars(&siblings, &setup, |k| {
+            (k == "JC_PORTAL_OPENBAO_ADDR").then(|| "https://bao.example".to_owned())
+        });
+        assert!(!bao.contains_key("JC_PORTAL_SOPS_AGE_KEY_FILE"));
     }
 }

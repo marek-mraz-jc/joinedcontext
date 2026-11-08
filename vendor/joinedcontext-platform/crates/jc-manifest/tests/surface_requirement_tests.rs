@@ -415,3 +415,74 @@ fn an_output_filter_that_does_not_parse_is_refused_at_the_endpoint() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// EP-177: `jcctl validate` refuses a `spec.catalog.datasets` entry naming a type the
+/// Endpoint does not serve, and one whose name another Endpoint publishes on one catalogue.
+fn dataset_findings(dir: &Path) -> Vec<String> {
+    validate::run(dir)
+        .findings
+        .into_iter()
+        .filter(|f| f.message.contains("EP-177"))
+        .map(|f| f.message)
+        .collect()
+}
+
+const DATASETS: &str = "  catalog:\n    datasets:\n      - name: city-events\n        title: { en: Events }\n        description: { en: Every event }\n        types: [Event]\n";
+
+#[test]
+fn a_dataset_of_a_served_type_is_accepted_and_an_unserved_one_refused() {
+    let dir = repo_with("datasets-ok", Some(EVENT_MODEL), DATASETS);
+    assert_eq!(dataset_findings(&dir), Vec::<String>::new());
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let dir = repo_with(
+        "datasets-unserved",
+        Some(EVENT_MODEL),
+        &DATASETS.replace("types: [Event]", "types: [Event, Meeting]"),
+    );
+    assert_eq!(
+        dataset_findings(&dir),
+        ["Endpoint city/calendar: spec.catalog.datasets `city-events` names type Meeting, which the Endpoint does not serve: name a type of its space's model (EP-177)"]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let dir = repo_with("datasets-no-model", None, DATASETS);
+    let found = dataset_findings(&dir);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("has no data model"), "{}", found[0]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_dataset_name_another_endpoint_publishes_on_the_same_catalogue_is_refused() {
+    let dir = repo_with("datasets-collision", Some(EVENT_MODEL), DATASETS);
+    write(
+        &dir,
+        "projects/city/ckan/open-data.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: CkanInstance\nmetadata:\n  name: open-data\n  \
+         namespace: city\nspec:\n  url: https://data.city.example\n  organizationDefault: city\n  \
+         apiTokenRef: { name: ckan, key: token }\n",
+    );
+    write(
+        &dir,
+        "projects/city/spaces/events/endpoints/other.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: other\n  \
+         namespace: city\nspec:\n  contextSpaceRef: events\n  slug: pzd2wc5kzn6mth4rqvb7xj3sfy\n  \
+         audience: public\n  publish:\n    ckan:\n      instanceRef: open-data\n      name: city-events\n",
+    );
+    let found = dataset_findings(&dir);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(
+        found
+            .iter()
+            .any(|f| f.starts_with("Endpoint city/calendar:") && f.contains("Endpoint city/other")),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|f| f.starts_with("Endpoint city/other:") && f.contains("Endpoint city/calendar")),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -6,6 +6,7 @@
 
 pub mod assemble;
 pub mod bento;
+pub mod catalogue;
 pub mod foreign_models;
 pub mod history;
 pub mod lifetime;

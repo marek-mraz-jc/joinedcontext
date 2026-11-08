@@ -16,12 +16,10 @@ use std::path::{Path, PathBuf};
 
 /// The realm the Portal signs in through when kaisatsu runs beside it.
 pub const PORTAL_REALM: &str = "jc";
-/// The Portal's sign-in client (confidential, code + PKCE, service account for client writes).
-pub const PORTAL_CLIENT: &str = "portal";
-/// The Portal's silent sign-in check client (public, PKCE).
-pub const PORTAL_UI_CLIENT: &str = "portal-ui";
+/// The Portal's sign-in client in kaisatsu's shipped realm file (confidential, code + PKCE).
+pub const PORTAL_CLIENT: &str = "portal-api";
 /// The Portal's people-administration client (service account only).
-pub const PORTAL_ADMIN_CLIENT: &str = "portal-admin";
+pub const PORTAL_ADMIN_CLIENT: &str = "portal-reconciler";
 /// The first person, a member of the Portal's bootstrap group.
 pub const FIRST_ADMIN: &str = "admin";
 /// The Portal's default bootstrap group (`JC_PORTAL_BOOTSTRAP_ADMINS`).
@@ -50,10 +48,14 @@ pub enum Secret {
     AntaresAdminToken,
     DashboardsPassword,
     CatalogueToken,
+    /// The age identity of the Portal's SOPS backend (`AGE-SECRET-KEY-1...`): it decrypts the
+    /// repository's `projects/{p}/secrets/*.enc.yaml`, which is how a `secretRef` or a
+    /// CkanInstance `apiTokenRef` resolves.
+    PortalAgeKey,
 }
 
 impl Secret {
-    pub const ALL: [Secret; 11] = [
+    pub const ALL: [Secret; 12] = [
         Secret::KaisatsuKek,
         Secret::PortalClientSecret,
         Secret::PortalAdminClientSecret,
@@ -65,6 +67,7 @@ impl Secret {
         Secret::AntaresAdminToken,
         Secret::DashboardsPassword,
         Secret::CatalogueToken,
+        Secret::PortalAgeKey,
     ];
 
     /// File name inside the state directory.
@@ -82,13 +85,22 @@ impl Secret {
             Secret::AntaresAdminToken => "antares-admin-token",
             Secret::DashboardsPassword => "dashboards-password",
             Secret::CatalogueToken => "catalogue-token",
+            Secret::PortalAgeKey => "portal-age-key",
         }
     }
 
-    fn random_bytes(self) -> usize {
+    /// A fresh value: an age identity for the SOPS key, else random bytes as hex.
+    fn fresh(self) -> Result<String, StartError> {
         match self {
-            Secret::PortalCookieKey => 64,
-            _ => 32,
+            Secret::PortalAgeKey => {
+                use age::secrecy::ExposeSecret as _;
+                Ok(age::x25519::Identity::generate()
+                    .to_string()
+                    .expose_secret()
+                    .to_owned())
+            }
+            Secret::PortalCookieKey => random_hex(64),
+            _ => random_hex(32),
         }
     }
 
@@ -108,6 +120,7 @@ impl Secret {
             Secret::AntaresAdminToken => &[Module::Antares],
             Secret::DashboardsPassword => &[Module::Daiya, Module::Portal],
             Secret::CatalogueToken => &[Module::Dataroom, Module::Portal],
+            Secret::PortalAgeKey => &[Module::Portal],
         }
     }
 }
@@ -168,9 +181,9 @@ fn random_hex(bytes: usize) -> Result<String, StartError> {
 
 /// Reads the secret in `path`, or writes a fresh one there first (0600, created exclusively, so
 /// two starts never write two values).
-fn read_or_create(path: &Path, bytes: usize) -> Result<String, StartError> {
+fn read_or_create(path: &Path, secret: Secret) -> Result<String, StartError> {
     if !path.exists() {
-        let value = random_hex(bytes)?;
+        let value = secret.fresh()?;
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -203,7 +216,7 @@ impl Setup {
                 continue;
             }
             let path = dir.join(secret.file_name());
-            let value = read_or_create(&path, secret.random_bytes())?;
+            let value = read_or_create(&path, secret)?;
             held.insert(secret.file_name(), Held { path, value });
         }
         Ok(Self {
@@ -231,13 +244,13 @@ impl Setup {
     }
 }
 
-/// The importer variables the generated realm file names (`$(env:NAME)`), filled from memory.
+/// The importer variables the realm files name (`$(NAME)`), filled from memory.
 #[must_use]
 pub fn realm_env(setup: &Setup) -> BTreeMap<String, String> {
     [
-        ("JC_SETUP_PORTAL_CLIENT_SECRET", Secret::PortalClientSecret),
+        ("CLIENT_SECRET_PORTAL_API", Secret::PortalClientSecret),
         (
-            "JC_SETUP_PORTAL_ADMIN_CLIENT_SECRET",
+            "CLIENT_SECRET_PORTAL_RECONCILER",
             Secret::PortalAdminClientSecret,
         ),
         ("JC_SETUP_FIRST_ADMIN_PASSWORD", Secret::FirstAdminPassword),
@@ -247,97 +260,42 @@ pub fn realm_env(setup: &Setup) -> BTreeMap<String, String> {
     .collect()
 }
 
-/// The kaisatsu realm the Portal signs in through, as a Keycloak realm file. `portal_base` is the
-/// Portal's public base with a trailing slash (`https://city.example/portal/`).
-///
-/// Least privilege (kaisatsu `core/src/authz.rs`, Portal `config.rs` on the admin client):
-/// - `portal-admin` holds `manage-users` and `query-groups` of `realm-management`, nothing else;
-/// - `portal` (sign-in) holds `view-clients`, which kaisatsu narrows to the clients the Portal
-///   manages (`managed-by: joinedcontext`, K3); no realm-admin anywhere.
-#[must_use]
-pub fn portal_realm(portal_base: &str) -> Value {
-    let groups_mapper = json!({
-        "name": "groups",
-        "protocol": "openid-connect",
-        "protocolMapper": "oidc-group-membership-mapper",
-        "config": {
-            "claim.name": "groups",
-            "full.path": "true",
-            "id.token.claim": "true",
-            "access.token.claim": "true",
-            "userinfo.token.claim": "true"
-        }
-    });
-    json!({
+/// kaisatsu's shipped realm file for the Portal (`crates/kaisatsu/import/realms/jc-portal.json`).
+const SHIPPED_REALM: &str = include_str!("../../../crates/kaisatsu/import/realms/jc-portal.json");
+/// The Portal base the shipped realm file is written for.
+const SHIPPED_HOST: &str = "https://portal.jc.localhost";
+
+/// The realm files the Portal signs in through: kaisatsu's shipped `jc-portal.json` with its
+/// placeholder host turned into `portal_base` (the Portal's public base with a trailing slash),
+/// and the first administrator, a member of the bootstrap group. The shipped file holds the least
+/// privilege the Portal needs: `portal-reconciler` has `manage-users` and `query-groups`,
+/// `portal-api` `view-clients`, `query-users` and `query-groups`, no realm-admin.
+pub fn portal_realm_files(portal_base: &str) -> Result<Vec<(String, Value)>, serde_json::Error> {
+    let shipped = SHIPPED_REALM.replace(SHIPPED_HOST, portal_base.trim_end_matches('/'));
+    let first_admin = json!({
         "realm": PORTAL_REALM,
-        "enabled": true,
-        "displayName": "joinedcontext",
-        "groups": [{"name": BOOTSTRAP_GROUP}],
-        "clients": [
-            {
-                "clientId": PORTAL_CLIENT,
-                "enabled": true,
-                "protocol": "openid-connect",
-                "publicClient": false,
-                "standardFlowEnabled": true,
-                "serviceAccountsEnabled": true,
-                "secret": "$(env:JC_SETUP_PORTAL_CLIENT_SECRET)",
-                "redirectUris": [format!("{portal_base}api/v1/auth/callback")],
-                "attributes": {
-                    "pkce.code.challenge.method": "S256",
-                    "post.logout.redirect.uris": portal_base,
-                    "standard.token.exchange.enabled": "true"
-                },
-                "protocolMappers": [groups_mapper]
-            },
-            {
-                "clientId": PORTAL_UI_CLIENT,
-                "enabled": true,
-                "protocol": "openid-connect",
-                "publicClient": true,
-                "standardFlowEnabled": true,
-                "redirectUris": [format!("{portal_base}api/v1/auth/sso-check/done")],
-                "attributes": {"pkce.code.challenge.method": "S256"}
-            },
-            {
-                "clientId": PORTAL_ADMIN_CLIENT,
-                "enabled": true,
-                "protocol": "openid-connect",
-                "publicClient": false,
-                "standardFlowEnabled": false,
-                "serviceAccountsEnabled": true,
-                "secret": "$(env:JC_SETUP_PORTAL_ADMIN_CLIENT_SECRET)"
-            }
-        ],
-        "users": [
-            {
-                "username": format!("service-account-{PORTAL_ADMIN_CLIENT}"),
-                "enabled": true,
-                "serviceAccountClientId": PORTAL_ADMIN_CLIENT,
-                "clientRoles": {"realm-management": ["manage-users", "query-groups"]}
-            },
-            {
-                "username": format!("service-account-{PORTAL_CLIENT}"),
-                "enabled": true,
-                "serviceAccountClientId": PORTAL_CLIENT,
-                "clientRoles": {"realm-management": ["view-clients"]}
-            },
-            {
-                "username": FIRST_ADMIN,
-                "enabled": true,
-                "email": "admin@jc.invalid",
-                "emailVerified": true,
-                "firstName": "First",
-                "lastName": "Administrator",
-                "groups": [format!("/{BOOTSTRAP_GROUP}")],
-                "credentials": [{
-                    "type": "password",
-                    "value": "$(env:JC_SETUP_FIRST_ADMIN_PASSWORD)",
-                    "temporary": false
-                }]
-            }
-        ]
-    })
+        "users": [{
+            "username": FIRST_ADMIN,
+            "enabled": true,
+            "email": "admin@jc.invalid",
+            "emailVerified": true,
+            "firstName": "First",
+            "lastName": "Administrator",
+            "groups": [format!("/{BOOTSTRAP_GROUP}")],
+            "credentials": [{
+                "type": "password",
+                "value": "$(env:JC_SETUP_FIRST_ADMIN_PASSWORD)",
+                "temporary": false
+            }]
+        }]
+    });
+    Ok(vec![
+        (
+            "10-jc-portal.json".to_owned(),
+            serde_json::from_str(&shipped)?,
+        ),
+        ("20-jc-first-admin.json".to_owned(), first_admin),
+    ])
 }
 
 #[cfg(test)]
@@ -361,7 +319,14 @@ mod tests {
             let held = first.get(secret).unwrap();
             #[cfg(unix)]
             assert_eq!(mode(&held.path), 0o600, "{}", secret.file_name());
-            assert_eq!(held.value.len(), secret.random_bytes() * 2);
+            if secret == Secret::PortalAgeKey {
+                assert!(
+                    held.value.starts_with("AGE-SECRET-KEY-1"),
+                    "an age identity"
+                );
+            } else {
+                assert!(held.value.len() >= 64, "{}", secret.file_name());
+            }
         }
         assert_ne!(
             first.value(Secret::ShakoToken),
@@ -412,23 +377,70 @@ mod tests {
 
     #[test]
     fn the_realm_holds_no_literal_secret_and_least_privilege_roles() {
-        let realm = portal_realm("https://city.example/portal/");
-        let text = realm.to_string();
+        let files = portal_realm_files("https://city.example/").unwrap();
+        let text = serde_json::to_string(&files).unwrap();
         assert!(!text.contains("realm-admin"), "no realm-admin");
-        assert!(text.contains("https://city.example/portal/api/v1/auth/callback"));
+        assert!(
+            !text.contains(SHIPPED_HOST),
+            "the placeholder host is replaced"
+        );
+        assert!(text.contains("https://city.example/api/v1/auth/callback"));
+        let realm = &files[0].1;
         for client in realm["clients"].as_array().unwrap() {
             if let Some(secret) = client.get("secret") {
-                assert!(secret.as_str().unwrap().starts_with("$(env:"));
+                assert!(secret.as_str().unwrap().starts_with("$("), "{client}");
             }
         }
-        let admin = &realm["users"][0]["clientRoles"]["realm-management"];
-        assert_eq!(admin, &json!(["manage-users", "query-groups"]));
+        let reconciler = realm["users"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|u| u["serviceAccountClientId"] == PORTAL_ADMIN_CLIENT)
+            .expect("the reconciler's service account");
+        assert_eq!(
+            reconciler["clientRoles"]["realm-management"],
+            json!(["manage-users", "query-groups"])
+        );
         let tmp = tempfile::tempdir().unwrap();
         let setup = Setup::prepare(tmp.path(), &[Module::Kaisatsu, Module::Portal]).unwrap();
         let env = realm_env(&setup);
         assert_eq!(env.len(), 3);
         for name in env.keys() {
-            assert!(text.contains(&format!("$(env:{name})")), "{name}");
+            assert!(
+                text.contains(&format!("$({name})")) || text.contains(&format!("$(env:{name})")),
+                "{name}"
+            );
         }
+    }
+
+    /// A secret sealed for the Portal's setup identity resolves through the Portal's SOPS
+    /// resolver, which is how a CkanInstance `apiTokenRef` or a pipeline `secretRef` reads.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn a_secret_sealed_for_the_setup_identity_resolves() {
+        use joinedcontext_portal::pipeline_secrets::{Backend, Resolver};
+        use joinedcontext_portal::secret_files;
+        let tmp = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(&tmp.path().join("state"), &[Module::Portal]).unwrap();
+        let key = setup.path(Secret::PortalAgeKey).unwrap().to_path_buf();
+        let recipient = secret_files::own_recipient(&key).unwrap();
+        let keys = BTreeMap::from([(
+            "token".to_owned(),
+            zeroize::Zeroizing::new("ckan-token-value".to_owned()),
+        )]);
+        let text =
+            secret_files::encrypt("ckan", &keys, &[recipient], "2026-11-08T00:00:00Z").unwrap();
+        let tree = tmp.path().join("repo");
+        let file = tree.join(secret_files::path_of("org", "ckan"));
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, text).unwrap();
+        let reference = jc_core::envelope::SecretRef {
+            name: "ckan".to_owned(),
+            key: Some("token".to_owned()),
+            env_var: None,
+        };
+        let resolver = Resolver::new(Backend::Sops { age_key_file: key });
+        let value = resolver.one(&tree, "org", &reference).await.unwrap();
+        assert_eq!(value, "ckan-token-value");
     }
 }

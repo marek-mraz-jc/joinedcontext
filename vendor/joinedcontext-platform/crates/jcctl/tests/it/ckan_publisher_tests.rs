@@ -484,10 +484,21 @@ fn a_publication_without_an_organization_is_refused() {
     assert_eq!(error, PublishError::NoOrganization);
 }
 
-/// An endpoint that declares no publication is left alone.
+/// A closed Endpoint that declares no publication is left alone; a public one is the dataset
+/// every public Endpoint is, by its own name (EP-174), and `harvest: false` keeps it out.
 #[test]
 fn an_endpoint_without_a_publication_block_is_not_published() {
     let mut api = ckan();
+    let mut closed = endpoint("[ngsi-ld]", "");
+    closed.spec["audience"] = json!("organization");
+    let outcome =
+        publish(&mut api, &closed, &instance(), &record(), &settings()).expect("the run completes");
+    assert_eq!(outcome, Outcome::NotPublished);
+    let opted_out = endpoint("[ngsi-ld]", "  catalog: { harvest: false }\n");
+    let outcome = publish(&mut api, &opted_out, &instance(), &record(), &settings())
+        .expect("the run completes");
+    assert_eq!(outcome, Outcome::NotPublished);
+    assert!(api.actions().is_empty(), "{:?}", api.actions());
 
     let outcome = publish(
         &mut api,
@@ -497,9 +508,27 @@ fn an_endpoint_without_a_publication_block_is_not_published() {
         &settings(),
     )
     .expect("the run completes");
+    assert_eq!(outcome, Outcome::Created);
+    assert!(api.package("ovzdusie-public").is_some());
+}
 
-    assert_eq!(outcome, Outcome::NotPublished);
-    assert!(api.actions().is_empty(), "{:?}", api.actions());
+/// EP-178: a dataset of the same name that the publisher did not write (a person's, a
+/// harvest's) carries no `generated_by` mark and is never deleted by a withdrawal.
+#[test]
+fn a_dataset_without_the_publishers_mark_is_not_withdrawn() {
+    let mut api = ckan();
+    api.action(
+        "package_create",
+        &json!({ "name": "kvalita-ovzdusia", "owner_org": "mesto-banska-bystrica",
+                 "extras": [{ "key": "generated_by", "value": "a-person" }] }),
+    )
+    .expect("a hand-made dataset");
+    assert_eq!(
+        withdraw(&mut api, "kvalita-ovzdusia").expect("the withdrawal answers"),
+        Outcome::NotPublished
+    );
+    assert!(api.package("kvalita-ovzdusia").is_some());
+    assert_eq!(api.actions(), vec!["package_create"]);
 }
 
 /// CC-19: withdrawing the publication removes the dataset, and doing it twice is fine.

@@ -13,6 +13,7 @@
 use crate::loader::RawManifest;
 use jc_core::display_order::{display_order, Field};
 use jc_core::kinds::catalog::Texts;
+use jc_core::kinds::catalog_datasets::CatalogDataset;
 use jc_core::kinds::ckan::{CkanInstanceSpec, CkanPublication};
 use jc_core::kinds::space::{duration_seconds, RetentionRule, HISTORY_FOREVER, HISTORY_OFF};
 use jc_core::kinds::visualization::{Visualization, VisualizationData, MAX_VISUALIZATIONS};
@@ -147,27 +148,64 @@ pub trait CkanApi {
     fn action(&mut self, action: &str, payload: &Value) -> Result<Value, CkanError>;
 }
 
-/// The dataset one Endpoint becomes, or `None` when it declares no publication (EP-62).
+/// The publication an Endpoint reads as: its `spec.publish.ckan`, or for a public Endpoint in the
+/// feeds the one dataset every such Endpoint is (EP-174) on `instance`; `None` for any other.
+pub fn publication_of(spec: &EndpointSpec) -> Option<CkanPublication> {
+    match spec.publish.as_ref().and_then(|p| p.ckan.clone()) {
+        Some(declared) => Some(declared),
+        None => (spec.audience == Audience::Public
+            && spec.catalog.as_ref().is_none_or(|c| c.harvested()))
+        .then(|| CkanPublication {
+            instance_ref: jc_core::envelope::Ref::Name(String::new()),
+            organization: None,
+            name: None,
+            datastore: None,
+            license: None,
+        }),
+    }
+}
+
+fn spec_of(endpoint: &RawManifest) -> Result<EndpointSpec, PublishError> {
+    if endpoint.kind != "Endpoint" {
+        return Err(PublishError::NotAnEndpoint);
+    }
+    serde_json::from_value(endpoint.spec.clone()).map_err(|e| PublishError::Spec(e.to_string()))
+}
+
+/// The dataset one Endpoint becomes, or `None` when it is no dataset (EP-62, EP-174).
 pub fn package(
     endpoint: &RawManifest,
     instance: &CkanInstanceSpec,
     record: &Value,
     settings: &Settings,
 ) -> Result<Option<Value>, PublishError> {
-    if endpoint.kind != "Endpoint" {
-        return Err(PublishError::NotAnEndpoint);
-    }
-    let spec: EndpointSpec = serde_json::from_value(endpoint.spec.clone())
-        .map_err(|e| PublishError::Spec(e.to_string()))?;
-    let Some(publication) = spec.publish.as_ref().and_then(|p| p.ckan.as_ref()) else {
+    let spec = spec_of(endpoint)?;
+    let Some(publication) = publication_of(&spec) else {
         return Ok(None);
     };
+    package_of(endpoint, &publication, None, instance, record, settings).map(Some)
+}
+
+/// The dataset `slice` of an Endpoint is, or its one dataset when `slice` is `None`, from the
+/// record it is published from: the Endpoint's own, or the slice's (EP-63, EP-176).
+pub fn package_of(
+    endpoint: &RawManifest,
+    publication: &CkanPublication,
+    slice: Option<&CatalogDataset>,
+    instance: &CkanInstanceSpec,
+    record: &Value,
+    settings: &Settings,
+) -> Result<Value, PublishError> {
+    let spec = spec_of(endpoint)?;
     let organization = organization(publication, instance)?;
-    let name = publication.dataset_name(&endpoint.metadata.name);
+    let name = slice.map_or_else(
+        || publication.dataset_name(&endpoint.metadata.name),
+        |slice| slice.name.as_str(),
+    );
     // The address a reader clicks is the one the Endpoint's own record names, not the host the
     // publisher read the record through: the Portal reads it on its own host, and the catalogue
     // showed that one beside a DCAT record naming the public one (T-4066).
-    let url = public_base(record, spec.slug.as_str())
+    let url = public_base(record, spec.slug.as_str(), slice.map(|s| s.name.as_str()))
         .unwrap_or_else(|| settings.endpoint_url(spec.slug.as_str()));
     let language = settings.language.as_deref();
     // The feed outputs are listed one resource per output and format, and the calendar outputs
@@ -178,13 +216,25 @@ pub fn package(
         .into_iter()
         .filter(|r| *r != Representation::Feed)
         .filter(|r| *r != Representation::Ical)
+        // A slice lists only the surfaces a URL narrows; the rest answer the whole Endpoint,
+        // which its record names as the data service (EP-176).
+        .filter(|r| match slice {
+            None => true,
+            Some(slice) => {
+                matches!(r, Representation::NgsiLd | Representation::Csv)
+                    || (*r == Representation::OgcFeatures && slice.q.is_none())
+            }
+        })
         .collect();
 
     let mut payload = json!({
         "name": name,
         "owner_org": organization,
         "title": text_in(record.get("dct:title"), language).unwrap_or_else(|| name.to_owned()),
-        "url": format!("{url}/"),
+        "url": match slice {
+            Some(slice) => format!("{url}/datasets/{}", slice.name),
+            None => format!("{url}/"),
+        },
         "private": spec.audience != Audience::Public,
         "resources": resources(&served, &url, record),
         "extras": extras(record, &url, language),
@@ -255,26 +305,36 @@ pub fn package(
         &served,
         &Usage {
             dataset: name,
-            entity_type: record
-                .get(EXAMPLE_TYPE)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|kind| !kind.is_empty()),
-            entity_types: record
-                .get(SERVED_TYPES)
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .filter(|kind| is_type_name(kind))
-                .take(MAX_ENTITY_SETS)
-                .collect(),
+            entity_type: match slice {
+                Some(slice) => slice.types.first().map(String::as_str),
+                None => record
+                    .get(EXAMPLE_TYPE)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|kind| !kind.is_empty()),
+            },
+            entity_types: match slice {
+                Some(slice) => slice.types.iter().map(String::as_str).collect(),
+                None => record
+                    .get(SERVED_TYPES)
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .filter(|kind| is_type_name(kind))
+                    .take(MAX_ENTITY_SETS)
+                    .collect(),
+            },
             url: &url,
             licence: licence.as_deref(),
             public: spec.audience == Audience::Public,
             documentation: settings.documentation.as_deref(),
         },
     );
+    if let Some(slice) = slice {
+        narrow(&mut payload["resources"], &served, &url, slice);
+        return Ok(payload);
+    }
     if let Some(list) = payload["resources"].as_array_mut() {
         let feeds = feed_resources(
             spec.feed_outputs(),
@@ -286,13 +346,71 @@ pub fn package(
         let calendars = calendar_resources(calendars, &url, language);
         list.splice(at..at, calendars.into_iter().chain(feeds));
     }
-    Ok(Some(payload))
+    Ok(payload)
+}
+
+/// The surface resources of a slice narrowed to its rows (EP-176): the NGSI-LD query and the CSV
+/// with its `type` and `q`, the OGC landing page replaced by one items resource per type, and
+/// the record resource pointing at the slice's own record. Every URL stays under the Endpoint,
+/// so its Policy decides each read (EP-66).
+fn narrow(resources: &mut Value, served: &[Representation], url: &str, slice: &CatalogDataset) {
+    let Some(list) = resources.as_array_mut() else {
+        return;
+    };
+    let query = slice.query();
+    let mut out = Vec::with_capacity(list.len() + slice.types.len());
+    for (index, mut resource) in std::mem::take(list).into_iter().enumerate() {
+        match served.get(index) {
+            Some(Representation::NgsiLd) => {
+                resource["url"] = json!(format!("{url}/ngsi-ld/v1/entities?{query}"));
+            }
+            Some(Representation::Csv) => {
+                let address = format!("{url}/file.csv?{query}");
+                resource["description"] = json!(format!(
+                    "A CSV table of this dataset's rows, generated on each download from the \
+                     endpoint's live data.\n\n    curl -o file.csv '{address}'"
+                ));
+                resource["url"] = json!(address);
+            }
+            Some(Representation::OgcFeatures) => {
+                for kind in &slice.types {
+                    let address = format!("{url}/ogc/features/collections/{kind}/items");
+                    let mut items = resource.clone();
+                    items["name"] = json!(format!("OGC API - Features: {kind}"));
+                    items["url"] = json!(address);
+                    items["description"] = json!(format!(
+                        "The {kind} features of this dataset as GeoJSON, OGC API - Features \
+                         Part 1. In QGIS: Layer, Add Layer, Add WFS / OGC API - Features Layer, \
+                         the URL {url}/ogc/features/.\n\n    curl '{address}'"
+                    ));
+                    out.push(items);
+                }
+                continue;
+            }
+            _ => {
+                if resource["name"] == "DCAT-AP record" {
+                    resource["url"] = json!(format!("{url}/datasets/{}", slice.name));
+                    resource["description"] = json!(
+                        "This dataset's own DCAT-AP 3.0 description, which it is published from \
+                         (EP-63, EP-176)."
+                    );
+                }
+            }
+        }
+        out.push(resource);
+    }
+    *list = out;
 }
 
 /// The record's own `@id` when it is `https://{host}/api/endpoint/{slug}` for this slug and a
 /// plain host; `None` keeps the publisher's host for a record that names anything else.
-fn public_base(record: &Value, slug: &str) -> Option<String> {
+fn public_base(record: &Value, slug: &str, slice: Option<&str>) -> Option<String> {
     let id = record.get("@id")?.as_str()?.trim_end_matches('/');
+    // A slice's record is `{endpoint}/datasets/{name}` (EP-176).
+    let id = match slice {
+        Some(name) => id.strip_suffix(&format!("/datasets/{name}"))?,
+        None => id,
+    };
     let host = id
         .strip_prefix("https://")?
         .strip_suffix(&format!("/api/endpoint/{slug}"))?;
@@ -540,9 +658,32 @@ pub fn publish(
     record: &Value,
     settings: &Settings,
 ) -> Result<Outcome, PublishError> {
-    let Some(desired) = package(endpoint, instance, record, settings)? else {
+    let Some(publication) = publication_of(&spec_of(endpoint)?) else {
         return Ok(Outcome::NotPublished);
     };
+    publish_dataset(
+        api,
+        endpoint,
+        &publication,
+        None,
+        instance,
+        record,
+        settings,
+    )
+}
+
+/// [`publish`] for one dataset of an Endpoint: `slice` of its `spec.catalog.datasets`, or its
+/// one dataset when `None`, from the record that dataset is published from (EP-176).
+pub fn publish_dataset(
+    api: &mut impl CkanApi,
+    endpoint: &RawManifest,
+    publication: &CkanPublication,
+    slice: Option<&CatalogDataset>,
+    instance: &CkanInstanceSpec,
+    record: &Value,
+    settings: &Settings,
+) -> Result<Outcome, PublishError> {
+    let desired = package_of(endpoint, publication, slice, instance, record, settings)?;
     let organization = desired["owner_org"].as_str().unwrap_or_default().to_owned();
     match api.show("organization_show", &organization)? {
         None => {
@@ -581,8 +722,10 @@ pub fn publish(
             Ok(Outcome::Created)
         }
         Some(live) => {
-            let desired = match carried(endpoint, record, &live) {
-                Some(record) => package(endpoint, instance, &record, settings)?.unwrap_or(desired),
+            let desired = match carried(endpoint, record, &live).filter(|_| slice.is_none()) {
+                Some(record) => {
+                    package_of(endpoint, publication, None, instance, &record, settings)?
+                }
                 None => desired,
             };
             let desired = with_issued(desired, &live);
@@ -689,12 +832,26 @@ pub fn publish_views(
     settings: &Settings,
     automatic: &[Visualization],
 ) -> Result<Views, PublishError> {
-    let spec: EndpointSpec = serde_json::from_value(endpoint.spec.clone())
-        .map_err(|e| PublishError::Spec(e.to_string()))?;
-    let Some(publication) = spec.publish.as_ref().and_then(|p| p.ckan.as_ref()) else {
+    let spec = spec_of(endpoint)?;
+    let Some(publication) = publication_of(&spec) else {
         return Ok(Views::default());
     };
-    let name = publication.dataset_name(&endpoint.metadata.name);
+    let name = publication.dataset_name(&endpoint.metadata.name).to_owned();
+    publish_views_on(api, endpoint, &name, true, settings, automatic)
+}
+
+/// [`publish_views`] on the dataset `name` of the Endpoint: its declared visualizations when
+/// `declared_here` (the first dataset of a list), else none of them; `automatic` either way
+/// when it declares none (ADR-N-068 §2.3).
+pub fn publish_views_on(
+    api: &mut impl CkanApi,
+    endpoint: &RawManifest,
+    name: &str,
+    declared_here: bool,
+    settings: &Settings,
+    automatic: &[Visualization],
+) -> Result<Views, PublishError> {
+    let spec = spec_of(endpoint)?;
     let Some(live) = api.show("package_show", name)?.filter(|p| !deleted(p)) else {
         return Ok(Views::default());
     };
@@ -715,10 +872,10 @@ pub fn publish_views(
         .map(|c| c.visualizations.as_slice())
         .unwrap_or_default();
     // Every Endpoint serves NGSI-LD, which a `temporal` source reads (EP-10).
-    let items = if declared.is_empty() {
-        automatic
-    } else {
-        declared
+    let items = match (declared.is_empty(), declared_here) {
+        (true, _) => automatic,
+        (false, true) => declared,
+        (false, false) => &[],
     };
     let mut desired: BTreeMap<&str, Value> = BTreeMap::new();
     for item in items {
@@ -990,10 +1147,22 @@ fn with_issued(mut desired: Value, live: &Value) -> Value {
 /// Removing what is not there succeeds: a publication run has to be re-runnable after a
 /// partial failure. A sysadmin token still sees a deleted dataset in `package_show`, so a
 /// dataset CKAN already marked deleted is "not there" too.
+///
+/// Only a dataset carrying the publisher's own `generated_by` mark is removed: since every
+/// public Endpoint is a dataset by its name (EP-174), a name can meet a dataset a person or a
+/// harvest made, which is never the platform's to delete (EP-178).
 pub fn withdraw(api: &mut impl CkanApi, name: &str) -> Result<Outcome, PublishError> {
     match api.show("package_show", name)? {
         None => return Ok(Outcome::Unchanged),
         Some(live) if deleted(&live) => return Ok(Outcome::Unchanged),
+        Some(live)
+            if extras_by_key(live.get("extras"))
+                .get("generated_by")
+                .and_then(Value::as_str)
+                != Some(GENERATOR) =>
+        {
+            return Ok(Outcome::NotPublished)
+        }
         Some(_) => {}
     }
     api.action("package_delete", &json!({ "id": name }))?;

@@ -8419,7 +8419,11 @@ export interface components {
         CkanStatus: {
             /** @description Every catalogue this project can publish to. */
             instances: components["schemas"]["InstanceSummary"][];
-            /** @description One entry per endpoint that declares `spec.publish.ckan`. */
+            /**
+             * @description One entry per dataset the project's endpoints publish: each public endpoint's one dataset
+             *     or each of its `spec.catalog.datasets`, and each closed endpoint declaring
+             *     `spec.publish.ckan` (EP-174, EP-175).
+             */
             publications: components["schemas"]["PublicationStatus"][];
         };
         /** @description A class of the space's model and its attributes (T-3223). */

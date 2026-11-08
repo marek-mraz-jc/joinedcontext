@@ -3,6 +3,7 @@ name = "shako-core"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [features]
 default = []
@@ -20,7 +21,7 @@ jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc
 odata-csdl = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-csdl" }
 odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
 odata-url = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-url" }
-p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+p256 = { version = "0.14", features = ["ecdsa", "pem"] }
 parking_lot = "0.12"
 rand = "0.9"
 regex = "1.13"

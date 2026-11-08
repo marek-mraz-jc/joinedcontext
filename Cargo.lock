@@ -449,12 +449,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19fe8d6cb13c4714962c072ea496f3392015f0989b1a2847bb4b2d9effd71d83"
 dependencies = [
  "askama_parser",
- "basic-toml",
  "mime",
  "mime_guess",
  "proc-macro2",
  "quote",
- "serde",
  "syn 2.0.119",
 ]
 
@@ -2282,7 +2280,7 @@ dependencies = [
  "p384",
  "p521",
  "pem-rfc7468 1.0.0",
- "quick-xml 0.42.0",
+ "quick-xml",
  "regex",
  "ryu",
  "serde",
@@ -2440,7 +2438,7 @@ dependencies = [
  "ekiben-core",
  "flate2",
  "futures",
- "quick-xml 0.42.0",
+ "quick-xml",
  "regex",
  "serde",
  "serde_json",
@@ -5061,16 +5059,21 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 name = "jc"
 version = "0.1.0"
 dependencies = [
+ "age",
  "antares-broker",
  "axum",
+ "base64 0.22.1",
+ "chrono",
  "clap",
  "daiya-model",
  "daiya-server",
  "daiya-store-memory",
+ "daiya-store-pg",
  "dataroom-api",
  "dataroom-core",
  "dataroom-server",
  "dataroom-store-memory",
+ "dataroom-store-pg",
  "ekiben-core",
  "ekiben-server",
  "getrandom 0.3.4",
@@ -5096,6 +5099,7 @@ dependencies = [
  "shako-core",
  "shako-server",
  "shako-store-memory",
+ "shako-store-pg",
  "sqlx",
  "tempfile",
  "thiserror 2.0.21",
@@ -5106,6 +5110,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]
@@ -5695,6 +5700,7 @@ dependencies = [
  "ipnet",
  "jc-router",
  "jsonwebtoken 11.1.0",
+ "jsonwebtoken 9.3.1",
  "kaisatsu-admin",
  "kaisatsu-core",
  "kaisatsu-crypto",
@@ -7077,13 +7083,11 @@ dependencies = [
 [[package]]
 name = "oxrdfxml"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8d4bf9c5331127f01efbd1245d90fd75b7c546a97cb3e95461121ce1ad5b1c8"
 dependencies = [
  "oxilangtag",
  "oxiri",
  "oxrdf",
- "quick-xml 0.37.5",
+ "quick-xml",
  "thiserror 2.0.21",
 ]
 
@@ -7225,12 +7229,6 @@ dependencies = [
  "getrandom 0.4.3",
  "phc",
 ]
-
-[[package]]
-name = "paste"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pbkdf2"
@@ -7719,15 +7717,6 @@ dependencies = [
  "wasi",
  "web-sys",
  "winapi",
-]
-
-[[package]]
-name = "quick-xml"
-version = "0.37.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
-dependencies = [
- "memchr",
 ]
 
 [[package]]
@@ -8973,7 +8962,7 @@ dependencies = [
  "odata-csdl",
  "odata-table",
  "odata-url",
- "p256 0.13.2",
+ "p256 0.14.0",
  "parking_lot",
  "rand 0.9.5",
  "regex",
@@ -9057,7 +9046,6 @@ dependencies = [
  "http",
  "http-body-util",
  "jc-router",
- "p256 0.13.2",
  "parking_lot",
  "serde",
  "serde_json",
@@ -9767,11 +9755,8 @@ dependencies = [
 [[package]]
 name = "tikv-jemalloc-ctl"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a184c43b8ab2f41df2733b55556e3f5f632f4aeaa205b1bb018f574b7f5f142"
 dependencies = [
  "libc",
- "paste",
  "tikv-jemalloc-sys",
 ]
 

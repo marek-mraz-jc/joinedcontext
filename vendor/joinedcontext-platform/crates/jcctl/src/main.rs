@@ -1489,16 +1489,24 @@ fn publish_ckan(options: &PublishCkanOptions) -> ExitCode {
         Ok(repo) => repo,
         Err(err) => return fail(&err.to_string()),
     };
-    let targets = match command::targets(&repo, &options.project) {
-        Ok(targets) => targets,
+    let (targets, unplanned) = match command::targets_with(&repo, &options.project, None) {
+        Ok(found) => found,
         Err(err) => return fail(&err.to_string()),
     };
+    for line in &unplanned {
+        eprintln!("{}/{}: {}", line.project, line.endpoint, line.reason);
+    }
     if targets.is_empty() {
         println!(
-            "no endpoint of project {} declares spec.publish.ckan",
+            "no endpoint of project {} is a catalogue dataset: none is public or declares \
+             spec.publish.ckan",
             options.project
         );
-        return ExitCode::SUCCESS;
+        return if unplanned.is_empty() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
     }
     let mut settings = Settings::new(options.host.clone());
     if let Some(title) = &options.organization_title {

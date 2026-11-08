@@ -1553,7 +1553,16 @@
         "sourceTitle": "Název původní datové sady",
         "sourceDescription": "Popis původní datové sady",
         "pipeline": "Plní tok dat",
-        "legislation": "Příslušný právní předpis"
+        "legislation": "Příslušný právní předpis",
+        "harvest": "Uvést v katalogu",
+        "datasets": "Datasety tohoto rozhraní",
+        "datasetName": "Název datasetu",
+        "datasetTitle": "Název",
+        "datasetDescription": "Popis",
+        "datasetTypes": "Typy entit",
+        "datasetQuery": "Zužující dotaz",
+        "datasetKeywords": "Klíčová slova",
+        "datasetLicense": "Licence"
       }
     },
     "rateClass": {
@@ -3356,8 +3365,16 @@
       "inbox": "Žádosti o přístup",
       "inboxLead": "Lidé, kteří žádají o čtení endpointu tohoto prostoru, a pipeline jiných prostorů, které žádají o jeho čtení nebo zápis. Schválení navrhne oprávnění jako změnu tohoto projektu; tuto změnu schválí jiná osoba.",
       "inboxEmpty": "O přístup k tomuto prostoru zatím nikdo nepožádal.",
+      "inboxRefused": "O žádné žádosti o přístup v tomto projektu nerozhodujete: {reason}",
+      "grantChange": "Jeho oprávnění je změna {change}; přístup začne, jakmile ji schválí jiná osoba.",
+      "inboxEmptyProject": "Na vaše rozhodnutí o přístupu k prostoru tohoto projektu nikdo nečeká.",
+      "inboxFailed": "Žádosti o přístup se nenačetly: {reason}",
+      "inSpace": "· v prostoru {space}",
       "on": "na {endpoint}, žádá {who}",
       "decisionReason": "Důvod pro žadatele",
+      "decision": {
+        "reasonHelp": "Potřebný k zamítnutí nebo odvolání; žadatel si jej přečte, například: Povoleno pro pilot do června; o zápis požádejte znovu."
+      },
       "approve": "Schválit",
       "approveOf": "Schválit přístup pro {account}",
       "decline": "Zamítnout",
@@ -6649,6 +6666,13 @@
       "stale": "Koncept se od poslední kontroly změnil; spusťte kontrolu znovu."
     },
     "laxWarning": "Mírné ověření: kontrola neproběhla nebo neuspěla.",
+    "discard": {
+      "ask": "Zahodit koncept",
+      "confirm": "Zahodit uložený koncept? Přijdou o něj i vaše další okna a asistent.",
+      "yes": "Zahodit",
+      "keep": "Ponechat",
+      "refused": "Koncept nebyl zahozen: {reason}"
+    },
     "findings": "Nálezy",
     "saveRefused": "Koncept se neuložil: {reason}",
     "elsewhere": {
@@ -7483,6 +7507,7 @@
     },
     "title": "Administrace",
     "adminOnly": "Tato stránka je pro administrátory organizace. O to, co zde potřebujete, požádejte některého z nich.",
+    "installationOnly": "Tato část patří instalaci: otevírají ji jen její správci.",
     "lead": "Co je stejné v každém projektu: nastavení organizace, její členové, role, skupiny a servisní účty a její projekty. Každá změna se zde navrhuje a schvaluje.",
     "tab": {
       "settings": "Nastavení",
@@ -10132,9 +10157,10 @@
   },
   "inbox": {
     "title": "Doručené",
-    "lead": "Co na vás čeká: změny, o kterých smíte rozhodnout v každém projektu, a komentáře, které vás zmiňují.",
+    "lead": "Co na vás čeká: změny, o kterých smíte rozhodnout v každém projektu, žádosti o přístup k prostorům tohoto projektu a komentáře, které vás zmiňují.",
     "decisions": "Čeká na vaše rozhodnutí",
     "decisionsHint": "Schválení změny v červeném pruhu si žádá její název, jako na její vlastní stránce.",
+    "accessLead": "Lidé a pipeline, kteří žádají číst nebo zapisovat do prostoru projektu {project}. Schválení navrhne oprávnění jako změnu, kterou schválí jiná osoba.",
     "noDecisions": "Nic nečeká na vaše rozhodnutí.",
     "listFailed": "Změny projektu {project} se nenačetly, seznam proto nemusí být úplný: {reason} Schránka to zkusí znovu za 30 sekund.",
     "by": "navrhl {author} v {project}",
@@ -11615,6 +11641,10 @@
   },
   "askAdmins": {
     "title": "Obraťte se na administrátora organizace",
+    "installationTitle": "Zeptejte se správců instalace",
+    "ownSections": "Otevřít členy vaší organizace",
+    "installationContacts": "Kontakty instalace",
+    "noInstallationContacts": "Instalace zatím nezveřejňuje žádný kontakt.",
     "contacts": "Kontakty vaší organizace",
     "back": "Zpět na vaše projekty"
   },

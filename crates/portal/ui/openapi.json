@@ -43971,7 +43971,7 @@
             "items": {
               "$ref": "#/components/schemas/PublicationStatus"
             },
-            "description": "One entry per endpoint that declares `spec.publish.ckan`."
+            "description": "One entry per dataset the project's endpoints publish: each public endpoint's one dataset\nor each of its `spec.catalog.datasets`, and each closed endpoint declaring\n`spec.publish.ckan` (EP-174, EP-175)."
           }
         }
       },

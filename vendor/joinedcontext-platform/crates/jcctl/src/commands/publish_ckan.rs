@@ -18,9 +18,11 @@ use crate::publish::ckan::{self, CkanApi, Outcome, PublishError, Settings};
 use crate::secrets::{identities_from_file, SecretStore, SecretValue};
 use jc_core::envelope::{Kind, Ref};
 use jc_core::i18n::Text;
+use jc_core::kinds::catalog_datasets::CatalogDataset;
 use jc_core::kinds::ckan::{CkanInstanceSpec, CkanPublication};
 use jc_core::kinds::policy::{Operation, OperationRef, PolicySpec, PrincipalKind};
 use jc_core::kinds::{ContextSpaceSpec, EndpointSpec};
+use jc_manifest::catalogue::{self, Catalogues, Door, Unplanned};
 use serde_json::{json, Value};
 use std::fmt;
 use std::path::Path;
@@ -42,8 +44,11 @@ pub struct Target {
     pub manifest: RawManifest,
     /// The Endpoint's slug, which is where the gateway answers for it.
     pub slug: String,
-    /// The `spec.publish.ckan` block.
+    /// The `spec.publish.ckan` block, or the one a public Endpoint without it reads as (EP-174).
     pub publication: CkanPublication,
+    /// The entry of `spec.catalog.datasets` this target publishes; `None` for the Endpoint's
+    /// one dataset (ADR-N-068, EP-175).
+    pub slice: Option<CatalogDataset>,
     /// The name of the `CkanInstance` the block names.
     pub instance_name: String,
     /// The instance itself.
@@ -62,9 +67,40 @@ pub struct Target {
 }
 
 impl Target {
-    /// The CKAN dataset name this Endpoint publishes as.
+    /// The CKAN dataset name this target publishes as: its slice's, else the publication's.
     pub fn dataset_name(&self) -> &str {
-        self.publication.dataset_name(&self.id.name)
+        match &self.slice {
+            Some(slice) => &slice.name,
+            None => self.publication.dataset_name(&self.id.name),
+        }
+    }
+
+    /// Whether this is the Endpoint's one dataset or the first of its `spec.catalog.datasets`,
+    /// the one its declared visualizations go on (ADR-N-068 §2.3).
+    pub fn first_of_its_endpoint(&self) -> bool {
+        let Some(slice) = &self.slice else {
+            return true;
+        };
+        serde_json::from_value::<EndpointSpec>(self.manifest.spec.clone())
+            .ok()
+            .and_then(|spec| spec.catalog)
+            .and_then(|catalog| {
+                catalog
+                    .datasets
+                    .first()
+                    .map(|first| first.name == slice.name)
+            })
+            .unwrap_or(false)
+    }
+
+    /// The address of the record this target is published from: the Endpoint's own, or its
+    /// slice's `{endpoint}/datasets/{name}` (EP-176).
+    pub fn record_url(&self, settings: &Settings) -> String {
+        let base = settings.endpoint_url(&self.slug);
+        match &self.slice {
+            Some(slice) => format!("{base}/datasets/{}", slice.name),
+            None => format!("{base}/"),
+        }
     }
 
     /// `settings` for this Endpoint: its space's language, and its instance's title, which
@@ -187,25 +223,77 @@ pub enum Error {
     Publish(#[from] PublishError),
 }
 
-/// Every Endpoint of `project` that declares `spec.publish.ckan`, with its instance
-/// resolved, in repository order (EP-62).
-///
-/// The instance is looked up in the project the Endpoint is in, and only there: a reference
-/// naming another project's namespace is an error (T-6292). An Endpoint that names no publication is not a target and
-/// not an error; one whose spec or instance is broken stops the walk, because a run that
-/// silently skips a misdeclared Endpoint would report a catalogue that is not converged.
+/// Every dataset of `project`, with its instance resolved, in repository order (EP-62,
+/// EP-174): [`targets_with`] without the installation's catalogue, the unplanned dropped.
 pub fn targets(repo: &Repository, project: &str) -> Result<Vec<Target>, Error> {
-    let mut targets = Vec::new();
+    targets_with(repo, project, None).map(|(targets, _)| targets)
+}
+
+/// Every dataset of `project` (ADR-N-068): the one dataset of each public Endpoint and of each
+/// that declares `spec.publish.ckan`, or one per entry of its `spec.catalog.datasets`, as
+/// [`jc_manifest::catalogue::datasets`] decides it; with the Endpoints that would be a dataset
+/// and are not, and why. `installation` is the installation's catalogue, which takes a public
+/// Endpoint of a project that declares no `CkanInstance` (EP-174).
+///
+/// A declared publication is looked up in the project the Endpoint is in, and only there: a
+/// reference naming another project's namespace is an error (T-6292). One whose spec or instance
+/// is broken stops the walk, because a run that silently skips a misdeclared Endpoint would report
+/// a catalogue that is not converged. A slice naming a type the Endpoint's bound Policies do not
+/// grant the public is unplanned, never published (EP-177).
+pub fn targets_with(
+    repo: &Repository,
+    project: &str,
+    installation: Option<&CkanInstanceSpec>,
+) -> Result<(Vec<Target>, Vec<Unplanned>), Error> {
+    let mut catalogues = Catalogues {
+        installation: installation.cloned(),
+        ..Catalogues::default()
+    };
+    let mut endpoints = Vec::new();
     for (id, resource) in repo.iter() {
-        if id.kind != "Endpoint" || id.namespace.as_deref() != Some(project) {
+        if id.namespace.as_deref() != Some(project) {
             continue;
         }
-        let spec: EndpointSpec =
-            serde_json::from_value(resource.manifest.spec.clone()).map_err(|e| Error::Spec {
-                endpoint: Box::new(id.clone()),
+        match id.kind.as_str() {
+            "App" => {
+                catalogues
+                    .apps
+                    .insert((project.to_owned(), id.name.clone()));
+            }
+            "Endpoint" => {
+                let spec: EndpointSpec = serde_json::from_value(resource.manifest.spec.clone())
+                    .map_err(|e| Error::Spec {
+                        endpoint: Box::new(id.clone()),
+                        message: e.to_string(),
+                    })?;
+                endpoints.push((id.clone(), resource.manifest.clone(), spec));
+            }
+            _ => {}
+        }
+    }
+    // Every instance an Endpoint may land on: the ones a publication names, which must be there,
+    // and for a public Endpoint without one, the project's only instance.
+    for (id, resource) in repo.iter() {
+        if id.kind != CkanInstanceSpec::KIND || id.namespace.as_deref() != Some(project) {
+            continue;
+        }
+        let instance: CkanInstanceSpec = serde_json::from_value(resource.manifest.spec.clone())
+            .map_err(|e| Error::Instance {
+                instance: Box::new(id.clone()),
                 message: e.to_string(),
             })?;
-        let Some(publication) = spec.publish.as_ref().and_then(|p| p.ckan.clone()) else {
+        instance.validate().map_err(|e| Error::Instance {
+            instance: Box::new(id.clone()),
+            message: e.to_string(),
+        })?;
+        catalogues
+            .instances
+            .entry(project.to_owned())
+            .or_default()
+            .insert(id.name.clone(), instance);
+    }
+    for (id, _, spec) in &endpoints {
+        let Some(publication) = spec.publish.as_ref().and_then(|p| p.ckan.as_ref()) else {
             continue;
         };
         // T-6292: never another project's instance, whose token and catalogue are not ours.
@@ -225,29 +313,56 @@ pub fn targets(repo: &Repository, project: &str) -> Result<Vec<Target>, Error> {
             Some(project.to_owned()),
             publication.instance_ref.name(),
         );
-        let Some(instance_manifest) = repo.get(&instance_id) else {
+        if repo.get(&instance_id).is_none() {
             return Err(Error::UnknownInstance {
                 endpoint: Box::new(id.clone()),
                 instance: Box::new(instance_id),
             });
+        }
+    }
+
+    let (planned, mut unplanned) = catalogue::datasets(
+        endpoints.iter().map(|(id, _, spec)| Door {
+            project,
+            name: &id.name,
+            spec,
+        }),
+        &catalogues,
+    );
+    let mut targets = Vec::new();
+    for dataset in planned {
+        let Some((id, manifest, spec)) = endpoints
+            .iter()
+            .find(|(id, _, _)| id.name == dataset.endpoint)
+        else {
+            continue;
         };
-        let instance: CkanInstanceSpec =
-            serde_json::from_value(instance_manifest.manifest.spec.clone()).map_err(|e| {
-                Error::Instance {
-                    instance: Box::new(instance_id.clone()),
-                    message: e.to_string(),
-                }
-            })?;
-        instance.validate().map_err(|e| Error::Instance {
-            instance: Box::new(instance_id.clone()),
-            message: e.to_string(),
-        })?;
-        let space = space_of(repo, id, &spec);
+        let space = space_of(repo, id, spec);
         let language = space
             .as_ref()
             .and_then(|space| space.default_locale.clone())
             .filter(|locale| !locale.trim().is_empty());
-        let policies = bound_policies(repo, id, &spec);
+        let policies = bound_policies(repo, id, spec);
+        let granted = granted_types(&policies);
+        // EP-177: a public slice reads only what the Endpoint grants the public by name.
+        if let Some(slice) = dataset
+            .slice
+            .as_ref()
+            .filter(|_| spec.audience == jc_core::kinds::Audience::Public && !granted.is_empty())
+        {
+            if let Some(kind) = slice.types.iter().find(|kind| !granted.contains(kind)) {
+                unplanned.push(Unplanned {
+                    project: project.to_owned(),
+                    endpoint: id.name.clone(),
+                    reason: format!(
+                        "not published: spec.catalog.datasets `{}` names type {kind}, which the \
+                         Endpoint's Policies do not grant the public (EP-177)",
+                        slice.name
+                    ),
+                });
+                continue;
+            }
+        }
         let history = ckan::History {
             grants: policies.iter().flat_map(temporal_grants).collect(),
             retention: space
@@ -255,25 +370,30 @@ pub fn targets(repo: &Repository, project: &str) -> Result<Vec<Target>, Error> {
                 .map(|s| s.retention.clone())
                 .unwrap_or_default(),
         };
-        let granted = granted_types(&policies);
-        let instance_title = title_in(
-            &instance_manifest.manifest.metadata.rest,
-            language.as_deref(),
+        let instance_title = ResourceId::new(
+            id.group.clone(),
+            CkanInstanceSpec::KIND,
+            Some(project.to_owned()),
+            &dataset.instance_name,
         );
+        let instance_title = repo
+            .get(&instance_title)
+            .and_then(|instance| title_in(&instance.manifest.metadata.rest, language.as_deref()));
         targets.push(Target {
             id: id.clone(),
-            manifest: resource.manifest.clone(),
+            manifest: manifest.clone(),
             slug: spec.slug.as_str().to_owned(),
-            publication,
-            instance_name: instance_id.name,
-            instance,
+            publication: dataset.publication,
+            slice: dataset.slice,
+            instance_name: dataset.instance_name,
+            instance: dataset.instance,
             language,
             instance_title,
             history,
             granted,
         });
     }
-    Ok(targets)
+    Ok((targets, unplanned))
 }
 
 /// The space an Endpoint serves, looked up in the Endpoint's project.
@@ -544,7 +664,7 @@ fn refusal(status: reqwest::StatusCode, text: &str) -> String {
 /// the Endpoint's WebSocket guide names under [`ckan::EXAMPLE_TYPE`] when it names one (T-4132).
 pub fn record(target: &Target, settings: &Settings) -> Result<Value, Error> {
     let base = settings.endpoint_url(&target.slug);
-    let url = format!("{base}/");
+    let url = target.record_url(settings);
     let text = fetch(&url, "application/ld+json")?;
     let mut record: Value = serde_json::from_str(&text).map_err(|e| Error::Gateway {
         url,
@@ -699,14 +819,40 @@ pub fn publish_one(
     settings: &Settings,
 ) -> Result<Line, Error> {
     let settings = target.settings(settings);
-    let outcome = ckan::publish(api, &target.manifest, &target.instance, record, &settings)?;
+    let outcome = ckan::publish_dataset(
+        api,
+        &target.manifest,
+        &target.publication,
+        target.slice.as_ref(),
+        &target.instance,
+        record,
+        &settings,
+    )?;
     let views = match outcome {
         Outcome::NotPublished => ckan::Views::default(),
         _ => {
-            let automatic = models
+            let mut automatic = models
                 .map(|m| ckan::series_charts(&m.schema, m.linkml.as_deref(), &target.history))
                 .unwrap_or_default();
-            ckan::publish_views(api, &target.manifest, &settings, &automatic)?
+            // A slice charts its own types; the declared charts go on the list's first dataset
+            // (ADR-N-068 §2.3).
+            if let Some(slice) = &target.slice {
+                automatic.retain(|chart| match &chart.data {
+                    jc_core::kinds::visualization::VisualizationData::Temporal {
+                        entity_type,
+                        ..
+                    } => slice.types.contains(entity_type),
+                    _ => false,
+                });
+            }
+            ckan::publish_views_on(
+                api,
+                &target.manifest,
+                target.dataset_name(),
+                target.first_of_its_endpoint(),
+                &settings,
+                &automatic,
+            )?
         }
     };
     Ok(Line {

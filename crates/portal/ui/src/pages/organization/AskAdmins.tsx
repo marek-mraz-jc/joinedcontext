@@ -19,7 +19,16 @@ interface Contact {
  * projects when the whole page is refused. The server decides every read; a refused or failed
  * read of the Organization leaves only the sentence.
  */
-export function AskAdmins({ message, back }: { message: string; back?: string }): JSX.Element {
+export function AskAdmins({
+  message,
+  back,
+  installation = false,
+}: {
+  message: string;
+  back?: string;
+  /** The section is the installation's: its administrators are whom to ask, never the person's own Organization's. */
+  installation?: boolean;
+}): JSX.Element {
   const { t } = useTranslation();
   const { own } = useAdministers();
   const organizations = useQuery({
@@ -30,19 +39,19 @@ export function AskAdmins({ message, back }: { message: string; back?: string })
   });
   const items = asManifests(organizations.data?.items ?? []);
   const organization =
-    items.find((item) => item.metadata.name === own) ??
+    (installation ? undefined : items.find((item) => item.metadata.name === own)) ??
     items.find((item) => (item.spec as { installation?: boolean } | undefined)?.installation === true) ??
     (items.length === 1 ? items[0] : undefined);
   const contacts = ((organization?.spec as { contacts?: Contact[] } | undefined)?.contacts ?? []).filter(
     (contact) => contact.name || contact.email,
   );
   return (
-    <Alert tone="info" title={t("askAdmins.title")}>
+    <Alert tone="info" title={t(installation ? "askAdmins.installationTitle" : "askAdmins.title")}>
       <div className="flex flex-col gap-2">
         <p>{message}</p>
         {contacts.length > 0 ? (
           <div className="flex flex-col gap-1">
-            <p className="font-medium">{t("askAdmins.contacts")}</p>
+            <p className="font-medium">{t(installation ? "askAdmins.installationContacts" : "askAdmins.contacts")}</p>
             <ul className="flex flex-col gap-0.5">
               {contacts.map((contact, index) => (
                 <li key={`${contact.email ?? contact.name ?? ""}-${index}`} className="[overflow-wrap:anywhere]">
@@ -52,6 +61,13 @@ export function AskAdmins({ message, back }: { message: string; back?: string })
               ))}
             </ul>
           </div>
+        ) : installation && organizations.isSuccess ? (
+          <p>{t("askAdmins.noInstallationContacts")}</p>
+        ) : null}
+        {installation ? (
+          <Link to="/organization/$tab" params={{ tab: "members" }} className="w-fit font-medium underline hover:no-underline">
+            {t("askAdmins.ownSections")}
+          </Link>
         ) : null}
         {back ? (
           <Link to="/projects/$project/home" params={{ project: back }} className="w-fit font-medium underline hover:no-underline">

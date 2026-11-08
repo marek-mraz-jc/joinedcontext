@@ -644,6 +644,7 @@ pub fn scope_for_context(ctx: &RequestCtx, authorizer: &dyn Authorizer, set_name
             realm_id: ctx.realm_id.clone(),
             org_id: sample_org.clone(),
             scope_id: "*".into(),
+            managed_by: None,
         },
         "Sessions" | "ClientSessions" | "OfflineSessions" => ObjectTarget::Session {
             realm_id: ctx.realm_id.clone(),
