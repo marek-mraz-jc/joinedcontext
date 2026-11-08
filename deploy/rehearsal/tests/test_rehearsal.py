@@ -218,6 +218,7 @@ def test_the_import_never_sends_an_instance_older_than_the_window(tmp_path, monk
         {"tenant": "t", "entity": {"id": "urn:ngsi-ld:X:1", "type": "X"}}) + "\n")
     (export / "antares" / "temporal.jsonl").write_text("".join(json.dumps(instance(d)) + "\n" for d in (25, 23, 1)))
     (export / "manifest.json").write_text(json.dumps({"env": "unit", "exportedAt": rh.iso(NOW)}))  # written last
+    (tmp_path / "antares-admin-token").write_text("unit-admin-token\n")
     report = tmp_path / "report.json"
     def run(now):
         seen.clear()
@@ -444,3 +445,93 @@ def test_an_import_that_would_fill_the_shared_disk_does_not_start():
     assert "1,822,836 entities" in why and "35.0 GB are free" in why
     assert rh.disk_problem(1_822_836, 100 * 10**9) == ""
     assert rh.disk_problem(260, 30 * 10**9) == ""
+
+
+def clean_import():
+    return {"entities": 10, "exportEntities": 10, "refusedCallCount": 0, "temporal": 5, "temporalKept": 5,
+            "temporalRefusedByKind": {"cut-off": 3}}
+
+
+@pytest.mark.parametrize("change, word", [
+    ({"entities": 0}, "0 of 10 exported entities"),
+    ({"refusedCallCount": 4439}, "4,439 broker calls refused"),
+    ({"temporal": 4}, "4 of 5 temporal instances"),
+    ({"temporalRefusedByKind": {"cut-off": 3, "no-observedAt": 1}}, "no-observedAt"),
+])
+def test_a_short_or_refused_import_is_a_problem_and_the_cut_off_alone_is_not(change, word):
+    assert rh.antares_problems(clean_import()) == []
+    problems = rh.antares_problems({**clean_import(), **change})
+    assert len(problems) == 1 and word in problems[0], problems
+
+
+def stub_import(tmp_path, admit):
+    """The importer against a stub broker that admits a subject-less write only with the admin
+    bearer `admit` (jc's broker since T-5032); returns (rc, report, Authorization headers seen)."""
+    seen = []
+
+    class Broker(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.rfile.read(int(self.headers["Content-Length"]))
+            seen.append(self.headers.get("Authorization"))
+            ok = self.headers.get("Authorization") == f"Bearer {admit}"
+            body = b"" if ok else json.dumps({"status": 401, "detail": "a request without a subject needs "
+                                                                          "the broker's admin bearer token"}).encode()
+            self.send_response((201 if "temporal" in self.path else 204) if ok else 401)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Broker)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    export = tmp_path / "export"
+    (export / "antares").mkdir(parents=True)
+    (export / "antares" / "entities.jsonl").write_text("".join(json.dumps(
+        {"tenant": "t", "entity": {"id": f"urn:ngsi-ld:X:{i}", "type": "X"}}) + "\n" for i in range(3)))
+    (export / "antares" / "temporal.jsonl").write_text(json.dumps(instance(1)) + "\n")
+    (export / "manifest.json").write_text(json.dumps({"env": "unit", "exportedAt": rh.iso(NOW)}))
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "antares-admin-token").write_text("the-admin-token\n")
+    report = tmp_path / "report.json"
+    try:
+        rc = rh.main(["import", "--export", str(export), "--base", f"http://127.0.0.1:{server.server_port}",
+                      "--state", str(state), "--report", str(report), "--only", "antares", "--now", rh.iso(NOW)])
+    finally:
+        server.shutdown()
+    return rc, json.loads(report.read_text()), seen
+
+
+def test_the_import_sends_the_broker_admin_token_and_fails_when_the_broker_refuses(tmp_path, monkeypatch):
+    monkeypatch.setattr(rh, "DISK_RESERVE", 0)
+    rc, r, seen = stub_import(tmp_path / "ok", "the-admin-token")
+    assert rc == 0 and r["problems"] == [] and r["antares"]["entities"] == 3 and r["antares"]["temporal"] == 1
+    assert seen and set(seen) == {"Bearer the-admin-token"}
+    # the dev run of 2026-11-08 21:44: every call 401, 0 entities, and the import said rc 0
+    rc, r, _ = stub_import(tmp_path / "refused", "another-token")
+    assert rc == 1 and r["antares"]["entities"] == 0
+    assert any("0 of 3 exported entities" in p for p in r["problems"])
+
+
+def test_import_sh_stops_the_allow_all_jc_when_the_import_fails(tmp_path):
+    """import.sh with stand-ins: up.sh starts a 'jc' (sleep), rehearsal.py import fails; the
+    script must fail and the allow-all jc must be gone."""
+    kit = tmp_path / "kit"
+    kit.mkdir()
+    (kit / "import.sh").write_text((HERE / "import.sh").read_text())
+    home = tmp_path / "home"
+    (kit / "up.sh").write_text(f"#!/bin/bash\nmkdir -p {home}/e\nsetsid sleep 300 >/dev/null 2>&1 &\necho $! > {home}/e/jc.pid\n")
+    (kit / "rehearsal.py").write_text("import sys\nsys.exit(1)\n")
+    for f in ("import.sh", "up.sh"):
+        (kit / f).chmod(0o755)
+    r = subprocess.run([str(kit / "import.sh"), "e", "1", "2", str(tmp_path)], capture_output=True, text=True,
+                       env=dict(os.environ, REHEARSAL_HOME=str(home)), timeout=60)
+    pid = int((home / "e" / "jc.pid").read_text())
+    time.sleep(0.5)
+    alive = Path(f"/proc/{pid}").exists() and "Z" not in Path(f"/proc/{pid}/stat").read_text().split()[2]
+    if alive:
+        os.kill(pid, 9)
+    assert r.returncode != 0 and "import FAILED" in r.stderr
+    assert not alive, "jc on allow-all stayed up after a failed import"

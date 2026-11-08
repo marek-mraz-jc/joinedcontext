@@ -584,15 +584,16 @@ def split_by_cutoff(lines, cutoff: dt.datetime):
     for t in lines:
         at = t.get("instance", {}).get("observedAt")
         if not at:
-            refused.append({**_key(t), "reason": "no observedAt"})
+            refused.append({**_key(t), "kind": "no-observedAt", "reason": "no observedAt"})
             continue
         try:
             when = parse_time(at)
         except ValueError:
-            refused.append({**_key(t), "reason": f"bad observedAt {at!r}"})
+            refused.append({**_key(t), "kind": "bad-observedAt", "reason": f"bad observedAt {at!r}"})
             continue
         if when < cutoff:
-            refused.append({**_key(t), "observedAt": at, "reason": f"older than the cut-off {iso(cutoff)}"})
+            refused.append({**_key(t), "kind": "cut-off", "observedAt": at,
+                            "reason": f"older than the cut-off {iso(cutoff)}"})
         else:
             kept.append(t)
     return kept, refused
@@ -645,11 +646,35 @@ def _tenant_batches(lines):
             yield tenant, batch
 
 
-def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
+# The one temporal refusal an import may hold: the 24-hour rule (owner, amendment 5). Any other
+# refused instance, a refused broker call or an entity short of the export fails the import.
+ACCEPTED_TEMPORAL_REFUSALS = {"cut-off"}
+
+
+def antares_problems(out: dict) -> list[str]:
+    """Why an Antares import is not a copy of the bundle; empty when it is."""
+    problems = []
+    if out["entities"] < out["exportEntities"]:
+        problems.append(f"{out['entities']:,} of {out['exportEntities']:,} exported entities imported")
+    if out["refusedCallCount"]:
+        problems.append(f"{out['refusedCallCount']:,} broker calls refused")
+    if out["temporal"] < out["temporalKept"]:
+        problems.append(f"{out['temporal']:,} of {out['temporalKept']:,} temporal instances in the window imported")
+    other = {k: n for k, n in out["temporalRefusedByKind"].items() if k not in ACCEPTED_TEMPORAL_REFUSALS}
+    if other:
+        problems.append(f"temporal instances refused for reasons not accepted: {other}")
+    return problems
+
+
+def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, admin_token: str):
     base = "/broker/ngsi-ld/v1"
-    out = {"entities": 0, "entityCalls": 0, "refusedCalls": [], "refusedCallCount": 0,
-           "temporal": 0, "temporalRefused": [], "temporalRefusedCount": 0}
+    out = {"entities": 0, "exportEntities": 0, "entityCalls": 0, "refusedCalls": [], "refusedCallCount": 0,
+           "temporal": 0, "temporalExport": 0, "temporalKept": 0, "temporalRefused": [], "temporalRefusedCount": 0,
+           "temporalRefusedByKind": {}}
     lock = threading.Lock()
+    # jc's broker serves a call without a subject only with its admin bearer token (T-5032),
+    # whatever the policy engine; the import's writes carry no subject.
+    auth = {"Authorization": f"Bearer {admin_token}"}
 
     def refused(row):
         with lock:
@@ -660,7 +685,7 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
     def upsert(job):
         tenant, batch = job
         st, body = h.json("POST", f"{base}/entityOperations/upsert?options=update", body=batch,
-                          headers={"NGSILD-Tenant": tenant})
+                          headers={"NGSILD-Tenant": tenant, **auth})
         ok = len(batch) if st in (200, 201, 204) else \
             len(body.get("success", [])) if st == 207 and isinstance(body, dict) else 0
         with lock:
@@ -674,7 +699,7 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
 
     def temporal(job):
         (tenant, eid), ent = job
-        st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant})
+        st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant, **auth})
         if st in (200, 201, 204):
             with lock:
                 out["temporal"] += sum(len(v) for k, v in ent.items() if k not in ("id", "type"))
@@ -685,7 +710,11 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
     with ThreadPoolExecutor(IMPORT_WORKERS) as pool:
         # bounded: at most a few batches in flight, never the whole file in memory
         pending = set()
-        for job in _tenant_batches(_jsonl(export / "antares" / "entities.jsonl")):
+        def lines():  # counted as read, so an entity a batch cap drops still counts as exported
+            for line in _jsonl(export / "antares" / "entities.jsonl"):
+                out["exportEntities"] += 1
+                yield line
+        for job in _tenant_batches(lines()):
             pending.add(pool.submit(upsert, job))
             if len(pending) >= IMPORT_WORKERS * 2:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
@@ -696,6 +725,9 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
         kept, refused_old = split_by_cutoff(_jsonl(export / "antares" / "temporal.jsonl"), cutoff)
         out["temporalRefusedCount"] = len(refused_old)
         out["temporalRefused"] = refused_old[:MAX_REPORTED]
+        out["temporalExport"], out["temporalKept"] = len(kept) + len(refused_old), len(kept)
+        for r in refused_old:
+            out["temporalRefusedByKind"][r["kind"]] = out["temporalRefusedByKind"].get(r["kind"], 0) + 1
         grouped: dict[tuple, dict] = {}
         for t in kept:
             ent = grouped.setdefault((t["tenant"], t["id"]), {"id": t["id"], "type": t["type"]})
@@ -703,6 +735,7 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
         for f in [pool.submit(temporal, job) for job in sorted(grouped.items())]:
             f.result()
     report["antares"] = out
+    report["problems"] = antares_problems(out)
 
 
 def _daiya_kind(name: str) -> str:
@@ -863,7 +896,7 @@ def cmd_import(a):
     if "shako" in steps:
         import_shako(h, read_secret(state, "shako-token"), export, report)
     if "antares" in steps:
-        import_antares(h, export, cutoff, report)
+        import_antares(h, export, cutoff, report, read_secret(state, "antares-admin-token"))
     if "daiya" in steps:
         import_daiya(h, state, export, a.daiya_bin, report, Path(a.dashboards) if a.dashboards else None)
     Path(a.report).write_text(json.dumps(report, indent=1))
@@ -872,8 +905,13 @@ def cmd_import(a):
         "shako": _count(report.get("shako", []), "result"),
         "antares": {k: (len(v) if isinstance(v, list) else v) for k, v in report.get("antares", {}).items()},
         "daiya": _count(report.get("daiya", []), "result"),
+        "problems": report.get("problems", []),
     }
     print(json.dumps(summary))
+    if report.get("problems"):
+        print("import FAILED: " + "; ".join(report["problems"]), file=sys.stderr)
+        return 1
+    return 0
 
 
 def _count(rows, key):
@@ -932,15 +970,39 @@ def old_history_sql(cutoff: dt.datetime) -> str:
     return "\n".join(stmts) + "\n"
 
 
-def old_history(host, port, user, db, password_file, cutoff: dt.datetime) -> int:
-    """History rows older than `cutoff` in the rehearsal's Antares database; raises when it
-    cannot read them (a check that cannot look must not pass)."""
+def _psql(host, port, user, db, password_file, sql: str) -> str:
+    """`sql` through psql (password from its file, never argv); raises when psql fails, so a
+    check that cannot look never passes."""
     env = dict(os.environ, PGPASSWORD=Path(password_file).read_text().strip())
     psql = ["psql", "-AXt", "-v", "ON_ERROR_STOP=1", "-h", host, "-p", str(port), "-U", user, "-d", db]
-    r = subprocess.run(psql, input=old_history_sql(cutoff), env=env, capture_output=True, text=True)
+    r = subprocess.run(psql, input=sql, env=env, capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip()[-300:])
-    return sum(int(x) for x in re.findall(r"^old \w+ (\d+)$", r.stdout, re.M))
+    return r.stdout
+
+
+def old_history(host, port, user, db, password_file, cutoff: dt.datetime) -> int:
+    """History rows older than `cutoff` in the rehearsal's Antares database."""
+    out = _psql(host, port, user, db, password_file, old_history_sql(cutoff))
+    return sum(int(x) for x in re.findall(r"^old \w+ (\d+)$", out, re.M))
+
+
+STORED_ENTITIES_SQL = ("BEGIN;\nSELECT set_config('antares.service', 'on', true) \\g /dev/null\n"
+                       "SELECT 'stored ' || count(*) FROM public.entities;\nCOMMIT;\n")
+
+
+def stored_entities(host, port, user, db, password_file) -> int:
+    """Entities in the rehearsal's Antares database, every Tenant."""
+    out = _psql(host, port, user, db, password_file, STORED_ENTITIES_SQL)
+    m = re.search(r"^stored (\d+)$", out, re.M)
+    if not m:
+        raise RuntimeError(f"no count in {out[-200:]!r}")
+    return int(m.group(1))
+
+
+def exported_entities(export: Path) -> int:
+    with open(export / "antares" / "entities.jsonl", "rb") as f:
+        return sum(1 for _ in f)
 
 
 def cmd_retain(a):
@@ -1202,6 +1264,18 @@ def cmd_smoke(a):
           f"{len(bad)} failed: {'; '.join(bad[:5])}", "GET /api/endpoint/{slug}/ngsi-ld/v1/types")
     # 9. the 24 h rule holds in the broker: no instance older than the window (+ one sweep), read
     # in its database (the broker's reads need a subject on its default policy)
+    # 10. the broker holds every exported entity (an import refused call by call stores none)
+    if a.pg_port and a.antares_password_file:
+        try:
+            want = exported_entities(Path(a.export))
+            have = stored_entities("127.0.0.1", a.pg_port, "antares", "antares", a.antares_password_file)
+            check("broker holds every exported entity", have >= want, f"{have:,} stored, {want:,} exported",
+                  "SELECT count(*) FROM entities vs wc -l antares/entities.jsonl")
+        except (OSError, RuntimeError) as e:
+            check("broker holds every exported entity", False, f"cannot read: {e}", "psql antares")
+    else:
+        check("broker holds every exported entity", False, "not checked: no --pg-port/--antares-password-file",
+              "psql antares")
     if a.pg_port and a.antares_password_file:
         try:
             n = old_history("127.0.0.1", a.pg_port, "antares", "antares", a.antares_password_file,
