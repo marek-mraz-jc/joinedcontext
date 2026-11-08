@@ -322,7 +322,27 @@ pub async fn import_ckan_json(
             created_publishers += 1;
         }
 
-        let mut ds = dataset_from_ckan(ctx.org_id, ctx.catalogue_id, pkg, None, default_lang);
+        // A dump imported again updates the records it created instead of failing on their names.
+        let mut existing = None;
+        for key in ["id", "name"] {
+            if let Some(k) = pkg
+                .get(key)
+                .and_then(Value::as_str)
+                .filter(|k| !k.is_empty())
+            {
+                existing = store.get_dataset(ctx, k).await?;
+                if existing.is_some() {
+                    break;
+                }
+            }
+        }
+        let mut ds = dataset_from_ckan(
+            ctx.org_id,
+            ctx.catalogue_id,
+            pkg,
+            existing.as_ref(),
+            default_lang,
+        );
         if ds.publisher_id.is_empty() {
             ds.publisher_id = org_slug.to_owned();
         }
