@@ -25,7 +25,9 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-use wiremock::matchers::{header_regex, method, path, path_regex, query_param};
+use wiremock::matchers::{
+    body_string_contains, header_regex, method, path, path_regex, query_param,
+};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// The LinkML source of the `bikes` model, served by the forge (DM-56).
@@ -939,7 +941,7 @@ async fn code_forge() -> MockServer {
     Mock::given(method("GET"))
         .and(path_regex(format!(
             "^{}/Branches\\('",
-            regex::escape(&APP_REPO)
+            regex::escape(APP_REPO)
         )))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .up_to_n_times(1)
@@ -949,7 +951,7 @@ async fn code_forge() -> MockServer {
     Mock::given(method("GET"))
         .and(path_regex(format!(
             "^{}/Branches\\('",
-            regex::escape(&APP_REPO)
+            regex::escape(APP_REPO)
         )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "head" })))
         .mount(&forge)
@@ -964,7 +966,10 @@ async fn code_forge() -> MockServer {
         .and(path(format!(
             "{APP_REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
         )))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Truncated": false,
+            "Tree": [{ "Path": "README.md", "Type": "blob", "Sha": "r" }]
+        })))
         .mount(&forge)
         .await;
     Mock::given(method("POST"))

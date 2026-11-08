@@ -169,7 +169,7 @@ async fn forge(writer_verbs: &[&str]) -> (MockServer, AppState) {
         Mock::given(method("GET"))
             .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
             .and(query_param("@p", "'spaces/mobility/space.yaml'"))
-            .and(query_param("@r", format!("'{}'", format!("head-{number}"))))
+            .and(query_param("@r", format!("'head-{number}'")))
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_body_json(json!({ "Sha": "blob", "Content": STANDARD.encode(SPACE) })),

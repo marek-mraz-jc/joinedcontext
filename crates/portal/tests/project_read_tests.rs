@@ -149,7 +149,10 @@ mod at_a_revision {
                 common::REPO
             )))
             .and(query_param("@r", format!("'{PAST}'")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "Sha": PAST, "Truncated": false, "Tree": tree })),
+            )
             .with_priority(1)
             .mount(&forge)
             .await;

@@ -447,7 +447,7 @@ async fn files_are_what_was_written(server: &MockServer, extra: &[&str]) {
     Mock::given(method("GET"))
         .and(path_regex(format!(
             "^{}/PullRequests\\([0-9]+\\)/Files$",
-            regex::escape(&common::REPO)
+            regex::escape(common::REPO)
         )))
         .respond_with(move |_: &Request| {
             let mut files: Vec<Value> = written

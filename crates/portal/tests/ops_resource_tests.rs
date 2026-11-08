@@ -9,7 +9,7 @@ use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-use wiremock::matchers::{method, path, path_regex, query_param};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};

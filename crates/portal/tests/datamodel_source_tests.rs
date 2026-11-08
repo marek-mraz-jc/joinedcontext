@@ -1200,9 +1200,9 @@ async fn importing_world() -> (MockServer, MockServer, AppState, String) {
         ("datamodels/stations/stations.linkml.yaml", STATIONS_LINKML),
     ] {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)"
-            )))
+            .and(path(
+                "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
+            ))
             .and(query_param("@p", format!("'{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": "sha-1",

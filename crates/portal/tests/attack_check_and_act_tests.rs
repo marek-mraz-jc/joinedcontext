@@ -284,7 +284,7 @@ async fn behind_forge(update_status: u16, manifest_after: &str) -> MockServer {
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{}/Branches('{BRANCH}')", common::REPO)))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": UPDATED })))
         .mount(&shako)
         .await;
     for (commit, blob) in [(REVIEWED, "blob-reviewed"), (UPDATED, manifest_after)] {
@@ -294,7 +294,13 @@ async fn behind_forge(update_status: u16, manifest_after: &str) -> MockServer {
                 common::REPO
             )))
             .and(query_param("@r", format!("'{commit}'")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Truncated": false,
+                "Tree": [
+                    { "Path": MANIFEST_PATH, "Type": "blob", "Sha": blob },
+                    { "Path": "README.md", "Type": "blob", "Sha": format!("readme-{commit}") }
+                ]
+            })))
             .mount(&shako)
             .await;
     }

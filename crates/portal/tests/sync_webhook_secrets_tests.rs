@@ -85,9 +85,7 @@ async fn forge(files: &[(&str, &str)]) -> MockServer {
         .map(|(p, _)| json!({ "Path": p, "Type": "blob" }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
-        ))).and(query_param("@r", format!("'{REVISION}'")))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", format!("'{REVISION}'")))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_json(json!({ "Sha": "tree-sha", "Truncated": false, "Tree": tree })),
@@ -96,9 +94,7 @@ async fn forge(files: &[(&str, &str)]) -> MockServer {
         .await;
     for (file, content) in files {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-            ))).and(query_param("@p", format!("'{file}'")))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file}'")))
             .and(query_param("@r", format!("'{}'", REVISION)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": "blob-sha",

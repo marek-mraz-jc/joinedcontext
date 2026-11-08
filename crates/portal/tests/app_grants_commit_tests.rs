@@ -11,7 +11,7 @@ mod common;
 use axum::http::StatusCode;
 use base64::Engine;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path_regex};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{checked_send as send, envelope, forge, person};

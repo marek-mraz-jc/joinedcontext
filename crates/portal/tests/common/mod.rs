@@ -328,7 +328,7 @@ pub async fn mount_repository(shako: &MockServer, repo: &str) {
         .await;
     Mock::given(path_regex(format!(
         "^{}/PullRequests\\([0-9]+\\)/(Shako\\.Merge|Shako\\.Review)$",
-        regex::escape(&repo)
+        regex::escape(repo)
     )))
     .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
     .mount(shako)
@@ -336,7 +336,7 @@ pub async fn mount_repository(shako: &MockServer, repo: &str) {
     Mock::given(method("POST"))
         .and(path_regex(format!(
             "^{}/PullRequests\\([0-9]+\\)/Shako\\.Close$",
-            regex::escape(&repo)
+            regex::escape(repo)
         )))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "state": "closed" })))
         .mount(shako)

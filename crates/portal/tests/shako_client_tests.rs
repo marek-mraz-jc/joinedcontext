@@ -549,9 +549,7 @@ async fn list_tree_reads_every_page_of_a_large_tree() {
                 tree: Vec<serde_json::Value>,
                 truncated: bool| {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
-            ))).and(query_param("@r", format!("'{ref_}'")))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", format!("'{ref_}'")))
             .and(query_param("@s", n))
             .and(query_param("@t", "1000"))
             .respond_with(

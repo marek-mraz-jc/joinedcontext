@@ -18,7 +18,7 @@ use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path, path_regex, query_param};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const REVISION: &str = "8c56954a1f0e2b3c4d5e6f708192a3b4c5d6e7f8";

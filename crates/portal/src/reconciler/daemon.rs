@@ -3591,9 +3591,7 @@ output_error{stream="kpi"} 6
             .await;
         for (file, content) in files {
             Mock::given(method("GET"))
-                .and(path(format!(
-                    "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-                ))).and(query_param("@p", format!("'{file}'")))
+                .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file}'")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                     "Sha": "blob-sha",
                     "Content": base64::engine::general_purpose::STANDARD.encode(content)
@@ -4912,9 +4910,7 @@ output_error{stream="kpi"} 6
 
         tree(Some("t4481-blob-b"), 3).mount(&server).await;
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-            ))).and(query_param("@p", format!("'{file}'")))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": "t4481-blob-b",
                 "Content": b64(&space(true))
@@ -4945,9 +4941,7 @@ output_error{stream="kpi"} 6
 
     async fn mount_file(server: &MockServer, path: &str, git_ref: &str, sha: &str, text: &str) {
         Mock::given(method("GET"))
-            .and(path_matcher(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-            ))).and(query_param("@p", format!("'{path}'")))
+            .and(path_matcher("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{path}'")))
             .and(query_param("@r", format!("'{}'", git_ref)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": sha,

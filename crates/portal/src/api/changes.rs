@@ -3788,9 +3788,7 @@ mod tests {
             .await;
         let manifest = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: air-quality\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: air\n";
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-            ))).and(query_param("@p", format!("'{manifest_path}'")))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{manifest_path}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": "blob-7",
                 "Content": base64::engine::Engine::encode(
@@ -3875,9 +3873,7 @@ mod tests {
             .await;
         let manifest = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: air-quality\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: air\n";
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-            ))).and(query_param("@p", format!("'{manifest_path}'")))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{manifest_path}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": "blob-7",
                 "Content": base64::engine::Engine::encode(
@@ -4050,9 +4046,7 @@ mod tests {
                 "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: air-{n}\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: air\n"
             );
             Mock::given(method("GET"))
-                .and(path(format!(
-                    "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-                ))).and(query_param("@p", format!("'{manifest_path}'")))
+                .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{manifest_path}'")))
                 .respond_with(
                     ResponseTemplate::new(200)
                         .set_body_json(json!({
@@ -4536,9 +4530,7 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-            ))).and(query_param("@p", format!("'{file}'")))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": "blob-9",
                 "Content": base64::engine::Engine::encode(

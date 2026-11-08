@@ -1390,7 +1390,6 @@ spec:
 #[tokio::test]
 async fn rejecting_an_applications_change_ends_the_run_that_proposed_it() {
     use joinedcontext_portal::agents::run::AgentRun;
-    use wiremock::matchers::path_regex;
 
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
@@ -2027,9 +2026,9 @@ async fn bundle_on(
     // A deleted file is read from the base branch, because the head no longer holds it.
     let extra_ref = if status == "deleted" { "main" } else { branch };
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-        )))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
         .and(query_param("@p", format!("'{PIPELINE_PATH}'")))
         .and(query_param("@r", format!("'{}'", branch)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -2040,9 +2039,7 @@ async fn bundle_on(
         .await;
     for (file, content) in extra {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-            ))).and(query_param("@p", format!("'{file}'")))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file}'")))
             .and(query_param("@r", format!("'{}'", extra_ref)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": format!("blob-{}", file.len()),
@@ -2522,9 +2519,9 @@ async fn change_of_file_by(
         .await;
     pr_files(&server, 66, &[(file, "added")]).await;
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-        )))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
         .and(query_param("@p", format!("'{file}'")))
         .and(query_param("@r", format!("'{}'", branch)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({

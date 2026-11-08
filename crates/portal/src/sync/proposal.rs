@@ -277,7 +277,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path_regex(format!(
                 "^{}/PullRequests\\([0-9]+\\)/Shako\\.Close$",
-                regex::escape(&repo)
+                regex::escape(repo)
             )))
             .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({})))
             .mount(&server)

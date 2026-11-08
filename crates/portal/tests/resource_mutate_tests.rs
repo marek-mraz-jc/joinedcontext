@@ -1346,9 +1346,9 @@ async fn a_stale_proposal_branch_is_recreated_from_main() {
         .await;
     let branch = branch_name("ovzdusie", "ContextSpace", "mobility", Operation::Create);
     Mock::given(method("POST"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch"
-        )))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch",
+        ))
         .and(body_string_contains(format!(r#""Branch":"{branch}""#)))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
@@ -1516,17 +1516,17 @@ async fn a_subscription_is_proposed_into_the_space_it_watches() {
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-        )))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
         .and(query_param("@p", format!("'{file}'")))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles"
-        )))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
         .and(body_string_contains(format!(r#""path":"{file}""#)))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "Sha": "commit-sha-created"
@@ -2447,9 +2447,9 @@ async fn two_proposals_of_one_resource_at_once_open_one_change_and_delete_no_bra
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch"
-        )))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch",
+        ))
         .and(body_string_contains(format!(r#""Branch":"{branch}""#)))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)

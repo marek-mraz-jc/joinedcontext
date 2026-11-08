@@ -47,9 +47,7 @@ async fn forge(files: &[(&str, &str)]) -> MockServer {
         .map(|(p, _)| json!({ "Path": p, "Type": "blob" }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
-        ))).and(query_param("@r", format!("'{REVISION}'")))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", format!("'{REVISION}'")))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_json(json!({ "Sha": "tree-sha", "Truncated": false, "Tree": tree })),
@@ -59,9 +57,7 @@ async fn forge(files: &[(&str, &str)]) -> MockServer {
 
     for (file_path, content) in files {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-            ))).and(query_param("@p", format!("'{file_path}'")))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file_path}'")))
             .and(query_param("@r", format!("'{}'", REVISION)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": "blob-sha",
@@ -332,9 +328,7 @@ async fn a_second_run_reads_only_the_files_whose_blob_it_has_not_read() {
         .map(|(p, _, sha)| json!({ "Path": p, "Type": "blob", "Sha": sha }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
-        ))).and(query_param("@r", format!("'{REVISION}'")))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", format!("'{REVISION}'")))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_json(json!({ "Sha": "tree-sha", "Truncated": false, "Tree": tree })),
@@ -344,9 +338,7 @@ async fn a_second_run_reads_only_the_files_whose_blob_it_has_not_read() {
         .await;
     for (file_path, content, _) in &files {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-            ))).and(query_param("@p", format!("'{file_path}'")))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file_path}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": "blob-sha",
                 "Content": STANDARD.encode(content.as_bytes())

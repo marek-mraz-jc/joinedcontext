@@ -197,17 +197,17 @@ async fn a_write_becomes_a_merge_request_at_the_kinds_own_path() {
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-        )))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
         .and(query_param("@p", format!("'{MANIFEST_PATH}'")))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles"
-        )))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
         .and(body_string_contains(format!(r#""path":"{MANIFEST_PATH}""#)))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-1" })))
         .mount(&shako)

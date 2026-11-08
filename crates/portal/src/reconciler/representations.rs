@@ -388,9 +388,7 @@ mod tests {
             "kind: Endpoint\nmetadata:\n  name: bikes\nspec:\n  enabledRepresentations: [csv]\n";
         for (file, content) in [("a.yaml", ENDPOINT), ("b.yaml", clean)] {
             Mock::given(method("GET"))
-                .and(path(format!(
-                    "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-                ))).and(query_param("@p", format!("'{file}'")))
+                .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file}'")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                     "Sha": "blob-sha",
                     "Content": base64::engine::general_purpose::STANDARD.encode(content)

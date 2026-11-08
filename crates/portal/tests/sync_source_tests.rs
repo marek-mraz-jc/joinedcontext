@@ -19,7 +19,7 @@ use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::sync::driver::{Driver, Remote};
 use joinedcontext_portal::sync::state::States;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path, path_regex, query_param};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 /// The head of the repository the Portal reconciles.
@@ -169,9 +169,7 @@ async fn forge(files: &[(&str, String)]) -> (MockServer, Arc<Forge>) {
         .map(|(p, _)| json!({ "Path": p, "Type": "blob" }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
-        ))).and(query_param("@r", format!("'{HEAD}'")))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", format!("'{HEAD}'")))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_json(json!({ "Sha": "tree-sha", "Truncated": false, "Tree": tree })),
@@ -181,9 +179,7 @@ async fn forge(files: &[(&str, String)]) -> (MockServer, Arc<Forge>) {
 
     for (file_path, content) in files {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-            ))).and(query_param("@p", format!("'{file_path}'")))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file_path}'")))
             .and(query_param("@r", format!("'{}'", HEAD)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": "blob-sha",

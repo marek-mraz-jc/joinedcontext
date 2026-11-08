@@ -1707,7 +1707,7 @@ async fn a_code_run_previews_its_files_as_one_document() {
 async fn a_function_of_the_run_answers_through_jc_functions() {
     use joinedcontext_portal::agents::kit;
     use joinedcontext_portal::auth::oidc::OidcClient;
-    use wiremock::matchers::{body_partial_json, header as has_header, method, path, query_param};
+    use wiremock::matchers::{body_partial_json, header as has_header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let realm = MockServer::start().await;
@@ -3714,7 +3714,7 @@ async fn a_static_run_with_no_commit_is_not_published() {
 /// is opened and the run does not move.
 #[tokio::test]
 async fn a_static_run_whose_branch_holds_no_application_is_not_published() {
-    use wiremock::matchers::{method, path, path_regex};
+    use wiremock::matchers::{method, path, path_regex, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
     let server = MockServer::start().await;
     Mock::given(method("GET"))

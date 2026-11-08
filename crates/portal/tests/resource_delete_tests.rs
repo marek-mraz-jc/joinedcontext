@@ -679,9 +679,9 @@ async fn a_stale_branch_is_recreated_from_main_before_the_removal_is_written() {
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!(
-            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch"
-        )))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch",
+        ))
         .and(body_string_contains(format!(r#""Branch":"{branch}""#)))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
@@ -812,9 +812,7 @@ async fn deleting_a_datamodel_removes_its_source_and_its_artefacts_in_one_change
         ("datamodels/shared.linkml.yaml", "sha-shared"),
     ] {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-            ))).and(query_param("@p", format!("'projects/ovzdusie/spaces/mobility/{file}'")))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'projects/ovzdusie/spaces/mobility/{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": sha,
                 "Content": "YXBpVmVyc2lvbjogam9pbmVkY29udGV4dC5jb20vdjFhbHBoYTEK"
@@ -945,9 +943,7 @@ async fn a_source_another_manifest_still_names_survives_the_delete() {
         ("datamodels/bikes.linkml.yaml", "sha-source"),
     ] {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
-            ))).and(query_param("@p", format!("'projects/ovzdusie/spaces/mobility/{file}'")))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'projects/ovzdusie/spaces/mobility/{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "Sha": sha,
                 "Content": "YXBpVmVyc2lvbjogam9pbmVkY29udGV4dC5jb20vdjFhbHBoYTEK"

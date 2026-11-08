@@ -28,7 +28,7 @@ use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-use wiremock::matchers::{method, path, path_regex, query_param};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CSRF: &str = "test-csrf-token-2651";
