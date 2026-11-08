@@ -12,13 +12,14 @@ use crate::{
     Datasource, DsError, DsFuture, EditorFieldHint, EditorSchema, Health, ImportOutcome, Query,
     QueryCtx, ResourceReq, ResourceResp, SecretResolver,
 };
-use daiya_model::{FieldColumn, Frame, FrameMeta, FrameSet};
+use daiya_expr::parse_duration_ms;
+use daiya_model::{FieldColumn, Frame, FrameMeta, FrameSet, Notice, NoticeSeverity};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use regex::Regex;
 use reqwest::Method;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 /// Built-in Prometheus datasource implementation (§3.2, R3).
 pub struct PrometheusDatasource {
@@ -84,67 +85,119 @@ pub fn format_prom_interval(ms: u64) -> String {
     }
 }
 
-/// Escapes a template variable value for safe inclusion inside a PromQL string/regex literal
-/// so user-supplied variable values cannot break out of quotes and inject arbitrary PromQL (R12).
-#[must_use]
-pub fn escape_promql_var(val: &str) -> String {
-    let mut out = String::with_capacity(val.len());
-    for ch in val.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            _ => out.push(ch),
+/// Escapes a template variable value for the place it stands in a PromQL expression, so a
+/// value cannot end its literal and inject PromQL (R12):
+/// - inside `"..."` or `'...'`: the backslash, that quote and line breaks are escaped;
+/// - inside a raw `` `...` `` string: a value holding a backtick is refused (nothing escapes it);
+/// - outside a literal: only a PromQL name, number or duration (`-?[A-Za-z0-9_:.]+`) passes.
+pub fn escape_promql_var(val: &str, quote: Option<char>) -> Result<String, String> {
+    match quote {
+        Some('`') if val.contains('`') => Err("a backtick cannot stand in a raw string".into()),
+        Some('`') => Ok(val.to_owned()),
+        Some(q) => {
+            let mut out = String::with_capacity(val.len());
+            for ch in val.chars() {
+                match ch {
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    c if c == q => {
+                        out.push('\\');
+                        out.push(c);
+                    }
+                    c => out.push(c),
+                }
+            }
+            Ok(out)
         }
+        None if val
+            .strip_prefix('-')
+            .unwrap_or(val)
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | '.')) =>
+        {
+            Ok(val.to_owned())
+        }
+        None => Err("outside a string literal only a name, number or duration may stand".into()),
     }
-    out
 }
 
-/// Interpolates Grafana built-in interval/range variables and dashboard template variables (`query.go:349-396`).
-#[must_use]
+/// The string literal (`"`, `'` or `` ` ``) enclosing each byte of `expr`, if any.
+fn quote_context(expr: &str) -> Vec<Option<char>> {
+    let mut ctx = vec![None; expr.len() + 1];
+    let mut open: Option<char> = None;
+    let mut escaped = false;
+    for (i, c) in expr.char_indices() {
+        ctx[i] = open;
+        match open {
+            Some(_) if escaped => escaped = false,
+            Some(q) if c == '\\' && q != '`' => escaped = true,
+            Some(q) if c == q => open = None,
+            Some(_) => {}
+            None if matches!(c, '"' | '\'' | '`') => open = Some(c),
+            None => {}
+        }
+    }
+    ctx
+}
+
+/// Grafana's variable syntax: `${name}`, `${name:format}`, `[[name]]`, `$name`.
+static VARIABLE_RE: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"\$\{(\w+)(?::[^}]*)?\}|\[\[(\w+)(?::\w+)?\]\]|\$(\w+)").ok());
+
+/// Interpolates Grafana built-in interval/range variables and dashboard template variables
+/// (`query.go:349-396`) in one pass: a substituted value is never read again as a variable,
+/// `$job` never matches inside `$jobname`, and an unknown variable stays as written. Answers
+/// the reason when a value cannot stand where its variable is (see [`escape_promql_var`]).
 pub fn interpolate_promql_variables(
     expr: &str,
     step_ms: u64,
     scrape_ms: u64,
     range_ms: u64,
     vars: &BTreeMap<String, String>,
-) -> String {
+) -> Result<String, String> {
     let step_ms = step_ms.max(1_000);
     let scrape_ms = scrape_ms.max(1_000);
     let rate_interval_ms = (step_ms + scrape_ms).max(4 * scrape_ms);
     let range_s = ((range_ms as f64) / 1000.0).round() as u64;
+    let builtins: BTreeMap<&str, String> = [
+        ("__interval_ms", step_ms.to_string()),
+        ("__interval", format_prom_interval(step_ms)),
+        ("__range_ms", range_ms.to_string()),
+        ("__range_s", range_s.to_string()),
+        ("__range", format!("{range_s}s")),
+        ("__rate_interval_ms", rate_interval_ms.to_string()),
+        ("__rate_interval", format_prom_interval(rate_interval_ms)),
+    ]
+    .into_iter()
+    .collect();
 
-    let step_str = format_prom_interval(step_ms);
-    let rate_str = format_prom_interval(rate_interval_ms);
-    let range_str = format!("{range_s}s");
-
-    let mut out = expr.to_owned();
-    for (pat, rep) in [
-        ("$__interval_ms", step_ms.to_string()),
-        ("${__interval_ms}", step_ms.to_string()),
-        ("$__interval", step_str.clone()),
-        ("${__interval}", step_str),
-        ("$__range_ms", range_ms.to_string()),
-        ("${__range_ms}", range_ms.to_string()),
-        ("$__range_s", range_s.to_string()),
-        ("${__range_s}", range_s.to_string()),
-        ("$__range", range_str.clone()),
-        ("${__range}", range_str),
-        ("$__rate_interval_ms", rate_interval_ms.to_string()),
-        ("${__rate_interval_ms}", rate_interval_ms.to_string()),
-        ("$__rate_interval", rate_str.clone()),
-        ("${__rate_interval}", rate_str),
-    ] {
-        out = out.replace(pat, &rep);
-    }
-
-    for (k, v) in vars {
-        let escaped = escape_promql_var(v);
-        out = out.replace(&format!("${{{k}}}"), &escaped);
-        out = out.replace(&format!("${k}"), &escaped);
-    }
-
-    out
+    let Some(re) = VARIABLE_RE.as_ref() else {
+        return Err("variable pattern unavailable".into());
+    };
+    let quotes = quote_context(expr);
+    let mut refused: Option<String> = None;
+    let out = re
+        .replace_all(expr, |caps: &regex::Captures<'_>| {
+            let whole = &caps[0];
+            let name = [1, 2, 3]
+                .iter()
+                .find_map(|i| caps.get(*i))
+                .map_or("", |m| m.as_str());
+            if let Some(v) = builtins.get(name) {
+                return v.clone();
+            }
+            let Some(v) = vars.get(name) else {
+                return whole.to_owned();
+            };
+            let quote = caps.get(0).and_then(|m| quotes[m.start()]);
+            escape_promql_var(v, quote).unwrap_or_else(|reason| {
+                refused.get_or_insert(format!("variable '{name}': {reason}"));
+                String::new()
+            })
+        })
+        .into_owned();
+    refused.map_or(Ok(out), Err)
 }
 
 /// Renders a Prometheus `legendFormat` template (`"{{status}} {{method}}"`) against metric labels.
@@ -154,7 +207,8 @@ pub fn format_legend(
     metric: &BTreeMap<String, String>,
     fallback_expr: &str,
 ) -> String {
-    let Some(tpl) = legend_format.filter(|s| !s.is_empty()) else {
+    // `__auto` (Grafana 9+ "Auto") names the series like an empty legend.
+    let Some(tpl) = legend_format.filter(|s| !s.is_empty() && *s != "__auto") else {
         if metric.is_empty() {
             return fallback_expr.to_owned();
         }
@@ -181,6 +235,19 @@ pub fn format_legend(
         })
         .into_owned();
     result
+}
+
+/// An error answer of the Prometheus HTTP API: its `error` member when the body is the API's
+/// JSON envelope, else the first 200 characters of the body.
+fn upstream_error(status: u16, body: &[u8]) -> DsError {
+    let message = serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned))
+        .unwrap_or_else(|| String::from_utf8_lossy(body).into_owned());
+    DsError::Upstream {
+        status,
+        message: message.chars().take(200).collect(),
+    }
 }
 
 /// Aligns epoch milliseconds down to a multiple of `step_ms` (`query.go:AlignTimeRange`).
@@ -210,7 +277,39 @@ fn parse_prom_response_to_frames(
             message: err_msg.to_owned(),
         });
     }
+    // Prometheus `warnings` and `infos` reach the panel as notices, as in Grafana.
+    let notices: Vec<Notice> = [
+        ("warnings", NoticeSeverity::Warning),
+        ("infos", NoticeSeverity::Info),
+    ]
+    .into_iter()
+    .flat_map(|(key, severity)| {
+        payload
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(move |text| Notice {
+                severity,
+                text: text.to_owned(),
+            })
+    })
+    .collect();
+    let mut frames = parse_prom_result(ref_id, expr, legend_format, format, payload);
+    for frame in &mut frames {
+        frame.meta.notices.extend(notices.iter().cloned());
+    }
+    Ok(frames)
+}
 
+fn parse_prom_result(
+    ref_id: &str,
+    expr: &str,
+    legend_format: Option<&str>,
+    format: &str,
+    payload: &Value,
+) -> Vec<Frame> {
     let data = payload.get("data").unwrap_or(&Value::Null);
     let result_type = data
         .get("resultType")
@@ -223,7 +322,7 @@ fn parse_prom_response_to_frames(
         .unwrap_or_default();
 
     if format == "table" {
-        return Ok(vec![build_prom_table_frame(ref_id, expr, &results)]);
+        return vec![build_prom_table_frame(ref_id, expr, &results)];
     }
 
     let mut frames = Vec::with_capacity(results.len());
@@ -285,7 +384,7 @@ fn parse_prom_response_to_frames(
         });
     }
 
-    Ok(frames)
+    frames
 }
 
 fn build_prom_table_frame(ref_id: &str, expr: &str, results: &[Value]) -> Frame {
@@ -386,13 +485,21 @@ impl Datasource for PrometheusDatasource {
                     }
                 })?;
 
+                // The target's `interval` (Grafana "Min step", `30s`, legacy `>30s`) raises the step.
+                let min_step_ms = q
+                    .model
+                    .get("interval")
+                    .and_then(Value::as_str)
+                    .and_then(|i| parse_duration_ms(i.trim().trim_start_matches('>')).ok())
+                    .and_then(|ms| u64::try_from(ms).ok())
+                    .unwrap_or(0);
                 let interval_factor = q
                     .model
                     .get("intervalFactor")
                     .and_then(Value::as_u64)
                     .unwrap_or(1)
                     .max(1);
-                let effective_step_ms = step_ms * interval_factor;
+                let effective_step_ms = step_ms.max(min_step_ms) * interval_factor;
 
                 let expr = interpolate_promql_variables(
                     raw_expr,
@@ -400,7 +507,11 @@ impl Datasource for PrometheusDatasource {
                     self.scrape_interval_ms,
                     range_ms,
                     &ctx.variables,
-                );
+                )
+                .map_err(|reason| DsError::InvalidQuery {
+                    ref_id: q.ref_id.clone(),
+                    reason,
+                })?;
                 let legend_format = q.model.get("legendFormat").and_then(Value::as_str);
                 let format = q
                     .model
@@ -444,11 +555,7 @@ impl Datasource for PrometheusDatasource {
                     .await?;
 
                 if resp.status >= 400 {
-                    let text = String::from_utf8_lossy(&resp.body);
-                    return Err(DsError::Upstream {
-                        status: resp.status,
-                        message: text.chars().take(200).collect(),
-                    });
+                    return Err(upstream_error(resp.status, &resp.body));
                 }
 
                 let payload: Value =
@@ -557,6 +664,9 @@ impl Datasource for PrometheusDatasource {
                     timeout: Some(ctx.timeout),
                 })
                 .await?;
+            if resp.status >= 400 {
+                return Err(upstream_error(resp.status, &resp.body));
+            }
             let data: Value =
                 serde_json::from_slice(&resp.body).map_err(|e| DsError::Upstream {
                     status: 502,

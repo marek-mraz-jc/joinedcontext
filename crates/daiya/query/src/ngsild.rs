@@ -923,6 +923,15 @@ impl Datasource for NgsiLdDatasource {
                     timeout: Some(ctx.timeout),
                 })
                 .await?;
+            if resp.status >= 400 {
+                return Err(DsError::Upstream {
+                    status: resp.status,
+                    message: String::from_utf8_lossy(&resp.body)
+                        .chars()
+                        .take(200)
+                        .collect(),
+                });
+            }
             let data: Value =
                 serde_json::from_slice(&resp.body).map_err(|e| DsError::Upstream {
                     status: 502,
