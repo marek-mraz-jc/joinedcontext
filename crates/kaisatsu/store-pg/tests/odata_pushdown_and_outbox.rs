@@ -8,6 +8,7 @@ use chrono::{Duration, Utc};
 use kaisatsu_core::*;
 use kaisatsu_crypto::Kek;
 use kaisatsu_store_memory::MemoryStore;
+use kaisatsu_store_pg::PgScopedTable;
 use odata_table::{MemoryTable, query};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -325,4 +326,120 @@ async fn pg_scoped_table_matches_memory_table_and_binds_filter_values() {
 
     let _ = (MemoryTable::new, query::<MemoryTable>);
     db.drop_db().await;
+}
+
+/// K15: the pushdown runs inside the RLS transaction with the caller's organizations, so even a
+/// scope without row restrictions shows an org-scoped caller only its organizations' people.
+#[tokio::test]
+async fn pg_scoped_table_reads_under_the_callers_organization_rls() {
+    let Some(db) =
+        common::test_db("pg_scoped_table_reads_under_the_callers_organization_rls").await
+    else {
+        return;
+    };
+    let pg = db.store(Kek::generate_for_tests()).await;
+    let as_store: Arc<dyn Store> = Arc::new(db.store(Kek::generate_for_tests()).await);
+    seed_store(&as_store).await;
+    let info = pg.table_info("People").unwrap();
+    let options = odata_table::QueryOptions::default();
+    let names = |ans: odata_table::Answer| -> Vec<String> {
+        ans.rows
+            .iter()
+            .filter_map(|r| {
+                r.get("username")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            })
+            .collect()
+    };
+
+    let hel = PgScopedTable::new(
+        &pg,
+        info.clone(),
+        "dev".into(),
+        Some(vec!["helsinki".into()]),
+    );
+    let seen = names(
+        query(&hel, &options, &odata_table::Scope::all(), 100)
+            .await
+            .unwrap(),
+    );
+    assert!(seen.contains(&"anna@hel.fi".to_owned()), "{seen:?}");
+    assert!(
+        !seen.contains(&"david@esp.fi".to_owned()),
+        "RLS hides espoo: {seen:?}"
+    );
+
+    let realm_wide = PgScopedTable::new(&pg, info, "dev".into(), None);
+    let seen = names(
+        query(&realm_wide, &options, &odata_table::Scope::all(), 100)
+            .await
+            .unwrap(),
+    );
+    assert!(seen.contains(&"david@esp.fi".to_owned()), "{seen:?}");
+    db.drop_db().await;
+}
+
+/// K9: a dispatcher skips outbox rows another transaction holds (`FOR UPDATE SKIP LOCKED`)
+/// instead of waiting for it.
+#[tokio::test]
+async fn pg_outbox_claim_skips_rows_another_dispatcher_holds() {
+    let Some(db) = common::test_db("pg_outbox_claim_skips_rows_another_dispatcher_holds").await
+    else {
+        return;
+    };
+    let store: Arc<dyn Store> = Arc::new(db.store(Kek::generate_for_tests()).await);
+    seed_store(&store).await;
+    for id in ["ob-held", "ob-free"] {
+        store
+            .enqueue_outbox(EmailOutboxRecord {
+                id: id.into(),
+                realm_id: "dev".into(),
+                action_jti: format!("jti-{id}"),
+                ..outbox_record()
+            })
+            .await
+            .unwrap();
+    }
+    let su = db.superuser_pool().await;
+    let mut holder = su.begin().await.unwrap();
+    sqlx::query("SELECT id FROM kaisatsu.email_outbox WHERE id = 'ob-held' FOR UPDATE")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let claimed = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        store.claim_outbox_batch("dev", 10),
+    )
+    .await
+    .expect("the claim does not wait for the held row")
+    .unwrap();
+    let ids: Vec<_> = claimed.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["ob-free"]);
+    holder.rollback().await.unwrap();
+    db.drop_db().await;
+}
+
+fn outbox_record() -> EmailOutboxRecord {
+    EmailOutboxRecord {
+        id: "ob".into(),
+        realm_id: "dev".into(),
+        org_id: Some("helsinki".into()),
+        user_id: "u-0".into(),
+        to_address: "anna@hel.fi".into(),
+        locale: "en".into(),
+        template_kind: "EXECUTE_ACTIONS".into(),
+        action_jti: "jti".into(),
+        actions: vec!["UPDATE_PASSWORD".into()],
+        client_id: None,
+        redirect_uri: None,
+        lifespan_secs: 900,
+        issuer: "https://idm.localhost/realms/dev".into(),
+        status: "pending".into(),
+        attempts: 0,
+        last_error: None,
+        next_attempt_at: Utc::now(),
+        created_at: Utc::now(),
+        sent_at: None,
+    }
 }
