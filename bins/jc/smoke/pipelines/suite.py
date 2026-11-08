@@ -54,13 +54,14 @@ SECRET_WORDS = ("secret", "sops", "decrypt", "envVar", "credential")
 
 
 def conditions(item: dict) -> list[dict]:
-    return ((item or {}).get("status") or {}).get("conditions") or []
+    status = (item or {}).get("status")
+    return (status.get("conditions") or []) if isinstance(status, dict) else []
 
 
 def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline) -> dict:
     base = f"/api/v1/projects/{p.project}/pipelines/{p.name}"
     st, _, raw = http.call("GET", base)
-    item = as_json(raw) or {}
+    item = (as_json(raw) or {}) if st == 200 else {}
     r.check("listed", p.key, f"GET {base}", "200 named " + p.name,
             f"{st} {short(raw, 120) if st != 200 else (item.get('metadata') or {}).get('name')}",
             st == 200 and (item.get("metadata") or {}).get("name") == p.name)
@@ -68,7 +69,7 @@ def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline) 
         st, _, raw = http.call("GET", base + "/bento")
         r.check("bento", p.key, f"GET {base}/bento", "200 the bento.yaml beside the manifest",
                 f"{st} {short(raw, 80)}", st == 200 and bool(raw))
-    status = (item.get("status") or {})
+    status = item.get("status") or {}
     bad = [c for c in conditions(item) if c.get("type") == "StreamDeployed" and c.get("status") == "False"]
     said = "; ".join(f"{c.get('reason')}: {c.get('message')}" for c in bad)
     actual = f"phase {status.get('phase')}" + (f", {said}" if said else "")
@@ -116,8 +117,13 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float) -
             last = _ts(run.get("lastAt"))
             if last and time.time() - last > 20:
                 break
+    why = ""
+    if not run:
+        st, _, raw = http.call("GET", base)
+        said = [f"{c.get('reason')}: {c.get('message')}" for c in conditions(as_json(raw) or {})]
+        why = f"none within {wait:.0f} s; status {'; '.join(said)[:200]}"
     r.check("history", p.key, f"GET {base}/runs", "the started run listed with its counts",
-            json.dumps(run)[:240] if run else f"none within {wait:.0f} s", run is not None)
+            json.dumps(run)[:240] if run else why, run is not None)
     if not run:
         for x in ("log", "landed"):
             r.skip(x, p.key, "", "", "no run in the history")
@@ -154,6 +160,15 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float) -
                 st == 200 and n is not None and int(n) >= int(run["sent"]))
 
 
+def runner_list(headers: dict, raw: bytes):
+    """The stream list ekiben answers, or None: without the ekiben module /streams falls through
+    to the Portal's page, a 200 that is HTML."""
+    if "json" not in (headers.get("content-type") or ""):
+        return None
+    doc = as_json(raw)
+    return doc if isinstance(doc, (list, dict)) else None
+
+
 def _ts(text):
     if not text:
         return None
@@ -185,9 +200,11 @@ def main(argv):
     ekiben_tok = None
     if a.state and (Path(a.state) / "ekiben-token").exists():
         ekiben_tok = (Path(a.state) / "ekiben-token").read_text().strip()
-    st, _, raw = http.call("GET", "/streams/streams", ekiben_tok)
-    r.check("runner", "ekiben", "GET /streams/streams", "200 the runner's stream list",
-            f"{st} {len(as_json(raw) or {})} streams" if st == 200 else f"{st} {short(raw)}", st == 200)
+    st, h, raw = http.call("GET", "/streams/streams", ekiben_tok)
+    listed = runner_list(h, raw)
+    r.check("runner", "ekiben", "GET /streams/streams", "200 the runner's JSON stream list",
+            f"{st} {len(listed)} streams" if listed is not None else f"{st} {h.get('content-type')} {short(raw, 80)}",
+            st == 200 and listed is not None)
     admin = None
     if not a.state:
         for p in pipelines:

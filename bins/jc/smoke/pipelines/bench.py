@@ -298,6 +298,7 @@ def summarize(rows: list[dict], result: dict) -> dict:
         "entities_per_s_wall": round(written / result["wall_s"], 1) if result["wall_s"] else None,
         "entities_per_s_writes": round(written / span, 1) if span else None,
         "other_calls": _classes([r for r in rows if r not in writes]),
+        "first_error": next((r["error"] for r in writes if r.get("error")), None),
     }
 
 
@@ -357,7 +358,7 @@ def main(argv=None):
     ap.add_argument("--attrs", type=int, default=1)
     ap.add_argument("--template", default="barcelona.pedestrian-crossings")
     ap.add_argument("--variants", default="http,native-1,native-4")
-    ap.add_argument("--sweep", action="store_true")
+    ap.add_argument("--sweep", default="", help="chunk sizes of the delete sweep, e.g. 100,300,1000")
     ap.add_argument("--order", action="store_true", help="duplicate-id order check at native-1/-4")
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--fail-every", type=int, default=0)
@@ -412,7 +413,7 @@ def main(argv=None):
                 if a.sweep and v == variants[0] and rep == 0:
                     ids = [f"urn:ngsi-ld:BenchThing:{i}" for i in range(a.synthetic)]
                     slug = write_slug(base)
-                    for chunk in (100, 1000):
+                    for chunk in [int(c) for c in a.sweep.split(",")]:
                         # The same ids written again into a fresh tenant per chunk size.
                         wrun = f"w{stamp}-{chunk}"
                         one(f"sweep-fill {chunk}", t["project"], build("http", base), wrun)
@@ -440,7 +441,8 @@ def main(argv=None):
                                                    "sum": round(sum(r["upstream_ms"] for r in dl))},
                               "gw_span_s": round(span, 3) if span else None,
                               "before": before, "after": broker_count(a, drun, "BenchThing"),
-                              "reports": len([r for r in rows if r.get("class") == "internal:source-deletes"])}
+                              "reports": len([r for r in rows if r.get("class") == "internal:source-deletes"]),
+                              "first_error": next((r["error"] for r in q + dl if r.get("error")), None)}
                         if res["exit"] != 0:
                             sw["stderr_tail"] = res["stderr_tail"]
                         print(json.dumps(sw), flush=True)

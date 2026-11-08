@@ -18,6 +18,7 @@ answer (`ms`). Binds 127.0.0.1 only."""
 
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import os
@@ -42,8 +43,8 @@ def _fixture_key():
 
 
 def tenant_of(run: str) -> str:
-    """One tenant per run, so each run's count starts at zero."""
-    return "bench-" + run
+    """One tenant per run, so each run's count starts at zero (Antares refuses a long name)."""
+    return "bench-" + hashlib.sha256(run.encode()).hexdigest()[:12]
 
 
 def entities_in(route: str, body: bytes) -> int | None:
@@ -73,6 +74,9 @@ class Proxy:
         self.admin_token = admin_token
         self.fixtures = fixtures
         self.rows: list[dict] = []
+        # Runs whose upsert bodies are kept (replay.py reads the ids back): run -> [(row, body)].
+        self.keep_bodies: set[str] = set()
+        self.bodies: dict[str, list] = {}
         self.lock = threading.Lock()
         self.local = threading.local()
         self.fixture_key = _fixture_key() if fixtures else None
@@ -202,6 +206,9 @@ class Proxy:
         row["class"] = "gw:" + op
         row["slug"] = slug
         row["entities"] = entities_in(tail, body)
+        if run in self.keep_bodies and op.startswith("entityOperations/upsert"):
+            with self.lock:
+                self.bodies.setdefault(run, []).append((row, body))
         self.counter = getattr(self, "counter", 0) + 1
         if self.fail_every and op.startswith("entityOperations/") and self.counter % self.fail_every == 0:
             h.answer(503, b'{"title":"bench: injected 503"}', "application/problem+json",
@@ -228,6 +235,8 @@ class Proxy:
                     h.answer(502, b'{"title":"bench: broker unreachable"}')
                     return 502, None
         upstream_ms = round((time.perf_counter() - t0) * 1000, 2)
+        if r.status >= 400:
+            row["error"] = data[:300].decode("utf-8", "replace")
         extra = {k: v for k, v in r.getheaders() if k.lower() in ("ngsild-results-count", "link")}
         h.answer(r.status, data, r.getheader("Content-Type") or "application/json", extra)
         return r.status, upstream_ms

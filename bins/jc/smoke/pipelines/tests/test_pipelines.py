@@ -114,3 +114,10 @@ def test_the_sweep_stream_queries_and_deletes_in_chunks_of_the_given_size():
     enc = s["input"]["generate"]["mapping"].split('"')[1]
     chunks = json.loads(base64.b64decode(enc))
     assert [len(c["ids"]) for c in chunks] == [100, 100, 50]
+
+
+def test_the_runner_check_refuses_the_portal_page_answered_in_place_of_ekiben():
+    import suite
+    assert suite.runner_list({"content-type": "text/html"}, b"<!doctype html>") is None
+    assert suite.runner_list({"content-type": "application/json"}, b"not json") is None
+    assert suite.runner_list({"content-type": "application/json"}, b'{"zilina.a": {}}') == {"zilina.a": {}}
