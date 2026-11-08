@@ -70,6 +70,28 @@ impl Api {
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         (st, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
     }
+
+    async fn call_with_if_match(
+        &self,
+        method: Method,
+        uri: &str,
+        token: &str,
+        if_match: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::IF_MATCH, if_match)
+            .header(header::CONTENT_TYPE, "application/scim+json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = self.app.clone().oneshot(req).await.unwrap();
+        let st = resp.status();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        (st, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
 }
 
 async fn colleague(api: &Api) -> String {
@@ -360,6 +382,48 @@ async fn k14_scim_put_patch_groups_etags_errors_and_deactivation_session_revocat
         .await;
     assert_eq!(st_unk, StatusCode::BAD_REQUEST);
     assert_eq!(err_unk["scimType"], "invalidValue");
+
+    // 2b. A stale If-Match ETag is refused with 412; the current one passes.
+    let (st_stale, _) = api
+        .call_with_if_match(
+            Method::PUT,
+            &format!("{SCIM}/Users/{uid}"),
+            &admin,
+            "W/\"0000000000000000\"",
+            json!({
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                "userName": "bjensen@hel.fi",
+                "externalId": "ext-bj",
+                "active": true,
+                "name": { "givenName": "Barbara", "familyName": "Jensen" },
+                "emails": [
+                    { "value": "bjensen@hel.fi", "type": "work", "primary": true },
+                    { "value": "babs@home.org", "type": "home", "primary": false }
+                ]
+            }),
+        )
+        .await;
+    assert_eq!(st_stale, StatusCode::PRECONDITION_FAILED);
+    let (st_cur, _) = api
+        .call_with_if_match(
+            Method::PUT,
+            &format!("{SCIM}/Users/{uid}"),
+            &admin,
+            &etag1,
+            json!({
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                "userName": "bjensen@hel.fi",
+                "externalId": "ext-bj",
+                "active": true,
+                "name": { "givenName": "Barbara", "familyName": "Jensen" },
+                "emails": [
+                    { "value": "bjensen@hel.fi", "type": "work", "primary": true },
+                    { "value": "babs@home.org", "type": "home", "primary": false }
+                ]
+            }),
+        )
+        .await;
+    assert_eq!(st_cur, StatusCode::OK);
 
     // 3. Changing immutable `id` on PUT -> 400 scimType="mutability".
     let (st_mut, err_mut) = api

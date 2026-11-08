@@ -731,5 +731,11 @@ async fn k17_import_dir_watch_applies_changes_keeps_last_good_state_on_error_and
             err.to_string().contains("escapes import directory"),
             "{err}"
         );
+        // The loader `import_dir` and `kaisatsu check` use refuses the same escape.
+        let err = kaisatsu_server::load_realm_files_from_path(&dir).unwrap_err();
+        assert!(
+            err.to_string().contains("escapes import directory"),
+            "{err}"
+        );
     }
 }
