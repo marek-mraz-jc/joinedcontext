@@ -62,7 +62,12 @@ fn other_project_admin() -> Identity {
     someone("hela")
 }
 
-fn binding(name: &str, user: &str, role: &str, scope: Value) -> joinedcontext_portal::resource::ResourceEnvelope {
+fn binding(
+    name: &str,
+    user: &str,
+    role: &str,
+    scope: Value,
+) -> joinedcontext_portal::resource::ResourceEnvelope {
     envelope(
         "RoleBinding",
         name,
@@ -80,9 +85,19 @@ fn world() -> AppState {
         ORG_NAMESPACE,
         json!({ "domain": "hel.fi", "installation": true }),
     ));
-    m.upsert(envelope("Organization", "esp", ORG_NAMESPACE, json!({ "domain": "espoo.fi" })));
+    m.upsert(envelope(
+        "Organization",
+        "esp",
+        ORG_NAMESPACE,
+        json!({ "domain": "espoo.fi" }),
+    ));
     for (project, org) in [(HEL_PROJECT, "hel"), (ESP_PROJECT, "esp")] {
-        m.upsert(envelope("Project", project, ORG_NAMESPACE, json!({ "organizationRef": org })));
+        m.upsert(envelope(
+            "Project",
+            project,
+            ORG_NAMESPACE,
+            json!({ "organizationRef": org }),
+        ));
         m.upsert(envelope(
             "ServiceAccount",
             &format!("{project}-cam"),
@@ -91,14 +106,37 @@ fn world() -> AppState {
         ));
     }
     // A rule names its kinds one by one (jc-core `Rule::grants`): every kind the Portal has.
-    let kinds: Vec<&str> = joinedcontext_portal::resource::kinds().map(|info| info.kind).collect();
-    let every = json!({ "rules": [{ "kinds": kinds, "verbs": ["read", "propose", "approve", "delete"] }] });
+    let kinds: Vec<&str> = joinedcontext_portal::resource::kinds()
+        .map(|info| info.kind)
+        .collect();
+    let every =
+        json!({ "rules": [{ "kinds": kinds, "verbs": ["read", "propose", "approve", "delete"] }] });
     m.upsert(envelope("Role", "org-admin", ORG_NAMESPACE, every.clone()));
     m.upsert(envelope("Role", "steward", ORG_NAMESPACE, every));
-    m.upsert(binding("platform", "plat", "org-admin", json!({ "organization": "hel" })));
-    m.upsert(binding("esp-admins", "orga", "org-admin", json!({ "organization": "esp" })));
-    m.upsert(binding("esp-air-steward", "proj", "steward", json!({ "project": ESP_PROJECT })));
-    m.upsert(binding("hel-bus-steward", "hela", "steward", json!({ "project": HEL_PROJECT })));
+    m.upsert(binding(
+        "platform",
+        "plat",
+        "org-admin",
+        json!({ "organization": "hel" }),
+    ));
+    m.upsert(binding(
+        "esp-admins",
+        "orga",
+        "org-admin",
+        json!({ "organization": "esp" }),
+    ));
+    m.upsert(binding(
+        "esp-air-steward",
+        "proj",
+        "steward",
+        json!({ "project": ESP_PROJECT }),
+    ));
+    m.upsert(binding(
+        "hel-bus-steward",
+        "hela",
+        "steward",
+        json!({ "project": HEL_PROJECT }),
+    ));
     state
 }
 
@@ -212,7 +250,11 @@ async fn the_project_list_never_names_another_organizations_project() {
         assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
         let seen = project_names(&answer.body);
         assert!(seen.contains(own), "{}: {seen:?}", who.username);
-        assert!(!seen.contains(foreign), "{} reads {foreign}: {seen:?}", who.username);
+        assert!(
+            !seen.contains(foreign),
+            "{} reads {foreign}: {seen:?}",
+            who.username
+        );
         assert!(
             !answer.text().contains(foreign),
             "{} learns of {foreign}: {}",
@@ -266,9 +308,26 @@ async fn the_organization_readings_are_for_the_installations_administrators() {
 #[tokio::test]
 async fn the_rest_door_answers_what_the_operation_answers() {
     let state = world();
-    let uri = format!("/api/v1/projects/{ORG_NAMESPACE}/ops/{}", administration::ORGANIZATION);
-    let page = common::send(&state, platform(), "GET", "/api/v1/organization/setup", None).await;
-    let tool = common::send(&state, platform(), "POST", &uri, Some(json!({ "aspect": "setup" }))).await;
+    let uri = format!(
+        "/api/v1/projects/{ORG_NAMESPACE}/ops/{}",
+        administration::ORGANIZATION
+    );
+    let page = common::send(
+        &state,
+        platform(),
+        "GET",
+        "/api/v1/organization/setup",
+        None,
+    )
+    .await;
+    let tool = common::send(
+        &state,
+        platform(),
+        "POST",
+        &uri,
+        Some(json!({ "aspect": "setup" })),
+    )
+    .await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.text);
     assert_eq!(tool.status, StatusCode::OK, "{}", tool.text);
     let page: Value = serde_json::from_str(&page.text).expect("json");
@@ -282,7 +341,12 @@ async fn the_rest_door_answers_what_the_operation_answers() {
         Some(json!({ "aspect": "setup", "limit": 3 })),
     )
     .await;
-    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", refused.text);
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text
+    );
     assert!(refused.text.contains("limit"), "{}", refused.text);
 }
 
@@ -328,12 +392,19 @@ async fn an_mcp_call_of_an_administration_tool_is_one_row_on_the_activity() {
     )
     .await;
     assert_eq!(answer["result"]["isError"], json!(false), "{answer}");
-    assert!(answer["result"]["structuredContent"].is_object(), "{answer}");
+    assert!(
+        answer["result"]["structuredContent"].is_object(),
+        "{answer}"
+    );
     let filter = joinedcontext_portal::activity::ActivityFilter {
         limit: 50,
         ..Default::default()
     };
-    let page = state.activity.list(ESP_PROJECT, &filter).await.expect("activity");
+    let page = state
+        .activity
+        .list(ESP_PROJECT, &filter)
+        .await
+        .expect("activity");
     let rows = serde_json::to_string(&page.items).expect("json");
     assert!(rows.contains(administration::ACCOUNT), "{rows}");
 }
@@ -363,7 +434,12 @@ async fn access_requests_need_the_portals_database_and_a_decision_says_why() {
         json!({ "id": "r-1", "decision": "revoke" }),
     )
     .await;
-    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", refused.text());
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text()
+    );
     let stranger = call_in(
         administration::DECIDE,
         &mcp(through_client(other_project_admin())),
@@ -372,7 +448,12 @@ async fn access_requests_need_the_portals_database_and_a_decision_says_why() {
         json!({ "id": "r-1", "decision": "approve" }),
     )
     .await;
-    assert_eq!(stranger.status, StatusCode::FORBIDDEN, "{}", stranger.text());
+    assert_eq!(
+        stranger.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        stranger.text()
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -399,14 +480,38 @@ async fn scenario_world() -> AppState {
 
 /// What a step's door answered: the status and the body. A proposal is checked first with the
 /// same manifest, as every door asks since T-0956 (PF-57).
-async fn step(who: &Identity, state: &AppState, project: &str, name: &str, input: Value) -> (StatusCode, Value) {
+async fn step(
+    who: &Identity,
+    state: &AppState,
+    project: &str,
+    name: &str,
+    input: Value,
+) -> (StatusCode, Value) {
     if name.ends_with("_propose") {
         let check = json!({ "manifest": input["manifest"] });
-        let checked =
-            call_in("jc_manifest_dry_run", &mcp(through_client(who.clone())), state, project, check).await;
-        assert_eq!(checked.status, StatusCode::OK, "the check: {}", checked.text());
+        let checked = call_in(
+            "jc_manifest_dry_run",
+            &mcp(through_client(who.clone())),
+            state,
+            project,
+            check,
+        )
+        .await;
+        assert_eq!(
+            checked.status,
+            StatusCode::OK,
+            "the check: {}",
+            checked.text()
+        );
     }
-    let answer = call_in(name, &mcp(through_client(who.clone())), state, project, input).await;
+    let answer = call_in(
+        name,
+        &mcp(through_client(who.clone())),
+        state,
+        project,
+        input,
+    )
+    .await;
     (answer.status, answer.body)
 }
 
@@ -433,7 +538,15 @@ async fn records_checked(state: &AppState, project: &str, manifest: &Value) {
     let name = manifest["metadata"]["name"].as_str().expect("a name");
     state
         .drafts
-        .put(project, "Pipeline", name, manifest.clone(), Some(0), "steward", "person")
+        .put(
+            project,
+            "Pipeline",
+            name,
+            manifest.clone(),
+            Some(0),
+            "steward",
+            "person",
+        )
         .await
         .expect("the draft");
     let mut verdict = Verdict::green(manifest, None);
@@ -459,7 +572,14 @@ fn proposed(status: StatusCode, body: &Value, what: &str) {
 /// Space, Endpoint and Pipeline in `project`, each approved before the next names it.
 async fn data_path(who: &Identity, state: &AppState, project: &str, domain: &str) {
     let space = manifest("ContextSpace", "air", project, json!({}));
-    let (status, body) = step(who, state, project, "jc_resource_propose", json!({ "manifest": space })).await;
+    let (status, body) = step(
+        who,
+        state,
+        project,
+        "jc_resource_propose",
+        json!({ "manifest": space }),
+    )
+    .await;
     proposed(status, &body, "space");
     approved(state, &space);
 
@@ -473,7 +593,14 @@ async fn data_path(who: &Identity, state: &AppState, project: &str, domain: &str
             "enabledRepresentations": ["ngsi-ld"]
         }),
     );
-    let (status, body) = step(who, state, project, "jc_resource_propose", json!({ "manifest": endpoint })).await;
+    let (status, body) = step(
+        who,
+        state,
+        project,
+        "jc_resource_propose",
+        json!({ "manifest": endpoint }),
+    )
+    .await;
     proposed(status, &body, "endpoint");
     // The approved Endpoint carries the slug the platform minted (EP-75).
     let mut minted = endpoint.clone();
@@ -491,7 +618,14 @@ async fn data_path(who: &Identity, state: &AppState, project: &str, domain: &str
         }),
     );
     records_checked(state, project, &pipeline).await;
-    let (status, body) = step(who, state, project, "jc_resource_propose", json!({ "manifest": pipeline })).await;
+    let (status, body) = step(
+        who,
+        state,
+        project,
+        "jc_resource_propose",
+        json!({ "manifest": pipeline }),
+    )
+    .await;
     proposed(status, &body, "pipeline");
 }
 
@@ -508,18 +642,44 @@ fn organization(name: &str, domain: &str) -> Value {
 async fn a_platform_administrator_sets_up_an_organization_a_project_and_its_data_path() {
     let state = scenario_world().await;
     let who = platform();
-    let (status, body) = step(&who, &state, ORG_NAMESPACE, "jc_resource_propose",
-        json!({ "manifest": organization("vnt", "vantaa.fi") })).await;
+    let (status, body) = step(
+        &who,
+        &state,
+        ORG_NAMESPACE,
+        "jc_resource_propose",
+        json!({ "manifest": organization("vnt", "vantaa.fi") }),
+    )
+    .await;
     proposed(status, &body, "organization");
 
-    let (status, body) = step(&who, &state, ORG_NAMESPACE, "jc_project_create",
-        json!({ "name": "hel-air", "displayName": "Helsinki air" })).await;
+    let (status, body) = step(
+        &who,
+        &state,
+        ORG_NAMESPACE,
+        "jc_project_create",
+        json!({ "name": "hel-air", "displayName": "Helsinki air" }),
+    )
+    .await;
     proposed(status, &body, "project");
-    approved(&state, &manifest("Project", "hel-air", ORG_NAMESPACE, json!({ "organizationRef": "hel" })));
+    approved(
+        &state,
+        &manifest(
+            "Project",
+            "hel-air",
+            ORG_NAMESPACE,
+            json!({ "organizationRef": "hel" }),
+        ),
+    );
 
     data_path(&who, &state, "hel-air", "hel.fi").await;
-    let (status, body) = step(&who, &state, "hel-air", administration::ORGANIZATION,
-        json!({ "aspect": "setup" })).await;
+    let (status, body) = step(
+        &who,
+        &state,
+        "hel-air",
+        administration::ORGANIZATION,
+        json!({ "aspect": "setup" }),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
 }
 
@@ -527,24 +687,51 @@ async fn a_platform_administrator_sets_up_an_organization_a_project_and_its_data
 async fn an_organization_administrator_runs_its_own_organization_and_no_other() {
     let state = scenario_world().await;
     let who = organization_admin();
-    let (status, body) = step(&who, &state, ORG_NAMESPACE, "jc_resource_propose",
-        json!({ "manifest": organization("esp", "espoo.fi") })).await;
+    let (status, body) = step(
+        &who,
+        &state,
+        ORG_NAMESPACE,
+        "jc_resource_propose",
+        json!({ "manifest": organization("esp", "espoo.fi") }),
+    )
+    .await;
     proposed(status, &body, "own organization settings");
 
-    for refused in [organization("hel", "hel.fi"), organization("vnt", "vantaa.fi")] {
-        let (status, body) = step(&who, &state, ORG_NAMESPACE, "jc_resource_propose",
-            json!({ "manifest": refused })).await;
+    for refused in [
+        organization("hel", "hel.fi"),
+        organization("vnt", "vantaa.fi"),
+    ] {
+        let (status, body) = step(
+            &who,
+            &state,
+            ORG_NAMESPACE,
+            "jc_resource_propose",
+            json!({ "manifest": refused }),
+        )
+        .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     }
     // A new project belongs to the installation Organization (ADR-N-058 §2.2).
-    let (status, body) = step(&who, &state, ORG_NAMESPACE, "jc_project_create",
-        json!({ "name": "esp-bus" })).await;
+    let (status, body) = step(
+        &who,
+        &state,
+        ORG_NAMESPACE,
+        "jc_project_create",
+        json!({ "name": "esp-bus" }),
+    )
+    .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
 
     data_path(&who, &state, ESP_PROJECT, "espoo.fi").await;
     let space = manifest("ContextSpace", "bus", HEL_PROJECT, json!({}));
-    let (status, body) = step(&who, &state, HEL_PROJECT, "jc_resource_propose",
-        json!({ "manifest": space })).await;
+    let (status, body) = step(
+        &who,
+        &state,
+        HEL_PROJECT,
+        "jc_resource_propose",
+        json!({ "manifest": space }),
+    )
+    .await;
     assert!(
         status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND,
         "another Organization's project: {status} {body}"
@@ -555,20 +742,38 @@ async fn an_organization_administrator_runs_its_own_organization_and_no_other() 
 async fn a_project_administrator_builds_its_project_and_touches_nothing_else() {
     let state = scenario_world().await;
     let who = project_admin();
-    let (status, body) = step(&who, &state, ORG_NAMESPACE, "jc_resource_propose",
-        json!({ "manifest": organization("esp", "espoo.fi") })).await;
+    let (status, body) = step(
+        &who,
+        &state,
+        ORG_NAMESPACE,
+        "jc_resource_propose",
+        json!({ "manifest": organization("esp", "espoo.fi") }),
+    )
+    .await;
     assert!(
         status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND,
         "organization settings: {status} {body}"
     );
-    let (status, body) = step(&who, &state, ESP_PROJECT, "jc_project_create",
-        json!({ "name": "esp-bus" })).await;
+    let (status, body) = step(
+        &who,
+        &state,
+        ESP_PROJECT,
+        "jc_project_create",
+        json!({ "name": "esp-bus" }),
+    )
+    .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
 
     data_path(&who, &state, ESP_PROJECT, "espoo.fi").await;
     let space = manifest("ContextSpace", "bus", HEL_PROJECT, json!({}));
-    let (status, body) = step(&who, &state, HEL_PROJECT, "jc_resource_propose",
-        json!({ "manifest": space })).await;
+    let (status, body) = step(
+        &who,
+        &state,
+        HEL_PROJECT,
+        "jc_resource_propose",
+        json!({ "manifest": space }),
+    )
+    .await;
     assert!(
         status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND,
         "another project: {status} {body}"

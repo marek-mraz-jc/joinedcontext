@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use super::admin::proposed;
 use super::bounds::{text, ID, NAME, TERM};
 use super::runs::as_user;
-use super::{annotations, parse_input, Operation, OpError};
+use super::{annotations, parse_input, OpError, Operation};
 use crate::api::access_requests::{approve_request, list_incoming, revoke_request, Decision};
 use crate::change::Lane;
 use crate::error::ApiError;
@@ -159,16 +159,32 @@ async fn read(
     let state = || State(state.clone());
     let answer = match input.aspect {
         Aspect::Projects => {
-            json!(crate::api::projects::list_projects(user(), state()).await?.0)
+            json!(
+                crate::api::projects::list_projects(user(), state())
+                    .await?
+                    .0
+            )
         }
         Aspect::Setup => json!(crate::api::setup::get_setup(user(), state()).await?.0),
         Aspect::Health => json!(crate::api::validation::get_health(user(), state()).await?.0),
-        Aspect::HealthChecks => json!(crate::api::health_checks::list_all(user(), state()).await?.0),
+        Aspect::HealthChecks => json!(
+            crate::api::health_checks::list_all(user(), state())
+                .await?
+                .0
+        ),
         Aspect::Limits => {
-            json!(crate::api::organization_limits::get_limits(user(), state()).await?.0)
+            json!(
+                crate::api::organization_limits::get_limits(user(), state())
+                    .await?
+                    .0
+            )
         }
         Aspect::Brokers => json!(crate::api::brokers::list_brokers(user(), state()).await?.0),
-        Aspect::Agents => json!(crate::api::agent_registry::list_agents(user(), state()).await?.0),
+        Aspect::Agents => json!(
+            crate::api::agent_registry::list_agents(user(), state())
+                .await?
+                .0
+        ),
         Aspect::AgentActivity => {
             let query = crate::api::agent_activity::ActivityQuery {
                 limit: input.limit,
