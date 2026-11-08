@@ -26,7 +26,10 @@ pub use render::{
     PanelTimeRange, PanelView, execute_targets_and_expressions, panel_view,
     render_frames_html_table,
 };
-pub use state::{DaiyaState, SubjectResolver, TokenBinding, resolve_request_ctx};
+pub use state::{
+    DaiyaState, MIN_SERVER_ADMIN_PASSWORD, ServerAdminCheck, SubjectResolver, TokenBinding,
+    resolve_request_ctx,
+};
 
 use axum::Router;
 use jc_router::Mount;

@@ -544,3 +544,42 @@ async fn the_dashboard_page_escapes_what_a_dashboard_holds() {
         "{page}"
     );
 }
+
+/// PORTAL-CALLS.md §5: a host that verifies a kaisatsu token (here: a stand-in check on the
+/// bearer) makes its caller the server administrator; any other bearer stays anonymous.
+#[tokio::test]
+async fn a_host_check_can_name_the_server_admin() {
+    let grafana = Grafana::new(Arc::new(FlakyStore::default()), None);
+    let state = grafana.state.clone().with_server_admin_check(|headers| {
+        headers.get("authorization").and_then(|v| v.to_str().ok())
+            == Some("Bearer verified-kaisatsu-token")
+    });
+    let app = api_router(
+        state.clone(),
+        Mount::new("dashboards", "https", "x.example", "").expect("mount"),
+    );
+    let host = Grafana { state, app };
+    let (status, body) = host
+        .call(
+            "POST",
+            "/orgs",
+            None,
+            Some("Bearer verified-kaisatsu-token"),
+            Some(json!({ "name": "helsinki" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _) = host
+        .call(
+            "GET",
+            "/orgs/name/helsinki",
+            None,
+            Some("Bearer another-token"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // The Basic credential set before still works beside it.
+    let (status, _) = host.admin("GET", "/orgs/name/helsinki", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+}

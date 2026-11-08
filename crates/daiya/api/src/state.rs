@@ -74,10 +74,14 @@ pub struct DaiyaState {
     pub outbound_policy: OutboundPolicy,
     /// Drivers built from stored datasource records (see [`DaiyaState::driver_for`]).
     pub built_drivers: Arc<RwLock<BuiltDriverMap>>,
-    /// SHA-256 of the server administrator's `Basic` credential (see
-    /// [`DaiyaState::with_server_admin`]); `None` when there is none.
-    pub server_admin_sha256: Option<String>,
+    /// Checks that recognise the server administrator ([`DaiyaState::with_server_admin`],
+    /// [`DaiyaState::with_server_admin_check`]); none by default.
+    pub server_admin: Vec<ServerAdminCheck>,
 }
+
+/// A host-supplied check that a request comes from the server administrator, e.g. a kaisatsu
+/// token verified in-process with daiya's audience (PORTAL-CALLS.md §5).
+pub type ServerAdminCheck = Arc<dyn Fn(&HeaderMap) -> bool + Send + Sync>;
 
 /// The shortest server administrator password accepted.
 pub const MIN_SERVER_ADMIN_PASSWORD: usize = 16;
@@ -143,7 +147,7 @@ impl DaiyaState {
             subject_resolver: None,
             outbound_policy: OutboundPolicy::default(),
             built_drivers: Arc::new(RwLock::new(BTreeMap::new())),
-            server_admin_sha256: None,
+            server_admin: Vec::new(),
         }
     }
 
@@ -152,7 +156,7 @@ impl DaiyaState {
     /// [`SERVER_ADMIN_ACTOR`] in every organization (see [`ServerAdminAuthorizer`]). Only the
     /// digest is kept. Refuses an empty user, a user holding `:` and a password shorter than
     /// [`MIN_SERVER_ADMIN_PASSWORD`]; the error never repeats the password.
-    pub fn with_server_admin(mut self, user: &str, password: &str) -> CrResult<Self> {
+    pub fn with_server_admin(self, user: &str, password: &str) -> CrResult<Self> {
         use base64::Engine as _;
         if user.trim().is_empty() || user.contains(':') {
             return Err(daiya_model::CrError::BadRequest(
@@ -166,28 +170,30 @@ impl DaiyaState {
         }
         let credential =
             base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"));
-        self.server_admin_sha256 = Some(sha256_hex(credential.as_bytes()));
-        self.authorizer = Arc::new(ServerAdminAuthorizer {
-            inner: self.authorizer.clone(),
-        });
-        Ok(self)
+        let expected = sha256_hex(credential.as_bytes());
+        Ok(self.with_server_admin_check(move |headers| basic_matches(headers, &expected)))
     }
 
-    /// The server administrator, when `Authorization` carries its `Basic` credential: a member
-    /// of every organization the directory holds, the main one first.
-    fn server_admin_for(&self, headers: &HeaderMap) -> Option<Subject> {
-        let expected = self.server_admin_sha256.as_deref()?;
-        let raw = headers
-            .get(axum::http::header::AUTHORIZATION)?
-            .to_str()
-            .ok()?
-            .trim();
-        let (scheme, credential) = raw.split_once(' ')?;
-        if !scheme.eq_ignore_ascii_case("basic") {
-            return None;
+    /// Recognises the server administrator by `check` (beside any check already set): a host
+    /// that verifies a kaisatsu token with daiya's audience passes it here.
+    #[must_use]
+    pub fn with_server_admin_check<F>(mut self, check: F) -> Self
+    where
+        F: Fn(&HeaderMap) -> bool + Send + Sync + 'static,
+    {
+        if self.server_admin.is_empty() {
+            self.authorizer = Arc::new(ServerAdminAuthorizer {
+                inner: self.authorizer.clone(),
+            });
         }
-        let digest = sha256_hex(credential.trim().as_bytes());
-        if !constant_time_eq(expected, &digest) {
+        self.server_admin.push(Arc::new(check));
+        self
+    }
+
+    /// The server administrator, when one of its checks recognises the request: a member of
+    /// every organization the directory holds, the main one first.
+    fn server_admin_for(&self, headers: &HeaderMap) -> Option<Subject> {
+        if !self.server_admin.iter().any(|check| check(headers)) {
             return None;
         }
         let organizations = self
@@ -331,6 +337,20 @@ impl DaiyaState {
             authz,
         )
     }
+}
+
+/// Whether `Authorization` is `Basic` with the credential whose SHA-256 is `expected`,
+/// compared in constant time.
+fn basic_matches(headers: &HeaderMap, expected: &str) -> bool {
+    let Some((scheme, credential)) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|raw| raw.trim().split_once(' '))
+    else {
+        return false;
+    };
+    scheme.eq_ignore_ascii_case("basic")
+        && constant_time_eq(expected, &sha256_hex(credential.trim().as_bytes()))
 }
 
 /// Builds the [`RequestCtx`] of a request. The subject comes only from verified sources: the
