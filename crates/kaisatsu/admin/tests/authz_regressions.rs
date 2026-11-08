@@ -715,11 +715,13 @@ async fn org_admin_post_creates_no_role_mappings() {
             Method::POST,
             "/admin/realms/dev/users",
             &t,
-            Some(json!({ "id": "esp-person", "username": "made-admin", "enabled": true,
+            Some(
+                json!({ "id": "esp-person", "username": "made-admin", "enabled": true,
                          "groups": ["/platform-admins"],
                          "realmRoles": ["realm-admin"],
                          "clientRoles": { "realm-management": ["realm-admin"] },
-                         "serviceAccountClientId": "realm-management" })),
+                         "serviceAccountClientId": "realm-management" }),
+            ),
         )
         .await;
     assert_eq!(st, StatusCode::CREATED);

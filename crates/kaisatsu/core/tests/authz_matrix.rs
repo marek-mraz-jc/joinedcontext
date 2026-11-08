@@ -290,7 +290,12 @@ fn realm_management_roles() {
             assert!(!dec.allowed && !dec.visible, "view-clients {other:?}");
         }
         // The mark alone grants nothing to a role without view-clients.
-        let dec = check(&mgmt(&["query-groups"]), None, write_act, &marked(Some("joinedcontext")));
+        let dec = check(
+            &mgmt(&["query-groups"]),
+            None,
+            write_act,
+            &marked(Some("joinedcontext")),
+        );
         assert!(!dec.allowed, "query-groups writes a marked scope");
     }
     // manage-clients in an org writes roles and client scopes.

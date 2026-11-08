@@ -1174,7 +1174,10 @@ pub(crate) async fn with_group_roles(
             .await?
         {
             add(
-                merged.client_roles.entry(client.client_id.clone()).or_default(),
+                merged
+                    .client_roles
+                    .entry(client.client_id.clone())
+                    .or_default(),
                 &mapping.role_name,
             );
         }
@@ -1210,7 +1213,8 @@ async fn mint_tokens_for_principal(
     let keys = state.store.list_signing_keys(&realm.id).await?;
     let user_groups = state.store.list_user_groups(&realm.id, &user.id).await?;
     let all_realm_roles = state.store.list_roles(&realm.id, None).await?;
-    let user = &with_group_roles(state.store.as_ref(), &realm.id, user, &user_groups, client).await?;
+    let user =
+        &with_group_roles(state.store.as_ref(), &realm.id, user, &user_groups, client).await?;
 
     let now = Utc::now().timestamp();
     let access_ttl = client
@@ -2801,7 +2805,14 @@ async fn userinfo_inner(
     }
     let user_groups = state.store.list_user_groups(&realm.id, &user.id).await?;
     let all_roles = state.store.list_roles(&realm.id, None).await?;
-    let user = with_group_roles(state.store.as_ref(), &realm.id, &user, &user_groups, &client).await?;
+    let user = with_group_roles(
+        state.store.as_ref(),
+        &realm.id,
+        &user,
+        &user_groups,
+        &client,
+    )
+    .await?;
 
     let ctx = MapperContext {
         realm: &realm,

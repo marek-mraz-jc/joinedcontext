@@ -26,8 +26,7 @@ use openidconnect::core::{
 };
 use openidconnect::{
     AdditionalProviderMetadata, ClientId, CsrfToken, IssuerUrl, Nonce, OAuth2TokenResponse,
-    PkceCodeChallenge,
-    ProviderMetadata, RedirectUrl, Scope, TokenResponse,
+    PkceCodeChallenge, ProviderMetadata, RedirectUrl, Scope, TokenResponse,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -150,8 +149,7 @@ struct Answer {
 
 impl Answer {
     fn json(&self) -> Value {
-        serde_json::from_str(&self.text)
-            .unwrap_or_else(|e| panic!("not JSON ({e}): {}", self.text))
+        serde_json::from_str(&self.text).unwrap_or_else(|e| panic!("not JSON ({e}): {}", self.text))
     }
 
     fn location(&self) -> String {
@@ -194,7 +192,13 @@ async fn send(app: &Router, request: Request<Body>) -> Answer {
 
 /// An admin API call as `Admin::send` (reconciler/app_clients.rs:517) and `people.rs`
 /// `Admin::send` (people.rs:262) make it: bearer token, JSON body.
-async fn admin(app: &Router, token: &str, method: Method, path: &str, body: Option<Value>) -> Answer {
+async fn admin(
+    app: &Router,
+    token: &str,
+    method: Method,
+    path: &str,
+    body: Option<Value>,
+) -> Answer {
     let mut b = Request::builder()
         .method(method)
         .uri(format!("{ADMIN}{path}"))
@@ -221,7 +225,12 @@ async fn get_page(app: &Router, uri: &str, cookie: Option<&str>) -> Answer {
     send(app, b.body(Body::empty()).unwrap()).await
 }
 
-async fn post_form(app: &Router, uri: &str, pairs: &[(&str, &str)], cookie: Option<&str>) -> Answer {
+async fn post_form(
+    app: &Router,
+    uri: &str,
+    pairs: &[(&str, &str)],
+    cookie: Option<&str>,
+) -> Answer {
     let encoded = url::form_urlencoded::Serializer::new(String::new())
         .extend_pairs(pairs)
         .finish();
@@ -251,7 +260,11 @@ fn param(url: &str, name: &str) -> Option<String> {
     let u = url::Url::parse(url).ok()?;
     let from_fragment: Vec<(String, String)> = u
         .fragment()
-        .map(|f| url::form_urlencoded::parse(f.as_bytes()).into_owned().collect())
+        .map(|f| {
+            url::form_urlencoded::parse(f.as_bytes())
+                .into_owned()
+                .collect()
+        })
         .unwrap_or_default();
     u.query_pairs()
         .into_owned()
@@ -271,7 +284,9 @@ fn payload(jwt: &str) -> Value {
 async fn sign_in(app: &Router, authorize: &str) -> (String, String) {
     let first = get_page(app, authorize, None).await;
     assert_eq!(first.status, StatusCode::SEE_OTHER, "{}", first.text);
-    let auth_cookie = first.cookie("__Host-wk_auth=").expect("auth session cookie");
+    let auth_cookie = first
+        .cookie("__Host-wk_auth=")
+        .expect("auth session cookie");
     let login = first.location();
     let page = get_page(app, &login, Some(&auth_cookie)).await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.text);
@@ -513,14 +528,14 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
         .end_session_endpoint
         .clone()
         .expect("end_session_endpoint (auth/oidc.rs:223)");
-    assert!(metadata.token_endpoint().is_some(), "token endpoint (auth/oidc.rs:229)");
+    assert!(
+        metadata.token_endpoint().is_some(),
+        "token endpoint (auth/oidc.rs:229)"
+    );
     let redirect = format!("{PORTAL}/api/v1/auth/callback");
-    let client = CoreClient::from_provider_metadata(
-        metadata,
-        ClientId::new("portal-api".into()),
-        None,
-    )
-    .set_redirect_uri(RedirectUrl::new(redirect.clone()).unwrap());
+    let client =
+        CoreClient::from_provider_metadata(metadata, ClientId::new("portal-api".into()), None)
+            .set_redirect_uri(RedirectUrl::new(redirect.clone()).unwrap());
 
     // auth/oidc.rs:596 login: profile and email, PKCE, nonce, state, ui_locales.
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
@@ -537,7 +552,10 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
         .url();
     let (back, sso) = sign_in(app, authorize.as_str()).await;
     assert!(back.starts_with(&redirect), "{back}");
-    assert_eq!(param(&back, "state").as_deref(), Some(state.secret().as_str()));
+    assert_eq!(
+        param(&back, "state").as_deref(),
+        Some(state.secret().as_str())
+    );
     let code = param(&back, "code").expect("code");
 
     // auth/oidc.rs:760 the code exchange through `token_request` (auth/oidc.rs:289).
@@ -556,8 +574,12 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
     )
     .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
-    let tokens: CoreTokenResponse = serde_json::from_str(&answer.text)
-        .unwrap_or_else(|e| panic!("auth/oidc.rs:327 refuses the token response ({e}): {}", answer.text));
+    let tokens: CoreTokenResponse = serde_json::from_str(&answer.text).unwrap_or_else(|e| {
+        panic!(
+            "auth/oidc.rs:327 refuses the token response ({e}): {}",
+            answer.text
+        )
+    });
     let id_token = tokens.id_token().expect("an ID token").clone();
     // auth/oidc.rs:768: signature (RS256 alone, openidconnect's default), issuer, audience, nonce.
     let claims = id_token
@@ -576,7 +598,11 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
         "auth/oidc.rs:779 username"
     );
     assert_eq!(claims.email().map(|e| e.as_str()), Some(ANA));
-    assert_eq!(claims.email_verified(), Some(true), "auth/session.rs verified_email");
+    assert_eq!(
+        claims.email_verified(),
+        Some(true),
+        "auth/session.rs verified_email"
+    );
     assert_eq!(
         claims.name().and_then(|n| n.get(None)).map(|n| n.as_str()),
         Some("Ana Virtanen")
@@ -584,14 +610,22 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
     // auth/oidc.rs:831 groups (full path, one leading `/` cut by the Portal), :859 realm roles
     // from the ID token (`realm-roles-in-id-token`), :848 acr and amr.
     let id_claims = payload(&id_token.to_string());
-    assert_eq!(id_claims["groups"], json!(["/helsinki/members"]), "{id_claims}");
+    assert_eq!(
+        id_claims["groups"],
+        json!(["/helsinki/members"]),
+        "{id_claims}"
+    );
     assert!(
         id_claims["realm_access"]["roles"].is_array(),
         "realm_access.roles in the ID token: {id_claims}"
     );
     assert!(id_claims["amr"].is_array(), "{id_claims}");
     assert_eq!(id_claims["jc_org"], json!(["helsinki"]), "{id_claims}");
-    assert_eq!(id_claims["jc_groups"], json!(["/helsinki/members"]), "{id_claims}");
+    assert_eq!(
+        id_claims["jc_groups"],
+        json!(["/helsinki/members"]),
+        "{id_claims}"
+    );
     let refresh = tokens
         .refresh_token()
         .expect("a refresh token (auth/oidc.rs:449)")
@@ -637,7 +671,10 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
     let live = check(Some(sso.clone())).await;
     assert_eq!(live.status, StatusCode::SEE_OTHER, "{}", live.text);
     let landed = live.location();
-    assert!(landed.starts_with(&format!("{PORTAL}/api/v1/auth/sso-check/done#")), "{landed}");
+    assert!(
+        landed.starts_with(&format!("{PORTAL}/api/v1/auth/sso-check/done#")),
+        "{landed}"
+    );
     assert!(param(&landed, "code").is_some(), "{landed}");
     let none = check(None).await;
     assert_eq!(
@@ -650,7 +687,10 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
     // (`Url::as_str`, trailing slash), id_token_hint, client_id. The realm then posts the
     // back-channel logout to the Portal (auth/oidc.rs:1055).
     let backchannel = format!("{PORTAL}/api/v1/auth/backchannel-logout");
-    realm.state.guard().insert_mock(&backchannel, 204, Vec::new());
+    realm
+        .state
+        .guard()
+        .insert_mock(&backchannel, 204, Vec::new());
     let mut logout = url::Url::parse(&end_session).unwrap();
     logout
         .query_pairs_mut()
@@ -752,10 +792,19 @@ async fn exchange(app: &Router, subject: &str, slug: &str) -> Answer {
         app,
         TOKEN,
         &[
-            ("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange"),
+            (
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:token-exchange",
+            ),
             ("subject_token", subject),
-            ("subject_token_type", "urn:ietf:params:oauth:token-type:access_token"),
-            ("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+            (
+                "subject_token_type",
+                "urn:ietf:params:oauth:token-type:access_token",
+            ),
+            (
+                "requested_token_type",
+                "urn:ietf:params:oauth:token-type:access_token",
+            ),
             ("audience", "mcp-hub"),
             ("scope", &scope),
             ("client_id", "portal-api"),
@@ -830,7 +879,9 @@ async fn bearer_and_connector_tokens_verify_and_exchange_for_one_endpoint() {
     )
     .await;
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
-    let scopes = admin(app, &api, Method::GET, "/client-scopes", None).await.json();
+    let scopes = admin(app, &api, Method::GET, "/client-scopes", None)
+        .await
+        .json();
     let scope_id = scopes
         .as_array()
         .unwrap()
@@ -844,7 +895,10 @@ async fn bearer_and_connector_tokens_verify_and_exchange_for_one_endpoint() {
         app,
         &operator,
         Method::PUT,
-        &format!("/clients/{}/optional-client-scopes/{scope_id}", id_of(&portal)),
+        &format!(
+            "/clients/{}/optional-client-scopes/{scope_id}",
+            id_of(&portal)
+        ),
         None,
     )
     .await;
@@ -871,7 +925,12 @@ async fn bearer_and_connector_tokens_verify_and_exchange_for_one_endpoint() {
     // auth/oidc.rs:125: an Endpoint whose scope is not linked yet answers `invalid_scope`.
     let refused = exchange(app, subject, "otherslugotherslugother234").await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
-    assert_eq!(refused.json()["error"], json!("invalid_scope"), "{}", refused.text);
+    assert_eq!(
+        refused.json()["error"],
+        json!("invalid_scope"),
+        "{}",
+        refused.text
+    );
 
     // auth/oidc.rs:114: once the person's sessions end, the subject token is refused as
     // `invalid_token` (or Keycloak's `invalid_request` "Invalid token").
@@ -908,7 +967,10 @@ async fn bearer_and_connector_tokens_verify_and_exchange_for_one_endpoint() {
     .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
     let own: CoreTokenResponse = serde_json::from_str(&answer.text).expect("token response");
-    assert!(own.expires_in().is_some(), "auth/oidc.rs:350 holds it until expiry");
+    assert!(
+        own.expires_in().is_some(),
+        "auth/oidc.rs:350 holds it until expiry"
+    );
 }
 
 /// reconciler/hub_scopes.rs:61 `desired`.
@@ -959,7 +1021,14 @@ async fn the_portal_manages_people_as_the_reconciler() {
     let id = made.location().rsplit('/').next().unwrap().to_owned();
     assert!(!id.is_empty());
     // people.rs:341 the fallback when no Location came back.
-    let found = admin(app, &token, Method::GET, &format!("/users?email={newcomer}&exact=true"), None).await;
+    let found = admin(
+        app,
+        &token,
+        Method::GET,
+        &format!("/users?email={newcomer}&exact=true"),
+        None,
+    )
+    .await;
     assert_eq!(found.status, StatusCode::OK, "{}", found.text);
     assert_eq!(found.json()[0]["id"], json!(id), "{}", found.text);
     // The same e-mail again is 409, which people.rs maps to Conflict (PF-04 "exists already").
@@ -967,14 +1036,19 @@ async fn the_portal_manages_people_as_the_reconciler() {
     assert_eq!(again.status, StatusCode::CONFLICT, "{}", again.text);
 
     // people.rs:304 get, read as KcUser.
-    let user = admin(app, &token, Method::GET, &format!("/users/{id}"), None).await.json();
+    let user = admin(app, &token, Method::GET, &format!("/users/{id}"), None)
+        .await
+        .json();
     assert_eq!(user["username"], json!(newcomer));
     assert_eq!(user["email"], json!(newcomer));
     assert_eq!(user["firstName"], json!("Nora"));
     assert_eq!(user["lastName"], json!("Newcomer"));
     assert_eq!(user["enabled"], json!(true));
     assert_eq!(user["emailVerified"], json!(false));
-    assert!(user["createdTimestamp"].as_i64().is_some_and(|t| t > 0), "{user}");
+    assert!(
+        user["createdTimestamp"].as_i64().is_some_and(|t| t > 0),
+        "{user}"
+    );
     let mut required = strings_of(&user["requiredActions"]);
     required.sort_unstable();
     assert_eq!(required, ["UPDATE_PASSWORD", "VERIFY_EMAIL"]);
@@ -999,17 +1073,51 @@ async fn the_portal_manages_people_as_the_reconciler() {
         .map(|u| u["username"].as_str().unwrap().to_owned())
         .collect();
     assert!(names.contains(&newcomer.to_owned()), "{names:?}");
-    assert!(names.iter().all(|n| !n.starts_with("service-account-")), "{names:?}");
+    assert!(
+        names.iter().all(|n| !n.starts_with("service-account-")),
+        "{names:?}"
+    );
     // `first` and `max` count people: two pages of one hold Ana and the newcomer.
     let mut paged = Vec::new();
     for first in 0..3 {
-        let one = admin(app, &token, Method::GET, &format!("/users?search=&first={first}&max=1&briefRepresentation=false"), None).await.json();
-        paged.extend(one.as_array().unwrap().iter().map(|u| u["username"].as_str().unwrap().to_owned()));
+        let one = admin(
+            app,
+            &token,
+            Method::GET,
+            &format!("/users?search=&first={first}&max=1&briefRepresentation=false"),
+            None,
+        )
+        .await
+        .json();
+        paged.extend(
+            one.as_array()
+                .unwrap()
+                .iter()
+                .map(|u| u["username"].as_str().unwrap().to_owned()),
+        );
     }
     paged.sort();
     assert_eq!(paged, [ANA, newcomer], "people.rs:290 pages");
-    let searched = admin(app, &token, Method::GET, "/users?search=nora&first=0&max=20&briefRepresentation=false", None).await;
-    assert_eq!(strings_of(&json!(searched.json().as_array().unwrap().iter().map(|u| u["id"].clone()).collect::<Vec<_>>())), [id.as_str()]);
+    let searched = admin(
+        app,
+        &token,
+        Method::GET,
+        "/users?search=nora&first=0&max=20&briefRepresentation=false",
+        None,
+    )
+    .await;
+    assert_eq!(
+        strings_of(&json!(
+            searched
+                .json()
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|u| u["id"].clone())
+                .collect::<Vec<_>>()
+        )),
+        [id.as_str()]
+    );
 
     // people.rs:361 update: read, edit, write the whole representation back; what the Portal
     // does not know survives.
@@ -1018,7 +1126,9 @@ async fn the_portal_manages_people_as_the_reconciler() {
     raw["attributes"]["department"] = json!(["parks"]);
     let put = admin(app, &token, Method::PUT, &format!("/users/{id}"), Some(raw)).await;
     assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
-    let user = admin(app, &token, Method::GET, &format!("/users/{id}"), None).await.json();
+    let user = admin(app, &token, Method::GET, &format!("/users/{id}"), None)
+        .await
+        .json();
     assert_eq!(user["firstName"], json!("Norah"));
     assert_eq!(user["attributes"]["locale"], json!(["sk"]), "{user}");
     assert_eq!(user["attributes"]["department"], json!(["parks"]), "{user}");
@@ -1055,23 +1165,57 @@ async fn the_portal_manages_people_as_the_reconciler() {
     assert_eq!(reset.status, StatusCode::NO_CONTENT, "{}", reset.text);
 
     // people.rs:426 credentials, read as {id, type}.
-    let credentials = admin(app, &token, Method::GET, &format!("/users/{id}/credentials"), None).await;
+    let credentials = admin(
+        app,
+        &token,
+        Method::GET,
+        &format!("/users/{id}/credentials"),
+        None,
+    )
+    .await;
     assert_eq!(credentials.status, StatusCode::OK, "{}", credentials.text);
     let credentials = credentials.json();
     assert!(
-        credentials.as_array().unwrap().iter().any(|c| c["type"] == "password" && c["id"].is_string()),
+        credentials
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["type"] == "password" && c["id"].is_string()),
         "{credentials}"
     );
 
     // people.rs:445 sessions and :452 consents: arrays.
     for path in ["sessions", "consents"] {
-        let listed = admin(app, &token, Method::GET, &format!("/users/{id}/{path}"), None).await;
+        let listed = admin(
+            app,
+            &token,
+            Method::GET,
+            &format!("/users/{id}/{path}"),
+            None,
+        )
+        .await;
         assert_eq!(listed.status, StatusCode::OK, "{path}: {}", listed.text);
         assert!(listed.json().is_array(), "{path}: {}", listed.text);
     }
-    let ana = realm.store.get_user_by_username_or_email("jc", None, ANA).await.unwrap().unwrap();
-    let sessions = admin(app, &token, Method::GET, &format!("/users/{}/sessions", ana.id), None).await.json();
-    assert!(sessions.as_array().unwrap().is_empty(), "nobody signed in yet: {sessions}");
+    let ana = realm
+        .store
+        .get_user_by_username_or_email("jc", None, ANA)
+        .await
+        .unwrap()
+        .unwrap();
+    let sessions = admin(
+        app,
+        &token,
+        Method::GET,
+        &format!("/users/{}/sessions", ana.id),
+        None,
+    )
+    .await
+    .json();
+    assert!(
+        sessions.as_array().unwrap().is_empty(),
+        "nobody signed in yet: {sessions}"
+    );
 
     // people.rs:507 join_members: an exact search for `members`, the tree under each root, the
     // group at `/{organization}/members`, then the membership.
@@ -1096,22 +1240,61 @@ async fn the_portal_manages_people_as_the_reconciler() {
     }
     let members = find(&tree, "/helsinki/members")
         .unwrap_or_else(|| panic!("people.rs:147 finds no /helsinki/members in {tree}"));
-    let joined = admin(app, &token, Method::PUT, &format!("/users/{id}/groups/{members}"), None).await;
+    let joined = admin(
+        app,
+        &token,
+        Method::PUT,
+        &format!("/users/{id}/groups/{members}"),
+        None,
+    )
+    .await;
     assert_eq!(joined.status, StatusCode::NO_CONTENT, "{}", joined.text);
 
     // people.rs:483 the groups by path and the realm roles, composites expanded.
-    let groups = admin(app, &token, Method::GET, &format!("/users/{id}/groups"), None).await.json();
-    let paths: Vec<&str> = groups.as_array().unwrap().iter().map(|g| g["path"].as_str().unwrap()).collect();
+    let groups = admin(
+        app,
+        &token,
+        Method::GET,
+        &format!("/users/{id}/groups"),
+        None,
+    )
+    .await
+    .json();
+    let paths: Vec<&str> = groups
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["path"].as_str().unwrap())
+        .collect();
     assert_eq!(paths, ["/helsinki/members"], "{groups}");
-    let roles = admin(app, &token, Method::GET, &format!("/users/{id}/role-mappings/realm/composite"), None).await;
+    let roles = admin(
+        app,
+        &token,
+        Method::GET,
+        &format!("/users/{id}/role-mappings/realm/composite"),
+        None,
+    )
+    .await;
     assert_eq!(roles.status, StatusCode::OK, "{}", roles.text);
     let roles = roles.json();
-    let names: Vec<&str> = roles.as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = roles
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
     // The realm's default role: claude.ai's connector asks offline_access (T-6301).
     assert!(names.contains(&"offline_access"), "{roles}");
 
     // people.rs:418 sign out, :434 a second factor's removal (none here), :519 delete.
-    let out = admin(app, &token, Method::POST, &format!("/users/{id}/logout"), None).await;
+    let out = admin(
+        app,
+        &token,
+        Method::POST,
+        &format!("/users/{id}/logout"),
+        None,
+    )
+    .await;
     assert_eq!(out.status, StatusCode::NO_CONTENT, "{}", out.text);
     let gone = admin(app, &token, Method::DELETE, &format!("/users/{id}"), None).await;
     assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
@@ -1130,14 +1313,34 @@ async fn the_group_wave_converges_as_the_reconciler() {
     let realm = realm().await;
     let app = &realm.app;
     let token = reconciler(app).await;
-    let ana = realm.store.get_user_by_username_or_email("jc", None, ANA).await.unwrap().unwrap();
+    let ana = realm
+        .store
+        .get_user_by_username_or_email("jc", None, ANA)
+        .await
+        .unwrap()
+        .unwrap();
 
     // groups.rs:331 a managed root group with its Organization claims.
     let attributes = json!({ MANAGED.0: [MANAGED.1], "jc_org": ["helsinki"], "jc_groups": ["/helsinki/stewards"] });
-    let made = admin(app, &token, Method::POST, "/groups", Some(json!({ "name": "helsinki-stewards", "attributes": attributes }))).await;
+    let made = admin(
+        app,
+        &token,
+        Method::POST,
+        "/groups",
+        Some(json!({ "name": "helsinki-stewards", "attributes": attributes })),
+    )
+    .await;
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
     // groups.rs:344 found again by an exact name search, read as KcGroup.
-    let found = admin(app, &token, Method::GET, "/groups?search=helsinki-stewards&exact=true", None).await.json();
+    let found = admin(
+        app,
+        &token,
+        Method::GET,
+        "/groups?search=helsinki-stewards&exact=true",
+        None,
+    )
+    .await
+    .json();
     let group = found
         .as_array()
         .unwrap()
@@ -1148,43 +1351,142 @@ async fn the_group_wave_converges_as_the_reconciler() {
     let id = id_of(&group);
 
     // groups.rs:207 the whole list with attributes, the managed mark as groups.rs:140 reads it.
-    let all = admin(app, &token, Method::GET, "/groups?briefRepresentation=false&max=1000", None).await.json();
-    let listed = all.as_array().unwrap().iter().find(|g| g["id"] == json!(id)).unwrap_or_else(|| panic!("{all}"));
+    let all = admin(
+        app,
+        &token,
+        Method::GET,
+        "/groups?briefRepresentation=false&max=1000",
+        None,
+    )
+    .await
+    .json();
+    let listed = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["id"] == json!(id))
+        .unwrap_or_else(|| panic!("{all}"));
     assert_eq!(listed["attributes"], attributes, "{listed}");
 
     // groups.rs:385 members, :403 join, :486 exists.
     let path = format!("/groups/{id}/members?max=1000");
-    assert_eq!(admin(app, &token, Method::GET, &path, None).await.json(), json!([]));
-    let exists = admin(app, &token, Method::GET, &format!("/users/{}", ana.id), None).await;
+    assert_eq!(
+        admin(app, &token, Method::GET, &path, None).await.json(),
+        json!([])
+    );
+    let exists = admin(
+        app,
+        &token,
+        Method::GET,
+        &format!("/users/{}", ana.id),
+        None,
+    )
+    .await;
     assert_eq!(exists.status, StatusCode::OK, "{}", exists.text);
-    let nobody = admin(app, &token, Method::GET, "/users/00000000-0000-0000-0000-000000000000", None).await;
-    assert_eq!(nobody.status, StatusCode::NOT_FOUND, "app_clients.rs:583 reads 404 as absent: {}", nobody.text);
-    let joined = admin(app, &token, Method::PUT, &format!("/users/{}/groups/{id}", ana.id), None).await;
+    let nobody = admin(
+        app,
+        &token,
+        Method::GET,
+        "/users/00000000-0000-0000-0000-000000000000",
+        None,
+    )
+    .await;
+    assert_eq!(
+        nobody.status,
+        StatusCode::NOT_FOUND,
+        "app_clients.rs:583 reads 404 as absent: {}",
+        nobody.text
+    );
+    let joined = admin(
+        app,
+        &token,
+        Method::PUT,
+        &format!("/users/{}/groups/{id}", ana.id),
+        None,
+    )
+    .await;
     assert_eq!(joined.status, StatusCode::NO_CONTENT, "{}", joined.text);
     let held = admin(app, &token, Method::GET, &path, None).await.json();
-    let ids: Vec<&str> = held.as_array().unwrap().iter().map(|u| u["id"].as_str().unwrap()).collect();
+    let ids: Vec<&str> = held
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| u["id"].as_str().unwrap())
+        .collect();
     assert_eq!(ids, [ana.id.as_str()], "{held}");
 
     // groups.rs:471 the claims rewritten.
     let changed = json!({ MANAGED.0: [MANAGED.1], "jc_org": ["helsinki"], "jc_groups": ["/helsinki/editors"] });
-    let put = admin(app, &token, Method::PUT, &format!("/groups/{id}"), Some(json!({ "name": "helsinki-stewards", "attributes": changed }))).await;
+    let put = admin(
+        app,
+        &token,
+        Method::PUT,
+        &format!("/groups/{id}"),
+        Some(json!({ "name": "helsinki-stewards", "attributes": changed })),
+    )
+    .await;
     assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
-    let all = admin(app, &token, Method::GET, "/groups?briefRepresentation=false&max=1000", None).await.json();
-    let listed = all.as_array().unwrap().iter().find(|g| g["id"] == json!(id)).unwrap();
+    let all = admin(
+        app,
+        &token,
+        Method::GET,
+        "/groups?briefRepresentation=false&max=1000",
+        None,
+    )
+    .await
+    .json();
+    let listed = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["id"] == json!(id))
+        .unwrap();
     assert_eq!(listed["attributes"], changed, "{listed}");
 
     // groups.rs:428 leave, :288 delete.
-    let left = admin(app, &token, Method::DELETE, &format!("/users/{}/groups/{id}", ana.id), None).await;
+    let left = admin(
+        app,
+        &token,
+        Method::DELETE,
+        &format!("/users/{}/groups/{id}", ana.id),
+        None,
+    )
+    .await;
     assert_eq!(left.status, StatusCode::NO_CONTENT, "{}", left.text);
     let gone = admin(app, &token, Method::DELETE, &format!("/groups/{id}"), None).await;
     assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
 
     // Least privilege: the reconciler writes no client and reads no client secret.
-    let clients = admin(app, &token, Method::GET, "/clients?clientId=portal-api", None).await;
-    let listed = if clients.status == StatusCode::OK { clients.json() } else { json!([]) };
-    assert!(listed.as_array().unwrap().is_empty(), "portal-reconciler reads clients: {listed}");
-    let made = admin(app, &token, Method::POST, "/clients", Some(json!({ "clientId": "app-sneaky", "attributes": { MANAGED.0: MANAGED.1 } }))).await;
-    assert!(made.status.is_client_error(), "portal-reconciler creates a client: {}", made.status);
+    let clients = admin(
+        app,
+        &token,
+        Method::GET,
+        "/clients?clientId=portal-api",
+        None,
+    )
+    .await;
+    let listed = if clients.status == StatusCode::OK {
+        clients.json()
+    } else {
+        json!([])
+    };
+    assert!(
+        listed.as_array().unwrap().is_empty(),
+        "portal-reconciler reads clients: {listed}"
+    );
+    let made = admin(
+        app,
+        &token,
+        Method::POST,
+        "/clients",
+        Some(json!({ "clientId": "app-sneaky", "attributes": { MANAGED.0: MANAGED.1 } })),
+    )
+    .await;
+    assert!(
+        made.status.is_client_error(),
+        "portal-reconciler creates a client: {}",
+        made.status
+    );
 }
 
 // ------------------------------------------------------------------------------------------
@@ -1275,17 +1577,29 @@ async fn converge_mappers(app: &Router, token: &str, uuid: &str, wanted: &[Value
     let held = held.json();
     let mut changed = Vec::new();
     for mapper in held.as_array().unwrap() {
-        let ours = wanted
-            .iter()
-            .any(|w| w["protocolMapper"] == mapper["protocolMapper"] && w["name"] == mapper["name"]);
+        let ours = wanted.iter().any(|w| {
+            w["protocolMapper"] == mapper["protocolMapper"] && w["name"] == mapper["name"]
+        });
         if !ours {
-            let gone = admin(app, token, Method::DELETE, &format!("{path}/{}", id_of(mapper)), None).await;
+            let gone = admin(
+                app,
+                token,
+                Method::DELETE,
+                &format!("{path}/{}", id_of(mapper)),
+                None,
+            )
+            .await;
             assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
             changed.push(format!("removed {}", mapper["name"]));
         }
     }
     for want in wanted {
-        match held.as_array().unwrap().iter().find(|m| m["name"] == want["name"]) {
+        match held
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["name"] == want["name"])
+        {
             None => {
                 let made = admin(app, token, Method::POST, &path, Some(want.clone())).await;
                 assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
@@ -1300,7 +1614,14 @@ async fn converge_mappers(app: &Router, token: &str, uuid: &str, wanted: &[Value
                 if differs {
                     let mut body = want.clone();
                     body["id"] = mapper["id"].clone();
-                    let put = admin(app, token, Method::PUT, &format!("{path}/{}", id_of(mapper)), Some(body)).await;
+                    let put = admin(
+                        app,
+                        token,
+                        Method::PUT,
+                        &format!("{path}/{}", id_of(mapper)),
+                        Some(body),
+                    )
+                    .await;
                     assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
                     changed.push(format!("rewrote {}", want["name"]));
                 }
@@ -1318,7 +1639,14 @@ async fn drop_optional_scopes(app: &Router, token: &str, uuid: &str) -> Vec<Stri
     let linked = linked.json();
     let mut names = Vec::new();
     for scope in linked.as_array().unwrap() {
-        let gone = admin(app, token, Method::DELETE, &format!("{path}/{}", id_of(scope)), None).await;
+        let gone = admin(
+            app,
+            token,
+            Method::DELETE,
+            &format!("{path}/{}", id_of(scope)),
+            None,
+        )
+        .await;
         assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
         names.push(scope["name"].as_str().unwrap().to_owned());
     }
@@ -1328,7 +1656,15 @@ async fn drop_optional_scopes(app: &Router, token: &str, uuid: &str) -> Vec<Stri
 /// Ana's sign-in to App `bikes` through its confidential client, as the App's edge does it;
 /// answers the access token's claims as the edge verifies them (RS256, aud `app-bikes`).
 async fn app_sign_in(app: &Router, api: &str, uuid: &str) -> Value {
-    let secret = admin(app, api, Method::GET, &format!("/clients/{uuid}/client-secret"), None).await.json();
+    let secret = admin(
+        app,
+        api,
+        Method::GET,
+        &format!("/clients/{uuid}/client-secret"),
+        None,
+    )
+    .await
+    .json();
     let secret = secret["value"].as_str().unwrap().to_owned();
     let (pkce, verifier) = PkceCodeChallenge::new_random_sha256();
     let back = "https://bikes.apps.jc.localhost/oauth2/callback";
@@ -1356,7 +1692,10 @@ async fn app_sign_in(app: &Router, api: &str, uuid: &str) -> Value {
     .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
     let access = answer.json()["access_token"].as_str().unwrap().to_owned();
-    assert_eq!(jsonwebtoken9::decode_header(&access).unwrap().alg, jsonwebtoken9::Algorithm::RS256);
+    assert_eq!(
+        jsonwebtoken9::decode_header(&access).unwrap().alg,
+        jsonwebtoken9::Algorithm::RS256
+    );
     Bearer::of(app)
         .await
         .verify(&access, "app-bikes", "Bearer")
@@ -1375,7 +1714,9 @@ async fn the_app_wave_converges_an_app_client() {
     assert!(find_client(app, &api, "app-bikes").await.is_none());
     let made = admin(app, &api, Method::POST, "/clients", Some(want.clone())).await;
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
-    let held = find_client(app, &api, "app-bikes").await.expect("app-bikes is found");
+    let held = find_client(app, &api, "app-bikes")
+        .await
+        .expect("app-bikes is found");
     let uuid = id_of(&held);
     // app_clients.rs:1177 the next run finds nothing to write back.
     assert_eq!(drift(&want, &held), Vec::<String>::new(), "{held}");
@@ -1383,23 +1724,50 @@ async fn the_app_wave_converges_an_app_client() {
     // T-6301: Keycloak links the realm's default optional scopes, which the wave unlinks;
     // kaisatsu links none to an admin-made client, which the wave reads as nothing to drop.
     let dropped = drop_optional_scopes(app, &api, &uuid).await;
-    assert!(dropped.iter().all(|n| n == "connector" || n == "offline_access"), "{dropped:?}");
-    assert_eq!(drop_optional_scopes(app, &api, &uuid).await, Vec::<String>::new());
+    assert!(
+        dropped
+            .iter()
+            .all(|n| n == "connector" || n == "offline_access"),
+        "{dropped:?}"
+    );
+    assert_eq!(
+        drop_optional_scopes(app, &api, &uuid).await,
+        Vec::<String>::new()
+    );
 
     // :655 the mappers: added once, then nothing to change.
     let wanted = app_mappers(&["app-bikes", SLUG]);
     let first = converge_mappers(app, &api, &uuid, &wanted).await;
-    assert!(first.iter().filter(|c| c.starts_with("added")).count() == wanted.len(), "{first:?}");
-    assert_eq!(converge_mappers(app, &api, &uuid, &wanted).await, Vec::<String>::new());
+    assert!(
+        first.iter().filter(|c| c.starts_with("added")).count() == wanted.len(),
+        "{first:?}"
+    );
+    assert_eq!(
+        converge_mappers(app, &api, &uuid, &wanted).await,
+        Vec::<String>::new()
+    );
     // One Endpoint fewer: its audience mapper goes.
     let fewer = app_mappers(&["app-bikes"]);
-    assert_eq!(converge_mappers(app, &api, &uuid, &fewer).await, [format!("removed \"audience-{SLUG}\"")]);
+    assert_eq!(
+        converge_mappers(app, &api, &uuid, &fewer).await,
+        [format!("removed \"audience-{SLUG}\"")]
+    );
 
     // :870 roles: listed, created by name, read back with an id.
     let roles = format!("/clients/{uuid}/roles");
-    assert_eq!(admin(app, &api, Method::GET, &roles, None).await.json(), json!([]));
+    assert_eq!(
+        admin(app, &api, Method::GET, &roles, None).await.json(),
+        json!([])
+    );
     for name in ["rider", "dispatcher"] {
-        let made = admin(app, &api, Method::POST, &roles, Some(json!({ "name": name }))).await;
+        let made = admin(
+            app,
+            &api,
+            Method::POST,
+            &roles,
+            Some(json!({ "name": name })),
+        )
+        .await;
         assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
     }
     let held_roles = admin(app, &api, Method::GET, &roles, None).await.json();
@@ -1416,7 +1784,14 @@ async fn the_app_wave_converges_an_app_client() {
     let mapping = json!([{ "id": rider["id"], "name": "rider" }]);
 
     // :799 the group by name and :841 the user by e-mail, as the member credential.
-    let groups = admin(app, &members, Method::GET, "/groups?briefRepresentation=true&max=1000", None).await;
+    let groups = admin(
+        app,
+        &members,
+        Method::GET,
+        "/groups?briefRepresentation=true&max=1000",
+        None,
+    )
+    .await;
     assert_eq!(groups.status, StatusCode::OK, "{}", groups.text);
     let helsinki = groups
         .json()
@@ -1426,7 +1801,17 @@ async fn the_app_wave_converges_an_app_client() {
         .find(|g| g["name"] == "helsinki")
         .map(id_of)
         .expect("the root group helsinki");
-    let users = admin(app, &members, Method::GET, &format!("/users?exact=true&email={}", url::form_urlencoded::byte_serialize(ANA.as_bytes()).collect::<String>()), None).await;
+    let users = admin(
+        app,
+        &members,
+        Method::GET,
+        &format!(
+            "/users?exact=true&email={}",
+            url::form_urlencoded::byte_serialize(ANA.as_bytes()).collect::<String>()
+        ),
+        None,
+    )
+    .await;
     assert_eq!(users.status, StatusCode::OK, "{}", users.text);
     let ana = users.json()[0].clone();
     assert_eq!(ana["email"], json!(ANA), "{ana}");
@@ -1434,16 +1819,47 @@ async fn the_app_wave_converges_an_app_client() {
 
     // :940 the mappings, written by the member credential.
     for path in [format!("/groups/{helsinki}"), format!("/users/{ana_id}")] {
-        let mapped = admin(app, &members, Method::POST, &format!("{path}/role-mappings/clients/{uuid}"), Some(mapping.clone())).await;
-        assert_eq!(mapped.status, StatusCode::NO_CONTENT, "{path}: {}", mapped.text);
+        let mapped = admin(
+            app,
+            &members,
+            Method::POST,
+            &format!("{path}/role-mappings/clients/{uuid}"),
+            Some(mapping.clone()),
+        )
+        .await;
+        assert_eq!(
+            mapped.status,
+            StatusCode::NO_CONTENT,
+            "{path}: {}",
+            mapped.text
+        );
     }
     // :908 who holds the role, read by the App-client manager (view-clients + query-*).
-    let by_groups = admin(app, &api, Method::GET, &format!("{roles}/rider/groups?briefRepresentation=true&max=1000"), None).await;
+    let by_groups = admin(
+        app,
+        &api,
+        Method::GET,
+        &format!("{roles}/rider/groups?briefRepresentation=true&max=1000"),
+        None,
+    )
+    .await;
     assert_eq!(by_groups.status, StatusCode::OK, "{}", by_groups.text);
     let by_groups = by_groups.json();
-    let names: Vec<&str> = by_groups.as_array().unwrap().iter().map(|g| g["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = by_groups
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["name"].as_str().unwrap())
+        .collect();
     assert_eq!(names, ["helsinki"]);
-    let by_users = admin(app, &api, Method::GET, &format!("{roles}/rider/users?max=1000"), None).await;
+    let by_users = admin(
+        app,
+        &api,
+        Method::GET,
+        &format!("{roles}/rider/users?max=1000"),
+        None,
+    )
+    .await;
     assert_eq!(by_users.status, StatusCode::OK, "{}", by_users.text);
     let held_by = by_users.json();
     assert_eq!(held_by[0]["id"], json!(ana_id), "{held_by}");
@@ -1451,52 +1867,148 @@ async fn the_app_wave_converges_an_app_client() {
 
     // A sign-in to the App: the edge verifies RS256 and reads aud, resource_access and groups.
     let claims = app_sign_in(app, &api, &uuid).await;
-    assert_eq!(claims["resource_access"]["app-bikes"]["roles"], json!(["rider"]), "{claims}");
+    assert_eq!(
+        claims["resource_access"]["app-bikes"]["roles"],
+        json!(["rider"]),
+        "{claims}"
+    );
     assert_eq!(claims["groups"], json!(["/helsinki/members"]), "{claims}");
     assert_eq!(claims["jc_org"], json!(["helsinki"]), "{claims}");
-    assert!(claims["exp"].as_i64().unwrap() - claims["iat"].as_i64().unwrap() <= 60, "access.token.lifespan 60: {claims}");
+    assert!(
+        claims["exp"].as_i64().unwrap() - claims["iat"].as_i64().unwrap() <= 60,
+        "access.token.lifespan 60: {claims}"
+    );
     // The role held through the root group `helsinki` alone (a group subject of `spec.access`).
-    let gone = admin(app, &members, Method::DELETE, &format!("/users/{ana_id}/role-mappings/clients/{uuid}"), Some(mapping.clone())).await;
+    let gone = admin(
+        app,
+        &members,
+        Method::DELETE,
+        &format!("/users/{ana_id}/role-mappings/clients/{uuid}"),
+        Some(mapping.clone()),
+    )
+    .await;
     assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
     let claims = app_sign_in(app, &api, &uuid).await;
-    assert_eq!(claims["resource_access"]["app-bikes"]["roles"], json!(["rider"]), "a group's App role: {claims}");
-    let mapped = admin(app, &members, Method::POST, &format!("/users/{ana_id}/role-mappings/clients/{uuid}"), Some(mapping.clone())).await;
+    assert_eq!(
+        claims["resource_access"]["app-bikes"]["roles"],
+        json!(["rider"]),
+        "a group's App role: {claims}"
+    );
+    let mapped = admin(
+        app,
+        &members,
+        Method::POST,
+        &format!("/users/{ana_id}/role-mappings/clients/{uuid}"),
+        Some(mapping.clone()),
+    )
+    .await;
     assert_eq!(mapped.status, StatusCode::NO_CONTENT, "{}", mapped.text);
 
     // :929 a mapping the App no longer gives is removed by the member credential.
     for path in [format!("/groups/{helsinki}"), format!("/users/{ana_id}")] {
-        let gone = admin(app, &members, Method::DELETE, &format!("{path}/role-mappings/clients/{uuid}"), Some(mapping.clone())).await;
+        let gone = admin(
+            app,
+            &members,
+            Method::DELETE,
+            &format!("{path}/role-mappings/clients/{uuid}"),
+            Some(mapping.clone()),
+        )
+        .await;
         assert_eq!(gone.status, StatusCode::NO_CONTENT, "{path}: {}", gone.text);
     }
-    assert_eq!(admin(app, &api, Method::GET, &format!("{roles}/rider/users?max=1000"), None).await.json(), json!([]));
+    assert_eq!(
+        admin(
+            app,
+            &api,
+            Method::GET,
+            &format!("{roles}/rider/users?max=1000"),
+            None
+        )
+        .await
+        .json(),
+        json!([])
+    );
     // A role taken away is gone from the next token (app_clients.rs:181, T-4914).
     let claims = app_sign_in(app, &api, &uuid).await;
     assert!(claims["resource_access"]["app-bikes"].is_null(), "{claims}");
     // :878 a role the App drops.
-    let gone = admin(app, &api, Method::DELETE, &format!("{roles}/dispatcher"), None).await;
+    let gone = admin(
+        app,
+        &api,
+        Method::DELETE,
+        &format!("{roles}/dispatcher"),
+        None,
+    )
+    .await;
     assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
 
     // :1003 the secret the App's edge reads.
-    let secret = admin(app, &api, Method::GET, &format!("/clients/{uuid}/client-secret"), None).await;
+    let secret = admin(
+        app,
+        &api,
+        Method::GET,
+        &format!("/clients/{uuid}/client-secret"),
+        None,
+    )
+    .await;
     assert_eq!(secret.status, StatusCode::OK, "{}", secret.text);
-    assert!(secret.json()["value"].as_str().is_some_and(|v| v.len() >= 32), "a secret value");
+    assert!(
+        secret.json()["value"]
+            .as_str()
+            .is_some_and(|v| v.len() >= 32),
+        "a secret value"
+    );
 
     // :1181 a field changed by hand is put back, then nothing drifts.
     let mut changed = held.clone();
     changed["redirectUris"] = json!(["https://evil.example/*"]);
-    let put = admin(app, &api, Method::PUT, &format!("/clients/{uuid}"), Some(changed)).await;
+    let put = admin(
+        app,
+        &api,
+        Method::PUT,
+        &format!("/clients/{uuid}"),
+        Some(changed),
+    )
+    .await;
     assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
     let held = find_client(app, &api, "app-bikes").await.unwrap();
-    assert_eq!(drift(&want, &held), ["redirectUris: Some(Array [String(\"https://evil.example/*\")]) != [\"https://bikes.apps.jc.localhost/*\"]"]);
-    let put = admin(app, &api, Method::PUT, &format!("/clients/{uuid}"), Some(want.clone())).await;
+    assert_eq!(
+        drift(&want, &held),
+        [
+            "redirectUris: Some(Array [String(\"https://evil.example/*\")]) != [\"https://bikes.apps.jc.localhost/*\"]"
+        ]
+    );
+    let put = admin(
+        app,
+        &api,
+        Method::PUT,
+        &format!("/clients/{uuid}"),
+        Some(want.clone()),
+    )
+    .await;
     assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
-    assert_eq!(drift(&want, &find_client(app, &api, "app-bikes").await.unwrap()), Vec::<String>::new());
+    assert_eq!(
+        drift(&want, &find_client(app, &api, "app-bikes").await.unwrap()),
+        Vec::<String>::new()
+    );
 
     // :1067 the managed app clients, by a clientId search; :1107 one no App names is removed.
-    let listed = admin(app, &api, Method::GET, "/clients?search=true&clientId=app-&max=1000", None).await;
+    let listed = admin(
+        app,
+        &api,
+        Method::GET,
+        "/clients?search=true&clientId=app-&max=1000",
+        None,
+    )
+    .await;
     assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
     let listed = listed.json();
-    let ids: Vec<&str> = listed.as_array().unwrap().iter().map(|c| c["clientId"].as_str().unwrap()).collect();
+    let ids: Vec<&str> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["clientId"].as_str().unwrap())
+        .collect();
     assert_eq!(ids, ["app-bikes"]);
     let gone = admin(app, &api, Method::DELETE, &format!("/clients/{uuid}"), None).await;
     assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
@@ -1513,11 +2025,20 @@ async fn the_app_wave_converges_an_app_client() {
 async fn create_client(app: &Router, token: &str, body: Value, want: &Value) -> String {
     let client_id = want["clientId"].as_str().unwrap().to_owned();
     let made = admin(app, token, Method::POST, "/clients", Some(body)).await;
-    assert_eq!(made.status, StatusCode::CREATED, "{client_id}: {}", made.text);
+    assert_eq!(
+        made.status,
+        StatusCode::CREATED,
+        "{client_id}: {}",
+        made.text
+    );
     let held = find_client(app, token, &client_id)
         .await
         .unwrap_or_else(|| panic!("{client_id} is found"));
-    assert_eq!(drift(want, &held), Vec::<String>::new(), "{client_id}: {held}");
+    assert_eq!(
+        drift(want, &held),
+        Vec::<String>::new(),
+        "{client_id}: {held}"
+    );
     id_of(&held)
 }
 
@@ -1562,34 +2083,111 @@ async fn the_client_waves_converge_as_portal_api() {
     // :867 converge_scopes: `basic` the only default scope, no optional one, and `basic` is in
     // the realm's list for the run that has to put it back.
     let path = format!("/clients/{uuid}");
-    let default = admin(app, &api, Method::GET, &format!("{path}/default-client-scopes"), None).await;
+    let default = admin(
+        app,
+        &api,
+        Method::GET,
+        &format!("{path}/default-client-scopes"),
+        None,
+    )
+    .await;
     assert_eq!(default.status, StatusCode::OK, "{}", default.text);
     assert_eq!(scope_names(&default.json()), ["basic"]);
-    let optional = admin(app, &api, Method::GET, &format!("{path}/optional-client-scopes"), None).await.json();
+    let optional = admin(
+        app,
+        &api,
+        Method::GET,
+        &format!("{path}/optional-client-scopes"),
+        None,
+    )
+    .await
+    .json();
     assert_eq!(scope_names(&optional), Vec::<String>::new());
-    let realm_scopes = admin(app, &api, Method::GET, "/client-scopes", None).await.json();
+    let realm_scopes = admin(app, &api, Method::GET, "/client-scopes", None)
+        .await
+        .json();
     let basic = realm_scopes
         .as_array()
         .unwrap()
         .iter()
         .find(|s| s["name"] == "basic")
         .map(id_of)
-        .unwrap_or_else(|| panic!("workload_clients.rs:893 needs a realm scope basic: {realm_scopes}"));
-    let gone = admin(app, &api, Method::DELETE, &format!("{path}/default-client-scopes/{basic}"), None).await;
+        .unwrap_or_else(|| {
+            panic!("workload_clients.rs:893 needs a realm scope basic: {realm_scopes}")
+        });
+    let gone = admin(
+        app,
+        &api,
+        Method::DELETE,
+        &format!("{path}/default-client-scopes/{basic}"),
+        None,
+    )
+    .await;
     assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
-    let back = admin(app, &api, Method::PUT, &format!("{path}/default-client-scopes/{basic}"), None).await;
+    let back = admin(
+        app,
+        &api,
+        Method::PUT,
+        &format!("{path}/default-client-scopes/{basic}"),
+        None,
+    )
+    .await;
     assert_eq!(back.status, StatusCode::NO_CONTENT, "{}", back.text);
-    assert_eq!(scope_names(&admin(app, &api, Method::GET, &format!("{path}/default-client-scopes"), None).await.json()), ["basic"]);
+    assert_eq!(
+        scope_names(
+            &admin(
+                app,
+                &api,
+                Method::GET,
+                &format!("{path}/default-client-scopes"),
+                None
+            )
+            .await
+            .json()
+        ),
+        ["basic"]
+    );
     // The account's audience mappers (owner "the account").
-    assert!(converge_mappers(app, &api, &uuid, &app_mappers(&[SLUG])[..1]).await.len() == 1);
+    assert!(
+        converge_mappers(app, &api, &uuid, &app_mappers(&[SLUG])[..1])
+            .await
+            .len()
+            == 1
+    );
     // :839 the service-account user, whose tokens end with the client.
-    let user = admin(app, &api, Method::GET, &format!("{path}/service-account-user"), None).await;
+    let user = admin(
+        app,
+        &api,
+        Method::GET,
+        &format!("{path}/service-account-user"),
+        None,
+    )
+    .await;
     assert_eq!(user.status, StatusCode::OK, "{}", user.text);
-    assert_eq!(user.json()["username"], json!("service-account-helsinki-counter-sync"), "{}", user.text);
+    assert_eq!(
+        user.json()["username"],
+        json!("service-account-helsinki-counter-sync"),
+        "{}",
+        user.text
+    );
     // :744 the whole list; :809 delete.
-    let listed = admin(app, &api, Method::GET, "/clients?briefRepresentation=false&max=2000", None).await;
+    let listed = admin(
+        app,
+        &api,
+        Method::GET,
+        "/clients?briefRepresentation=false&max=2000",
+        None,
+    )
+    .await;
     assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
-    assert!(listed.json().as_array().unwrap().iter().any(|c| c["clientId"] == "helsinki-counter-sync"));
+    assert!(
+        listed
+            .json()
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["clientId"] == "helsinki-counter-sync")
+    );
     let gone = admin(app, &api, Method::DELETE, &path, None).await;
     assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
 
@@ -1613,18 +2211,57 @@ async fn the_client_waves_converge_as_portal_api() {
     creation["defaultClientScopes"] = json!(["basic"]);
     creation["optionalClientScopes"] = json!([]);
     let uuid = create_client(app, &api, creation, &external).await;
-    let issued = admin(app, &api, Method::POST, &format!("/clients/{uuid}/client-secret"), None).await;
+    let issued = admin(
+        app,
+        &api,
+        Method::POST,
+        &format!("/clients/{uuid}/client-secret"),
+        None,
+    )
+    .await;
     assert_eq!(issued.status, StatusCode::OK, "{}", issued.text);
-    let secret = issued.json()["value"].as_str().expect("account_secret.rs:195 reads value").to_owned();
+    let secret = issued.json()["value"]
+        .as_str()
+        .expect("account_secret.rs:195 reads value")
+        .to_owned();
     let token = service_token(app, "helsinki-reporter", &secret).await;
     let claims = payload(&token);
     assert_eq!(claims["azp"], json!("helsinki-reporter"), "{claims}");
-    let user = admin(app, &api, Method::GET, &format!("/clients/{uuid}/service-account-user"), None).await.json();
-    assert_eq!(claims["sub"], user["id"], "account_secret.rs:220 revokes this subject: {claims}");
+    let user = admin(
+        app,
+        &api,
+        Method::GET,
+        &format!("/clients/{uuid}/service-account-user"),
+        None,
+    )
+    .await
+    .json();
+    assert_eq!(
+        claims["sub"], user["id"],
+        "account_secret.rs:220 revokes this subject: {claims}"
+    );
     // A second issue replaces the first.
-    let again = admin(app, &api, Method::POST, &format!("/clients/{uuid}/client-secret"), None).await.json();
+    let again = admin(
+        app,
+        &api,
+        Method::POST,
+        &format!("/clients/{uuid}/client-secret"),
+        None,
+    )
+    .await
+    .json();
     assert_ne!(again["value"], json!(secret));
-    let stale = post_form(app, TOKEN, &[("grant_type", "client_credentials"), ("client_id", "helsinki-reporter"), ("client_secret", &secret)], None).await;
+    let stale = post_form(
+        app,
+        TOKEN,
+        &[
+            ("grant_type", "client_credentials"),
+            ("client_id", "helsinki-reporter"),
+            ("client_secret", &secret),
+        ],
+        None,
+    )
+    .await;
     assert_eq!(stale.status, StatusCode::UNAUTHORIZED, "{}", stale.text);
 
     // mcp_clients.rs:42 a connector's public client with consent, :264 its mappers.
@@ -1650,11 +2287,29 @@ async fn the_client_waves_converge_as_portal_api() {
     let uuid = create_client(app, &api, mcp.clone(), &mcp).await;
     let wanted = app_mappers(&["mcp-helsinki-counters"]);
     converge_mappers(app, &api, &uuid, &wanted).await;
-    assert_eq!(converge_mappers(app, &api, &uuid, &wanted).await, Vec::<String>::new());
+    assert_eq!(
+        converge_mappers(app, &api, &uuid, &wanted).await,
+        Vec::<String>::new()
+    );
     drop_optional_scopes(app, &api, &uuid).await;
-    let put = admin(app, &api, Method::PUT, &format!("/clients/{uuid}"), Some(mcp.clone())).await;
+    let put = admin(
+        app,
+        &api,
+        Method::PUT,
+        &format!("/clients/{uuid}"),
+        Some(mcp.clone()),
+    )
+    .await;
     assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
-    assert_eq!(drift(&mcp, &find_client(app, &api, "mcp-helsinki-counters").await.unwrap()), Vec::<String>::new());
+    assert_eq!(
+        drift(
+            &mcp,
+            &find_client(app, &api, "mcp-helsinki-counters")
+                .await
+                .unwrap()
+        ),
+        Vec::<String>::new()
+    );
 
     // mqtt_brokers.rs:897 a broker's bearer-only client.
     let mqtt = json!({
@@ -1672,62 +2327,223 @@ async fn the_client_waves_converge_as_portal_api() {
 
     // hub_scopes.rs:172 create, :208 update, :241 delete an Endpoint's scope; :271 the hub's
     // links read.
-    let made = admin(app, &api, Method::POST, "/client-scopes", Some(hub_scope(SLUG))).await;
+    let made = admin(
+        app,
+        &api,
+        Method::POST,
+        "/client-scopes",
+        Some(hub_scope(SLUG)),
+    )
+    .await;
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
-    let listed = admin(app, &api, Method::GET, "/client-scopes", None).await.json();
-    let held = listed.as_array().unwrap().iter().find(|s| s["name"] == format!("endpoint:{SLUG}")).unwrap().clone();
+    let listed = admin(app, &api, Method::GET, "/client-scopes", None)
+        .await
+        .json();
+    let held = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == format!("endpoint:{SLUG}"))
+        .unwrap()
+        .clone();
     let scope_id = id_of(&held);
-    assert_eq!(drift(&hub_scope(SLUG), &held), Vec::<String>::new(), "{held}");
+    assert_eq!(
+        drift(&hub_scope(SLUG), &held),
+        Vec::<String>::new(),
+        "{held}"
+    );
     let mut renamed = hub_scope(SLUG);
     renamed["attributes"]["consent.screen.text"] = json!("Endpoint helsinki/bike-counters");
-    let put = admin(app, &api, Method::PUT, &format!("/client-scopes/{scope_id}"), Some(renamed.clone())).await;
+    let put = admin(
+        app,
+        &api,
+        Method::PUT,
+        &format!("/client-scopes/{scope_id}"),
+        Some(renamed.clone()),
+    )
+    .await;
     assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
-    let held = admin(app, &api, Method::GET, &format!("/client-scopes/{scope_id}"), None).await.json();
+    let held = admin(
+        app,
+        &api,
+        Method::GET,
+        &format!("/client-scopes/{scope_id}"),
+        None,
+    )
+    .await
+    .json();
     assert_eq!(drift(&renamed, &held), Vec::<String>::new(), "{held}");
     let hub = find_client(app, &api, "mcp-hub").await.expect("mcp-hub");
     for kind in ["default", "optional"] {
-        let links = admin(app, &api, Method::GET, &format!("/clients/{}/{kind}-client-scopes", id_of(&hub)), None).await;
+        let links = admin(
+            app,
+            &api,
+            Method::GET,
+            &format!("/clients/{}/{kind}-client-scopes", id_of(&hub)),
+            None,
+        )
+        .await;
         assert_eq!(links.status, StatusCode::OK, "{kind}: {}", links.text);
     }
 
     // What portal-api may not do: a scope or client of the realm's own, a mapper on a scope,
     // a scope name in use, the hub's links, and people.
-    let roles_scope = listed.as_array().unwrap().iter().find(|s| s["name"] == "connector").unwrap().clone();
+    let roles_scope = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "connector")
+        .unwrap()
+        .clone();
     let mut taken = roles_scope.clone();
     taken["attributes"] = json!({ MANAGED.0: MANAGED.1, "include.in.token.scope": "true" });
-    let put = admin(app, &api, Method::PUT, &format!("/client-scopes/{}", id_of(&roles_scope)), Some(taken)).await;
-    assert!(put.status.is_client_error(), "portal-api rewrites the connector scope: {}", put.status);
-    let del = admin(app, &api, Method::DELETE, &format!("/client-scopes/{}", id_of(&roles_scope)), None).await;
-    assert!(del.status.is_client_error(), "portal-api deletes the connector scope: {}", del.status);
+    let put = admin(
+        app,
+        &api,
+        Method::PUT,
+        &format!("/client-scopes/{}", id_of(&roles_scope)),
+        Some(taken),
+    )
+    .await;
+    assert!(
+        put.status.is_client_error(),
+        "portal-api rewrites the connector scope: {}",
+        put.status
+    );
+    let del = admin(
+        app,
+        &api,
+        Method::DELETE,
+        &format!("/client-scopes/{}", id_of(&roles_scope)),
+        None,
+    )
+    .await;
+    assert!(
+        del.status.is_client_error(),
+        "portal-api deletes the connector scope: {}",
+        del.status
+    );
     let mut squat = hub_scope(SLUG);
     squat["name"] = json!("connector");
     let made = admin(app, &api, Method::POST, "/client-scopes", Some(squat)).await;
-    assert_eq!(made.status, StatusCode::CONFLICT, "a marked scope named connector: {}", made.text);
+    assert_eq!(
+        made.status,
+        StatusCode::CONFLICT,
+        "a marked scope named connector: {}",
+        made.text
+    );
     let mut claims = hub_scope("mappermappermappermapper23");
     claims["protocolMappers"] = json!([{
         "name": "admin", "protocol": "openid-connect", "protocolMapper": "oidc-hardcoded-claim-mapper",
         "config": { "claim.name": "realm_access.roles", "claim.value": "realm-admin", "access.token.claim": "true" },
     }]);
     let made = admin(app, &api, Method::POST, "/client-scopes", Some(claims)).await;
-    assert!(made.status.is_client_error(), "portal-api posts a scope with a mapper: {}", made.status);
+    assert!(
+        made.status.is_client_error(),
+        "portal-api posts a scope with a mapper: {}",
+        made.status
+    );
     let mut unmarked = renamed.clone();
-    unmarked["attributes"].as_object_mut().unwrap().remove(MANAGED.0);
-    let put = admin(app, &api, Method::PUT, &format!("/client-scopes/{scope_id}"), Some(unmarked)).await;
-    assert!(put.status.is_client_error(), "portal-api drops the mark: {}", put.status);
-    let link = admin(app, &api, Method::PUT, &format!("/clients/{}/optional-client-scopes/{scope_id}", id_of(&hub)), None).await;
-    assert!(link.status.is_client_error(), "portal-api links a scope to the hub: {}", link.status);
-    let portal = find_client(app, &api, "portal-api").await.expect("portal-api reads itself");
-    let link = admin(app, &api, Method::PUT, &format!("/clients/{}/optional-client-scopes/{scope_id}", id_of(&portal)), None).await;
-    assert!(link.status.is_client_error(), "portal-api links a scope to itself: {}", link.status);
-    let reconciler_client = find_client(app, &api, "portal-reconciler").await.expect("view-clients lists it");
+    unmarked["attributes"]
+        .as_object_mut()
+        .unwrap()
+        .remove(MANAGED.0);
+    let put = admin(
+        app,
+        &api,
+        Method::PUT,
+        &format!("/client-scopes/{scope_id}"),
+        Some(unmarked),
+    )
+    .await;
+    assert!(
+        put.status.is_client_error(),
+        "portal-api drops the mark: {}",
+        put.status
+    );
+    let link = admin(
+        app,
+        &api,
+        Method::PUT,
+        &format!("/clients/{}/optional-client-scopes/{scope_id}", id_of(&hub)),
+        None,
+    )
+    .await;
+    assert!(
+        link.status.is_client_error(),
+        "portal-api links a scope to the hub: {}",
+        link.status
+    );
+    let portal = find_client(app, &api, "portal-api")
+        .await
+        .expect("portal-api reads itself");
+    let link = admin(
+        app,
+        &api,
+        Method::PUT,
+        &format!(
+            "/clients/{}/optional-client-scopes/{scope_id}",
+            id_of(&portal)
+        ),
+        None,
+    )
+    .await;
+    assert!(
+        link.status.is_client_error(),
+        "portal-api links a scope to itself: {}",
+        link.status
+    );
+    let reconciler_client = find_client(app, &api, "portal-reconciler")
+        .await
+        .expect("view-clients lists it");
     let mut widened = reconciler_client.clone();
     widened["redirectUris"] = json!(["https://evil.example/*"]);
-    let put = admin(app, &api, Method::PUT, &format!("/clients/{}", id_of(&reconciler_client)), Some(widened)).await;
-    assert!(put.status.is_client_error(), "portal-api rewrites portal-reconciler: {}", put.status);
-    let made = admin(app, &api, Method::POST, "/clients", Some(json!({ "clientId": "unmarked" , "attributes": { MANAGED.0: "apply" } }))).await;
-    assert!(made.status.is_client_error(), "portal-api creates an unmarked client: {}", made.status);
-    let made = admin(app, &api, Method::POST, "/users", Some(json!({ "username": "x@hel.example", "enabled": true }))).await;
-    assert!(made.status.is_client_error(), "portal-api creates a person: {}", made.status);
-    let gone = admin(app, &api, Method::DELETE, &format!("/client-scopes/{scope_id}"), None).await;
+    let put = admin(
+        app,
+        &api,
+        Method::PUT,
+        &format!("/clients/{}", id_of(&reconciler_client)),
+        Some(widened),
+    )
+    .await;
+    assert!(
+        put.status.is_client_error(),
+        "portal-api rewrites portal-reconciler: {}",
+        put.status
+    );
+    let made = admin(
+        app,
+        &api,
+        Method::POST,
+        "/clients",
+        Some(json!({ "clientId": "unmarked" , "attributes": { MANAGED.0: "apply" } })),
+    )
+    .await;
+    assert!(
+        made.status.is_client_error(),
+        "portal-api creates an unmarked client: {}",
+        made.status
+    );
+    let made = admin(
+        app,
+        &api,
+        Method::POST,
+        "/users",
+        Some(json!({ "username": "x@hel.example", "enabled": true })),
+    )
+    .await;
+    assert!(
+        made.status.is_client_error(),
+        "portal-api creates a person: {}",
+        made.status
+    );
+    let gone = admin(
+        app,
+        &api,
+        Method::DELETE,
+        &format!("/client-scopes/{scope_id}"),
+        None,
+    )
+    .await;
     assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
 }
