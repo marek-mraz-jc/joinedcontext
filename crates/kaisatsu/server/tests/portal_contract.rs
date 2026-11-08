@@ -1502,3 +1502,232 @@ async fn the_app_wave_converges_an_app_client() {
     assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
     assert!(find_client(app, &api, "app-bikes").await.is_none());
 }
+
+// ------------------------------------------------------------------------------------------
+// Workload, account, MCP and MQTT clients, hub scopes, as `portal-api`
+// (reconciler/workload_clients.rs, api/account_secret.rs, mcp_clients.rs, mqtt_brokers.rs,
+// hub_scopes.rs)
+// ------------------------------------------------------------------------------------------
+
+/// POST /clients, find it back and check the next run finds no drift; answers its uuid.
+async fn create_client(app: &Router, token: &str, body: Value, want: &Value) -> String {
+    let client_id = want["clientId"].as_str().unwrap().to_owned();
+    let made = admin(app, token, Method::POST, "/clients", Some(body)).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{client_id}: {}", made.text);
+    let held = find_client(app, token, &client_id)
+        .await
+        .unwrap_or_else(|| panic!("{client_id} is found"));
+    assert_eq!(drift(want, &held), Vec::<String>::new(), "{client_id}: {held}");
+    id_of(&held)
+}
+
+fn scope_names(listed: &Value) -> Vec<String> {
+    let mut names: Vec<String> = listed
+        .as_array()
+        .unwrap_or_else(|| panic!("{listed}"))
+        .iter()
+        .map(|s| s["name"].as_str().unwrap().to_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn the_client_waves_converge_as_portal_api() {
+    let realm = realm().await;
+    let app = &realm.app;
+    let api = portal_api(app).await;
+
+    // workload_clients.rs:98 a Kubernetes-bound account, created by :60 `creation`.
+    let workload = json!({
+        "clientId": "helsinki-counter-sync",
+        "name": "ServiceAccount helsinki/counter-sync",
+        "protocol": "openid-connect",
+        "enabled": true, "publicClient": false, "bearerOnly": false,
+        "standardFlowEnabled": false, "implicitFlowEnabled": false,
+        "directAccessGrantsEnabled": false, "serviceAccountsEnabled": true,
+        "clientAuthenticatorType": "federated-jwt",
+        "attributes": {
+            "jwt.credential.issuer": "kubernetes",
+            "jwt.credential.sub": "system:serviceaccount:helsinki:counter-sync",
+            "oauth2.device.authorization.grant.enabled": "false",
+            MANAGED.0: MANAGED.1,
+            "joinedcontext.serviceaccount": "helsinki/counter-sync",
+        },
+    });
+    let mut creation = workload.clone();
+    creation["defaultClientScopes"] = json!(["basic"]);
+    creation["optionalClientScopes"] = json!([]);
+    let uuid = create_client(app, &api, creation, &workload).await;
+    // :867 converge_scopes: `basic` the only default scope, no optional one, and `basic` is in
+    // the realm's list for the run that has to put it back.
+    let path = format!("/clients/{uuid}");
+    let default = admin(app, &api, Method::GET, &format!("{path}/default-client-scopes"), None).await;
+    assert_eq!(default.status, StatusCode::OK, "{}", default.text);
+    assert_eq!(scope_names(&default.json()), ["basic"]);
+    let optional = admin(app, &api, Method::GET, &format!("{path}/optional-client-scopes"), None).await.json();
+    assert_eq!(scope_names(&optional), Vec::<String>::new());
+    let realm_scopes = admin(app, &api, Method::GET, "/client-scopes", None).await.json();
+    let basic = realm_scopes
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "basic")
+        .map(id_of)
+        .unwrap_or_else(|| panic!("workload_clients.rs:893 needs a realm scope basic: {realm_scopes}"));
+    let gone = admin(app, &api, Method::DELETE, &format!("{path}/default-client-scopes/{basic}"), None).await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+    let back = admin(app, &api, Method::PUT, &format!("{path}/default-client-scopes/{basic}"), None).await;
+    assert_eq!(back.status, StatusCode::NO_CONTENT, "{}", back.text);
+    assert_eq!(scope_names(&admin(app, &api, Method::GET, &format!("{path}/default-client-scopes"), None).await.json()), ["basic"]);
+    // The account's audience mappers (owner "the account").
+    assert!(converge_mappers(app, &api, &uuid, &app_mappers(&[SLUG])[..1]).await.len() == 1);
+    // :839 the service-account user, whose tokens end with the client.
+    let user = admin(app, &api, Method::GET, &format!("{path}/service-account-user"), None).await;
+    assert_eq!(user.status, StatusCode::OK, "{}", user.text);
+    assert_eq!(user.json()["username"], json!("service-account-helsinki-counter-sync"), "{}", user.text);
+    // :744 the whole list; :809 delete.
+    let listed = admin(app, &api, Method::GET, "/clients?briefRepresentation=false&max=2000", None).await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
+    assert!(listed.json().as_array().unwrap().iter().any(|c| c["clientId"] == "helsinki-counter-sync"));
+    let gone = admin(app, &api, Method::DELETE, &path, None).await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+
+    // workload_clients.rs:161 an account outside the cluster, and account_secret.rs:192 its
+    // secret issued once, which then signs it in.
+    let external = json!({
+        "clientId": "helsinki-reporter",
+        "name": "ServiceAccount helsinki/reporter",
+        "protocol": "openid-connect",
+        "enabled": true, "publicClient": false, "bearerOnly": false,
+        "standardFlowEnabled": false, "implicitFlowEnabled": false,
+        "directAccessGrantsEnabled": false, "serviceAccountsEnabled": true,
+        "clientAuthenticatorType": "client-secret",
+        "attributes": {
+            "oauth2.device.authorization.grant.enabled": "false",
+            MANAGED.0: MANAGED.1,
+            "joinedcontext.serviceaccount": "helsinki/reporter",
+        },
+    });
+    let mut creation = external.clone();
+    creation["defaultClientScopes"] = json!(["basic"]);
+    creation["optionalClientScopes"] = json!([]);
+    let uuid = create_client(app, &api, creation, &external).await;
+    let issued = admin(app, &api, Method::POST, &format!("/clients/{uuid}/client-secret"), None).await;
+    assert_eq!(issued.status, StatusCode::OK, "{}", issued.text);
+    let secret = issued.json()["value"].as_str().expect("account_secret.rs:195 reads value").to_owned();
+    let token = service_token(app, "helsinki-reporter", &secret).await;
+    let claims = payload(&token);
+    assert_eq!(claims["azp"], json!("helsinki-reporter"), "{claims}");
+    let user = admin(app, &api, Method::GET, &format!("/clients/{uuid}/service-account-user"), None).await.json();
+    assert_eq!(claims["sub"], user["id"], "account_secret.rs:220 revokes this subject: {claims}");
+    // A second issue replaces the first.
+    let again = admin(app, &api, Method::POST, &format!("/clients/{uuid}/client-secret"), None).await.json();
+    assert_ne!(again["value"], json!(secret));
+    let stale = post_form(app, TOKEN, &[("grant_type", "client_credentials"), ("client_id", "helsinki-reporter"), ("client_secret", &secret)], None).await;
+    assert_eq!(stale.status, StatusCode::UNAUTHORIZED, "{}", stale.text);
+
+    // mcp_clients.rs:42 a connector's public client with consent, :264 its mappers.
+    let mcp = json!({
+        "clientId": "mcp-helsinki-counters",
+        "name": "MCP server helsinki/counters",
+        "protocol": "openid-connect",
+        "enabled": true, "publicClient": true, "bearerOnly": false, "consentRequired": true,
+        "standardFlowEnabled": true, "implicitFlowEnabled": false,
+        "directAccessGrantsEnabled": false, "serviceAccountsEnabled": false,
+        "redirectUris": [
+            "http://localhost/callback", "http://127.0.0.1/callback",
+            "https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback",
+            "https://chatgpt.com/connector_platform_oauth_redirect",
+            "https://platform.openai.com/chatkit-oauth-callback",
+        ],
+        "attributes": {
+            "pkce.code.challenge.method": "S256",
+            MANAGED.0: MANAGED.1,
+            "joinedcontext.mcpserver": "helsinki/counters",
+        },
+    });
+    let uuid = create_client(app, &api, mcp.clone(), &mcp).await;
+    let wanted = app_mappers(&["mcp-helsinki-counters"]);
+    converge_mappers(app, &api, &uuid, &wanted).await;
+    assert_eq!(converge_mappers(app, &api, &uuid, &wanted).await, Vec::<String>::new());
+    drop_optional_scopes(app, &api, &uuid).await;
+    let put = admin(app, &api, Method::PUT, &format!("/clients/{uuid}"), Some(mcp.clone())).await;
+    assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
+    assert_eq!(drift(&mcp, &find_client(app, &api, "mcp-helsinki-counters").await.unwrap()), Vec::<String>::new());
+
+    // mqtt_brokers.rs:897 a broker's bearer-only client.
+    let mqtt = json!({
+        "clientId": "helsinki-sensors-mqtt",
+        "name": "MQTT broker helsinki/sensors",
+        "protocol": "openid-connect",
+        "enabled": true, "publicClient": false, "bearerOnly": true,
+        "standardFlowEnabled": false, "implicitFlowEnabled": false,
+        "directAccessGrantsEnabled": false, "serviceAccountsEnabled": false,
+        "attributes": { MANAGED.0: MANAGED.1, "joinedcontext.mqttbroker": "helsinki/sensors" },
+    });
+    let uuid = create_client(app, &api, mqtt.clone(), &mqtt).await;
+    let gone = admin(app, &api, Method::DELETE, &format!("/clients/{uuid}"), None).await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+
+    // hub_scopes.rs:172 create, :208 update, :241 delete an Endpoint's scope; :271 the hub's
+    // links read.
+    let made = admin(app, &api, Method::POST, "/client-scopes", Some(hub_scope(SLUG))).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    let listed = admin(app, &api, Method::GET, "/client-scopes", None).await.json();
+    let held = listed.as_array().unwrap().iter().find(|s| s["name"] == format!("endpoint:{SLUG}")).unwrap().clone();
+    let scope_id = id_of(&held);
+    assert_eq!(drift(&hub_scope(SLUG), &held), Vec::<String>::new(), "{held}");
+    let mut renamed = hub_scope(SLUG);
+    renamed["attributes"]["consent.screen.text"] = json!("Endpoint helsinki/bike-counters");
+    let put = admin(app, &api, Method::PUT, &format!("/client-scopes/{scope_id}"), Some(renamed.clone())).await;
+    assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
+    let held = admin(app, &api, Method::GET, &format!("/client-scopes/{scope_id}"), None).await.json();
+    assert_eq!(drift(&renamed, &held), Vec::<String>::new(), "{held}");
+    let hub = find_client(app, &api, "mcp-hub").await.expect("mcp-hub");
+    for kind in ["default", "optional"] {
+        let links = admin(app, &api, Method::GET, &format!("/clients/{}/{kind}-client-scopes", id_of(&hub)), None).await;
+        assert_eq!(links.status, StatusCode::OK, "{kind}: {}", links.text);
+    }
+
+    // What portal-api may not do: a scope or client of the realm's own, a mapper on a scope,
+    // a scope name in use, the hub's links, and people.
+    let roles_scope = listed.as_array().unwrap().iter().find(|s| s["name"] == "connector").unwrap().clone();
+    let mut taken = roles_scope.clone();
+    taken["attributes"] = json!({ MANAGED.0: MANAGED.1, "include.in.token.scope": "true" });
+    let put = admin(app, &api, Method::PUT, &format!("/client-scopes/{}", id_of(&roles_scope)), Some(taken)).await;
+    assert!(put.status.is_client_error(), "portal-api rewrites the connector scope: {}", put.status);
+    let del = admin(app, &api, Method::DELETE, &format!("/client-scopes/{}", id_of(&roles_scope)), None).await;
+    assert!(del.status.is_client_error(), "portal-api deletes the connector scope: {}", del.status);
+    let mut squat = hub_scope(SLUG);
+    squat["name"] = json!("connector");
+    let made = admin(app, &api, Method::POST, "/client-scopes", Some(squat)).await;
+    assert_eq!(made.status, StatusCode::CONFLICT, "a marked scope named connector: {}", made.text);
+    let mut claims = hub_scope("mappermappermappermapper23");
+    claims["protocolMappers"] = json!([{
+        "name": "admin", "protocol": "openid-connect", "protocolMapper": "oidc-hardcoded-claim-mapper",
+        "config": { "claim.name": "realm_access.roles", "claim.value": "realm-admin", "access.token.claim": "true" },
+    }]);
+    let made = admin(app, &api, Method::POST, "/client-scopes", Some(claims)).await;
+    assert!(made.status.is_client_error(), "portal-api posts a scope with a mapper: {}", made.status);
+    let mut unmarked = renamed.clone();
+    unmarked["attributes"].as_object_mut().unwrap().remove(MANAGED.0);
+    let put = admin(app, &api, Method::PUT, &format!("/client-scopes/{scope_id}"), Some(unmarked)).await;
+    assert!(put.status.is_client_error(), "portal-api drops the mark: {}", put.status);
+    let link = admin(app, &api, Method::PUT, &format!("/clients/{}/optional-client-scopes/{scope_id}", id_of(&hub)), None).await;
+    assert!(link.status.is_client_error(), "portal-api links a scope to the hub: {}", link.status);
+    let portal = find_client(app, &api, "portal-api").await.expect("portal-api reads itself");
+    let link = admin(app, &api, Method::PUT, &format!("/clients/{}/optional-client-scopes/{scope_id}", id_of(&portal)), None).await;
+    assert!(link.status.is_client_error(), "portal-api links a scope to itself: {}", link.status);
+    let reconciler_client = find_client(app, &api, "portal-reconciler").await.expect("view-clients lists it");
+    let mut widened = reconciler_client.clone();
+    widened["redirectUris"] = json!(["https://evil.example/*"]);
+    let put = admin(app, &api, Method::PUT, &format!("/clients/{}", id_of(&reconciler_client)), Some(widened)).await;
+    assert!(put.status.is_client_error(), "portal-api rewrites portal-reconciler: {}", put.status);
+    let made = admin(app, &api, Method::POST, "/clients", Some(json!({ "clientId": "unmarked" , "attributes": { MANAGED.0: "apply" } }))).await;
+    assert!(made.status.is_client_error(), "portal-api creates an unmarked client: {}", made.status);
+    let made = admin(app, &api, Method::POST, "/users", Some(json!({ "username": "x@hel.example", "enabled": true }))).await;
+    assert!(made.status.is_client_error(), "portal-api creates a person: {}", made.status);
+    let gone = admin(app, &api, Method::DELETE, &format!("/client-scopes/{scope_id}"), None).await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+}

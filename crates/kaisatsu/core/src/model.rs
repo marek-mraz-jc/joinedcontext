@@ -471,6 +471,21 @@ impl Default for ProtocolMapperRepresentation {
     }
 }
 
+/// The client scopes every realm has without storing them (Keycloak creates them with a realm):
+/// a client may name them, and the admin API lists the ones the realm does not store.
+pub const BUILTIN_CLIENT_SCOPES: [&str; 10] = [
+    "basic",
+    "email",
+    "profile",
+    "roles",
+    "web-origins",
+    "address",
+    "phone",
+    "offline_access",
+    "microprofile-jwt",
+    "acr",
+];
+
 /// Client Scope (`ClientScopeRepresentation`, W1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", default)]

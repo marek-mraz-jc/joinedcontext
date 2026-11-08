@@ -2885,7 +2885,20 @@ async fn compat_list_client_scopes(
             managed_by: None,
         },
     ))?;
-    let scopes = state.oidc.store.list_client_scopes(&realm).await?;
+    let mut scopes = state.oidc.store.list_client_scopes(&realm).await?;
+    // The built-in scopes the realm does not store, as a client's scope list shows them
+    // (`resolve_scope_objects`): workload_clients.rs finds `basic` here to link it back.
+    let unstored: Vec<ClientScopeRepresentation> = BUILTIN_CLIENT_SCOPES
+        .into_iter()
+        .filter(|name| !scopes.iter().any(|s| s.name == *name))
+        .map(|name| ClientScopeRepresentation {
+            id: name.to_owned(),
+            realm_id: realm.clone(),
+            name: name.to_owned(),
+            ..Default::default()
+        })
+        .collect();
+    scopes.extend(unstored);
     Ok(Json(scopes))
 }
 
