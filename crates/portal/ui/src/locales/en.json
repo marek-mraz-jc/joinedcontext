@@ -11678,7 +11678,7 @@
   "repositories": {
     "title": "Repositories",
     "intro": "The project's repositories on the forge: its configuration, its own and its applications'.",
-    "loading": "Loading the repository",
+    "loading": "Loading from the forge",
     "filter": {
       "label": "Filter by name",
       "help": "Part of a name or description, for example config or dash."
@@ -11705,7 +11705,9 @@
       "label": "Pages",
       "previous": "Previous",
       "next": "Next",
-      "position": "{from}–{to} of {total}"
+      "position": "{from}–{to} of {total}",
+      "firstPage": "This is the first page.",
+      "lastPage": "This is the last page."
     },
     "back": "All repositories",
     "page": {
@@ -11736,7 +11738,8 @@
       "truncated": "The folder holds more entries than are shown; open a subfolder to see the rest.",
       "history": "History of this file",
       "emptyRepository": "This repository has no commits yet",
-      "emptyRepositoryHint": "Files appear once the first change is approved and merged."
+      "emptyRepositoryHint": "Files appear once the first change is approved and merged.",
+      "emptyFolderHint": "A folder holds files once a change adds them."
     },
     "file": {
       "tooLarge": "This file is too large to show",
@@ -11753,7 +11756,8 @@
       "sha": "Commit",
       "parent": "Parent",
       "files": "{count, plural, one {# file changed} other {# files changed}}",
-      "truncated": "This commit changes more than can be shown; the rest is left out."
+      "truncated": "This commit changes more than can be shown; the rest is left out.",
+      "emptyHint": "Commits appear once a change is merged into this branch."
     },
     "status": {
       "added": "Added",
@@ -11773,11 +11777,13 @@
       "title": "Branches",
       "empty": "No branches",
       "default": "Default",
-      "protected": "Protected"
+      "protected": "Protected",
+      "emptyHint": "A branch appears once a change is proposed, for example portal/edit-air."
     },
     "tags": {
       "title": "Tags",
-      "empty": "No tags"
+      "empty": "No tags",
+      "emptyHint": "A tag marks a release, for example v1.2.0."
     },
     "pulls": {
       "filter": {

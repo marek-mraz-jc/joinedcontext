@@ -946,8 +946,8 @@ impl GiteaClient {
             let pairs: Vec<String> = query
                 .iter()
                 .map(|(name, value)| {
-                    let value: String = url::form_urlencoded::byte_serialize(value.as_bytes())
-                        .collect();
+                    let value: String =
+                        url::form_urlencoded::byte_serialize(value.as_bytes()).collect();
                     format!("{name}={}", value.replace('+', "%20"))
                 })
                 .collect();

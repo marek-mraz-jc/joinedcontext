@@ -56,7 +56,9 @@ export function RepositoryPage({
   const navigate = useNavigate();
   const permissions = usePermissions(project);
   const repository = useRepositoryRead<Repository>(project, "jc_repository_get", { repository: name });
-  const administers = permissions.can("Project", "approve");
+  // Only once the document is read: `can` says yes while it is on its way, and what only an
+  // approver reads is not offered on a guess (the server answers 403 to anyone else).
+  const administers = Boolean(permissions.data) && permissions.can("Project", "approve");
   const tabs = REPOSITORY_TABS.filter((tab) => tab !== "settings" || administers);
   const tab = tabs.find((value) => value === search.tab) ?? "files";
   const back = (
@@ -69,7 +71,7 @@ export function RepositoryPage({
     return (
       <section aria-labelledby="repository-title" className="space-y-6">
         <PageHeader title={<span id="repository-title">{name}</span>} description={t("repositories.page.intro")} breadcrumb={back} />
-        <PageFailed error={repository.error} onRetry={() => void repository.refetch()} back={back} />
+        <PageFailed error={repository.error} onRetry={() => void repository.refetch()} />
       </section>
     );
   }

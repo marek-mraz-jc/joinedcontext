@@ -131,13 +131,13 @@ export function Pager({
   if (cursor === 0 && next === undefined) return null;
   return (
     <nav aria-label={t("repositories.pager.label")} className="flex flex-wrap items-center gap-2">
-      <Button size="sm" variant="secondary" disabled={cursor === 0} onClick={() => onCursor(Math.max(0, cursor - size))}>
+      <Button size="sm" variant="secondary" disabled={cursor === 0} disabledReason={t("repositories.pager.firstPage")} onClick={() => onCursor(Math.max(0, cursor - size))}>
         {t("repositories.pager.previous")}
       </Button>
       <span className="text-caption text-fg-muted">
         {t("repositories.pager.position", { from: cursor + 1, to: Math.min(cursor + size, total), total })}
       </span>
-      <Button size="sm" variant="secondary" disabled={next === undefined} onClick={() => next !== undefined && onCursor(next)}>
+      <Button size="sm" variant="secondary" disabled={next === undefined} disabledReason={t("repositories.pager.lastPage")} onClick={() => next !== undefined && onCursor(next)}>
         {t("repositories.pager.next")}
       </Button>
     </nav>

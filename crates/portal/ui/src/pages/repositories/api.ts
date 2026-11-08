@@ -104,7 +104,7 @@ export interface PullRow {
 export interface Pull extends PullRow {
   repository: string;
   body?: string;
-  changeId?: string;
+  change?: string;
   files: { path: string; status?: string }[];
   reviews: { author?: string; verdict: string; body?: string; commit?: string }[];
 }

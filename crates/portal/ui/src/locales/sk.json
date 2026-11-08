@@ -11678,7 +11678,7 @@
   "repositories": {
     "title": "Repozitáre",
     "intro": "Repozitáre projektu na forge: jeho konfigurácia, jeho vlastné a repozitáre jeho aplikácií.",
-    "loading": "Načítava sa repozitár",
+    "loading": "Načítava sa z forge",
     "filter": {
       "label": "Filtrovať podľa názvu",
       "help": "Časť názvu alebo popisu, napríklad config alebo dash."
@@ -11705,7 +11705,9 @@
       "label": "Stránky",
       "previous": "Predchádzajúca",
       "next": "Ďalšia",
-      "position": "{from}–{to} z {total}"
+      "position": "{from}–{to} z {total}",
+      "firstPage": "Toto je prvá stránka.",
+      "lastPage": "Toto je posledná stránka."
     },
     "back": "Všetky repozitáre",
     "page": {
@@ -11736,7 +11738,8 @@
       "truncated": "Priečinok obsahuje viac položiek, ako sa zobrazuje; otvorte podpriečinok a uvidíte zvyšok.",
       "history": "História tohto súboru",
       "emptyRepository": "Tento repozitár zatiaľ nemá commity",
-      "emptyRepositoryHint": "Súbory sa zobrazia, keď sa prvá zmena schváli a zlúči."
+      "emptyRepositoryHint": "Súbory sa zobrazia, keď sa prvá zmena schváli a zlúči.",
+      "emptyFolderHint": "Priečinok bude obsahovať súbory, keď ich zmena pridá."
     },
     "file": {
       "tooLarge": "Tento súbor je príliš veľký na zobrazenie",
@@ -11750,10 +11753,11 @@
       "noMessage": "(bez správy)",
       "by": "{author} · {date}",
       "all": "Všetky commity",
-      "sha": "Commit",
+      "sha": "Revízia",
       "parent": "Rodič",
       "files": "{count, plural, one {# zmenený súbor} few {# zmenené súbory} other {# zmenených súborov}}",
-      "truncated": "Tento commit mení viac, ako sa dá zobraziť; zvyšok je vynechaný."
+      "truncated": "Tento commit mení viac, ako sa dá zobraziť; zvyšok je vynechaný.",
+      "emptyHint": "Commity sa zobrazia, keď sa do tejto vetvy zlúči zmena."
     },
     "status": {
       "added": "Pridaný",
@@ -11773,11 +11777,13 @@
       "title": "Vetvy",
       "empty": "Žiadne vetvy",
       "default": "Predvolená",
-      "protected": "Chránená"
+      "protected": "Chránená",
+      "emptyHint": "Vetva sa zobrazí, keď sa navrhne zmena, napr. portal/edit-air."
     },
     "tags": {
       "title": "Značky",
-      "empty": "Žiadne značky"
+      "empty": "Žiadne značky",
+      "emptyHint": "Značka označuje vydanie, napr. v1.2.0."
     },
     "pulls": {
       "filter": {

@@ -53,8 +53,12 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// Four pipeline panels and six governance readings went in one tool each (`view`, `aspect`), and
 /// a connector lists only its segments' share; the assistant's own turn lists none of them
 /// (tools_registry.rs MCP_ONLY); 64,034 once `jc_kpi_compute` took `endpoint` (T-6484, 69 bytes): a
-/// KPI read from an Endpoint needed no rows carried through the client's model.
-const RATCHET: usize = 64_035;
+/// KPI read from an Endpoint needed no rows carried through the client's model; 70,633 with the
+/// ten repository reads over shako (jc-shako-ui): jc_repository_commits 1,004, _pulls 777,
+/// _tree 755, _file 748, _list 654, _commit 638, _pull 604, _get 490, _settings 490, _refs 457.
+/// Each bounds a repository name, a ref, a path or a sha by pattern, which is most of their bytes;
+/// the assistant's own turn lists none of them (tools_registry.rs).
+const RATCHET: usize = 70_634;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]

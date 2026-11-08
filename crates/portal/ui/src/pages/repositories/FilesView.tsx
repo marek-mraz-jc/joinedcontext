@@ -121,7 +121,7 @@ export function FolderView({
       ) : tree.isPending ? (
         <PageLoading label={t("repositories.loading")} />
       ) : tree.data.entries.length === 0 ? (
-        <EmptyState icon="git" title={t("repositories.files.emptyFolder")} />
+        <EmptyState icon="git" title={t("repositories.files.emptyFolder")} description={t("repositories.files.emptyFolderHint")} />
       ) : (
         <Table caption={t("repositories.files.caption", { path: path || repository.name })}>
           <TableHead>
@@ -231,7 +231,7 @@ export function FileView({
 export function FileLines({ text, label }: { text: string; label: string }): JSX.Element {
   const lines = text.replace(/\n$/, "").split("\n");
   return (
-    <div role="group" aria-label={label} tabIndex={0} className="focus-ring overflow-x-auto rounded-lg border border-border bg-surface">
+    <Card flush role="group" aria-label={label} tabIndex={0} className="focus-ring overflow-x-auto">
       <div className="table min-w-full py-1 font-mono text-caption">
         {lines.map((line, index) => (
           <div key={index} className="table-row">
@@ -242,6 +242,6 @@ export function FileLines({ text, label }: { text: string; label: string }): JSX
           </div>
         ))}
       </div>
-    </div>
+    </Card>
   );
 }

@@ -33,7 +33,7 @@ export function CommitsView({
     return <CommitDetail project={project} repository={repository.name} sha={search.commit} />;
   }
   if (repository.empty) {
-    return <EmptyState icon="git" title={t("repositories.files.emptyRepository")} />;
+    return <EmptyState icon="git" title={t("repositories.files.emptyRepository")} description={t("repositories.files.emptyRepositoryHint")} />;
   }
   return <CommitList project={project} repository={repository} gitRef={search.ref} path={search.path} />;
 }
@@ -70,9 +70,9 @@ export function CommitList({
           : t("repositories.commits.atRef", { ref: commits.data.ref ?? repository.defaultBranch })}
       </p>
       {commits.data.items.length === 0 ? (
-        <EmptyState icon="git" title={t("repositories.commits.empty")} />
+        <EmptyState icon="git" title={t("repositories.commits.empty")} description={t("repositories.commits.emptyHint")} />
       ) : (
-        <ol className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
+        <Card as="ul" flush className="divide-y divide-border overflow-hidden">
           {commits.data.items.map((commit) => (
             <li key={commit.sha} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 py-3">
               <div className="min-w-0">
@@ -91,7 +91,7 @@ export function CommitList({
               <code className="font-mono text-caption text-fg-muted">{shortSha(commit.sha)}</code>
             </li>
           ))}
-        </ol>
+        </Card>
       )}
       <Pager total={commits.data.total} cursor={cursor} size={PAGE} next={commits.data.nextCursor} onCursor={setCursor} />
     </div>
@@ -163,7 +163,7 @@ export function CommitDetail({ project, repository, sha }: { project: string; re
 export function FileDiff({ file }: { file: CommitFile }): JSX.Element {
   const { t } = useTranslation();
   return (
-    <section aria-label={file.path} className="overflow-hidden rounded-lg border border-border bg-surface">
+    <Card as="section" flush aria-label={file.path} className="overflow-hidden">
       <header className="flex flex-wrap items-center gap-2 border-b border-border bg-surface-subtle px-3 py-2">
         <StatusBadge status={file.status} />
         <span className="min-w-0 break-all font-mono text-caption font-semibold">{file.path}</span>
@@ -177,7 +177,7 @@ export function FileDiff({ file }: { file: CommitFile }): JSX.Element {
       ) : (
         <DiffView patch={file.patch} label={file.path} />
       )}
-    </section>
+    </Card>
   );
 }
 

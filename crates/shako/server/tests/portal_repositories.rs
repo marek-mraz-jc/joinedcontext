@@ -378,7 +378,7 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
     .unwrap();
     assert_eq!(one["files"][0]["path"], "spaces/air/endpoints/c.yaml", "{one}");
     assert_eq!(one["reviews"][0]["body"], "Looks right");
-    assert_eq!(one["changeId"], format!("chg-{:08x}", pull.number));
+    assert_eq!(one["change"], format!("chg-{:08x}", pull.number));
 
     // Settings: a steward reads them, a viewer is refused.
     let settings = call(&state, &steward, "jc_repository_settings", json!({ "repository": CONFIG }))

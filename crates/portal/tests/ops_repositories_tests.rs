@@ -23,7 +23,8 @@ const ROOT: &str = "1111111111111111111111111111111111111111";
 const SRC: &str = "2222222222222222222222222222222222222222";
 const HEAD: &str = "3333333333333333333333333333333333333333";
 const PARENT: &str = "4444444444444444444444444444444444444444";
-const XSS: &str = "<script>alert(1)</script><img src=x onerror=alert(2)> [go](javascript:alert(3))\n";
+const XSS: &str =
+    "<script>alert(1)</script><img src=x onerror=alert(2)> [go](javascript:alert(3))\n";
 
 const OPERATIONS: &[&str] = &[
     "jc_repository_list",
@@ -87,27 +88,50 @@ async fn world() -> (MockServer, AppState) {
     )
     .await;
     let tree = format!("/odata/Repositories('{CONFIG_ID}')/Tree");
-    get_with(&server, &tree, "Ref", "main", json!({ "sha": ROOT, "tree": [
+    get_with(
+        &server,
+        &tree,
+        "Ref",
+        "main",
+        json!({ "sha": ROOT, "tree": [
         { "path": "README.md", "mode": "100644", "type": "blob", "size": XSS.len(), "sha": "r" },
         { "path": "logo.png", "mode": "100644", "type": "blob", "size": 6, "sha": "p" },
         { "path": "big.csv", "mode": "100644", "type": "blob", "size": 5_000_000, "sha": "c" },
         { "path": "src", "mode": "040000", "type": "tree", "size": 0, "sha": SRC },
-    ] }))
+    ] }),
+    )
     .await;
-    get_with(&server, &tree, "Ref", SRC, json!({ "sha": SRC, "tree": [
+    get_with(
+        &server,
+        &tree,
+        "Ref",
+        SRC,
+        json!({ "sha": SRC, "tree": [
         { "path": "page.html", "mode": "100644", "type": "blob", "size": XSS.len(), "sha": "h" },
-    ] }))
+    ] }),
+    )
     .await;
     let file = format!("/odata/Repositories('{CONFIG_ID}')/File");
     get_with(&server, &file, "Path", "README.md", blob(XSS.as_bytes())).await;
-    get_with(&server, &file, "Path", "src/page.html", blob(XSS.as_bytes())).await;
+    get_with(
+        &server,
+        &file,
+        "Path",
+        "src/page.html",
+        blob(XSS.as_bytes()),
+    )
+    .await;
     get_with(&server, &file, "Path", "logo.png", blob(b"PNG\0\x01\x02")).await;
     let history = format!("/odata/Repositories('{CONFIG_ID}')/History");
-    get(&server, &history, json!({ "value": [{
+    get(
+        &server,
+        &history,
+        json!({ "value": [{
         "sha": HEAD, "message": "Change b\n\nWhy it changed", "author_name": "Alice",
         "author_email": "alice@city.example", "author_date": "2026-11-08T10:00:00Z",
         "parent_shas": [PARENT],
-    }] }))
+    }] }),
+    )
     .await;
     get(
         &server,
@@ -115,20 +139,37 @@ async fn world() -> (MockServer, AppState) {
         json!({ "files": [{ "filename": "src/page.html", "status": "modified" }] }),
     )
     .await;
-    get(&server, "/odata/Commits", json!({ "value": [{
+    get(
+        &server,
+        "/odata/Commits",
+        json!({ "value": [{
         "Sha": HEAD, "Message": "Change b", "Author": "Alice", "Date": "2026-11-08T10:00:00Z",
-    }], "@odata.count": 1 }))
+    }], "@odata.count": 1 }),
+    )
     .await;
-    get(&server, "/odata/Branches", json!({ "value": [
+    get(
+        &server,
+        "/odata/Branches",
+        json!({ "value": [
         { "Name": "portal/x", "HeadSha": PARENT, "Protected": false },
         { "Name": "main", "HeadSha": HEAD, "Protected": true },
-    ] }))
+    ] }),
+    )
     .await;
-    get(&server, "/odata/Tags", json!({ "value": [{ "Name": "v1", "TargetSha": HEAD }] })).await;
-    get(&server, "/odata/PullRequests", json!({ "value": [{
+    get(
+        &server,
+        "/odata/Tags",
+        json!({ "value": [{ "Name": "v1", "TargetSha": HEAD }] }),
+    )
+    .await;
+    get(
+        &server,
+        "/odata/PullRequests",
+        json!({ "value": [{
         "Number": 7, "Title": "Add c", "State": "open", "Merged": false, "Author": "jc-portal",
         "Head": "portal/x", "Base": "main", "CreatedAt": "2026-11-08T10:00:00Z", "ClosedAt": null,
-    }], "@odata.count": 1 }))
+    }], "@odata.count": 1 }),
+    )
     .await;
     get(&server, &format!("/odata/PullRequests('{CONFIG_ID}:7')"), json!({
         "Number": 7, "Title": "Add c", "State": "open", "Merged": false, "Author": "jc-portal",
@@ -137,16 +178,25 @@ async fn world() -> (MockServer, AppState) {
         "Reviews": [{ "Author": "jana", "Verdict": "APPROVED", "Body": "ok", "CommitId": HEAD }],
     }))
     .await;
-    get(&server, "/odata/ProtectionRules", json!({ "value": [{
+    get(
+        &server,
+        "/odata/ProtectionRules",
+        json!({ "value": [{
         "Pattern": "main", "EnablePush": false, "EnableForcePush": false, "RequiredApprovals": 1,
-    }] }))
+    }] }),
+    )
     .await;
     get(&server, "/odata/Webhooks", json!({ "value": [{
         "Id": "w", "Url": "https://portal:hook-secret@portal.example/api/v1/webhooks/shako?key=k", "Active": true,
         "Secret": "never-shown-secret",
     }] }))
     .await;
-    get(&server, "/odata/Teams", json!({ "value": [{ "Group": "city-stewards", "Verb": "write" }] })).await;
+    get(
+        &server,
+        "/odata/Teams",
+        json!({ "value": [{ "Group": "city-stewards", "Verb": "write" }] }),
+    )
+    .await;
     get(&server, "/odata/PackageVersions", json!({ "value": [] })).await;
 
     let state = doors::state_with(state_on(&server));
@@ -176,7 +226,12 @@ async fn a_steward_reads_everything_a_viewer_all_but_the_settings_a_stranger_not
     let (_server, state) = world().await;
     for name in OPERATIONS {
         let as_steward = doors::call(name, &session(steward()), &state, input(name)).await;
-        assert_eq!(as_steward.status, StatusCode::OK, "{name}: {}", as_steward.text());
+        assert_eq!(
+            as_steward.status,
+            StatusCode::OK,
+            "{name}: {}",
+            as_steward.text()
+        );
         let as_viewer = doors::call(name, &session(viewer()), &state, input(name)).await;
         let expected = if *name == "jc_repository_settings" {
             StatusCode::FORBIDDEN
@@ -186,7 +241,12 @@ async fn a_steward_reads_everything_a_viewer_all_but_the_settings_a_stranger_not
         assert_eq!(as_viewer.status, expected, "{name}: {}", as_viewer.text());
         // A person with no binding here reads a project that is not there (PF-59, R20).
         let as_stranger = doors::call(name, &session(stranger()), &state, input(name)).await;
-        assert_eq!(as_stranger.status, StatusCode::NOT_FOUND, "{name}: {}", as_stranger.text());
+        assert_eq!(
+            as_stranger.status,
+            StatusCode::NOT_FOUND,
+            "{name}: {}",
+            as_stranger.text()
+        );
         // The same through MCP.
         let over_mcp = doors::call(name, &mcp(stranger()), &state, input(name)).await;
         assert_eq!(over_mcp.status, StatusCode::NOT_FOUND, "{name}");
@@ -237,7 +297,12 @@ async fn another_projects_repository_and_another_organizations_project_are_not_t
             json!({ "repository": "doprava_maps" }),
         )
         .await;
-        assert_eq!(answer.status, StatusCode::NOT_FOUND, "{name}: {}", answer.text());
+        assert_eq!(
+            answer.status,
+            StatusCode::NOT_FOUND,
+            "{name}: {}",
+            answer.text()
+        );
     }
 }
 
@@ -258,7 +323,12 @@ async fn a_traversal_is_refused_before_the_forge_is_asked() {
             json!({ "repository": "ovzdusie-config", "path": bad }),
         )
         .await;
-        assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY, "{name} {bad}: {}", answer.text());
+        assert_eq!(
+            answer.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{name} {bad}: {}",
+            answer.text()
+        );
     }
     for bad_ref in ["main..dev", "../x", "a'b"] {
         let answer = doors::call(
@@ -318,7 +388,11 @@ async fn the_reads_answer_in_the_shapes_the_pages_draw() {
     let call = |name: &str| {
         let state = state.clone();
         let name = name.to_owned();
-        async move { doors::call(&name, &session(steward()), &state, input(&name)).await.body }
+        async move {
+            doors::call(&name, &session(steward()), &state, input(&name))
+                .await
+                .body
+        }
     };
     let repo = call("jc_repository_get").await;
     assert_eq!(repo["readme"]["text"], XSS);
@@ -332,26 +406,38 @@ async fn the_reads_answer_in_the_shapes_the_pages_draw() {
     let refs = call("jc_repository_refs").await;
     assert_eq!(refs["branches"][0]["name"], "main", "the default first");
     let pull = call("jc_repository_pull").await;
-    assert_eq!(pull["changeId"], "chg-00000007");
+    assert_eq!(pull["change"], "chg-00000007");
     assert_eq!(pull["reviews"][0]["verdict"], "APPROVED");
     let settings = call("jc_repository_settings").await;
     let shown = settings.to_string();
-    assert!(!shown.contains("hook-secret") && !shown.contains("never-shown-secret") && !shown.contains("key=k"), "{shown}");
-    assert_eq!(settings["webhooks"][0]["address"], "https://portal.example/api/v1/webhooks/shako");
+    assert!(
+        !shown.contains("hook-secret")
+            && !shown.contains("never-shown-secret")
+            && !shown.contains("key=k"),
+        "{shown}"
+    );
+    assert_eq!(
+        settings["webhooks"][0]["address"],
+        "https://portal.example/api/v1/webhooks/shako"
+    );
     // Each read leaves an activity row naming the repository.
     let rows = state
         .activity
-        .list(PROJECT, &joinedcontext_portal::activity::ActivityFilter {
-            kinds: vec!["repository.read".into()],
-            limit: 50,
-            ..Default::default()
-        })
+        .list(
+            PROJECT,
+            &joinedcontext_portal::activity::ActivityFilter {
+                kinds: vec!["repository.read".into()],
+                limit: 50,
+                ..Default::default()
+            },
+        )
         .await
         .expect("activity");
     assert!(
-        rows.items
-            .iter()
-            .any(|row| row.details["object"] == "repositories/ovzdusie-config" && row.details["actor"] == "jana"),
+        rows.items.iter().any(
+            |row| row.details["object"] == "repositories/ovzdusie-config"
+                && row.details["actor"] == "jana"
+        ),
         "{:?}",
         rows.items
     );

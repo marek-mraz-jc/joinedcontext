@@ -11678,7 +11678,7 @@
   "repositories": {
     "title": "Repositories",
     "intro": "Die Repositories des Projekts in der Forge: seine Konfiguration, seine eigenen und die seiner Anwendungen.",
-    "loading": "Repository wird geladen",
+    "loading": "Wird aus der Forge geladen",
     "filter": {
       "label": "Nach Namen filtern",
       "help": "Teil eines Namens oder einer Beschreibung, zum Beispiel config oder dash."
@@ -11705,7 +11705,9 @@
       "label": "Seiten",
       "previous": "Zurück",
       "next": "Weiter",
-      "position": "{from}–{to} von {total}"
+      "position": "{from}–{to} von {total}",
+      "firstPage": "Dies ist die erste Seite.",
+      "lastPage": "Dies ist die letzte Seite."
     },
     "back": "Alle Repositories",
     "page": {
@@ -11736,7 +11738,8 @@
       "truncated": "Der Ordner enthält mehr Einträge als angezeigt; öffnen Sie einen Unterordner für den Rest.",
       "history": "Verlauf dieser Datei",
       "emptyRepository": "Dieses Repository hat noch keine Commits",
-      "emptyRepositoryHint": "Dateien erscheinen, sobald die erste Änderung genehmigt und zusammengeführt ist."
+      "emptyRepositoryHint": "Dateien erscheinen, sobald die erste Änderung genehmigt und zusammengeführt ist.",
+      "emptyFolderHint": "Der Ordner enthält Dateien, sobald eine Änderung sie hinzufügt."
     },
     "file": {
       "tooLarge": "Diese Datei ist zu groß für die Anzeige",
@@ -11753,7 +11756,8 @@
       "sha": "Commit",
       "parent": "Vorgänger",
       "files": "{count, plural, one {# Datei geändert} other {# Dateien geändert}}",
-      "truncated": "Dieser Commit ändert mehr, als angezeigt werden kann; der Rest ist ausgelassen."
+      "truncated": "Dieser Commit ändert mehr, als angezeigt werden kann; der Rest ist ausgelassen.",
+      "emptyHint": "Commits erscheinen, sobald eine Änderung in diesen Branch zusammengeführt wird."
     },
     "status": {
       "added": "Hinzugefügt",
@@ -11773,11 +11777,13 @@
       "title": "Branches",
       "empty": "Keine Branches",
       "default": "Standard",
-      "protected": "Geschützt"
+      "protected": "Geschützt",
+      "emptyHint": "Ein Branch erscheint, sobald eine Änderung vorgeschlagen wird, zum Beispiel portal/edit-air."
     },
     "tags": {
       "title": "Tags",
-      "empty": "Keine Tags"
+      "empty": "Keine Tags",
+      "emptyHint": "Ein Tag markiert eine Version, zum Beispiel v1.2.0."
     },
     "pulls": {
       "filter": {

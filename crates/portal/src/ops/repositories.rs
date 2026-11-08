@@ -113,7 +113,10 @@ fn list_input() -> Value {
 }
 
 fn repository_input() -> Value {
-    closed(json!({ "repository": repository_schema() }), &["repository"])
+    closed(
+        json!({ "repository": repository_schema() }),
+        &["repository"],
+    )
 }
 
 fn tree_input() -> Value {
@@ -156,7 +159,7 @@ fn commit_input() -> Value {
     closed(
         json!({
             "repository": repository_schema(),
-            "sha": { "type": "string", "pattern": SHA_PATTERN, "description": "The commit's 40-character id" }
+            "sha": { "type": "string", "pattern": SHA_PATTERN, "description": "The commit's 40-character id", "examples": ["9fceb02d0ae598e95dc970b74767f19372d61af8"] }
         }),
         &["repository", "sha"],
     )
@@ -264,7 +267,10 @@ pub fn path_segments(path: &str) -> Result<Vec<&str>, OpError> {
         return refused("holds a backslash or a control character");
     }
     let segments: Vec<&str> = path.trim_end_matches('/').split('/').collect();
-    if segments.iter().any(|s| s.is_empty() || *s == "." || *s == "..") {
+    if segments
+        .iter()
+        .any(|s| s.is_empty() || *s == "." || *s == "..")
+    {
         return refused("names an empty, `.` or `..` folder");
     }
     if segments.len() > MAX_DEPTH {
@@ -481,7 +487,9 @@ async fn blob(repo: &Owned, git_ref: &str, path: &str) -> Result<Option<Vec<u8>>
             base64::engine::general_purpose::STANDARD
                 .decode(encoded)
                 .map(Some)
-                .map_err(|_| ApiError::Internal("the forge answered a file that does not decode".into()))
+                .map_err(|_| {
+                    ApiError::Internal("the forge answered a file that does not decode".into())
+                })
         }
         Err(ApiError::NotFound(_)) => Ok(None),
         Err(other) => Err(other),
@@ -717,7 +725,11 @@ async fn get(state: &AppState, project: &str, name: &str) -> Result<Value, ApiEr
     let readme = root.iter().find(|entry| {
         entry["type"] == "blob"
             && ["readme.md", "readme", "readme.txt"].contains(
-                &entry["path"].as_str().unwrap_or_default().to_lowercase().as_str(),
+                &entry["path"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .as_str(),
             )
     });
     if let Some(entry) = readme {
@@ -763,7 +775,8 @@ async fn tree(state: &AppState, project: &str, input: PathInput) -> Result<Value
         })
         .collect();
     entries.sort_by(|a, b| {
-        (a["type"] != "folder", a["name"].as_str()).cmp(&(b["type"] != "folder", b["name"].as_str()))
+        (a["type"] != "folder", a["name"].as_str())
+            .cmp(&(b["type"] != "folder", b["name"].as_str()))
     });
     let truncated = entries.len() > MAX_TREE_ENTRIES;
     entries.truncate(MAX_TREE_ENTRIES);
@@ -858,7 +871,9 @@ async fn commits(state: &AppState, project: &str, input: CommitsInput) -> Result
         .flatten()
         .map(|c| json!({ "sha": c["Sha"], "message": c["Message"], "author": c["Author"], "date": c["Date"] }))
         .collect();
-    let total = answer["@odata.count"].as_u64().map_or(cursor + items.len(), |t| t as usize);
+    let total = answer["@odata.count"]
+        .as_u64()
+        .map_or(cursor + items.len(), |t| t as usize);
     let mut out = json!({ "items": items, "total": total, "ref": git_ref });
     if cursor + limit < total {
         out["nextCursor"] = json!(cursor + limit);
@@ -913,7 +928,12 @@ async fn commit(state: &AppState, project: &str, input: CommitInput) -> Result<V
             .into_iter()
             .flatten()
             .filter(|e| e["type"] == "blob")
-            .map(|e| (e["path"].as_str().unwrap_or_default().to_owned(), "added".to_owned()))
+            .map(|e| {
+                (
+                    e["path"].as_str().unwrap_or_default().to_owned(),
+                    "added".to_owned(),
+                )
+            })
             .collect(),
     };
     let mut files = Vec::new();
@@ -1035,7 +1055,9 @@ async fn pulls(state: &AppState, project: &str, input: PullsInput) -> Result<Val
         .flatten()
         .map(pull_row)
         .collect();
-    let total = answer["@odata.count"].as_u64().map_or(cursor + items.len(), |t| t as usize);
+    let total = answer["@odata.count"]
+        .as_u64()
+        .map_or(cursor + items.len(), |t| t as usize);
     let mut out = json!({ "items": items, "total": total });
     if cursor + limit < total {
         out["nextCursor"] = json!(cursor + limit);
@@ -1075,7 +1097,7 @@ async fn pull(state: &AppState, project: &str, input: PullInput) -> Result<Value
     // shows on its approval page (CC-87).
     if repo.role == "configuration" {
         let forge = repo.client.clone();
-        answer["changeId"] =
+        answer["change"] =
             json!(crate::api::changes::change_meta(state, &forge, input.number, project).name);
     }
     Ok(answer)
@@ -1085,12 +1107,14 @@ async fn pull(state: &AppState, project: &str, input: PullInput) -> Result<Value
 /// password or query, where a secret could ride along.
 pub fn shown_address(raw: &str) -> String {
     match url::Url::parse(raw) {
-        Ok(url) => format!(
-            "{}://{}{}",
-            url.scheme(),
-            url.host_str().unwrap_or_default(),
-            url.port().map(|p| format!(":{p}")).unwrap_or_default()
-        ) + url.path(),
+        Ok(url) => {
+            format!(
+                "{}://{}{}",
+                url.scheme(),
+                url.host_str().unwrap_or_default(),
+                url.port().map(|p| format!(":{p}")).unwrap_or_default()
+            ) + url.path()
+        }
         Err(_) => "(an address that does not parse)".to_owned(),
     }
 }
@@ -1222,7 +1246,10 @@ fn get_output() -> Value {
     properties.insert("lastCommit".into(), commit_row_schema());
     properties.insert(
         "readme".into(),
-        object(json!({ "path": { "type": "string" }, "text": { "type": "string" } }), &["path", "text"]),
+        object(
+            json!({ "path": { "type": "string" }, "text": { "type": "string" } }),
+            &["path", "text"],
+        ),
     );
     schema
 }
@@ -1324,7 +1351,10 @@ fn pull_row_schema() -> Map<String, Value> {
 }
 
 fn pulls_output() -> Value {
-    page_of(object(Value::Object(pull_row_schema()), &["number", "title", "state"]))
+    page_of(object(
+        Value::Object(pull_row_schema()),
+        &["number", "title", "state"],
+    ))
 }
 
 fn pull_output() -> Value {
@@ -1332,7 +1362,7 @@ fn pull_output() -> Value {
     properties.insert("repository".into(), json!({ "type": "string" }));
     properties.insert("body".into(), json!({ "type": "string" }));
     properties.insert(
-        "changeId".into(),
+        "change".into(),
         json!({ "type": "string", "description": "The Change this pull request is, on the approval page" }),
     );
     properties.insert(
@@ -1348,7 +1378,10 @@ fn pull_output() -> Value {
             "commit": { "type": "string" }
         }), &["verdict"]) }),
     );
-    object(Value::Object(properties), &["number", "title", "state", "files", "reviews"])
+    object(
+        Value::Object(properties),
+        &["number", "title", "state", "files", "reviews"],
+    )
 }
 
 fn settings_output() -> Value {
@@ -1366,7 +1399,13 @@ fn settings_output() -> Value {
             }), &["group"]) },
             "packages": { "type": "array", "items": { "type": "object" } }
         }),
-        &["repository", "protection", "webhooks", "collaborators", "packages"],
+        &[
+            "repository",
+            "protection",
+            "webhooks",
+            "collaborators",
+            "packages",
+        ],
     )
 }
 
@@ -1618,10 +1657,21 @@ mod tests {
 
     #[test]
     fn a_traversal_or_an_odd_path_is_refused() {
-        for path in ["../etc/passwd", "a/../../b", "/etc", "a//b", "a/./b", "a\\b", "a\u{0}b"] {
+        for path in [
+            "../etc/passwd",
+            "a/../../b",
+            "/etc",
+            "a//b",
+            "a/./b",
+            "a\\b",
+            "a\u{0}b",
+        ] {
             assert!(path_segments(path).is_err(), "{path:?}");
         }
-        assert_eq!(path_segments("src/pages/").expect("ok"), vec!["src", "pages"]);
+        assert_eq!(
+            path_segments("src/pages/").expect("ok"),
+            vec!["src", "pages"]
+        );
         assert!(path_segments("").expect("root").is_empty());
         assert!(checked_ref(Some("main..dev")).is_err());
         assert!(checked_ref(Some("feature/x")).is_ok());
@@ -1629,11 +1679,12 @@ mod tests {
 
     #[test]
     fn a_repository_is_the_projects_only_by_its_rule() {
-        let row = |owner: &str, name: &str, project: &str| {
-            json!({ "Owner": owner, "Name": name, "Project": project })
-        };
+        let row = |owner: &str, name: &str, project: &str| json!({ "Owner": owner, "Name": name, "Project": project });
         let role = |r: Value| role_of("ovzdusie", "org", Some("ovzdusie-config"), "apps", &r);
-        assert_eq!(role(row("org", "ovzdusie-config", "")), Some("configuration"));
+        assert_eq!(
+            role(row("org", "ovzdusie-config", "")),
+            Some("configuration")
+        );
         assert_eq!(role(row("org", "tools", "ovzdusie")), Some("project"));
         assert_eq!(role(row("apps", "ovzdusie_dash", "")), Some("application"));
         // Another project's, a prefix that is not the project, the shared repository, another
@@ -1685,6 +1736,9 @@ mod tests {
             shown_address("https://user:s3cret@hooks.example.org:8443/in?token=abc#x"),
             "https://hooks.example.org:8443/in"
         );
-        assert_eq!(shown_address("not a url"), "(an address that does not parse)");
+        assert_eq!(
+            shown_address("not a url"),
+            "(an address that does not parse)"
+        );
     }
 }

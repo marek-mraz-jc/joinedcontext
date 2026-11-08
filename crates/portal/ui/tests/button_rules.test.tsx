@@ -66,6 +66,8 @@ const PAGES = [
   `/projects/${PROJECT}/ckan`,
   `/projects/${PROJECT}/mcp`,
   `/projects/${PROJECT}/knowledge`,
+  `/projects/${PROJECT}/repositories`,
+  `/projects/${PROJECT}/repositories/air`,
   `/projects/${PROJECT}/knowledge/web`,
   `/projects/${PROJECT}/knowledge/conversations`,
   "/catalogue",

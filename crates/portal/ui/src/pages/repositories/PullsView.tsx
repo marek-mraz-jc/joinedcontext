@@ -70,7 +70,7 @@ export function PullList({ project, repository }: { project: string; repository:
         <EmptyState icon="git" title={t("repositories.pulls.empty")} description={t("repositories.pulls.emptyHint")} />
       ) : (
         <>
-          <ol className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
+          <Card as="ul" flush className="divide-y divide-border overflow-hidden">
             {pulls.data.items.map((pull) => (
               <li key={pull.number} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3">
                 <PullStateBadge state={pull.state} />
@@ -95,7 +95,7 @@ export function PullList({ project, repository }: { project: string; repository:
                 </div>
               </li>
             ))}
-          </ol>
+          </Card>
           <Pager total={pulls.data.total} cursor={cursor} size={PAGE} next={pulls.data.nextCursor} onCursor={setCursor} />
         </>
       )}
@@ -130,12 +130,12 @@ export function PullDetail({ project, repository, number }: { project: string; r
             base: data.base ?? "—",
           })}
         </p>
-        {data.changeId ? (
+        {data.change ? (
           <p className="text-body">
             {t("repositories.pulls.change")}{" "}
             <Link
               to="/projects/$project/approvals/$id"
-              params={{ project, id: data.changeId }}
+              params={{ project, id: data.change }}
               className="focus-ring rounded-sm font-semibold text-primary-soft-fg underline"
             >
               {t("repositories.pulls.openChange")}

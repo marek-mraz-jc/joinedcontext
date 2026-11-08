@@ -17,7 +17,7 @@ export function BranchesView({ project, repository }: { project: string; reposit
       <Card as="section" aria-labelledby="repository-branches" flush>
         <CardHeader as="h2" titleId="repository-branches" title={t("repositories.branches.title")} className="px-4 pt-4" />
         {refs.data.branches.length === 0 ? (
-          <EmptyState bare icon="git" title={t("repositories.branches.empty")} />
+          <EmptyState bare icon="git" title={t("repositories.branches.empty")} description={t("repositories.branches.emptyHint")} />
         ) : (
           <ul className="divide-y divide-border">
             {refs.data.branches.map((branch) => (
@@ -36,7 +36,7 @@ export function BranchesView({ project, repository }: { project: string; reposit
       <Card as="section" aria-labelledby="repository-tags" flush>
         <CardHeader as="h2" titleId="repository-tags" title={t("repositories.tags.title")} className="px-4 pt-4" />
         {refs.data.tags.length === 0 ? (
-          <EmptyState bare icon="git" title={t("repositories.tags.empty")} />
+          <EmptyState bare icon="git" title={t("repositories.tags.empty")} description={t("repositories.tags.emptyHint")} />
         ) : (
           <ul className="divide-y divide-border">
             {refs.data.tags.map((tag) => (
