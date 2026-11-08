@@ -5089,6 +5089,7 @@ dependencies = [
  "shako-core",
  "shako-server",
  "shako-store-memory",
+ "sqlx",
  "tempfile",
  "thiserror 2.0.21",
  "tikv-jemallocator",

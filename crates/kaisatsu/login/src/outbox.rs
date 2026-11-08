@@ -73,17 +73,28 @@ impl RecordingSender {
     }
 
     pub fn set_failures(&self, count: u32) {
-        *self.fail_remaining.lock().unwrap() = count;
+        *self
+            .fail_remaining
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = count;
     }
 
     #[must_use]
     pub fn drain(&self) -> Vec<RecordedMail> {
-        std::mem::take(&mut *self.sent.lock().unwrap())
+        std::mem::take(
+            &mut *self
+                .sent
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
     }
 
     #[must_use]
     pub fn messages(&self) -> Vec<RecordedMail> {
-        self.sent.lock().unwrap().clone()
+        self.sent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -98,19 +109,25 @@ impl MailSender for RecordingSender {
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             {
-                let mut rem = self.fail_remaining.lock().unwrap();
+                let mut rem = self
+                    .fail_remaining
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if *rem > 0 {
                     *rem -= 1;
                     return Err(KaisatsuError::Storage("simulated SMTP failure".into()));
                 }
             }
-            self.sent.lock().unwrap().push(RecordedMail {
-                realm_id: realm_id.to_owned(),
-                to_address: to_address.to_owned(),
-                subject: subject.to_owned(),
-                body: body.to_owned(),
-                action_link: action_link.to_owned(),
-            });
+            self.sent
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(RecordedMail {
+                    realm_id: realm_id.to_owned(),
+                    to_address: to_address.to_owned(),
+                    subject: subject.to_owned(),
+                    body: body.to_owned(),
+                    action_link: action_link.to_owned(),
+                });
             Ok(())
         })
     }
@@ -256,5 +273,65 @@ impl OutboxDispatcher {
             }
         }
         Ok(sent_count)
+    }
+
+    /// One dispatch pass over every realm: up to [`MAX_OUTBOX_BATCH`] due rows each (K9). A
+    /// failing realm is logged and does not stop the others.
+    pub async fn dispatch_all_realms(&self, mount: &Mount) -> Result<usize> {
+        let mut sent = 0usize;
+        for realm in self.store.list_realms().await? {
+            match self
+                .dispatch_realm_batch(mount, &realm.id, MAX_OUTBOX_BATCH)
+                .await
+            {
+                Ok(n) => sent += n,
+                Err(e) => {
+                    tracing::warn!(realm = %realm.realm, error = %e.public_detail(), "kaisatsu outbox pass")
+                }
+            }
+        }
+        Ok(sent)
+    }
+}
+
+/// Production [`MailSender`]: each realm's own SMTP settings (`smtpServer`, TLS required) with
+/// the SMTP password read from one file in the secrets mount at send time, never stored or
+/// logged (K9).
+pub struct RealmSmtpSender {
+    store: Arc<dyn Store>,
+    password_file: std::path::PathBuf,
+}
+
+impl RealmSmtpSender {
+    #[must_use]
+    pub fn new(store: Arc<dyn Store>, password_file: std::path::PathBuf) -> Self {
+        Self {
+            store,
+            password_file,
+        }
+    }
+}
+
+impl MailSender for RealmSmtpSender {
+    fn send_mail<'a>(
+        &'a self,
+        realm_id: &'a str,
+        to_address: &'a str,
+        subject: &'a str,
+        body: &'a str,
+        action_link: &'a str,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let smtp = self
+                .store
+                .get_realm(realm_id)
+                .await?
+                .and_then(|r| r.smtp_server)
+                .ok_or_else(|| KaisatsuError::BadRequest("realm has no smtpServer".into()))?;
+            let sender = EmailSender::from_secret_mount(smtp, &self.password_file)?;
+            sender
+                .send_mail(realm_id, to_address, subject, body, action_link)
+                .await
+        })
     }
 }

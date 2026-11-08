@@ -427,7 +427,10 @@ async fn render_state_page(
             LoginState::VerifyEmail { user_id, .. } => {
                 // K7 / K9: Ensure a verification code and outbox email are queued once for this session.
                 if auth_session.pending_email_code_hash.is_none() {
-                    let code = "654321".to_owned();
+                    // The mail carries only the signed action link (K9 stores no secret), so the
+                    // step completes once that link set `email_verified`; this random value only
+                    // marks the mail as queued and can never be typed (it was a fixed "654321").
+                    let code = random_handle_256();
                     let mut updated = auth_session.clone();
                     updated.pending_email_code_hash = Some(sha256_hex(&code));
                     state.store.put_auth_session(updated).await?;
@@ -1361,7 +1364,33 @@ async fn authenticate_page_post(
             )
             .await;
         };
-        stored_hashes.remove(idx);
+        // Single use even under concurrent submits: the first request to record the code's hash
+        // wins; the stored list update below is only bookkeeping (K7).
+        let used_hash = stored_hashes.remove(idx);
+        if state
+            .store
+            .mark_token_revoked(RevokedTokenRecord {
+                jti_hash: sha256_hex(&format!("recovery:{}:{used_hash}", user.id)),
+                realm_id: realm.id.clone(),
+                expires_at: Utc::now() + Duration::days(3650),
+            })
+            .await
+            .is_err()
+        {
+            let _ = bf
+                .record_failure(&realm, Some(&user.id), client_ip.as_deref())
+                .await;
+            return render_state_page(
+                &state,
+                &mount,
+                &realm,
+                &auth_session,
+                &current_state,
+                &headers,
+                bundle.get("invalidUserMessage"),
+            )
+            .await;
+        }
         let mut updated_cred = rec_cred.clone();
         updated_cred.secret_data = serde_json::json!({ "hashes": stored_hashes }).to_string();
         updated_cred.credential_data =
@@ -2086,6 +2115,52 @@ async fn action_token_post(
             .unwrap_or(&realm.default_locale),
     );
 
+    // Every check runs before the first write: a wrong code must not leave the new password
+    // stored, or the retry is refused as a reused password and the link can never finish.
+    let totp_credential = if auth_session
+        .scope
+        .split_whitespace()
+        .any(|a| a == "CONFIGURE_TOTP")
+    {
+        let secret = auth_session
+            .pending_totp_secret
+            .as_deref()
+            .ok_or_else(|| KaisatsuError::BadRequest("missing pending TOTP secret".into()))?;
+        let otp_code = form.get("otp").map(String::as_str).unwrap_or_default();
+        let cred = CredentialRecord {
+            id: uuid::Uuid::now_v7().to_string(),
+            realm_id: realm.id.clone(),
+            user_id: user.id.clone(),
+            credential_type: "otp".into(),
+            user_label: Some("Authenticator".into()),
+            created_date: Utc::now().timestamp_millis(),
+            secret_data: serde_json::json!({ "value": secret }).to_string(),
+            credential_data: serde_json::json!({
+                "subType": "totp",
+                "digits": realm.otp_policy_digits,
+                "period": realm.otp_policy_period,
+                "algorithm": realm.otp_policy_algorithm,
+                "secretEncoding": "BASE32",
+            })
+            .to_string(),
+            temporary: false,
+        };
+        let now_secs = u64::try_from(Utc::now().timestamp()).unwrap_or_default();
+        if verify_totp_code(
+            &cred,
+            otp_code,
+            realm.otp_policy_look_ahead_window,
+            now_secs,
+        )?
+        .is_none()
+        {
+            return Err(KaisatsuError::BadRequest("invalid TOTP code".into()));
+        }
+        Some(cred)
+    } else {
+        None
+    };
+
     if auth_session
         .scope
         .split_whitespace()
@@ -2126,45 +2201,7 @@ async fn action_token_post(
         user.required_actions.retain(|a| a != "UPDATE_PASSWORD");
     }
 
-    if auth_session
-        .scope
-        .split_whitespace()
-        .any(|a| a == "CONFIGURE_TOTP")
-    {
-        let secret = auth_session
-            .pending_totp_secret
-            .as_deref()
-            .ok_or_else(|| KaisatsuError::BadRequest("missing pending TOTP secret".into()))?;
-        let otp_code = form.get("otp").map(String::as_str).unwrap_or_default();
-        let cred = CredentialRecord {
-            id: uuid::Uuid::now_v7().to_string(),
-            realm_id: realm.id.clone(),
-            user_id: user.id.clone(),
-            credential_type: "otp".into(),
-            user_label: Some("Authenticator".into()),
-            created_date: Utc::now().timestamp_millis(),
-            secret_data: serde_json::json!({ "value": secret }).to_string(),
-            credential_data: serde_json::json!({
-                "subType": "totp",
-                "digits": realm.otp_policy_digits,
-                "period": realm.otp_policy_period,
-                "algorithm": realm.otp_policy_algorithm,
-                "secretEncoding": "BASE32",
-            })
-            .to_string(),
-            temporary: false,
-        };
-        let now_secs = u64::try_from(Utc::now().timestamp()).unwrap_or_default();
-        if verify_totp_code(
-            &cred,
-            otp_code,
-            realm.otp_policy_look_ahead_window,
-            now_secs,
-        )?
-        .is_none()
-        {
-            return Err(KaisatsuError::BadRequest("invalid TOTP code".into()));
-        }
+    if let Some(cred) = totp_credential {
         state.store.upsert_credential(cred).await?;
         user.required_actions.retain(|a| a != "CONFIGURE_TOTP");
     }

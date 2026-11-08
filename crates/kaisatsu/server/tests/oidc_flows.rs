@@ -1091,3 +1091,32 @@ async fn k4_pairwise_sub_agrees_across_tokens_userinfo_and_introspection() {
     assert_eq!(intro["active"], true, "{intro}");
     assert_eq!(intro["sub"], id_sub);
 }
+
+/// K4: userinfo resolves a non-local `sub` through the token's session only when it equals the
+/// pairwise subject the client would see. Red before: any `sub` with a live `sid` answered with
+/// the session person's claims.
+#[tokio::test]
+async fn k4_userinfo_refuses_a_sub_that_is_not_the_clients_subject() {
+    let (app, store, _, kek) = app().await;
+    let (code, _) = browser_login(&app).await;
+    let tokens = exchange(&app, &code).await;
+    let real = decode_jwt_payload(tokens["access_token"].as_str().unwrap());
+    let key = store
+        .list_signing_keys("dev")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|k| k.status == "ACTIVE")
+        .unwrap();
+    let mut forged = real.clone();
+    forged["sub"] = json!("someone-else-entirely");
+    forged["jti"] = json!("k4-forged-sub");
+    let token = sign_jwt(&key, &kek, Some("JWT"), &forged).unwrap();
+    let ui = "/realms/dev/protocol/openid-connect/userinfo";
+    let (st, _, body) = get(&app, ui, None, Some(&format!("Bearer {token}"))).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "{body}");
+    // The untouched token still answers.
+    let access = tokens["access_token"].as_str().unwrap();
+    let (st, _, _) = get(&app, ui, None, Some(&format!("Bearer {access}"))).await;
+    assert_eq!(st, StatusCode::OK);
+}

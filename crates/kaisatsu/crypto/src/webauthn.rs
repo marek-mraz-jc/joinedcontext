@@ -588,9 +588,11 @@ impl ParsedAuthData {
     }
 }
 
-/// ClientDataJSON structure (W3C WebAuthn L3 §5.8.1).
+/// ClientDataJSON structure (W3C WebAuthn L3 §5.8.1). The browser writes it, not the caller,
+/// and §5.8.1 lets it carry more members (Chrome adds `other_keys_can_be_added_here`): unknown
+/// members are ignored, the signed bytes are what the assertion check covers.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct CollectedClientData {
     #[serde(rename = "type")]
     pub client_type: String,

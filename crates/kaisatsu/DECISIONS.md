@@ -60,3 +60,25 @@
 1. **K6 Realm DPoP Nonce Default (`dpop.require.nonce`)**: Controlled by `realm.attributes["dpop.require.nonce"] == "true"`. Defaults to off (`"false"`) for imported Keycloak realms so existing drop-in OIDC clients that do not expect an initial `400 use_dpop_nonce` challenge keep working unchanged, while any realm setting `dpop.require.nonce: "true"` enforces stateless HMAC nonces at both the AS token endpoint (400 + `DPoP-Nonce`) and all RS APIs (401 + `WWW-Authenticate: DPoP error="use_dpop_nonce"` + `DPoP-Nonce`).
 2. **K7 VerifyEmail Step Completion**: Supports both completion paths: (a) clicking the signed single-use action link sent via the K9 outbox (`/realms/{realm}/login-actions/action-token`), and (b) submitting the verification code on the in-flight `VerifyEmail` login page.
 3. **K9 Outbox Secret Avoidance**: `kaisatsu.email_outbox` stores `action_jti` and the action metadata (`actions`, `client_id`, `redirect_uri`, `lifespan_secs`), never a signed JWT or plaintext secret; `OutboxDispatcher` mints the signed JWT action link at send time using the realm's active signing key.
+
+## 4. Decisions of the finishing run (kaisatsu-finish, 2026-11-08, owner may override)
+
+1. **Action link lifespan cap stays 12 h.** 00-task.md asks for short links; `execute-actions-email` callers
+   (Keycloak admin API, the Portal) pass `lifespan` up to 43 200 s and expect it honoured. The cap is 12 h;
+   every link is single use (`action_jti` revoked on first POST, red-proven).
+2. **Passkey registration challenge is server-issued and MAC'd.** `RegisterPasskey` step 1 returns
+   `challenge = base64url(16 random bytes || 8-byte expiry || HMAC-SHA256)` under
+   `Kek::mac(REG_CHALLENGE_PURPOSE, realm || 0 || person || 0 || body)`, valid 300 s; step 2 verifies the
+   MAC and expiry before the single-use mark. A client-chosen challenge is refused (400).
+3. **K3 client roles keep T-2725.** `view-clients` alone cannot write roles; a role write on a client is also
+   allowed when the `Application` Update decision allows it (portal-api writing `managed-by: joinedcontext`
+   App client roles through fine-grained permissions). Roles of any other client answer 404.
+4. **Outbox sender in `serve`.** `kaisatsu serve --smtp-password-file F` runs `OutboxDispatcher` every
+   `--outbox-interval-secs` (default 10) with `RealmSmtpSender` (each realm's `smtpServer`, the password
+   from the mount). Without the file, `serve` logs one warning and queued mails stay pending. `jc` does
+   not run the dispatcher yet (STATUS limitations).
+5. **SCIM never carries proof of an address.** A SCIM create, PUT or PATCH that sets or changes `emails`
+   leaves the person `emailVerified=false`, because account linking trusts a verified address.
+6. **Userinfo checks the pairwise subject.** A token's `sub` must equal the subject computed for its
+   client (constant time), or userinfo answers 401; back-channel logout skips a client whose pairwise
+   subject cannot be computed instead of sending the local user id.
