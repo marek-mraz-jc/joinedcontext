@@ -619,12 +619,35 @@ pub fn may_try(
         return administration::may_decide(&effective, project);
     }
     match missing_right(op.name, &effective, input.and_then(named_kind)) {
-        None => Ok(()),
+        None => proposed_target(op.name, &effective, input),
         Some(what) => Err(OpError::Api(ApiError::Denied(format!(
             "{} needs a role with {what} in project {project} (PF-50)",
             op.title
         )))),
     }
+}
+
+/// A proposal's manifest, checked here as the proposal checks it (`proposals.rs`
+/// `record_verdict`): a grant narrowed to one Organization or space admits its own targets
+/// only, so a person is never asked to confirm a proposal the Portal then refuses.
+fn proposed_target(
+    name: &str,
+    effective: &crate::permissions::Effective,
+    input: Option<&Value>,
+) -> Result<(), OpError> {
+    let Some(manifest) = input
+        .filter(|_| name == "jc_resource_propose")
+        .and_then(|input| input.get("manifest"))
+        .filter(|manifest| manifest.is_object())
+    else {
+        return Ok(());
+    };
+    let Some(kind) = manifest.get("kind").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    effective
+        .check(kind, Verb::Propose, Some(manifest))
+        .map_err(OpError::Api)
 }
 
 /// For an operation that acts on one object named by the input's `name`, the route's 404 when
