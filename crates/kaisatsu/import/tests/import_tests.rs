@@ -251,3 +251,144 @@ async fn dangling_reference_unknown_mapper_and_file_escape_fail_and_plan_refuses
     let exported2 = export_realm(&store2, "dev", false).await.unwrap();
     assert_eq!(exported1, exported2);
 }
+
+#[tokio::test]
+async fn unset_secret_variables_never_become_guessable_secrets() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let var = "KAISATSU_IMPORT_TEST_UNSET_SECRET_7F3A";
+    assert!(std::env::var(var).is_err());
+    let doc = |secret: &str| {
+        json!({
+            "realm": "unset",
+            // The realm defaults name these as default optional scopes; an export lists them.
+            "clientScopes": [
+                {"name": "connector", "protocol": "openid-connect"},
+                {"name": "offline_access", "protocol": "openid-connect"}
+            ],
+            "clients": [{
+                "clientId": "svc",
+                "publicClient": false,
+                "serviceAccountsEnabled": true,
+                "secret": secret
+            }]
+        })
+    };
+    let opts = ApplyOptions::default();
+
+    // The offline check and a dry run validate with the variable unset.
+    assert!(check_realm_value(&doc(&format!("$(env:{var})")), &opts).is_ok());
+    let dry = ApplyOptions {
+        dry_run: true,
+        ..Default::default()
+    };
+    apply_realm_files(
+        &store,
+        &[("a.json".into(), doc(&format!("$({var})")))],
+        &dry,
+    )
+    .await
+    .expect("dry run");
+
+    // A real apply of a new client refuses, and writes nothing (all or nothing).
+    let err = apply_realm_files(
+        &store,
+        &[("a.json".into(), doc(&format!("$(env:{var})")))],
+        &opts,
+    )
+    .await
+    .expect_err("unset variable refused");
+    assert!(err.to_string().contains("$.clients[0].secret"), "{err}");
+    assert!(store.get_realm("unset").await.unwrap().is_none());
+
+    // With the variable given the client gets that secret.
+    let with_var = ApplyOptions {
+        env_vars: BTreeMap::from([(var.to_owned(), "the-real-secret".to_owned())]),
+        ..Default::default()
+    };
+    apply_realm_files(
+        &store,
+        &[("a.json".into(), doc(&format!("$({var})")))],
+        &with_var,
+    )
+    .await
+    .expect("apply");
+    let secret = || async {
+        store
+            .get_client_by_client_id("unset", "svc")
+            .await
+            .unwrap()
+            .unwrap()
+            .secret
+    };
+    assert_eq!(secret().await.as_deref(), Some("the-real-secret"));
+
+    // Re-applying the files (secrets as variables) without the variable keeps the current
+    // secret, as re-applying an export does.
+    let mut reapply = doc(&format!("$(CLIENT_SECRET_SVC_{var})"));
+    reapply["displayName"] = json!("changed so the checksum differs");
+    apply_realm_files(&store, &[("export.json".into(), reapply)], &opts)
+        .await
+        .expect("re-apply export");
+    assert_eq!(secret().await.as_deref(), Some("the-real-secret"));
+
+    // A user's password variable and an SMTP password variable must be set.
+    let user_doc = json!({
+        "realm": "unset",
+        "users": [{
+            "username": "someone",
+            "enabled": true,
+            "credentials": [{"type": "password", "value": format!("$(env:{var})")}]
+        }]
+    });
+    let err = apply_realm_files(&store, &[("u.json".into(), user_doc)], &opts)
+        .await
+        .expect_err("unset password variable refused");
+    assert!(
+        err.to_string().contains("$.users[0].credentials[0]"),
+        "{err}"
+    );
+    let otp_doc = json!({
+        "realm": "unset",
+        "users": [{
+            "username": "someone",
+            "enabled": true,
+            "credentials": [{
+                "type": "otp",
+                "secretData": json!({"value": format!("$({var})")}).to_string()
+            }]
+        }]
+    });
+    assert!(
+        apply_realm_files(&store, &[("o.json".into(), otp_doc)], &opts)
+            .await
+            .is_err()
+    );
+    let smtp_doc = json!({
+        "realm": "unset",
+        "smtpServer": {"host": "mail", "from": "a@b.c", "password": format!("$(env:{var})")}
+    });
+    let err = apply_realm_files(&store, &[("s.json".into(), smtp_doc.clone())], &opts)
+        .await
+        .expect_err("unset SMTP password refused");
+    assert!(err.to_string().contains("smtpServer.password"), "{err}");
+    apply_realm_files(&store, &[("s.json".into(), smtp_doc.clone())], &with_var)
+        .await
+        .expect("apply SMTP");
+    let smtp_password = || async {
+        store
+            .get_realm("unset")
+            .await
+            .unwrap()
+            .unwrap()
+            .smtp_server
+            .unwrap()
+            .password
+    };
+    assert_eq!(smtp_password().await, "the-real-secret");
+    let mut again = smtp_doc;
+    again["displayName"] = json!("again");
+    apply_realm_files(&store, &[("s.json".into(), again)], &opts)
+        .await
+        .expect("an existing SMTP password is kept");
+    assert_eq!(smtp_password().await, "the-real-secret");
+}

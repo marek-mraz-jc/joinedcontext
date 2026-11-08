@@ -57,6 +57,43 @@ impl Default for PgStoreConfig {
     }
 }
 
+impl PgStoreConfig {
+    /// Connection options from the URL and the password file. A password inside the URL is
+    /// refused: the password comes from a file in the secrets mount, never argv or env (W2).
+    pub fn connect_options(&self) -> Result<PgConnectOptions> {
+        if url_carries_password(&self.url_without_password) {
+            return Err(KaisatsuError::Storage(
+                "the database URL must not carry a password; pass a password file (W2)".into(),
+            ));
+        }
+        let mut opts = PgConnectOptions::from_str(&self.url_without_password)
+            .map_err(|e| KaisatsuError::Storage(format!("invalid pg url: {e}")))?;
+        if let Some(pw_path) = &self.password_file {
+            opts = opts.password(&read_password_file(pw_path)?);
+        }
+        Ok(opts)
+    }
+}
+
+/// True when a `postgres://user:password@host/db` URL or its `password=` parameter holds a password.
+fn url_carries_password(url: &str) -> bool {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let (authority, query) = match rest.split_once('?') {
+        Some((a, q)) => (a, q),
+        None => (rest, ""),
+    };
+    let authority = authority.split('/').next().unwrap_or_default();
+    let userinfo_has_password = authority
+        .rsplit_once('@')
+        .is_some_and(|(userinfo, _)| userinfo.contains(':'));
+    let query_has_password = query.split('&').any(|kv| {
+        kv.split_once('=')
+            .map_or(kv, |(k, _)| k)
+            .eq_ignore_ascii_case("password")
+    });
+    userinfo_has_password || query_has_password
+}
+
 /// PostgreSQL store with private pool, RLS verification, sweeper, and `LISTEN/NOTIFY` (W2).
 #[derive(Clone)]
 pub struct PgStore {
@@ -184,13 +221,7 @@ impl PgStore {
     /// Connects to PostgreSQL reading the password from `config.password_file` if provided,
     /// and runs the mandatory W2 RLS and role privilege boot check.
     pub async fn connect(config: &PgStoreConfig, kek: Kek) -> Result<Self> {
-        let mut opts = PgConnectOptions::from_str(&config.url_without_password)
-            .map_err(|e| KaisatsuError::Storage(format!("invalid pg url: {e}")))?;
-        if let Some(pw_path) = &config.password_file {
-            let pw = read_password_file(pw_path)?;
-            opts = opts.password(&pw);
-        }
-        Self::connect_with(opts, config.max_connections, kek).await
+        Self::connect_with(config.connect_options()?, config.max_connections, kek).await
     }
 
     /// Connects with explicit connection options (pool size clamped to 1..=50) and runs the

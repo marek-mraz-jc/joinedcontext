@@ -589,6 +589,31 @@ async fn connect_reads_the_password_from_a_file_and_refuses_bad_input() {
     .expect("connects with the password file");
     assert!(store.list_realms().await.expect("list").is_empty());
 
+    // The same, correct password inside the URL (argv) or its query is refused before connecting.
+    for with_password in [
+        format!(
+            "postgresql://kaisatsu_app:{}@{}:{}/{}",
+            db.app_password(),
+            opts.get_host(),
+            opts.get_port(),
+            db.name
+        ),
+        format!("{url}?password={}", db.app_password()),
+    ] {
+        let refused = PgStore::connect(
+            &PgStoreConfig {
+                url_without_password: with_password,
+                password_file: None,
+                max_connections: 1,
+            },
+            Kek::generate_for_tests(),
+        )
+        .await
+        .err()
+        .expect("a password in the URL is refused");
+        assert!(!refused.to_string().contains(db.app_password()));
+    }
+
     let empty = dir.join("empty");
     std::fs::write(&empty, "  \n").expect("write");
     assert!(read_password_file(&empty).is_err());
@@ -617,6 +642,38 @@ async fn connect_reads_the_password_from_a_file_and_refuses_bad_input() {
     assert_eq!(PgStoreConfig::default().max_connections, 5);
     std::fs::remove_dir_all(&dir).expect("cleanup");
     db.drop_db().await;
+}
+
+#[test]
+fn connect_options_refuse_a_password_in_the_url() {
+    let config = |url: &str| PgStoreConfig {
+        url_without_password: url.into(),
+        ..Default::default()
+    };
+    for ok in [
+        "postgresql://kaisatsu_app@db:5432/kaisatsu",
+        "postgres://db/kaisatsu?sslmode=require&application_name=kaisatsu",
+        "postgres://kaisatsu_app@db/kaisatsu?options=-c%20search_path%3Dx",
+    ] {
+        assert!(config(ok).connect_options().is_ok(), "{ok}");
+    }
+    for refused in [
+        "postgresql://kaisatsu_app:secret@db:5432/kaisatsu",
+        "postgresql://kaisatsu_app:@db/kaisatsu",
+        "postgres://kaisatsu_app@db/kaisatsu?sslmode=require&Password=secret",
+        "postgres://kaisatsu_app@db/kaisatsu?password",
+    ] {
+        let err = config(refused).connect_options().expect_err(refused);
+        assert!(!err.to_string().contains("secret"));
+    }
+    assert!(
+        PgStoreConfig {
+            password_file: Some("/nonexistent/kaisatsu/password".into()),
+            ..Default::default()
+        }
+        .connect_options()
+        .is_err()
+    );
 }
 
 #[tokio::test]
