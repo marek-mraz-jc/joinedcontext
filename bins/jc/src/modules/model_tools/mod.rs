@@ -48,6 +48,11 @@ const WORK_SLOTS: usize = 4;
 /// How long a request waits for its compilation. The task itself runs on: its limits bound it.
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// The artifacts of the Python service this port leaves out; each is named in `errors`.
+pub const UNRENDERED: [&str; 4] = ["jsonSchema", "docs", "example", "typescript"];
+const NOT_RENDERED: &str = "not rendered by jc's Model Tools, which renders the broker schema and \
+                            the @context the views need";
+
 /// The version that rendered an artifact set (DM-19).
 #[must_use]
 pub fn generator_version() -> String {
@@ -303,6 +308,11 @@ fn artifacts(source: &str, imports: &BTreeMap<String, String>) -> Value {
             out.insert("brokerSchema".to_owned(), schema);
         }
         Err(e) => fail("brokerSchema", e),
+    }
+    // The Portal saves a model only with every artifact it commits (DM-02): an empty JSON Schema,
+    // documentation or example would be committed and served as if generated.
+    for field in UNRENDERED {
+        fail(field, NOT_RENDERED.to_owned());
     }
     let errors: Vec<Value> = failures
         .into_iter()

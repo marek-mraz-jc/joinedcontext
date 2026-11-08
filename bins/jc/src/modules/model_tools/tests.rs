@@ -59,6 +59,11 @@ fn source(text: &str) -> Map<String, Value> {
     m
 }
 
+/// The one error of a model that compiles: the artifacts this port does not render.
+fn unrendered() -> String {
+    format!("{}: {NOT_RENDERED}", UNRENDERED.join(", "))
+}
+
 fn errors_of(v: &Value) -> Vec<String> {
     v["errors"]
         .as_array()
@@ -96,7 +101,7 @@ async fn a_model_compiles_to_a_broker_schema_the_broker_reads_and_a_context() {
     let body = json!({"source": MODEL}).to_string();
     let (status, out) = call("POST", "/generate", body).await;
     assert_eq!(status, StatusCode::OK, "{out}");
-    assert_eq!(errors_of(&out), Vec::<String>::new());
+    assert_eq!(errors_of(&out), vec![unrendered()]);
     let schema = &out["brokerSchema"];
     assert_eq!(schema["name"], "parking");
     assert_eq!(schema["classes"]["ParkingSpot"]["is_a"], "Entity");
@@ -223,7 +228,7 @@ slots:
     body.insert("imports".to_owned(), json!({"org.shared.v1": shared}));
     let (status, out) = generate(&body);
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
+    assert_eq!(errors_of(&out), vec![unrendered()], "{out}");
     assert_eq!(out["brokerSchema"]["slots"]["label"]["range"], "string");
 }
 
