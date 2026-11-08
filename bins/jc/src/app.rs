@@ -113,7 +113,7 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
 /// realm and reads its forge over HTTP while it is built, so it is built after `jc` serves its
 /// siblings, and only then put in place.
 #[derive(Clone, Default)]
-pub struct LateRouter(Arc<std::sync::OnceLock<Router>>);
+pub struct LateRouter(Arc<(std::sync::OnceLock<Router>, tokio::sync::Notify)>);
 
 impl LateRouter {
     fn router(&self) -> Router {
@@ -121,7 +121,7 @@ impl LateRouter {
         Router::new().fallback(move |req: Request| {
             let slot = slot.clone();
             async move {
-                match slot.0.get() {
+                match slot.0.0.get() {
                     Some(router) => {
                         use tower::ServiceExt;
                         match router.clone().oneshot(req).await {
@@ -136,7 +136,60 @@ impl LateRouter {
     }
 
     fn set(&self, router: Router) {
-        let _ = self.0.set(router);
+        let _ = self.0.0.set(router);
+        self.0.1.notify_waiters();
+    }
+
+    /// Resolves once a router is in place.
+    async fn ready(&self) {
+        loop {
+            let notified = self.0.1.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.0.0.get().is_some() {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+/// The first wait between two failed Portal builds; it doubles up to [`PORTAL_RETRY_MAX`].
+const PORTAL_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(1);
+const PORTAL_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Runs `attempt` until it builds a router, then puts it in `late`. A failed attempt (the realm's
+/// discovery or the forge not answering yet) is logged and retried with backoff, so `jc` keeps
+/// serving its other modules and the Portal's mount answers 503 meanwhile. Returns without a
+/// router when `shutdown` is cancelled.
+async fn build_until_ready<F, Fut>(
+    mut attempt: F,
+    late: LateRouter,
+    shutdown: CancellationToken,
+    first: std::time::Duration,
+) where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Router, StartError>>,
+{
+    let mut delay = first;
+    loop {
+        let result = tokio::select! {
+            () = shutdown.cancelled() => return,
+            result = attempt() => result,
+        };
+        match result {
+            Ok(router) => {
+                late.set(router);
+                tracing::info!("portal: ready");
+                return;
+            }
+            Err(e) => tracing::warn!(error = %e, retry_in = ?delay, "portal: not built, retrying"),
+        }
+        tokio::select! {
+            () = shutdown.cancelled() => return,
+            () = tokio::time::sleep(delay) => {}
+        }
+        delay = (delay * 2).min(PORTAL_RETRY_MAX);
     }
 }
 
@@ -265,6 +318,7 @@ pub struct Running {
     shutdown: CancellationToken,
     tasks: TaskTracker,
     servers: Vec<JoinHandle<std::io::Result<()>>>,
+    portal: Option<LateRouter>,
 }
 
 impl Running {
@@ -288,6 +342,14 @@ impl Running {
         self.tasks.close();
         self.tasks.wait().await;
         result
+    }
+
+    /// Resolves once the Portal serves (at once when the Portal is not in the role set). jc
+    /// serves its other modules before that; the Portal's mount answers 503 meanwhile.
+    pub async fn portal_ready(&self) {
+        if let Some(late) = &self.portal {
+            late.ready().await;
+        }
     }
 
     /// Cancels the shutdown token and waits for everything to stop.
@@ -328,6 +390,18 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     };
     let tasks = TaskTracker::new();
     let built = build_router(cfg, ctx, plans, &shutdown, &tasks).await?;
+    // A Portal setting that cannot parse refuses the start here; only what needs a sibling to
+    // answer (discovery, the forge) is retried after jc serves.
+    #[cfg(feature = "portal")]
+    if let Some((_, mount)) = &built.portal {
+        let env = |key: &str| std::env::var(key).ok();
+        let vars = if cfg.portal_siblings {
+            crate::siblings::portal_vars(&siblings, &setup, env)
+        } else {
+            std::collections::BTreeMap::new()
+        };
+        modules::portal::config(mount, env, vars)?;
+    }
     let mut servers = vec![serve(listener, built.router, shutdown.clone())];
     let mut admin_addr = None;
     if let (Some(admin), Some(token)) = (cfg.admin_listen, admin_token) {
@@ -336,38 +410,77 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         admin_addr = Some(listener.local_addr().map_err(StartError::Serve)?);
         servers.push(serve(listener, admin_router, shutdown.clone()));
     }
+    let portal = built.portal.as_ref().map(|(late, _)| late.clone());
     let running = Running {
         addr,
         admin_addr,
         shutdown,
         tasks,
         servers,
+        portal,
     };
     if let Some((late, mount)) = built.portal {
-        let portal = async {
-            if cfg.portal_siblings {
-                crate::provision::forge(&siblings, &setup).await?;
-            }
-            modules::build(
-                Module::Portal,
-                cfg,
-                ctx,
-                mount,
-                &running.shutdown,
-                &running.tasks,
+        // Built in the background: a sibling that does not answer yet (the realm's discovery
+        // through the edge, the forge) delays the Portal, never stops jc.
+        let (cfg, setup, siblings) = (Arc::new(cfg.clone()), Arc::new(setup), Arc::new(siblings));
+        let shutdown = running.shutdown.clone();
+        let attempt = move || {
+            portal_attempt(
+                cfg.clone(),
+                setup.clone(),
+                siblings.clone(),
+                mount.clone(),
+                shutdown.clone(),
             )
-            .await
         };
-        match portal.await {
-            Ok(router) => late.set(router),
-            Err(e) => {
-                let _ = running.stop().await;
-                return Err(e);
-            }
-        }
+        running.tasks.spawn(build_until_ready(
+            attempt,
+            late,
+            running.shutdown.clone(),
+            PORTAL_RETRY_FIRST,
+        ));
     }
     tracing::info!(%addr, admin = ?admin_addr, "jc listening");
     Ok(running)
+}
+
+/// One attempt at the Portal: the forge it writes to, then its router.
+async fn portal_attempt(
+    cfg: Arc<Config>,
+    setup: Arc<Setup>,
+    siblings: Arc<Siblings>,
+    mount: Mount,
+    shutdown: CancellationToken,
+) -> Result<Router, StartError> {
+    // Boxed as `Send` where the borrows are concrete: rustc cannot prove these futures `Send`
+    // for every lifetime once they sit inside a spawned task (rust-lang/rust#102211).
+    type Step<'a, T> = std::pin::Pin<Box<dyn Future<Output = Result<T, StartError>> + Send + 'a>>;
+    if cfg.portal_siblings {
+        let forge: Step<'_, ()> = Box::pin(crate::provision::forge(&siblings, &setup));
+        forge.await?;
+    }
+    let ctx = modules::BuildCtx {
+        setup: &setup,
+        siblings: &siblings,
+    };
+    #[cfg(feature = "portal")]
+    {
+        let build: Step<'_, Router> = Box::pin(modules::portal::build(
+            ctx,
+            cfg.portal_siblings,
+            mount,
+            &shutdown,
+        ));
+        build.await
+    }
+    #[cfg(not(feature = "portal"))]
+    {
+        let _ = (ctx, mount, &shutdown);
+        Err(StartError::module(
+            Module::Portal,
+            "not compiled into this jc binary",
+        ))
+    }
 }
 
 /// Runs `jc` until `stop` resolves (the binary passes SIGTERM/Ctrl-C), then shuts down cleanly.
@@ -376,4 +489,75 @@ pub async fn run_until(cfg: Config, stop: impl Future<Output = ()>) -> Result<()
     stop.await;
     tracing::info!("shutting down");
     running.stop().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+    use tower::ServiceExt;
+
+    async fn status(late: &LateRouter) -> StatusCode {
+        let req = Request::builder()
+            .uri("/")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        late.router().oneshot(req).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn a_failed_portal_build_is_retried_and_the_mount_answers_503_until_it_builds() {
+        let late = LateRouter::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let attempt = {
+            let calls = calls.clone();
+            move || {
+                let n = calls.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if n < 2 {
+                        Err(StartError::module(
+                            Module::Portal,
+                            "discovery: connection refused",
+                        ))
+                    } else {
+                        Ok(Router::new().route("/", get(|| async { "portal" })))
+                    }
+                }
+            }
+        };
+        assert_eq!(status(&late).await, StatusCode::SERVICE_UNAVAILABLE);
+        let task = tokio::spawn(build_until_ready(
+            attempt,
+            late.clone(),
+            CancellationToken::new(),
+            Duration::from_millis(10),
+        ));
+        tokio::time::timeout(Duration::from_secs(10), late.ready())
+            .await
+            .expect("the Portal is built after two failed attempts");
+        task.await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(status(&late).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn shutdown_ends_the_retries_of_a_portal_that_never_builds() {
+        let late = LateRouter::default();
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn(build_until_ready(
+            || async { Err(StartError::module(Module::Portal, "discovery: timed out")) },
+            late.clone(),
+            shutdown.clone(),
+            Duration::from_millis(5),
+        ));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!task.is_finished(), "a failed build keeps retrying");
+        assert_eq!(status(&late).await, StatusCode::SERVICE_UNAVAILABLE);
+        shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the retry loop stops on shutdown")
+            .unwrap();
+    }
 }
