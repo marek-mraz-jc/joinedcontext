@@ -225,6 +225,16 @@ pub fn portal_vars(
             ],
         );
     }
+    // The Portal's own secret backend (SOPS + age, its identity a setup file) unless the
+    // environment names a backend.
+    if unset("JC_PORTAL_SOPS_AGE_KEY_FILE") && unset("JC_PORTAL_OPENBAO_ADDR") {
+        if let Some(path) = setup.path(Secret::PortalAgeKey) {
+            out.insert(
+                "JC_PORTAL_SOPS_AGE_KEY_FILE".to_owned(),
+                path.display().to_string(),
+            );
+        }
+    }
     out
 }
 
@@ -467,5 +477,17 @@ mod tests {
         assert_eq!(origin("http://127.0.0.1:1/id"), "http://127.0.0.1:1");
         assert_eq!(origin("https://a.example"), "https://a.example");
         assert_eq!(origin("nope"), "nope");
+    }
+
+    #[test]
+    fn the_portal_resolves_secrets_with_its_setup_identity_unless_a_backend_is_named() {
+        let (siblings, setup, _d) = fixture("https");
+        let v = portal_vars(&siblings, &setup, none);
+        let key = setup.path(Secret::PortalAgeKey).unwrap();
+        assert_eq!(v["JC_PORTAL_SOPS_AGE_KEY_FILE"], key.display().to_string());
+        let bao = portal_vars(&siblings, &setup, |k| {
+            (k == "JC_PORTAL_OPENBAO_ADDR").then(|| "https://bao.example".to_owned())
+        });
+        assert!(!bao.contains_key("JC_PORTAL_SOPS_AGE_KEY_FILE"));
     }
 }
