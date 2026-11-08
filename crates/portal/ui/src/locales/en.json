@@ -1553,7 +1553,16 @@
         "sourceTitle": "Original dataset name",
         "sourceDescription": "Original dataset description",
         "pipeline": "Filled by pipeline",
-        "legislation": "Applicable law"
+        "legislation": "Applicable law",
+        "harvest": "List it in the catalogue",
+        "datasets": "Datasets of this endpoint",
+        "datasetName": "Dataset name",
+        "datasetTitle": "Title",
+        "datasetDescription": "Description",
+        "datasetTypes": "Entity types",
+        "datasetQuery": "Narrowing query",
+        "datasetKeywords": "Keywords",
+        "datasetLicense": "Licence"
       }
     },
     "rateClass": {

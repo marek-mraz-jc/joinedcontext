@@ -83,6 +83,64 @@ pub(crate) async fn endpoint_record(
     }
 }
 
+/// The DCAT-AP record of one dataset of an Endpoint's `spec.catalog.datasets`, as JSON-LD or
+/// Turtle (EP-176; a page asks for the JSON-LD): admitted as the Endpoint's own record is, and
+/// the same 404 for a name the Endpoint does not list as for an unknown slug.
+pub(crate) async fn dataset_record(
+    State(gateway): State<Arc<Gateway>>,
+    Path((slug, name)): Path<(String, String)>,
+    mut request: Request,
+) -> Response<Body> {
+    tenancy::strip_client_headers(&mut request);
+    let (endpoint, subject) = match admit(&gateway, &slug, None, request.headers()) {
+        Ok(admitted) => admitted,
+        Err(problem) => return *problem,
+    };
+    let Some(profile) = profile_of(&gateway, request.uri().query()) else {
+        return ProblemDetails::not_found().into_response();
+    };
+    let Some(slice) = endpoint
+        .catalog
+        .as_deref()
+        .and_then(|catalog| catalog.datasets.iter().find(|d| d.name == name))
+        .cloned()
+    else {
+        return ProblemDetails::not_found().into_response();
+    };
+    let index = schema_routes::index_for(&gateway, &endpoint, &endpoint.slug, &subject).await;
+    let index =
+        crate::handlers::mappings::with_mappings(&gateway, &endpoint, &subject, index).await;
+    let space = gateway.resolver.resolve_space(&endpoint.space);
+    let catalog = jc_dcat::slice_catalog(endpoint.catalog.as_deref(), &slice);
+    let record = profile::render(
+        endpoint_surface::dataset_slice(
+            &endpoint,
+            space.as_deref(),
+            &slice,
+            &index,
+            gateway.base_url(),
+        ),
+        profile,
+        Some(&catalog),
+    );
+    let accept = request
+        .headers()
+        .get(axum::http::header::ACCEPT)
+        .and_then(|value| value.to_str().ok());
+    match space_surface::negotiate(accept) {
+        space_surface::Format::Turtle => (
+            [(axum::http::header::CONTENT_TYPE, "text/turtle")],
+            jc_dcat::turtle(&record),
+        )
+            .into_response(),
+        _ => (
+            [(axum::http::header::CONTENT_TYPE, "application/ld+json")],
+            serde_json::to_string(&record).unwrap_or_default(),
+        )
+            .into_response(),
+    }
+}
+
 /// The records of every public Endpoint as the anonymous caller reads each one, which is all
 /// the feed may carry (EP-84, EP-69): no token is read, so no grant widens what it lists.
 // ponytail: one broker hop per public Endpoint, in turn; join them if the feed's latency
@@ -118,11 +176,33 @@ async fn public_records(
         let index =
             crate::handlers::mappings::with_mappings(gateway, &endpoint, &anonymous, index).await;
         let space = gateway.resolver.resolve_space(&endpoint.space);
-        records.push(profile::render(
-            endpoint_surface::dataset(&endpoint, space.as_deref(), &index, gateway.base_url()),
-            profile,
-            endpoint.catalog.as_deref(),
-        ));
+        let slices = endpoint
+            .catalog
+            .as_deref()
+            .map(|c| c.datasets.as_slice())
+            .unwrap_or_default();
+        // An Endpoint listing its datasets is in the feed as those datasets (EP-176).
+        if slices.is_empty() {
+            records.push(profile::render(
+                endpoint_surface::dataset(&endpoint, space.as_deref(), &index, gateway.base_url()),
+                profile,
+                endpoint.catalog.as_deref(),
+            ));
+        }
+        for slice in slices {
+            let catalog = jc_dcat::slice_catalog(endpoint.catalog.as_deref(), slice);
+            records.push(profile::render(
+                endpoint_surface::dataset_slice(
+                    &endpoint,
+                    space.as_deref(),
+                    slice,
+                    &index,
+                    gateway.base_url(),
+                ),
+                profile,
+                Some(&catalog),
+            ));
+        }
     }
     gateway
         .catalog_records
@@ -279,6 +359,8 @@ pub(crate) fn routes() -> Router<Arc<Gateway>> {
         .route("/api/endpoint/{slug}", get(endpoint_record))
         .route("/api/endpoint/{slug}/", get(endpoint_record))
         .route("/api/endpoint/{slug}/widget.json", get(widget_defaults))
+        // One dataset of the Endpoint's `spec.catalog.datasets` (EP-176).
+        .route("/api/endpoint/{slug}/datasets/{name}", get(dataset_record))
         // The organization's catalogue for harvesters: every public Endpoint's record (EP-84).
         .route("/catalog.jsonld", get(catalog_feed_jsonld))
         .route("/catalog.ttl", get(catalog_feed_turtle))

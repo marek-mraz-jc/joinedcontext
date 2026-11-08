@@ -136,6 +136,12 @@ fn rows() -> Vec<Row> {
         ),
         row(
             "GET",
+            "/api/endpoint/{slug}/datasets/{name}",
+            get(ep("/datasets/sweep-devices")),
+            Member,
+        ),
+        row(
+            "GET",
             "/api/endpoint/{slug}/ngsi-ld/v1",
             get(ep("/ngsi-ld/v1")),
             Member,
@@ -583,7 +589,13 @@ fn endpoint(base_path: String) -> Endpoint {
         base_path,
         models: Vec::new(),
         view_mapping: None,
-        catalog: None,
+        catalog: Some(std::sync::Arc::new(
+            serde_norway::from_str(
+                "datasets: [{ name: sweep-devices, title: { en: Devices }, \
+                 description: { en: Every device }, types: [Device] }]\n",
+            )
+            .expect("the catalogue block parses"),
+        )),
         deprecation: None,
         feeds: vec![serde_norway::from_str(
             "name: news\nsources: [{ type: Device, preset: generic }]\n",
