@@ -6,10 +6,32 @@ use std::collections::BTreeSet;
 
 /// Classes the templates use only as hooks for scripts, tests or the theme's descendant rules.
 const HOOKS: &[&str] = &[
-    "btn-lg", "btn-sm", "collapse", "control-order-by", "count", "filters", "flash-messages", "home", "image",
-    "input-lg", "lang-select", "logo", "media-image", "module-shallow", "navbar-light", "no-bottom-border", "no-nav",
-    "not-authed", "nums", "pagination-wrapper", "prose", "resource-url-analytics", "resources", "sdk-datagrid",
-    "shacl-panel", "show-filters",
+    "btn-lg",
+    "btn-sm",
+    "collapse",
+    "control-order-by",
+    "count",
+    "filters",
+    "flash-messages",
+    "home",
+    "image",
+    "input-lg",
+    "lang-select",
+    "logo",
+    "media-image",
+    "module-shallow",
+    "navbar-light",
+    "no-bottom-border",
+    "no-nav",
+    "not-authed",
+    "nums",
+    "pagination-wrapper",
+    "prose",
+    "resource-url-analytics",
+    "resources",
+    "sdk-datagrid",
+    "shacl-panel",
+    "show-filters",
 ];
 
 fn template_classes() -> BTreeSet<String> {
@@ -46,7 +68,10 @@ fn every_layout_class_the_templates_use_has_a_rule() {
         .filter(|c| !c.starts_with("jc-") && !c.starts_with("fa") && !HOOKS.contains(&c.as_str()))
         .filter(|c| !styled(css, c))
         .collect();
-    assert!(missing.is_empty(), "classes with no rule in JC_THEME_CSS: {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "classes with no rule in JC_THEME_CSS: {missing:?}"
+    );
 }
 
 #[test]
@@ -56,7 +81,12 @@ fn the_base_layout_comes_before_the_theme_so_the_theme_wins() {
     let theme = css.find("--jc-paper").expect("theme tokens");
     assert!(base < theme);
     // The masthead's lists and the skip link stop rendering as bullets and plain text.
-    for rule in [".navbar-nav {", ".list-unstyled", ".breadcrumb {", ".visually-hidden-focusable:not(:focus)"] {
+    for rule in [
+        ".navbar-nav {",
+        ".list-unstyled",
+        ".breadcrumb {",
+        ".visually-hidden-focusable:not(:focus)",
+    ] {
         assert!(css.contains(rule), "{rule}");
     }
 }
