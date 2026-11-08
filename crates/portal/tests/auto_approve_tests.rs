@@ -20,7 +20,7 @@ use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::{Change, ChangePhase};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::ops::{self, Caller, Via};
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
@@ -28,7 +28,7 @@ use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-use wiremock::matchers::{method, path, path_regex};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CSRF: &str = "test-csrf-token-2651";
@@ -96,96 +96,99 @@ fn org(kind: &str, name: &str, spec: Value) -> ResourceEnvelope {
 /// across the organization and holds the space `mobility`.
 async fn forge(rules: Value, files: &[(&str, &str)]) -> (MockServer, AppState) {
     let server = MockServer::start().await;
-    let repo = "/api/v1/repos/test-owner/test-repo";
+    let repo = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
     let ok = |body: Value| ResponseTemplate::new(200).set_body_json(body);
     Mock::given(method("GET"))
         .and(path(repo))
-        .respond_with(ok(json!({ "default_branch": "main" })))
+        .respond_with(ok(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{repo}/branches")))
+        .and(path(format!("{repo}/Shako.CreateBranch")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{repo}/contents/{PIPELINE_PATH}")))
+        .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{PIPELINE_PATH}'")))
         .respond_with(ok(
-            json!({ "sha": "blob-p", "content": STANDARD.encode(PIPELINE_YAML) }),
+            json!({ "Sha": "blob-p", "Content": STANDARD.encode(PIPELINE_YAML) }),
         ))
         .with_priority(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{repo}/contents/")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", repo)))
         .respond_with(ok(
-            json!({ "sha": "blob-1", "content": STANDARD.encode(SPACE_YAML) }),
+            json!({ "Sha": "blob-1", "Content": STANDARD.encode(SPACE_YAML) }),
         ))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{repo}/git/trees/")))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            repo
+        )))
         .respond_with(ok(json!({
-            "sha": "tree-1",
-            "truncated": false,
-            "tree": [{ "path": SPACE_PATH, "type": "blob", "sha": "blob-1", "mode": "100644" }]
+            "Sha": "tree-1",
+            "Truncated": false,
+            "Tree": [{ "Path": SPACE_PATH, "Type": "blob", "Sha": "blob-1", "Mode": "100644" }]
         })))
         .mount(&server)
         .await;
-    for verb in ["PUT", "POST", "DELETE"] {
-        Mock::given(method(verb))
-            .and(path_regex(format!("^{repo}/contents(/.*)?$")))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-            )
-            .mount(&server)
-            .await;
-    }
+    Mock::given(method("POST"))
+        .and(path(format!("{repo}/Shako.CommitFiles")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
+        .mount(&server)
+        .await;
     let pull = json!({
-        "number": 1,
-        "html_url": "https://gitea.example.sk/pulls/1",
-        "state": "open",
-        "title": "create ContextSpace mobility",
-        "head": { "ref": "portal/create-contextspace-mobility-11111111", "sha": "head-1" },
-        "base": { "ref": "main" },
-        "created_at": "2026-09-22T09:14:22Z",
-        "user": { "login": "jana.kovacova", "full_name": "Jana Kováčová", "email": EMAIL },
-        "mergeable": true,
-        "merged": false
+        "Number": 1,
+        "HtmlUrl": "https://shako.example.sk/pulls/1",
+        "State": "open",
+        "Title": "create ContextSpace mobility",
+        "Head": "portal/create-contextspace-mobility-11111111",
+        "HeadSha": "head-1",
+        "Base": "main",
+        "CreatedAt": "2026-09-22T09:14:22Z",
+        "Author": "jana.kovacova",
+        "AuthorName": "Jana Kováčová",
+        "AuthorEmail": EMAIL,
+        "Mergeable": true,
+        "Merged": false
     });
     Mock::given(method("POST"))
-        .and(path(format!("{repo}/pulls")))
+        .and(path(format!("{repo}/Shako.OpenPullRequest")))
         .respond_with(ResponseTemplate::new(201).set_body_json(pull.clone()))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{repo}/pulls/1")))
+        .and(path(format!("{repo}/PullRequests(1)")))
         .respond_with(ok(pull))
         .mount(&server)
         .await;
     let listed: Vec<Value> = files
         .iter()
-        .map(|(filename, status)| json!({ "filename": filename, "status": status }))
+        .map(|(filename, status)| json!({ "Filename": filename, "Status": status }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{repo}/pulls/1/files")))
-        .respond_with(ok(json!(listed)))
+        .and(path(format!("{repo}/PullRequests(1)/Files")))
+        .respond_with(ok(json!({ "value": listed })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{repo}/pulls/1/merge")))
+        .and(path(format!("{repo}/PullRequests(1)/Shako.Merge")))
         .respond_with(ok(json!({})))
         .mount(&server)
         .await;
 
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().expect("url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
     state
         .mirror
         .upsert(org("Role", "admin-role", json!({ "rules": rules })));
@@ -211,7 +214,7 @@ async fn merge_message(server: &MockServer) -> Option<String> {
         .await
         .expect("requests")
         .iter()
-        .find(|r| r.url.path().ends_with("/pulls/1/merge"))
+        .find(|r| r.url.path().ends_with("/PullRequests(1)/Shako.Merge"))
         .map(|r| String::from_utf8_lossy(&r.body).into_owned())
 }
 

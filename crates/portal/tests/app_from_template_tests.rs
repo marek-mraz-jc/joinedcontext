@@ -17,8 +17,8 @@ use serde_json::{json, Value};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const PROJECT: &str = "/api/v1/repos/test-owner/sharing";
-const LANDED: &str = "/api/v1/repos/test-owner/sharing_bike-finder";
+const PROJECT: &str = "/odata/Repositories(Owner='test-owner',Name='sharing')";
+const LANDED: &str = "/odata/Repositories(Owner='test-owner',Name='sharing_bike-finder')";
 const ROUTE: &str = "/api/v1/projects/sharing/app-templates/citizen-map/apps";
 const FIRST: &str = "5d0f3c1f6a3e2b9d8c7a6b5e4d3c2b1a0f9e8d7c";
 
@@ -40,30 +40,30 @@ async fn world() -> (MockServer, AppState) {
         .await;
     at(
         "POST",
-        "/api/v1/orgs/test-owner/repos",
+        "/odata/CreateRepository",
         201,
-        json!({ "name": "created" }),
+        json!({ "Name": "created" }),
     )
     .mount(&server)
     .await;
     at(
         "POST",
-        &format!("{LANDED}/contents"),
+        &format!("{LANDED}/Shako.CommitFiles"),
         201,
-        json!({ "commit": { "sha": FIRST } }),
+        json!({ "Sha": FIRST }),
     )
     .mount(&server)
     .await;
     for (verb, route) in [
-        ("POST", format!("{LANDED}/branch_protections")),
+        ("POST", format!("{LANDED}/Shako.Protect")),
         ("DELETE", LANDED.to_owned()),
     ] {
         at(verb, &route, 201, json!({})).mount(&server).await;
     }
 
     let mut state = state_on(&server);
-    if let Some(gitea) = state.gitea.as_mut().and_then(std::sync::Arc::get_mut) {
-        gitea.public_base = "https://forge.example/".parse().expect("a url");
+    if let Some(shako) = state.shako.as_mut().and_then(std::sync::Arc::get_mut) {
+        shako.public_base = "https://forge.example/".parse().expect("a url");
     }
     state.mirror.set_layout(2);
     state.mirror.set_repositories(BTreeMap::from([(
@@ -155,17 +155,17 @@ async fn sent(server: &MockServer, verb: &str, route: &str) -> Vec<Value> {
 }
 
 async fn nothing_created(server: &MockServer) {
-    assert!(sent(server, "POST", "/api/v1/orgs/test-owner/repos")
+    assert!(sent(server, "POST", "/odata/CreateRepository")
         .await
         .is_empty());
-    assert!(sent(server, "POST", &format!("{LANDED}/contents"))
+    assert!(sent(server, "POST", &format!("{LANDED}/Shako.CommitFiles"))
         .await
         .is_empty());
 }
 
-/// The files of a `/contents` commit, path to text.
+/// The files of a `Shako.CommitFiles` commit, path to text.
 fn committed(body: &Value) -> BTreeMap<String, String> {
-    body["files"]
+    body["Files"]
         .as_array()
         .into_iter()
         .flatten()
@@ -192,13 +192,13 @@ async fn a_template_lands_in_its_own_repository_and_the_app_is_proposed_without_
     .await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
 
-    let created = sent(&server, "POST", "/api/v1/orgs/test-owner/repos").await;
+    let created = sent(&server, "POST", "/odata/CreateRepository").await;
     assert_eq!(created.len(), 1);
-    assert_eq!(created[0]["name"], "sharing_bike-finder");
-    assert_eq!(created[0]["private"], true);
-    let commits = sent(&server, "POST", &format!("{LANDED}/contents")).await;
+    assert_eq!(created[0]["Name"], "sharing_bike-finder");
+    assert_eq!(created[0]["Private"], true);
+    let commits = sent(&server, "POST", &format!("{LANDED}/Shako.CommitFiles")).await;
     assert_eq!(commits.len(), 1, "one first commit");
-    assert_eq!(commits[0]["branch"], "main");
+    assert_eq!(commits[0]["Branch"], "main");
     let files = committed(&commits[0]);
     // The sample's own App over the template, with its tests, and the Portal's build.
     let sample = std::fs::read_to_string("sdk/samples/citizen-map/src/App.tsx").expect("sample");
@@ -214,7 +214,7 @@ async fn a_template_lands_in_its_own_repository_and_the_app_is_proposed_without_
     // No credential of the platform rides in the source.
     assert!(files.values().all(|text| !text.contains("token-xyz")));
     assert_eq!(
-        sent(&server, "POST", &format!("{LANDED}/branch_protections"))
+        sent(&server, "POST", &format!("{LANDED}/Shako.Protect"))
             .await
             .len(),
         1
@@ -228,18 +228,11 @@ async fn a_template_lands_in_its_own_repository_and_the_app_is_proposed_without_
         .expect("requests")
         .into_iter()
         .filter(|r| {
-            matches!(r.method.as_str(), "PUT" | "POST")
-                && r.url.path().starts_with(&format!("{PROJECT}/contents"))
+            r.method.as_str() == "POST" && r.url.path() == format!("{PROJECT}/Shako.CommitFiles")
         })
         .flat_map(|r| {
             let body: Value = serde_json::from_slice(&r.body).unwrap_or(Value::Null);
-            let mut texts: Vec<String> = committed(&body).into_values().collect();
-            if let Some(one) = body["content"].as_str() {
-                texts.push(
-                    String::from_utf8_lossy(&STANDARD.decode(one).unwrap_or_default()).into_owned(),
-                );
-            }
-            texts
+            committed(&body).into_values().collect::<Vec<String>>()
         })
         .collect();
     let app = proposed
@@ -262,12 +255,7 @@ async fn a_template_lands_in_its_own_repository_and_the_app_is_proposed_without_
     // Only the forge was asked: no model, no agent proxy.
     for request in server.received_requests().await.expect("requests") {
         let at = request.url.path();
-        assert!(
-            at.starts_with("/api/v1/repos/")
-                || at.starts_with("/api/v1/orgs/")
-                || at.starts_with("/api/v1/user"),
-            "asked {at}"
-        );
+        assert!(at.starts_with("/odata/"), "asked {at}");
     }
 }
 
@@ -384,7 +372,7 @@ async fn a_bad_or_taken_name_is_a_422_naming_the_field_and_an_unknown_template_a
 #[tokio::test]
 async fn a_repository_already_in_the_forge_is_never_adopted() {
     let (server, state) = world().await;
-    at("GET", LANDED, 200, json!({ "default_branch": "main" }))
+    at("GET", LANDED, 200, json!({ "DefaultBranch": "main" }))
         .with_priority(1)
         .mount(&server)
         .await;

@@ -16,20 +16,19 @@ use http_body_util::BodyExt;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, Phase, ResourceEnvelope, Status, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CSRF_TOKEN: &str = "test-csrf-token-12345";
 const SLUG: &str = "zt4qm7ge2xdv6ksb3ncf5arw2y";
-const INSTANCE_PATH: &str =
-    "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/ckan/open-data.yaml";
+const INSTANCE_PATH: &str = "projects/ovzdusie/ckan/open-data.yaml";
 
 fn session_cookie(config: &Config) -> String {
     use axum::response::IntoResponse;
@@ -303,7 +302,7 @@ async fn the_status_needs_a_session() {
 #[tokio::test]
 async fn a_catalogue_is_configured_through_the_resource_api_as_a_change_proposal() {
     let forge = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
@@ -312,43 +311,54 @@ async fn a_catalogue_is_configured_through_the_resource_api_as_a_change_proposal
     .expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path(INSTANCE_PATH))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param("@p", format!("'{INSTANCE_PATH}'")))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&forge)
         .await;
-    Mock::given(method("PUT"))
-        .and(path(INSTANCE_PATH))
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
+        .and(body_string_contains(format!(r#""path":"{INSTANCE_PATH}""#)))
         .respond_with(
-            ResponseTemplate::new(201)
-                .set_body_json(json!({ "commit": { "sha": "commit-sha-created" } })),
+            ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-sha-created" })),
         )
         .mount(&forge)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 7,
-            "html_url": "https://gitea.example.sk/pulls/7",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 7,
+            "HtmlUrl": "https://shako.example.sk/pulls/7",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&forge)
         .await;
 
     let config = Config::for_tests();
     let cookies = format!("{}; {CSRF_COOKIE}={CSRF_TOKEN}", session_cookie(&config));
-    let app = server::app(AppState::new(config, None).with_gitea(Arc::new(client)));
+    let app = server::app(AppState::new(config, None).with_shako(Arc::new(client)));
 
     let response = app
         .oneshot_checked(

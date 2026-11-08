@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
-//! Transactional outbox event recording, in-process bus dispatch, and Gitea-compatible
-//! outbound webhook delivery with HMAC-SHA256 (`X-Gitea-Signature`, `X-Gitea-Event`,
-//! `X-Gitea-Delivery`) and 3 retries through `OutboundGuard` (Contract S14, R§5, Threat T3, T11).
+//! Transactional outbox event recording, in-process bus dispatch, and outbound webhook delivery
+//! with HMAC-SHA256 and 3 retries through `OutboundGuard` (Contract S14, R§5, Threat T3, T11).
+//! A hook delivers in its own [`WebhookFormat`]: Gitea's headers and body (`X-Gitea-Signature`,
+//! `X-Gitea-Event`, `X-Gitea-Delivery`) for outside clients, or shako's native body with
+//! `X-Shako-Signature`, `X-Shako-Event` and `X-Shako-Delivery` (the Portal's receiver).
 
 use crate::state::ShakoState;
 use chrono::Utc;
@@ -10,7 +12,7 @@ use serde_json::{Value, json};
 use sha2::Sha256;
 use shako_core::{
     DeliveryRecord, OutboxEvent, PullRequestRecord, RepoId, RepoRecord, ShakoError, ShakoResult,
-    WebhookRecord,
+    WebhookFormat, WebhookRecord,
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -111,6 +113,72 @@ pub fn build_pr_webhook_payload(
     })
 }
 
+/// The native body of an event, built from the Gitea-shaped payload the outbox stores: what a
+/// [`WebhookFormat::Shako`] hook delivers (`PORTAL-ODATA.md` section 8).
+#[must_use]
+pub fn native_webhook_payload(event_kind: &str, gitea: &Value) -> Value {
+    let text = |v: &Value, k: &str| {
+        v.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let repo = gitea.get("repository").cloned().unwrap_or(Value::Null);
+    let owner = repo
+        .get("owner")
+        .map(|o| text(o, "login"))
+        .filter(|o| !o.is_empty())
+        .or_else(|| {
+            text(&repo, "full_name")
+                .split_once('/')
+                .map(|(o, _)| o.to_owned())
+        })
+        .unwrap_or_default();
+    let repository = json!({
+        "owner": owner,
+        "name": text(&repo, "name"),
+        "defaultBranch": text(&repo, "default_branch"),
+        "private": repo.get("private").and_then(Value::as_bool).unwrap_or(true),
+    });
+    let sender = gitea
+        .get("sender")
+        .map(|s| text(s, "login"))
+        .unwrap_or_default();
+    match event_kind {
+        "pull_request" => {
+            let pr = gitea.get("pull_request").cloned().unwrap_or(Value::Null);
+            let side = |k: &str| {
+                let s = pr.get(k).cloned().unwrap_or(Value::Null);
+                json!({ "ref": text(&s, "ref"), "sha": text(&s, "sha") })
+            };
+            json!({
+                "event": "pull_request",
+                "action": text(gitea, "action"),
+                "pullRequest": {
+                    "number": pr.get("number").cloned().unwrap_or(Value::Null),
+                    "state": text(&pr, "state"),
+                    "title": text(&pr, "title"),
+                    "merged": pr.get("merged").and_then(Value::as_bool).unwrap_or(false),
+                    "mergeCommitSha": text(&pr, "merge_commit_sha"),
+                    "head": side("head"),
+                    "base": side("base"),
+                },
+                "repository": repository,
+                "sender": sender,
+            })
+        }
+        "push" => json!({
+            "event": "push",
+            "ref": text(gitea, "ref"),
+            "before": text(gitea, "before"),
+            "after": text(gitea, "after"),
+            "repository": repository,
+            "sender": sender,
+        }),
+        other => json!({ "event": other, "repository": repository, "sender": sender }),
+    }
+}
+
 /// Appends an event to `shako.outbox` and immediately dispatches pending events to:
 /// 1. The in-process broadcast channel and registered `InProcessEventSubscriber`s (Portal sync).
 /// 2. Matching outbound webhooks with HMAC-SHA256 signatures and up to 3 attempts (S14).
@@ -196,8 +264,11 @@ pub async fn deliver_webhook_with_retries(
     event_kind: &str,
     payload: &Value,
 ) -> ShakoResult<DeliveryRecord> {
-    let body_bytes =
-        serde_json::to_vec(payload).map_err(|e| ShakoError::Internal(e.to_string()))?;
+    let body = match hook.format {
+        WebhookFormat::Gitea => payload.clone(),
+        WebhookFormat::Shako => native_webhook_payload(event_kind, payload),
+    };
+    let body_bytes = serde_json::to_vec(&body).map_err(|e| ShakoError::Internal(e.to_string()))?;
     let delivery_id = uuid::Uuid::now_v7();
     // A hook whose secret is gone is not delivered: a body signed with an empty key would
     // pass any receiver that, like this forge, accepts an empty secret, and fail the others.
@@ -223,19 +294,28 @@ pub async fn deliver_webhook_with_retries(
     let sig = compute_gitea_signature(&secret, &body_bytes)?;
     let ts = Utc::now().timestamp().to_string();
 
+    let prefix = match hook.format {
+        WebhookFormat::Gitea => "X-Gitea",
+        WebhookFormat::Shako => "X-Shako",
+    };
     let mut headers = vec![
         ("Content-Type".to_owned(), "application/json".to_owned()),
-        ("X-Gitea-Event".to_owned(), event_kind.to_owned()),
-        ("X-Gitea-Signature".to_owned(), sig.clone()),
-        ("X-Hub-Signature-256".to_owned(), format!("sha256={sig}")),
-        ("X-Gitea-Delivery".to_owned(), delivery_id.to_string()),
+        (format!("{prefix}-Event"), event_kind.to_owned()),
+        (format!("{prefix}-Signature"), sig.clone()),
+        (format!("{prefix}-Delivery"), delivery_id.to_string()),
         ("X-Shako-Timestamp".to_owned(), ts),
     ];
+    if hook.format == WebhookFormat::Gitea {
+        headers.push(("X-Hub-Signature-256".to_owned(), format!("sha256={sig}")));
+    }
     if let Some(prev_ref) = &hook.previous_secret_ref
-        && let Some(prev_sec) = state.secret_store.get_secret(hook.org_id, prev_ref)
+        && let Some(prev_sec) = state
+            .secret_store
+            .get_secret(hook.org_id, prev_ref)
+            .filter(|s| !s.is_empty())
         && let Ok(prev_sig) = compute_gitea_signature(&prev_sec, &body_bytes)
     {
-        headers.push(("X-Gitea-Signature-Previous".to_owned(), prev_sig));
+        headers.push((format!("{prefix}-Signature-Previous"), prev_sig));
     }
 
     let mut last_status_code: Option<u16> = None;

@@ -13,7 +13,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use common::{encode, envelope, person, send, REPO};
 use joinedcontext_portal::api::changes::{approve_change_for, ApprovedBy};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::gitea::committed_text;
+use joinedcontext_portal::forge::shako::committed_text;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::API_VERSION;
 use joinedcontext_portal::state::AppState;
@@ -52,21 +52,24 @@ const COMPILED: &str = r##"{
 /// A forge that takes every write and holds the project's source, and a Model Tools that
 /// compiles anything.
 async fn world() -> (MockServer, MockServer, AppState) {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{SOURCE_PATH}")))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{SOURCE_PATH}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-src", "content": encode(SOURCE)
+            "Sha": "sha-src",
+            "Content": encode(SOURCE)
         })))
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/branches/main")))
+        .and(path(format!("{REPO}/Branches('main')")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": "main", "commit": { "id": COMMIT }
+            "Name": "main",
+            "HeadSha": COMMIT
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     let tools = MockServer::start().await;
     Mock::given(method("POST"))
@@ -74,7 +77,7 @@ async fn world() -> (MockServer, MockServer, AppState) {
         .respond_with(ResponseTemplate::new(200).set_body_raw(COMPILED, "application/json"))
         .mount(&tools)
         .await;
-    let base = common::state_on(&gitea);
+    let base = common::state_on(&shako);
     let state = AppState::new(
         Config {
             model_tools_url: Some(tools.uri()),
@@ -82,7 +85,7 @@ async fn world() -> (MockServer, MockServer, AppState) {
         },
         None,
     )
-    .with_gitea(base.gitea.clone().expect("forge"));
+    .with_shako(base.shako.clone().expect("forge"));
 
     let every = json!(["read", "propose", "approve", "delete"]);
     for (name, verbs) in [("model-admin", every.clone()), ("model-steward", every)] {
@@ -108,7 +111,7 @@ async fn world() -> (MockServer, MockServer, AppState) {
         .mirror
         .upsert(envelope("ContextSpace", "ilma", "helsinki", json!({})));
     seed_model(&state, "published");
-    (gitea, tools, state)
+    (shako, tools, state)
 }
 
 fn seed_model(state: &AppState, lifecycle: &str) {
@@ -129,7 +132,7 @@ fn seed_model(state: &AppState, lifecycle: &str) {
 /// The organization's own `air`, shared earlier from `origin` (none: made there), at `version`
 /// with `source` in the organization repository.
 async fn seed_organization_model(
-    gitea: &MockServer,
+    shako: &MockServer,
     state: &AppState,
     origin: Option<Value>,
     version: &str,
@@ -148,13 +151,15 @@ async fn seed_organization_model(
         .mirror
         .upsert(envelope("DataModel", "air", ORG_NAMESPACE, spec));
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{ORG_SOURCE_PATH}")))
-        .and(query_param("ref", "main"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{ORG_SOURCE_PATH}'")))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-org", "content": encode(source)
+            "Sha": "sha-org",
+            "Content": encode(source)
         })))
         .with_priority(1)
-        .mount(gitea)
+        .mount(shako)
         .await;
 }
 
@@ -162,32 +167,25 @@ fn same_origin() -> Value {
     json!({ "project": "helsinki", "space": "ilma", "name": "air", "version": "1.0.0", "commit": "abcdef1" })
 }
 
-/// Every file the forge was asked to write, by path, decoded: one per-file write or each file
-/// of a `POST /contents` commit.
-async fn written(gitea: &MockServer) -> Vec<(String, String)> {
+/// Every file the forge was asked to write, by path, decoded: each file of every
+/// `POST R/Shako.CommitFiles` commit, a single-file write included.
+async fn written(shako: &MockServer) -> Vec<(String, String)> {
     let decode = |content: &Value| {
         let bytes = STANDARD.decode(content.as_str()?).ok()?;
         String::from_utf8(bytes).ok()
     };
     let mut files = Vec::new();
-    for request in gitea.received_requests().await.expect("recorded") {
+    for request in shako.received_requests().await.expect("recorded") {
         let Ok(body) = serde_json::from_slice::<Value>(&request.body) else {
             continue;
         };
         let at = request.url.path();
-        if request.method.as_str() == "POST" && at == format!("{REPO}/contents") {
-            for file in body["files"].as_array().into_iter().flatten() {
+        if request.method.as_str() == "POST" && at == format!("{REPO}/Shako.CommitFiles") {
+            for file in body["Files"].as_array().into_iter().flatten() {
                 if let (Some(path), Some(text)) = (file["path"].as_str(), decode(&file["content"]))
                 {
                     files.push((path.to_owned(), text));
                 }
-            }
-        } else if request.method.as_str() == "PUT" {
-            if let (Some(path), Some(text)) = (
-                at.strip_prefix(&format!("{REPO}/contents/")),
-                decode(&body["content"]),
-            ) {
-                files.push((path.to_owned(), text));
             }
         }
     }
@@ -208,14 +206,14 @@ fn file<'a>(files: &'a [(String, String)], wanted: &str) -> &'a str {
 }
 
 fn opened_a_change(requests: &[wiremock::Request]) -> bool {
-    requests
-        .iter()
-        .any(|r| r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/pulls"))
+    requests.iter().any(|r| {
+        r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.OpenPullRequest")
+    })
 }
 
 #[tokio::test]
 async fn a_project_member_proposes_a_red_change_that_copies_the_source_in_the_committed_layout() {
-    let (gitea, _tools, state) = world().await;
+    let (shako, _tools, state) = world().await;
 
     let answer = send(&state, person("steward"), "POST", SHARE, None).await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
@@ -223,7 +221,7 @@ async fn a_project_member_proposes_a_red_change_that_copies_the_source_in_the_co
     assert_eq!(change["status"]["lane"], "red", "{change}");
     assert_eq!(change["status"]["phase"], "PendingApproval", "{change}");
 
-    let files = written(&gitea).await;
+    let files = written(&shako).await;
     assert_eq!(
         file(&files, ORG_SOURCE_PATH),
         committed_text(ORG_SOURCE_PATH, SOURCE),
@@ -253,7 +251,7 @@ async fn a_project_member_proposes_a_red_change_that_copies_the_source_in_the_co
 
 #[tokio::test]
 async fn a_draft_a_stranger_and_a_model_importing_a_project_model_are_refused_before_any_write() {
-    let (gitea, tools, state) = world().await;
+    let (shako, tools, state) = world().await;
 
     let answer = send(&state, person("stranger"), "POST", SHARE, None).await;
     assert_eq!(answer.status, StatusCode::NOT_FOUND, "{}", answer.text);
@@ -279,19 +277,21 @@ async fn a_draft_a_stranger_and_a_model_importing_a_project_model_are_refused_be
     seed_model(&state, "published");
 
     // An organization model imports organization models only (DM-76).
-    gitea.reset().await;
-    common::mount_repository(&gitea, REPO).await;
+    shako.reset().await;
+    common::mount_repository(&shako, REPO).await;
     let importing = SOURCE.replace(
         "  - linkml:types",
         "  - linkml:types\n  - project.stations.v1",
     );
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{SOURCE_PATH}")))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{SOURCE_PATH}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-src", "content": encode(&importing)
+            "Sha": "sha-src",
+            "Content": encode(&importing)
         })))
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     let answer = send(&state, person("steward"), "POST", SHARE, None).await;
     assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
@@ -304,7 +304,7 @@ async fn a_draft_a_stranger_and_a_model_importing_a_project_model_are_refused_be
     );
 
     assert!(!opened_a_change(
-        &gitea.received_requests().await.expect("recorded")
+        &shako.received_requests().await.expect("recorded")
     ));
     assert!(tools
         .received_requests()
@@ -315,9 +315,9 @@ async fn a_draft_a_stranger_and_a_model_importing_a_project_model_are_refused_be
 
 #[tokio::test]
 async fn a_name_the_organization_holds_from_another_origin_is_409_naming_it() {
-    let (gitea, _tools, state) = world().await;
+    let (shako, _tools, state) = world().await;
     let other = json!({ "project": "espoo", "space": "ilma", "name": "air", "version": "1.0.0", "commit": "abcdef1" });
-    seed_organization_model(&gitea, &state, Some(other), "1.0.0", SOURCE).await;
+    seed_organization_model(&shako, &state, Some(other), "1.0.0", SOURCE).await;
 
     let answer = send(&state, person("steward"), "POST", SHARE, None).await;
     assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
@@ -330,26 +330,26 @@ async fn a_name_the_organization_holds_from_another_origin_is_409_naming_it() {
     );
 
     // One made in the organization itself has no origin, and keeps its name all the same.
-    seed_organization_model(&gitea, &state, None, "1.0.0", SOURCE).await;
+    seed_organization_model(&shako, &state, None, "1.0.0", SOURCE).await;
     let answer = send(&state, person("steward"), "POST", SHARE, None).await;
     assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
     assert!(!opened_a_change(
-        &gitea.received_requests().await.expect("recorded")
+        &shako.received_requests().await.expect("recorded")
     ));
 }
 
 #[tokio::test]
 async fn a_second_share_from_the_same_origin_proposes_the_next_version() {
     // The organization holds 1.0.0 without `no2`: this share adds a slot.
-    let (gitea, _tools, state) = world().await;
+    let (shako, _tools, state) = world().await;
     let older = SOURCE
         .replace("    slots: [pm10, no2]\n", "    slots: [pm10]\n")
         .replace("  no2: { range: float, slot_uri: aq:no2 }\n", "");
-    seed_organization_model(&gitea, &state, Some(same_origin()), "1.0.0", &older).await;
+    seed_organization_model(&shako, &state, Some(same_origin()), "1.0.0", &older).await;
 
     let answer = send(&state, person("steward"), "POST", SHARE, None).await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
-    let files = written(&gitea).await;
+    let files = written(&shako).await;
     let manifest: Value =
         serde_norway::from_str(file(&files, "datamodels/air/air.yaml")).expect("yaml");
     assert_eq!(manifest["spec"]["version"], "1.1.0", "{manifest}");
@@ -360,25 +360,25 @@ async fn a_second_share_from_the_same_origin_proposes_the_next_version() {
     );
 
     // Removing a slot the organization's copy has breaks it: a new major (DM-22).
-    let (gitea, _tools, state) = world().await;
+    let (shako, _tools, state) = world().await;
     let wider = SOURCE
         .replace("    slots: [pm10, no2]\n", "    slots: [pm10, no2, o3]\n")
         .replace(
             "  no2: { range: float, slot_uri: aq:no2 }\n",
             "  no2: { range: float, slot_uri: aq:no2 }\n  o3: { range: float, slot_uri: aq:o3 }\n",
         );
-    seed_organization_model(&gitea, &state, Some(same_origin()), "1.0.0", &wider).await;
+    seed_organization_model(&shako, &state, Some(same_origin()), "1.0.0", &wider).await;
     let answer = send(&state, person("steward"), "POST", SHARE, None).await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
-    let files = written(&gitea).await;
+    let files = written(&shako).await;
     let manifest: Value =
         serde_norway::from_str(file(&files, "datamodels/air/air.yaml")).expect("yaml");
     assert_eq!(manifest["spec"]["version"], "2.0.0", "{manifest}");
     file(&files, "datamodels/air/json-schema/air.v2.json");
 
     // The same source again changes nothing.
-    let (gitea, _tools, state) = world().await;
-    seed_organization_model(&gitea, &state, Some(same_origin()), "1.2.0", SOURCE).await;
+    let (shako, _tools, state) = world().await;
+    seed_organization_model(&shako, &state, Some(same_origin()), "1.2.0", SOURCE).await;
     let answer = send(&state, person("steward"), "POST", SHARE, None).await;
     assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
     assert!(
@@ -389,7 +389,7 @@ async fn a_second_share_from_the_same_origin_proposes_the_next_version() {
         answer.text
     );
     assert!(!opened_a_change(
-        &gitea.received_requests().await.expect("recorded")
+        &shako.received_requests().await.expect("recorded")
     ));
 }
 
@@ -398,30 +398,34 @@ async fn a_second_share_from_the_same_origin_proposes_the_next_version() {
 const SHARED: u64 = 0x401;
 
 /// The share's merge request as the organization repository holds it.
-async fn share_pull(gitea: &MockServer) {
+async fn share_pull(shako: &MockServer) {
     let branch = "portal/create-datamodel-air-00000401";
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{SHARED}")))
+        .and(path(format!("{REPO}/PullRequests({SHARED})")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": SHARED,
-            "html_url": "https://gitea.example/pulls/1025",
-            "state": "open",
-            "title": "share DataModel air with the organization",
-            "head": { "ref": branch },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-25T09:00:00Z",
-            "user": { "login": "portal", "full_name": "steward", "email": "steward@hel.fi" },
-            "mergeable": true,
-            "merged": false
+            "Number": SHARED,
+            "HtmlUrl": "https://shako.example/pulls/1025",
+            "State": "open",
+            "Title": "share DataModel air with the organization",
+            "Head": branch,
+            "Base": "main",
+            "CreatedAt": "2026-09-25T09:00:00Z",
+            "Author": "portal",
+            "AuthorName": "steward",
+            "AuthorEmail": "steward@hel.fi",
+            "Mergeable": true,
+            "Merged": false
         })))
-        .mount(gitea)
+        .mount(shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{SHARED}/files")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "filename": "datamodels/air/air.yaml", "status": "added" }
-        ])))
-        .mount(gitea)
+        .and(path(format!("{REPO}/PullRequests({SHARED})/Files")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                { "Filename": "datamodels/air/air.yaml", "Status": "added" }
+            ]
+        })))
+        .mount(shako)
         .await;
     let manifest = json!({
         "apiVersion": API_VERSION,
@@ -436,27 +440,29 @@ async fn share_pull(gitea: &MockServer) {
         }
     });
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/datamodels/air/air.yaml")))
-        .and(query_param("ref", branch))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", "'datamodels/air/air.yaml'"))
+        .and(query_param("@r", format!("'{}'", branch)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-share",
-            "content": encode(&serde_norway::to_string(&manifest).expect("yaml"))
+            "Sha": "sha-share",
+            "Content": encode(&serde_norway::to_string(&manifest).expect("yaml"))
         })))
         .with_priority(1)
-        .mount(gitea)
+        .mount(shako)
         .await;
 }
 
 fn merged(requests: &[wiremock::Request]) -> bool {
     requests.iter().any(|r| {
-        r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/pulls/{SHARED}/merge")
+        r.method.as_str() == "POST"
+            && r.url.path() == format!("{REPO}/PullRequests({SHARED})/Shako.Merge")
     })
 }
 
 #[tokio::test]
 async fn only_an_organization_approver_with_the_name_typed_merges_a_share() {
-    let (gitea, _tools, state) = world().await;
-    share_pull(&gitea).await;
+    let (shako, _tools, state) = world().await;
+    share_pull(&shako).await;
     let approve = format!("/api/v1/projects/{ORG_NAMESPACE}/changes/chg-{SHARED:08x}/approve");
 
     // The project's steward approves DataModel changes of helsinki, not the organization's.
@@ -477,7 +483,7 @@ async fn only_an_organization_approver_with_the_name_typed_merges_a_share() {
         "{}",
         answer.text
     );
-    assert!(!merged(&gitea.received_requests().await.expect("recorded")));
+    assert!(!merged(&shako.received_requests().await.expect("recorded")));
 
     let answer = send(
         &state,
@@ -488,13 +494,13 @@ async fn only_an_organization_approver_with_the_name_typed_merges_a_share() {
     )
     .await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
-    assert!(merged(&gitea.received_requests().await.expect("recorded")));
+    assert!(merged(&shako.received_requests().await.expect("recorded")));
 }
 
 #[tokio::test]
 async fn a_service_account_or_an_agent_run_never_approves_a_share() {
-    let (gitea, _tools, state) = world().await;
-    share_pull(&gitea).await;
+    let (shako, _tools, state) = world().await;
+    share_pull(&shako).await;
     let id = format!("chg-{SHARED:08x}");
 
     // The administrator's own grants, presented by a service account's token.
@@ -532,15 +538,15 @@ async fn a_service_account_or_an_agent_run_never_approves_a_share() {
         "{}",
         answer.text()
     );
-    assert!(!merged(&gitea.received_requests().await.expect("recorded")));
+    assert!(!merged(&shako.received_requests().await.expect("recorded")));
 }
 
 // DM-75, DM-78: every member reads the organization's copy and where it came from, which is what
 // lets the origin project offer to use it; a person with no binding reads neither.
 #[tokio::test]
 async fn every_member_reads_the_organization_copy_and_its_origin() {
-    let (gitea, _tools, state) = world().await;
-    seed_organization_model(&gitea, &state, Some(same_origin()), "1.0.0", SOURCE).await;
+    let (shako, _tools, state) = world().await;
+    seed_organization_model(&shako, &state, Some(same_origin()), "1.0.0", SOURCE).await;
 
     let answer = send(
         &state,

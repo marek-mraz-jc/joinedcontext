@@ -231,6 +231,11 @@ pub fn shako_odata_service() -> Service {
                     req_field("Id", FieldKind::String, "Composite key {RepoId}:{Number}"),
                     req_field("RepoId", FieldKind::String, "Repository UUID"),
                     req_field("Number", FieldKind::Integer, "Pull request number"),
+                    req_field(
+                        "HtmlUrl",
+                        FieldKind::String,
+                        "Web address of the pull request",
+                    ),
                     req_field("State", FieldKind::String, "open or closed"),
                     req_field("Title", FieldKind::String, "Title"),
                     req_field("Body", FieldKind::String, "Body markdown"),
@@ -247,7 +252,10 @@ pub fn shako_odata_service() -> Service {
                     req_field("Merged", FieldKind::Boolean, "Whether merged"),
                     req_field("MergeCommitSha", FieldKind::String, "Merge commit SHA"),
                     req_field("Author", FieldKind::String, "Author login"),
+                    req_field("AuthorName", FieldKind::String, "Author display name"),
+                    opt_field("AuthorEmail", FieldKind::String, "Author e-mail"),
                     opt_field("CreatedAt", FieldKind::DateTime, "Created timestamp"),
+                    opt_field("UpdatedAt", FieldKind::DateTime, "Last update timestamp"),
                     opt_field("ClosedAt", FieldKind::DateTime, "Closed timestamp"),
                 ],
                 rules: rw_rules("forge:read", "forge:propose"),
@@ -579,7 +587,7 @@ impl OperationRegistry {
                 rest_method: "POST",
                 rest_path: "/api/v1/projects/{project}/repositories",
                 compat_path: Some("/api/v1/orgs/{owner}/repos"),
-                input_schema: json!({"type":"object","properties":{"owner":{"type":"string"},"name":{"type":"string"},"description":{"type":"string"},"autoInit":{"type":"boolean"}},"required":["name"]}),
+                input_schema: json!({"type":"object","properties":{"owner":{"type":"string"},"name":{"type":"string"},"description":{"type":"string"},"private":{"type":"boolean"},"autoInit":{"type":"boolean"},"defaultBranch":{"type":"string"}},"required":["name"]}),
                 output_schema: json!({"type":"object"}),
                 odata: ODataOperation {
                     kind: A,
@@ -590,7 +598,9 @@ impl OperationRegistry {
                         p("Owner", "Edm.String", true),
                         p("Name", "Edm.String", false),
                         p("Description", "Edm.String", true),
+                        p("Private", "Edm.Boolean", true),
                         p("AutoInit", "Edm.Boolean", true),
+                        p("DefaultBranch", "Edm.String", true),
                     ],
                     return_type: Some("Shako.Repository"),
                 },
@@ -609,7 +619,7 @@ impl OperationRegistry {
                 rest_method: "POST",
                 rest_path: "/api/v1/projects/{project}/repositories/import",
                 compat_path: Some("/api/v1/repos/migrate"),
-                input_schema: json!({"type":"object","properties":{"cloneAddr":{"type":"string"},"repoOwner":{"type":"string"},"repoName":{"type":"string"}},"required":["cloneAddr","repoName"]}),
+                input_schema: json!({"type":"object","properties":{"sourceOwner":{"type":"string"},"sourceName":{"type":"string"},"repoOwner":{"type":"string"},"repoName":{"type":"string"},"description":{"type":"string"},"private":{"type":"boolean"}},"required":["sourceOwner","sourceName","repoOwner","repoName"]}),
                 output_schema: json!({"type":"object"}),
                 odata: ODataOperation {
                     kind: A,
@@ -617,9 +627,12 @@ impl OperationRegistry {
                     binding: None,
                     binding_collection: false,
                     params: vec![
-                        p("CloneAddr", "Edm.String", false),
+                        p("SourceOwner", "Edm.String", false),
+                        p("SourceName", "Edm.String", false),
                         p("RepoOwner", "Edm.String", false),
                         p("RepoName", "Edm.String", false),
+                        p("Description", "Edm.String", true),
+                        p("Private", "Edm.Boolean", true),
                     ],
                     return_type: Some("Shako.Repository"),
                 },
@@ -749,8 +762,10 @@ impl OperationRegistry {
                     binding: Some("Repository"),
                     binding_collection: false,
                     params: vec![
-                        p("Branch", "Edm.String", false),
+                        p("Branch", "Edm.String", true),
                         p("Message", "Edm.String", false),
+                        p("Author", "Edm.Untyped", true),
+                        p("Committer", "Edm.Untyped", true),
                         p("Files", "Edm.Untyped", false),
                     ],
                     return_type: Some("Edm.Untyped"),
@@ -810,6 +825,7 @@ impl OperationRegistry {
                     params: vec![
                         p("Event", "Edm.String", false),
                         p("Body", "Edm.String", true),
+                        p("CommitId", "Edm.String", true),
                     ],
                     return_type: Some("Shako.Review"),
                 },
@@ -839,6 +855,7 @@ impl OperationRegistry {
                         p("Style", "Edm.String", false),
                         p("Message", "Edm.String", true),
                         p("HeadCommitId", "Edm.String", true),
+                        p("DeleteBranchAfterMerge", "Edm.Boolean", true),
                     ],
                     return_type: Some("Edm.Untyped"),
                 },
@@ -957,7 +974,7 @@ impl OperationRegistry {
                 rest_method: "POST",
                 rest_path: "/api/v1/projects/{project}/repositories/{repo}/mirrors",
                 compat_path: Some("/api/v1/repos/{owner}/{repo}/push_mirrors"),
-                input_schema: json!({"type":"object","properties":{"repo":{"type":"string"},"remoteAddress":{"type":"string"},"secretRef":{"type":"string"}},"required":["repo","remoteAddress"]}),
+                input_schema: json!({"type":"object","properties":{"repo":{"type":"string"},"remoteAddress":{"type":"string"},"remoteUsername":{"type":"string"},"secretRef":{"type":"string"},"interval":{"type":"string"},"syncOnCommit":{"type":"boolean"}},"required":["repo","remoteAddress"]}),
                 output_schema: json!({"type":"object"}),
                 odata: ODataOperation {
                     kind: A,
@@ -966,7 +983,11 @@ impl OperationRegistry {
                     binding_collection: false,
                     params: vec![
                         p("RemoteAddress", "Edm.String", false),
+                        p("RemoteUsername", "Edm.String", true),
+                        p("Credential", "Edm.String", true),
                         p("SecretRef", "Edm.String", true),
+                        p("Interval", "Edm.String", true),
+                        p("SyncOnCommit", "Edm.Boolean", true),
                     ],
                     return_type: Some("Shako.PushMirror"),
                 },
@@ -1027,7 +1048,7 @@ impl OperationRegistry {
                 cli_command: "add-webhook",
                 connector_segment: "forge",
                 title: "Add Webhook",
-                description: "Register an outbound Gitea-compatible webhook with a secretRef.",
+                description: "Register an outbound webhook delivering shako's native events, signed with an inline secret or a secretRef.",
                 entity_set: Some("Webhooks"),
                 action: Action::Admin,
                 permission: "forge:admin",
@@ -1044,7 +1065,11 @@ impl OperationRegistry {
                     binding_collection: false,
                     params: vec![
                         p("Url", "Edm.String", false),
-                        p("SecretRef", "Edm.String", false),
+                        p("Secret", "Edm.String", true),
+                        p("SecretRef", "Edm.String", true),
+                        p("PreviousSecretRef", "Edm.String", true),
+                        p("Events", "Collection(Edm.String)", true),
+                        p("Active", "Edm.Boolean", true),
                     ],
                     return_type: Some("Shako.Webhook"),
                 },
@@ -1130,6 +1155,8 @@ impl OperationRegistry {
                         p("Ref", "Edm.String", false),
                         p("Path", "Edm.String", true),
                         p("Recursive", "Edm.Boolean", true),
+                        p("Skip", "Edm.Int32", true),
+                        p("Top", "Edm.Int32", true),
                     ],
                     return_type: Some("Edm.Untyped"),
                 },
@@ -1183,7 +1210,11 @@ impl OperationRegistry {
                     name: "History",
                     binding: Some("Repository"),
                     binding_collection: false,
-                    params: vec![p("Ref", "Edm.String", false), p("Path", "Edm.String", true)],
+                    params: vec![
+                        p("Ref", "Edm.String", false),
+                        p("Path", "Edm.String", true),
+                        p("Top", "Edm.Int32", true),
+                    ],
                     return_type: Some("Edm.Untyped"),
                 },
             },
@@ -1237,6 +1268,31 @@ impl OperationRegistry {
                     binding: Some("PullRequest"),
                     binding_collection: false,
                     params: Vec::new(),
+                    return_type: Some("Edm.Untyped"),
+                },
+            },
+            OperationDef {
+                name: "CommitStatus",
+                mcp_tool: "jc_forge_commit_status",
+                cli_command: "commit-status",
+                connector_segment: "forge",
+                title: "Read Commit Status",
+                description: "Read the combined CI state and the statuses of a commit.",
+                entity_set: None,
+                action: Action::Read,
+                permission: "forge:read",
+                audit_kind: "STATUS_READ",
+                rest_method: "GET",
+                rest_path: "/api/v1/projects/{project}/repositories/{repo}/commits/{sha}/status",
+                compat_path: Some("/api/v1/repos/{owner}/{repo}/commits/{sha}/status"),
+                input_schema: json!({"type":"object","properties":{"repo":{"type":"string"},"sha":{"type":"string"}},"required":["repo","sha"]}),
+                output_schema: json!({"type":"object"}),
+                odata: ODataOperation {
+                    kind: F,
+                    name: "CommitStatus",
+                    binding: Some("Repository"),
+                    binding_collection: false,
+                    params: vec![p("Sha", "Edm.String", false)],
                     return_type: Some("Edm.Untyped"),
                 },
             },
@@ -1482,6 +1538,8 @@ mod tests {
             "Action Name=\"CommitFiles\"",
             "Function Name=\"Tree\"",
             "Function Name=\"Allowed\"",
+            "Function Name=\"CommitStatus\"",
+            "Property Name=\"UpdatedAt\"",
         ] {
             assert!(xml.contains(required), "CSDL missing {required}");
         }
@@ -1490,5 +1548,9 @@ mod tests {
         assert!(!xml.contains("Property Name=\"SecretRef\""));
         assert!(!xml.contains("Property Name=\"PreviousSecretRef\""));
         assert!(!xml.contains("RemotePassword"));
+        // An inline hook secret or mirror credential is a write-only action parameter, never a
+        // property any entity answers.
+        assert!(!xml.contains("Property Name=\"Secret\""));
+        assert!(!xml.contains("Property Name=\"Credential\""));
     }
 }

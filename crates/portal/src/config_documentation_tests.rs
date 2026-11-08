@@ -220,7 +220,7 @@ fn the_source_reader_knows_a_read_from_a_mention() {
     assert!(names_on(r#".strip_prefix("JC_SPACE_")"#).is_empty());
     assert!(is_doc("    /// a field"));
     assert!(!is_doc("    // an ordinary comment"));
-    assert!(is_secret("JC_GITEA_TOKEN"));
+    assert!(is_secret("JC_SHAKO_TOKEN"));
     assert!(is_secret("JC_PORTAL_COOKIE_KEY"));
     assert!(is_secret("JC_PORTAL_DATABASE_URL"), "it carries a password");
     assert!(!is_secret("JC_PORTAL_GATEWAY_URL"), "an address is not one");

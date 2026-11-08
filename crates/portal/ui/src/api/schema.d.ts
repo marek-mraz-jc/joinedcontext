@@ -7106,7 +7106,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/webhooks/gitea": {
+    "/api/v1/webhooks/shako": {
         parameters: {
             query?: never;
             header?: never;
@@ -7119,7 +7119,7 @@ export interface paths {
          * Forge Webhook
          * @description Called by the forge on a push: a signed payload makes the mirror synchronize. An unsigned or wrongly signed call is refused with 401.
          */
-        post: operations["gitea_webhook"];
+        post: operations["shako_webhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -39769,28 +39769,36 @@ export interface operations {
             };
         };
     };
-    gitea_webhook: {
+    shako_webhook: {
         parameters: {
             query?: never;
             header: {
                 /** @description HMAC-SHA256 signature of request body */
-                "x-gitea-signature": string;
-                /** @description Gitea event type (e.g. push, pull_request) */
-                "x-gitea-event"?: string | null;
+                "x-shako-signature": string;
+                /** @description HMAC-SHA256 signature with the hook's previous secret, while the forge rotates it */
+                "x-shako-signature-previous"?: string | null;
+                /** @description Forge event type (push, pull_request) */
+                "x-shako-event"?: string | null;
             };
             path?: never;
             cookie?: never;
         };
-        /** @description Gitea webhook event payload */
+        /** @description The forge's native event body */
         requestBody: {
             content: {
                 /**
                  * @example {
                  *       "after": "4f2a9c1d0e8b7a6f5e4d3c2b1a0f9e8d7c6b5a49",
+                 *       "before": "",
+                 *       "event": "push",
                  *       "ref": "refs/heads/main",
                  *       "repository": {
-                 *         "full_name": "hel/config"
-                 *       }
+                 *         "defaultBranch": "main",
+                 *         "name": "config",
+                 *         "owner": "hel",
+                 *         "private": true
+                 *       },
+                 *       "sender": "jc-portal"
                  *     }
                  */
                 "application/json": Record<string, never>;
@@ -39843,9 +39851,11 @@ export interface operations {
     webhook: {
         parameters: {
             query?: never;
-            header: {
-                /** @description HMAC-SHA256 of the request body */
-                "x-gitea-signature": string;
+            header?: {
+                /** @description HMAC-SHA256 of the request body, from a shako origin */
+                "x-shako-signature"?: string | null;
+                /** @description HMAC-SHA256 of the request body, from an outside Gitea origin */
+                "x-gitea-signature"?: string | null;
             };
             path: {
                 /** @description Project name */

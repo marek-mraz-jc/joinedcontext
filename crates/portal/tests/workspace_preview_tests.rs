@@ -45,27 +45,32 @@ fn files() -> Vec<(&'static str, String)> {
 /// The forge holding the workspace branch `workspace/{name}` at `head` with `files`.
 async fn branch(server: &MockServer, name: &str, head: &str, files: &[(&str, String)]) {
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/branches/workspace/{name}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": head } })))
+        .and(path(format!("{REPO}/Branches('workspace%2F{name}')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": head })))
         .mount(server)
         .await;
     let tree: Vec<_> = files
         .iter()
-        .map(|(p, _)| json!({ "path": p, "type": "blob", "sha": format!("s-{p}") }))
+        .map(|(p, _)| json!({ "Path": p, "Type": "blob", "Sha": format!("s-{p}") }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/git/trees/{head}")))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", format!("'{head}'")))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "tree": tree, "truncated": false })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": tree, "Truncated": false })),
         )
         .mount(server)
         .await;
     for (file, content) in files {
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/contents/{file}")))
-            .and(query_param("ref", head))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
+            .and(query_param("@r", format!("'{}'", head)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "path": file, "sha": "x", "encoding": "base64", "content": encode(content)
+                "Sha": "x",
+                "Content": encode(content)
             })))
             .mount(server)
             .await;

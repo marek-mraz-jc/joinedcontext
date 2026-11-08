@@ -123,7 +123,7 @@ async fn an_address_inside_the_cluster_is_refused_before_the_runner_fetches_it()
         "http://localhost/a.json",
         "http://10.43.0.12/a.json",
         "http://portal.portal.svc.cluster.local/api/v1/version",
-        "http://gitea:3000/a.json",
+        "http://shako:3000/a.json",
     ] {
         for (name, input, field) in [
             ("jc_model_infer", json!({ "url": url }), "url"),

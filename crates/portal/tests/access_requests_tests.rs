@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use serde_json::{json, Value};
 
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
 
@@ -54,9 +54,9 @@ static FORGES: std::sync::LazyLock<
 > = std::sync::LazyLock::new(Default::default);
 
 async fn world(pipeline: &str, pipeline_identity: bool) -> AppState {
-    let gitea = common::forge().await;
-    let client = GiteaClient::new(
-        gitea.uri().parse().expect("mock url"),
+    let shako = common::forge().await;
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
@@ -65,10 +65,10 @@ async fn world(pipeline: &str, pipeline_identity: bool) -> AppState {
     FORGES
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(pipeline.to_owned(), gitea);
+        .insert(pipeline.to_owned(), shako);
     let mut config = Config::for_tests();
     config.pipeline_identity = pipeline_identity;
-    let state = AppState::new(config, None).with_gitea(Arc::new(client));
+    let state = AppState::new(config, None).with_shako(Arc::new(client));
     for (project, space) in [(KPIS, "kpi"), (HELSINKI, "air")] {
         state.mirror.upsert(common::envelope(
             "Project",
@@ -438,7 +438,7 @@ async fn two_approvals_at_once_open_one_change() {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest"))
         .count();
     assert_eq!(opened, 1, "one approval, one Change");
 }
@@ -511,7 +511,7 @@ async fn two_revokes_at_once_open_one_change() {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest"))
         .count();
     assert_eq!(opened, 2, "one approval and one revoke, one Change each");
     let revoked =

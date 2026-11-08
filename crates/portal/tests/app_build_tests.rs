@@ -5,7 +5,7 @@ mod common;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
-use wiremock::matchers::{body_json, method, path};
+use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{checked_send as send, envelope, person};
@@ -14,7 +14,7 @@ use joinedcontext_portal::resource::{ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::state::AppState;
 
 /// `common::state_on` names the organization `test-owner`; the App's repository is `{project}_{app}`.
-const REPO: &str = "/api/v1/repos/test-owner/helsinki_bikes";
+const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='helsinki_bikes')";
 const COMMIT: &str = "3f1c0e2d7a6b5c4f1b9c0e2d7a6b5c4f1b9c0e2d";
 
 fn app(git: bool) -> ResourceEnvelope {
@@ -47,8 +47,8 @@ fn app(git: bool) -> ResourceEnvelope {
 }
 
 /// `jana` proposes Apps in helsinki, `vera` only reads them, anyone else has no grant here.
-fn state_with(gitea: &MockServer, git: bool) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer, git: bool) -> AppState {
+    let state = common::state_on(shako);
     for (role, verbs) in [
         ("app-editor", json!(["propose"])),
         ("app-reader", json!(["read"])),
@@ -77,32 +77,35 @@ fn state_with(gitea: &MockServer, git: bool) -> AppState {
 }
 
 async fn forge_with_a_run() -> MockServer {
-    let gitea = MockServer::start().await;
+    let shako = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/actions/runs")))
+        .and(path(format!("{REPO}/WorkflowRuns")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "total_count": 1,
-            "workflow_runs": [{
-                "id": 91, "run_number": 7, "status": "completed", "conclusion": "success",
-                "head_sha": COMMIT, "html_url": "http://gitea-http:3000/test-owner/helsinki_bikes/actions/runs/7",
-            }],
+            "value": [
+                {
+                    "Number": 7,
+                    "Status": "completed",
+                    "Conclusion": "success",
+                    "HeadSha": COMMIT
+                }
+            ]
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(REPO))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
-        .mount(&gitea)
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
+        .mount(&shako)
         .await;
-    gitea
+    shako
 }
 
 fn body(text: &str) -> Value {
     serde_json::from_str(text).expect("a JSON answer")
 }
 
-async fn dispatches(gitea: &MockServer) -> Vec<String> {
-    gitea
+async fn dispatches(shako: &MockServer) -> Vec<String> {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -116,8 +119,8 @@ async fn dispatches(gitea: &MockServer) -> Vec<String> {
 /// each behind the forge's sign-in, and offers Rebuild only to a person who may propose an App.
 #[tokio::test]
 async fn the_build_links_the_repository_the_run_and_the_package_behind_the_forge_sign_in() {
-    let gitea = forge_with_a_run().await;
-    let state = state_with(&gitea, true);
+    let shako = forge_with_a_run().await;
+    let state = state_with(&shako, true);
     const URI: &str = "/api/v1/projects/helsinki/apps/bikes/build";
 
     let answer = send(&state, person("jana"), "GET", URI, None).await;
@@ -126,7 +129,7 @@ async fn the_build_links_the_repository_the_run_and_the_package_behind_the_forge
     let login = |target: &str| {
         format!(
             "{}/user/oauth2/keycloak?redirect_to={}",
-            gitea.uri(),
+            shako.uri(),
             target
         )
     };
@@ -184,31 +187,29 @@ async fn the_build_links_the_repository_the_run_and_the_package_behind_the_forge
 /// whatever repository the manifest names; a reader is refused and nothing is dispatched.
 #[tokio::test]
 async fn rebuild_dispatches_the_apps_own_workflow_on_its_default_branch() {
-    let gitea = forge_with_a_run().await;
+    let shako = forge_with_a_run().await;
     Mock::given(method("POST"))
-        .and(path(format!(
-            "{REPO}/actions/workflows/build.yml/dispatches"
-        )))
-        .and(body_json(json!({ "ref": "main" })))
+        .and(path(format!("{REPO}/Shako.DispatchWorkflow")))
+        .and(body_json(json!({ "File": "build.yml", "Ref": "main" })))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea, true);
+    let state = state_with(&shako, true);
     const URI: &str = "/api/v1/projects/helsinki/apps/bikes/rebuild";
 
     let refused = send(&state, person("vera"), "POST", URI, None).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
     assert!(
-        dispatches(&gitea).await.is_empty(),
+        dispatches(&shako).await.is_empty(),
         "a reader dispatched a build"
     );
 
     let accepted = send(&state, person("jana"), "POST", URI, None).await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
     assert_eq!(
-        dispatches(&gitea).await,
-        vec![format!("{REPO}/actions/workflows/build.yml/dispatches")]
+        dispatches(&shako).await,
+        vec![format!("{REPO}/Shako.DispatchWorkflow")]
     );
 }
 
@@ -216,8 +217,8 @@ async fn rebuild_dispatches_the_apps_own_workflow_on_its_default_branch() {
 /// page says so and Rebuild is refused `409` with the reason, and nothing reaches the forge.
 #[tokio::test]
 async fn an_app_not_built_on_the_forge_has_no_links_and_no_rebuild() {
-    let gitea = MockServer::start().await;
-    let state = state_with(&gitea, false);
+    let shako = MockServer::start().await;
+    let state = state_with(&shako, false);
 
     let answer = send(
         &state,
@@ -249,7 +250,7 @@ async fn an_app_not_built_on_the_forge_has_no_links_and_no_rebuild() {
     )
     .await;
     assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text);
-    assert!(gitea
+    assert!(shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -260,27 +261,25 @@ async fn an_app_not_built_on_the_forge_has_no_links_and_no_rebuild() {
 /// without a run yet is a page with no run rather than an error.
 #[tokio::test]
 async fn a_refused_dispatch_says_the_forges_reason_and_no_run_is_no_error() {
-    let gitea = MockServer::start().await;
+    let shako = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/actions/runs")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "workflow_runs": [] })))
-        .mount(&gitea)
+        .and(path(format!("{REPO}/WorkflowRuns")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(REPO))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
-        .mount(&gitea)
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!(
-            "{REPO}/actions/workflows/build.yml/dispatches"
-        )))
+        .and(path(format!("{REPO}/Shako.DispatchWorkflow")))
         .respond_with(
             ResponseTemplate::new(422).set_body_string("Actions are disabled for this repository"),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea, true);
+    let state = state_with(&shako, true);
 
     let page = body(
         &send(
@@ -318,10 +317,10 @@ async fn a_refused_dispatch_says_the_forges_reason_and_no_run_is_no_error() {
 
 const BUILD: &str = "/api/v1/projects/helsinki/apps/bikes/build";
 
-fn login(gitea: &MockServer, target: &str) -> Value {
+fn login(shako: &MockServer, target: &str) -> Value {
     json!(format!(
         "{}/user/oauth2/keycloak?redirect_to={target}",
-        gitea.uri()
+        shako.uri()
     ))
 }
 
@@ -330,8 +329,8 @@ fn login(gitea: &MockServer, target: &str) -> Value {
 /// the App's own repository is read by every signed-in person who may read the App (T-3030).
 #[tokio::test]
 async fn in_layout_1_the_configuration_link_is_for_a_person_bound_at_the_organization() {
-    let gitea = forge_with_a_run().await;
-    let state = state_with(&gitea, true);
+    let shako = forge_with_a_run().await;
+    let state = state_with(&shako, true);
     state.mirror.upsert(envelope(
         "RoleBinding",
         "olga-app-reader",
@@ -347,17 +346,17 @@ async fn in_layout_1_the_configuration_link_is_for_a_person_bound_at_the_organiz
     assert_eq!(jana["configurationUrl"], Value::Null);
     assert_eq!(
         jana["repositoryUrl"],
-        login(&gitea, "%2Ftest-owner%2Fhelsinki_bikes")
+        login(&shako, "%2Ftest-owner%2Fhelsinki_bikes")
     );
 
     let olga = body(&send(&state, person("olga"), "GET", BUILD, None).await.text);
     assert_eq!(
         olga["configurationUrl"],
-        login(&gitea, "%2Ftest-owner%2Ftest-repo")
+        login(&shako, "%2Ftest-owner%2Ftest-repo")
     );
     assert_eq!(
         olga["repositoryUrl"],
-        login(&gitea, "%2Ftest-owner%2Fhelsinki_bikes")
+        login(&shako, "%2Ftest-owner%2Fhelsinki_bikes")
     );
 }
 
@@ -366,8 +365,8 @@ async fn in_layout_1_the_configuration_link_is_for_a_person_bound_at_the_organiz
 /// address follows the platform's record of the repository, so a renamed one moves with it.
 #[tokio::test]
 async fn in_layout_2_the_configuration_link_is_the_projects_own_repository_for_its_readers() {
-    let gitea = forge_with_a_run().await;
-    let state = state_with(&gitea, true);
+    let shako = forge_with_a_run().await;
+    let state = state_with(&shako, true);
     state.mirror.set_layout(2);
     state
         .mirror
@@ -377,7 +376,7 @@ async fn in_layout_2_the_configuration_link_is_the_projects_own_repository_for_i
         let build = body(&send(&state, person(who), "GET", BUILD, None).await.text);
         assert_eq!(
             build["configurationUrl"],
-            login(&gitea, "%2Ftest-owner%2Fhelsinki"),
+            login(&shako, "%2Ftest-owner%2Fhelsinki"),
             "{who}"
         );
     }
@@ -388,7 +387,7 @@ async fn in_layout_2_the_configuration_link_is_the_projects_own_repository_for_i
     let renamed = body(&send(&state, person("vera"), "GET", BUILD, None).await.text);
     assert_eq!(
         renamed["configurationUrl"],
-        login(&gitea, "%2Ftest-owner%2Fhelsinki-city")
+        login(&shako, "%2Ftest-owner%2Fhelsinki-city")
     );
 }
 
@@ -396,21 +395,33 @@ async fn in_layout_2_the_configuration_link_is_the_projects_own_repository_for_i
 /// carries its number and times, so a client tells the run it started from the one before.
 #[tokio::test]
 async fn a_build_carries_its_runs_number_and_times_and_the_estimate_of_the_last_success() {
-    let gitea = MockServer::start().await;
+    let shako = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/actions/runs")))
+        .and(path(format!("{REPO}/WorkflowRuns")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "workflow_runs": [
-                { "run_number": 9, "status": "in_progress", "head_sha": COMMIT, "started_at": "2026-10-07T10:00:00Z" },
-                { "run_number": 8, "status": "completed", "conclusion": "failure", "head_sha": COMMIT,
-                  "started_at": "2026-10-07T09:00:00Z", "completed_at": "2026-10-07T09:00:20Z" },
-                { "run_number": 7, "status": "completed", "conclusion": "success", "head_sha": COMMIT,
-                  "started_at": "2026-10-07T08:00:00Z", "completed_at": "2026-10-07T08:03:05Z" }
-            ],
+            "value": [
+                { "Number": 9, "Status": "in_progress", "HeadSha": COMMIT, "StartedAt": "2026-10-07T10:00:00Z" },
+                {
+                    "Number": 8,
+                    "Status": "completed",
+                    "Conclusion": "failure",
+                    "HeadSha": COMMIT,
+                    "StartedAt": "2026-10-07T09:00:00Z",
+                    "CompletedAt": "2026-10-07T09:00:20Z"
+                },
+                {
+                    "Number": 7,
+                    "Status": "completed",
+                    "Conclusion": "success",
+                    "HeadSha": COMMIT,
+                    "StartedAt": "2026-10-07T08:00:00Z",
+                    "CompletedAt": "2026-10-07T08:03:05Z"
+                }
+            ]
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea, true);
+    let state = state_with(&shako, true);
     let answer = send(
         &state,
         person("jana"),
@@ -432,15 +443,15 @@ async fn a_build_carries_its_runs_number_and_times_and_the_estimate_of_the_last_
 /// No successful run yet is no estimate rather than a guess.
 #[tokio::test]
 async fn without_a_finished_success_there_is_no_estimate() {
-    let gitea = MockServer::start().await;
+    let shako = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/actions/runs")))
+        .and(path(format!("{REPO}/WorkflowRuns")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "workflow_runs": [{ "run_number": 1, "status": "queued", "head_sha": COMMIT }],
+            "value": [{ "Number": 1, "Status": "queued", "HeadSha": COMMIT }]
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea, true);
+    let state = state_with(&shako, true);
     let answer = send(
         &state,
         person("jana"),
@@ -460,80 +471,95 @@ const OTHER: &str = "1111111111111111111111111111111111111111";
 /// A forge with the current build, an earlier one built twice, a failed run, the two trees and
 /// the forge's write routes.
 async fn forge_with_builds() -> MockServer {
-    let gitea = MockServer::start().await;
+    let shako = MockServer::start().await;
     let run = |number: u64, commit: &str, conclusion: &str| {
-        json!({ "id": number, "run_number": number, "status": "completed", "conclusion": conclusion,
-                "head_sha": commit, "html_url": "", "completed_at": "2026-10-05T08:12:40Z" })
+        json!({ "Number": number, "Status": "completed", "Conclusion": conclusion,
+                "HeadSha": commit, "CompletedAt": "2026-10-05T08:12:40Z" })
     };
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/actions/runs")))
+        .and(path(format!("{REPO}/WorkflowRuns")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "total_count": 4,
-            "workflow_runs": [run(9, OTHER, "failure"), run(8, COMMIT, "success"),
-                              run(7, OLD, "success"), run(6, OLD, "success")],
+            "value": [
+                run(9, OTHER, "failure"),
+                run(8, COMMIT, "success"),
+                run(7, OLD, "success"),
+                run(6, OLD, "success")
+            ]
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(REPO))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
-        .mount(&gitea)
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
+        .mount(&shako)
         .await;
     let tree =
-        |entries: Value| ResponseTemplate::new(200).set_body_json(json!({ "tree": entries }));
+        |entries: Value| ResponseTemplate::new(200).set_body_json(json!({ "Tree": entries }));
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/git/trees/{OLD}")))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", format!("'{OLD}'")))
         .respond_with(tree(json!([
-            { "path": "index.html", "type": "blob", "sha": "a1" },
-            { "path": "src/App.tsx", "type": "blob", "sha": "old" },
-            { "path": "src", "type": "tree", "sha": "t1" },
+            { "Path": "index.html", "Type": "blob", "Sha": "a1" },
+            { "Path": "src/App.tsx", "Type": "blob", "Sha": "old" },
+            { "Path": "src", "Type": "tree", "Sha": "t1" },
         ])))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/git/trees/main")))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", "'main'"))
         .respond_with(tree(json!([
-            { "path": "index.html", "type": "blob", "sha": "a1" },
-            { "path": "src/App.tsx", "type": "blob", "sha": "new" },
-            { "path": "src/New.tsx", "type": "blob", "sha": "n1" },
+            { "Path": "index.html", "Type": "blob", "Sha": "a1" },
+            { "Path": "src/App.tsx", "Type": "blob", "Sha": "new" },
+            { "Path": "src/New.tsx", "Type": "blob", "Sha": "n1" },
         ])))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/src/App.tsx")))
-        .and(wiremock::matchers::query_param("ref", OLD))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", "'src/App.tsx'"))
+        .and(query_param("@r", format!("'{OLD}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "old", "content": "ZXhwb3J0IGNvbnN0IG9sZCA9IDE7", // "export const old = 1;"
+            "Sha": "old", "Content": "ZXhwb3J0IGNvbnN0IG9sZCA9IDE7", // "export const old = 1;"
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/branches")))
+        .and(path(format!("{REPO}/Shako.CreateBranch")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/contents")))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c0ffee" } })),
-        )
-        .mount(&gitea)
+        .and(path(format!("{REPO}/Shako.CommitFiles")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c0ffee" })))
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/pulls")))
+        .and(path(format!("{REPO}/Shako.OpenPullRequest")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 3, "html_url": "https://forge.example/test-owner/helsinki_bikes/pulls/3",
-            "state": "open", "title": "restore", "body": "", "head": { "ref": "restore" },
-            "base": { "ref": "main" }, "created_at": "2026-10-10T21:00:00Z",
-            "user": { "login": "jana" }, "mergeable": true, "merged": false,
+            "Number": 3,
+            "HtmlUrl": "https://forge.example/test-owner/helsinki_bikes/pulls/3",
+            "State": "open",
+            "Title": "restore",
+            "Body": "",
+            "Head": "restore",
+            "Base": "main",
+            "CreatedAt": "2026-10-10T21:00:00Z",
+            "Author": "jana",
+            "Mergeable": true,
+            "Merged": false
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    gitea
+    shako
 }
 
-async fn posted(gitea: &MockServer, route: &str) -> Vec<Value> {
-    gitea
+async fn posted(shako: &MockServer, route: &str) -> Vec<Value> {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -547,8 +573,8 @@ async fn posted(gitea: &MockServer, route: &str) -> Vec<Value> {
 /// marked, and Restore is offered to a person who may propose an App, never to a reader.
 #[tokio::test]
 async fn the_builds_are_the_successful_runs_once_per_commit_and_restore_needs_propose() {
-    let gitea = forge_with_builds().await;
-    let state = state_with(&gitea, true);
+    let shako = forge_with_builds().await;
+    let state = state_with(&shako, true);
     const URI: &str = "/api/v1/projects/helsinki/apps/bikes/builds";
 
     let answer = send(&state, person("jana"), "GET", URI, None).await;
@@ -588,8 +614,8 @@ async fn the_builds_are_the_successful_runs_once_per_commit_and_restore_needs_pr
 /// never writes `status.build`.
 #[tokio::test]
 async fn restore_opens_a_merge_request_back_to_the_builds_commit() {
-    let gitea = forge_with_builds().await;
-    let state = state_with(&gitea, true);
+    let shako = forge_with_builds().await;
+    let state = state_with(&shako, true);
     const URI: &str = "/api/v1/projects/helsinki/apps/bikes/restore";
 
     let answer = send(
@@ -609,14 +635,14 @@ async fn restore_opens_a_merge_request_back_to_the_builds_commit() {
         "https://forge.example/test-owner/helsinki_bikes/pulls/3"
     );
 
-    let branches = posted(&gitea, "branches").await;
+    let branches = posted(&shako, "Shako.CreateBranch").await;
     assert_eq!(
         branches,
-        vec![json!({ "new_branch_name": branch, "old_branch_name": "main" })]
+        vec![json!({ "NewBranchName": branch, "OldBranchName": "main" })]
     );
-    let change = posted(&gitea, "contents").await;
+    let change = posted(&shako, "Shako.CommitFiles").await;
     assert_eq!(change.len(), 1);
-    let files: Vec<(&str, &str)> = change[0]["files"]
+    let files: Vec<(&str, &str)> = change[0]["Files"]
         .as_array()
         .expect("files")
         .iter()
@@ -632,16 +658,16 @@ async fn restore_opens_a_merge_request_back_to_the_builds_commit() {
         vec![("upload", "src/App.tsx"), ("delete", "src/New.tsx")]
     );
     assert_eq!(
-        change[0]["files"][0]["content"],
+        change[0]["Files"][0]["content"],
         "ZXhwb3J0IGNvbnN0IG9sZCA9IDE7"
     );
-    assert_eq!(change[0]["branch"], branch.as_str());
-    let pulls = posted(&gitea, "pulls").await;
+    assert_eq!(change[0]["Branch"], branch.as_str());
+    let pulls = posted(&shako, "Shako.OpenPullRequest").await;
     assert_eq!(pulls.len(), 1);
-    assert_eq!(pulls[0]["head"], branch.as_str());
-    assert_eq!(pulls[0]["base"], "main");
+    assert_eq!(pulls[0]["Head"], branch.as_str());
+    assert_eq!(pulls[0]["Base"], "main");
     assert!(
-        pulls[0]["title"].as_str().unwrap_or_default().contains(OLD),
+        pulls[0]["Title"].as_str().unwrap_or_default().contains(OLD),
         "{}",
         pulls[0]
     );
@@ -661,8 +687,8 @@ async fn restore_opens_a_merge_request_back_to_the_builds_commit() {
 /// none of them reaches the forge's write routes.
 #[tokio::test]
 async fn restore_refuses_a_reader_a_foreign_or_failed_commit_and_the_current_build() {
-    let gitea = forge_with_builds().await;
-    let state = state_with(&gitea, true);
+    let shako = forge_with_builds().await;
+    let state = state_with(&shako, true);
     const URI: &str = "/api/v1/projects/helsinki/apps/bikes/restore";
 
     let reader = send(
@@ -705,7 +731,7 @@ async fn restore_refuses_a_reader_a_foreign_or_failed_commit_and_the_current_bui
     .await;
     assert!(unknown.status.is_client_error(), "{}", unknown.text);
     assert!(
-        dispatches(&gitea).await.is_empty(),
+        dispatches(&shako).await.is_empty(),
         "a refused restore wrote to the forge"
     );
 }
@@ -713,8 +739,8 @@ async fn restore_refuses_a_reader_a_foreign_or_failed_commit_and_the_current_bui
 /// AP-171: an App not built on the forge lists no builds and Restore is refused `409`.
 #[tokio::test]
 async fn an_app_not_built_on_the_forge_has_no_builds_to_restore() {
-    let gitea = MockServer::start().await;
-    let state = state_with(&gitea, false);
+    let shako = MockServer::start().await;
+    let state = state_with(&shako, false);
     let listed = body(
         &send(
             &state,
@@ -737,7 +763,7 @@ async fn an_app_not_built_on_the_forge_has_no_builds_to_restore() {
     )
     .await;
     assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text);
-    assert!(gitea
+    assert!(shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -749,16 +775,17 @@ async fn an_app_not_built_on_the_forge_has_no_builds_to_restore() {
 #[tokio::test]
 async fn restore_refuses_a_binary_change_and_a_build_equal_to_the_default_branch() {
     const URI: &str = "/api/v1/projects/helsinki/apps/bikes/restore";
-    let gitea = forge_with_builds().await;
+    let shako = forge_with_builds().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/src/App.tsx")))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", "'src/App.tsx'"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "sha": "old", "content": "/w==" })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": "old", "Content": "/w==" })),
         )
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea, true);
+    let state = state_with(&shako, true);
     let binary = send(
         &state,
         person("jana"),
@@ -770,17 +797,22 @@ async fn restore_refuses_a_binary_change_and_a_build_equal_to_the_default_branch
     assert_eq!(binary.status, StatusCode::CONFLICT, "{}", binary.text);
     assert!(binary.text.contains("src/App.tsx"), "{}", binary.text);
 
-    let gitea = forge_with_builds().await;
+    let shako = forge_with_builds().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/git/trees/main")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "tree": [
-            { "path": "index.html", "type": "blob", "sha": "a1" },
-            { "path": "src/App.tsx", "type": "blob", "sha": "old" },
-        ]})))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", "'main'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Tree": [
+                { "Path": "index.html", "Type": "blob", "Sha": "a1" },
+                { "Path": "src/App.tsx", "Type": "blob", "Sha": "old" }
+            ]
+        })))
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea, true);
+    let state = state_with(&shako, true);
     let same = send(
         &state,
         person("jana"),
@@ -791,15 +823,15 @@ async fn restore_refuses_a_binary_change_and_a_build_equal_to_the_default_branch
     .await;
     assert_eq!(same.status, StatusCode::CONFLICT, "{}", same.text);
     assert!(same.text.contains("already holds"), "{}", same.text);
-    assert!(dispatches(&gitea).await.is_empty());
+    assert!(dispatches(&shako).await.is_empty());
 }
 
 /// F-POR1-005: Rebuild is judged on the App itself. A grant that proposes only the App `trams`
 /// reads `bikes` but does not rebuild or restore it.
 #[tokio::test]
 async fn a_grant_for_another_app_neither_rebuilds_nor_restores_this_one() {
-    let gitea = forge_with_a_run().await;
-    let state = state_with(&gitea, true);
+    let shako = forge_with_a_run().await;
+    let state = state_with(&shako, true);
     state.mirror.upsert(envelope(
         "Role",
         "trams-editor",
@@ -831,7 +863,7 @@ async fn a_grant_for_another_app_neither_rebuilds_nor_restores_this_one() {
     .await;
     assert_eq!(rebuild.status, StatusCode::FORBIDDEN, "{}", rebuild.text);
     assert!(
-        dispatches(&gitea).await.is_empty(),
+        dispatches(&shako).await.is_empty(),
         "a build of bikes was dispatched"
     );
     let page = send(

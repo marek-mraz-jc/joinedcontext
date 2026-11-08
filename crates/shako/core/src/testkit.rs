@@ -179,11 +179,12 @@ pub async fn run_isolation_suite(store: &dyn Store) {
             instance_id: inst,
             org_id: org_a,
             repo_id: repo_a_id,
-            url: "https://portal.city.example/api/v1/webhooks/gitea".into(),
+            url: "https://portal.city.example/api/v1/webhooks/shako".into(),
             events: vec!["push".into()],
             active: true,
             secret_ref: "hook-sec".into(),
             previous_secret_ref: None,
+            format: WebhookFormat::Shako,
             created_at: now,
         })
         .await

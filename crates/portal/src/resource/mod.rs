@@ -241,7 +241,7 @@ pub fn home(info: &KindInfo, project: &str) -> String {
 
 /// [`KindInfo::repo_path`] with one refusal on top: a placeholder must never be left behind, since
 /// a manifest written to `.../spaces/{space}/...` would be unreachable for the reconciler and
-/// invisible in Gitea.
+/// invisible in the forge.
 pub fn repository_path(
     info: &KindInfo,
     project: &str,

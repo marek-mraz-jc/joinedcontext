@@ -180,10 +180,15 @@ pub fn config(
 /// The organization repository `{forge}/{owner}/{repo}.git` checked out under `work`: the tree of
 /// `main` behind the link `repo/current`, swapped in one rename, then every registered project of
 /// a layout 2 organization under `projects/` (`jcctl checkouts`). Blocking (git).
-pub fn sync_forge(forge: &str, token_file: &Path, work: &Path) -> Result<PathBuf, String> {
+pub fn sync_forge(
+    forge: &str,
+    repo: &setup::ForgeRepo,
+    token_file: &Path,
+    work: &Path,
+) -> Result<PathBuf, String> {
     use jc_manifest::assemble::{GitCheckouts, Resolver};
     let token = crate::runtime::read_secret_file(token_file)?;
-    let owner = format!("{}/{}", forge.trim_end_matches('/'), setup::FORGE_OWNER);
+    let owner = format!("{}/{}", forge.trim_end_matches('/'), repo.owner);
     let resolver = GitCheckouts {
         cache: work.join("org-cache"),
         forge: owner.clone(),
@@ -191,8 +196,8 @@ pub fn sync_forge(forge: &str, token_file: &Path, work: &Path) -> Result<PathBuf
         secrets: &|_| Err("jc names no Secret for an outside repository".to_owned()),
     };
     let entry: jc_core::kinds::ProjectSpec = serde_json::from_value(serde_json::json!({
-        "organizationRef": setup::FORGE_OWNER,
-        "repository": { "name": setup::FORGE_REPO },
+        "organizationRef": repo.owner,
+        "repository": { "name": repo.repo },
         "ref": "main",
     }))
     .map_err(|e| e.to_string())?;
@@ -223,11 +228,18 @@ pub fn sync_forge(forge: &str, token_file: &Path, work: &Path) -> Result<PathBuf
 }
 
 /// Fetches the forge every [`SYNC_EVERY`]; a failed pass keeps the last tree and says why.
-async fn follow_forge(forge: String, token_file: PathBuf, work: PathBuf) {
+async fn follow_forge(forge: String, repo: setup::ForgeRepo, token_file: PathBuf, work: PathBuf) {
     loop {
         tokio::time::sleep(SYNC_EVERY).await;
-        let (forge, token_file, work) = (forge.clone(), token_file.clone(), work.clone());
-        match tokio::task::spawn_blocking(move || sync_forge(&forge, &token_file, &work)).await {
+        let (forge, repo, token_file, work) = (
+            forge.clone(),
+            repo.clone(),
+            token_file.clone(),
+            work.clone(),
+        );
+        match tokio::task::spawn_blocking(move || sync_forge(&forge, &repo, &token_file, &work))
+            .await
+        {
             Ok(Ok(_)) => {}
             Ok(Err(why)) => tracing::warn!(%why, "gateway: the forge checkout failed"),
             Err(e) => tracing::warn!(error = %e, "gateway: the forge checkout stopped"),
@@ -308,14 +320,16 @@ pub async fn build(
             .path(Secret::ShakoToken)
             .ok_or_else(|| err("no shako token"))?
             .to_path_buf();
+        // The repository the Portal writes, read the same way (JC_SHAKO_OWNER, JC_SHAKO_REPO).
+        let repo = setup::forge_repo(env).map_err(err)?;
         let work = work_dir(ctx.setup);
         crate::setup::private_dir(&work)?;
-        let (f, t, w) = (forge.clone(), token.clone(), work.clone());
-        tokio::task::spawn_blocking(move || sync_forge(&f, &t, &w))
+        let (f, r, t, w) = (forge.clone(), repo.clone(), token.clone(), work.clone());
+        tokio::task::spawn_blocking(move || sync_forge(&f, &r, &t, &w))
             .await
             .map_err(err)?
             .map_err(|why| err(format!("the forge checkout: {why}")))?;
-        tokio::spawn(follow_forge(forge, token, work));
+        tokio::spawn(follow_forge(forge, repo, token, work));
     }
     let mut broker = context_gateway::serve::broker_of(&config).map_err(err)?;
     if let (Some(hop), true) = (&hop, filled.contains_key("JC_GATEWAY_BROKER_URL")) {

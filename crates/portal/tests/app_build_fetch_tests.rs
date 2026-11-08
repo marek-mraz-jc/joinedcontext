@@ -10,11 +10,12 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use joinedcontext_portal::apps::fetch::fetch_missing;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::store::Mirror;
 
 const COMMIT: &str = "8c56954a1f0e3d2c1b0a99887766554433221100";
-const BUNDLE: &str = "/api/packages/test-owner/generic/app-air-quality/8c56954a1f0e3d2c1b0a99887766554433221100/bundle.tar.gz";
+/// `bundle.tar.gz` of the build published under the bare commit, `GET PackageFiles(…)/$value`.
+const BUNDLE: &str = "/odata/PackageFiles(Owner='test-owner',Name='app-air-quality',Version='8c56954a1f0e3d2c1b0a99887766554433221100',File='bundle.tar.gz')/$value";
 
 /// `bundle.tar.gz` as the lane packs it: `tar -C bundle -cf - .`, gzipped.
 fn bundle(index: &[u8]) -> Vec<u8> {
@@ -66,7 +67,7 @@ fn mirror_naming(digest: &str) -> Mirror {
     mirror
 }
 
-async fn forge_holding(bytes: Vec<u8>) -> (MockServer, GiteaClient) {
+async fn forge_holding(bytes: Vec<u8>) -> (MockServer, ShakoClient) {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path(BUNDLE))
@@ -74,7 +75,7 @@ async fn forge_holding(bytes: Vec<u8>) -> (MockServer, GiteaClient) {
         .expect(1)
         .mount(&server)
         .await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         url::Url::parse(&server.uri()).expect("forge url"),
         "test-owner",
         "configuration",
@@ -113,10 +114,9 @@ async fn a_replica_reads_the_version_of_the_digest_and_not_the_older_build_of_th
     let bytes = bundle(b"<!doctype html><title>rebuilt</title>");
     let named = digest(&bytes);
     let server = MockServer::start().await;
-    let package = "/api/packages/test-owner/generic/app-air-quality";
     Mock::given(method("GET"))
         .and(path(format!(
-            "{package}/{COMMIT}-{}/bundle.tar.gz",
+            "/odata/PackageFiles(Owner='test-owner',Name='app-air-quality',Version='{COMMIT}-{}',File='bundle.tar.gz')/$value",
             &named["sha256:".len().."sha256:".len() + 12]
         )))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes))
@@ -131,7 +131,7 @@ async fn a_replica_reads_the_version_of_the_digest_and_not_the_older_build_of_th
         .expect(0)
         .mount(&server)
         .await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         url::Url::parse(&server.uri()).expect("forge url"),
         "test-owner",
         "configuration",
@@ -193,15 +193,15 @@ mod tempdir {
 }
 
 /// A client whose applications live in `joinedcontext-apps` with their own token (PF-106).
-fn moved_client(server: &MockServer) -> GiteaClient {
+fn moved_client(server: &MockServer) -> ShakoClient {
     let uri = server.uri();
-    GiteaClient::from_env(move |name| match name {
-        "JC_GITEA_URL" => Some(uri.clone()),
-        "JC_GITEA_OWNER" => Some("test-owner".to_owned()),
-        "JC_GITEA_REPO" => Some("configuration".to_owned()),
-        "JC_GITEA_TOKEN" => Some("portal-token".to_owned()),
-        "JC_GITEA_APPS_OWNER" => Some("joinedcontext-apps".to_owned()),
-        "JC_GITEA_APPS_TOKEN" => Some("apps-token".to_owned()),
+    ShakoClient::from_env(move |name| match name {
+        "JC_SHAKO_URL" => Some(uri.clone()),
+        "JC_SHAKO_OWNER" => Some("test-owner".to_owned()),
+        "JC_SHAKO_REPO" => Some("configuration".to_owned()),
+        "JC_SHAKO_TOKEN" => Some("portal-token".to_owned()),
+        "JC_SHAKO_APPS_OWNER" => Some("joinedcontext-apps".to_owned()),
+        "JC_SHAKO_APPS_TOKEN" => Some("apps-token".to_owned()),
         _ => None,
     })
     .expect("config")
@@ -229,7 +229,7 @@ async fn a_build_published_before_the_move_is_still_served() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(wiremock::matchers::path_regex(
-            r"^/api/packages/joinedcontext-apps/generic/app-air-quality/.*",
+            r"^/odata/PackageFiles\(Owner='joinedcontext-apps',Name='app-air-quality',.*",
         ))
         .respond_with(ResponseTemplate::new(404))
         .expect(2)
@@ -237,7 +237,7 @@ async fn a_build_published_before_the_move_is_still_served() {
         .await;
     Mock::given(method("GET"))
         .and(path(BUNDLE))
-        .and(header("authorization", "token portal-token"))
+        .and(header("authorization", "Bearer portal-token"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes))
         .expect(1)
         .mount(&server)
@@ -260,7 +260,7 @@ async fn the_old_organizations_package_is_held_to_the_named_digest() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(wiremock::matchers::path_regex(
-            r"^/api/packages/joinedcontext-apps/.*",
+            r"^/odata/PackageFiles\(Owner='joinedcontext-apps',.*",
         ))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
@@ -306,7 +306,7 @@ async fn the_applications_organization_comes_first_and_only_a_missing_package_fa
     let failing = MockServer::start().await;
     Mock::given(method("GET"))
         .and(wiremock::matchers::path_regex(
-            r"^/api/packages/joinedcontext-apps/.*",
+            r"^/odata/PackageFiles\(Owner='joinedcontext-apps',.*",
         ))
         .respond_with(ResponseTemplate::new(503))
         .mount(&failing)

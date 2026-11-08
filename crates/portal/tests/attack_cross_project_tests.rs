@@ -25,7 +25,7 @@ mod common;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -46,49 +46,52 @@ fn pipeline_yaml(project: &str, name: &str) -> String {
 
 /// A forge holding merge request 12 with `files` in it, each mounted on both branches.
 async fn forge_with(files: &[(&str, String)]) -> MockServer {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/pulls/12", common::REPO)))
+        .and(path(format!("{}/PullRequests(12)", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 12,
-            "html_url": "https://gitea.example/pulls/12",
-            "state": "open",
-            "title": "update Pipeline aq",
-            "head": { "ref": BRANCH },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-18T09:14:22Z",
-            "user": { "login": "someone.else", "full_name": "Someone Else", "email": "else@hel.fi" },
-            "mergeable": true,
-            "merged": false
+            "Number": 12,
+            "HtmlUrl": "https://shako.example/pulls/12",
+            "State": "open",
+            "Title": "update Pipeline aq",
+            "Head": BRANCH,
+            "Base": "main",
+            "CreatedAt": "2026-09-18T09:14:22Z",
+            "Author": "someone.else",
+            "AuthorName": "Someone Else",
+            "AuthorEmail": "else@hel.fi",
+            "Mergeable": true,
+            "Merged": false
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     let listed: Vec<Value> = files
         .iter()
-        .map(|(path, _)| json!({ "filename": path, "status": "modified" }))
+        .map(|(path, _)| json!({ "Filename": path, "Status": "modified" }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{}/pulls/12/files", common::REPO)))
-        .respond_with(ResponseTemplate::new(200).set_body_json(listed))
-        .mount(&gitea)
+        .and(path(format!("{}/PullRequests(12)/Files", common::REPO)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": listed })))
+        .mount(&shako)
         .await;
     for (repo_path, content) in files {
         Mock::given(method("GET"))
-            .and(path(format!("{}/contents/{repo_path}", common::REPO)))
+            .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+            .and(query_param("@p", format!("'{repo_path}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "blob-1",
-                "content": common::encode(content),
+                "Sha": "blob-1",
+                "Content": common::encode(content)
             })))
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
-    gitea
+    shako
 }
 
 /// `steward@hel.fi` may read, propose, approve and delete Pipelines and RoleBindings — in
 /// `ovzdusie` and nowhere else. That is the whole attack: a binding of one project.
-fn state_with(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     state.mirror.upsert(common::envelope(
         "Role",
         "pipelines-of-ovzdusie",
@@ -112,8 +115,8 @@ fn state_with(gitea: &MockServer) -> AppState {
 }
 
 /// Everything the forge was asked to change: a merge, a close, a review or a write.
-async fn mutated(gitea: &MockServer) -> Vec<String> {
-    gitea
+async fn mutated(shako: &MockServer) -> Vec<String> {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -142,7 +145,7 @@ async fn approve(state: &AppState) -> common::Answer {
 #[tokio::test]
 async fn a_bundle_carrying_another_projects_manifest_is_not_approved_from_this_one() {
     let foreign = format!("projects/{THEIRS}/pipelines/bikes/pipeline.yaml");
-    let gitea = forge_with(&[
+    let shako = forge_with(&[
         (
             "projects/ovzdusie/pipelines/aq/pipeline.yaml",
             pipeline_yaml(MINE, "aq"),
@@ -150,7 +153,7 @@ async fn a_bundle_carrying_another_projects_manifest_is_not_approved_from_this_o
         (foreign.as_str(), pipeline_yaml(THEIRS, "bikes")),
     ])
     .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
     let answer = approve(&state).await;
     assert_eq!(
         answer.status,
@@ -165,9 +168,9 @@ async fn a_bundle_carrying_another_projects_manifest_is_not_approved_from_this_o
     );
     let _ = &foreign;
     assert!(
-        mutated(&gitea).await.is_empty(),
+        mutated(&shako).await.is_empty(),
         "the refusal came after the forge was asked to write: {:?}",
-        mutated(&gitea).await
+        mutated(&shako).await
     );
 }
 
@@ -175,7 +178,7 @@ async fn a_bundle_carrying_another_projects_manifest_is_not_approved_from_this_o
 /// foreign project and not bundles, and this one fails if the check is written too wide.
 #[tokio::test]
 async fn a_bundle_inside_the_project_is_approved_and_merged() {
-    let gitea = forge_with(&[
+    let shako = forge_with(&[
         (
             "projects/ovzdusie/pipelines/aq/pipeline.yaml",
             pipeline_yaml(MINE, "aq"),
@@ -186,7 +189,7 @@ async fn a_bundle_inside_the_project_is_approved_and_merged() {
         ),
     ])
     .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
     let answer = approve(&state).await;
     assert_eq!(
         answer.status,
@@ -195,12 +198,12 @@ async fn a_bundle_inside_the_project_is_approved_and_merged() {
         answer.text
     );
     assert!(
-        mutated(&gitea)
+        mutated(&shako)
             .await
             .iter()
-            .any(|call| call.ends_with("/pulls/12/merge")),
+            .any(|call| call.ends_with("/PullRequests(12)/Shako.Merge")),
         "nothing was merged: {:?}",
-        mutated(&gitea).await
+        mutated(&shako).await
     );
 }
 
@@ -213,7 +216,7 @@ async fn an_organization_file_still_travels_with_a_projects_change() {
                    name: steward-of-ovzdusie\n  namespace: org\nspec:\n  subjects:\n  - user: \
                    steward@hel.fi\n  role: pipelines-of-ovzdusie\n  scope:\n    project: \
                    ovzdusie\n";
-    let gitea = forge_with(&[
+    let shako = forge_with(&[
         (
             "projects/ovzdusie/pipelines/aq/pipeline.yaml",
             pipeline_yaml(MINE, "aq"),
@@ -224,7 +227,7 @@ async fn an_organization_file_still_travels_with_a_projects_change() {
         ),
     ])
     .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
     let answer = approve(&state).await;
     assert_eq!(
         answer.status,
@@ -239,8 +242,8 @@ async fn an_organization_file_still_travels_with_a_projects_change() {
 /// there.
 #[tokio::test]
 async fn a_draft_of_another_project_is_not_reachable_through_this_ones_path() {
-    let gitea = common::forge().await;
-    let state = state_with(&gitea);
+    let shako = common::forge().await;
+    let state = state_with(&shako);
     let manifest = json!({
         "apiVersion": "joinedcontext.com/v1alpha1",
         "kind": "Pipeline",

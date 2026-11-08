@@ -30,7 +30,7 @@ NAME = re.compile(r"[a-z][a-z0-9]{1,15}")
 TOUCHED = (
     "Cargo.toml",
     "crates/antares-broker/Cargo.toml",
-    "crates/antares-broker/src/main.rs",
+    "crates/antares-broker/src/lib.rs",
     "ARCHITECTURE.md",
     "docs/src/SUMMARY.md",
     "docs/src/surfaces.md",
@@ -84,7 +84,7 @@ def edits(name, struct, title, desc):
             f"# dev/new-surface.py (`ANTARES_API_SURFACES=admin,views,{name}`).\n"
             f'{name} = ["views", "dep:{crate}"]\n',
         ),
-        "crates/antares-broker/src/main.rs": lambda t: before_one(
+        "crates/antares-broker/src/lib.rs": lambda t: before_one(
             t,
             '    #[cfg(feature = "ws")]\n    ("ws", ',
             f'    #[cfg(feature = "{name}")]\n'
@@ -119,7 +119,7 @@ def generate(root, name, struct, title, desc):
     if "\n" in title + desc or "|" in title + desc:
         raise SystemExit("the title and description are one line without '|'")
     crate_dir = root / f"crates/antares-{name}"
-    shelf = (root / "crates/antares-broker/src/main.rs").read_text()
+    shelf = (root / "crates/antares-broker/src/lib.rs").read_text()
     if crate_dir.exists() or f'("{name}",' in shelf:
         raise SystemExit(f"a surface named {name} exists already")
     new = {f: fn((root / f).read_text()) for f, fn in edits(name, struct, title, desc).items()}
@@ -168,7 +168,7 @@ def self_test():
         assert '"]\n\n# `/x/views/{view}/probe/v1/{type}`, Probe of a view' in broker
         assert 'probe = ["views", "dep:antares-probe"]\n' in broker
         assert "antares-probe = { workspace = true, optional = true }" in broker
-        main = (root / "crates/antares-broker/src/main.rs").read_text()
+        main = (root / "crates/antares-broker/src/lib.rs").read_text()
         assert '("probe", || antares_ops::mount(antares_probe::Probe)),\n    #[cfg(feature = "ws")]' in main
         assert "| [Probe of a view](probe.md) |\n| WebSocket" in (root / "docs/src/surfaces.md").read_text()
         assert "antares-probe|antares-ops|" in (root / "dev/check-no-addon.sh").read_text()

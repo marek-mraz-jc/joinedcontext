@@ -713,8 +713,8 @@ fn a_long_endpoint_list_is_read_to_its_end() {
 /// and whoever asks — and the reason names only what the caller sent.
 #[tokio::test]
 async fn an_operation_that_is_not_registered_is_refused_for_everyone() {
-    let gitea = common::forge().await;
-    let state = common::state_on(&gitea);
+    let shako = common::forge().await;
+    let state = common::state_on(&shako);
     let access = the_widest_profile();
     for name in [
         "",
@@ -738,8 +738,8 @@ async fn an_operation_that_is_not_registered_is_refused_for_everyone() {
 /// other unknown name and never panics or truncates into a name that exists.
 #[tokio::test]
 async fn an_enormous_or_control_laden_operation_name_is_refused_without_panic() {
-    let gitea = common::forge().await;
-    let state = common::state_on(&gitea);
+    let shako = common::forge().await;
+    let state = common::state_on(&shako);
     let access = the_widest_profile();
     for name in [
         "a".repeat(1024 * 1024),
@@ -756,8 +756,8 @@ async fn an_enormous_or_control_laden_operation_name_is_refused_without_panic() 
 /// says nothing about the project.
 #[tokio::test]
 async fn the_profile_refusal_comes_first_and_reveals_nothing_about_the_project() {
-    let gitea = common::forge().await;
-    let state = common::state_on(&gitea);
+    let shako = common::forge().await;
+    let state = common::state_on(&shako);
     let access = Access::from_spec(&json!({ "access": { "operations": [] } }));
     let expected = Err(joinedcontext_portal::agents::access::refusal(
         "jc_catalog_search",
@@ -785,8 +785,8 @@ async fn the_profile_refusal_comes_first_and_reveals_nothing_about_the_project()
 /// that is not there — not as a project they may not read.
 #[tokio::test]
 async fn a_read_by_a_person_with_no_binding_answers_not_found_and_not_denied() {
-    let gitea = common::forge().await;
-    let state = common::state_on(&gitea);
+    let shako = common::forge().await;
+    let state = common::state_on(&shako);
     let access = the_widest_profile();
     let refused = access
         .check(
@@ -810,9 +810,9 @@ async fn a_read_by_a_person_with_no_binding_answers_not_found_and_not_denied() {
 /// SQL, no forge or realm URL and no token.
 #[tokio::test]
 async fn a_refusal_carries_no_stack_no_sql_and_no_internal_url() {
-    let gitea = common::forge().await;
-    let state = common::state_on(&gitea);
-    let host = gitea.uri();
+    let shako = common::forge().await;
+    let state = common::state_on(&shako);
+    let host = shako.uri();
     for access in [
         Access::default(),
         the_widest_profile(),
@@ -833,7 +833,7 @@ async fn a_refusal_carries_no_stack_no_sql_and_no_internal_url() {
                 "http://",
                 "https://",
                 "keycloak",
-                "gitea",
+                "shako",
             ] {
                 assert!(!lower.contains(leak), "{refused:?} carries {leak:?}");
             }
@@ -849,8 +849,8 @@ async fn a_refusal_carries_no_stack_no_sql_and_no_internal_url() {
 /// administrator who may approve everything by hand.
 #[tokio::test]
 async fn a_decision_is_refused_by_the_profile_half_even_for_an_administrator() {
-    let gitea = common::forge().await;
-    let state = common::state_on(&gitea);
+    let shako = common::forge().await;
+    let state = common::state_on(&shako);
     let access = the_widest_profile();
     let mut admin = common::person("ada");
     admin.groups = vec!["portal-approver".to_owned()];
@@ -872,8 +872,8 @@ async fn a_decision_is_refused_by_the_profile_half_even_for_an_administrator() {
 /// which is what `ops::call` does behind every tool.
 #[tokio::test]
 async fn check_is_not_the_only_gate_an_agent_passes() {
-    let gitea = common::forge().await;
-    let state = common::state_on(&gitea);
+    let shako = common::forge().await;
+    let state = common::state_on(&shako);
     let access = the_widest_profile();
     let mut admin = common::person("ada");
     admin.groups = vec!["portal-approver".to_owned()];
@@ -898,8 +898,8 @@ async fn check_is_not_the_only_gate_an_agent_passes() {
 /// turn into a second acceptance.
 #[tokio::test]
 async fn asking_check_twice_gives_the_same_answer() {
-    let gitea = common::forge().await;
-    let state = common::state_on(&gitea);
+    let shako = common::forge().await;
+    let state = common::state_on(&shako);
     let access = the_widest_profile();
     let jana = common::person("jana");
     for name in ["jc_catalog_search", "jc_change_approve", "jc_made_up"] {
@@ -913,8 +913,8 @@ async fn asking_check_twice_gives_the_same_answer() {
 /// a project the caller may read, and the answer is a refusal rather than a panic.
 #[tokio::test]
 async fn a_project_name_that_is_not_one_is_refused_without_panic() {
-    let gitea = common::forge().await;
-    let state = common::state_on(&gitea);
+    let shako = common::forge().await;
+    let state = common::state_on(&shako);
     let access = the_widest_profile();
     for project in [
         "",

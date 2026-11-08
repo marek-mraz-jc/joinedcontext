@@ -98,7 +98,7 @@ const NOBODYS_SECRET: &str = "no source of this platform is opened by this value
 mod tests {
     use super::*;
 
-    /// The hex HMAC-SHA256 an origin presents, as Gitea computes it.
+    /// The hex HMAC-SHA256 an origin presents, as shako (or an outside Gitea origin) computes it.
     fn signature(secret: &str, body: &[u8]) -> String {
         use hmac::{Hmac, Mac};
         let mut mac = <Hmac<sha2::Sha256>>::new_from_slice(secret.as_bytes()).expect("any key");

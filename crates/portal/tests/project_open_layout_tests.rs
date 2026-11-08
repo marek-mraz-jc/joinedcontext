@@ -7,44 +7,42 @@ use axum::http::StatusCode;
 use common::{envelope, forge, mount_repository, person, send, state_on, REPO};
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const NEW: &str = "/api/v1/repos/test-owner/doprava";
+const NEW: &str = "/odata/Repositories(Owner='test-owner',Name='doprava')";
 
 /// The forge of a layout 2 organization that lets anyone open a project. The repository
 /// `doprava` is not there until the Portal creates it; `exists` says it already is.
 async fn world(exists: bool) -> (MockServer, AppState) {
     let server = forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(NEW))
         .respond_with(if exists {
-            ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" }))
+            ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" }))
         } else {
             ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" }))
         })
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/orgs/test-owner/repos"))
-        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "name": "doprava" })))
+        .and(path("/odata/CreateRepository"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Name": "doprava" })))
         .mount(&server)
         .await;
     for (verb, route) in [
-        ("POST", format!("{NEW}/contents")),
-        ("POST", format!("{NEW}/branch_protections")),
+        ("POST", format!("{NEW}/Shako.CommitFiles")),
+        ("POST", format!("{NEW}/Shako.Protect")),
         ("DELETE", NEW.to_owned()),
     ] {
         Mock::given(method(verb))
             .and(path(route))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "seed" } })),
-            )
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "seed" })))
             .mount(&server)
             .await;
     }
@@ -96,17 +94,17 @@ async fn a_project_opens_into_a_repository_of_its_own() {
     let (status, text) = open(&state).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{text}");
 
-    let created = received(&server, "POST", "/api/v1/orgs/test-owner/repos").await;
+    let created = received(&server, "POST", "/odata/CreateRepository").await;
     assert_eq!(created.len(), 1);
     assert_eq!(
-        (created[0]["name"].as_str(), created[0]["private"].as_bool()),
+        (created[0]["Name"].as_str(), created[0]["Private"].as_bool()),
         (Some("doprava"), Some(true))
     );
 
-    let seed = received(&server, "POST", &format!("{NEW}/contents")).await;
+    let seed = received(&server, "POST", &format!("{NEW}/Shako.CommitFiles")).await;
     assert_eq!(seed.len(), 1, "one commit");
-    assert_eq!(seed[0]["branch"], "main");
-    let mut seeded: Vec<&str> = seed[0]["files"]
+    assert_eq!(seed[0]["Branch"], "main");
+    let mut seeded: Vec<&str> = seed[0]["Files"]
         .as_array()
         .expect("files")
         .iter()
@@ -124,7 +122,7 @@ async fn a_project_opens_into_a_repository_of_its_own() {
     );
     // CC-90: the workflow validates the project under its slug on the runner that carries
     // jcctl, and fetches no action from outside the installation.
-    let workflow = seed[0]["files"]
+    let workflow = seed[0]["Files"]
         .as_array()
         .expect("files")
         .iter()
@@ -143,7 +141,7 @@ async fn a_project_opens_into_a_repository_of_its_own() {
     );
     assert!(!workflow.contains("uses:"), "no action is fetched");
     assert_eq!(
-        received(&server, "POST", &format!("{NEW}/branch_protections")).await[0]["rule_name"],
+        received(&server, "POST", &format!("{NEW}/Shako.Protect")).await[0]["Rule"]["rule_name"],
         "main"
     );
 
@@ -188,9 +186,11 @@ async fn a_repository_that_is_already_there_is_not_adopted() {
     let (status, text) = open(&state).await;
     assert_eq!(status, StatusCode::CONFLICT, "{text}");
     assert!(text.contains("doprava"), "{text}");
-    assert!(received(&server, "POST", &format!("{NEW}/contents"))
-        .await
-        .is_empty());
+    assert!(
+        received(&server, "POST", &format!("{NEW}/Shako.CommitFiles"))
+            .await
+            .is_empty()
+    );
     assert!(organization_files(&server).await.is_empty());
     assert!(
         received(&server, "DELETE", NEW).await.is_empty(),
@@ -204,7 +204,7 @@ async fn a_repository_that_is_already_there_is_not_adopted() {
 async fn a_failed_registration_removes_the_new_repository() {
     let (server, state) = world(false).await;
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/pulls")))
+        .and(path(format!("{REPO}/Shako.OpenPullRequest")))
         .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
         .with_priority(1)
         .mount(&server)
@@ -225,24 +225,29 @@ async fn a_failed_registration_removes_the_new_repository() {
 async fn deleting_a_project_removes_its_registry_entry() {
     let (server, state) = world(false).await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/git/trees/main")))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "truncated": false,
-            "tree": [
-                { "path": "org.yaml", "type": "blob" },
-                { "path": "projects/doprava.yaml", "type": "blob" },
-                { "path": "projects/ovzdusie.yaml", "type": "blob" },
-                { "path": "users/assignments/doprava-creator.yaml", "type": "blob" },
-            ],
+            "Truncated": false,
+            "Tree": [
+                { "Path": "org.yaml", "Type": "blob" },
+                { "Path": "projects/doprava.yaml", "Type": "blob" },
+                { "Path": "projects/ovzdusie.yaml", "Type": "blob" },
+                { "Path": "users/assignments/doprava-creator.yaml", "Type": "blob" }
+            ]
         })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(wiremock::matchers::path_regex(format!(
-            "^{REPO}/contents/.*"
+        .and(wiremock::matchers::path(format!(
+            "{}/Shako.File(Path=@p,Ref=@r)",
+            REPO
         )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1", "content": "", "encoding": "base64"
+            "Sha": "blob-1",
+            "Content": ""
         })))
         .mount(&server)
         .await;
@@ -305,7 +310,7 @@ async fn pulls_read(server: &MockServer) -> Vec<String> {
         .await
         .expect("requests")
         .into_iter()
-        .filter(|r| r.method.as_str() == "GET" && r.url.path().contains("/pulls/"))
+        .filter(|r| r.method.as_str() == "GET" && r.url.path().contains("/PullRequests("))
         .map(|r| r.url.path().to_owned())
         .collect()
 }
@@ -374,7 +379,7 @@ async fn an_organization_change_is_read_and_rejected_in_the_organization_reposit
     }
 
     let read = pulls_read(&server).await;
-    let organization = format!("{REPO}/pulls/9");
+    let organization = format!("{REPO}/PullRequests(9)");
     assert!(
         read.iter().filter(|path| **path == organization).count() >= 3,
         "each of read, approve and reject asked the organization repository: {read:?}"
@@ -399,7 +404,7 @@ async fn a_project_change_keeps_its_id_and_its_repository() {
     .await;
 
     let read = pulls_read(&server).await;
-    assert!(read.contains(&format!("{NEW}/pulls/9")), "{read:?}");
+    assert!(read.contains(&format!("{NEW}/PullRequests(9)")), "{read:?}");
     assert!(
         !read
             .iter()
@@ -408,48 +413,52 @@ async fn a_project_change_keeps_its_id_and_its_repository() {
     );
 }
 
-/// PF-106: the gateway's forge user reads the configuration's repositories and nothing more,
-/// so a project repository the Portal opens names it as a reader; without `JC_GITEA_READER`
-/// nobody is added.
+/// PF-106: shako has no per-repository collaborators, so opening a project repository adds no
+/// reader, whether `JC_SHAKO_READER` names one or not: the opening still succeeds and every call
+/// the Portal makes is one of shako's OData calls.
 #[tokio::test]
 async fn the_gateway_reads_a_project_repository_the_portal_opens() {
     let (server, mut state) = world(false).await;
-    Mock::given(method("PUT"))
-        .and(path(format!("{NEW}/collaborators/jc-gateway")))
-        .respond_with(ResponseTemplate::new(204))
-        .mount(&server)
-        .await;
     let uri = server.uri();
-    let client = joinedcontext_portal::git::GiteaClient::from_env(|key| {
+    let client = joinedcontext_portal::forge::ShakoClient::from_env(|key| {
         match key {
-            "JC_GITEA_URL" => Some(uri.as_str()),
-            "JC_GITEA_OWNER" => Some("test-owner"),
-            "JC_GITEA_REPO" => Some("test-repo"),
-            "JC_GITEA_TOKEN" => Some("token-xyz"),
-            "JC_GITEA_READER" => Some("jc-gateway"),
+            "JC_SHAKO_URL" => Some(uri.as_str()),
+            "JC_SHAKO_OWNER" => Some("test-owner"),
+            "JC_SHAKO_REPO" => Some("test-repo"),
+            "JC_SHAKO_TOKEN" => Some("token-xyz"),
+            "JC_SHAKO_READER" => Some("jc-gateway"),
             _ => None,
         }
         .map(str::to_owned)
     })
     .expect("config")
     .expect("configured");
-    state.gitea = Some(std::sync::Arc::new(client));
+    state.shako = Some(std::sync::Arc::new(client));
     let (status, text) = open(&state).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{text}");
-    assert_eq!(
-        received(&server, "PUT", &format!("{NEW}/collaborators/jc-gateway")).await,
-        vec![json!({ "permission": "read" })]
+    let requests = server.received_requests().await.expect("requests");
+    assert!(
+        !requests
+            .iter()
+            .any(|r| r.url.path().contains("/collaborators")),
+        "a collaborator call shako does not have"
+    );
+    assert!(
+        requests.iter().all(|r| r.url.path().starts_with("/odata/")),
+        "every call is one of shako's OData calls"
     );
 
     let (server, state) = world(false).await;
     let (status, text) = open(&state).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{text}");
-    let added = server
-        .received_requests()
-        .await
-        .expect("requests")
-        .into_iter()
-        .filter(|r| r.url.path().contains("/collaborators/"))
+    let requests = server.received_requests().await.expect("requests");
+    let added = requests
+        .iter()
+        .filter(|r| r.url.path().contains("/collaborators"))
         .count();
     assert_eq!(added, 0, "a reader was added that nobody named");
+    assert!(
+        requests.iter().all(|r| r.url.path().starts_with("/odata/")),
+        "every call is one of shako's OData calls"
+    );
 }

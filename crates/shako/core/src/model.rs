@@ -325,7 +325,21 @@ pub struct WebhookRecord {
     pub secret_ref: String,
     #[serde(skip_serializing)]
     pub previous_secret_ref: Option<String>,
+    /// How a delivery is shaped and signed; a hook stored before formats existed is Gitea's.
+    #[serde(default)]
+    pub format: WebhookFormat,
     pub created_at: DateTime<Utc>,
+}
+
+/// The body and headers a webhook delivers: Gitea's (`X-Gitea-*`, Gitea's payload) for a hook an
+/// outside client registered through the Gitea route, or shako's own (`X-Shako-*`, the native
+/// payload) for one registered through OData or a manifest.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum WebhookFormat {
+    #[default]
+    Gitea,
+    Shako,
 }
 
 /// Webhook delivery record (`shako.delivery`, S14). Never stores the response body.

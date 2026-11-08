@@ -9,13 +9,13 @@ use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-use wiremock::matchers::{method, path, path_regex};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::ops::{self, Caller, Via};
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
@@ -23,7 +23,7 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 
 const CSRF_TOKEN: &str = "test-csrf-token-resources";
-const REPO: &str = "/api/v1/repos/test-owner/test-repo";
+const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
 
 fn identity(username: &str, groups: &[&str]) -> Identity {
     Identity {
@@ -82,85 +82,78 @@ fn envelope(kind: &str, name: &str, namespace: &str, spec: Value) -> ResourceEnv
 /// A forge that answers every write: a file it has at `existing`, none elsewhere, and merge
 /// request 9 for every branch.
 async fn forge(existing: &[&str]) -> MockServer {
-    let gitea = MockServer::start().await;
+    let shako = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path(REPO))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
-        .mount(&gitea)
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/branches")))
+        .and(path(format!("{REPO}/Shako.CreateBranch")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     for file in existing {
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/contents/{file}")))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "sha-existing",
-                "content": "YXBpVmVyc2lvbjogeW91"
+                "Sha": "sha-existing",
+                "Content": "YXBpVmVyc2lvbjogeW91"
             })))
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/contents/.*")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     // A deletion reads the tree to find the files the resource owns beside its manifest (T-0900).
     let tree: Vec<Value> = existing
         .iter()
-        .map(|path| json!({ "path": path, "type": "blob" }))
+        .map(|path| json!({ "Path": path, "Type": "blob" }))
         .collect();
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/git/trees/.*")))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            REPO
+        )))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "tree": tree, "truncated": false })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": tree, "Truncated": false })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    // One commit for every file of a resource goes to `POST /contents` (T-0900).
+    // One commit for every file of a resource, a single-file write included, goes to
+    // `POST R/Shako.CommitFiles` (T-0900).
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/contents")))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "commit-1" } })),
-        )
-        .mount(&gitea)
+        .and(path(format!("{REPO}/Shako.CommitFiles")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-1" })))
+        .mount(&shako)
         .await;
-    for verb in ["PUT", "POST", "DELETE"] {
-        Mock::given(method(verb))
-            .and(path_regex(format!("^{REPO}/contents/.*")))
-            .respond_with(
-                ResponseTemplate::new(201)
-                    .set_body_json(json!({ "commit": { "sha": "commit-1" } })),
-            )
-            .mount(&gitea)
-            .await;
-    }
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/pulls")))
+        .and(path(format!("{REPO}/Shako.OpenPullRequest")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 9,
-            "html_url": "https://gitea.example.sk/pulls/9",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 9,
+            "HtmlUrl": "https://shako.example.sk/pulls/9",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    gitea
+    shako
 }
 
-fn state_with(gitea: &MockServer) -> AppState {
-    let client = GiteaClient::new(
-        gitea.uri().parse().expect("mock url"),
+fn state_with(shako: &MockServer) -> AppState {
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client))
+    AppState::new(Config::for_tests(), None).with_shako(Arc::new(client))
 }
 
 /// A request as every door makes it since T-0956 (PF-57): a proposal is checked first with the
@@ -280,26 +273,22 @@ async fn records_checked(state: &AppState, project: &str, manifest: &Value) {
 }
 
 /// The file paths the forge was asked to write or remove.
-async fn written(gitea: &MockServer) -> Vec<String> {
-    gitea
+async fn written(shako: &MockServer) -> Vec<String> {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
         .iter()
         .filter(|request| request.method.as_str() != "GET")
         .flat_map(|request| {
-            let path = request.url.path();
-            // A one-file write names its path in the URL; a batch commit (`POST /contents`)
-            // names every file it touches in its body.
-            if let Some(one) = path.strip_prefix(&format!("{REPO}/contents/")) {
-                return vec![one.to_owned()];
-            }
-            if path != format!("{REPO}/contents") {
+            // Every write, a one-file one included, is one `POST R/Shako.CommitFiles` that names
+            // every file it touches in its body.
+            if request.url.path() != format!("{REPO}/Shako.CommitFiles") {
                 return Vec::new();
             }
             serde_json::from_slice::<Value>(&request.body)
                 .ok()
-                .and_then(|body| body["files"].as_array().cloned())
+                .and_then(|body| body["Files"].as_array().cloned())
                 .unwrap_or_default()
                 .iter()
                 .filter_map(|file| file["path"].as_str().map(str::to_owned))
@@ -365,8 +354,8 @@ fn role_binding() -> Value {
 
 #[tokio::test]
 async fn an_endpoint_a_pipeline_a_policy_and_a_role_binding_are_proposed_at_their_own_paths() {
-    let gitea = forge(&["projects/ovzdusie/spaces/ovzdusie/endpoints/ovzdusie-public.yaml"]).await;
-    let state = state_with(&gitea);
+    let shako = forge(&["projects/ovzdusie/spaces/ovzdusie/endpoints/ovzdusie-public.yaml"]).await;
+    let state = state_with(&shako);
     // The endpoint exists, so its proposal is an update.
     let current = endpoint();
     state.mirror.upsert(envelope(
@@ -423,7 +412,7 @@ async fn an_endpoint_a_pipeline_a_policy_and_a_role_binding_are_proposed_at_thei
         );
     }
 
-    let paths = written(&gitea).await;
+    let paths = written(&shako).await;
     for expected in [
         "projects/ovzdusie/spaces/ovzdusie/endpoints/ovzdusie-public.yaml",
         "projects/ovzdusie/pipelines/smart-meter-mqtt/pipeline.yaml",
@@ -439,8 +428,8 @@ async fn an_endpoint_a_pipeline_a_policy_and_a_role_binding_are_proposed_at_thei
 
 #[tokio::test]
 async fn the_route_and_the_operation_open_the_same_change() {
-    let gitea = forge(&[]).await;
-    let state = state_with(&gitea);
+    let shako = forge(&[]).await;
+    let state = state_with(&shako);
 
     let (rest_status, by_route) = send(
         &state,
@@ -470,8 +459,8 @@ async fn the_route_and_the_operation_open_the_same_change() {
 
 #[tokio::test]
 async fn a_deletion_is_red_needs_the_name_typed_back_and_names_what_still_references_it() {
-    let gitea = forge(&["projects/ovzdusie/spaces/mobility/endpoints/live-traffic.yaml"]).await;
-    let state = state_with(&gitea);
+    let shako = forge(&["projects/ovzdusie/spaces/mobility/endpoints/live-traffic.yaml"]).await;
+    let state = state_with(&shako);
     state
         .mirror
         .upsert(envelope("ContextSpace", "mobility", "ovzdusie", json!({})));
@@ -519,7 +508,7 @@ async fn a_deletion_is_red_needs_the_name_typed_back_and_names_what_still_refere
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{mistyped}");
     assert!(
-        written(&gitea).await.is_empty(),
+        written(&shako).await.is_empty(),
         "nothing is written before the name matches"
     );
 
@@ -539,15 +528,15 @@ async fn a_deletion_is_red_needs_the_name_typed_back_and_names_what_still_refere
         "{change}"
     );
     assert_eq!(
-        written(&gitea).await,
+        written(&shako).await,
         ["projects/ovzdusie/spaces/mobility/endpoints/live-traffic.yaml"]
     );
 }
 
 #[tokio::test]
 async fn a_secret_typed_into_a_manifest_is_refused_before_a_branch_exists() {
-    let gitea = forge(&[]).await;
-    let state = state_with(&gitea);
+    let shako = forge(&[]).await;
+    let state = state_with(&shako);
     let mut manifest = pipeline();
     manifest["spec"]["source"] =
         json!({ "http": { "url": "https://feed.example.sk", "token": "hunter2" } });
@@ -563,20 +552,20 @@ async fn a_secret_typed_into_a_manifest_is_refused_before_a_branch_exists() {
 
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
     assert!(problem.to_string().contains("secretRef"), "{problem}");
-    let branches = gitea
+    let branches = shako
         .received_requests()
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|request| request.url.path().ends_with("/branches"))
+        .filter(|request| request.url.path().ends_with("/Shako.CreateBranch"))
         .count();
     assert_eq!(branches, 0, "no branch for a manifest with a secret in it");
 }
 
 #[tokio::test]
 async fn a_person_without_the_verb_is_refused_with_it_and_an_agent_never_decides_a_change() {
-    let gitea = forge(&[]).await;
-    let state = state_with(&gitea);
+    let shako = forge(&[]).await;
+    let state = state_with(&shako);
     state.mirror.upsert(envelope(
         "Role",
         "pipeline-developer",
@@ -630,7 +619,7 @@ async fn a_person_without_the_verb_is_refused_with_it_and_an_agent_never_decides
         assert!(refused.to_string().contains("AG-11"), "{name}: {refused}");
     }
     assert!(
-        gitea
+        shako
             .received_requests()
             .await
             .unwrap_or_default()
