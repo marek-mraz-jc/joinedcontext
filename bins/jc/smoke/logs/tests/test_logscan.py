@@ -43,6 +43,12 @@ def test_targets_map_to_modules():
     assert ls.module_of("sqlx::query") == "other"
     r = ls.parse_line(1, "2026-11-08T21:36:57Z  INFO jc::access: request module=dataroom status=401")
     assert r.module == "dataroom"
+    r = ls.parse_line(1, '2026-11-08T21:36:57Z  INFO request{module="gateway" request_id=smokelogs-0123}: '
+                         'jc_core::auth::token: token refused rejected="no bearer token presented"')
+    assert r.module == "gateway" and r.request_id == "smokelogs-0123"
+    r = ls.parse_line(1, '2026-11-08T21:36:57Z  INFO request{module="portal" request_id=abcdefgh1}: '
+                         'shako_api::x: a line of shako inside a Portal span')
+    assert r.module == "shako"
 
 
 def test_every_form_of_a_secret_is_found_and_names_only_its_file(tmp_path):

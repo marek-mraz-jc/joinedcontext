@@ -19,6 +19,7 @@ TEXT = re.compile(
     r"^(?P<ts>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z)\s+(?P<level>TRACE|DEBUG|INFO|WARN|ERROR)\s+"
     r"(?P<spans>(?:[\w-]+\{[^{}]*\}:)*)\s*(?P<target>[\w:-]+): (?P<rest>.*)$")
 SPAN_ID = re.compile(r"\brequest_id=\"?([A-Za-z0-9-]{8,128})")
+SPAN_MODULE = re.compile(r"\bmodule=\"?([a-z]+)")
 # The module each log target belongs to; the first matching prefix wins. jc's own targets name the
 # module they wire (jc::modules::<m>); jc::access names it in its `module` field.
 MODULE_PREFIXES = (
@@ -44,12 +45,15 @@ class Record:
     request_id: str | None = None
     raw: str = ""
     structured: bool = True
+    span_module: str | None = None  # the module of jc's request span the line was written in
 
     @property
     def module(self) -> str:
         if self.target == "jc::access" and self.fields.get("module"):
             return str(self.fields["module"])
-        return module_of(self.target)
+        own = module_of(self.target)
+        # A shared library (jc_core, sqlx, rmcp) logs for the module whose request it serves.
+        return self.span_module if own in ("jc", "other") and self.span_module else own
 
 
 def module_of(target: str) -> str:
@@ -94,13 +98,15 @@ def parse_line(n: int, line: str) -> Record:
         if isinstance(doc, dict) and doc.get("level") and doc.get("target"):
             f = dict(doc.get("fields") or {})
             msg = str(f.pop("message", ""))
-            rid = None
-            for span in [doc.get("span") or {}] + list(doc.get("spans") or []):
+            rid, mod = None, None
+            for span in list(doc.get("spans") or []) + [doc.get("span") or {}]:
                 if isinstance(span, dict) and span.get("request_id"):
                     rid = str(span["request_id"])
+                if isinstance(span, dict) and span.get("module"):
+                    mod = str(span["module"])
             rid = rid or (str(f["request_id"]) if f.get("request_id") else None)
             return Record(n, parse_time(str(doc.get("timestamp", ""))), str(doc["level"]).upper(),
-                          str(doc["target"]), msg, f, rid, line)
+                          str(doc["target"]), msg, f, rid, line, span_module=mod)
     m = TEXT.match(line)
     if not m:
         return Record(n, None, "", "", "", {}, None, line, structured=False)
@@ -109,7 +115,9 @@ def parse_line(n: int, line: str) -> Record:
     for found in SPAN_ID.finditer(m.group("spans")):
         rid = found.group(1)  # the innermost request span names it
     rid = rid or fields.get("request_id")
-    return Record(n, parse_time(m.group("ts")), m.group("level"), m.group("target"), msg, fields, rid, line)
+    mods = SPAN_MODULE.findall(m.group("spans"))
+    return Record(n, parse_time(m.group("ts")), m.group("level"), m.group("target"), msg, fields, rid, line,
+                  span_module=mods[-1] if mods else None)
 
 
 def read_records(path: Path, start: int = 0) -> tuple[list[Record], int]:

@@ -215,15 +215,17 @@ class Person:
 
 # ------------------------------------------------------------------ refused calls, one per door
 
-def refused_calls(marker: str) -> list[dict]:
-    """(module, method, path, headers, body, accepted statuses): each refused before any work."""
+def refused_calls(marker: str, slug: str | None = None) -> list[dict]:
+    """(module, method, path, headers, body, accepted statuses): each refused before any work.
+    The gateway's call names a public Endpoint when one is known (a forged token is 401 there),
+    else an unknown one (404, which says nothing more)."""
     bad = {"Authorization": "Bearer smokelogs.not.a.token"}
     return [
         {"module": "portal", "method": "GET", "path": "/api/v1/projects", "headers": {}, "ok": (401,)},
         {"module": "portal", "id": "portal.bad-token", "method": "GET", "path": "/api/v1/projects",
          "headers": bad, "ok": (401,)},
-        {"module": "gateway", "method": "GET", "path": f"/api/endpoint/{marker}/ngsi-ld/v1/types",
-         "headers": bad, "ok": (401, 403, 404)},
+        {"module": "gateway", "method": "GET", "path": f"/api/endpoint/{slug or marker}/ngsi-ld/v1/types",
+         "headers": bad, "ok": (401, 403) if slug else (401, 403, 404)},
         {"module": "antares", "method": "POST", "path": "/broker/ngsi-ld/v1/entities", "headers": {},
          "body": {"id": f"urn:ngsi-ld:SmokeLogs:{marker}", "type": "SmokeLogs"}, "ok": (401, 403)},
         {"module": "shako", "method": "GET", "path": "/git/api/v1/user", "headers": bad,
@@ -484,11 +486,11 @@ def main(argv=None) -> int:
     h = Session(a.base_url)
     marker = "smokelogs" + secrets.token_hex(6)
 
-    probes = [run_probe(h, pr) for pr in refused_calls(marker)]
+    slugs, hub = public_slugs(h)
+    probes = [run_probe(h, pr) for pr in refused_calls(marker, slugs[0] if slugs else None)]
 
     # Flows: each with its own request id.
     flows = []
-    slugs, hub = public_slugs(h)
     # A random one: the Portal keeps a standards answer for a while, and a kept answer asks nobody.
     slug = secrets.choice(slugs) if slugs else None
     rid = new_id()
