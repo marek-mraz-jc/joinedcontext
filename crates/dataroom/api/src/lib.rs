@@ -1659,11 +1659,17 @@ async fn dispatch_ui_route(
                 .get("sort")
                 .cloned()
                 .unwrap_or_else(|| "score desc, metadata_modified desc".into());
+            let page = q_params
+                .get("page")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(1)
+                .max(1);
             let mut filter = DatasetFilter {
                 q: q.clone(),
                 publishers: vec![pub_rec.name.clone()],
                 sort: Some(sort.clone()),
-                limit: 50,
+                offset: (page - 1).saturating_mul(dataroom_web::listing::PER_PAGE),
+                limit: dataroom_web::listing::PER_PAGE,
                 ..DatasetFilter::default()
             };
             if let Some(t) = q_params.get("tags") {
@@ -1686,7 +1692,7 @@ async fn dispatch_ui_route(
             .unwrap_or_else(|_| dataroom_search::SearchOutcome {
                 total: 0,
                 offset: 0,
-                limit: 50,
+                limit: dataroom_web::listing::PER_PAGE,
                 datasets: Vec::new(),
                 facets: Default::default(),
             });
@@ -1698,14 +1704,50 @@ async fn dispatch_ui_route(
                 &outcome.datasets,
                 &outcome.facets,
                 outcome.total,
+                page,
                 &q,
                 &sort,
+                &q_params,
                 &lang,
                 had_url_prefix,
                 &state.mount_prefix,
                 &nonce,
             );
             html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // G3: Topics (`/group/`), CKAN's group list built from the EU data themes.
+        ["group"] => {
+            let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            let q = q_params.get("q").map(String::as_str).unwrap_or("");
+            let sort = q_params
+                .get("sort")
+                .map(String::as_str)
+                .unwrap_or("title asc");
+            let html = dataroom_web::groups::render_group_list_page(
+                &cat,
+                Some(&state.installation_branding),
+                &datasets,
+                q,
+                sort,
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            );
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // A topic's page is its dataset search (CKAN's `/group/{name}`).
+        ["group", code] => {
+            let enc: String = url::form_urlencoded::byte_serialize(code.as_bytes()).collect();
+            let prefix = if had_url_prefix {
+                format!("{}/{lang}", state.mount_prefix)
+            } else {
+                state.mount_prefix.clone()
+            };
+            safe_redirect(
+                StatusCode::FOUND,
+                &format!("{prefix}/dataset/?vocab_jc_topic={enc}"),
+            )
         }
         // D6: About page (`/about`)
         ["about"] => {

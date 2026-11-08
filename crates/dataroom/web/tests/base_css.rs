@@ -11,6 +11,7 @@ const HOOKS: &[&str] = &[
     "collapse",
     "control-order-by",
     "count",
+    "filtered",
     "filters",
     "flash-messages",
     "home",

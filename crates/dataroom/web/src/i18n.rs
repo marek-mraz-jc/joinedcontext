@@ -1624,6 +1624,62 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "{n} adatkészlet található",
     );
     add(
+        "datasets_found_query",
+        "{n} datasets found for \"{q}\"",
+        "{n} datasety nájdené na dopyt \"{q}\"",
+        "{n} datových sad nalezeno pro dotaz \"{q}\"",
+        "{n} Datensätze gefunden für \"{q}\"",
+        "{n} adatkészlet található erre: \"{q}\"",
+    );
+    add(
+        "resources_nav",
+        "Resources",
+        "Zdroje",
+        "Zdroje",
+        "Ressourcen",
+        "Erőforrások",
+    );
+    add(
+        "remove",
+        "Remove",
+        "Zmazať",
+        "Odstranit",
+        "Entfernen",
+        "Eltávolítás",
+    );
+    add(
+        "search_topics",
+        "Search topics...",
+        "Hľadať témy...",
+        "Hledat témata...",
+        "Themen suchen...",
+        "Témák keresése...",
+    );
+    add(
+        "topics_found",
+        "{n} topics found",
+        "{n} témy nájdené",
+        "{n} témat nalezeno",
+        "{n} Themen gefunden",
+        "{n} téma található",
+    );
+    add(
+        "no_topics_found",
+        "No topics found",
+        "Nenájdené žiadne témy",
+        "Nenalezena žádná témata",
+        "Keine Themen gefunden",
+        "Nincs találat a témák között",
+    );
+    add(
+        "empty_topics",
+        "There are currently no topics in this catalogue.",
+        "V tomto katalógu momentálne nie sú žiadne témy.",
+        "V tomto katalogu nyní nejsou žádná témata.",
+        "In diesem Katalog gibt es derzeit keine Themen.",
+        "Ebben a katalógusban jelenleg nincs téma.",
+    );
+    add(
         "organizations_found",
         "{n} organizations found",
         "{n} organizácie nájdené",
