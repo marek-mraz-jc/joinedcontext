@@ -36,7 +36,7 @@ impl JsonSchemaProcessor {
             conf.config.get("schema_path").and_then(Value::as_str),
         ) {
             (Some(s), None) if !s.is_empty() => s.to_string(),
-            (None, Some(p)) if !p.is_empty() => read_schema_path(p, ctx)?,
+            (None, Some(p)) if !p.is_empty() => read_schema_path(p, ctx.file_root.as_deref())?,
             (Some(_), Some(_)) => {
                 return Err(CoreError::config(
                     "json_schema: set either schema or schema_path, not both",
@@ -57,9 +57,9 @@ impl JsonSchemaProcessor {
 }
 
 /// `schema_path` is `file://<path>` or a path, read inside the stream's file root when one is set.
-fn read_schema_path(path: &str, ctx: &ProcContext) -> Result<String, CoreError> {
+fn read_schema_path(path: &str, file_root: Option<&std::path::Path>) -> Result<String, CoreError> {
     let rel = path.strip_prefix("file://").unwrap_or(path);
-    let full = match &ctx.file_root {
+    let full = match file_root {
         Some(root) => {
             let p = std::path::Path::new(rel);
             if p.is_absolute()
@@ -741,6 +741,25 @@ mod tests {
 
     fn errors(schema: Value, doc: Value) -> Vec<String> {
         Schema::compile(schema).unwrap().validate(&doc)
+    }
+
+    #[test]
+    fn schema_path_stays_inside_the_file_root() {
+        let root = std::env::temp_dir().join(format!("json-schema-root-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("schemas")).unwrap();
+        std::fs::write(root.join("schemas/a.json"), "{}").unwrap();
+        std::fs::write(std::env::temp_dir().join("json-schema-outside.json"), "{}").unwrap();
+        assert_eq!(read_schema_path("file://schemas/a.json", Some(&root)).unwrap(), "{}");
+        for escape in [
+            "../json-schema-outside.json",
+            "schemas/../../json-schema-outside.json",
+            "file:///etc/passwd",
+            "/etc/passwd",
+        ] {
+            let err = read_schema_path(escape, Some(&root)).expect_err(escape);
+            assert!(err.to_string().contains("inside the file root"), "{escape}: {err}");
+        }
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
