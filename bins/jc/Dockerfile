@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
 # The jc image: one binary hosting every module (bins/jc), default features, the Portal UI
 # embedded. Build from the repository root: `docker build -f bins/jc/Dockerfile .`
-# .github/workflows/image.yml builds, smoke-tests, pushes by digest and signs it.
+# .github/workflows/image.yml builds, smoke-tests, pushes by digest and signs it. It compiles jc
+# on the runner and hands the result in as this file's `build` stage
+# (`--build-context build=<dir holding jc, kaisatsu and an empty 0700 state/>`), so only the final
+# stage runs there; a plain `docker build` compiles everything below.
 
 # The Portal UI and the App SDK bundles the Portal embeds (rust-embed reads crates/portal/ui/dist
 # and crates/portal/sdk/dist at compile time), as crates/portal/Dockerfile builds them.
@@ -85,5 +88,11 @@ ENV JCBIN_LISTEN=0.0.0.0:8080 \
 # jemalloc as the Portal and the gateway run it (crates/portal/Dockerfile): freed pages purged after a
 # second, four arenas whatever the node's core count.
 ENV _RJEM_MALLOC_CONF=background_thread:true,narenas:4,dirty_decay_ms:1000,muzzy_decay_ms:0
+# The commit, read at run time by the Portal's /api/v1/version (crates/portal/src/api/health.rs):
+# set here, in the last layer, rather than compiled in, so a new commit recompiles nothing.
+ARG JC_COMMIT=
+ENV JC_COMMIT=${JC_COMMIT}
+LABEL org.opencontainers.image.revision=${JC_COMMIT} \
+      org.opencontainers.image.source=https://github.com/marek-mraz-jc/joinedcontext
 ENTRYPOINT ["/usr/local/bin/jc"]
 CMD ["--role", "all"]

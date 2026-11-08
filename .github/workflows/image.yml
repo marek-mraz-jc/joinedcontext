@@ -1,39 +1,87 @@
 name: ship
-# Builds the jc image (bins/jc/Dockerfile: every module, default features, the Portal UI
-# embedded) after a green ci on main, smoke-tests it, pushes ghcr.io/<owner>/jc by digest and
-# signs it with cosign, as the platform's image.yml does. image-scan.yml runs after it: the SBOM
-# and the trivy gate, attested. Deployments pin the digest (deployment components/jc/images.yaml),
-# never a tag; deployment scripts/verify-pinned-images.py accepts this workflow's signature on main
-# only. A dispatch builds any ref (its signature is then refused there).
+# The jc image (every module, default features, the Portal UI embedded): built from a release
+# binary this workflow compiles on the runner (warm target cache and sccache), then put into the
+# image by bins/jc/Dockerfile with that binary as its `build` stage (a BuildKit named context, so
+# nothing compiles twice), smoke-tested, pushed as ghcr.io/<owner>/jc:<sha> by digest, and signed
+# with cosign. Deployments pin the digest (deployment components/jc/images.yaml), never a tag;
+# deployment scripts/verify-pinned-images.py accepts this workflow's signature on main only.
+#
+# ci.yml calls it twice on a push to main (or ship-proof/**): `mode: build` beside the tests (the
+# image is pushed unsigned, so nothing can deploy it yet) and `mode: sign` once every gate and
+# image-scan.yml passed. A called workflow signs under its own name, so the signature still reads
+# `.github/workflows/image.yml@refs/heads/main`. A `v*` tag or a dispatch builds and signs at once
+# (a dispatch of a branch: its signature is then refused by the deployment).
 on:
-  workflow_run: { workflows: [ci], types: [completed], branches: [main] }
+  workflow_call:
+    inputs:
+      mode: { description: "build (push unsigned) or sign", type: string, required: true }
+      digest: { description: "sign: the sha256 digest build pushed", type: string, default: "" }
+    outputs:
+      digest:
+        description: the pushed image's digest
+        value: ${{ jobs.build.outputs.digest }}
   push:
     tags: ["v*"]
   workflow_dispatch:
-# Read-only by default: only the job that publishes holds packages: write and id-token: write.
+# Read-only by default: only the jobs that publish hold packages: write and id-token: write.
 permissions: { contents: read }
-# Never cancelled: the output is an artifact the deployment pins, not a verdict.
-concurrency:
-  group: "image-${{ github.sha }}"
-  cancel-in-progress: false
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/jc
 jobs:
   build:
-    # A green ci of a push to main in this repository, on the commit main still points at.
-    if: >-
-      github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_sha == github.sha &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+    if: inputs.mode != 'sign'
     runs-on: ubuntu-latest
-    permissions: { contents: read, packages: write, id-token: write }
-    timeout-minutes: 150
+    permissions: { contents: read, packages: write }
+    timeout-minutes: 90
     outputs:
       digest: ${{ steps.push.outputs.digest }}
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: sh .github/scripts/free-disk.sh
+      # The bundles the Portal embeds (rust-embed reads crates/portal/ui/dist and sdk/dist at
+      # compile time). version.json carries no commit, so the bundle, and with it the Portal crate,
+      # stays byte-identical across commits that leave the UI alone: the Portal reports its commit
+      # from JC_COMMIT, which the image sets (crates/portal/src/api/health.rs).
+      - id: ui
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            crates/portal/ui/dist
+            crates/portal/sdk/dist
+          key: jc-ui-${{ hashFiles('crates/portal/ui/**', 'crates/portal/sdk/**') }}
+      - if: steps.ui.outputs.cache-hit != 'true'
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { package_json_file: crates/portal/ui/package.json }
+      - if: steps.ui.outputs.cache-hit != 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 24 }
+      - if: steps.ui.outputs.cache-hit != 'true'
+        working-directory: crates/portal
+        run: |
+          set -eu
+          (cd sdk && pnpm install --frozen-lockfile)
+          (cd ui && pnpm install --frozen-lockfile && pnpm build)
+          test -s ui/dist/index.html && ls ui/dist/assets/*.js >/dev/null
+          (cd sdk && pnpm build)
+          for f in kit.js kit.css kit-worker.js runtime/runtime.json functions-server.js demos/index.html; do
+            test -s "sdk/dist/$f"
+          done
+          printf '{"commit":"","openapi":"%s"}\n' "$(sha256sum ui/openapi.json | cut -d' ' -f1)" > ui/dist/version.json
+      # The Dockerfile's toolchain (rust:1.97), so both ways of building the image use one compiler.
+      - uses: ./.github/actions/rust
+        with: { key: release, toolchain: "1.97.0" }
+      - run: cargo build --release --locked -p jc -p kaisatsu-server
+      - id: bin
+        run: |
+          set -eu
+          ctx="$RUNNER_TEMP/jc-build"
+          mkdir -p "$ctx/state" && chmod 0700 "$ctx/state"
+          strip -o "$ctx/jc" target/release/jc
+          strip -o "$ctx/kaisatsu" target/release/kaisatsu
+          ls -l "$ctx"
+          echo "dir=$ctx" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
@@ -43,11 +91,10 @@ jobs:
         with:
           context: .
           file: bins/jc/Dockerfile
+          build-contexts: build=${{ steps.bin.outputs.dir }}
           build-args: JC_COMMIT=${{ github.sha }}
           load: true
           tags: jc-local:smoke
-          cache-from: type=gha,scope=jc
-          cache-to: type=gha,mode=max,scope=jc
       - name: jc --role all starts as nonroot on a read-only root filesystem and every mount answers
         run: sh .github/scripts/image-smoke.sh jc-local:smoke
       - id: push
@@ -55,12 +102,37 @@ jobs:
         with:
           context: .
           file: bins/jc/Dockerfile
+          build-contexts: build=${{ steps.bin.outputs.dir }}
           build-args: JC_COMMIT=${{ github.sha }}
           push: true
-          tags: ${{ env.IMAGE }}:${{ github.sha }},${{ env.IMAGE }}:${{ github.ref_name == 'main' && 'main' || format('ref-{0}', github.run_number) }}
-          cache-from: type=gha,scope=jc
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
           provenance: true
           sbom: true
+      - run: echo "jc ${{ github.sha }} pushed unsigned as ${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+  sign:
+    needs: build
+    # mode sign (ci.yml, after every gate) or a tag/dispatch right after its own build
+    if: >-
+      always() && (inputs.mode == 'sign' ||
+      (inputs.mode != 'build' && needs.build.result == 'success'))
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write, id-token: write }
+    timeout-minutes: 10
+    env:
+      DIGEST: ${{ inputs.mode == 'sign' && inputs.digest || needs.build.outputs.digest }}
+    steps:
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
-      - run: cosign sign --yes "$IMAGE@${{ steps.push.outputs.digest }}"
-      - run: echo "jc digest ${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+      - run: |
+          set -eu
+          printf '%s' "$DIGEST" | grep -qxE 'sha256:[0-9a-f]{64}' || { echo "::error::'$DIGEST' is no digest"; exit 1; }
+          # The digest must be the one this commit's tag names: a sign call never signs another image.
+          tagged=$(docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA" --format '{{json .Manifest}}' | jq -r '.digest // empty')
+          [ "$tagged" = "$DIGEST" ] || { echo "::error::$IMAGE:$GITHUB_SHA is $tagged, not $DIGEST"; exit 1; }
+          cosign sign --yes "$IMAGE@$DIGEST"
+          case "$GITHUB_REF" in
+            refs/heads/main) docker buildx imagetools create -t "$IMAGE:main" "$IMAGE@$DIGEST" ;;
+            refs/tags/*) docker buildx imagetools create -t "$IMAGE:$GITHUB_REF_NAME" "$IMAGE@$DIGEST" ;;
+          esac
+          echo "jc $GITHUB_SHA signed: $IMAGE@$DIGEST" >> "$GITHUB_STEP_SUMMARY"

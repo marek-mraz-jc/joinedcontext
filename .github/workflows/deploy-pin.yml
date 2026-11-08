@@ -1,0 +1,72 @@
+name: deploy-pin
+# After a green ci of a push to main: pins the jc image that run promoted (built, smoke-tested,
+# scanned, signed) in the deployment repository's components/jc/images.yaml, on a branch
+# `pin/jc-<sha>`, and opens a pull request for the deployer. dev only: nothing here applies a
+# cluster, and prod stays the deployer's manual pin. ship-proof/** pushes (pipeline measurements)
+# push their pin branch `pin-proof/jc-<sha>` and open no pull request.
+#
+# The pin is written only for a digest that carries this repository's image.yml signature and the
+# image-scan.yml vuln-scan attestation of the same ref, checked here with cosign, not taken from
+# the ci run's word. Writing to the deployment repository needs the secret DEPLOY_PIN_TOKEN: a
+# fine-grained token for marek-mraz-jc/joinedcontext-deployment only, Contents and Pull requests
+# read/write. Without it the run fails and its summary holds the pin to apply by hand.
+on:
+  workflow_run: { workflows: [ci], types: [completed], branches: [main, "ship-proof/**"] }
+permissions: { contents: read, packages: read }
+# One pin at a time; a newer commit's run waits rather than racing this one's push.
+concurrency: { group: deploy-pin, cancel-in-progress: false }
+jobs:
+  pin:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      BRANCH: ${{ github.event.workflow_run.head_branch }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/jc
+      DEPLOYMENT: marek-mraz-jc/joinedcontext-deployment
+      # The deployment branch the pin goes on top of (components/jc lives on main once jc-ship merged).
+      DEPLOY_BASE: ${{ vars.DEPLOY_PIN_BASE || 'main' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { ref: "${{ github.event.workflow_run.head_sha }}" }
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - id: digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$BRANCH" --jq .sha)
+          if [ "$head" != "$SHA" ]; then
+            echo "::notice::$BRANCH moved on to $head: its own run pins the newer image"
+            exit 0
+          fi
+          digest=$(docker buildx imagetools inspect "$IMAGE:$SHA" --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty' || true)
+          if [ -z "$digest" ]; then
+            echo "::notice::no image for $SHA: the push changed nothing the image holds"
+            exit 0
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - if: steps.digest.outputs.digest
+        name: the digest is signed by image.yml and passed image-scan.yml on this ref
+        env:
+          REF: ${{ steps.digest.outputs.digest && format('{0}@{1}', env.IMAGE, steps.digest.outputs.digest) }}
+        run: |
+          set -eu
+          id="https://github.com/$GITHUB_REPOSITORY/.github/workflows"
+          cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "$id/image.yml@refs/heads/$BRANCH" "$REF" > /dev/null
+          cosign verify-attestation --type https://joinedcontext.com/attestations/vuln-scan/v1 \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "$id/image-scan.yml@refs/heads/$BRANCH" "$REF" > /dev/null
+      - if: steps.digest.outputs.digest
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+          PIN_TOKEN: ${{ secrets.DEPLOY_PIN_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CI_URL: ${{ github.event.workflow_run.html_url }}
+        run: sh .github/scripts/deploy-pin.sh
