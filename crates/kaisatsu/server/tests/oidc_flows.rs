@@ -1017,3 +1017,77 @@ async fn k5_logout_without_hint_needs_a_confirmed_single_use_token() {
     let (st, _, _) = post_form(&app, logout, &[("logout_csrf_token", &anon_token)], None).await;
     assert_eq!(st, StatusCode::FORBIDDEN);
 }
+
+/// K4 (OIDC Core §8.1): with a pairwise mapper on the client, the ID token, the access token,
+/// userinfo and introspection all carry one pairwise `sub`, never the local user id.
+#[tokio::test]
+async fn k4_pairwise_sub_agrees_across_tokens_userinfo_and_introspection() {
+    let (app, store, _, _) = app().await;
+    let mut edge = store
+        .get_client_by_client_id("dev", "edge")
+        .await
+        .unwrap()
+        .unwrap();
+    edge.protocol_mappers.push(ProtocolMapperRepresentation {
+        id: "pm-pairwise".into(),
+        name: "pairwise subject".into(),
+        protocol: "openid-connect".into(),
+        protocol_mapper: "oidc-sha256-pairwise-sub-mapper".into(),
+        config: [
+            (
+                "sectorIdentifierUri",
+                "https://sector.example.test/redirects.json",
+            ),
+            ("pairwiseSubAlgorithmSalt", "k4-salt"),
+            ("id.token.claim", "true"),
+            ("access.token.claim", "true"),
+            ("userinfo.token.claim", "true"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect(),
+        ..Default::default()
+    });
+    store.upsert_client(edge).await.unwrap();
+    let user = store
+        .get_user_by_username_or_email("dev", None, "demo.orgmember@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+
+    let (code, _) = browser_login(&app).await;
+    let tokens = exchange(&app, &code).await;
+    let access = tokens["access_token"].as_str().unwrap();
+    let id_sub = decode_jwt_payload(tokens["id_token"].as_str().unwrap())["sub"].clone();
+    let at_sub = decode_jwt_payload(access)["sub"].clone();
+    assert_ne!(id_sub, json!(user.id), "the local id stays hidden");
+    assert_eq!(id_sub, at_sub);
+
+    let (st, _, body) = get(
+        &app,
+        "/realms/dev/protocol/openid-connect/userinfo",
+        None,
+        Some(&format!("Bearer {access}")),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let ui: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(ui["sub"], id_sub);
+    assert!(!body.contains(&user.id), "{body}");
+
+    let (st, _, body) = post_form(
+        &app,
+        "/realms/dev/protocol/openid-connect/token/introspect",
+        &[
+            ("client_id", "edge"),
+            ("client_secret", "edge-secret-123"),
+            ("token", tokens["refresh_token"].as_str().unwrap()),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let intro: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(intro["active"], true, "{intro}");
+    assert_eq!(intro["sub"], id_sub);
+}

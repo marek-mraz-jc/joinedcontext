@@ -2701,9 +2701,11 @@ async fn userinfo_inner(
         .and_then(Value::as_str)
         .unwrap_or("openid");
 
+    let mut via_session = false;
     let user = match state.store.get_user_by_id(&realm.id, None, sub).await? {
         Some(u) if u.enabled => u,
         _ => {
+            via_session = true;
             // K4: When the access token carries a pairwise `sub`, resolve the user from the SSO
             // session (`sid`) and verify that the pairwise `sub` for `azp` matches.
             let sid = claims
@@ -2730,6 +2732,14 @@ async fn userinfo_inner(
         .unwrap_or_default();
     let (active_scopes, _) =
         resolve_scopes_for_client(&state.store, &realm, &client, Some(scope_str)).await?;
+    if via_session {
+        let expected =
+            kaisatsu_core::claims::compute_subject_for_client(&client, &active_scopes, &user.id)
+                .map_err(|_| KaisatsuError::Unauthorized("user not found".into()))?;
+        if !constant_time_str_eq(&expected, sub) {
+            return Err(KaisatsuError::Unauthorized("user not found".into()));
+        }
+    }
     let user_groups = state.store.list_user_groups(&realm.id, &user.id).await?;
     let all_roles = state.store.list_roles(&realm.id, None).await?;
 
@@ -2787,12 +2797,15 @@ pub async fn dispatch_backchannel_logout(
         };
         let (active_scopes, _) =
             resolve_scopes_for_client(&state.store, realm, &client, None).await?;
-        let logout_sub = kaisatsu_core::claims::compute_subject_for_client(
+        // A pairwise mapper that cannot compute the subject sends nothing: falling back to the
+        // local user id would hand the client the identifier pairwise hides (K4).
+        let Ok(logout_sub) = kaisatsu_core::claims::compute_subject_for_client(
             &client,
             &active_scopes,
             &session.user_id,
-        )
-        .unwrap_or_else(|_| session.user_id.clone());
+        ) else {
+            continue;
+        };
         let key = select_signing_key(&keys, realm, &client, true)?;
         let logout_claims = json!({
             "iss": issuer,

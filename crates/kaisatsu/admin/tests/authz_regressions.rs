@@ -532,6 +532,18 @@ async fn application_and_group_subresources_are_checked_by_the_authorizer() {
 #[tokio::test]
 async fn k3_view_clients_cannot_write_roles_or_client_scopes_on_compat_routes() {
     let f = Fixture::new().await;
+    // A platform client portal-api does not own (T-2725: not `managed-by: joinedcontext`).
+    f.store
+        .upsert_client(ClientRepresentation {
+            id: "uuid-hel-edge".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            client_id: "hel-edge".into(),
+            managed_by: Some("platform".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     f.store
         .upsert_client_scope(ClientScopeRepresentation {
             id: "sc-existing".into(),
@@ -576,15 +588,45 @@ async fn k3_view_clients_cannot_write_roles_or_client_scopes_on_compat_routes() 
         .await,
         StatusCode::OK
     );
+    for (method, uri, body) in [
+        (
+            Method::POST,
+            "/admin/realms/dev/clients/uuid-hel-edge/roles",
+            Some(json!({ "name": "forged-role" })),
+        ),
+        (
+            Method::DELETE,
+            "/admin/realms/dev/clients/uuid-hel-edge/roles/viewer",
+            None,
+        ),
+    ] {
+        assert_eq!(
+            f.send(method.clone(), uri, &view_clients_tok, body).await,
+            StatusCode::NOT_FOUND,
+            "{method} {uri}"
+        );
+    }
+    // The T-2725 grant stays: portal-api writes the roles of the App clients it manages
+    // (Portal reconciler, COMPAT rows 32-33).
     assert_eq!(
         f.send(
             Method::POST,
             "/admin/realms/dev/clients/uuid-hel-app/roles",
             &view_clients_tok,
-            Some(json!({ "name": "forged-role" }))
+            Some(json!({ "name": "app-role" }))
         )
         .await,
-        StatusCode::NOT_FOUND
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        f.send(
+            Method::DELETE,
+            "/admin/realms/dev/clients/uuid-hel-app/roles/app-role",
+            &view_clients_tok,
+            None
+        )
+        .await,
+        StatusCode::NO_CONTENT
     );
     assert_eq!(
         f.send(

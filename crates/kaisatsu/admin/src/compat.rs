@@ -2214,6 +2214,44 @@ async fn compat_list_client_roles(
     Ok(Json(roles))
 }
 
+/// K3: writes of a client role pass on the role decision or on the client's own decision (T-2725
+/// keeps `view-clients` to `managed-by: joinedcontext` clients); otherwise the role decision's
+/// answer (404 when hidden).
+fn client_role_write(
+    state: &AdminState,
+    ctx: &RequestCtx,
+    action: Action,
+    client: &ClientRepresentation,
+    role_name: &str,
+) -> Result<()> {
+    let on_role = state.authorizer.check(
+        ctx,
+        action,
+        &ObjectTarget::Role {
+            realm_id: ctx.realm_id.clone(),
+            org_id: client.org_id.clone(),
+            role_id: role_name.to_owned(),
+        },
+    );
+    if on_role.allowed {
+        return Ok(());
+    }
+    let on_client = state.authorizer.check(
+        ctx,
+        Action::Update,
+        &ObjectTarget::Application {
+            realm_id: ctx.realm_id.clone(),
+            org_id: client.org_id.clone(),
+            client_id: client.client_id.clone(),
+            managed_by: client.managed_by.clone(),
+        },
+    );
+    if on_client.allowed {
+        return Ok(());
+    }
+    check_decision(on_role)
+}
+
 async fn compat_create_client_role(
     State(state): State<AdminState>,
     Path((realm, uuid)): Path<(String, String)>,
@@ -2230,17 +2268,10 @@ async fn compat_create_client_role(
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
-    // K3: Creating or deleting a client role requires write permission on `ObjectTarget::Role`
-    // (or `manage-clients` / `realm-admin`), so `view-clients` cannot create or delete roles.
-    check_decision(state.authorizer.check(
-        &ctx,
-        Action::Create,
-        &ObjectTarget::Role {
-            realm_id: realm.clone(),
-            org_id: client.org_id.clone(),
-            role_id: role.name.clone(),
-        },
-    ))?;
+    // K3: a client role is written by whoever may write roles, or may write this client: the
+    // T-2725 grant lets `portal-api` (`view-clients`) manage its own `managed-by: joinedcontext`
+    // App clients and their roles (Keycloak's per-client manage permission), never another's.
+    client_role_write(&state, &ctx, Action::Create, &client, &role.name)?;
     role.realm_id = realm.clone();
     role.org_id = client.org_id;
     role.client_role = true;
@@ -2273,15 +2304,7 @@ async fn compat_delete_client_role(
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
-    check_decision(state.authorizer.check(
-        &ctx,
-        Action::Delete,
-        &ObjectTarget::Role {
-            realm_id: realm.clone(),
-            org_id: client.org_id,
-            role_id: role_name.clone(),
-        },
-    ))?;
+    client_role_write(&state, &ctx, Action::Delete, &client, &role_name)?;
     state
         .oidc
         .store
