@@ -250,6 +250,69 @@ fn upstream_error(status: u16, body: &[u8]) -> DsError {
     }
 }
 
+/// Rounds an interval to Grafana's step ladder (`gtime/intervalv2` `roundInterval`): each row is
+/// (largest interval in ms, step it rounds to in ms).
+#[must_use]
+pub fn round_interval_ms(ms: u64) -> u64 {
+    const LADDER: [(u64, u64); 31] = [
+        (10, 1),
+        (15, 10),
+        (35, 20),
+        (75, 50),
+        (150, 100),
+        (350, 200),
+        (750, 500),
+        (1_500, 1_000),
+        (3_500, 2_000),
+        (7_500, 5_000),
+        (12_500, 10_000),
+        (17_500, 15_000),
+        (25_000, 20_000),
+        (45_000, 30_000),
+        (90_000, 60_000),
+        (210_000, 120_000),
+        (450_000, 300_000),
+        (750_000, 600_000),
+        (1_050_000, 900_000),
+        (1_500_000, 1_200_000),
+        (2_700_000, 1_800_000),
+        (5_400_000, 3_600_000),
+        (9_000_000, 7_200_000),
+        (16_200_000, 10_800_000),
+        (32_400_000, 21_600_000),
+        (86_400_000, 43_200_000),
+        (172_800_000, 86_400_000),
+        (604_800_000, 86_400_000),
+        (1_814_400_000, 604_800_000),
+        // Grafana compares this row with `<`, the others with `<=`.
+        (3_628_799_999, 2_592_000_000),
+        (u64::MAX, 31_536_000_000),
+    ];
+    LADDER
+        .iter()
+        .find(|(upto, _)| ms <= *upto)
+        .map_or(31_536_000_000, |(_, step)| *step)
+}
+
+/// Grafana promlib's step (`calculatePrometheusInterval`): the range over `max_data_points`
+/// (1500 when 0), raised to `min_ms` or rounded, and never below the rounded safe step of the
+/// range over 11 000 points.
+#[must_use]
+pub fn prometheus_step_ms(range_ms: u64, max_data_points: u32, min_ms: u64) -> u64 {
+    let points = if max_data_points == 0 {
+        1_500
+    } else {
+        u64::from(max_data_points)
+    };
+    let calculated = range_ms / points;
+    let calculated = if calculated < min_ms {
+        min_ms
+    } else {
+        round_interval_ms(calculated)
+    };
+    calculated.max(round_interval_ms(range_ms / 11_000))
+}
+
 /// Aligns epoch milliseconds down to a multiple of `step_ms` (`query.go:AlignTimeRange`).
 #[must_use]
 pub const fn align_time_ms(t_ms: i64, step_ms: i64) -> i64 {
@@ -470,8 +533,7 @@ impl Datasource for PrometheusDatasource {
         Box::pin(async move {
             let headers = self.auth_headers(ctx)?;
             let range_ms = (ctx.to_ms - ctx.from_ms).max(1_000) as u64;
-            let safe_step = (range_ms / 11_000).max(1_000);
-            let step_ms = ctx.interval_ms.max(self.scrape_interval_ms).max(safe_step);
+            let floor_ms = ctx.interval_ms.max(self.scrape_interval_ms).max(1_000);
 
             let mut out = Vec::with_capacity(queries.len());
             for q in queries {
@@ -499,7 +561,12 @@ impl Datasource for PrometheusDatasource {
                     .and_then(Value::as_u64)
                     .unwrap_or(1)
                     .max(1);
-                let effective_step_ms = step_ms.max(min_step_ms) * interval_factor;
+                let effective_step_ms = prometheus_step_ms(
+                    range_ms,
+                    ctx.max_data_points,
+                    floor_ms.max(min_step_ms),
+                )
+                .saturating_mul(interval_factor);
 
                 let expr = interpolate_promql_variables(
                     raw_expr,
