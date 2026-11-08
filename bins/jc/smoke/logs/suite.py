@@ -42,7 +42,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
 import logscan as ls  # noqa: E402
-from common import PASS, FAIL, SKIP, Results, as_json, loopback_only, read_token, short  # noqa: E402
+from common import PASS, FAIL, Results, as_json, loopback_only, read_token, short  # noqa: E402
 
 PORTAL_ADMIN_CLIENT = "portal-reconciler"
 PERSON = "smoke-logs-reader"
@@ -373,15 +373,14 @@ def judge_metrics(res: Results, a) -> None:
 
 def suite_windows(dirs: list[Path]) -> list[dict]:
     out = []
-    for d in dirs:
-        f = d / "results.json"
-        doc = as_json(f.read_bytes()) if f.is_file() else None
-        if not isinstance(doc, dict):
+    for f in [f for d in dirs for f in sorted(d.rglob("results.json"))]:
+        doc = as_json(f.read_bytes())
+        if not isinstance(doc, dict) or not isinstance(doc.get("checks"), list):
             continue
         end = f.stat().st_mtime
         start = end - float(doc.get("seconds") or 0)
         writes = [c for c in doc.get("checks", []) if c.get("result") == PASS and MUTATING.search(str(c.get("call", "")))]
-        out.append({"suite": doc.get("suite", d.name), "dir": str(d), "start": start - 60, "end": end + 60,
+        out.append({"suite": doc.get("suite", f.parent.name), "dir": str(f.parent), "start": start - 60, "end": end + 60,
                     "writes": len(writes), "example": writes[0]["call"][:120] if writes else ""})
     return out
 
@@ -413,7 +412,8 @@ def judge_activity(res: Results, person: Person | None, why: str, windows: list[
     res.check("activity.feed", "portal", "GET /api/v1/projects/{p}/activity?since=...", "200 for every project",
               f"{len(projects) - len(bad)}/{len(projects)} answered, {len(events)} events" +
               (f"; {', '.join(bad[:5])}" if bad else ""), not bad and bool(projects))
-    for w in windows:
+    for i, w in enumerate(windows, 1):
+        w["suite"] = f"{w['suite']}.{i}"
         a = dt.datetime.fromtimestamp(w["start"], dt.timezone.utc)
         b = dt.datetime.fromtimestamp(w["end"], dt.timezone.utc)
         inside = [e for e in events if a <= e[0] <= b]
@@ -603,10 +603,10 @@ def main(argv=None) -> int:
                 f"{len(found)} values", PASS)
         index = ls.SecretIndex(found)
         sources = [("log", "jc", log)] if log and log.is_file() else []
-        for d in a.results_dir:
+        for i, d in enumerate(a.results_dir, 1):
             for f in sorted(Path(d).rglob("*")):
                 if f.is_file() and f.stat().st_size < 64 << 20 and f.suffix in (".json", ".md", ".txt", ".log", ".jsonl", ""):
-                    sources.append((f"results.{Path(d).name}.{f.relative_to(d)}", "results", f))
+                    sources.append((f"results{i}.{f.relative_to(d)}", f"results {d}", f))
         scan_text_sources(res, index, sources)
 
     if person:
