@@ -1000,18 +1000,25 @@ async fn a_batched_write_that_fails_later_is_counted_and_answered_by_the_next_wr
     let (_tx, s) = stream_ctx(reg.clone());
     let out = reg
         .build_output(
-            &conf(json!({"refuses": {"batching": {"count": 100, "period": "20ms"}}})),
+            &conf(json!({"refuses": {"batching": {"count": 100, "period": "300ms"}}})),
             &s,
         )
         .unwrap();
     out.write_batch(&s, parts(&["a"])).await.unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    assert_eq!(
+    // The timed flush fails; the next write comes inside the following period, so only the
+    // remembered failure can answer it.
+    let errors = || {
         s.metrics
             .output_error
-            .load(std::sync::atomic::Ordering::Relaxed),
-        1
-    );
+            .load(std::sync::atomic::Ordering::Relaxed)
+    };
+    for _ in 0..500 {
+        if errors() > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(errors(), 1);
     let err = out
         .write_batch(&s, parts(&["b"]))
         .await
