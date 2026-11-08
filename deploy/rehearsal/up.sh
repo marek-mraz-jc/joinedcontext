@@ -153,7 +153,7 @@ fi
 # default $home/dashboards: a rehearsal.py dashboards dir); daiya lets only file-provisioned
 # datasources reach it.
 REHEARSAL_DASHBOARDS=${REHEARSAL_DASHBOARDS:-$home/dashboards}
-if [ -d "$REHEARSAL_DASHBOARDS" ]; then
+if compgen -G "$REHEARSAL_DASHBOARDS/*.datasource.*.json" >/dev/null; then
   python3 -I "$here/rehearsal.py" provisioning --dashboards "$REHEARSAL_DASHBOARDS" --port "$port" \
     --out "$home/daiya-provisioning"
   db_config+=$(printf '\n[daiya]\nprovisioning_dir = "%s"\n' "$home/daiya-provisioning")
