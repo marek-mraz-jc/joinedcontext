@@ -72,51 +72,12 @@ pub async fn open_kaisatsu_store(
     }
 }
 
-/// Applies the realm the Portal signs in through (first-start setup), when the Portal runs beside
-/// kaisatsu. Apply mode `no-delete`: a restart updates what changed and removes nothing an
-/// operator added. Secrets reach the importer as `$(env:...)` values from memory.
-async fn apply_portal_realm(
-    store: &Arc<dyn Store>,
-    ctx: BuildCtx<'_>,
-    mount: &Mount,
-) -> Result<(), StartError> {
-    let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
-    let (Some(base), Some(_)) = (
-        ctx.siblings.portal_base(),
-        ctx.setup.value(setup::Secret::PortalClientSecret),
-    ) else {
-        return Ok(());
-    };
-    let mut files = setup::portal_realm_files(&base).map_err(|e| err(&e))?;
-    if ctx
-        .setup
-        .value(setup::Secret::GatewayClientSecret)
-        .is_some()
-    {
-        files.push(setup::gateway_realm_file());
-    }
-    files.push(account_console_realm_file(mount));
-    let options = ApplyOptions {
-        env_vars: setup::realm_env(ctx.setup),
-        ..ApplyOptions::default()
-    };
-    let report = apply_realm_files(store, &files, &options)
-        .await
-        .map_err(|e| err(&e))?;
-    tracing::info!(
-        realm = %report.realm,
-        changed = report.has_changes(),
-        "kaisatsu: the Portal's realm is applied"
-    );
-    Ok(())
-}
-
 /// The account console's client in the Portal's realm (Keycloak's `account-console`): public,
 /// authorization code + PKCE S256, redirects only under kaisatsu's own `/account/` path, CORS
 /// for that origin alone (`+`), and audience `account`, the only audience the account REST
 /// takes. No service account, no direct grants, no realm role in its tokens.
-fn account_console_realm_file(mount: &Mount) -> (String, serde_json::Value) {
-    let account = format!("{}/account", mount.realm_issuer(setup::PORTAL_REALM));
+fn account_console_realm_file(kaisatsu_public: &str) -> (String, serde_json::Value) {
+    let account = format!("{kaisatsu_public}/realms/{}/account", setup::PORTAL_REALM);
     let client = serde_json::json!({
         "realm": setup::PORTAL_REALM,
         "clients": [{
@@ -155,6 +116,43 @@ fn account_console_realm_file(mount: &Mount) -> (String, serde_json::Value) {
     ("40-jc-account-console.json".to_owned(), client)
 }
 
+/// Applies the realm the Portal signs in through (first-start setup), when the Portal runs beside
+/// kaisatsu. Apply mode `no-delete`: a restart updates what changed and removes nothing an
+/// operator added. Secrets reach the importer as `$(env:...)` values from memory.
+async fn apply_portal_realm(store: &Arc<dyn Store>, ctx: BuildCtx<'_>) -> Result<(), StartError> {
+    let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
+    let (Some(base), Some(_)) = (
+        ctx.siblings.portal_base(),
+        ctx.setup.value(setup::Secret::PortalClientSecret),
+    ) else {
+        return Ok(());
+    };
+    let mut files = setup::portal_realm_files(&base).map_err(|e| err(&e))?;
+    if ctx
+        .setup
+        .value(setup::Secret::GatewayClientSecret)
+        .is_some()
+    {
+        files.push(setup::gateway_realm_file());
+    }
+    if let Some(kaisatsu) = ctx.siblings.get(Module::Kaisatsu) {
+        files.push(account_console_realm_file(&kaisatsu.public));
+    }
+    let options = ApplyOptions {
+        env_vars: setup::realm_env(ctx.setup),
+        ..ApplyOptions::default()
+    };
+    let report = apply_realm_files(store, &files, &options)
+        .await
+        .map_err(|e| err(&e))?;
+    tracing::info!(
+        realm = %report.realm,
+        changed = report.has_changes(),
+        "kaisatsu: the Portal's realm is applied"
+    );
+    Ok(())
+}
+
 pub async fn build(
     cfg: &KaisatsuSection,
     ctx: BuildCtx<'_>,
@@ -174,7 +172,7 @@ pub async fn build(
             .await
             .map_err(|e| err(&e))?;
     }
-    apply_portal_realm(&store, ctx, &mount).await?;
+    apply_portal_realm(&store, ctx).await?;
     let state = KaisatsuState::new(
         store,
         kek,
@@ -358,7 +356,7 @@ mod tests {
     #[test]
     fn the_account_console_client_is_public_pkce_and_bound_to_kaisatsus_own_path() {
         let mount = Mount::new("kaisatsu", "https", "jc.example", "/id").unwrap();
-        let (name, file) = account_console_realm_file(&mount);
+        let (name, file) = account_console_realm_file(&mount.public_base());
         assert!(name.ends_with(".json"));
         let client = &file["clients"][0];
         assert_eq!(client["clientId"], "account-console");
