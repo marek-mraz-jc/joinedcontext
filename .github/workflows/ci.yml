@@ -280,7 +280,9 @@ jobs:
   image:
     needs: changes
     if: needs.changes.outputs.release == 'true' && needs.changes.outputs.ship == 'true'
-    permissions: { contents: read, packages: write }
+    # image.yml's sign job (skipped in mode build) asks id-token: a caller grants what every job of
+    # a called workflow asks, run or not.
+    permissions: { contents: read, packages: write, id-token: write }
     uses: ./.github/workflows/image.yml
     with: { mode: build }
   scan:
