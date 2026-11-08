@@ -60,10 +60,12 @@ impl MemoryStore {
 
 fn check_folder_depth<'a>(
     folders: &'a BTreeMap<String, FolderRecord>,
+    folder_uid: &str,
     mut parent_uid: Option<&'a str>,
 ) -> CrResult<()> {
     let mut depth = 0usize;
     let mut visited = BTreeSet::new();
+    visited.insert(folder_uid.to_owned());
     while let Some(p_uid) = parent_uid {
         if p_uid.is_empty() {
             break;
@@ -73,7 +75,8 @@ fn check_folder_depth<'a>(
         }
         depth += 1;
         // MaxNestedFolderDepth = 4 (GF pkg/services/folder/model.go:30)
-        if depth > 4 {
+        // Grafana counts the new folder too (`len(parents)+1 >= MaxNestedFolderDepth`).
+        if depth >= 4 {
             return Err(CrError::BadRequest(
                 "folder nesting depth exceeds maximum allowed depth of 4".into(),
             ));
@@ -149,7 +152,7 @@ impl DaiyaStore for MemoryStore {
             }
             let mut guard = self.inner.write();
             let org = guard.orgs.entry(folder.org_id).or_default();
-            check_folder_depth(&org.folders, folder.parent_uid.as_deref())?;
+            check_folder_depth(&org.folders, &folder.uid, folder.parent_uid.as_deref())?;
 
             let now = Utc::now();
             if let Some(existing) = org.folders.get(&folder.uid) {
@@ -337,7 +340,12 @@ impl DaiyaStore for MemoryStore {
             Ok(guard
                 .orgs
                 .get(&org_id)
-                .map(|o| o.datasources.values().cloned().collect())
+                .map(|o| {
+                    // Sorted by name, as Grafana lists them and the Postgres store does.
+                    let mut all: Vec<DatasourceRecord> = o.datasources.values().cloned().collect();
+                    all.sort_by(|a, b| a.name.cmp(&b.name));
+                    all
+                })
                 .unwrap_or_default())
         })
     }
@@ -377,6 +385,18 @@ impl DaiyaStore for MemoryStore {
             let mut guard = self.inner.write();
             let org = guard.orgs.entry(ds.org_id).or_default();
 
+            // One name per organization, as Grafana (`ErrDataSourceNameExists`) and the
+            // Postgres store's UNIQUE (org_id, name).
+            if org
+                .datasources
+                .values()
+                .any(|other| other.uid != ds.uid && other.name == ds.name)
+            {
+                return Err(CrError::Conflict(format!(
+                    "already exists (data source name '{}')",
+                    ds.name
+                )));
+            }
             let is_new = !org.datasources.contains_key(&ds.uid);
             if is_new {
                 if org.datasources.len() as u64 >= org.quotas.max_datasources {
@@ -632,7 +652,12 @@ impl DaiyaStore for MemoryStore {
             Ok(guard
                 .orgs
                 .get(&org_id)
-                .map(|o| o.import_reports.clone())
+                .map(|o| {
+                    // Newest first, as the Postgres store (`ORDER BY created_at DESC`).
+                    let mut all = o.import_reports.clone();
+                    all.sort_by_key(|r| std::cmp::Reverse(r.created_at));
+                    all
+                })
                 .unwrap_or_default())
         })
     }
