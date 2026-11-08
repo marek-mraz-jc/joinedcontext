@@ -137,6 +137,8 @@ def capture(a):
                     if pair == "grafana":
                         P.add_dashboards(ctxvars.get("dashboards", []))
                 for pg in spec["pages"]:
+                    if a.only and pg["id"] not in a.only.split(","):
+                        continue
                     if side not in pg and side == "prod":
                         continue  # production is the reference only where a page names it
                     path = pg[side]
@@ -346,6 +348,7 @@ def main(argv=None):
     c.add_argument("--side", choices=("old", "new", "prod"), required=True)
     c.add_argument("--base", required=True, help="old: dev's primary host; new: the rehearsal's jc listener")
     c.add_argument("--pairs")
+    c.add_argument("--only", help="comma-separated page ids: capture only these")
     c.add_argument("--person-file", help="file holding '<user> <password>'; never printed")
     c.add_argument("--out", required=True)
     m = sub.add_parser("compose")
