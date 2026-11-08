@@ -191,7 +191,7 @@ turns it all off.
 | `JC_GITEA_*` | shako | `URL`, `PUBLIC_URL`, `OWNER=jc`, `REPO=config`, `TOKEN`, `APPS_OWNER=jc-apps`, `APPS_TOKEN`, `WEBHOOK_SECRET` | works: proposal commits, approval merges, sync reads them back |
 | pipeline runner | ekiben | `JC_PIPELINE_RUNNER_URL` | wired, refused: no runner credential (gap d) |
 | CKAN | dataroom | `JC_CKAN_URL`, `JC_CKAN_API_URL`, only when the public URL is https (EP-67) | wired for https installs; the http e2e leaves it unset (gap e) |
-| Grafana | daiya | `JC_GRAFANA_URL`, `_PUBLIC_URL`, `_USER=portal`, `_PASSWORD` | wired; no org per project (gap f) |
+| Grafana | daiya | `JC_GRAFANA_URL`, `_PUBLIC_URL`, `_USER=portal`, `_PASSWORD` | works as server admin; nothing creates the org per project (gap f) |
 | broker | antares | `JC_BROKER_URL`, `JC_BROKER_ADMIN_TOKEN_FILE` | wired; the gateway between Portal and broker is no jc module (gap d) |
 
 The Portal's forge client reads its `JC_GITEA_*` through `Config::forge_var` (environment first, then the values jc
@@ -207,8 +207,11 @@ filled), so the process environment is never written.
   (service account, `manage-users` + `query-groups`, no realm-admin), group `platform-admins`, user `admin` in it.
 - shako: token file; the repository `jc/config` created after serve through `POST /api/v1/orgs/jc/repos`
   (idempotent: GET first, 409 accepted).
-- ekiben, Antares admin, daiya (`portal` Basic credential bound as Admin of org 1), dataroom (`portal` token bound as
-  Admin of the default catalogue), the webhook secret and the Portal cookie key: one file each.
+- shako also gets `org.yaml` (the installation's Organization, domain = the Portal's host or `jc.invalid`) and
+  `users/roles/steward.yaml` (the role a project's opener is bound to), each written only when absent.
+- ekiben, Antares admin, daiya (the Portal's Grafana user is daiya's server administrator,
+  `DaiyaState::with_server_admin`), dataroom (`dataroom_api::portal_publisher`: Read + Propose on the default
+  catalogue only), the webhook secret and the Portal cookie key: one file each.
 - The Portal is built after jc serves (a `LateRouter` answers 503 until then), because its discovery calls kaisatsu
   on jc's own listener.
 - The Portal is mounted at the root (`[mounts.portal] path_prefix = ""`): its UI and redirects assume `/`.
@@ -239,19 +242,19 @@ set (run both ways). `JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false` is a test-on
 | b. person created through the Portal, read back from kaisatsu | pass |
 | c. Group proposed (dry run, propose), approved by a second admin with confirm, commit read back with `git clone`, group read back from kaisatsu | pass |
 | d. Pipeline on ekiben writes Entities to Antares | gap: runner refuses the Portal |
-| e. public Endpoint in the dataroom catalogue | partial: dataroom accepts the Portal's token; the Portal does not sync to an http CKAN |
-| f. dashboard in daiya | partial: daiya accepts the Portal's credential; no org per project |
+| e. public Endpoint in the dataroom catalogue | partial: the Portal's W2 + W5 calls with its token, dataset read back anonymously; the Portal's own sync needs https |
+| f. dashboard in daiya | partial: provision.sh's org, folder and dashboard made as the Portal's server admin, read back with G1 and G5; jc does not run those steps per project |
 
 ### Compat gaps (refused calls)
 
 - d, ekiben: `GET/PUT/POST/DELETE /streams/streams[/{id}]` without Authorization -> 401. The Portal has no runner
   credential setting (owner: jc-ekiben-portal).
-- d, Antares: `PUT /broker/q/views/{id}` -> 404; jc builds Antares without `views` and `jc-policy`. The Portal's
-  Endpoint writes go through context-gateway, which is not a jc module.
+- d, Antares: jc builds Antares without the `views` and `jc-policy` features, so `/broker/q/views` is not served.
+  The Portal's Endpoint writes go through context-gateway, which is not a jc module.
 - e, Portal: the CKAN URL must be https (EP-67); a CkanInstance token comes only from a `CKAN_*` env var named by
   `apiTokenRef` (no file). dataroom answers `help`/`uri` links with https on an http install.
-- f, daiya: `GET /dashboards/api/orgs/name/{project}` with the Portal's Basic credential -> 404
-  `{"error":{"code":"cr.not_found","message":"Organization not found"}}`.
+- f, jc: nothing runs provision.sh's per-project steps (`POST /dashboards/api/orgs`, `POST /api/folders`), so the
+  Portal's `GET /dashboards/api/orgs/name/{project}` answers 404 `Organization not found` until they run.
 - shako: hooks take Gitea's body but shako refuses loopback targets, so the Portal polls (`JC_PORTAL_SYNC_INTERVAL`);
   the webhook secret store has no API; the mergeRequest link points at `/git/user/oauth2/keycloak?redirect_to=...`,
   which shako does not serve (owner: jc-shako-portal).
@@ -260,6 +263,19 @@ set (run both ways). `JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false` is a test-on
 - Audience-bound tokens: the Portal's admin calls use kaisatsu `client_credentials` tokens of `portal-admin`. shako,
   ekiben, daiya, dataroom and the Antares admin still take static credentials from setup files: none of them
   verifies kaisatsu tokens in jc yet.
+
+- Portal, fixed here: `POST /api/v1/projects` wrote the creator RoleBinding with the opener's e-mail, which
+  jc-core refuses (PF-126); the reconciler dropped it (`api/projects.rs`, test in `project_open_layout_tests.rs`,
+  red with the old line).
+- Portal + shako: after `POST /api/v1/projects` (202) and its approval by a second administrator (202), the
+  project's repository `jc/{project}` is absent (`GET /git/api/v1/repos/jc/{project}` -> 404) and
+  `GET /api/v1/projects` lists no project. The UI shots therefore show the `org` namespace (owner:
+  jc-shako-portal / jc-mcp-admin).
+
+### Merged module branches
+
+jc-shako-portal (473e07e), jc-catalog-dash-portal (144a1fb), jc-mcp-admin (e7e7bd1), merged without conflict; jc
+uses `dataroom_api::portal_publisher` and `DaiyaState::with_server_admin` from them.
 
 ### Not verified
 
