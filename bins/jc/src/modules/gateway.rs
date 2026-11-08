@@ -177,13 +177,35 @@ pub fn config(
     Config::from_vars(|key| env(&env_key(key)).or_else(|| filled.get(key).cloned())).map_err(err)
 }
 
+/// The organization repository the Portal reads, `(owner, repo)`: its `JC_GITEA_OWNER` and
+/// `JC_GITEA_REPO` when the environment sets them, else jc's own `jc/config`. The gateway reads
+/// the same repository, or it serves the Endpoints of another one.
+pub fn forge_repo(env: impl Fn(&str) -> Option<String>) -> (String, String) {
+    let set = |key: &str, default: &str| {
+        env(key)
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| default.to_owned())
+    };
+    (
+        set("JC_GITEA_OWNER", setup::FORGE_OWNER),
+        set("JC_GITEA_REPO", setup::FORGE_REPO),
+    )
+}
+
 /// The organization repository `{forge}/{owner}/{repo}.git` checked out under `work`: the tree of
 /// `main` behind the link `repo/current`, swapped in one rename, then every registered project of
 /// a layout 2 organization under `projects/` (`jcctl checkouts`). Blocking (git).
-pub fn sync_forge(forge: &str, token_file: &Path, work: &Path) -> Result<PathBuf, String> {
+pub fn sync_forge(
+    forge: &str,
+    (owner, repo): (&str, &str),
+    token_file: &Path,
+    work: &Path,
+) -> Result<PathBuf, String> {
     use jc_manifest::assemble::{GitCheckouts, Resolver};
     let token = crate::runtime::read_secret_file(token_file)?;
-    let owner = format!("{}/{}", forge.trim_end_matches('/'), setup::FORGE_OWNER);
+    let org = owner;
+    let owner = format!("{}/{org}", forge.trim_end_matches('/'));
     let resolver = GitCheckouts {
         cache: work.join("org-cache"),
         forge: owner.clone(),
@@ -191,8 +213,8 @@ pub fn sync_forge(forge: &str, token_file: &Path, work: &Path) -> Result<PathBuf
         secrets: &|_| Err("jc names no Secret for an outside repository".to_owned()),
     };
     let entry: jc_core::kinds::ProjectSpec = serde_json::from_value(serde_json::json!({
-        "organizationRef": setup::FORGE_OWNER,
-        "repository": { "name": setup::FORGE_REPO },
+        "organizationRef": org,
+        "repository": { "name": repo },
         "ref": "main",
     }))
     .map_err(|e| e.to_string())?;
@@ -223,11 +245,20 @@ pub fn sync_forge(forge: &str, token_file: &Path, work: &Path) -> Result<PathBuf
 }
 
 /// Fetches the forge every [`SYNC_EVERY`]; a failed pass keeps the last tree and says why.
-async fn follow_forge(forge: String, token_file: PathBuf, work: PathBuf) {
+async fn follow_forge(forge: String, repo: (String, String), token_file: PathBuf, work: PathBuf) {
     loop {
         tokio::time::sleep(SYNC_EVERY).await;
-        let (forge, token_file, work) = (forge.clone(), token_file.clone(), work.clone());
-        match tokio::task::spawn_blocking(move || sync_forge(&forge, &token_file, &work)).await {
+        let (forge, repo, token_file, work) = (
+            forge.clone(),
+            repo.clone(),
+            token_file.clone(),
+            work.clone(),
+        );
+        match tokio::task::spawn_blocking(move || {
+            sync_forge(&forge, (&repo.0, &repo.1), &token_file, &work)
+        })
+        .await
+        {
             Ok(Ok(_)) => {}
             Ok(Err(why)) => tracing::warn!(%why, "gateway: the forge checkout failed"),
             Err(e) => tracing::warn!(error = %e, "gateway: the forge checkout stopped"),
@@ -310,12 +341,13 @@ pub async fn build(
             .to_path_buf();
         let work = work_dir(ctx.setup);
         crate::setup::private_dir(&work)?;
-        let (f, t, w) = (forge.clone(), token.clone(), work.clone());
-        tokio::task::spawn_blocking(move || sync_forge(&f, &t, &w))
+        let repo = forge_repo(&env);
+        let (f, r, t, w) = (forge.clone(), repo.clone(), token.clone(), work.clone());
+        tokio::task::spawn_blocking(move || sync_forge(&f, (&r.0, &r.1), &t, &w))
             .await
             .map_err(err)?
             .map_err(|why| err(format!("the forge checkout: {why}")))?;
-        tokio::spawn(follow_forge(forge, token, work));
+        tokio::spawn(follow_forge(forge, repo, token, work));
     }
     let mut broker = context_gateway::serve::broker_of(&config).map_err(err)?;
     if let (Some(hop), true) = (&hop, filled.contains_key("JC_GATEWAY_BROKER_URL")) {
@@ -358,6 +390,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let setup = Setup::prepare(dir.path(), &Module::ALL).unwrap();
         (siblings, setup, mount, dir)
+    }
+
+    /// The gateway serves the repository the Portal reads: the Portal's `JC_GITEA_OWNER` and
+    /// `JC_GITEA_REPO` (a rehearsal's `joinedcontext/configuration`), else jc's `jc/config`.
+    #[test]
+    fn the_gateway_follows_the_portals_organization_repository() {
+        assert_eq!(
+            forge_repo(|_| None),
+            (setup::FORGE_OWNER.to_owned(), setup::FORGE_REPO.to_owned())
+        );
+        let env = |k: &str| match k {
+            "JC_GITEA_OWNER" => Some("joinedcontext".to_owned()),
+            "JC_GITEA_REPO" => Some("configuration".to_owned()),
+            _ => None,
+        };
+        assert_eq!(
+            forge_repo(env),
+            ("joinedcontext".to_owned(), "configuration".to_owned())
+        );
+        assert_eq!(forge_repo(|_| Some(" ".to_owned())).0, setup::FORGE_OWNER);
     }
 
     #[test]
