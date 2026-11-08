@@ -740,8 +740,33 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
             .iter()
             .any(|r| r.template_kind == "VERIFY_EMAIL")
     );
-    // Submit the verification code to complete VerifyEmail
-    let (st_ve_done, h_ve_done, _) = ve_attempt.post(&app, &[("email_code", "654321")]).await;
+    // The fixed code of the first write ("654321") no longer verifies anything.
+    let (st_ve_bad, _, html_ve_bad) = ve_attempt.post(&app, &[("email_code", "654321")]).await;
+    assert_eq!(st_ve_bad, StatusCode::OK);
+    assert_eq!(page_id(&html_ve_bad), "verify-email");
+    assert!(!user(&store, MEMBER).await.email_verified);
+    // The mailed action link verifies the address; the next POST of the step completes it.
+    let ve_sink = RecordingSender::new();
+    OutboxDispatcher::new(
+        store_dyn.clone(),
+        store.kek().clone(),
+        Arc::new(ve_sink.clone()),
+    )
+    .dispatch_realm_batch(&mount(), "dev", 50)
+    .await
+    .unwrap();
+    let ve_mail = ve_sink.drain().pop().unwrap();
+    let ve_link = ve_mail
+        .action_link
+        .strip_prefix("https://idm.dev.example.test")
+        .unwrap()
+        .to_owned();
+    let (st_link, _, _) = get(&app, &ve_link, None).await;
+    assert!(
+        st_link.is_success() || st_link == StatusCode::SEE_OTHER,
+        "{st_link}"
+    );
+    let (st_ve_done, h_ve_done, _) = ve_attempt.post(&app, &[("email_code", "")]).await;
     assert!(is_code(st_ve_done, &h_ve_done));
     let verified_member = user(&store, MEMBER).await;
     assert!(verified_member.email_verified);
@@ -993,4 +1018,50 @@ async fn reset_credentials_never_says_whether_the_account_exists() {
         h.replace(&h[i..(i + 22).min(h.len())], "")
     };
     assert_eq!(strip(&known).len(), strip(&unknown).len());
+}
+
+/// K7: a recovery code whose single use is already recorded (a concurrent submit that won the
+/// race) is refused even while the stored list still holds its hash. Red before: the stored list
+/// alone decided, so two parallel submits of one code both signed in.
+#[tokio::test]
+async fn k7_recovery_code_single_use_holds_under_a_concurrent_submit() {
+    let (app, store) = app().await;
+    let steward = user(&store, STEWARD).await;
+    let (plain, hashes) = generate_recovery_codes();
+    store
+        .upsert_credential(CredentialRecord {
+            id: "steward-rec-race".into(),
+            realm_id: "dev".into(),
+            user_id: steward.id.clone(),
+            credential_type: "recovery-authn-codes".into(),
+            user_label: None,
+            created_date: chrono::Utc::now().timestamp_millis(),
+            secret_data: serde_json::json!({ "hashes": hashes }).to_string(),
+            credential_data: serde_json::json!({ "remaining": 10 }).to_string(),
+            temporary: false,
+        })
+        .await
+        .unwrap();
+    // The other request recorded the use of code 0 but has not rewritten the list yet.
+    store
+        .mark_token_revoked(RevokedTokenRecord {
+            jti_hash: sha256_hex(&format!("recovery:{}:{}", steward.id, hashes[0])),
+            realm_id: "dev".into(),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+        })
+        .await
+        .unwrap();
+    let a = start(&app, "").await;
+    a.password(&app, STEWARD, STEWARD_PW).await;
+    a.post(&app, &[("switch_to", "recovery_code")]).await;
+    let (st, _, html) = a.post(&app, &[("recovery_code", &plain[0])]).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "recovery-code", "{html}");
+    assert!(html.contains("role=\"alert\""));
+    // An unused code still passes.
+    let (st, h, html) = a.post(&app, &[("recovery_code", &plain[1])]).await;
+    assert!(
+        is_code(st, &h) || page_id(&html) == "org-choice",
+        "{st} {html}"
+    );
 }

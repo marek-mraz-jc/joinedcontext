@@ -427,7 +427,10 @@ async fn render_state_page(
             LoginState::VerifyEmail { user_id, .. } => {
                 // K7 / K9: Ensure a verification code and outbox email are queued once for this session.
                 if auth_session.pending_email_code_hash.is_none() {
-                    let code = "654321".to_owned();
+                    // The mail carries only the signed action link (K9 stores no secret), so the
+                    // step completes once that link set `email_verified`; this random value only
+                    // marks the mail as queued and can never be typed (it was a fixed "654321").
+                    let code = random_handle_256();
                     let mut updated = auth_session.clone();
                     updated.pending_email_code_hash = Some(sha256_hex(&code));
                     state.store.put_auth_session(updated).await?;
@@ -1361,7 +1364,33 @@ async fn authenticate_page_post(
             )
             .await;
         };
-        stored_hashes.remove(idx);
+        // Single use even under concurrent submits: the first request to record the code's hash
+        // wins; the stored list update below is only bookkeeping (K7).
+        let used_hash = stored_hashes.remove(idx);
+        if state
+            .store
+            .mark_token_revoked(RevokedTokenRecord {
+                jti_hash: sha256_hex(&format!("recovery:{}:{used_hash}", user.id)),
+                realm_id: realm.id.clone(),
+                expires_at: Utc::now() + Duration::days(3650),
+            })
+            .await
+            .is_err()
+        {
+            let _ = bf
+                .record_failure(&realm, Some(&user.id), client_ip.as_deref())
+                .await;
+            return render_state_page(
+                &state,
+                &mount,
+                &realm,
+                &auth_session,
+                &current_state,
+                &headers,
+                bundle.get("invalidUserMessage"),
+            )
+            .await;
+        }
         let mut updated_cred = rec_cred.clone();
         updated_cred.secret_data = serde_json::json!({ "hashes": stored_hashes }).to_string();
         updated_cred.credential_data =
