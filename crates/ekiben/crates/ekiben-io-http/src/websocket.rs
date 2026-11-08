@@ -125,7 +125,7 @@ fn s<'a>(map: &'a serde_json::Map<String, JsonValue>, key: &str) -> &'a str {
 }
 
 /// The DER certificates of a PEM text.
-fn pem_certificates(pem: &str) -> Result<Vec<Vec<u8>>, CoreError> {
+pub(crate) fn pem_certificates(pem: &str) -> Result<Vec<Vec<u8>>, CoreError> {
     const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
     const END: &str = "-----END CERTIFICATE-----";
     let mut out = Vec::new();
@@ -385,7 +385,7 @@ pub fn oauth1_header(
     )
 }
 
-async fn tls_connect(
+pub(crate) async fn tls_connect(
     tcp: tokio::net::TcpStream,
     host: &str,
     extra_roots: &[Vec<u8>],

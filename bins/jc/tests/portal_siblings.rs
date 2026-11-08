@@ -5,9 +5,11 @@
 //! kaisatsu runs on PostgreSQL when `KAISATSU_TEST_DATABASE_URL` (a superuser URL) is set; the
 //! other modules have no Postgres path in `jc` yet (memory stores, STATUS.md).
 
-use reqwest::{Client, Method, StatusCode, header};
+mod common;
+
+use common::{Body, Browser, sign_in};
+use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -15,8 +17,20 @@ use std::time::{Duration, Instant};
 
 const REALM: &str = "jc";
 
+/// Where jc places its modules: one host with a slug each, or a host per module (`--mode host`,
+/// the Portal on `portal.localhost`).
+#[derive(Clone, Copy, PartialEq)]
+enum Placement {
+    Slug,
+    Host,
+}
+
+const SLUGS: [&str; 6] = ["id", "git", "streams", "opendata", "dashboards", "broker"];
+
 struct Jc {
     child: Child,
+    placement: Placement,
+    port: u16,
     base: String,
     state: PathBuf,
     _dir: tempfile::TempDir,
@@ -52,7 +66,18 @@ impl Jc {
             .to_owned()
     }
 
+    /// The public URL of `path` as slug mode spells it (`/id/...` is kaisatsu, anything else the
+    /// Portal): in host mode each module's slug becomes its own host.
     fn url(&self, path: &str) -> String {
+        if self.placement == Placement::Host {
+            for slug in SLUGS {
+                if let Some(rest) = path.strip_prefix(&format!("/{slug}"))
+                    && (rest.is_empty() || rest.starts_with('/'))
+                {
+                    return format!("http://{slug}.localhost:{}{rest}", self.port);
+                }
+            }
+        }
         format!("{}{path}", self.base)
     }
 
@@ -83,6 +108,11 @@ async fn kaisatsu_pg(dir: &Path) -> Option<(PathBuf, PathBuf)> {
         .unwrap();
     let suffix = format!("{:x}", std::process::id());
     let (app_pw, mig_pw) = (format!("app{suffix}x9"), format!("mig{suffix}x9"));
+    // Both tests of this binary set the shared roles: two ALTER ROLE at once fail with "tuple
+    // concurrently updated", so they take turns; each test gets its own database.
+    static ROLES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let roles = ROLES.lock().await;
     for (role, pw) in [("kaisatsu_app", &app_pw), ("kaisatsu_migrate", &mig_pw)] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -92,7 +122,9 @@ async fn kaisatsu_pg(dir: &Path) -> Option<(PathBuf, PathBuf)> {
         .await
         .unwrap();
     }
-    let db = format!("kaisatsu_e2e_{suffix}");
+    drop(roles);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let db = format!("kaisatsu_e2e_{suffix}_{n}");
     for statement in [
         format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
         format!("CREATE DATABASE {db} OWNER kaisatsu_migrate"),
@@ -132,6 +164,10 @@ async fn kaisatsu_pg(dir: &Path) -> Option<(PathBuf, PathBuf)> {
 }
 
 async fn start() -> Jc {
+    start_placed(Placement::Slug).await
+}
+
+async fn start_placed(placement: Placement) -> Jc {
     assert!(
         Command::new("docker")
             .args(["run", "--rm", "alpine", "true"])
@@ -145,9 +181,23 @@ async fn start() -> Jc {
     let state = dir.path().join("state");
     let port = free_port();
     let base_host = format!("localhost:{port}");
-    // The Portal at the root of the one domain: its redirects and UI assets are absolute paths.
+    // Slug mode: the Portal at the root of the one domain (its redirects and UI assets are
+    // absolute paths). Host mode: every module on `<slug>.localhost`, the Portal on
+    // `portal.localhost`, which resolves to ::1.
     let config = dir.path().join("jc.toml");
-    std::fs::write(&config, "[mounts.portal]\npath_prefix = \"\"\n").unwrap();
+    let (mounts, listen, base) = match placement {
+        Placement::Slug => (
+            "[mounts.portal]\npath_prefix = \"\"\n",
+            format!("127.0.0.1:{port}"),
+            format!("http://{base_host}"),
+        ),
+        Placement::Host => (
+            "mode = \"host\"\n",
+            format!("[::1]:{port}"),
+            format!("http://portal.{base_host}"),
+        ),
+    };
+    std::fs::write(&config, mounts).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
     for (key, _) in std::env::vars() {
         if key.starts_with("JCBIN_") || key.starts_with("JC_") {
@@ -157,7 +207,7 @@ async fn start() -> Jc {
     cmd.args(["--role", "all", "--scheme", "http", "--log-format", "text"])
         .arg("--config")
         .arg(&config)
-        .args(["--listen", &format!("127.0.0.1:{port}")])
+        .args(["--listen", &listen])
         .args(["--base-host", &base_host])
         .arg("--state-dir")
         .arg(&state)
@@ -183,7 +233,7 @@ async fn start() -> Jc {
     let sink = log.clone();
     std::thread::spawn(move || {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            if line.contains("jc listening") {
+            if line.contains("portal: ready") {
                 let _ = tx.send(Ok(()));
             } else if line.contains("Error:") || line.contains("ERROR") {
                 eprintln!("{line}");
@@ -194,7 +244,9 @@ async fn start() -> Jc {
     });
     let jc = Jc {
         child,
-        base: format!("http://{base_host}"),
+        placement,
+        port,
+        base,
         state,
         _dir: dir,
         log,
@@ -206,207 +258,6 @@ async fn start() -> Jc {
             panic!("jc did not start ({other:?}):\n{tail}");
         }
     }
-}
-
-/// A browser-like cookie jar: name -> (value, path). Secure cookies are kept on
-/// `http://localhost`, as browsers do for localhost.
-#[derive(Default)]
-struct Jar(BTreeMap<String, (String, String)>);
-
-impl Jar {
-    fn store(&mut self, headers: &header::HeaderMap) {
-        for raw in headers.get_all(header::SET_COOKIE) {
-            let raw = raw.to_str().unwrap_or_default();
-            let mut parts = raw.split(';').map(str::trim);
-            let Some((name, value)) = parts.next().and_then(|kv| kv.split_once('=')) else {
-                continue;
-            };
-            let mut path = "/".to_owned();
-            let mut expired = false;
-            for attr in parts {
-                let lower = attr.to_ascii_lowercase();
-                if let Some(p) = lower.strip_prefix("path=") {
-                    path = attr[5..5 + p.len()].to_owned();
-                }
-                if lower == "max-age=0" {
-                    expired = true;
-                }
-            }
-            if expired || value.is_empty() {
-                self.0.remove(name);
-            } else {
-                self.0.insert(name.to_owned(), (value.to_owned(), path));
-            }
-        }
-    }
-
-    fn header_for(&self, url: &str) -> String {
-        let path = url
-            .split_once("://")
-            .and_then(|(_, rest)| rest.find('/').map(|i| &rest[i..]))
-            .unwrap_or("/");
-        self.0
-            .iter()
-            .filter(|(_, (_, p))| path.starts_with(p.as_str()))
-            .map(|(n, (v, _))| format!("{n}={v}"))
-            .collect::<Vec<_>>()
-            .join("; ")
-    }
-
-    fn get(&self, name: &str) -> Option<&str> {
-        self.0.get(name).map(|(v, _)| v.as_str())
-    }
-}
-
-struct Browser {
-    client: Client,
-    jar: Jar,
-}
-
-struct Answer {
-    status: StatusCode,
-    headers: header::HeaderMap,
-    text: String,
-}
-
-impl Answer {
-    fn json(&self) -> Value {
-        serde_json::from_str(&self.text).unwrap_or(Value::Null)
-    }
-
-    fn location(&self) -> String {
-        self.headers
-            .get(header::LOCATION)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_default()
-            .to_owned()
-    }
-}
-
-impl Browser {
-    fn new() -> Self {
-        Self {
-            client: Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(60))
-                .build()
-                .unwrap(),
-            jar: Jar::default(),
-        }
-    }
-
-    async fn send(
-        &mut self,
-        method: Method,
-        url: &str,
-        body: Option<Body<'_>>,
-        csrf: bool,
-    ) -> Answer {
-        let mut req = self.client.request(method, url);
-        let cookies = self.jar.header_for(url);
-        if !cookies.is_empty() {
-            req = req.header(header::COOKIE, cookies);
-        }
-        if csrf && let Some(token) = self.jar.get("__Host-jc_csrf") {
-            req = req.header("x-csrf-token", token);
-        }
-        req = match body {
-            Some(Body::Form(fields)) => req.form(fields),
-            Some(Body::Json(value)) => req.json(value),
-            None => req,
-        };
-        let resp = req.send().await.unwrap_or_else(|e| panic!("{url}: {e}"));
-        let status = resp.status();
-        let headers = resp.headers().clone();
-        self.jar.store(&headers);
-        Answer {
-            status,
-            headers,
-            text: resp.text().await.unwrap_or_default(),
-        }
-    }
-
-    async fn get(&mut self, url: &str) -> Answer {
-        self.send(Method::GET, url, None, false).await
-    }
-
-    /// Follows redirects by hand, keeping cookies, until a non-redirect answer or `stop` matches
-    /// the next location.
-    async fn follow(&mut self, mut url: String, stop: impl Fn(&str) -> bool) -> (String, Answer) {
-        for _ in 0..12 {
-            let answer = self.get(&url).await;
-            if !answer.status.is_redirection() {
-                return (url, answer);
-            }
-            let next = answer.location();
-            let next = if next.starts_with("http") {
-                next
-            } else {
-                let origin = &url[..url[8..].find('/').map_or(url.len(), |i| i + 8)];
-                format!("{origin}{next}")
-            };
-            if stop(&next) {
-                return (next, answer);
-            }
-            url = next;
-        }
-        panic!("too many redirects from {url}");
-    }
-}
-
-enum Body<'a> {
-    Form(&'a [(&'a str, &'a str)]),
-    Json(&'a Value),
-}
-
-fn hidden(html: &str, name: &str) -> String {
-    let marker = format!("name=\"{name}\"");
-    let at = html
-        .find(&marker)
-        .unwrap_or_else(|| panic!("no {name} in {html}"));
-    let tag_start = html[..at].rfind('<').unwrap();
-    let tag_end = at + html[at..].find('>').unwrap();
-    let tag = &html[tag_start..tag_end];
-    let v = tag.find("value=\"").unwrap() + 7;
-    tag[v..v + tag[v..].find('"').unwrap()].replace("&amp;", "&")
-}
-
-/// a. Signs `username` in to the Portal through kaisatsu: the Portal's login redirect, kaisatsu's
-/// authorization endpoint (code + PKCE), its login form, back to the Portal's callback.
-async fn sign_in(jc: &Jc, browser: &mut Browser, username: &str, password: &str) {
-    let (login_url, page) = browser
-        .follow(jc.url("/api/v1/auth/login"), |_| false)
-        .await;
-    assert_eq!(page.status, StatusCode::OK, "{login_url}: {}", page.text);
-    assert!(
-        login_url.starts_with(&jc.url(&format!("/id/realms/{REALM}/login-actions/authenticate"))),
-        "the Portal sends the browser to kaisatsu: {login_url}"
-    );
-    let csrf = hidden(&page.text, "csrf_token");
-    let session = hidden(&page.text, "session_code");
-    let fields = [
-        ("csrf_token", csrf.as_str()),
-        ("session_code", session.as_str()),
-        ("username", username),
-        ("password", password),
-    ];
-    let posted = browser
-        .send(Method::POST, &login_url, Some(Body::Form(&fields)), false)
-        .await;
-    assert!(
-        posted.status.is_redirection(),
-        "kaisatsu accepts the password: {} {}",
-        posted.status,
-        posted.text
-    );
-    let callback = posted.location();
-    assert!(
-        callback.starts_with(&jc.url("/api/v1/auth/callback?")),
-        "{callback}"
-    );
-    assert!(callback.contains("code="), "{callback}");
-    let (_, home) = browser.follow(callback, |_| false).await;
-    assert!(home.status.is_success(), "{} {}", home.status, home.text);
 }
 
 async fn me(jc: &Jc, browser: &mut Browser) -> Value {
@@ -516,7 +367,7 @@ async fn the_portal_runs_on_its_sibling_modules() {
 
     // a. Sign-in through kaisatsu.
     let password = jc.secret("first-admin-password");
-    sign_in(&jc, &mut browser, "admin", &password).await;
+    sign_in(&|p| jc.url(p), &mut browser, "admin", &password).await;
     let who = me(&jc, &mut browser).await;
     assert_eq!(who["username"], "admin", "{who}");
     // kaisatsu holds the session the Portal's sign-in opened.
@@ -567,6 +418,14 @@ async fn the_portal_runs_on_its_sibling_modules() {
     let st = kaisatsu_admin_write(
         &jc,
         &admin_token,
+        &format!("/users/{person_id}/reset-password"),
+        &json!({"type": "password", "value": approver_pw, "temporary": false}),
+    )
+    .await;
+    assert!(st.is_success(), "reset-password {st}");
+    let st = kaisatsu_admin_write(
+        &jc,
+        &admin_token,
         &format!("/users/{person_id}"),
         &json!({
             "username": "e2e.person@jc.invalid",
@@ -580,14 +439,6 @@ async fn the_portal_runs_on_its_sibling_modules() {
     )
     .await;
     assert!(st.is_success(), "user update {st}");
-    let st = kaisatsu_admin_write(
-        &jc,
-        &admin_token,
-        &format!("/users/{person_id}/reset-password"),
-        &json!({"type": "password", "value": approver_pw, "temporary": false}),
-    )
-    .await;
-    assert!(st.is_success(), "reset-password {st}");
     let (_, groups) = kaisatsu_admin(
         &jc,
         &admin_token,
@@ -639,7 +490,13 @@ async fn the_portal_runs_on_its_sibling_modules() {
             .expect("the Change's name")
             .to_owned();
         let mut approver = Browser::new();
-        sign_in(&jc, &mut approver, "e2e.person@jc.invalid", approver_pw).await;
+        sign_in(
+            &|p| jc.url(p),
+            &mut approver,
+            "e2e.person@jc.invalid",
+            approver_pw,
+        )
+        .await;
         let approved = approver
             .send(
                 Method::POST,
@@ -726,7 +583,13 @@ async fn the_portal_runs_on_its_sibling_modules() {
         .expect("the Change's name")
         .to_owned();
     let mut approver = Browser::new();
-    sign_in(&jc, &mut approver, "e2e.person@jc.invalid", approver_pw).await;
+    sign_in(
+        &|p| jc.url(p),
+        &mut approver,
+        "e2e.person@jc.invalid",
+        approver_pw,
+    )
+    .await;
     let approved = approver
         .send(
             Method::POST,
@@ -1002,4 +865,113 @@ async fn the_portal_runs_on_its_sibling_modules() {
         gaps.join("\n"),
     )
     .ok();
+}
+
+/// Host mode: every module on its own host name, the Portal on `portal.localhost`. The Portal
+/// signs a person in through kaisatsu on `id.localhost`, keeps its cookies on its own host, writes
+/// people to kaisatsu and proposals to shako, and a module's slug on the Portal's host reaches the
+/// Portal, not the module.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_portal_runs_on_its_own_host_in_host_mode() {
+    let jc = start_placed(Placement::Host).await;
+    let mut browser = Browser::new();
+
+    // a. Sign-in across hosts.
+    let password = jc.secret("first-admin-password");
+    sign_in(&|p| jc.url(p), &mut browser, "admin", &password).await;
+    let who = me(&jc, &mut browser).await;
+    assert_eq!(who["username"], "admin", "{who}");
+    let portal_cookies = browser.jar.names_for(&jc.url("/"));
+    let id_cookies = browser.jar.names_for(&jc.url("/id/"));
+    assert!(
+        portal_cookies.iter().any(|n| n == "__Host-jc_session"),
+        "{portal_cookies:?}"
+    );
+    assert!(
+        id_cookies.iter().all(|n| !n.starts_with("__Host-jc_")),
+        "a Portal cookie on kaisatsu's host: {id_cookies:?}"
+    );
+    assert!(!id_cookies.is_empty(), "kaisatsu's own session cookie");
+
+    // b. A person written through the Portal lands in kaisatsu.
+    let created = browser
+        .send(
+            Method::POST,
+            &jc.url("/api/v1/organization/people"),
+            Some(Body::Json(&json!({
+                "email": "host.person@jc.invalid",
+                "firstName": "Hana",
+                "lastName": "Host",
+            }))),
+            true,
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text);
+    let admin_token = kaisatsu_admin_token(&jc).await;
+    let (status, found) = kaisatsu_admin(
+        &jc,
+        &admin_token,
+        "/users?email=host.person@jc.invalid&exact=true",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    assert_eq!(found[0]["firstName"], "Hana", "{found}");
+
+    // c. The Portal's forge: a proposal checks against shako, and shako serves git on its host.
+    let group = json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "Group",
+        "metadata": {"name": "host-editors", "namespace": "org"},
+        "spec": {"members": []}
+    });
+    let dry = browser
+        .send(
+            Method::POST,
+            &jc.url("/api/v1/projects/org/groups?dryRun=All"),
+            Some(Body::Json(&group)),
+            true,
+        )
+        .await;
+    assert_eq!(dry.status, StatusCode::OK, "{}", dry.text);
+    assert_eq!(dry.json()["valid"], true, "{}", dry.text);
+    let checkout = tempfile::tempdir().unwrap();
+    let cloned = git_clone(&jc, &checkout.path().join("config"));
+    assert!(
+        cloned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cloned.stderr)
+    );
+
+    // Every other module answers on its own host.
+    let client = Client::new();
+    for (path, needle) in [
+        ("/opendata/api/3/action/status_show", "\"success\""),
+        ("/dashboards/api/health", "\"database\""),
+        ("/streams/ping", "pong"),
+        ("/broker/ngsi-ld/v1/info/sourceIdentity", "antares"),
+        ("/git/api/healthz", "\"status\":\"ok\""),
+    ] {
+        let body = client
+            .get(jc.url(path))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(body.contains(needle), "{}: {body}", jc.url(path));
+    }
+    // A module's slug on the Portal's host is the Portal's path, not the module.
+    let on_portal = client
+        .get(format!(
+            "{}/id/realms/{REALM}/.well-known/openid-configuration",
+            jc.base
+        ))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!on_portal.contains("\"issuer\""), "{on_portal}");
 }

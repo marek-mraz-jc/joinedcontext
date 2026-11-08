@@ -1,0 +1,627 @@
+//! End to end: Endpoints inside `jc --role all`, as on dev. The test writes a project to shako's
+//! organization repository (one space, a public and a closed Endpoint, their Policies), waits for
+//! the Portal's reconciler to write the views and rule documents into Antares and for the gateway
+//! to load the Endpoints from its checkout, then reads and writes only through the public mount:
+//! `/api/endpoint/{slug}/...` and `/api/mcp`, anonymous and with kaisatsu tokens.
+//!
+//! The people and clients come from a realm file in kaisatsu's import directory: a person in the
+//! project's reader and writer groups, a client whose tokens name the closed Endpoint, and one
+//! whose tokens name only another Endpoint.
+
+mod common;
+
+use base64::Engine as _;
+use common::{Browser, sign_in};
+use reqwest::{Client, StatusCode};
+use serde_json::{Value, json};
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+const PROJECT: &str = "e2e";
+const SPACE: &str = "things";
+const PUBLIC: &str = "e2epublicendpointaaaaaaaaa";
+const CLOSED: &str = "e2eclosedendpointaaaaaaaaa";
+const ELSEWHERE: &str = "e2eotherendpointaaaaaaaaaa";
+const PERSON: &str = "e2e.person";
+const PERSON_PASSWORD: &str = "e2e-person-password-not-secret";
+const READER_SECRET: &str = "e2e-reader-client-secret-not-secret";
+
+struct Jc {
+    child: Child,
+    base: String,
+    state: PathBuf,
+    _dir: tempfile::TempDir,
+    log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl Drop for Jc {
+    fn drop(&mut self) {
+        let _ = Command::new("kill")
+            .args(["-TERM", &self.child.id().to_string()])
+            .status();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if let Ok(Some(_)) = self.child.try_wait() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = self.child.kill();
+    }
+}
+
+impl Jc {
+    fn secret(&self, name: &str) -> String {
+        std::fs::read_to_string(self.state.join(name))
+            .unwrap()
+            .trim()
+            .to_owned()
+    }
+
+    fn log_has(&self, needle: &str) -> bool {
+        self.log.lock().unwrap().iter().any(|l| l.contains(needle))
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.base)
+    }
+
+    /// The last lines of the child's log; the whole log goes to a file named in the answer.
+    fn tail(&self) -> String {
+        let log = self.log.lock().unwrap();
+        let file = Path::new(env!("CARGO_TARGET_TMPDIR")).join("gateway_endpoints.log");
+        let _ = std::fs::write(&file, log.join("\n"));
+        format!(
+            "{}\n(whole log: {})",
+            log[log.len().saturating_sub(60)..].join("\n"),
+            file.display()
+        )
+    }
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// The test's people and clients, imported into realm `jc` before the Portal's own files.
+fn realm_file(dir: &Path) {
+    let audience = |name: &str, slug: &str| {
+        json!({
+            "name": name,
+            "protocol": "openid-connect",
+            "protocolMapper": "oidc-audience-mapper",
+            "consentRequired": false,
+            "config": {
+                "included.custom.audience": slug,
+                "access.token.claim": "true",
+                "id.token.claim": "false"
+            }
+        })
+    };
+    let groups = json!({
+        "name": "groups",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-group-membership-mapper",
+        "consentRequired": false,
+        "config": {
+            "claim.name": "groups",
+            "full.path": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+        }
+    });
+    let client = |id: &str, slug: &str| {
+        json!({
+            "clientId": id,
+            "enabled": true,
+            "protocol": "openid-connect",
+            "publicClient": false,
+            "clientAuthenticatorType": "client-secret",
+            "secret": "$(env:E2E_CLIENT_SECRET)",
+            "standardFlowEnabled": false,
+            "directAccessGrantsEnabled": true,
+            "serviceAccountsEnabled": false,
+            "fullScopeAllowed": false,
+            "redirectUris": [],
+            "webOrigins": [],
+            "defaultClientScopes": ["basic"],
+            "protocolMappers": [audience("endpoint", slug), groups.clone()]
+        })
+    };
+    let realm = json!({
+        "realm": "jc",
+        "enabled": true,
+        "groups": [
+            { "name": format!("{PROJECT}-readers") },
+            { "name": format!("{PROJECT}-writers") }
+        ],
+        "clients": [client("e2e-reader", CLOSED), client("e2e-elsewhere", ELSEWHERE)],
+        "users": [{
+            "username": PERSON,
+            "enabled": true,
+            "email": "e2e.person@jc.invalid",
+            "emailVerified": true,
+            "firstName": "End",
+            "lastName": "Toend",
+            "groups": [format!("/{PROJECT}-readers"), format!("/{PROJECT}-writers")],
+            "credentials": [{
+                "type": "password",
+                "value": "$(env:E2E_PERSON_PASSWORD)",
+                "temporary": false
+            }]
+        }]
+    });
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("00-e2e.json"), realm.to_string()).unwrap();
+}
+
+async fn start() -> Jc {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("state");
+    let realms = dir.path().join("realms");
+    realm_file(&realms);
+    let port = free_port();
+    let base_host = format!("localhost:{port}");
+    let config = dir.path().join("jc.toml");
+    std::fs::write(&config, "[mounts.portal]\npath_prefix = \"\"\n").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+    for (key, _) in std::env::vars() {
+        if key.starts_with("JCBIN_") || key.starts_with("JC_") || key.starts_with("ANTARES_") {
+            cmd.env_remove(key);
+        }
+    }
+    cmd.args(["--role", "all", "--scheme", "http", "--log-format", "text"])
+        .arg("--config")
+        .arg(&config)
+        .args(["--listen", &format!("127.0.0.1:{port}")])
+        .args(["--base-host", &base_host])
+        .arg("--state-dir")
+        .arg(&state)
+        .arg("--kaisatsu-import-dir")
+        .arg(&realms)
+        .env("E2E_CLIENT_SECRET", READER_SECRET)
+        .env("E2E_PERSON_PASSWORD", PERSON_PASSWORD)
+        .env("JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR", "false")
+        .env("JC_PORTAL_SYNC_INTERVAL", "3")
+        .env("RUST_LOG", "info,sqlx=warn")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().expect("spawn jc");
+    let stderr = child.stderr.take().unwrap();
+    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let sink = log.clone();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if line.contains("jc listening") {
+                let _ = tx.send(Ok(()));
+            }
+            sink.lock().unwrap().push(line);
+        }
+        let _ = tx.send(Err(()));
+    });
+    let jc = Jc {
+        child,
+        base: format!("http://{base_host}"),
+        state,
+        _dir: dir,
+        log,
+    };
+    match rx.recv_timeout(Duration::from_secs(180)) {
+        Ok(Ok(())) => jc,
+        other => panic!("jc did not start ({other:?}):\n{}", jc.tail()),
+    }
+}
+
+const HEADER: &str = "apiVersion: joinedcontext.com/v1alpha1";
+
+/// The project's manifests at their layout 1 paths in the organization repository.
+fn manifests() -> Vec<(String, String)> {
+    let at = |rel: &str| format!("projects/{PROJECT}/{rel}");
+    let space = |rel: &str| at(&format!("spaces/{SPACE}/{rel}"));
+    let endpoint = |name: &str, slug: &str, audience: &str, extra: &str| {
+        format!(
+            "{HEADER}\nkind: Endpoint\nmetadata:\n  name: {name}\n  namespace: {PROJECT}\nspec:\n  \
+             contextSpaceRef: {SPACE}\n  slug: {slug}\n  audience: {audience}\n  \
+             enabledRepresentations: [ngsi-ld, mcp]\n{extra}"
+        )
+    };
+    let policy = |name: &str, assignee: &str, operations: &str, types: &str| {
+        format!(
+            "{HEADER}\nkind: Policy\nmetadata:\n  name: {name}\n  namespace: {PROJECT}\nspec:\n  \
+             contextSpaceRef: {SPACE}\n  assigner: did:web:jc.invalid\n  assignee: {assignee}\n  \
+             operations: [{operations}]\n  information:\n    - entities:\n{types}"
+        )
+    };
+    // No DataModel: a view shows only the Attributes a Policy lists.
+    let thing = "        - type: Thing\n      propertyNames: [name]\n";
+    vec![
+        (
+            at("project.yaml"),
+            format!(
+                "{HEADER}\nkind: Project\nmetadata:\n  name: {PROJECT}\n  namespace: org\nspec:\n  \
+                 organizationRef: jc\n"
+            ),
+        ),
+        (
+            space("space.yaml"),
+            format!(
+                "{HEADER}\nkind: ContextSpace\nmetadata:\n  name: {SPACE}\n  namespace: {PROJECT}\n\
+                 spec:\n  isSandbox: false\n  urnSegment: {SPACE}\n"
+            ),
+        ),
+        (
+            space("endpoints/public.yaml"),
+            endpoint("public", PUBLIC, "public", ""),
+        ),
+        (
+            space("endpoints/closed.yaml"),
+            endpoint(
+                "closed",
+                CLOSED,
+                "project-list",
+                &format!("  allowedProjects: [{PROJECT}]\n"),
+            ),
+        ),
+        (
+            space("policies/public-read.yaml"),
+            policy(
+                "public-read",
+                "{ kind: role, id: public }",
+                "retrieveOps",
+                thing,
+            ),
+        ),
+        (
+            space("policies/readers.yaml"),
+            policy(
+                "readers",
+                &format!("{{ kind: group, id: {PROJECT}-readers }}"),
+                "retrieveOps",
+                thing,
+            ),
+        ),
+        (
+            space("policies/writers.yaml"),
+            policy(
+                "writers",
+                &format!("{{ kind: group, id: {PROJECT}-writers }}"),
+                "createEntity, upsertBatch",
+                thing,
+            ),
+        ),
+    ]
+}
+
+/// Writes `path` on `main` of shako's organization repository (Gitea contents API).
+async fn put_file(jc: &Jc, path: &str, content: &str) {
+    let resp = Client::new()
+        .put(jc.url(&format!("/git/api/v1/repos/jc/config/contents/{path}")))
+        .header(
+            "authorization",
+            format!("token {}", jc.secret("shako-token")),
+        )
+        .json(&json!({
+            "content": base64::engine::general_purpose::STANDARD.encode(content),
+            "message": format!("Add {path}"),
+            "branch": "main",
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert!(status.is_success(), "PUT contents/{path}: {status} {body}");
+}
+
+async fn eventually<F, Fut, T>(what: &str, jc: &Jc, secs: u64, mut probe: F) -> T
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    loop {
+        match probe().await {
+            Ok(v) => return v,
+            Err(last) if Instant::now() >= deadline => {
+                panic!("{what}: not within {secs} s; last: {last}\n{}", jc.tail())
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(500)).await,
+        }
+    }
+}
+
+/// A person's token from `client` by the password grant.
+async fn token(jc: &Jc, client: &str) -> String {
+    let resp = Client::new()
+        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .form(&[
+            ("grant_type", "password"),
+            ("client_id", client),
+            ("client_secret", READER_SECRET),
+            ("username", PERSON),
+            ("password", PERSON_PASSWORD),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or(Value::Null);
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "password grant for {client}: {body}"
+    );
+    body["access_token"].as_str().unwrap().to_owned()
+}
+
+async fn call(
+    jc: &Jc,
+    method: reqwest::Method,
+    path: &str,
+    token: Option<&str>,
+    body: Option<&Value>,
+) -> (StatusCode, String) {
+    let mut req = Client::new().request(method, jc.url(path));
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    if let Some(body) = body {
+        req = req
+            .header("content-type", "application/json")
+            .body(body.to_string());
+    }
+    let resp = req.send().await.unwrap();
+    let status = resp.status();
+    (status, resp.text().await.unwrap_or_default())
+}
+
+fn entity(kind: &str, local: &str) -> Value {
+    json!({
+        "id": format!("urn:ngsi-ld:{kind}:{local}"),
+        "type": kind,
+        "name": { "type": "Property", "value": local },
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn endpoints_answer_inside_jc_as_on_dev() {
+    let jc = start().await;
+    let started = Instant::now();
+    for (path, content) in manifests() {
+        put_file(&jc, &path, &content).await;
+    }
+    let get = reqwest::Method::GET;
+    let post = reqwest::Method::POST;
+    let public = format!("/api/endpoint/{PUBLIC}/ngsi-ld/v1");
+    let closed = format!("/api/endpoint/{CLOSED}/ngsi-ld/v1");
+
+    // The gateway loads the Endpoints from its checkout, the Portal writes the views into
+    // Antares: the public Endpoint's types answer once both have run.
+    eventually(
+        "the public Endpoint answers its types",
+        &jc,
+        120,
+        || async {
+            let (status, body) =
+                call(&jc, get.clone(), &format!("{public}/types"), None, None).await;
+            if status == StatusCode::OK {
+                return Ok(());
+            }
+            let views = Client::new()
+                .get(jc.url("/broker/q/views"))
+                .bearer_auth(jc.secret("antares-admin-token"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap_or_default();
+            Err(format!("{status} {body}; the broker's views: {views}"))
+        },
+    )
+    .await;
+
+    // A write through the closed Endpoint by a writer of the project lands in Antares.
+    let person = token(&jc, "e2e-reader").await;
+    let writes = format!("{closed}/entities");
+    let thing = entity("Thing", "one");
+    let (status, body) = eventually("a writer's create lands", &jc, 60, || async {
+        let (status, body) = call(&jc, post.clone(), &writes, Some(&person), Some(&thing)).await;
+        (status == StatusCode::CREATED)
+            .then_some((status, body.clone()))
+            .ok_or(format!("{status} {body}"))
+    })
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let admin = jc.secret("antares-admin-token");
+    // A layout 1 space is the tenant of its own name (the Portal's `cs-things` view).
+    let tenant = SPACE;
+    // The broker's own admin token reads no data under the joinedcontext engine; its tenant
+    // list shows the write made the space's tenant, and the reads below show the Entity.
+    let resp = Client::new()
+        .get(jc.url("/broker/q/tenants"))
+        .bearer_auth(&admin)
+        .send()
+        .await
+        .unwrap();
+    let landed = resp.status();
+    let tenants = resp.text().await.unwrap_or_default();
+    assert_eq!(landed, StatusCode::OK, "{tenants}");
+    assert!(tenants.contains(&format!("\"{tenant}\"")), "{tenants}");
+
+    // A write outside the writers' Policy (a type it does not grant) is refused.
+    let other = entity("Other", "one");
+    let (status, body) = call(&jc, post.clone(), &writes, Some(&person), Some(&other)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    // Anonymous: the public Endpoint answers types and an entity query, the closed one 401.
+    let (status, body) = call(&jc, get.clone(), &format!("{public}/types"), None, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("Thing"), "{body}");
+    let (status, body) = call(
+        &jc,
+        get.clone(),
+        &format!("{public}/entities?type=Thing"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    let (status, body) = call(
+        &jc,
+        get.clone(),
+        &format!("{closed}/entities?type=Thing"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+    // A person holding the readers' Policy reads the closed Endpoint.
+    let (status, body) = call(
+        &jc,
+        get.clone(),
+        &format!("{closed}/entities?type=Thing"),
+        Some(&person),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+
+    // The same person's token for another Endpoint is refused on this one.
+    let elsewhere = token(&jc, "e2e-elsewhere").await;
+    let (status, body) = call(
+        &jc,
+        get.clone(),
+        &format!("{closed}/entities?type=Thing"),
+        Some(&elsewhere),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+    // A caller who claims the gateway's mesh identity or a subject on the public broker mount
+    // is nobody but itself: the claim reaches no rule, and the admin token is still asked for.
+    let resp = Client::new()
+        .get(jc.url("/broker/ngsi-ld/v1/entities?type=Thing"))
+        .header("NGSILD-Tenant", tenant)
+        .header("l5d-client-id", "context-gateway.jc")
+        .header("x-jc-client", "context-gateway")
+        .header("x-jc-subject", PERSON)
+        .header("x-jc-groups", format!("{PROJECT}-readers"))
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert!(
+        !body.contains("urn:ngsi-ld:Thing:one"),
+        "the broker believed a claimed identity: {status} {body}"
+    );
+
+    // MCP through the hub: the tools list and one query of the public Endpoint, anonymously.
+    let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    let (status, body) = call(&jc, post.clone(), "/api/mcp", None, Some(&list)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let listed: Value = serde_json::from_str(&body).unwrap();
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no tools: {body}"))
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(names.contains(&"query_entities"), "{names:?}");
+    let query = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "query_entities",
+            "arguments": { "endpoint": PUBLIC, "type": ["Thing"] }
+        }
+    });
+    let (status, body) = call(&jc, post.clone(), "/api/mcp", None, Some(&query)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+
+    // The gateway's revocation poll (every 10 s) is admitted by the Portal's internal listener:
+    // its token names the issuer the Portal checks and the client the route belongs to.
+    tokio::time::sleep(Duration::from_secs(25).saturating_sub(started.elapsed())).await;
+    assert!(
+        !jc.log_has("the Portal answered 401"),
+        "the Portal refused the gateway:\n{}",
+        jc.tail()
+    );
+
+    // A person the Portal disables is refused by the gateway within one revocation poll (10 s)
+    // with the token they still hold: the gateway reads the Portal's internal listener at the
+    // free port it took, which jc hands on.
+    let (status, body) = call(
+        &jc,
+        get.clone(),
+        &format!("{closed}/entities?type=Thing"),
+        Some(&person),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "before the revocation: {body}");
+    let mut admin = Browser::new();
+    sign_in(
+        &|p| jc.url(p),
+        &mut admin,
+        "admin",
+        &jc.secret("first-admin-password"),
+    )
+    .await;
+    let listed = admin.get(&jc.url("/api/v1/organization/people")).await;
+    let id = listed.json()["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|p| p["email"] == "e2e.person@jc.invalid"))
+        .and_then(|p| p["id"].as_str())
+        .unwrap_or_else(|| panic!("{PERSON} in the Portal's people: {}", listed.text))
+        .to_owned();
+    let disabled = admin
+        .send(
+            reqwest::Method::POST,
+            &jc.url(&format!("/api/v1/organization/people/{id}/disable")),
+            None,
+            true,
+        )
+        .await;
+    assert!(
+        disabled.status.is_success(),
+        "disable {PERSON}: {} {}",
+        disabled.status,
+        disabled.text
+    );
+    let revoked = Instant::now();
+    loop {
+        let (status, body) = call(
+            &jc,
+            get.clone(),
+            &format!("{closed}/entities?type=Thing"),
+            Some(&person),
+            None,
+        )
+        .await;
+        if status == StatusCode::UNAUTHORIZED {
+            break;
+        }
+        assert!(
+            revoked.elapsed() < Duration::from_secs(25),
+            "the gateway still answers the revoked token {status}: {body}\n{}",
+            jc.tail()
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    println!("refused {:?} after the revocation", revoked.elapsed());
+}

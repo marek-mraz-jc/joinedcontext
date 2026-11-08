@@ -16,6 +16,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::watch;
 
 use crate::manager::StreamManager;
+use crate::oidc::OidcAuth;
 use crate::tokens::OrgTokenFile;
 
 pub const MAX_API_BODY_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
@@ -31,6 +32,8 @@ pub const MAX_API_BODY_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 ///   of its own): `/ready` needs a token too, only `/ping` answers without one.
 /// - The admin token may act for the organization named by `X-Jc-Org` (default otherwise); an
 ///   organization token acts for its own organization only.
+/// - `oidc`: a JWT of one of its clients acts as the admin token does (the Portal's runner client
+///   in `jc`, signed by kaisatsu for audience `ekiben`).
 #[derive(Clone, Default)]
 pub struct ServerAuthConfig {
     /// Optional single admin bearer token (compared in constant time).
@@ -45,6 +48,8 @@ pub struct ServerAuthConfig {
     /// hosted in a shared process (`jc`), where an open API would hand any caller a stream runner
     /// inside that process and no orchestrator probes ekiben's own `/ready`.
     pub guard_probes: bool,
+    /// Admits JWTs an OIDC provider signs for ekiben ([`OidcAuth`]) as the admin caller.
+    pub oidc: Option<Arc<OidcAuth>>,
 }
 
 impl std::fmt::Debug for ServerAuthConfig {
@@ -64,6 +69,7 @@ impl std::fmt::Debug for ServerAuthConfig {
             )
             .field("require_auth", &self.require_auth)
             .field("guard_probes", &self.guard_probes)
+            .field("oidc", &self.oidc)
             .field(
                 "org_token_file",
                 &self.org_token_file.as_ref().map(|f| f.path().to_path_buf()),
@@ -103,6 +109,14 @@ impl ServerAuthConfig {
         self.admin_bearer_token.is_some()
             || !self.org_tokens.is_empty()
             || self.org_token_file.is_some()
+            || self.oidc.is_some()
+    }
+
+    /// Whether `provided` is a JWT the OIDC provider signed for an admitted client.
+    fn oidc_admits(&self, provided: &[u8]) -> bool {
+        self.oidc
+            .as_ref()
+            .is_some_and(|o| std::str::from_utf8(provided).is_ok_and(|token| o.verify(token)))
     }
 
     /// Whether the auth middleware guards the API.
@@ -164,6 +178,14 @@ impl ServerAuthConfig {
             });
         }
 
+        if self.oidc_admits(provided) {
+            return Ok(Caller {
+                org: header_org.unwrap_or_default(),
+                admin: true,
+                open: false,
+            });
+        }
+
         Err(StatusCode::UNAUTHORIZED)
     }
 
@@ -189,9 +211,9 @@ impl ServerAuthConfig {
     /// Admits only the admin bearer token: `401` without a valid token, `403` for an organization
     /// token or when no admin token is configured (a server without auth has no admin).
     pub fn authenticate_admin(&self, headers: &HeaderMap) -> Result<(), StatusCode> {
-        let Some(ref admin_tok) = self.admin_bearer_token else {
+        if self.admin_bearer_token.is_none() && self.oidc.is_none() {
             return Err(StatusCode::FORBIDDEN);
-        };
+        }
         let provided = headers
             .get("authorization")
             .and_then(|v| v.to_str().ok())
@@ -201,7 +223,12 @@ impl ServerAuthConfig {
             })
             .ok_or(StatusCode::UNAUTHORIZED)?
             .as_bytes();
-        if constant_time_eq_slices(provided, admin_tok.as_bytes()) {
+        if let Some(ref admin_tok) = self.admin_bearer_token {
+            if constant_time_eq_slices(provided, admin_tok.as_bytes()) {
+                return Ok(());
+            }
+        }
+        if self.oidc_admits(provided) {
             return Ok(());
         }
         if self.match_org_token(provided).is_some() {
@@ -230,6 +257,14 @@ async fn require_auth_layer(
     next: Next,
 ) -> Response {
     if state.auth.guards_routes() && !is_open_route(req.uri().path(), state.auth.guard_probes) {
+        if let Some(oidc) = &state.auth.oidc {
+            let token = bearer_token(req.headers())
+                .and_then(|t| std::str::from_utf8(t).ok())
+                .map(str::to_owned);
+            if let Some(token) = token {
+                oidc.prepare(&token).await;
+            }
+        }
         match state.auth.identify(req.headers()) {
             Ok(_) => {}
             Err(StatusCode::FORBIDDEN) => {

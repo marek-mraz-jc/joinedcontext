@@ -184,7 +184,15 @@ impl Config {
 
     /// Reads the configuration from the process environment.
     pub fn from_env() -> Result<Self, ConfigError> {
-        let bind = match std::env::var("JC_GATEWAY_BIND") {
+        Self::from_vars(|name| std::env::var(name).ok())
+    }
+
+    /// Reads the configuration from `lookup`, which answers a variable's value or `None` when it
+    /// is unset: the process environment for the binary, the host's own settings when a host
+    /// (`jc`) mounts the gateway beside other modules.
+    pub fn from_vars(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
+        let var = |name: &str| lookup(name).ok_or(std::env::VarError::NotPresent);
+        let bind = match var("JC_GATEWAY_BIND") {
             Err(_) => "0.0.0.0:8080".to_owned(),
             Ok(value) => value,
         };
@@ -195,7 +203,7 @@ impl Config {
                 reason: e.to_string(),
             })?;
 
-        let internal_bind = std::env::var("JC_GATEWAY_INTERNAL_BIND")
+        let internal_bind = var("JC_GATEWAY_INTERNAL_BIND")
             .ok()
             .filter(|value| !value.trim().is_empty())
             .map(|value| value.parse())
@@ -205,19 +213,19 @@ impl Config {
                 reason: e.to_string(),
             })?;
 
-        let broker_url = std::env::var("JC_GATEWAY_BROKER_URL")
+        let broker_url = var("JC_GATEWAY_BROKER_URL")
             .map_err(|_| ConfigError::Missing("JC_GATEWAY_BROKER_URL"))?;
         let broker_url = normalize_broker_url(&broker_url)?;
-        let broker_url_template = match std::env::var("JC_GATEWAY_BROKER_URL_TEMPLATE") {
+        let broker_url_template = match var("JC_GATEWAY_BROKER_URL_TEMPLATE") {
             Ok(raw) if !raw.trim().is_empty() => Some(broker_url_template(&raw)?),
             _ => None,
         };
 
-        let org_domain = std::env::var("JC_GATEWAY_ORG_DOMAIN")
+        let org_domain = var("JC_GATEWAY_ORG_DOMAIN")
             .map_err(|_| ConfigError::Missing("JC_GATEWAY_ORG_DOMAIN"))?;
 
-        let oidc_issuer = std::env::var("JC_OIDC_ISSUER").ok();
-        let oidc_jwks_url = std::env::var("JC_OIDC_JWKS_URL").ok();
+        let oidc_issuer = var("JC_OIDC_ISSUER").ok();
+        let oidc_jwks_url = var("JC_OIDC_JWKS_URL").ok();
         if oidc_issuer.is_some() != oidc_jwks_url.is_some() {
             return Err(ConfigError::Invalid {
                 name: "JC_OIDC_ISSUER",
@@ -225,11 +233,7 @@ impl Config {
             });
         }
 
-        let non_empty = |name| {
-            std::env::var(name)
-                .ok()
-                .filter(|v: &String| !v.trim().is_empty())
-        };
+        let non_empty = |name| var(name).ok().filter(|v: &String| !v.trim().is_empty());
         let credential = match (
             non_empty("JC_OIDC_CLIENT_SECRET"),
             non_empty("JC_OIDC_CLIENT_ASSERTION_FILE"),
@@ -245,16 +249,13 @@ impl Config {
             (None, None) => None,
         };
 
-        let domain_verification = crate::domain_gate::Mode::parse(
-            std::env::var("JC_GATEWAY_DOMAIN_VERIFICATION")
-                .ok()
-                .as_deref(),
-        )
-        .map_err(|reason| ConfigError::Invalid {
-            name: "JC_GATEWAY_DOMAIN_VERIFICATION",
-            reason,
-        })?;
-        let domain_verifications_url = std::env::var("JC_GATEWAY_DOMAIN_VERIFICATIONS_URL")
+        let domain_verification =
+            crate::domain_gate::Mode::parse(var("JC_GATEWAY_DOMAIN_VERIFICATION").ok().as_deref())
+                .map_err(|reason| ConfigError::Invalid {
+                    name: "JC_GATEWAY_DOMAIN_VERIFICATION",
+                    reason,
+                })?;
+        let domain_verifications_url = var("JC_GATEWAY_DOMAIN_VERIFICATIONS_URL")
             .ok()
             .filter(|url| !url.trim().is_empty());
         // `enforce` with nowhere to learn the state would refuse every write forever and look
@@ -267,38 +268,38 @@ impl Config {
 
         let write_budget_mib = positive(
             "JC_GATEWAY_WRITE_BUDGET_MIB",
-            std::env::var("JC_GATEWAY_WRITE_BUDGET_MIB"),
+            var("JC_GATEWAY_WRITE_BUDGET_MIB"),
             "MiB",
             crate::app::WRITE_BUDGET_MIB,
         )?;
         use crate::middleware::in_flight;
         let max_in_flight = positive(
             "JC_GATEWAY_MAX_IN_FLIGHT",
-            std::env::var("JC_GATEWAY_MAX_IN_FLIGHT"),
+            var("JC_GATEWAY_MAX_IN_FLIGHT"),
             "requests",
             in_flight::MAX_IN_FLIGHT,
         )?;
         let max_in_flight_per_caller = positive(
             "JC_GATEWAY_MAX_IN_FLIGHT_PER_CALLER",
-            std::env::var("JC_GATEWAY_MAX_IN_FLIGHT_PER_CALLER"),
+            var("JC_GATEWAY_MAX_IN_FLIGHT_PER_CALLER"),
             "requests",
             in_flight::MAX_IN_FLIGHT_PER_CALLER,
         )?;
         let max_downloads = positive(
             "JC_GATEWAY_MAX_DOWNLOADS",
-            std::env::var("JC_GATEWAY_MAX_DOWNLOADS"),
+            var("JC_GATEWAY_MAX_DOWNLOADS"),
             "downloads",
             in_flight::MAX_DOWNLOADS,
         )?;
         let loadtest_in_flight = positive(
             "JC_GATEWAY_LOADTEST_IN_FLIGHT",
-            std::env::var("JC_GATEWAY_LOADTEST_IN_FLIGHT"),
+            var("JC_GATEWAY_LOADTEST_IN_FLIGHT"),
             "requests",
             in_flight::LOADTEST_IN_FLIGHT,
         )?;
-        let public_max_age = public_max_age(std::env::var("JC_GATEWAY_PUBLIC_MAX_AGE"))?;
+        let public_max_age = public_max_age(var("JC_GATEWAY_PUBLIC_MAX_AGE"))?;
 
-        let public_url = std::env::var("JC_GATEWAY_PUBLIC_URL")
+        let public_url = var("JC_GATEWAY_PUBLIC_URL")
             .ok()
             .map(|url| url.trim_end_matches('/').to_owned())
             .filter(|url| !url.is_empty());
@@ -333,7 +334,7 @@ impl Config {
             max_in_flight,
             max_in_flight_per_caller,
             max_downloads,
-            loadtest_client: std::env::var("JC_GATEWAY_LOADTEST_CLIENT")
+            loadtest_client: var("JC_GATEWAY_LOADTEST_CLIENT")
                 .ok()
                 .map(|client| client.trim().to_owned())
                 .filter(|client| !client.is_empty()),
@@ -343,70 +344,69 @@ impl Config {
             domain_verifications_url,
             bind,
             internal_bind,
-            mqtt_runner_host: std::env::var("JC_GATEWAY_MQTT_RUNNER_HOST")
+            mqtt_runner_host: var("JC_GATEWAY_MQTT_RUNNER_HOST")
                 .ok()
                 .map(|host| host.trim().to_owned())
                 .filter(|host| !host.is_empty()),
-            mqtt_portal_host: std::env::var("JC_GATEWAY_MQTT_PORTAL_HOST")
+            mqtt_portal_host: var("JC_GATEWAY_MQTT_PORTAL_HOST")
                 .ok()
                 .map(|host| host.trim().to_owned())
                 .filter(|host| !host.is_empty()),
-            mqtt_broker_host: std::env::var("JC_GATEWAY_MQTT_BROKER_HOST")
+            mqtt_broker_host: var("JC_GATEWAY_MQTT_BROKER_HOST")
                 .ok()
                 .map(|host| host.trim().to_owned())
                 .filter(|host| !host.is_empty()),
-            mqtt_portal_identity: std::env::var("JC_GATEWAY_MQTT_PORTAL_IDENTITY")
+            mqtt_portal_identity: var("JC_GATEWAY_MQTT_PORTAL_IDENTITY")
                 .ok()
                 .and_then(|identity| mesh_name(&identity)),
             broker_url,
             broker_url_template,
-            repo_dir: std::env::var("JC_GATEWAY_REPO_DIR").ok().map(PathBuf::from),
-            projects_dir: std::env::var("JC_GATEWAY_PROJECTS_DIR")
+            repo_dir: var("JC_GATEWAY_REPO_DIR").ok().map(PathBuf::from),
+            projects_dir: var("JC_GATEWAY_PROJECTS_DIR")
                 .ok()
                 .filter(|dir| !dir.trim().is_empty())
                 .map(PathBuf::from),
-            assembly_dir: std::env::var("JC_GATEWAY_ASSEMBLY_DIR")
+            assembly_dir: var("JC_GATEWAY_ASSEMBLY_DIR")
                 .ok()
                 .filter(|dir| !dir.trim().is_empty())
                 .map_or_else(|| PathBuf::from("/tmp/jc-assembly"), PathBuf::from),
-            previews_url: std::env::var("JC_GATEWAY_PREVIEWS_URL")
+            previews_url: var("JC_GATEWAY_PREVIEWS_URL")
                 .ok()
                 .filter(|url| !url.trim().is_empty()),
-            connectors_url: std::env::var("JC_GATEWAY_CONNECTORS_URL")
+            connectors_url: var("JC_GATEWAY_CONNECTORS_URL")
                 .ok()
                 .filter(|url| !url.trim().is_empty()),
-            usage_url: std::env::var("JC_GATEWAY_USAGE_URL")
+            usage_url: var("JC_GATEWAY_USAGE_URL")
                 .ok()
                 .filter(|url| !url.trim().is_empty()),
             revocations_url: revocations_url(
                 oidc_issuer.as_deref(),
-                std::env::var("JC_GATEWAY_REVOCATIONS_URL").ok(),
+                var("JC_GATEWAY_REVOCATIONS_URL").ok(),
             )?,
-            activity_url: std::env::var("JC_GATEWAY_ACTIVITY_URL")
+            activity_url: var("JC_GATEWAY_ACTIVITY_URL")
                 .ok()
                 .filter(|url| !url.trim().is_empty()),
-            assistant_url: std::env::var("JC_GATEWAY_ASSISTANT_URL")
+            assistant_url: var("JC_GATEWAY_ASSISTANT_URL")
                 .ok()
                 .filter(|url| !url.trim().is_empty()),
-            hub_knowledge_sources: std::env::var("JC_GATEWAY_HUB_KNOWLEDGE_SOURCES")
-                .unwrap_or_default(),
-            previews_dir: std::env::var("JC_GATEWAY_PREVIEWS_DIR")
+            hub_knowledge_sources: var("JC_GATEWAY_HUB_KNOWLEDGE_SOURCES").unwrap_or_default(),
+            previews_dir: var("JC_GATEWAY_PREVIEWS_DIR")
                 .ok()
                 .filter(|dir| !dir.trim().is_empty())
                 .map_or_else(|| PathBuf::from("/tmp/jc-previews"), PathBuf::from),
             org_domain,
             oidc_issuer,
             oidc_jwks_url,
-            oidc_token_url: std::env::var("JC_OIDC_TOKEN_URL")
+            oidc_token_url: var("JC_OIDC_TOKEN_URL")
                 .ok()
                 .filter(|url| !url.trim().is_empty()),
             oidc_client: non_empty("JC_OIDC_CLIENT_ID").zip(credential),
             public_url,
-            egress_ca_bundle: std::env::var("JC_GATEWAY_EGRESS_CA_BUNDLE")
+            egress_ca_bundle: var("JC_GATEWAY_EGRESS_CA_BUNDLE")
                 .ok()
                 .filter(|path| !path.trim().is_empty())
                 .map(PathBuf::from),
-            egress_private_hosts: std::env::var("JC_GATEWAY_EGRESS_PRIVATE_HOSTS")
+            egress_private_hosts: var("JC_GATEWAY_EGRESS_PRIVATE_HOSTS")
                 .map(|hosts| {
                     hosts
                         .split(',')

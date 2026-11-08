@@ -83,6 +83,9 @@ fn catalog_validation_names_the_refused_role_and_attribute() {
     assert!(err.contains("svc_y") && err.contains("owns 2"), "{err}");
 }
 
+/// The Postgres tests share one LOGIN role whose password each test sets: they run one at a time.
+static PG_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// LOGIN role of the request path in these tests: member of `shako_app`, no RLS bypass.
 const APP_LOGIN: &str = "shako_app_login";
 
@@ -110,6 +113,7 @@ async fn ensure_app_login(admin: &PgPool) -> String {
 
 #[tokio::test]
 async fn postgres_isolation_boot_rls_and_leakproof_index_plan() {
+    let _serial = PG_SERIAL.lock().await;
     let Ok(db_url) = std::env::var("SHAKO_TEST_DATABASE_URL") else {
         println!("SKIP: SHAKO_TEST_DATABASE_URL is unset");
         return;
@@ -236,4 +240,130 @@ async fn postgres_isolation_boot_rls_and_leakproof_index_plan() {
     assert!(admin_err.to_string().contains(&admin_role), "{admin_err}");
 
     run_isolation_suite(&store).await;
+}
+
+fn repo(
+    inst: shako_core::InstanceId,
+    org: shako_core::OrgId,
+    name: &str,
+) -> shako_core::RepoRecord {
+    let now = chrono::Utc::now();
+    shako_core::RepoRecord {
+        id: shako_core::RepoId::new(),
+        instance_id: inst,
+        org_id: org,
+        project_id: name.into(),
+        owner: "jc".into(),
+        name: name.into(),
+        description: String::new(),
+        default_branch: "main".into(),
+        private: true,
+        archived: false,
+        size_bytes: 0,
+        next_pr_number: 1,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+/// A restart keeps every record kind: a fresh store hydrated from `shako.store_log` answers the
+/// repository, the pull request and its number counter as before, and a tenant's replay never
+/// loads another organization's rows (forced RLS on the log).
+#[tokio::test]
+async fn postgres_store_log_survives_a_restart_and_stays_per_tenant() {
+    let _serial = PG_SERIAL.lock().await;
+    let Ok(db_url) = std::env::var("SHAKO_TEST_DATABASE_URL") else {
+        println!("SKIP: SHAKO_TEST_DATABASE_URL is unset");
+        return;
+    };
+    let opts = PgConnectOptions::from_str(&db_url).expect("valid SHAKO_TEST_DATABASE_URL");
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(opts.clone())
+        .await
+        .expect("SHAKO_TEST_DATABASE_URL is set but unreachable");
+    PgStore::run_migrations(&admin_pool).await.expect("migrate");
+    PgStore::run_migrations(&admin_pool)
+        .await
+        .expect("a second migration run changes nothing");
+    let app_password = ensure_app_login(&admin_pool).await;
+    let app_opts = opts.clone().username(APP_LOGIN).password(&app_password);
+
+    let inst = shako_core::InstanceId::new();
+    let (org_a, org_b) = (shako_core::OrgId::new(), shako_core::OrgId::new());
+    let first = PgStore::connect_with(app_opts.clone(), 2).await.unwrap();
+    let repo_a = first
+        .create_repo(repo(inst, org_a, "a-config"))
+        .await
+        .unwrap();
+    first
+        .create_repo(repo(inst, org_b, "b-secret"))
+        .await
+        .unwrap();
+    let number = first
+        .allocate_pr_number(inst, org_a, repo_a.id)
+        .await
+        .unwrap();
+    let now = chrono::Utc::now();
+    first
+        .create_pull_request(shako_core::PullRequestRecord {
+            id: uuid::Uuid::now_v7(),
+            instance_id: inst,
+            org_id: org_a,
+            repo_id: repo_a.id,
+            number,
+            state: "open".into(),
+            title: "Add space".into(),
+            body: String::new(),
+            head_ref: "feature".into(),
+            head_sha: "1".repeat(40),
+            base_ref: "main".into(),
+            base_sha: "0".repeat(40),
+            merge_base: "0".repeat(40),
+            mergeable: Some(true),
+            merged: false,
+            merge_commit_sha: String::new(),
+            author_login: "alice".into(),
+            author_name: "Alice".into(),
+            author_email: None,
+            created_at: now,
+            updated_at: now,
+            closed_at: None,
+        })
+        .await
+        .unwrap();
+    drop(first);
+
+    let second = PgStore::connect_with(app_opts.clone(), 2).await.unwrap();
+    assert!(
+        second.list_repos(inst, org_a).await.unwrap().is_empty(),
+        "nothing is served before hydrate"
+    );
+    let replayed = second.hydrate(inst, org_a).await.unwrap();
+    assert_eq!(replayed, 3, "org A's log holds its three operations only");
+    let repos = second.list_repos(inst, org_a).await.unwrap();
+    assert_eq!(
+        repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        ["a-config"]
+    );
+    let pr = second
+        .get_pull_request(inst, org_a, repo_a.id, number)
+        .await
+        .unwrap()
+        .expect("the pull request survives the restart");
+    assert_eq!(pr.title, "Add space");
+    assert_eq!(
+        second
+            .allocate_pr_number(inst, org_a, repo_a.id)
+            .await
+            .unwrap(),
+        number + 1,
+        "the number counter continues"
+    );
+    assert!(
+        second.list_repos(inst, org_b).await.unwrap().is_empty(),
+        "org B is not loaded by org A's replay"
+    );
+    assert_eq!(second.hydrate(inst, org_b).await.unwrap(), 1);
+    assert_eq!(second.list_repos(inst, org_b).await.unwrap().len(), 1);
 }

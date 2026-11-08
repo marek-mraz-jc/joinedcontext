@@ -18,6 +18,8 @@ mod wiring;
 #[cfg(feature = "ws")]
 mod ws_relay;
 
+/// The secret wrapper a host passes [`BrokerConfig::database_url`] in.
+pub use antares_api::secret::Secret;
 use antares_api::AppState;
 
 // ANTARES_DATABASE_URL: accepted — the ETSI compose wires one DB per broker —
@@ -382,6 +384,30 @@ pub struct BrokerConfig {
     /// ANTARES_ADMIN_TOKEN_FILE: the `/q` admin credential. A host may set
     /// it from its own configuration before [`build_state`].
     pub admin_token_file: Option<String>,
+    /// Values a host supplies for `ANTARES_*` keys its environment leaves unset (`jc` names
+    /// its gateway and the platform's engine this way, never by writing the environment). An
+    /// environment value always wins; an unknown key is refused by [`build_state`]. Read for
+    /// `ANTARES_API_SURFACES`, `ANTARES_POLICY`, `ANTARES_PROVENANCE_FROM`,
+    /// `ANTARES_POLICY_SUBJECT_FROM` and `ANTARES_POLICY_SUBJECT_HEADERS`.
+    pub defaults: std::collections::BTreeMap<String, String>,
+    /// The Postgres URL, password included, a host gives in place of
+    /// ANTARES_DATABASE_URL (that variable is read when this is `None`).
+    pub database_url: Option<Secret>,
+    /// ANTARES_REQUIRE_RLS: a database role that bypasses row-level
+    /// security refuses the boot instead of a warning. A host may force it.
+    pub require_rls: bool,
+    /// The pool size a host gives in place of ANTARES_PG_POOL (that
+    /// variable is read when this is `None`).
+    pub pg_pool: Option<u32>,
+}
+
+impl BrokerConfig {
+    /// `key` from the environment, else from [`BrokerConfig::defaults`].
+    fn var(&self, key: &str) -> Option<String> {
+        std::env::var(key)
+            .ok()
+            .or_else(|| self.defaults.get(key).cloned())
+    }
 }
 
 /// Reads and validates the broker's configuration from the environment.
@@ -476,7 +502,20 @@ pub fn config_from_env() -> Result<BrokerConfig, Box<dyn std::error::Error>> {
         drain_delay,
         drain_deadline,
         admin_token_file: std::env::var("ANTARES_ADMIN_TOKEN_FILE").ok(),
+        defaults: std::collections::BTreeMap::new(),
+        database_url: None,
+        require_rls: std::env::var("ANTARES_REQUIRE_RLS").is_ok_and(|v| !is_off(&v)),
+        pg_pool: None,
     })
+}
+
+/// What the store builders take from [`BrokerConfig`] instead of the
+/// environment.
+#[derive(Debug, Clone, Default)]
+struct PgSettings {
+    url: Option<Secret>,
+    require_rls: bool,
+    pool: Option<u32>,
 }
 
 /// ANTARES_PG_STATEMENT_TIMEOUT_MS → the per-session `statement_timeout`
@@ -769,8 +808,11 @@ fn policy_engine(raw: Option<&str>) -> Result<(&'static str, PolicyCtor), String
 /// OperationNotSupported 422, Table 6.3.2-1; the recorder produces
 /// nothing), and a different backend name builds a second store used only
 /// through its temporal half.
-async fn build_drivers(store_name: &str) -> Result<Drivers, Box<dyn std::error::Error>> {
-    let built = build_store(store_name, false).await?;
+async fn build_drivers(
+    store_name: &str,
+    pg: &PgSettings,
+) -> Result<Drivers, Box<dyn std::error::Error>> {
+    let built = build_store(store_name, false, pg).await?;
     // Every pg half gets the maintenance job: partitions, retention and the
     // 4.22 reap belong to whichever database holds the history.
     let mut maintenance = Vec::from_iter(built.maintenance);
@@ -786,7 +828,7 @@ async fn build_drivers(store_name: &str) -> Result<Drivers, Box<dyn std::error::
             None,
         ),
         TemporalChoice::Second(name) => {
-            let second = build_store(&name, true).await?;
+            let second = build_store(&name, true, pg).await?;
             maintenance.extend(second.maintenance);
             (second.temporal, Some(name))
         }
@@ -826,7 +868,11 @@ struct Built {
 /// One backend by name. `temporal_only` builds an instance whose
 /// current-state half is never served — the second store of a split
 /// `ANTARES_TEMPORAL`. An unknown name is an error naming the shelf.
-async fn build_store(name: &str, temporal_only: bool) -> Result<Built, Box<dyn std::error::Error>> {
+async fn build_store(
+    name: &str,
+    temporal_only: bool,
+    pg: &PgSettings,
+) -> Result<Built, Box<dyn std::error::Error>> {
     #[cfg(feature = "plugin-example")]
     if name == antares_plugin_example::NAME {
         // A driver from outside `crates/` mounts through exactly the two
@@ -846,7 +892,7 @@ async fn build_store(name: &str, temporal_only: bool) -> Result<Built, Box<dyn s
             store_shelf().join("|")
         )
     })?;
-    let (store, backend) = build_builtin(mode).await?;
+    let (store, backend) = build_builtin(mode, pg).await?;
     let store = if temporal_only {
         store.temporal_only()
     } else {
@@ -872,6 +918,7 @@ async fn build_store(name: &str, temporal_only: bool) -> Result<Built, Box<dyn s
 /// migrations at start and serve from the Pg backend.
 async fn build_builtin(
     mode: antares_sql::StoreMode,
+    pg: &PgSettings,
 ) -> Result<
     (
         antares_sql::store::any::AnyStore,
@@ -897,10 +944,16 @@ async fn build_builtin(
         StoreMode::Postgres | StoreMode::Timescale => {
             // The URL carries the database password: held as a Secret so no
             // error or log line below can print it (T-3915).
-            let url = std::env::var("ANTARES_DATABASE_URL")
-                .map(antares_api::secret::Secret::new)
-                .map_err(|_| format!("ANTARES_STORE={mode} requires ANTARES_DATABASE_URL"))?;
-            let pool_size = parse_pg_pool(std::env::var("ANTARES_PG_POOL").ok().as_deref())?;
+            let url = match &pg.url {
+                Some(url) => url.clone(),
+                None => std::env::var("ANTARES_DATABASE_URL")
+                    .map(Secret::new)
+                    .map_err(|_| format!("ANTARES_STORE={mode} requires ANTARES_DATABASE_URL"))?,
+            };
+            let pool_size = match pg.pool {
+                Some(n) => n.max(1),
+                None => parse_pg_pool(std::env::var("ANTARES_PG_POOL").ok().as_deref())?,
+            };
             let write_reserve = parse_pg_write_reserve(
                 std::env::var("ANTARES_PG_WRITE_RESERVE").ok().as_deref(),
                 pool_size,
@@ -974,9 +1027,7 @@ async fn build_builtin(
                             // believes RLS is enforced and the broker serves
                             // with a BYPASSRLS role. Anything but an explicit
                             // off value turns it on.
-                            let strict =
-                                std::env::var("ANTARES_REQUIRE_RLS").is_ok_and(|v| !is_off(&v));
-                            if strict {
+                            if pg.require_rls {
                                 return Err(
                                     "ANTARES_REQUIRE_RLS=1 but the database role bypasses \
                                      row-level security (superuser or BYPASSRLS) — connect as a \
@@ -1114,6 +1165,8 @@ pub struct Broker {
     )>,
     sweep_secs: u64,
     metrics_port: Option<u16>,
+    /// `ANTARES_POLICY_SUBJECT_FROM`, read once by [`build_state`].
+    subject_from: Option<Vec<String>>,
 }
 
 /// Builds the broker's state from `cfg`: storage drivers, memory budget,
@@ -1123,7 +1176,28 @@ pub async fn build_state(
     cfg: &BrokerConfig,
     metrics_render: Option<telemetry::MetricsRender>,
 ) -> Result<Broker, Box<dyn std::error::Error>> {
-    let drivers = build_drivers(&cfg.store_name).await?;
+    if let Some(key) = cfg
+        .defaults
+        .keys()
+        .find(|k| unknown_config_key(k) || !k.starts_with("ANTARES_"))
+    {
+        return Err(format!("unknown config key {key} in the host's defaults").into());
+    }
+    // Before anything reads the static: the host's subject headers when the environment
+    // names none.
+    if let Some(names) = cfg.defaults.get("ANTARES_POLICY_SUBJECT_HEADERS") {
+        antares_api::policy::default_subject_headers(names);
+    }
+    let subject_from = subject_from(cfg.var("ANTARES_POLICY_SUBJECT_FROM"))?;
+    let drivers = build_drivers(
+        &cfg.store_name,
+        &PgSettings {
+            url: cfg.database_url.clone(),
+            require_rls: cfg.require_rls,
+            pool: cfg.pg_pool,
+        },
+    )
+    .await?;
     let store = drivers.store;
     let temporal = drivers.temporal;
     let temporal_name = drivers.temporal_name;
@@ -1186,8 +1260,8 @@ pub async fn build_state(
     state.profile = antares_api::Profile::from_env()?;
     #[cfg(feature = "jc")]
     {
-        state.provenance_from = std::env::var("ANTARES_PROVENANCE_FROM")
-            .ok()
+        state.provenance_from = cfg
+            .var("ANTARES_PROVENANCE_FROM")
             .filter(|g| !g.trim().is_empty());
         // T-5032: a deployment that names who calls serves a caller
         // without a subject only with the admin bearer token.
@@ -1196,7 +1270,7 @@ pub async fn build_state(
     // The surfaces mounted beside the NGSI-LD API root, from configuration
     // rather than from a hard-wired list: the selection replaces what the
     // default mounting put there, before the state is shared.
-    let selected = api_surfaces(std::env::var("ANTARES_API_SURFACES").ok().as_deref())?;
+    let selected = api_surfaces(cfg.var("ANTARES_API_SURFACES").as_deref())?;
     #[cfg(feature = "channels")]
     if selected.iter().any(|(n, _)| *n == "channels") {
         antares_api::channels::bridges_from(
@@ -1207,8 +1281,7 @@ pub async fn build_state(
     // The policy engine, from configuration and from the shelf this binary
     // was built with. Without one the broker asks `allow-all` and behaves
     // exactly as it did before the seam existed.
-    let (policy_name, build_policy) =
-        policy_engine(std::env::var("ANTARES_POLICY").ok().as_deref())?;
+    let (policy_name, build_policy) = policy_engine(cfg.var("ANTARES_POLICY").as_deref())?;
     tracing::info!("policy engine: {policy_name}");
     // The built-in engine is attached as no engine at all: it decides
     // nothing, and a gate with nothing to ask skips the whole apparatus
@@ -1313,6 +1386,7 @@ pub async fn build_state(
         maintenance: drivers.maintenance,
         sweep_secs: cfg.sweep_secs,
         metrics_port: cfg.metrics_port,
+        subject_from,
     })
 }
 
@@ -1475,6 +1549,7 @@ pub fn router(broker: Broker) -> Result<Served, Box<dyn std::error::Error>> {
     let mut state = broker.state;
     let roles = broker.roles;
     let metrics_port = broker.metrics_port;
+    let subject_from = broker.subject_from;
     // Handles the drain needs, taken before `state` is consumed by the
     // router — the flag the health endpoint reads, and the store whose pools
     // close last.
@@ -1501,7 +1576,7 @@ pub fn router(broker: Broker) -> Result<Served, Box<dyn std::error::Error>> {
         antares_api::ops_router(state)
     }
     .layer(antares_api::compression());
-    let routed = match subject_from()? {
+    let routed = match subject_from {
         Some(from) => {
             tracing::info!(
                 ?from,
@@ -1723,8 +1798,8 @@ fn accept_backoff(e: &std::io::Error) -> bool {
 /// when unset, which believes every caller's subject headers. Set but naming
 /// nobody is fatal: an operator who set it asked for deny by default, and a
 /// blank value must not fall back to believing everyone.
-fn subject_from() -> Result<Option<Vec<String>>, String> {
-    let Ok(raw) = std::env::var("ANTARES_POLICY_SUBJECT_FROM") else {
+fn subject_from(raw: Option<String>) -> Result<Option<Vec<String>>, String> {
+    let Some(raw) = raw else {
         return Ok(None);
     };
     parse_subject_from(&raw).map(Some)
@@ -2210,7 +2285,7 @@ mod driver_registry_tests {
             temporal_choice(name, None).expect("ok"),
             TemporalChoice::SameAsStore
         );
-        let drivers = super::build_drivers(name)
+        let drivers = super::build_drivers(name, &super::PgSettings::default())
             .await
             .expect("the plugin driver builds");
         assert_eq!(drivers.temporal_name.as_deref(), Some(name));

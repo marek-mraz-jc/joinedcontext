@@ -308,13 +308,14 @@ impl UnarchiveProcessor {
     fn unarchive_part(&self, part: &mut Part) -> Result<Batch, String> {
         match self.format.as_str() {
             "json_array" => {
+                let parsed = !part.holds_structured();
                 let doc = part
                     .as_structured()
                     .map_err(|e| format!("failed to parse message into JSON array: {e}"))?;
                 let Value::Array(arr) = doc else {
                     return Err(format!(
                         "failed to parse message into JSON array: invalid type '{}'",
-                        doc.type_name()
+                        go_type(&doc, parsed)
                     ));
                 };
                 if arr.len() > self.max_members {
@@ -333,13 +334,14 @@ impl UnarchiveProcessor {
                 Ok(out)
             }
             "json_map" => {
+                let parsed = !part.holds_structured();
                 let doc = part
                     .as_structured()
                     .map_err(|e| format!("failed to parse message into JSON map: {e}"))?;
                 let Value::Object(map) = doc else {
                     return Err(format!(
                         "failed to parse message into JSON map: invalid type '{}'",
-                        doc.type_name()
+                        go_type(&doc, parsed)
                     ));
                 };
                 let mut out = Vec::with_capacity(map.len());
@@ -757,5 +759,16 @@ impl Processor for DecompressProcessor {
             }
         }
         Ok(vec![batch])
+    }
+}
+
+/// Go's `%T` of a document Bento's unarchive holds: bytes it parsed (UseNumber) give a number
+/// as json.Number, a mapping's value an int64 or float64.
+fn go_type(doc: &Value, parsed: bool) -> String {
+    match doc {
+        Value::Int(_) | Value::Uint(_) | Value::Float(_) | Value::Number(_) if parsed => {
+            "json.Number".to_string()
+        }
+        _ => ekiben_bloblang::go_fmt::sprintf("%T", std::slice::from_ref(doc)),
     }
 }

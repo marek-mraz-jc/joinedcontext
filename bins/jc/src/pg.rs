@@ -1,224 +1,192 @@
-//! PostgreSQL for the modules that keep state (`[<module>.database]` in the TOML file): the
-//! application role's URL and password come from files, the pool runs the module's boot RLS
-//! check, and when `migrate_url_file` is set the module's migrations run first as that role.
-//! The application role must not own the tables or bypass RLS; each module's own boot check
-//! refuses one that does.
+//! The Postgres settings of one module (`[<module>.database]` in the config file) and the
+//! connection they open.
+//!
+//! The URL names role, host, port and database and never a password: the password is read from
+//! `password_file` (the secrets mount). With `migrate_url` (and its own password file) `jc` runs
+//! the module's migrations first, as that owning role, under the module's advisory lock; without
+//! it the schema must already be migrated, and the module's boot check refuses an unmigrated
+//! one. A module with a `database` section never falls back to its memory store: a failed
+//! connection or a failed boot RLS check stops `jc`.
 
 use serde::Deserialize;
-use sqlx::PgPool;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
+/// Connections a module's pool opens at most when `max_connections` is unset.
+pub const DEFAULT_MAX_CONNECTIONS: u32 = 5;
+
 /// `[<module>.database]`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Database {
-    /// File holding the application role's URL, without a password.
-    pub url_file: PathBuf,
-    /// File holding the application role's password.
-    pub password_file: Option<PathBuf>,
-    /// Pool size (default 5).
+pub struct DatabaseSection {
+    /// `postgres://<request role>@<host>:<port>/<database>`, without a password.
+    pub url: String,
+    /// File holding the request role's password.
+    pub password_file: PathBuf,
+    /// Pool size (default [`DEFAULT_MAX_CONNECTIONS`]).
     pub max_connections: Option<u32>,
-    /// File holding the migration role's URL, without a password; migrations run at start
-    /// when set.
-    pub migrate_url_file: Option<PathBuf>,
-    /// File holding the migration role's password.
+    /// `postgres://<migration role>@...`: when set, `jc` migrates at start as this role.
+    pub migrate_url: Option<String>,
+    /// File holding the migration role's password (required with `migrate_url`).
     pub migrate_password_file: Option<PathBuf>,
 }
 
-/// Connection options from a URL file and a password file. A URL that carries a password is
-/// refused: the password belongs in its own file. Errors name files, never their content.
-pub fn options(url_file: &Path, password_file: Option<&Path>) -> Result<PgConnectOptions, String> {
-    let url = crate::runtime::read_secret_file(url_file)?;
-    if carries_password(&url) {
+impl DatabaseSection {
+    /// Checks the section without touching the network or the files: both URLs parse, carry a
+    /// role and no password, and the migration pair is complete.
+    pub fn validate(&self) -> Result<(), String> {
+        check_url("url", &self.url)?;
+        match (&self.migrate_url, &self.migrate_password_file) {
+            (Some(url), Some(_)) => check_url("migrate_url", url),
+            (None, None) => Ok(()),
+            _ => Err("migrate_url and migrate_password_file go together".into()),
+        }?;
+        if self.max_connections == Some(0) {
+            return Err("max_connections must be at least 1".into());
+        }
+        Ok(())
+    }
+
+    pub fn max_connections(&self) -> u32 {
+        self.max_connections.unwrap_or(DEFAULT_MAX_CONNECTIONS)
+    }
+
+    /// Options of the request role, password read from its file.
+    pub fn app_options(&self) -> Result<PgConnectOptions, String> {
+        options(&self.url, &self.password_file)
+    }
+
+    /// Options of the migration role, when one is configured.
+    pub fn migrate_options(&self) -> Result<Option<PgConnectOptions>, String> {
+        match (&self.migrate_url, &self.migrate_password_file) {
+            (Some(url), Some(file)) => options(url, file).map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    /// The request role's URL with its password, for a module that takes a URL string
+    /// (Antares). Hold it as a secret: never log or print it.
+    pub fn app_url_with_password(&self) -> Result<String, String> {
+        check_url("url", &self.url)?;
+        let password = read_password(&self.password_file)?;
+        let mut url = url::Url::parse(&self.url).map_err(|_| "url does not parse".to_owned())?;
+        url.set_password(Some(&password))
+            .map_err(|()| "url takes no password".to_owned())?;
+        Ok(url.into())
+    }
+
+    /// The role `url` names (the role a migration grants to).
+    pub fn app_role(&self) -> Result<String, String> {
+        Ok(PgConnectOptions::from_str(&self.url)
+            .map_err(|_| "url does not parse".to_owned())?
+            .get_username()
+            .to_owned())
+    }
+}
+
+fn check_url(key: &str, raw: &str) -> Result<(), String> {
+    let url = url::Url::parse(raw).map_err(|_| format!("{key} is not a URL"))?;
+    if !matches!(url.scheme(), "postgres" | "postgresql") {
+        return Err(format!("{key} must use the postgres:// scheme"));
+    }
+    if url.password().is_some() {
         return Err(format!(
-            "{}: the URL must not carry a password; put it in the password file",
-            url_file.display()
+            "{key} must not carry a password; put it in the password file"
         ));
     }
-    let mut opts = PgConnectOptions::from_str(&url)
-        .map_err(|_| format!("{}: not a PostgreSQL URL", url_file.display()))?;
-    if let Some(file) = password_file {
-        opts = opts.password(&crate::runtime::read_secret_file(file)?);
+    if url.username().is_empty() {
+        return Err(format!("{key} must name the database role"));
     }
-    Ok(opts)
+    PgConnectOptions::from_str(raw).map_err(|_| format!("{key} is not a Postgres URL"))?;
+    Ok(())
 }
 
-/// Whether a `postgres://` URL holds a password, in its user part or as a query parameter.
-fn carries_password(url: &str) -> bool {
-    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
-    let authority = rest.split(['/', '?']).next().unwrap_or_default();
-    let in_userinfo = authority
-        .rsplit_once('@')
-        .is_some_and(|(userinfo, _)| userinfo.contains(':'));
-    let in_query = rest.split_once('?').is_some_and(|(_, query)| {
-        query
-            .split('&')
-            .any(|pair| pair.split('=').next() == Some("password"))
-    });
-    in_userinfo || in_query
+fn read_password(path: &Path) -> Result<String, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read password file {}: {e}", path.display()))?;
+    let password = raw.trim();
+    if password.is_empty() {
+        return Err(format!("password file {} is empty", path.display()));
+    }
+    Ok(password.to_owned())
 }
 
-async fn connect(opts: PgConnectOptions, max: u32) -> Result<PgPool, String> {
+fn options(url: &str, password_file: &Path) -> Result<PgConnectOptions, String> {
+    let opts = PgConnectOptions::from_str(url).map_err(|_| "url does not parse".to_owned())?;
+    Ok(opts.password(&read_password(password_file)?))
+}
+
+/// A pool of at most `max` connections; a refused or unreachable server is an error (no retry
+/// beyond the acquire timeout, no fallback).
+pub async fn connect(opts: PgConnectOptions, max: u32) -> Result<PgPool, String> {
     PgPoolOptions::new()
-        .max_connections(max.clamp(1, 50))
+        .max_connections(max.max(1))
         .acquire_timeout(Duration::from_secs(10))
         .connect_with(opts)
         .await
-        .map_err(|e| format!("connect PostgreSQL: {e}"))
-}
-
-impl Database {
-    /// The application pool.
-    pub async fn app_pool(&self) -> Result<PgPool, String> {
-        let opts = options(&self.url_file, self.password_file.as_deref())?;
-        connect(opts, self.max_connections.unwrap_or(5)).await
-    }
-
-    /// The migration pool, when migrations run at start.
-    pub async fn migrate_pool(&self) -> Result<Option<PgPool>, String> {
-        let Some(url_file) = &self.migrate_url_file else {
-            return Ok(None);
-        };
-        let opts = options(url_file, self.migrate_password_file.as_deref())?;
-        connect(opts, 1).await.map(Some)
-    }
+        .map_err(|e| format!("cannot connect to Postgres: {e}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_url_with_a_password_is_refused_and_one_without_is_read() {
-        assert!(carries_password("postgres://app:pw@db:5432/x"));
-        assert!(carries_password("postgres://db/x?user=app&password=pw"));
-        assert!(!carries_password("postgres://app@db:5432/x"));
-        assert!(!carries_password("postgres://db/x?sslmode=require"));
-        assert!(!carries_password("postgres://app@[::1]:5432/x"));
-        let dir = tempfile::tempdir().unwrap();
-        let url = dir.path().join("url");
-        let pw = dir.path().join("pw");
-        std::fs::write(&url, "postgres://app:leaked@db/x\n").unwrap();
-        std::fs::write(&pw, "s3cret\n").unwrap();
-        let e = options(&url, Some(&pw)).unwrap_err();
-        assert!(
-            e.contains("must not carry a password") && !e.contains("leaked"),
-            "{e}"
-        );
-        std::fs::write(&url, "postgres://app@db:5433/x\n").unwrap();
-        let opts = options(&url, Some(&pw)).unwrap();
-        assert_eq!(opts.get_port(), 5433);
-        assert_eq!(opts.get_username(), "app");
-    }
-}
-
-/// A fresh database per test on the server `JC_TEST_PG_ADMIN_URL` names (a superuser URL);
-/// `None` with a SKIP line when it is unset. Migrations run as that superuser; the application
-/// role is a new LOGIN role granted the module's `<module>_app` role, so forced RLS applies.
-#[cfg(test)]
-pub(crate) mod testdb {
-    use super::Database;
-    use sqlx::postgres::PgConnectOptions;
-    use std::str::FromStr;
-
-    pub(crate) struct TestDb {
-        pub dir: tempfile::TempDir,
-        pub database: Database,
-        /// The superuser's address on the test database, for a bypassing-role check.
-        pub admin: Database,
-    }
-
-    fn write(dir: &std::path::Path, name: &str, text: &str) -> std::path::PathBuf {
-        let path = dir.join(name);
-        std::fs::write(&path, text).unwrap();
-        path
-    }
-
-    pub(crate) async fn create(module: &str) -> Option<TestDb> {
-        let Ok(admin_url) = std::env::var("JC_TEST_PG_ADMIN_URL") else {
-            eprintln!("SKIP: JC_TEST_PG_ADMIN_URL is unset");
-            return None;
-        };
-        let opts = PgConnectOptions::from_str(&admin_url).unwrap();
-        let admin = sqlx::PgPool::connect_with(opts.clone()).await.unwrap();
-        let n = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let db = format!("jct_{module}_{}_{n}", std::process::id());
-        let role = format!("jct_{module}_app");
-        let password = format!("{n:x}{:x}", std::process::id());
-        // Names and the password are made of [a-z0-9_] here; role DDL takes no binds.
-        let ddl = format!(
-            "DO $$ BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{module}_app') THEN
-                    CREATE ROLE {module}_app NOLOGIN NOBYPASSRLS;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{module}_migrate') THEN
-                    CREATE ROLE {module}_migrate NOLOGIN NOBYPASSRLS;
-                END IF;
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN
-                    CREATE ROLE {role} LOGIN NOBYPASSRLS;
-                END IF;
-             END $$;
-             ALTER ROLE {role} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{password}';
-             GRANT {module}_app TO {role};"
-        );
-        sqlx::raw_sql(sqlx::AssertSqlSafe(ddl))
-            .execute(&admin)
-            .await
-            .unwrap();
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE DATABASE {db}")))
-            .execute(&admin)
-            .await
-            .unwrap();
-        admin.close().await;
-        let dir = tempfile::tempdir().unwrap();
-        let host = opts.get_host();
-        let port = opts.get_port();
-        let su = opts.get_username();
-        let admin_pw = write(
-            dir.path(),
-            "admin-pw",
-            &url_password(&admin_url).unwrap_or_default(),
-        );
-        let admin_url_file = write(
-            dir.path(),
-            "admin-url",
-            &format!("postgres://{su}@{host}:{port}/{db}"),
-        );
-        let database = Database {
-            url_file: write(
-                dir.path(),
-                "app-url",
-                &format!("postgres://{role}@{host}:{port}/{db}"),
-            ),
-            password_file: Some(write(dir.path(), "app-pw", &password)),
-            max_connections: Some(2),
-            migrate_url_file: Some(admin_url_file.clone()),
-            migrate_password_file: Some(admin_pw.clone()),
-        };
-        let admin = Database {
-            url_file: admin_url_file,
-            password_file: Some(admin_pw),
-            max_connections: Some(2),
-            migrate_url_file: None,
+    fn section(url: &str) -> DatabaseSection {
+        DatabaseSection {
+            url: url.into(),
+            password_file: "/run/pw".into(),
+            max_connections: None,
+            migrate_url: None,
             migrate_password_file: None,
-        };
-        Some(TestDb {
-            dir,
-            database,
-            admin,
-        })
+        }
     }
 
-    /// The password of a URL's user part (taken as written: the test URL is not percent-encoded).
-    fn url_password(url: &str) -> Option<String> {
-        let rest = url.split_once("://")?.1;
-        let userinfo = rest.split(['/', '?']).next()?.rsplit_once('@')?.0;
-        Some(userinfo.split_once(':')?.1.to_owned())
+    #[test]
+    fn a_url_with_a_password_or_without_a_role_is_refused() {
+        assert!(section("postgres://shako@db:5432/jc").validate().is_ok());
+        for (bad, says) in [
+            ("postgres://shako:leaked@db/jc", "must not carry a password"),
+            ("postgres://db/jc", "must name the database role"),
+            ("mysql://shako@db/jc", "postgres:// scheme"),
+            ("not a url", "is not a URL"),
+        ] {
+            let err = section(bad).validate().unwrap_err();
+            assert!(err.contains(says), "{bad}: {err}");
+            assert!(!err.contains("leaked"), "{err}");
+        }
+        let mut s = section("postgres://shako@db/jc");
+        s.migrate_url = Some("postgres://shako_migrate@db/jc".into());
+        assert!(s.validate().unwrap_err().contains("go together"));
+        s.migrate_password_file = Some("/run/mpw".into());
+        assert!(s.validate().is_ok());
+        s.migrate_url = Some("postgres://shako_migrate:x@db/jc".into());
+        assert!(s.validate().unwrap_err().starts_with("migrate_url"));
+        s.migrate_url = None;
+        s.migrate_password_file = None;
+        s.max_connections = Some(0);
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn the_password_comes_from_its_file_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let pw = dir.path().join("pw");
+        std::fs::write(&pw, "s3cret\n").unwrap();
+        let mut s = section("postgres://antares@db:5432/jc");
+        s.password_file = pw.clone();
+        assert_eq!(
+            s.app_url_with_password().unwrap(),
+            "postgres://antares:s3cret@db:5432/jc"
+        );
+        assert_eq!(s.app_role().unwrap(), "antares");
+        assert!(s.app_options().is_ok());
+        assert_eq!(s.max_connections(), DEFAULT_MAX_CONNECTIONS);
+        std::fs::write(&pw, " \n").unwrap();
+        assert!(s.app_options().unwrap_err().contains("is empty"));
+        s.password_file = dir.path().join("missing");
+        assert!(s.app_options().unwrap_err().contains("cannot read"));
+        assert!(s.migrate_options().unwrap().is_none());
     }
 }

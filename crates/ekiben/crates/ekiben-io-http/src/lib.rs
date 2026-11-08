@@ -7,6 +7,8 @@ pub mod client;
 pub mod http_server;
 pub mod ingest;
 pub mod input;
+#[cfg(feature = "websocket")]
+pub mod mqtt;
 pub mod outbound;
 pub mod output;
 pub mod processor;
@@ -22,4 +24,6 @@ pub fn register_all(registry: &Registry) {
     http_server::register(registry);
     #[cfg(feature = "websocket")]
     websocket::register(registry);
+    #[cfg(feature = "websocket")]
+    mqtt::register(registry);
 }

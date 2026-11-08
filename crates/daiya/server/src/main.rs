@@ -7,7 +7,9 @@ use daiya_import::{
     DashboardImportInput, DesiredBundle, ExitCode, PlanBundle, check_dashboards_offline,
 };
 use daiya_model::{CrError, DataSourceInfo, InputLimits};
-use daiya_server::config::{DaiyaConfig, build_state, cli_ctx, standalone_router};
+use daiya_server::config::{
+    DaiyaConfig, build_state, cli_ctx, provisioning_vars_from, standalone_router,
+};
 use daiya_server::execute_cli_command;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -172,6 +174,11 @@ async fn main() {
             cfg.mount.path_prefix.clone_from(p);
         }
     }
+    // Only `DAIYA_VAR_*` reach the provisioning files; the rest of the environment never does.
+    cfg.provisioning_vars = provisioning_vars_from(
+        std::env::vars_os()
+            .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?))),
+    );
     let built = match build_state(&cfg).await {
         Ok(built) => built,
         Err(e) => {

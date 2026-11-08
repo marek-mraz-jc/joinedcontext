@@ -521,3 +521,38 @@ async fn store_failures_are_errors() {
     w.store.heal();
     assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR);
 }
+
+/// A caller `from` near i64::MIN must not wrap the span and skip the public range cap: the query
+/// still starts inside the capped window, not in 1970.
+#[tokio::test]
+async fn an_overflowing_public_range_is_still_capped() {
+    let w = world();
+    let (url, seen) = prometheus().await;
+    w.add_prometheus("prom", &url).await;
+    w.add_dashboard(templated("pub", "prom"), None).await;
+    let created = w
+        .ok(
+            "POST",
+            "/api/dashboards/uid/pub/public-dashboards",
+            Some(json!({ "uid": "pd-pub", "isEnabled": true, "timeSelectionEnabled": true })),
+        )
+        .await;
+    let token = created["accessToken"].as_str().unwrap();
+    let (st, body) = w
+        .call(
+            "POST",
+            &format!("/api/public/dashboards/{token}/panels/1/query"),
+            None,
+            Some(json!({ "timeRange": { "from": "-9223372036854775808", "to": "1700000600000" } })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let head = seen.lock().last().cloned().unwrap();
+    let start: f64 = head
+        .split(['?', '&', ' '])
+        .find_map(|p| p.strip_prefix("start="))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(start > 1_690_000_000.0, "capped start, not 1970: {head}");
+}

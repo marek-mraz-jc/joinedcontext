@@ -40,6 +40,16 @@ impl std::fmt::Display for UnexpectedHttpStatusError {
 
 impl std::error::Error for UnexpectedHttpStatusError {}
 
+/// Go's `Response.Status`: the code and the phrase the server sent (hyper keeps one that is not
+/// the canonical phrase, an empty one included, as `ReasonPhrase`), else the canonical phrase.
+pub fn go_status(resp: &reqwest::Response) -> String {
+    let phrase = match resp.extensions().get::<hyper::ext::ReasonPhrase>() {
+        Some(sent) => String::from_utf8_lossy(sent.as_bytes()).into_owned(),
+        None => resp.status().canonical_reason().unwrap_or("").to_string(),
+    };
+    format!("{} {phrase}", resp.status().as_u16())
+}
+
 /// The form of a client-credentials token request as x/oauth2 encodes it: `grant_type`, `scope`
 /// when scopes are set, the `endpoint_params` over both, and with `in_params` the client's id and
 /// secret; keys sorted, as Go's `url.Values.Encode` writes them.
@@ -125,6 +135,9 @@ pub struct HttpClient {
     http: reqwest::Client,
     /// For organizations whose quota sets `allow_private_ips`.
     http_open: reqwest::Client,
+    /// For the hosting process's own listener ([`ekiben_core::HostTarget`]): follows no redirect,
+    /// so the listener cannot send a stream on to another mount or address.
+    http_host: reqwest::Client,
     url: FieldExpression,
     raw_url: String,
     verb: Method,
@@ -147,9 +160,11 @@ pub struct HttpClient {
 }
 
 impl HttpClient {
-    fn client_for(&self, org: &OrgContext) -> &reqwest::Client {
+    fn client_for(&self, org: &OrgContext, url: &Url) -> &reqwest::Client {
         if org.get_quotas().allow_private_ips {
             &self.http_open
+        } else if org.host_target().is_some_and(|t| t.admits(url)) {
+            &self.http_host
         } else {
             &self.http
         }
@@ -341,10 +356,12 @@ impl HttpClient {
 
         let http = build_http(timeout, true)?;
         let http_open = build_http(timeout, false)?;
+        let http_host = build_host_http(timeout)?;
 
         Ok(Arc::new(Self {
             http,
             http_open,
+            http_host,
             url,
             raw_url,
             verb,
@@ -425,7 +442,7 @@ impl HttpClient {
         // As golang.org/x/oauth2 under Bento (AuthStyleAutoDetect): the client's credentials in a
         // Basic header first, and only when the endpoint refuses that, in the form instead.
         let mut resp = self
-            .client_for(org)
+            .client_for(org, &parsed_token_url)
             .post(parsed_token_url.clone())
             .header("Authorization", oauth2_basic(oa))
             .header("Content-Type", "application/x-www-form-urlencoded")
@@ -435,7 +452,7 @@ impl HttpClient {
             .map_err(|e| oauth2_failed(&e))?;
         if !resp.status().is_success() {
             resp = self
-                .client_for(org)
+                .client_for(org, &parsed_token_url)
                 .post(parsed_token_url)
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .body(oauth2_form(oa, true))
@@ -489,7 +506,9 @@ impl HttpClient {
         org.admit_http_request().await;
         let redacted_url = redact_url_str(parsed_url.as_str());
 
-        let mut req = self.client_for(org).request(self.verb.clone(), parsed_url);
+        let mut req = self
+            .client_for(org, &parsed_url)
+            .request(self.verb.clone(), parsed_url);
 
         let mut has_content_type = false;
         for (k, expr) in &self.headers {
@@ -618,6 +637,7 @@ impl HttpClient {
                 Ok(resp) => {
                     let status = resp.status();
                     let code = status.as_u16();
+                    let status_line = go_status(&resp);
                     let headers = resp.headers().clone();
 
                     let (succeeded, retry_strat) = self.check_status(code);
@@ -629,11 +649,7 @@ impl HttpClient {
 
                     let status_err = UnexpectedHttpStatusError {
                         code,
-                        status: format!(
-                            "{} {}",
-                            code,
-                            status.canonical_reason().unwrap_or("Error")
-                        ),
+                        status: status_line,
                         body: String::from_utf8_lossy(&body_bytes).into_owned(),
                         redacted_url,
                     };
@@ -757,7 +773,8 @@ pub fn validate_resolved_url(url_str: &str, org: &OrgContext) -> Result<Url, Cor
         CoreError::config(format!("URL '{}' has no host", redact_url_str(url_str)))
     })?;
 
-    let allow_private = org.get_quotas().allow_private_ips;
+    let allow_private =
+        org.get_quotas().allow_private_ips || org.host_target().is_some_and(|t| t.admits(&parsed));
     if !allow_private && is_private_or_loopback_host(host) {
         return Err(CoreError::AccessDenied {
             org: org.org_id.0.clone(),
@@ -802,6 +819,23 @@ fn build_http(timeout: Duration, guard: bool) -> Result<reqwest::Client, CoreErr
     if guard {
         builder = builder.dns_resolver(Arc::new(PublicOnlyResolver));
     }
+    if !timeout.is_zero() {
+        builder = builder.timeout(timeout);
+    }
+    builder
+        .build()
+        .map_err(|e| CoreError::config(format!("failed to build HTTP client: {e}")))
+}
+
+/// The client for [`ekiben_core::HostTarget`]: a literal address, so no resolver, and no redirect.
+fn build_host_http(timeout: Duration) -> Result<reqwest::Client, CoreError> {
+    let mut builder = reqwest::Client::builder()
+        .redirect(RedirectPolicy::none())
+        .connect_timeout(
+            timeout
+                .min(Duration::from_secs(5))
+                .max(Duration::from_millis(200)),
+        );
     if !timeout.is_zero() {
         builder = builder.timeout(timeout);
     }

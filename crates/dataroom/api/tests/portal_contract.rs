@@ -20,8 +20,8 @@ use jc_core::kinds::ckan::CkanInstanceSpec;
 use jc_core::ngsi_catalog::Package;
 use jcctl::loader::RawManifest;
 use jcctl::publish::ckan::{
-    publish, publish_views, withdraw, CkanApi, CkanError, Outcome, PublishError, Settings,
-    GENERATOR,
+    publish, publish_dataset, publish_views, withdraw, CkanApi, CkanError, Outcome, PublishError,
+    Settings, GENERATOR,
 };
 use jcctl::publish::ckan_http::HttpCkan;
 use jcctl::secrets::SecretValue;
@@ -72,6 +72,7 @@ fn catalogue(org_id: OrgId, id: CatalogueId) -> Catalogue {
         allowed_outbound_hosts: Vec::new(),
         applicable_legislation: Vec::new(),
         modified: Utc::now(),
+        public_base: None,
     }
 }
 
@@ -491,6 +492,107 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
     .await;
     assert_eq!(back.expect("republished"), Outcome::Updated);
     assert!(portal_dataset(&base, PUBLIC_DATASET).await.is_some());
+}
+
+/// ADR-N-068 (EP-175, EP-176, EP-178): one public Endpoint listing two datasets in
+/// `spec.catalog.datasets` is two datasets, each narrowed to its slice; both read anonymously and
+/// fold into the NGSI-LD catalogue by the Endpoint's slug; a rerun writes nothing; withdrawing
+/// one leaves the other.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn several_datasets_of_one_endpoint_converge_and_withdraw_one_by_one() {
+    let base = serve().await;
+    let manifest = || -> RawManifest {
+        let mut ep = endpoint("ovzdusie-public", PUBLIC_DATASET, "public", PUBLIC_SLUG);
+        ep.spec["catalog"]["datasets"] = json!([
+            { "name": "bb-pm", "title": { "sk": "Prachové častice" },
+              "description": { "sk": "PM10 a PM2.5" }, "types": ["AirQualityObserved"] },
+            { "name": "bb-zle-ovzdusie", "title": { "sk": "Zlé ovzdušie" },
+              "description": { "sk": "Nad limitom" }, "types": ["AirQualityObserved"],
+              "q": "pm10>50" },
+        ]);
+        ep.spec.as_object_mut().expect("a spec").remove("publish");
+        ep
+    };
+    let run = |base: String| {
+        blocking(move || {
+            let mut api = client(&base, TOKEN);
+            let ep = manifest();
+            let spec: jc_core::kinds::EndpointSpec =
+                serde_json::from_value(ep.spec.clone()).expect("the spec");
+            let publication =
+                jcctl::publish::ckan::publication_of(&spec).expect("a public Endpoint publishes");
+            let slices = spec.catalog.expect("a catalogue block").datasets;
+            slices
+                .iter()
+                .map(|slice| {
+                    publish_dataset(
+                        &mut api,
+                        &ep,
+                        &publication,
+                        Some(slice),
+                        &instance(),
+                        &record("Kvalita ovzdušia"),
+                        &settings("Mesto Banská Bystrica"),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+    };
+    let first = run(base.clone()).await.expect("published");
+    assert_eq!(first, [Outcome::Created, Outcome::Created]);
+    let again = run(base.clone()).await.expect("converged");
+    assert_eq!(again, [Outcome::Unchanged, Outcome::Unchanged]);
+
+    let zle = portal_dataset(&base, "bb-zle-ovzdusie")
+        .await
+        .expect("the second dataset reads anonymously");
+    assert_eq!(
+        zle["url"],
+        json!(format!(
+            "https://data.city.example/api/endpoint/{PUBLIC_SLUG}/datasets/bb-zle-ovzdusie"
+        ))
+    );
+    let page = anonymous(
+        &base,
+        "package_search",
+        &[("rows", "1000"), ("start", "0"), ("sort", "name asc")],
+    )
+    .await
+    .expect("a package_search result");
+    let packages: Vec<Package> = page["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .filter_map(Package::from_ckan)
+        .collect();
+    // A package as the catalogue reads it: name, the Endpoint's slug, the (type, q) of its rows.
+    type Read<'a> = (&'a str, &'a str, Option<(String, Option<String>)>);
+    let folded: Vec<Read> = packages
+        .iter()
+        .map(|p| (p.name.as_str(), p.slug.as_str(), p.rows.clone()))
+        .collect();
+    assert_eq!(
+        folded,
+        [
+            (
+                "bb-pm",
+                PUBLIC_SLUG,
+                Some(("AirQualityObserved".to_owned(), None))
+            ),
+            (
+                "bb-zle-ovzdusie",
+                PUBLIC_SLUG,
+                Some(("AirQualityObserved".to_owned(), Some("pm10>50".to_owned())))
+            ),
+        ],
+        "{page}"
+    );
+
+    let b = base.clone();
+    let gone = blocking(move || withdraw(&mut client(&b, TOKEN), "bb-zle-ovzdusie")).await;
+    assert_eq!(gone.expect("withdrawn"), Outcome::Withdrawn);
+    assert!(portal_dataset(&base, "bb-zle-ovzdusie").await.is_none());
+    assert!(portal_dataset(&base, "bb-pm").await.is_some());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

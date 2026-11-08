@@ -20,6 +20,8 @@ pub const PORTAL_REALM: &str = "jc";
 pub const PORTAL_CLIENT: &str = "portal-api";
 /// The Portal's people-administration client (service account only).
 pub const PORTAL_ADMIN_CLIENT: &str = "portal-reconciler";
+/// The Context Gateway's client (client_credentials), the Portal's `JC_PORTAL_GATEWAY_CLIENT_ID`.
+pub const GATEWAY_CLIENT: &str = "context-gateway";
 /// The first person, a member of the Portal's bootstrap group.
 pub const FIRST_ADMIN: &str = "admin";
 /// The Portal's default bootstrap group (`JC_PORTAL_BOOTSTRAP_ADMINS`).
@@ -52,10 +54,14 @@ pub enum Secret {
     /// repository's `projects/{p}/secrets/*.enc.yaml`, which is how a `secretRef` or a
     /// CkanInstance `apiTokenRef` resolves.
     PortalAgeKey,
+    /// The gateway's `context-gateway` client in kaisatsu.
+    GatewayClientSecret,
+    /// What the gateway's hop to Antares presents (`modules::antares::Hop`).
+    GatewayHopToken,
 }
 
 impl Secret {
-    pub const ALL: [Secret; 12] = [
+    pub const ALL: [Secret; 14] = [
         Secret::KaisatsuKek,
         Secret::PortalClientSecret,
         Secret::PortalAdminClientSecret,
@@ -68,6 +74,8 @@ impl Secret {
         Secret::DashboardsPassword,
         Secret::CatalogueToken,
         Secret::PortalAgeKey,
+        Secret::GatewayClientSecret,
+        Secret::GatewayHopToken,
     ];
 
     /// File name inside the state directory.
@@ -86,6 +94,8 @@ impl Secret {
             Secret::DashboardsPassword => "dashboards-password",
             Secret::CatalogueToken => "catalogue-token",
             Secret::PortalAgeKey => "portal-age-key",
+            Secret::GatewayClientSecret => "gateway-client-secret",
+            Secret::GatewayHopToken => "gateway-hop-token",
         }
     }
 
@@ -121,6 +131,8 @@ impl Secret {
             Secret::DashboardsPassword => &[Module::Daiya, Module::Portal],
             Secret::CatalogueToken => &[Module::Dataroom, Module::Portal],
             Secret::PortalAgeKey => &[Module::Portal],
+            Secret::GatewayClientSecret => &[Module::Kaisatsu, Module::Gateway, Module::Portal],
+            Secret::GatewayHopToken => &[Module::Antares, Module::Gateway],
         }
     }
 }
@@ -254,6 +266,7 @@ pub fn realm_env(setup: &Setup) -> BTreeMap<String, String> {
             Secret::PortalAdminClientSecret,
         ),
         ("JC_SETUP_FIRST_ADMIN_PASSWORD", Secret::FirstAdminPassword),
+        ("CLIENT_SECRET_CONTEXT_GATEWAY", Secret::GatewayClientSecret),
     ]
     .into_iter()
     .filter_map(|(name, secret)| Some((name.to_owned(), setup.value(secret)?.to_owned())))
@@ -296,6 +309,46 @@ pub fn portal_realm_files(portal_base: &str) -> Result<Vec<(String, Value)>, ser
         ),
         ("20-jc-first-admin.json".to_owned(), first_admin),
     ])
+}
+
+/// The gateway's client (`context-gateway`): client_credentials only, its tokens for the Portal's
+/// internal listener (audience `portal-internal`, where it reads revocations, connectors and
+/// usage), no realm role and no person's scope.
+#[must_use]
+pub fn gateway_realm_file() -> (String, Value) {
+    let client = json!({
+        "realm": PORTAL_REALM,
+        "clients": [{
+            "clientId": GATEWAY_CLIENT,
+            "name": "Context Gateway",
+            "enabled": true,
+            "protocol": "openid-connect",
+            "publicClient": false,
+            "clientAuthenticatorType": "client-secret",
+            "secret": "$(CLIENT_SECRET_CONTEXT_GATEWAY)",
+            "standardFlowEnabled": false,
+            "implicitFlowEnabled": false,
+            "directAccessGrantsEnabled": false,
+            "serviceAccountsEnabled": true,
+            "fullScopeAllowed": false,
+            "redirectUris": [],
+            "webOrigins": [],
+            "defaultClientScopes": ["basic"],
+            "optionalClientScopes": [],
+            "protocolMappers": [{
+                "name": "portal-internal-audience",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-audience-mapper",
+                "consentRequired": false,
+                "config": {
+                    "included.custom.audience": "portal-internal",
+                    "access.token.claim": "true",
+                    "id.token.claim": "false"
+                }
+            }]
+        }]
+    });
+    ("30-jc-gateway.json".to_owned(), client)
 }
 
 #[cfg(test)]

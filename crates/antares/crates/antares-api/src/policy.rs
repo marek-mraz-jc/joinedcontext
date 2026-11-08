@@ -1494,12 +1494,25 @@ pub const ACCESS_DENIED_TITLE: &str = "AccessDenied";
 /// into the subject would be handing an addon the whole request.
 pub static SUBJECT_HEADERS: LazyLock<Vec<String>> = LazyLock::new(|| {
     std::env::var("ANTARES_POLICY_SUBJECT_HEADERS")
+        .ok()
+        .or_else(|| HOSTED_SUBJECT_HEADERS.get().cloned())
         .unwrap_or_default()
         .split(',')
         .map(|s| s.trim().to_ascii_lowercase())
         .filter(|s| !s.is_empty())
         .collect()
 });
+
+/// The subject headers a host names when the environment names none (`jc`, which writes no
+/// environment). Read once, by the first use of [`SUBJECT_HEADERS`].
+static HOSTED_SUBJECT_HEADERS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Names the subject headers for a host whose environment leaves
+/// `ANTARES_POLICY_SUBJECT_HEADERS` unset. Only the first call counts, and only before
+/// [`SUBJECT_HEADERS`] is first read.
+pub fn default_subject_headers(names: &str) {
+    let _ = HOSTED_SUBJECT_HEADERS.set(names.to_owned());
+}
 
 /// Drops every header in `names` (the subject headers) from a request whose
 /// `l5d-client-id`, the mesh identity the Linkerd proxy in front of the
