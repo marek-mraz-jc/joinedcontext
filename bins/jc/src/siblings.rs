@@ -96,7 +96,7 @@ fn origin(url: &str) -> String {
 /// |---|---|
 /// | `JC_OIDC_ISSUER`, `JC_OIDC_CLIENT_*`, `JC_KEYCLOAK_ADMIN_URL`, `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_*`, `JC_PORTAL_COOKIE_KEY` | kaisatsu |
 /// | `JC_SHAKO_URL`, `_PUBLIC_URL`, `_OWNER`, `_REPO`, `_TOKEN`, `_APPS_OWNER`, `_APPS_TOKEN`, `_WEBHOOK_SECRET` | shako |
-/// | `JC_PORTAL_PIPELINE_RUNNER_URL` | ekiben |
+/// | `JC_PORTAL_PIPELINE_RUNNER_URL`, `JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE` | ekiben |
 /// | `JC_PORTAL_CKAN_URL`, `JC_PORTAL_CKAN_API_URL` (https, EP-67; http only with `JC_PORTAL_CKAN_ALLOW_HTTP=true`) | dataroom |
 /// | `JC_PORTAL_GRAFANA_URL`, `_PUBLIC_URL`, `_USER`, `_PASSWORD` | daiya |
 /// | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | antares |
@@ -173,13 +173,20 @@ pub fn portal_vars(
         );
     }
     if let Some(streams) = siblings.get(Module::Ekiben) {
-        // The runner bearer has no Portal setting yet (compat gap in STATUS.md).
+        // ekiben refuses every call without its bearer: the Portal sends jc's ekiben token file
+        // (an `[ekiben] token_file` of the operator's needs this key set to the same file).
+        let token = setup
+            .path(Secret::EkibenToken)
+            .map(|p| p.display().to_string());
         group(
             "JC_PORTAL_PIPELINE_RUNNER_URL",
-            vec![(
-                "JC_PORTAL_PIPELINE_RUNNER_URL",
-                Some(streams.internal.clone()),
-            )],
+            vec![
+                (
+                    "JC_PORTAL_PIPELINE_RUNNER_URL",
+                    Some(streams.internal.clone()),
+                ),
+                ("JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE", token),
+            ],
         );
     }
     if let Some(catalogue) = siblings.get(Module::Dataroom) {
@@ -435,13 +442,19 @@ mod tests {
     fn ekiben_row() {
         let v = row(
             "JC_PORTAL_PIPELINE_RUNNER_URL",
-            &["JC_PORTAL_PIPELINE_RUNNER_URL"],
+            &[
+                "JC_PORTAL_PIPELINE_RUNNER_URL",
+                "JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE",
+            ],
             "https",
         );
         assert_eq!(
             v["JC_PORTAL_PIPELINE_RUNNER_URL"],
             "http://127.0.0.1:8443/streams"
         );
+        // The file ekiben reads its bearer from, never the token itself.
+        let file = &v["JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE"];
+        assert!(file.ends_with(Secret::EkibenToken.file_name()), "{file}");
     }
 
     #[test]
@@ -514,7 +527,8 @@ mod tests {
         let v = portal_vars(&siblings, &Setup::default(), none);
         assert!(!v.contains_key("JC_SHAKO_URL"));
         assert!(!v.contains_key("JC_OIDC_ISSUER"));
-        assert!(v.contains_key("JC_PORTAL_PIPELINE_RUNNER_URL"));
+        // A runner URL without its bearer only meets 401s.
+        assert!(!v.contains_key("JC_PORTAL_PIPELINE_RUNNER_URL"));
     }
 
     #[test]

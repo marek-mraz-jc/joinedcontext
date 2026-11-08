@@ -298,6 +298,18 @@ pub(crate) fn http() -> &'static reqwest::Client {
     })
 }
 
+/// A client for the pipeline runner alone, carrying its bearer
+/// ([`crate::reconciler::streams::runner_client`]); [`http`] serves every other call and never
+/// carries it.
+pub(crate) fn runner_http(config: &crate::config::Config) -> reqwest::Client {
+    crate::reconciler::streams::runner_client(
+        reqwest::Client::builder()
+            .timeout(SCRAPE_TIMEOUT)
+            .pool_max_idle_per_host(0),
+        config.pipeline_runner_token_file.as_deref(),
+    )
+}
+
 /// What last crossed each node of a running stream (T-3974, API/01 §7b).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PipelineSamples {
@@ -495,12 +507,16 @@ pub async fn metrics_for(
         template.replace("{project}", project).trim_end_matches('/')
     );
 
-    let response = http().get(&url).send().await.map_err(|err| {
-        // The URL names an internal service; the reason is logged, the caller learns only that
-        // the runner is unreachable.
-        tracing::warn!(project = %project, error = %err, "pipeline runner metrics unreachable");
-        ApiError::Unavailable("the pipeline runner did not answer".into())
-    })?;
+    let response = runner_http(&state.config)
+        .get(&url)
+        .send()
+        .await
+        .map_err(|err| {
+            // The URL names an internal service; the reason is logged, the caller learns only that
+            // the runner is unreachable.
+            tracing::warn!(project = %project, error = %err, "pipeline runner metrics unreachable");
+            ApiError::Unavailable("the pipeline runner did not answer".into())
+        })?;
     if !response.status().is_success() {
         tracing::warn!(project = %project, status = %response.status(), "pipeline runner metrics refused");
         return Err(ApiError::Unavailable(
@@ -1177,10 +1193,11 @@ pub async fn retry_rejected(
         crate::agents::share::slug()
     );
     // The project's write budget the replay's upsert names, then the stream (T-5803).
-    let accepted = match crate::reconciler::streams::declare_egress(http(), &runner, &project).await
+    let http = runner_http(&state.config);
+    let accepted = match crate::reconciler::streams::declare_egress(&http, &runner, &project).await
     {
         Ok(None) => {
-            let created = http().post(&stream).json(&config).send().await;
+            let created = http.post(&stream).json(&config).send().await;
             matches!(&created, Ok(answer) if answer.status().is_success())
         }
         Ok(Some(why)) | Err(why) => {
@@ -1215,7 +1232,7 @@ pub async fn retry_rejected(
     // The stream ends after its one message; it is deleted once it has had its window.
     tokio::spawn(async move {
         tokio::time::sleep(REPLAY_WINDOW).await;
-        if let Err(error) = http().delete(&stream).send().await {
+        if let Err(error) = http.delete(&stream).send().await {
             tracing::warn!(%error, "a replay stream was not deleted");
         }
     });

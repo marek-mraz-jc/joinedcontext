@@ -131,4 +131,66 @@ mod tests {
         std::fs::write(&blocker, "x").unwrap();
         assert!(file_root(Some(&blocker.join("sub"))).is_err());
     }
+
+    /// The Portal's stream deletes reach jc's ekiben: the deployer sends the bearer of the token
+    /// file siblings.rs hands the Portal (`JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE`); a deployer
+    /// without it is refused 401 and the stream stays (jc-migrate's rehearsal, G15).
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn a_portal_issued_delete_reaches_ekiben() {
+        use crate::setup::{Secret, Setup};
+        use joinedcontext_portal::reconciler::streams::StreamDeployer;
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &[Module::Ekiben]).unwrap();
+        let cfg = EkibenSection {
+            file_root: Some(dir.path().join("files")),
+            ..Default::default()
+        };
+        let app = build(&cfg, &setup).await.unwrap();
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let runner = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await });
+        let token = setup.value(Secret::EkibenToken).unwrap().to_owned();
+        let url = format!("{runner}/streams/helsinki.gone");
+        let client = reqwest::Client::new();
+        let stream = serde_json::json!({
+            "input": {"generate": {"interval": "1h", "mapping": "root = {}"}},
+            "output": {"drop": {}}
+        });
+        let r = client
+            .post(&url)
+            .bearer_auth(&token)
+            .json(&stream)
+            .send()
+            .await
+            .unwrap();
+        assert!(r.status().is_success(), "{}", r.status());
+        let held = || async {
+            client
+                .get(&url)
+                .bearer_auth(&token)
+                .send()
+                .await
+                .unwrap()
+                .status()
+        };
+
+        StreamDeployer::new(runner.clone())
+            .retire("helsinki", &["gone".to_owned()])
+            .await;
+        assert!(
+            held().await.is_success(),
+            "a delete without the bearer is refused"
+        );
+
+        StreamDeployer::new(runner)
+            .with_runner_token(setup.path(Secret::EkibenToken).map(Into::into))
+            .retire("helsinki", &["gone".to_owned()])
+            .await;
+        assert_eq!(
+            held().await,
+            reqwest::StatusCode::NOT_FOUND,
+            "the Portal's delete reached ekiben"
+        );
+    }
 }

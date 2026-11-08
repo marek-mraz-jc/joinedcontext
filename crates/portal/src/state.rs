@@ -850,6 +850,7 @@ impl AppState {
                 }
             });
             let deployer = StreamDeployer::new(url)
+                .with_runner_token(self.config.pipeline_runner_token_file.clone())
                 .with_pipeline_identity(self.config.pipeline_identity)
                 .with_concurrency(batch, short)
                 .with_run_ends(ends);
