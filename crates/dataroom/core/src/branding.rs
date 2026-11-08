@@ -1043,6 +1043,30 @@ fn validate_webp_bytes(bytes: &[u8]) -> Result<()> {
     if bytes.len() < 30 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
         return Err(DataroomError::field_error("logo", "invalid WebP header"));
     }
+    // The canvas size sits in the first chunk (RFC 9649): VP8X stores width-1 and height-1 in
+    // 24 bits each, a lossless VP8L bitstream 14 bits each after its 0x2f signature, a lossy VP8
+    // frame 14 bits each after its start code.
+    let le24 = |i: usize| {
+        u32::from(bytes[i]) | u32::from(bytes[i + 1]) << 8 | u32::from(bytes[i + 2]) << 16
+    };
+    let (width, height) = match &bytes[12..16] {
+        b"VP8X" => (le24(24) + 1, le24(27) + 1),
+        b"VP8L" if bytes[20] == 0x2f => {
+            let bits = u32::from_le_bytes([bytes[21], bytes[22], bytes[23], bytes[24]]);
+            ((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1)
+        }
+        b"VP8 " if bytes[23..26] == [0x9d, 0x01, 0x2a] => (
+            u32::from(u16::from_le_bytes([bytes[26], bytes[27]]) & 0x3fff),
+            u32::from(u16::from_le_bytes([bytes[28], bytes[29]]) & 0x3fff),
+        ),
+        _ => return Err(DataroomError::field_error("logo", "invalid WebP header")),
+    };
+    if width == 0 || height == 0 || width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION {
+        return Err(DataroomError::field_error(
+            "logo",
+            format!("WebP dimensions {width}x{height} exceed limit of {MAX_IMAGE_DIMENSION}px"),
+        ));
+    }
     Ok(())
 }
 

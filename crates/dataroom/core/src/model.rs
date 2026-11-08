@@ -738,6 +738,9 @@ pub enum HarvestSourceKind {
     DcatAp,
     NkodSparql,
     CkanAction,
+    /// `arcgis-hub`, as [`HarvestSourceKind::as_str`] and the `kind` column write it; the
+    /// derived spelling `arc-gis-hub` is still read.
+    #[serde(rename = "arcgis-hub", alias = "arc-gis-hub")]
     ArcGisHub,
 }
 
