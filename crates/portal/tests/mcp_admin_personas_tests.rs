@@ -374,3 +374,203 @@ async fn access_requests_need_the_portals_database_and_a_decision_says_why() {
     .await;
     assert_eq!(stranger.status, StatusCode::FORBIDDEN, "{}", stranger.text());
 }
+
+// ---------------------------------------------------------------------------------------------
+// One scripted setup per persona: Organization, project, space, Endpoint and Pipeline through
+// the registry door an MCP `tools/call` reaches once the person confirmed (AG-63). Each Change a
+// step opens is approved by a person in the Portal (AG-133); the scenario stands in for that by
+// putting the approved manifest into the mirror, as the reconciler does after the merge.
+// ---------------------------------------------------------------------------------------------
+
+async fn scenario_world() -> AppState {
+    let state = common::state_on_forge().await;
+    let world = world();
+    for kind in ["Organization", "Project", "Role", "RoleBinding"] {
+        for item in world
+            .mirror
+            .list(ORG_NAMESPACE, kind, &Default::default())
+            .items
+        {
+            state.mirror.upsert(item);
+        }
+    }
+    state
+}
+
+/// What a step's door answered: the status and the body. A proposal is checked first with the
+/// same manifest, as every door asks since T-0956 (PF-57).
+async fn step(who: &Identity, state: &AppState, project: &str, name: &str, input: Value) -> (StatusCode, Value) {
+    if name.ends_with("_propose") {
+        let check = json!({ "manifest": input["manifest"] });
+        let checked =
+            call_in("jc_manifest_dry_run", &mcp(through_client(who.clone())), state, project, check).await;
+        assert_eq!(checked.status, StatusCode::OK, "the check: {}", checked.text());
+    }
+    let answer = call_in(name, &mcp(through_client(who.clone())), state, project, input).await;
+    (answer.status, answer.body)
+}
+
+fn manifest(kind: &str, name: &str, namespace: &str, spec: Value) -> Value {
+    json!({
+        "apiVersion": joinedcontext_portal::resource::API_VERSION,
+        "kind": kind,
+        "metadata": { "name": name, "namespace": namespace },
+        "spec": spec,
+    })
+}
+
+/// The person approved the Change in the Portal and the reconciler read it back.
+fn approved(state: &AppState, manifest: &Value) {
+    let envelope: joinedcontext_portal::resource::ResourceEnvelope =
+        serde_json::from_value(manifest.clone()).expect("an envelope");
+    state.mirror.upsert(envelope);
+}
+
+/// A Pipeline proposes on a green record check of its spec (T-4840), which `jc_pipeline_test`
+/// records; the scenario records it the way that run would.
+async fn records_checked(state: &AppState, project: &str, manifest: &Value) {
+    use joinedcontext_portal::ops::verdict::{digest_of, RecordsVerdict, Verdict};
+    let name = manifest["metadata"]["name"].as_str().expect("a name");
+    state
+        .drafts
+        .put(project, "Pipeline", name, manifest.clone(), Some(0), "steward", "person")
+        .await
+        .expect("the draft");
+    let mut verdict = Verdict::green(manifest, None);
+    verdict.records = Some(Box::new(RecordsVerdict {
+        ok: true,
+        checked: 1,
+        rejected: 0,
+        spec_digest: digest_of(&manifest["spec"]),
+        sample_digest: digest_of(&json!([])),
+    }));
+    state
+        .drafts
+        .set_verdict(project, "Pipeline", name, verdict)
+        .await
+        .expect("the verdict");
+}
+
+fn proposed(status: StatusCode, body: &Value, what: &str) {
+    assert_eq!(status, StatusCode::OK, "{what}: {body}");
+    assert_eq!(body["change"]["kind"], "Change", "{what}: {body}");
+}
+
+/// Space, Endpoint and Pipeline in `project`, each approved before the next names it.
+async fn data_path(who: &Identity, state: &AppState, project: &str, domain: &str) {
+    let space = manifest("ContextSpace", "air", project, json!({}));
+    let (status, body) = step(who, state, project, "jc_resource_propose", json!({ "manifest": space })).await;
+    proposed(status, &body, "space");
+    approved(state, &space);
+
+    let endpoint = manifest(
+        "Endpoint",
+        "air-public",
+        project,
+        json!({
+            "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+            "audience": "public",
+            "enabledRepresentations": ["ngsi-ld"]
+        }),
+    );
+    let (status, body) = step(who, state, project, "jc_resource_propose", json!({ "manifest": endpoint })).await;
+    proposed(status, &body, "endpoint");
+    // The approved Endpoint carries the slug the platform minted (EP-75).
+    let mut minted = endpoint.clone();
+    minted["spec"]["slug"] = json!("zt4qm7ge2xdv6ksb3ncf5arw2y");
+    approved(state, &minted);
+
+    let pipeline = manifest(
+        "Pipeline",
+        "air-feed",
+        project,
+        json!({
+            "class": "resident",
+            "targetEndpoint": format!("urn:ngsi-ld:Endpoint:{domain}:{project}:air-public"),
+            "quotas": { "maxMemoryMb": 128, "cpuMillicores": 250 }
+        }),
+    );
+    records_checked(state, project, &pipeline).await;
+    let (status, body) = step(who, state, project, "jc_resource_propose", json!({ "manifest": pipeline })).await;
+    proposed(status, &body, "pipeline");
+}
+
+fn organization(name: &str, domain: &str) -> Value {
+    manifest(
+        "Organization",
+        name,
+        ORG_NAMESPACE,
+        json!({ "domain": domain, "locales": ["en", "fi"], "defaultLocale": "en" }),
+    )
+}
+
+#[tokio::test]
+async fn a_platform_administrator_sets_up_an_organization_a_project_and_its_data_path() {
+    let state = scenario_world().await;
+    let who = platform();
+    let (status, body) = step(&who, &state, ORG_NAMESPACE, "jc_resource_propose",
+        json!({ "manifest": organization("vnt", "vantaa.fi") })).await;
+    proposed(status, &body, "organization");
+
+    let (status, body) = step(&who, &state, ORG_NAMESPACE, "jc_project_create",
+        json!({ "name": "hel-air", "displayName": "Helsinki air" })).await;
+    proposed(status, &body, "project");
+    approved(&state, &manifest("Project", "hel-air", ORG_NAMESPACE, json!({ "organizationRef": "hel" })));
+
+    data_path(&who, &state, "hel-air", "hel.fi").await;
+    let (status, body) = step(&who, &state, "hel-air", administration::ORGANIZATION,
+        json!({ "aspect": "setup" })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn an_organization_administrator_runs_its_own_organization_and_no_other() {
+    let state = scenario_world().await;
+    let who = organization_admin();
+    let (status, body) = step(&who, &state, ORG_NAMESPACE, "jc_resource_propose",
+        json!({ "manifest": organization("esp", "espoo.fi") })).await;
+    proposed(status, &body, "own organization settings");
+
+    for refused in [organization("hel", "hel.fi"), organization("vnt", "vantaa.fi")] {
+        let (status, body) = step(&who, &state, ORG_NAMESPACE, "jc_resource_propose",
+            json!({ "manifest": refused })).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+    // A new project belongs to the installation Organization (ADR-N-058 §2.2).
+    let (status, body) = step(&who, &state, ORG_NAMESPACE, "jc_project_create",
+        json!({ "name": "esp-bus" })).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    data_path(&who, &state, ESP_PROJECT, "espoo.fi").await;
+    let space = manifest("ContextSpace", "bus", HEL_PROJECT, json!({}));
+    let (status, body) = step(&who, &state, HEL_PROJECT, "jc_resource_propose",
+        json!({ "manifest": space })).await;
+    assert!(
+        status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND,
+        "another Organization's project: {status} {body}"
+    );
+}
+
+#[tokio::test]
+async fn a_project_administrator_builds_its_project_and_touches_nothing_else() {
+    let state = scenario_world().await;
+    let who = project_admin();
+    let (status, body) = step(&who, &state, ORG_NAMESPACE, "jc_resource_propose",
+        json!({ "manifest": organization("esp", "espoo.fi") })).await;
+    assert!(
+        status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND,
+        "organization settings: {status} {body}"
+    );
+    let (status, body) = step(&who, &state, ESP_PROJECT, "jc_project_create",
+        json!({ "name": "esp-bus" })).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    data_path(&who, &state, ESP_PROJECT, "espoo.fi").await;
+    let space = manifest("ContextSpace", "bus", HEL_PROJECT, json!({}));
+    let (status, body) = step(&who, &state, HEL_PROJECT, "jc_resource_propose",
+        json!({ "manifest": space })).await;
+    assert!(
+        status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND,
+        "another project: {status} {body}"
+    );
+}
