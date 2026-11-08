@@ -41,11 +41,15 @@ impl Drop for Jc {
 }
 
 impl Jc {
+    /// A secret this test gave jc (`given/`), else one jc keeps in its state directory.
     fn secret(&self, name: &str) -> String {
-        std::fs::read_to_string(self.state.join(name))
-            .unwrap()
-            .trim()
-            .to_owned()
+        let given = self._dir.path().join("given").join(name);
+        let path = if given.exists() {
+            given
+        } else {
+            self.state.join(name)
+        };
+        std::fs::read_to_string(path).unwrap().trim().to_owned()
     }
 
     fn url(&self, path: &str) -> String {
@@ -144,7 +148,21 @@ async fn start() -> Jc {
     // The Portal at the root of the one domain: its redirects and UI assets are absolute paths.
     let config = dir.path().join("jc.toml");
     std::fs::write(&config, "[mounts.portal]\npath_prefix = \"\"\n").unwrap();
+    // The service tokens between modules live in jc's memory only; the test acts as the Portal
+    // with tokens it gives jc as files (the split-role way of pinning them).
+    let given = dir.path().join("given");
+    std::fs::create_dir(&given).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+    for (name, flag) in [
+        ("shako-token", "--shako-token-file"),
+        ("ekiben-token", "--ekiben-token-file"),
+        ("catalogue-token", "--dataroom-portal-token-file"),
+        ("dashboards-password", "--daiya-portal-password-file"),
+    ] {
+        let file = given.join(name);
+        std::fs::write(&file, format!("test-{name}-{:x}", std::process::id())).unwrap();
+        cmd.arg(flag).arg(file);
+    }
     for (key, _) in std::env::vars() {
         if key.starts_with("JCBIN_") || key.starts_with("JC_") {
             cmd.env_remove(key);
@@ -495,8 +513,21 @@ async fn the_portal_runs_on_its_sibling_modules() {
     let mut browser = Browser::new();
     let mut gaps: Vec<String> = Vec::new();
 
-    // Setup: secrets are private files, never in the log.
-    for name in ["portal-client-secret", "shako-token", "ekiben-token"] {
+    // Setup: secrets are never in the log; the kept ones are private files, the given service
+    // tokens are not copied into the state directory.
+    for name in [
+        "shako-token",
+        "ekiben-token",
+        "catalogue-token",
+        "dashboards-password",
+    ] {
+        assert!(!jc.log_has(&jc.secret(name)), "{name} appears in the log");
+        assert!(
+            !jc.state.join(name).exists(),
+            "{name} written to the state dir"
+        );
+    }
+    for name in ["portal-client-secret"] {
         let value = jc.secret(name);
         assert!(!jc.log_has(&value), "{name} appears in the log");
         #[cfg(unix)]

@@ -414,16 +414,9 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
         .await
         .err()
         .expect("refused");
-    assert!(
-        matches!(
-            err,
-            StartError::Module {
-                module: Module::Kaisatsu,
-                ..
-            }
-        ),
-        "{err}"
-    );
+    // jc's one secret reader refuses the file before any module is built.
+    assert!(matches!(err, StartError::Config(_)), "{err}");
+    assert!(err.to_string().contains("missing-kek"), "{err}");
 
     // No file named: first-start setup generates one (0600, in the state dir) and jc starts.
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
@@ -518,6 +511,15 @@ async fn a_bad_antares_environment_refuses_to_start() {
         let mode = std::fs::metadata(&generated).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
+
+    // Without the Portal (the one reader of that file) the token is made per boot in memory,
+    // and the file a start with the Portal left is removed.
+    cfg.roles.retain(|m| *m != Module::Portal);
+    let running = jc::start(&cfg, CancellationToken::new())
+        .await
+        .expect("starts with an in-memory token");
+    running.stop().await.expect("stop");
+    assert!(!generated.exists(), "{}", generated.display());
 }
 
 #[tokio::test]
@@ -563,7 +565,7 @@ async fn an_admin_listener_without_a_readable_token_is_refused() {
         .await
         .err()
         .expect("refused");
-    assert!(matches!(err, StartError::Admin(_)), "{err}");
+    assert!(matches!(err, StartError::Config(_)), "{err}");
     assert!(err.to_string().contains("is empty"), "{err}");
 }
 
