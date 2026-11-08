@@ -262,9 +262,9 @@ pub async fn execute_targets_and_expressions(
 
         // Check authorization on the datasource in the caller's organization (R9, §5.3 test 3)
         let ds_meta = state.store.get_datasource(req_ctx.org_id, &ds_uid).await?;
-        let driver = state.get_datasource_driver(req_ctx.org_id, &ds_uid);
+        let registered = state.get_datasource_driver(req_ctx.org_id, &ds_uid);
 
-        if ds_meta.is_none() && driver.is_none() {
+        if ds_meta.is_none() && registered.is_none() {
             return Err(CrError::NotFound(format!(
                 "Data source '{ds_uid}' not found"
             )));
@@ -302,10 +302,15 @@ pub async fn execute_targets_and_expressions(
             continue;
         }
 
-        let Some(drv) = driver else {
-            return Err(CrError::NotFound(format!(
-                "Data source driver '{ds_uid}' not registered"
-            )));
+        // Built only after the read decision: building resolves the datasource's host.
+        let drv = match (registered, &ds_meta) {
+            (Some(driver), _) => driver,
+            (None, Some(record)) => state.driver_for_record(record).await?,
+            (None, None) => {
+                return Err(CrError::NotFound(format!(
+                    "Data source '{ds_uid}' not found"
+                )));
+            }
         };
 
         let sets = drv.query(&q_ctx, &[query]).await?;

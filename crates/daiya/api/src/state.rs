@@ -8,9 +8,10 @@ use daiya_model::{
     Authorizer, CrError, DaiyaStore, InputLimits, InstallationId, InstanceId, OperationRegistry,
     OrgId, PolicyAuthorizer, RequestCtx, Subject, constant_time_eq, daiya_registry, sha256_hex,
 };
+use daiya_model::{CrResult, DatasourceRecord};
 use daiya_query::{
-    Datasource, DenyTokenExchanger, MapSecretResolver, QueryCache, SecretResolver, TokenExchanger,
-    WasmPluginHost,
+    Datasource, DenyTokenExchanger, DriverDeps, MapSecretResolver, OutboundPolicy, QueryCache,
+    SecretResolver, TokenExchanger, WasmPluginHost, build_driver,
 };
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
@@ -18,6 +19,10 @@ use std::sync::Arc;
 
 /// Live datasource drivers keyed by `(org_id, datasource_uid)`.
 pub type DriverMap = BTreeMap<(OrgId, String), Arc<dyn Datasource>>;
+
+/// Drivers built from stored records, with the record revision (`version`, `updatedAt`) they
+/// were built from: a changed record builds a new driver.
+pub type BuiltDriverMap = BTreeMap<(OrgId, String), (String, Arc<dyn Datasource>)>;
 
 /// Host-supplied resolver of a verified [`Subject`] (the Portal or jc binary that mounts daiya
 /// in-process and has already verified the session or bearer token). `None` means "not mine".
@@ -64,6 +69,10 @@ pub struct DaiyaState {
     pub tokens: Arc<Vec<TokenBinding>>,
     /// Verified subject from the host that mounts daiya (checked before `tokens`).
     pub subject_resolver: Option<SubjectResolver>,
+    /// Operator outbound settings for drivers built from stored datasource records.
+    pub outbound_policy: OutboundPolicy,
+    /// Drivers built from stored datasource records (see [`DaiyaState::driver_for`]).
+    pub built_drivers: Arc<RwLock<BuiltDriverMap>>,
 }
 
 /// Directory mapping Grafana organization names and numeric IDs to UUIDv7 [`OrgId`]s.
@@ -125,6 +134,8 @@ impl DaiyaState {
             registry: Arc::new(daiya_registry()),
             tokens: Arc::new(Vec::new()),
             subject_resolver: None,
+            outbound_policy: OutboundPolicy::default(),
+            built_drivers: Arc::new(RwLock::new(BTreeMap::new())),
         }
     }
 
@@ -196,6 +207,51 @@ impl DaiyaState {
             .read()
             .get(&(org_id, uid.to_owned()))
             .cloned()
+    }
+
+    /// The driver for `(org_id, uid)`: a driver registered by the host first, otherwise one
+    /// built from the stored datasource record (cached until the record changes). `None` when
+    /// the organization has no such datasource.
+    pub async fn driver_for(
+        &self,
+        org_id: OrgId,
+        uid: &str,
+    ) -> CrResult<Option<Arc<dyn Datasource>>> {
+        if let Some(driver) = self.get_datasource_driver(org_id, uid) {
+            return Ok(Some(driver));
+        }
+        let Some(record) = self.store.get_datasource(org_id, uid).await? else {
+            return Ok(None);
+        };
+        self.driver_for_record(&record).await.map(Some)
+    }
+
+    /// The driver built from `record` (see [`daiya_query::build_driver`]), cached by record
+    /// revision so a Postgres pool or a resolved address is reused until the record changes.
+    pub async fn driver_for_record(
+        &self,
+        record: &DatasourceRecord,
+    ) -> CrResult<Arc<dyn Datasource>> {
+        if let Some(driver) = self.get_datasource_driver(record.org_id, &record.uid) {
+            return Ok(driver);
+        }
+        let key = (record.org_id, record.uid.clone());
+        let revision = format!("{}@{}", record.version, record.updated_at.to_rfc3339());
+        if let Some((built_rev, driver)) = self.built_drivers.read().get(&key)
+            && *built_rev == revision
+        {
+            return Ok(driver.clone());
+        }
+        let deps = DriverDeps {
+            secrets: self.secret_resolver.clone(),
+            token_exchanger: self.token_exchanger.clone(),
+            policy: self.outbound_policy.clone(),
+        };
+        let driver = build_driver(record, &deps).await?;
+        self.built_drivers
+            .write()
+            .insert(key, (revision, driver.clone()));
+        Ok(driver)
     }
 
     /// Convenience constructor with a permissive policy for standalone tests.

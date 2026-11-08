@@ -4,6 +4,7 @@
 //! per-organization query cache, and WASM component host adapter + WIT world (R3, R5, R6).
 
 pub mod cache;
+pub mod factory;
 pub mod guard;
 pub mod loki;
 pub mod ngsild;
@@ -17,6 +18,7 @@ pub use cache::{CacheKey, PublicCacheKey, QueryCache};
 pub use daiya_model::{
     ColumnValues, FieldColumn, FieldType, Frame, FrameMeta, FrameSet, Notice, NoticeSeverity,
 };
+pub use factory::{DriverDeps, OutboundPolicy, build_driver, guard_for};
 pub use guard::{GuardConfig, OutboundGuard, OutboundRequest, OutboundResponse};
 pub use loki::LokiDatasource;
 pub use ngsild::NgsiLdDatasource;

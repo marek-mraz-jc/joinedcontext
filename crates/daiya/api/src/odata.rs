@@ -28,7 +28,7 @@ use daiya_import::{
     import_dashboards,
 };
 use daiya_model::{Action, CrError, CrResult, ObjectTarget, RequestCtx};
-use daiya_query::{QueryCtx, ResourceReq};
+use daiya_query::{Health, QueryCtx, ResourceReq};
 use jc_router::ClientAddr;
 use odata_table::{
     MemoryTable, Operation as TableOp, Scope, Table, TableError, allowed as table_allowed,
@@ -461,26 +461,20 @@ pub async fn exec_odata_datasource_health(
     );
     dec.into_result(format!("Datasource '{uid}' not found"))?;
 
-    let ds_rec = state.store.get_datasource(ctx.org_id, uid).await?;
-    let drv = state.get_datasource_driver(ctx.org_id, uid);
-    if ds_rec.is_none() && drv.is_none() {
-        return Err(CrError::NotFound(format!("Datasource '{uid}' not found")));
-    }
-
-    if let Some(driver) = drv {
-        let q_ctx = QueryCtx::new(ctx.org_id, ctx.instance_id, ctx.subject.clone(), 0, 1000);
-        let h = driver.health(&q_ctx).await;
-        return Ok(json!({
-            "@odata.context": "$metadata#JoinedContext.Daiya.HealthStatus",
-            "status": h.status,
-            "message": h.message,
-        }));
-    }
-
+    // A datasource whose driver cannot be built (refused host, bad configuration, a kind
+    // with no driver) is reported unhealthy with the reason, never "working".
+    let h = match state.driver_for(ctx.org_id, uid).await {
+        Ok(Some(driver)) => {
+            let q_ctx = QueryCtx::new(ctx.org_id, ctx.instance_id, ctx.subject.clone(), 0, 1000);
+            driver.health(&q_ctx).await
+        }
+        Ok(None) => return Err(CrError::NotFound(format!("Datasource '{uid}' not found"))),
+        Err(err) => Health::error(err.public_detail()),
+    };
     Ok(json!({
         "@odata.context": "$metadata#JoinedContext.Daiya.HealthStatus",
-        "status": "ok",
-        "message": "Data source is working",
+        "status": h.status,
+        "message": h.message,
     }))
 }
 
@@ -499,19 +493,21 @@ pub async fn exec_odata_datasource_editor_schema(
     );
     dec.into_result(format!("Datasource '{uid}' not found"))?;
 
-    if let Some(driver) = state.get_datasource_driver(ctx.org_id, uid) {
-        let schema = driver.editor();
-        return Ok(serde_json::to_value(schema).unwrap_or(Value::Null));
+    let registered = state.get_datasource_driver(ctx.org_id, uid);
+    let ds_rec = state.store.get_datasource(ctx.org_id, uid).await?;
+    let driver = match (registered, &ds_rec) {
+        (Some(driver), _) => Some(driver),
+        (None, Some(record)) => state.driver_for_record(record).await.ok(),
+        (None, None) => return Err(CrError::NotFound(format!("Datasource '{uid}' not found"))),
+    };
+    if let Some(driver) = driver {
+        return Ok(serde_json::to_value(driver.editor()).unwrap_or(Value::Null));
     }
-
-    let ds_rec = state
-        .store
-        .get_datasource(ctx.org_id, uid)
-        .await?
-        .ok_or_else(|| CrError::NotFound(format!("Datasource '{uid}' not found")))?;
-
+    // The editor of a datasource whose driver cannot be built yet (the host is refused or
+    // the configuration incomplete) is a plain object form, so it can still be fixed.
+    let kind = ds_rec.map(|r| r.kind).unwrap_or_default();
     Ok(json!({
-        "kind": ds_rec.kind,
+        "kind": kind,
         "jsonSchema": { "type": "object" },
         "fieldHints": [],
     }))
@@ -535,7 +531,8 @@ pub async fn exec_odata_datasource_resource(
     dec.into_result(format!("Datasource '{uid}' not found"))?;
 
     let driver = state
-        .get_datasource_driver(ctx.org_id, uid)
+        .driver_for(ctx.org_id, uid)
+        .await?
         .ok_or_else(|| CrError::NotFound(format!("Datasource '{uid}' not found")))?;
     let q_ctx = QueryCtx::new(ctx.org_id, ctx.instance_id, ctx.subject.clone(), 0, 1000);
     let resp = driver

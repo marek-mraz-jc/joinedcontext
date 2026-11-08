@@ -15,7 +15,7 @@
 
 use crate::DsError;
 use futures_util::StreamExt;
-use ipnet::{Ipv4Net, Ipv6Net};
+use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use reqwest::Method;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::str::FromStr;
@@ -37,6 +37,10 @@ pub struct GuardConfig {
     /// for local mock servers; even then, `169.254.169.254` (metadata), private RFC 1918 ranges,
     /// and unlisted hosts remain strictly blocked.
     pub allow_loopback_for_tests: bool,
+    /// Non-public networks the operator opens on purpose (an in-cluster Prometheus or broker
+    /// on a service network). Only an allow-listed host may still be reached, and the cloud
+    /// metadata addresses stay blocked even inside these networks.
+    pub allowed_networks: Vec<IpNet>,
 }
 
 impl Default for GuardConfig {
@@ -47,6 +51,7 @@ impl Default for GuardConfig {
             timeout: Duration::from_secs(10),
             allow_http: false,
             allow_loopback_for_tests: false,
+            allowed_networks: Vec::new(),
         }
     }
 }
@@ -127,10 +132,70 @@ impl OutboundGuard {
 
         // If host is an IP literal, check it immediately
         if let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
-            check_ip_allowed(ip, self.config.allow_loopback_for_tests)?;
+            self.check_ip(ip)?;
         }
 
         Ok((parsed, host, port))
+    }
+
+    /// Checks one resolved address: the metadata addresses never pass, an operator-opened
+    /// network passes, everything else follows [`check_ip_allowed`].
+    pub fn check_ip(&self, ip: IpAddr) -> Result<(), DsError> {
+        if is_cloud_metadata(ip) {
+            return Err(DsError::GuardRefused(format!(
+                "blocked cloud metadata address {ip}"
+            )));
+        }
+        let unmapped = match ip {
+            IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
+            IpAddr::V4(_) => ip,
+        };
+        if self
+            .config
+            .allowed_networks
+            .iter()
+            .any(|net| net.contains(&unmapped))
+        {
+            return Ok(());
+        }
+        check_ip_allowed(ip, self.config.allow_loopback_for_tests)
+    }
+
+    /// Checks `host` against the allow-list, resolves it once and checks every address. The
+    /// answer is the address set a caller must connect to (DNS pinning), for HTTP and for
+    /// the Postgres driver's TCP connection alike.
+    pub async fn resolve_checked(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>, DsError> {
+        let host = host.trim().to_ascii_lowercase();
+        let clean_host = host.trim_matches(['[', ']']);
+        let host_with_port = format!("{clean_host}:{port}");
+        let allowed = self.config.allow_hosts.iter().any(|entry| {
+            let e = entry.trim().to_ascii_lowercase();
+            !e.is_empty() && (e == clean_host || e == host || e == host_with_port)
+        });
+        if !allowed {
+            return Err(DsError::GuardRefused(format!(
+                "host '{clean_host}' is not in the datasource allow-list"
+            )));
+        }
+        if let Ok(ip) = clean_host.parse::<IpAddr>() {
+            self.check_ip(ip)?;
+            return Ok(vec![SocketAddr::new(ip, port)]);
+        }
+        let resolved: Vec<SocketAddr> = tokio::net::lookup_host((clean_host, port))
+            .await
+            .map_err(|e| {
+                DsError::GuardRefused(format!("DNS resolution failed for '{clean_host}': {e}"))
+            })?
+            .collect();
+        if resolved.is_empty() {
+            return Err(DsError::GuardRefused(format!(
+                "DNS resolution returned no addresses for '{clean_host}'"
+            )));
+        }
+        for addr in &resolved {
+            self.check_ip(addr.ip())?;
+        }
+        Ok(resolved)
     }
 
     /// Resolves DNS, checks every returned IP address, pins the resolved addresses on the HTTP
@@ -140,26 +205,7 @@ impl OutboundGuard {
 
         // Resolve DNS and check every address
         let clean_host = host.trim_matches(['[', ']']);
-        let addrs: Vec<SocketAddr> = if let Ok(ip) = clean_host.parse::<IpAddr>() {
-            check_ip_allowed(ip, self.config.allow_loopback_for_tests)?;
-            vec![SocketAddr::new(ip, port)]
-        } else {
-            let resolved: Vec<SocketAddr> = tokio::net::lookup_host((clean_host, port))
-                .await
-                .map_err(|e| {
-                    DsError::GuardRefused(format!("DNS resolution failed for '{clean_host}': {e}"))
-                })?
-                .collect();
-            if resolved.is_empty() {
-                return Err(DsError::GuardRefused(format!(
-                    "DNS resolution returned no addresses for '{clean_host}'"
-                )));
-            }
-            for addr in &resolved {
-                check_ip_allowed(addr.ip(), self.config.allow_loopback_for_tests)?;
-            }
-            resolved
-        };
+        let addrs = self.resolve_checked(&host, port).await?;
 
         let timeout = req
             .timeout
@@ -243,6 +289,19 @@ impl OutboundGuard {
             headers,
             body,
         })
+    }
+}
+
+/// The cloud metadata addresses (`169.254.169.254`, also IPv4-mapped, and AWS `fd00:ec2::254`).
+#[must_use]
+pub fn is_cloud_metadata(ip: IpAddr) -> bool {
+    let metadata_v4 = Ipv4Addr::new(169, 254, 169, 254);
+    match ip {
+        IpAddr::V4(v4) => v4 == metadata_v4,
+        IpAddr::V6(v6) => {
+            v6.to_ipv4_mapped() == Some(metadata_v4)
+                || v6 == Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)
+        }
     }
 }
 
