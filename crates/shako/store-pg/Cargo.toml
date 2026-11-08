@@ -1,0 +1,28 @@
+[package]
+name = "shako-store-pg"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+nats = ["dep:async-nats"]
+
+[dependencies]
+shako-core = { path = "../core" }
+shako-store-memory = { path = "../store-memory" }
+async-nats = { version = "0.51", optional = true }
+chrono = { version = "0.4", features = ["serde"] }
+odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table", features = ["postgres"] }
+parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "uuid", "chrono", "json", "migrate"] }
+tokio = { version = "1.54", features = ["sync", "time", "rt", "fs"] }
+tracing = "0.1"
+uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
+zeroize = "1.9"
+
+[dev-dependencies]
+shako-core = { path = "../core", features = ["testkit"] }
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }

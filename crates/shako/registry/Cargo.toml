@@ -1,0 +1,31 @@
+[package]
+name = "shako-registry"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+shako-core = { path = "../core" }
+jc-router = { path = "../../shared/jc-router" }
+axum = { version = "0.8", features = ["json"] }
+base64 = "0.22"
+bytes = "1.12"
+chrono = { version = "0.4", features = ["serde"] }
+ecdsa = { version = "0.17", features = ["signing", "verifying", "der"] }
+futures-util = "0.3"
+hex = "0.4"
+http = "1.5"
+p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tokio = { version = "1.54", features = ["fs", "io-util", "sync"] }
+uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
+
+[dev-dependencies]
+shako-store-memory = { path = "../store-memory" }
+http-body-util = "0.1"
+tempfile = "3.27"
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }

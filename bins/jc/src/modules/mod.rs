@@ -22,6 +22,8 @@ mod ekiben;
 mod kaisatsu;
 #[cfg(feature = "portal")]
 mod portal;
+#[cfg(feature = "shako")]
+pub mod shako;
 
 /// Builds the router of `module` mounted at `mount`.
 pub async fn build(
@@ -45,6 +47,11 @@ pub async fn build(
         Module::Antares => antares::build(&cfg.antares).await,
         #[cfg(feature = "portal")]
         Module::Portal => portal::build(mount, shutdown).await,
+        #[cfg(feature = "shako")]
+        Module::Shako => {
+            let state = shako::build_state(&cfg.shako)?;
+            Ok(shako::build(state, mount).0)
+        }
         #[allow(unreachable_patterns)]
         other => Err(StartError::module(
             other,

@@ -13,17 +13,19 @@ pub enum Module {
     Ekiben,
     Antares,
     Portal,
+    Shako,
 }
 
 impl Module {
     /// Every module in mount order.
-    pub const ALL: [Module; 6] = [
+    pub const ALL: [Module; 7] = [
         Module::Kaisatsu,
         Module::Dataroom,
         Module::Daiya,
         Module::Ekiben,
         Module::Antares,
         Module::Portal,
+        Module::Shako,
     ];
 
     /// The module's name as `--role` and the config file spell it.
@@ -36,6 +38,7 @@ impl Module {
             Module::Ekiben => "ekiben",
             Module::Antares => "antares",
             Module::Portal => "portal",
+            Module::Shako => "shako",
         }
     }
 
@@ -49,6 +52,7 @@ impl Module {
             Module::Ekiben => "streams",
             Module::Antares => "broker",
             Module::Portal => "portal",
+            Module::Shako => "git",
         }
     }
 
@@ -68,6 +72,7 @@ impl Module {
             Module::Ekiben => cfg!(feature = "ekiben"),
             Module::Antares => cfg!(feature = "antares"),
             Module::Portal => cfg!(feature = "portal"),
+            Module::Shako => cfg!(feature = "shako"),
         }
     }
 }

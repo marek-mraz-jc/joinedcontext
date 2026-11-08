@@ -1,0 +1,42 @@
+[package]
+name = "shako-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "shako"
+path = "src/main.rs"
+
+[dependencies]
+shako-api = { path = "../api" }
+shako-core = { path = "../core" }
+shako-git = { path = "../git" }
+shako-mcp = { path = "../mcp" }
+shako-registry = { path = "../registry" }
+shako-store-memory = { path = "../store-memory" }
+shako-store-pg = { path = "../store-pg" }
+shako-web = { path = "../web" }
+jc-router = { path = "../../shared/jc-router" }
+axum = { version = "0.8", features = ["json"] }
+clap = { version = "4.6", features = ["derive"] }
+hex = "0.4"
+http = "1.5"
+rand = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "net", "signal", "fs", "sync", "time"] }
+tracing = "0.1"
+uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
+
+[dev-dependencies]
+base64 = "0.22"
+hmac = "0.12"
+http-body-util = "0.1"
+ipnet = "2.12"
+p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+sha2 = "0.10"
+tempfile = "3.27"
+tower = { version = "0.5", features = ["util"] }
+url = "2.5"

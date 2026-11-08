@@ -34,6 +34,15 @@ members = [
   "crates/daiya/api",
   "crates/daiya/mcp",
   "crates/daiya/server",
+  "crates/shako/core",
+  "crates/shako/git",
+  "crates/shako/store-pg",
+  "crates/shako/store-memory",
+  "crates/shako/api",
+  "crates/shako/registry",
+  "crates/shako/mcp",
+  "crates/shako/web",
+  "crates/shako/server",
   "bins/jc",
 ]
 # Joined repositories keep their own workspace (lockfile, lints, standalone binaries) for now; jc

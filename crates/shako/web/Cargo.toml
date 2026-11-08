@@ -1,0 +1,24 @@
+[package]
+name = "shako-web"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+shako-api = { path = "../api" }
+shako-core = { path = "../core" }
+shako-git = { path = "../git" }
+jc-router = { path = "../../shared/jc-router" }
+askama = "0.12"
+askama_escape = "0.10"
+axum = "0.8"
+http = "1.5"
+pulldown-cmark = "0.13"
+url = "2.5"
+
+[dev-dependencies]
+shako-store-memory = { path = "../store-memory" }
+http-body-util = "0.1"
+tempfile = "3.27"
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }

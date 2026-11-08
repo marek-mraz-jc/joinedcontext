@@ -1,0 +1,9 @@
+crates/shako/core
+crates/shako/git
+crates/shako/store-pg
+crates/shako/store-memory
+crates/shako/api
+crates/shako/registry
+crates/shako/mcp
+crates/shako/web
+crates/shako/server

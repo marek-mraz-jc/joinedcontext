@@ -1,0 +1,42 @@
+[package]
+name = "shako-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+testkit = []
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+ecdsa = { version = "0.17", features = ["signing", "verifying", "der", "pem"] }
+globset = "0.4"
+gix-validate = "0.13"
+hex = "0.4"
+hmac = "0.12"
+ipnet = "2.12"
+jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+odata-csdl = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-csdl" }
+odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
+odata-url = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-url" }
+p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+parking_lot = "0.12"
+rand = "0.9"
+regex = "1.13"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+schemars = { version = "0.8", features = ["uuid1", "chrono"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+subtle = "2.6"
+thiserror = "2.0"
+tokio = { version = "1.54", features = ["sync", "time", "net", "rt"] }
+utoipa = "5.5"
+url = "2.5"
+uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
+zeroize = { version = "1.9", features = ["derive"] }
+
+[dev-dependencies]
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
