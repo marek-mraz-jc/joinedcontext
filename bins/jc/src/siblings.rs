@@ -97,7 +97,7 @@ fn origin(url: &str) -> String {
 /// | `JC_OIDC_ISSUER`, `JC_OIDC_CLIENT_*`, `JC_KEYCLOAK_ADMIN_URL`, `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_*`, `JC_PORTAL_COOKIE_KEY` | kaisatsu |
 /// | `JC_GITEA_URL`, `_PUBLIC_URL`, `_OWNER`, `_REPO`, `_TOKEN`, `_APPS_OWNER`, `_APPS_TOKEN`, `_WEBHOOK_SECRET` | shako |
 /// | `JC_PORTAL_PIPELINE_RUNNER_URL` | ekiben |
-/// | `JC_PORTAL_CKAN_URL`, `JC_PORTAL_CKAN_API_URL` (only when the public scheme is https, EP-67) | dataroom |
+/// | `JC_PORTAL_CKAN_URL`, `JC_PORTAL_CKAN_API_URL` (https, EP-67; http only with `JC_PORTAL_CKAN_ALLOW_HTTP=true`) | dataroom |
 /// | `JC_PORTAL_GRAFANA_URL`, `_PUBLIC_URL`, `_USER`, `_PASSWORD` | daiya |
 /// | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | antares |
 #[must_use]
@@ -182,14 +182,25 @@ pub fn portal_vars(
         );
     }
     if let Some(catalogue) = siblings.get(Module::Dataroom) {
-        // The Portal holds the public catalogue URL to https (EP-67); an http installation
-        // leaves the route unset rather than failing the Portal's start.
-        if catalogue.public.starts_with("https://") {
+        // The Portal holds both catalogue URLs to https (EP-67; plain http only to a cluster
+        // Service), so an https installation calls the API at its public URL too. An http
+        // installation fills the route only with the operator's explicit
+        // `JC_PORTAL_CKAN_ALLOW_HTTP=true` (a local rehearsal), else leaves it unset rather than
+        // failing the Portal's start.
+        let rehearsal = env("JC_PORTAL_CKAN_ALLOW_HTTP").as_deref() == Some("true");
+        let api = if catalogue.public.starts_with("https://") {
+            Some(catalogue.public.clone())
+        } else if rehearsal {
+            Some(catalogue.internal.clone())
+        } else {
+            None
+        };
+        if let Some(api) = api {
             group(
                 "JC_PORTAL_CKAN_URL",
                 vec![
                     ("JC_PORTAL_CKAN_URL", Some(catalogue.public.clone())),
-                    ("JC_PORTAL_CKAN_API_URL", Some(catalogue.internal.clone())),
+                    ("JC_PORTAL_CKAN_API_URL", Some(api)),
                 ],
             );
         }
@@ -426,12 +437,31 @@ mod tests {
             "https",
         );
         assert_eq!(v["JC_PORTAL_CKAN_URL"], "https://city.example/opendata");
+        // The Portal refuses a plain http API outside a cluster Service (EP-67).
+        assert_eq!(v["JC_PORTAL_CKAN_API_URL"], "https://city.example/opendata");
+        let (siblings, setup, _d) = fixture("http");
+        assert!(!portal_vars(&siblings, &setup, none).contains_key("JC_PORTAL_CKAN_URL"));
+        for typo in ["TRUE", "1", "yes", ""] {
+            let v = portal_vars(&siblings, &setup, |k: &str| {
+                (k == "JC_PORTAL_CKAN_ALLOW_HTTP").then(|| typo.to_owned())
+            });
+            assert!(!v.contains_key("JC_PORTAL_CKAN_URL"), "{typo}");
+        }
+    }
+
+    /// A one-machine rehearsal over http fills the catalogue only on the operator's explicit
+    /// `JC_PORTAL_CKAN_ALLOW_HTTP=true`, which the Portal reads too.
+    #[test]
+    fn an_http_catalogue_needs_the_rehearsal_switch() {
+        let (siblings, setup, _d) = fixture("http");
+        let v = portal_vars(&siblings, &setup, |k: &str| {
+            (k == "JC_PORTAL_CKAN_ALLOW_HTTP").then(|| "true".to_owned())
+        });
+        assert_eq!(v["JC_PORTAL_CKAN_URL"], "http://city.example/opendata");
         assert_eq!(
             v["JC_PORTAL_CKAN_API_URL"],
             "http://127.0.0.1:8443/opendata"
         );
-        let (siblings, setup, _d) = fixture("http");
-        assert!(!portal_vars(&siblings, &setup, none).contains_key("JC_PORTAL_CKAN_URL"));
     }
 
     #[test]
