@@ -282,7 +282,7 @@ fn align_branch_result(
     let total = res_parts.len() + skipped_or_failed.len();
     if total != length {
         return Err(format!(
-            "message count from branch processors does not match request, started with {total} messages, finished with {length}"
+            "message count from branch processors does not match request, started with {length} messages, finished with {total}"
         ));
     }
 

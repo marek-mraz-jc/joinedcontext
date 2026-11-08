@@ -76,6 +76,7 @@ const SECRET_FIELD_KEYS: &[&str] = &[
     "access_token_secret",
     "consumer_secret",
     "secret",
+    "bearer",
     "token",
     "bot_token",
     "api_key",

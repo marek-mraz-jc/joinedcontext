@@ -186,6 +186,12 @@ pub fn known_methods() -> HashSet<String> {
         "ts_unix_micro",
         "ts_unix_milli",
         "ts_unix_nano",
+        "ngsild_geoproperty",
+        "ngsild_key_values",
+        "ngsild_language_property",
+        "ngsild_normalized",
+        "ngsild_property",
+        "ngsild_relationship",
     ]
     .into_iter()
     .map(String::from)
@@ -284,6 +290,9 @@ fn eval_method_on_value(
         return res;
     }
     if let Some(res) = crate::methods_formats::eval_format_family(&target_val, name, args, ctx) {
+        return res;
+    }
+    if let Some(res) = crate::ngsild::eval_ngsild_method(&target_val, name, args, ctx) {
         return res;
     }
     Err(format!("unrecognised method '{name}'"))

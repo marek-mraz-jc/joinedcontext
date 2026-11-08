@@ -38,7 +38,11 @@ impl std::fmt::Display for OrgId {
 }
 
 /// Per-organization quotas enforced by `ekiben` (`Section 7`).
+///
+/// The message and HTTP rates pace a stream (it waits); only the memory and processing-time
+/// limits fail a run. An unknown field is refused, so a typo never silently keeps a default.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OrgQuotas {
     #[serde(default = "default_max_concurrent_streams")]
     pub max_concurrent_streams: usize,
@@ -58,6 +62,12 @@ pub struct OrgQuotas {
     pub allowed_http_hosts: Option<Vec<String>>,
     #[serde(default)]
     pub nats_subject_prefix: Option<String>,
+    /// Exact host names this organization may reach although they resolve to private addresses
+    /// (an ekiben extension; example: the in-cluster gateway). Every resolved address is still
+    /// checked: loopback, link-local, cloud metadata, unspecified and multicast stay refused, so
+    /// a listed name cannot be re-pointed at the node itself.
+    #[serde(default)]
+    pub private_hosts: Vec<String>,
 }
 
 fn default_max_concurrent_streams() -> usize {
@@ -91,36 +101,60 @@ impl Default for OrgQuotas {
             allow_private_ips: false,
             allowed_http_hosts: None,
             nats_subject_prefix: None,
+            private_hosts: Vec::new(),
         }
     }
 }
 
-struct TokenWindow {
-    window_start: Instant,
-    used: u64,
+impl OrgQuotas {
+    /// Refuses a limit of zero: it would stop every stream of the organization for good.
+    /// Returns the name of the first offending field.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let limits = [
+            ("max_concurrent_streams", self.max_concurrent_streams as u64),
+            ("max_in_flight_messages", self.max_in_flight_messages as u64),
+            (
+                "max_memory_bytes_per_run",
+                self.max_memory_bytes_per_run as u64,
+            ),
+            ("max_cpu_time_ms_per_run", self.max_cpu_time_ms_per_run),
+            ("max_messages_per_sec", self.max_messages_per_sec),
+            ("max_http_requests_per_sec", self.max_http_requests_per_sec),
+        ];
+        match limits.iter().find(|(_, v)| *v == 0) {
+            Some((name, _)) => Err(name),
+            None => Ok(()),
+        }
+    }
 }
 
-impl TokenWindow {
+/// How long a pacer lets a stream run ahead of its rate before it waits (one second of burst).
+const PACER_BURST: Duration = Duration::from_secs(1);
+/// The longest single sleep of a waiting stream, so a changed limit or a shutdown is seen quickly.
+const PACER_MAX_SLEEP: Duration = Duration::from_millis(100);
+
+/// A generic cell rate pacer: each admission of `n` units pushes `next_free` by `n / limit`
+/// seconds, and an admission waits while `next_free` is more than [`PACER_BURST`] ahead.
+struct Pacer {
+    next_free: Instant,
+}
+
+impl Pacer {
     fn new() -> Self {
         Self {
-            window_start: Instant::now(),
-            used: 0,
+            next_free: Instant::now(),
         }
     }
 
-    fn try_consume(&mut self, amount: u64, limit_per_sec: u64) -> bool {
-        if limit_per_sec == 0 {
-            return false;
+    /// Reserves `amount` units at `limit_per_sec` and returns `None`, or returns how long to wait.
+    fn reserve(&mut self, amount: u64, limit_per_sec: u64, now: Instant) -> Option<Duration> {
+        let allowed_at = self.next_free.checked_sub(PACER_BURST).unwrap_or(now);
+        if now < allowed_at {
+            return Some(allowed_at - now);
         }
-        if self.window_start.elapsed() >= Duration::from_secs(1) {
-            self.window_start = Instant::now();
-            self.used = 0;
-        }
-        if self.used.saturating_add(amount) > limit_per_sec {
-            return false;
-        }
-        self.used += amount;
-        true
+        let cost = Duration::from_secs_f64(amount as f64 / limit_per_sec.max(1) as f64);
+        self.next_free = self.next_free.max(now) + cost;
+        None
     }
 }
 
@@ -134,8 +168,8 @@ pub struct OrgContext {
     pub active_streams: AtomicUsize,
     pub in_flight_messages: AtomicUsize,
     pub total_messages_processed: AtomicU64,
-    msg_rate: std::sync::Mutex<TokenWindow>,
-    http_rate: std::sync::Mutex<TokenWindow>,
+    msg_rate: std::sync::Mutex<Pacer>,
+    http_rate: std::sync::Mutex<Pacer>,
     secrets: RwLock<HashMap<String, SecretString>>,
 }
 
@@ -148,14 +182,19 @@ impl OrgContext {
             active_streams: AtomicUsize::new(0),
             in_flight_messages: AtomicUsize::new(0),
             total_messages_processed: AtomicU64::new(0),
-            msg_rate: std::sync::Mutex::new(TokenWindow::new()),
-            http_rate: std::sync::Mutex::new(TokenWindow::new()),
+            msg_rate: std::sync::Mutex::new(Pacer::new()),
+            http_rate: std::sync::Mutex::new(Pacer::new()),
             secrets: RwLock::new(HashMap::new()),
         })
     }
 
+    /// Replaces the quotas; running streams pace by the new rates from their next admission on
+    /// (a waiting stream rechecks every [`PACER_MAX_SLEEP`]), and a debt run up under the old
+    /// rate is forgiven so a raised limit takes effect at once.
     pub fn set_quotas(&self, quotas: OrgQuotas) {
         *self.quotas.write().unwrap() = quotas;
+        *self.msg_rate.lock().unwrap() = Pacer::new();
+        *self.http_rate.lock().unwrap() = Pacer::new();
     }
 
     pub fn get_quotas(&self) -> OrgQuotas {
@@ -181,6 +220,44 @@ impl OrgContext {
         self.secrets.write().unwrap().clear();
     }
 
+    /// Replaces the organization's whole variable map (`--org-vars <dir>/<org>.yaml`) at once,
+    /// so a reload never shows half a change. Values stay `SecretString` (redacted `Debug`).
+    pub fn replace_secrets(&self, vars: HashMap<String, String>) {
+        let next: HashMap<String, SecretString> = vars
+            .into_iter()
+            .map(|(k, v)| (k, SecretString::new(v)))
+            .collect();
+        *self
+            .secrets
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+    }
+
+    /// A copy of the organization's variable map, for `${VAR}` and Bloblang `env()` of its streams.
+    pub fn secrets_snapshot(&self) -> HashMap<String, String> {
+        self.secrets
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|(k, v)| (k.clone(), v.expose().to_string()))
+            .collect()
+    }
+
+    /// Whether `host` is one of the organization's `private_hosts` (exact, case-insensitive).
+    pub fn is_private_host_allowed(&self, host: &str) -> bool {
+        let clean = host
+            .trim_matches(|c| c == '[' || c == ']')
+            .trim_end_matches('.');
+        let quotas = self
+            .quotas
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        quotas
+            .private_hosts
+            .iter()
+            .any(|h| !h.is_empty() && h.eq_ignore_ascii_case(clean))
+    }
+
     /// Attempts to acquire a concurrent stream slot for this organization.
     pub fn acquire_stream_slot(self: &Arc<Self>) -> Result<OrgStreamGuard, CoreError> {
         let max_streams = self.quotas.read().unwrap().max_concurrent_streams;
@@ -198,47 +275,37 @@ impl OrgContext {
         Ok(OrgStreamGuard { org: self.clone() })
     }
 
-    /// Checks and accounts for `count` messages and `bytes` against the organization's quotas.
-    pub fn check_message_admission(&self, count: usize, bytes: usize) -> Result<(), CoreError> {
-        let quotas = self.quotas.read().unwrap().clone();
-        if bytes > quotas.max_memory_bytes_per_run {
+    /// Fails a batch larger than the per-run memory limit (a hard limit).
+    pub fn check_batch_memory(&self, bytes: usize) -> Result<(), CoreError> {
+        let limit = self.quotas.read().unwrap().max_memory_bytes_per_run;
+        if bytes > limit {
             return Err(CoreError::QuotaExceeded {
                 org: self.org_id.0.clone(),
                 reason: format!(
-                    "batch size ({bytes} bytes) exceeds per-run memory limit ({} bytes)",
-                    quotas.max_memory_bytes_per_run
+                    "batch size ({bytes} bytes) exceeds per-run memory limit ({limit} bytes)"
                 ),
             });
         }
-        let in_flight = self.in_flight_messages.load(Ordering::Acquire);
-        if in_flight.saturating_add(count) > quotas.max_in_flight_messages {
-            return Err(CoreError::QuotaExceeded {
-                org: self.org_id.0.clone(),
-                reason: format!(
-                    "in-flight messages ({}) would exceed limit ({})",
-                    in_flight + count,
-                    quotas.max_in_flight_messages
-                ),
-            });
-        }
-        let mut mw = self.msg_rate.lock().unwrap();
-        if !mw.try_consume(count as u64, quotas.max_messages_per_sec) {
-            return Err(CoreError::QuotaExceeded {
-                org: self.org_id.0.clone(),
-                reason: format!(
-                    "messages per second limit ({}) exceeded",
-                    quotas.max_messages_per_sec
-                ),
-            });
-        }
-        self.total_messages_processed
-            .fetch_add(count as u64, Ordering::Relaxed);
         Ok(())
     }
 
-    /// Checks outbound HTTP request rate limit and host allow-list for this organization.
-    pub fn check_http_request(&self, host: &str) -> Result<(), CoreError> {
-        let quotas = self.quotas.read().unwrap().clone();
+    /// Waits until `count` messages fit the organization's `max_messages_per_sec`, then accounts
+    /// for them. Returns false, without admitting, when `cancelled` turns true while waiting.
+    pub async fn admit_messages(&self, count: u64, cancelled: impl Fn() -> bool + Sync) -> bool {
+        let admitted = pace(&self.msg_rate, count, &cancelled, || {
+            self.quotas.read().unwrap().max_messages_per_sec
+        })
+        .await;
+        if admitted {
+            self.total_messages_processed
+                .fetch_add(count, Ordering::Relaxed);
+        }
+        admitted
+    }
+
+    /// Checks an outbound HTTP host against the organization's allow-list.
+    pub fn check_http_host(&self, host: &str) -> Result<(), CoreError> {
+        let quotas = self.quotas.read().unwrap();
         if let Some(ref allowed) = quotas.allowed_http_hosts {
             let host_lower = host.to_ascii_lowercase();
             let permitted = allowed.iter().any(|pattern| {
@@ -258,17 +325,15 @@ impl OrgContext {
                 });
             }
         }
-        let mut hw = self.http_rate.lock().unwrap();
-        if !hw.try_consume(1, quotas.max_http_requests_per_sec) {
-            return Err(CoreError::QuotaExceeded {
-                org: self.org_id.0.clone(),
-                reason: format!(
-                    "outbound HTTP requests per second limit ({}) exceeded",
-                    quotas.max_http_requests_per_sec
-                ),
-            });
-        }
         Ok(())
+    }
+
+    /// Waits until one more outbound HTTP request fits `max_http_requests_per_sec`.
+    pub async fn admit_http_request(&self) {
+        pace(&self.http_rate, 1, &|| false, || {
+            self.quotas.read().unwrap().max_http_requests_per_sec
+        })
+        .await;
     }
 
     /// Validates or prefixes a NATS subject so the stream can only publish/subscribe within its organization's namespace.
@@ -288,6 +353,53 @@ impl OrgContext {
             });
         }
         Ok(subject.to_string())
+    }
+}
+
+impl OrgContext {
+    /// A NATS KV bucket is stored under the subjects `$KV.<bucket>.>`, outside any subject
+    /// prefix, so an organization with `nats_subject_prefix` `a.b` may only use buckets named
+    /// `a_b`, `a_b_<name>` or `a_b-<name>`: one organization never opens another's bucket.
+    pub fn validate_nats_bucket(&self, bucket: &str) -> Result<(), CoreError> {
+        let quotas = self.quotas.read().unwrap();
+        let Some(prefix) = quotas.nats_subject_prefix.as_deref() else {
+            return Ok(());
+        };
+        let head = prefix.trim_end_matches('.').replace('.', "_");
+        let ok = bucket
+            .strip_prefix(head.as_str())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['_', '-']));
+        if ok {
+            return Ok(());
+        }
+        Err(CoreError::AccessDenied {
+            org: self.org_id.0.clone(),
+            reason: format!(
+                "NATS KV bucket '{bucket}' is outside organization prefix: name it '{head}_<name>'"
+            ),
+        })
+    }
+}
+
+/// Waits on `pacer` until `amount` units fit the limit `limit()` reads (live, each round).
+async fn pace(
+    pacer: &std::sync::Mutex<Pacer>,
+    amount: u64,
+    cancelled: &(impl Fn() -> bool + Sync),
+    limit: impl Fn() -> u64 + Sync,
+) -> bool {
+    loop {
+        let wait = pacer
+            .lock()
+            .unwrap()
+            .reserve(amount, limit(), Instant::now());
+        let Some(wait) = wait else {
+            return true;
+        };
+        if cancelled() {
+            return false;
+        }
+        tokio::time::sleep(wait.min(PACER_MAX_SLEEP)).await;
     }
 }
 

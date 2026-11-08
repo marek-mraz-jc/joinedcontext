@@ -326,6 +326,7 @@ async fn streams_api_crud_uptime_freeze_reset_redaction_and_cross_org_403() {
             ("token-org-a".to_string(), OrgId::new("org-a")),
             ("token-org-b".to_string(), OrgId::new("org-b")),
         ],
+        ..Default::default()
     };
     let state = ServerState::new(manager, auth);
     let app = build_router(state);
@@ -347,9 +348,17 @@ async fn streams_api_crud_uptime_freeze_reset_redaction_and_cross_org_403() {
     assert_eq!(ready.status(), reqwest::StatusCode::OK);
     assert_eq!(ready.text().await.unwrap(), "OK");
 
-    // 3. GET /version and /bento/version (root_path alias)
+    // 3. GET /version and /bento/version (root_path alias); with auth configured every route
+    // but /ping and /ready needs a token (E1 `require_auth`).
+    let unauth_ver = client
+        .get(format!("{base}/bento/version"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauth_ver.status(), reqwest::StatusCode::UNAUTHORIZED);
     let ver: serde_json::Value = client
         .get(format!("{base}/bento/version"))
+        .header("Authorization", "Bearer admin-secret-token")
         .send()
         .await
         .unwrap()
@@ -418,7 +427,8 @@ output:
         "stopped stream uptime must stay frozen (Bento 1.22 [T-6140])"
     );
 
-    // 6. Cross-organization access: Org B attempting GET / PUT / DELETE on Org A's `stream_a` gets 403 Forbidden!
+    // 6. Cross-organization access: Org B's GET / DELETE on Org A's `stream_a` answers exactly as
+    // for a stream that does not exist (404 "Stream not found"), so an id reveals nothing (E1).
     let cross_get = client
         .get(format!("{base}/streams/stream_a"))
         .header("Authorization", "Bearer token-org-b")
@@ -427,9 +437,10 @@ output:
         .unwrap();
     assert_eq!(
         cross_get.status(),
-        reqwest::StatusCode::FORBIDDEN,
-        "cross-org GET /streams/{{id}} must be 403 Forbidden"
+        reqwest::StatusCode::NOT_FOUND,
+        "cross-org GET /streams/{{id}} must look like a missing stream"
     );
+    assert_eq!(cross_get.text().await.unwrap(), "Stream not found");
 
     let cross_del = client
         .delete(format!("{base}/streams/stream_a"))
@@ -439,8 +450,8 @@ output:
         .unwrap();
     assert_eq!(
         cross_del.status(),
-        reqwest::StatusCode::FORBIDDEN,
-        "cross-org DELETE /streams/{{id}} must be 403 Forbidden"
+        reqwest::StatusCode::NOT_FOUND,
+        "cross-org DELETE /streams/{{id}} must look like a missing stream"
     );
 
     // 7. PUT /streams/stream_a with a resident stream resets uptime and sets active = true
@@ -473,15 +484,37 @@ output:
         .unwrap();
     assert!(stats_res["uptime_ns"].is_number());
 
+    // /metrics needs a token; an organization sees its own series with Bento's names (E2).
+    let unauth_metrics = client.get(format!("{base}/metrics")).send().await.unwrap();
+    assert_eq!(unauth_metrics.status(), reqwest::StatusCode::UNAUTHORIZED);
     let prom_text = client
         .get(format!("{base}/metrics"))
+        .header("Authorization", "Bearer token-org-a")
         .send()
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(prom_text.contains("ekiben_input_received_total"));
+    assert!(
+        prom_text.contains("# TYPE input_connection_up counter"),
+        "{prom_text}"
+    );
+    assert!(prom_text.contains(r#"org="org-a""#), "{prom_text}");
+    assert!(
+        !prom_text.contains("ekiben_input_received_total"),
+        "{prom_text}"
+    );
+    let org_b_text = client
+        .get(format!("{base}/metrics"))
+        .header("Authorization", "Bearer token-org-b")
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!org_b_text.contains("org-a"), "{org_b_text}");
 
     // 8. Linting error returns 400 with `lint_errors` / `linting_errors`
     let bad_yaml = r#"

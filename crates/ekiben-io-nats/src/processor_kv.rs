@@ -9,8 +9,9 @@ use ekiben_core::{
 };
 use serde_json::Value as JsonValue;
 
-use crate::broker_mem::{InMemoryNatsCluster, KvEntry};
+use crate::broker_mem::KvEntry;
 use crate::connection::NatsConnectionDetails;
+use crate::kv_backend::KvBucket;
 
 pub fn register(registry: &Registry) {
     registry.register_processor("nats_kv", |conf, ctx| {
@@ -25,7 +26,7 @@ pub fn register(registry: &Registry) {
 /// Implements `nats_kv` processor (`internal/impl/nats/processor_kv.go`).
 /// Supports `get`, `get_revision`, `create`, `put`, `update`, `delete`, `purge`, `history`, `keys`.
 pub struct NatsKvProcessor {
-    conn_details: NatsConnectionDetails,
+    store: KvBucket,
     bucket: String,
     operation: String,
     key: FieldExpression,
@@ -74,16 +75,12 @@ impl NatsKvProcessor {
         }
 
         Ok(Self {
-            conn_details,
+            store: KvBucket::new(conn_details, &ctx.org, &bucket)?,
             bucket,
             operation,
             key,
             revision,
         })
-    }
-
-    fn effective_bucket(&self, ctx: &ProcContext) -> String {
-        format!("{}::{}", ctx.org_id(), self.bucket)
     }
 
     fn annotate_from_entry(&self, part: &mut Part, entry: &KvEntry) {
@@ -118,8 +115,7 @@ impl Processor for NatsKvProcessor {
             let _ = p.as_bytes();
         }
         let view = PartsView(&batch);
-        let cluster = InMemoryNatsCluster::get(&self.conn_details.cluster_name());
-        let eff_bucket = self.effective_bucket(ctx);
+        let kv = &self.store;
         let mut out = Vec::with_capacity(batch.len());
 
         for (i, part) in batch.iter().enumerate() {
@@ -133,13 +129,20 @@ impl Processor for NatsKvProcessor {
                 }
             };
 
+            // Bento's texts: a missing key is nats.go's ErrKeyNotFound, an existing one the
+            // full API error.
+            let fail = |m: &mut Part, e: CoreError| match e {
+                CoreError::KeyNotFound(_) => ctx.on_error(m, "nats: key not found".to_string()),
+                CoreError::KeyAlreadyExists(text) => ctx.on_error(m, text),
+                other => ctx.on_error(m, other.to_string()),
+            };
             match self.operation.as_str() {
-                "get" => match cluster.kv_get(&eff_bucket, &key_str) {
+                "get" => match kv.get(&key_str).await {
                     Ok(entry) => {
                         self.annotate_from_entry(&mut m, &entry);
                         m.set_bytes(entry.value);
                     }
-                    Err(e) => ctx.on_error(&mut m, e.to_string()),
+                    Err(e) => fail(&mut m, e),
                 },
                 "get_revision" => {
                     let rev = self
@@ -148,25 +151,27 @@ impl Processor for NatsKvProcessor {
                         .and_then(|r| r.resolve_string(i, &view).ok())
                         .and_then(|s| s.parse::<u64>().ok())
                         .unwrap_or(0);
-                    match cluster.kv_get_revision(&eff_bucket, &key_str, rev) {
+                    match kv.get_revision(&key_str, rev).await {
                         Ok(entry) => {
                             self.annotate_from_entry(&mut m, &entry);
                             m.set_bytes(entry.value);
                         }
-                        Err(e) => ctx.on_error(&mut m, e.to_string()),
+                        Err(e) => fail(&mut m, e),
                     }
                 }
                 "create" => {
                     let val = m.as_bytes_ref();
-                    match cluster.kv_create(&eff_bucket, &key_str, val) {
+                    match kv.create(&key_str, val).await {
                         Ok(rev) => self.annotate_op(&mut m, &key_str, rev, "KeyValuePutOp"),
-                        Err(e) => ctx.on_error(&mut m, e.to_string()),
+                        Err(e) => fail(&mut m, e),
                     }
                 }
                 "put" => {
                     let val = m.as_bytes_ref();
-                    let rev = cluster.kv_put(&eff_bucket, &key_str, val);
-                    self.annotate_op(&mut m, &key_str, rev, "KeyValuePutOp");
+                    match kv.put(&key_str, val).await {
+                        Ok(rev) => self.annotate_op(&mut m, &key_str, rev, "KeyValuePutOp"),
+                        Err(e) => fail(&mut m, e),
+                    }
                 }
                 "update" => {
                     let rev = self
@@ -176,21 +181,28 @@ impl Processor for NatsKvProcessor {
                         .and_then(|s| s.parse::<u64>().ok())
                         .unwrap_or(0);
                     let val = m.as_bytes_ref();
-                    match cluster.kv_update(&eff_bucket, &key_str, val, rev) {
+                    match kv.update(&key_str, val, rev).await {
                         Ok(new_rev) => self.annotate_op(&mut m, &key_str, new_rev, "KeyValuePutOp"),
-                        Err(e) => ctx.on_error(&mut m, e.to_string()),
+                        Err(e) => fail(&mut m, e),
                     }
                 }
-                "delete" => {
-                    let rev = cluster.kv_delete(&eff_bucket, &key_str);
-                    self.annotate_op(&mut m, &key_str, rev, "KeyValueDeleteOp");
-                }
-                "purge" => {
-                    let rev = cluster.kv_purge(&eff_bucket, &key_str);
-                    self.annotate_op(&mut m, &key_str, rev, "KeyValuePurgeOp");
-                }
+                "delete" => match kv.delete(&key_str).await {
+                    Ok(rev) => self.annotate_op(&mut m, &key_str, rev, "KeyValueDeleteOp"),
+                    Err(e) => fail(&mut m, e),
+                },
+                "purge" => match kv.purge(&key_str).await {
+                    Ok(rev) => self.annotate_op(&mut m, &key_str, rev, "KeyValuePurgeOp"),
+                    Err(e) => fail(&mut m, e),
+                },
                 "history" => {
-                    let entries = cluster.kv_history(&eff_bucket, &key_str);
+                    let entries = match kv.history(&key_str).await {
+                        Ok(entries) => entries,
+                        Err(e) => {
+                            ctx.on_error(&mut m, e.to_string());
+                            out.push(m);
+                            continue;
+                        }
+                    };
                     let mut records = Vec::with_capacity(entries.len());
                     for entry in entries {
                         let mut rec = BTreeMap::new();
@@ -209,7 +221,14 @@ impl Processor for NatsKvProcessor {
                     m.set_structured(Value::Array(records.into()));
                 }
                 "keys" => {
-                    let keys = cluster.kv_keys(&eff_bucket, &key_str);
+                    let keys = match kv.keys(&key_str).await {
+                        Ok(keys) => keys,
+                        Err(e) => {
+                            ctx.on_error(&mut m, e.to_string());
+                            out.push(m);
+                            continue;
+                        }
+                    };
                     m.set_structured(Value::Array(keys.into_iter().map(Value::String).collect()));
                     m.meta_set_str("nats_kv_bucket", self.bucket.clone());
                 }
@@ -226,8 +245,7 @@ impl Processor for NatsKvProcessor {
 
 /// Implements `nats_kv` output (`internal/impl/nats/output_kv.go`).
 pub struct NatsKvOutput {
-    conn_details: NatsConnectionDetails,
-    bucket: String,
+    store: KvBucket,
     key: FieldExpression,
 }
 
@@ -248,8 +266,7 @@ impl NatsKvOutput {
             .ok_or_else(|| CoreError::config("nats_kv output requires a 'key' field"))?;
         let key = ctx.blobl_env.compile_field(key_str)?;
         Ok(Self {
-            conn_details,
-            bucket,
+            store: KvBucket::new(conn_details, &ctx.org, &bucket)?,
             key,
         })
     }
@@ -261,20 +278,17 @@ impl Output for NatsKvOutput {
         "nats_kv"
     }
 
-    async fn write_batch(&self, ctx: &StreamContext, mut batch: Batch) -> Result<(), CoreError> {
+    async fn write_batch(&self, _ctx: &StreamContext, mut batch: Batch) -> Result<(), CoreError> {
         for p in &mut batch {
             let _ = p.as_bytes();
         }
         let view = PartsView(&batch);
-        let cluster = InMemoryNatsCluster::get(&self.conn_details.cluster_name());
-        let eff_bucket = format!("{}::{}", ctx.org_id(), self.bucket);
-
         for (i, part) in batch.iter().enumerate() {
             let k = self
                 .key
                 .resolve_string(i, &view)
                 .map_err(|e| CoreError::other(e.to_string()))?;
-            cluster.kv_put(&eff_bucket, &k, part.as_bytes_ref());
+            self.store.put(&k, part.as_bytes_ref()).await?;
         }
         Ok(())
     }

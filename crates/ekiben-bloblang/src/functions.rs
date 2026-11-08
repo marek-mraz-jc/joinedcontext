@@ -68,6 +68,7 @@ pub fn known_functions() -> HashSet<String> {
         "cache_set",
         "cache_delete",
         "cache_add",
+        "ngsild_urn",
     ]
     .into_iter()
     .map(String::from)
@@ -238,6 +239,7 @@ pub(crate) fn eval_function(
         }
         "cosine_similarity" => eval_cosine_similarity(args, ctx),
         "fake" => Ok(Value::String("fake_value".to_string())),
+        "ngsild_urn" => crate::ngsild::eval_urn(args, ctx),
         _ => Err(format!("unrecognised function '{name}'")),
     }
 }

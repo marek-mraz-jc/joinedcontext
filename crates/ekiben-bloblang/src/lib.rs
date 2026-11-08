@@ -23,6 +23,7 @@ pub mod methods_strings;
 pub mod methods_structured;
 pub mod methods_time;
 pub mod msgpack;
+pub mod ngsild;
 pub mod parser;
 mod required_params;
 pub mod time_format;

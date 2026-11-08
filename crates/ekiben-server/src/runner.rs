@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 
 use ekiben_core::config::build_blobl_env_for_stream;
 use ekiben_core::{
-    execute_all, AckResponder, Batch, BatchError, CoreError, MetricsRegistry, OrgId, ProcContext,
-    Registry, ResourceManager, RunSummary, SortGroup, StreamConfig, StreamContext, StreamMetrics,
+    execute_all, AckResponder, Batch, BatchError, CoreError, EnvAccess, MetricsRegistry, OrgId,
+    ProcContext, Registry, ResourceManager, RunSummary, SortGroup, StreamConfig, StreamContext,
+    StreamMetrics,
 };
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
@@ -92,19 +93,20 @@ pub fn spawn_stream(
     resources: ResourceManager,
     metrics_reg: Option<&MetricsRegistry>,
     file_root: Option<std::path::PathBuf>,
-    allow_host_env: bool,
+    env_access: impl Into<EnvAccess>,
 ) -> Result<Arc<RunningStreamHandle>, CoreError> {
     let org_ctx = resources.get_or_create_org(&conf.org);
     let stream_slot_guard = org_ctx.acquire_stream_slot()?;
 
-    // Build environment variables for this stream from its org's `secret_refs` + process env if allowed
-    let mut env_vars = HashMap::new();
+    // The stream's variables: its organization's map (`--org-vars`, read at start), its
+    // `secret_refs`, then the process environment only as `env_access` allows (E1).
+    let mut env_vars: HashMap<String, String> = org_ctx.secrets_snapshot();
     for secret_name in &conf.secret_refs {
         if let Some(val) = org_ctx.resolve_secret(secret_name) {
             env_vars.insert(secret_name.clone(), val);
         }
     }
-    let blobl_env = build_blobl_env_for_stream(&env_vars, allow_host_env);
+    let blobl_env = build_blobl_env_for_stream(&env_vars, env_access);
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let metrics = StreamMetrics::new(stream_id.clone(), conf.org.0.clone());
@@ -146,6 +148,7 @@ pub fn spawn_stream(
     let input = registry.build_input(&conf.input, &sctx)?;
     let procs = registry.build_processor_list(&conf.pipeline.processors, &pctx)?;
     let output = registry.build_output(&conf.output, &sctx)?;
+    let threads = conf.pipeline.threads;
 
     let created_at = Instant::now();
     let stopped_after_ns = Arc::new(AtomicU64::new(0));
@@ -171,6 +174,7 @@ pub fn spawn_stream(
             output,
             sctx,
             pctx,
+            threads,
             in_conn_clone,
             out_conn_clone,
         )
@@ -204,7 +208,7 @@ pub async fn run_stream_once(
     registry: Arc<Registry>,
     resources: ResourceManager,
     file_root: Option<std::path::PathBuf>,
-    allow_host_env: bool,
+    env_access: impl Into<EnvAccess>,
 ) -> Result<RunSummary, CoreError> {
     let handle = spawn_stream(
         stream_id.into(),
@@ -213,7 +217,7 @@ pub async fn run_stream_once(
         resources,
         None,
         file_root,
-        allow_host_env,
+        env_access,
     )?;
     let summary = handle
         .wait_for_completion()
@@ -255,13 +259,15 @@ pub(crate) fn register_inline_resources(
     }
     for i in &conf.resources.input_resources {
         if !i.label.is_empty() {
-            let inp = registry.build_input(i, sctx)?;
+            let path = format!("root.input_resources.{}", i.label);
+            let inp = registry.build_input_at(i, sctx, &path)?;
             sctx.resources.insert_input(&conf.org, i.label.clone(), inp);
         }
     }
     for o in &conf.resources.output_resources {
         if !o.label.is_empty() {
-            let out = registry.build_output(o, sctx)?;
+            let path = format!("root.output_resources.{}", o.label);
+            let out = registry.build_output_at(o, sctx, &path)?;
             sctx.resources
                 .insert_output(&conf.org, o.label.clone(), out);
         }
@@ -279,6 +285,7 @@ async fn execute_stream_loop(
     output: Arc<dyn ekiben_core::Output>,
     sctx: StreamContext,
     pctx: ProcContext,
+    threads: isize,
     input_connected: Arc<AtomicBool>,
     output_connected: Arc<AtomicBool>,
 ) -> RunSummary {
@@ -308,7 +315,8 @@ async fn execute_stream_loop(
     output_connected.store(true, Ordering::Release);
 
     let cpu_limit_ms = sctx.org.get_quotas().max_cpu_time_ms_per_run;
-    let (tx_chan, mut rx_chan) = mpsc::channel::<(Batch, AckResponder)>(64);
+    let workers = worker_count(threads);
+    let (tx_chan, rx_chan) = mpsc::channel::<(Batch, AckResponder)>(64.max(workers * 2));
 
     let sctx_in = sctx.clone();
     let in_conn_flag = input_connected.clone();
@@ -326,6 +334,16 @@ async fn execute_stream_loop(
                         continue;
                     }
                     let msg_count = batch.len() as u64;
+                    // The organization's message rate paces the input (backpressure); it never fails it.
+                    let waiting = sctx_in.clone();
+                    if !sctx_in
+                        .org
+                        .admit_messages(msg_count, || waiting.is_shutting_down())
+                        .await
+                    {
+                        ack.nack(BatchError::new(batch, "stream stopped".to_string()));
+                        break;
+                    }
                     let byte_count: u64 = batch.iter().map(|p| p.as_bytes_ref().len() as u64).sum();
                     sctx_in
                         .metrics
@@ -335,11 +353,6 @@ async fn execute_stream_loop(
                         .metrics
                         .input_bytes
                         .fetch_add(byte_count, Ordering::Relaxed);
-                    if !sctx_in.label.is_empty() {
-                        sctx_in
-                            .metrics
-                            .incr_counter(&format!("{}.input_received", sctx_in.label), msg_count);
-                    }
                     if tx_chan.send((batch, ack)).await.is_err() {
                         break;
                     }
@@ -357,77 +370,36 @@ async fn execute_stream_loop(
         read_err
     });
 
-    let mut write_failed: Option<String> = None;
-
-    while let Some((batch, ack)) = rx_chan.recv().await {
-        if started_at.elapsed().as_millis() as u64 > cpu_limit_ms {
-            let err_msg = format!("stream run exceeded per-run time budget ({cpu_limit_ms} ms)");
-            ack.nack(BatchError::new(batch, err_msg.clone()));
-            write_failed = Some(err_msg);
-            break;
-        }
-
-        let (sorter, tagged_batch) = SortGroup::new(batch);
-        match execute_all(&pctx, &procs, vec![tagged_batch.clone()]).await {
-            Ok(out_batches) => {
-                if out_batches.is_empty() {
-                    ack.ack();
-                    continue;
-                }
-                let mut batch_err: Option<BatchError> = None;
-                for out_batch in out_batches {
-                    if out_batch.is_empty() {
-                        continue;
-                    }
-                    let collapsed: u64 = out_batch.iter().map(|p| p.collapsed_count() as u64).sum();
-                    let out_bytes: u64 = out_batch
-                        .iter()
-                        .map(|p| p.as_bytes_ref().len() as u64)
-                        .sum();
-
-                    match output.write_batch(&sctx, out_batch.clone()).await {
-                        Ok(()) => {
-                            sctx.metrics
-                                .output_sent
-                                .fetch_add(collapsed, Ordering::Relaxed);
-                            sctx.metrics
-                                .output_batch_sent
-                                .fetch_add(1, Ordering::Relaxed);
-                            sctx.metrics
-                                .output_bytes
-                                .fetch_add(out_bytes, Ordering::Relaxed);
-                        }
-                        Err(e) => {
-                            sctx.metrics.output_error.fetch_add(1, Ordering::Relaxed);
-                            let err_str = e.to_string();
-                            write_failed = Some(err_str.clone());
-                            let b_err = batch_err.get_or_insert_with(|| {
-                                BatchError::new(tagged_batch.clone(), err_str.clone())
-                            });
-                            for p in &out_batch {
-                                if let Some(orig_idx) = sorter.get_index(p) {
-                                    b_err.failed(orig_idx, err_str.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-                if let Some(b_err) = batch_err {
-                    ack.nack(b_err);
-                } else {
-                    ack.ack();
-                }
-            }
-            Err(e) => {
-                let err_str = e.to_string();
-                ack.nack(BatchError::new(tagged_batch, err_str.clone()));
-                write_failed = Some(err_str);
-                break;
-            }
+    let pool = Arc::new(WorkerPool {
+        rx: tokio::sync::Mutex::new(rx_chan),
+        procs: procs.clone(),
+        output: output.clone(),
+        sctx: sctx.clone(),
+        pctx,
+        cpu_limit_ns: cpu_limit_ms.saturating_mul(1_000_000),
+        busy_ns: AtomicU64::new(0),
+        stop: AtomicBool::new(false),
+        taken: AtomicU64::new(0),
+        in_flight: Arc::new(tokio::sync::Semaphore::new(workers * 2)),
+        failure: std::sync::Mutex::new(None),
+    });
+    let (done_tx, done_rx) = mpsc::channel::<Processed>(workers * 2);
+    let writer = tokio::spawn(pool.clone().write_in_order(done_rx));
+    let handles: Vec<_> = (0..workers)
+        .map(|_| pipeline_runtime().spawn(pool.clone().work(done_tx.clone())))
+        .collect();
+    drop(done_tx);
+    for h in handles {
+        if let Err(e) = h.await {
+            pool.fail(format!("pipeline worker ended abnormally: {e}"));
         }
     }
-
-    drop(rx_chan);
+    if let Err(e) = writer.await {
+        pool.fail(format!("pipeline writer ended abnormally: {e}"));
+    }
+    let write_failed = pool.failure.lock().unwrap().take();
+    // Dropping the pool drops the receiver, which ends an input still waiting to send.
+    drop(pool);
     let input_err = input_task.await.ok().flatten();
 
     for p in &procs {
@@ -451,6 +423,205 @@ async fn execute_stream_loop(
     }
 
     summary
+}
+
+/// The runtime every stream's pipeline workers run on, one thread per core, apart from the runtime
+/// of inputs, outputs and the API. tokio does not preempt a task, so CPU-bound batches on the main
+/// runtime held the input and the writer back: woken into a busy thread's LIFO slot, which no other
+/// thread can steal, they waited out each batch (threads -1 ran no faster than threads 1).
+fn pipeline_runtime() -> tokio::runtime::Handle {
+    static RUNTIME: std::sync::OnceLock<Option<tokio::runtime::Runtime>> =
+        std::sync::OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(worker_count(-1))
+                .thread_name("ekiben-pipeline")
+                .enable_all()
+                .build()
+                .ok()
+        })
+        .as_ref()
+        .map_or_else(tokio::runtime::Handle::current, |rt| rt.handle().clone())
+}
+
+/// The number of pipeline workers for `pipeline.threads`: zero or less means one per core (Bento).
+fn worker_count(threads: isize) -> usize {
+    if threads > 0 {
+        return threads as usize;
+    }
+    std::thread::available_parallelism().map_or(4, |n| n.get())
+}
+
+/// The workers of one stream: each takes the next input batch and runs the pipeline over it, so
+/// batches run in parallel; one writer writes the results in input order, so a run's output does
+/// not depend on the thread count.
+struct WorkerPool {
+    rx: tokio::sync::Mutex<mpsc::Receiver<(Batch, AckResponder)>>,
+    procs: Vec<Arc<dyn ekiben_core::Processor>>,
+    output: Arc<dyn ekiben_core::Output>,
+    sctx: StreamContext,
+    pctx: ProcContext,
+    /// `max_cpu_time_ms_per_run`, charged with the time workers spend inside the processors.
+    cpu_limit_ns: u64,
+    busy_ns: AtomicU64,
+    stop: AtomicBool,
+    failure: std::sync::Mutex<Option<String>>,
+    /// Sequence numbers handed out as batches are taken.
+    taken: AtomicU64,
+    /// Bounds the batches taken but not yet written, so a slow batch cannot let the writer's
+    /// reorder buffer grow without limit.
+    in_flight: Arc<tokio::sync::Semaphore>,
+}
+
+/// A batch the pipeline has run over, waiting for its turn to be written.
+struct Processed {
+    seq: u64,
+    sorter: SortGroup,
+    tagged_batch: Batch,
+    ack: AckResponder,
+    result: Result<Vec<Batch>, String>,
+    slot: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl WorkerPool {
+    /// Records the run's first failure.
+    fn fail(&self, reason: String) {
+        self.failure.lock().unwrap().get_or_insert(reason);
+    }
+
+    async fn work(self: Arc<Self>, done: mpsc::Sender<Processed>) {
+        while !self.stop.load(Ordering::Acquire) {
+            let Ok(slot) = self.in_flight.clone().acquire_owned().await else {
+                return;
+            };
+            let next = {
+                let mut rx = self.rx.lock().await;
+                rx.recv()
+                    .await
+                    .map(|b| (self.taken.fetch_add(1, Ordering::Relaxed), b))
+            };
+            let Some((seq, (batch, ack))) = next else {
+                return;
+            };
+            // Releasing the receiver's lock woke the next worker into this thread's LIFO slot, which
+            // no other thread can steal: yield so it takes the next batch now, instead of waiting
+            // out this CPU-bound one (without this the workers ran one after another, 12-14 s).
+            tokio::task::yield_now().await;
+            let (sorter, tagged_batch) = SortGroup::new(batch);
+            let result = if self.stop.load(Ordering::Acquire) {
+                Err("stream stopped".to_string())
+            } else if self.busy_ns.load(Ordering::Relaxed) > self.cpu_limit_ns {
+                Err(format!(
+                    "stream run exceeded per-run processing time budget ({} ms)",
+                    self.cpu_limit_ns / 1_000_000
+                ))
+            } else {
+                let started = Instant::now();
+                let res = execute_all(&self.pctx, &self.procs, vec![tagged_batch.clone()]).await;
+                self.busy_ns
+                    .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                res.map(|mut out_batches| {
+                    // Encode structured results here, in parallel, rather than in the one writer.
+                    for part in out_batches.iter_mut().flatten() {
+                        let _ = part.as_bytes();
+                    }
+                    out_batches
+                })
+                .map_err(|e| e.to_string())
+            };
+            let processed = Processed {
+                seq,
+                sorter,
+                tagged_batch,
+                ack,
+                result,
+                slot,
+            };
+            if done.send(processed).await.is_err() {
+                return;
+            }
+        }
+    }
+
+    /// Writes processed batches in sequence order as they arrive, holding early ones back.
+    async fn write_in_order(self: Arc<Self>, mut done: mpsc::Receiver<Processed>) {
+        let mut held = std::collections::BTreeMap::new();
+        let mut next = 0u64;
+        while let Some(p) = done.recv().await {
+            held.insert(p.seq, p);
+            while let Some(p) = held.remove(&next) {
+                next += 1;
+                match p.result {
+                    Ok(out_batches) => {
+                        self.write_all(&out_batches, &p.sorter, &p.tagged_batch, p.ack)
+                            .await;
+                        // Freeing a batch's messages costs more than writing them (glibc frees
+                        // memory other threads allocated slowly): free on the blocking pool, in
+                        // parallel, and give the in-flight slot back once that is done.
+                        let leftovers = (out_batches, p.tagged_batch, p.slot);
+                        tokio::task::spawn_blocking(move || drop(leftovers));
+                    }
+                    Err(reason) => {
+                        p.ack.nack(BatchError::new(p.tagged_batch, reason.clone()));
+                        self.fail(reason);
+                        self.stop.store(true, Ordering::Release);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Writes a processed batch's results, then acks it, or nacks the messages a write failed.
+    async fn write_all(
+        &self,
+        out_batches: &[Batch],
+        sorter: &SortGroup,
+        tagged_batch: &Batch,
+        ack: AckResponder,
+    ) {
+        let mut batch_err: Option<BatchError> = None;
+        for out_batch in out_batches.iter().filter(|b| !b.is_empty()) {
+            if let Err(e) = self.write(out_batch).await {
+                let reason = e.to_string();
+                self.fail(reason.clone());
+                let b_err = batch_err
+                    .get_or_insert_with(|| BatchError::new(tagged_batch.clone(), reason.clone()));
+                for p in out_batch {
+                    if let Some(orig_idx) = sorter.get_index(p) {
+                        b_err.failed(orig_idx, reason.clone());
+                    }
+                }
+            }
+        }
+        match batch_err {
+            Some(b_err) => ack.nack(b_err),
+            None => ack.ack(),
+        }
+    }
+
+    /// Writes one batch and counts the messages written (`messages_out`).
+    async fn write(&self, out_batch: &Batch) -> Result<(), CoreError> {
+        let out_bytes: u64 = out_batch
+            .iter()
+            .map(|p| p.as_bytes_ref().len() as u64)
+            .sum();
+        let metrics = &self.sctx.metrics;
+        match self.output.write_batch(&self.sctx, out_batch.clone()).await {
+            Ok(()) => {
+                metrics
+                    .output_sent
+                    .fetch_add(out_batch.len() as u64, Ordering::Relaxed);
+                metrics.output_batch_sent.fetch_add(1, Ordering::Relaxed);
+                metrics.output_bytes.fetch_add(out_bytes, Ordering::Relaxed);
+                Ok(())
+            }
+            Err(e) => {
+                metrics.output_error.fetch_add(1, Ordering::Relaxed);
+                Err(e)
+            }
+        }
+    }
 }
 
 fn read_peak_rss_bytes() -> Option<u64> {

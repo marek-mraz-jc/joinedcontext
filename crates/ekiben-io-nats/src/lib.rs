@@ -7,6 +7,7 @@ pub mod cache_kv;
 pub mod connection;
 pub mod input_core;
 pub mod input_jetstream;
+pub mod kv_backend;
 pub mod output_core;
 pub mod output_jetstream;
 pub mod processor_kv;

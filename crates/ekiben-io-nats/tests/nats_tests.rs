@@ -153,12 +153,18 @@ async fn nats_kv_cache_and_processor_and_org_subject_isolation() {
     let kv_conf_val = serde_json::json!({
         "nats_kv": {
             "urls": [url],
-            "bucket": "shared_bucket"
+            "bucket": "org_a_shared"
         }
     });
     let kv_conf = ComponentConfig::from_json_value(&kv_conf_val, "nats_kv", None).unwrap();
     let cache_a = reg.build_cache(&kv_conf, &sctx_a).unwrap();
-    let cache_b = reg.build_cache(&kv_conf, &sctx_b).unwrap();
+    // A real KV bucket lives outside every subject prefix: org B may not name org A's bucket.
+    assert!(
+        reg.build_cache(&kv_conf, &sctx_b).is_err(),
+        "Org B must be refused a bucket outside its prefix"
+    );
+    let (_, sctx_open, _) = make_nats_ctx("org-open", None);
+    let cache_b = reg.build_cache(&kv_conf, &sctx_open).unwrap();
 
     cache_a
         .set("k1", Bytes::from_static(b"val_from_a"), None)
@@ -177,7 +183,7 @@ async fn nats_kv_cache_and_processor_and_org_subject_isolation() {
     let put_val = serde_json::json!({
         "nats_kv": {
             "urls": [url],
-            "bucket": "proc_bucket",
+            "bucket": "org_a_proc",
             "operation": "put",
             "key": "item.${! json(\"id\") }"
         }
@@ -185,7 +191,7 @@ async fn nats_kv_cache_and_processor_and_org_subject_isolation() {
     let get_val = serde_json::json!({
         "nats_kv": {
             "urls": [url],
-            "bucket": "proc_bucket",
+            "bucket": "org_a_proc",
             "operation": "get",
             "key": "item.${! @lookup_id }"
         }

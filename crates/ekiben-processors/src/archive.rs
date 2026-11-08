@@ -46,24 +46,32 @@ pub fn register(registry: &Registry) {
     });
 
     registry.register_processor("compress", |conf, _ctx| {
-        let algo = conf
-            .config
-            .get("algorithm")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("gzip")
-            .to_string();
-        Ok(Arc::new(CompressProcessor { algorithm: algo }))
+        Ok(Arc::new(CompressProcessor {
+            algorithm: compression_algorithm(conf)?,
+        }))
     });
 
     registry.register_processor("decompress", |conf, _ctx| {
-        let algo = conf
-            .config
-            .get("algorithm")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("gzip")
-            .to_string();
-        Ok(Arc::new(DecompressProcessor { algorithm: algo }))
+        Ok(Arc::new(DecompressProcessor {
+            algorithm: compression_algorithm(conf)?,
+        }))
     });
+}
+
+/// The `algorithm` of a compress or decompress step; Bento refuses an unknown one when it builds
+/// the step, not per message.
+fn compression_algorithm(conf: &ComponentConfig) -> Result<String, CoreError> {
+    let algo = conf
+        .config
+        .get("algorithm")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("gzip");
+    if !matches!(algo, "gzip" | "pgzip" | "zlib" | "flate") {
+        return Err(CoreError::config(format!(
+            "compression algorithm not supported: {algo}"
+        )));
+    }
+    Ok(algo.to_string())
 }
 
 /// Implements `archive` (`internal/impl/pure/processor_archive.go`).
@@ -197,8 +205,13 @@ impl Processor for ArchiveProcessor {
                                 .unwrap_or_else(|_| format!("part_{i}")),
                             None => format!("part_{i}"),
                         };
-                        zw.start_file(name, opts)
-                            .map_err(|e| CoreError::other(e.to_string()))?;
+                        // ponytail: Go's archive/zip (Bento) writes a repeated name; the zip crate refuses it.
+                        zw.start_file(name.as_str(), opts).map_err(|e| {
+                            CoreError::other(format!(
+                                "zip archive member '{name}' failed: {}",
+                                zip_error_text(&e)
+                            ))
+                        })?;
                         zw.write_all(&part.as_bytes_ref())
                             .map_err(|e| CoreError::other(e.to_string()))?;
                     }
@@ -211,6 +224,16 @@ impl Processor for ArchiveProcessor {
 
         first_part.add_collapsed_count(total_collapsed);
         Ok(vec![vec![first_part]])
+    }
+}
+
+/// The zip crate prints a duplicate name through `EscapeAscii`'s Debug (`EscapeAscii { .. }`).
+fn zip_error_text(e: &zip::result::ZipError) -> String {
+    match e {
+        zip::result::ZipError::InvalidArchive(m) if m.starts_with("Duplicate filename") => {
+            "the name is used twice in this batch".to_string()
+        }
+        other => other.to_string(),
     }
 }
 

@@ -22,6 +22,8 @@ pub struct JetStreamOutput {
     subject: FieldExpression,
     headers: HashMap<String, FieldExpression>,
     meta_filter: MetadataFilter,
+    max_in_flight: usize,
+    live: tokio::sync::Mutex<Option<async_nats::jetstream::Context>>,
 }
 
 impl JetStreamOutput {
@@ -50,11 +52,22 @@ impl JetStreamOutput {
             .map(extract_metadata_filter)
             .unwrap_or_default();
 
+        let max_in_flight = match obj.get("max_in_flight") {
+            None => 1024,
+            Some(v) => v
+                .as_u64()
+                .filter(|n| *n > 0)
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or_else(|| CoreError::config("max_in_flight must be a positive integer"))?,
+        };
+
         Ok(Self {
             conn_details,
             subject,
             headers,
             meta_filter,
+            max_in_flight,
+            live: tokio::sync::Mutex::new(None),
         })
     }
 }
@@ -65,11 +78,25 @@ impl Output for JetStreamOutput {
         "nats_jetstream"
     }
 
+    async fn connect(&self, ctx: &StreamContext) -> Result<(), CoreError> {
+        if self.conn_details.is_in_memory() {
+            return Ok(());
+        }
+        let mut guard = self.live.lock().await;
+        if guard.is_none() {
+            let client = self.conn_details.connect_live(&ctx.label).await?;
+            *guard = Some(async_nats::jetstream::new(client));
+        }
+        Ok(())
+    }
+
     async fn write_batch(&self, ctx: &StreamContext, mut batch: Batch) -> Result<(), CoreError> {
         for p in &mut batch {
             let _ = p.as_bytes();
         }
         let view = PartsView(&batch);
+        let mut js: Option<async_nats::jetstream::Context> = None;
+        let mut pending = Vec::new();
 
         for (i, part) in batch.iter().enumerate() {
             let raw_subj = self.subject.resolve_string(i, &view).map_err(|e| {
@@ -92,9 +119,47 @@ impl Output for JetStreamOutput {
                 }
             }
 
-            let cluster = InMemoryNatsCluster::get(&self.conn_details.cluster_name());
-            cluster.publish_jetstream(subject, hdrs, part.as_bytes_ref());
+            if self.conn_details.is_in_memory() {
+                let cluster = InMemoryNatsCluster::get(&self.conn_details.cluster_name());
+                cluster.publish_jetstream(subject, hdrs, part.as_bytes_ref());
+                continue;
+            }
+            if js.is_none() {
+                let mut guard = self.live.lock().await;
+                if guard.is_none() {
+                    let client = self.conn_details.connect_live(&ctx.label).await?;
+                    *guard = Some(async_nats::jetstream::new(client));
+                }
+                js = guard.clone();
+            }
+            let Some(js) = js.as_ref() else {
+                return Err(CoreError::NotConnected);
+            };
+            let mut nats_hdrs = async_nats::HeaderMap::new();
+            for (k, v) in hdrs {
+                nats_hdrs.insert(k.as_str(), v.as_str());
+            }
+            let ack = js
+                .publish_with_headers(subject, nats_hdrs, part.as_bytes_ref())
+                .await
+                .map_err(|e| CoreError::other(format!("nats_jetstream publish failed: {e}")))?;
+            pending.push(ack);
+            if pending.len() >= self.max_in_flight {
+                await_acks(&mut pending).await?;
+            }
         }
-        Ok(())
+        await_acks(&mut pending).await
     }
+}
+
+/// Waits for every publish ack: the batch is acked upstream only once JetStream stored it.
+async fn await_acks(
+    pending: &mut Vec<async_nats::jetstream::context::PublishAckFuture>,
+) -> Result<(), CoreError> {
+    for res in
+        futures::future::join_all(pending.drain(..).map(std::future::IntoFuture::into_future)).await
+    {
+        res.map_err(|e| CoreError::other(format!("nats_jetstream publish not acknowledged: {e}")))?;
+    }
+    Ok(())
 }
