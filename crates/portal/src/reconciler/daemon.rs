@@ -2496,7 +2496,15 @@ impl Syncer {
             }
         }
 
-        if !runner.is_empty() {
+        // A host that runs the runner in its own process takes the environment itself, an
+        // empty one too, so a credential no pipeline names any more leaves the runner.
+        if let Some(host) = crate::pipeline_secrets::host_runner() {
+            host.replace(runner.values().clone());
+            tracing::info!(
+                variables = runner.variables().count(),
+                "the pipeline runner's secrets are handed to the host runner"
+            );
+        } else if !runner.is_empty() {
             let written = match self.credentials.as_ref() {
                 Some((kube, namespace)) => self.write_runner_secret(kube, namespace, &runner).await,
                 None => {

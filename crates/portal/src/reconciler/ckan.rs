@@ -386,8 +386,7 @@ impl CkanSync {
                 env: None,
                 age_key_file: age_key_file.as_deref(),
             };
-            let token = publisher::token(&target.instance, &repository, source)
-                .map_err(|err| err.to_string())?;
+            let token = project_token(&target, &repository, source)?;
             let api = HttpCkan::new(&api_url, token).map_err(|err| err.to_string())?;
             let mut api = Paced::new(api, last_call, CALL_GAP).remembering(&api_url, known);
             if withdraw {
@@ -436,8 +435,7 @@ impl CkanSync {
                 env: None,
                 age_key_file: age_key_file.as_deref(),
             };
-            let token = publisher::token(&target.instance, &repository, source)
-                .map_err(|err| err.to_string())?;
+            let token = project_token(&target, &repository, source)?;
             let api = HttpCkan::new(&api_url, token).map_err(|err| err.to_string())?;
             let mut api = Paced::new(api, last_call, CALL_GAP).remembering(&api_url, known);
             sweep_with(&mut api, &organization, &kept)
@@ -837,6 +835,25 @@ pub fn withdraw_one(api: &mut impl CkanApi, target: &Target) -> Result<Publicati
     })
 }
 
+/// The instance's API token, resolved against the Endpoint's own project's secrets
+/// (`projects/{project}/secrets`, CC-06) and never the whole staged tree, so one project's
+/// `apiTokenRef` cannot name another project's secret (T-6227). The instance lives in that
+/// project too: the publisher refuses an `instanceRef` into another one.
+fn project_token(
+    target: &Target,
+    repository: &Path,
+    source: publisher::TokenSource<'_>,
+) -> Result<jcctl::secrets::SecretValue, String> {
+    let project = target.id.namespace.as_deref().unwrap_or_default();
+    let folder = crate::pipeline_secrets::secrets_folder(
+        repository,
+        project,
+        std::slice::from_ref(&target.instance.api_token_ref),
+    )
+    .map_err(|err| err.to_string())?;
+    publisher::token(&target.instance, &folder, source).map_err(|err| err.to_string())
+}
+
 /// The projects of a repository, as the loader files them.
 fn projects(repo: &Repository) -> BTreeSet<String> {
     repo.iter()
@@ -960,4 +977,82 @@ pub fn withdrawn(previous: &Mirror, published: &BTreeSet<(String, String)>) -> V
         });
     }
     gone
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn target(project: &str) -> Target {
+        let publication = json!({ "instanceRef": { "kind": "CkanInstance", "name": "hel-fi" } });
+        Target {
+            id: ResourceId {
+                group: "joinedcontext.com".to_owned(),
+                kind: "Endpoint".to_owned(),
+                namespace: Some(project.to_owned()),
+                name: "bikes".to_owned(),
+            },
+            manifest: RawManifest {
+                api_version: "joinedcontext.com/v1alpha1".to_owned(),
+                kind: "Endpoint".to_owned(),
+                metadata: RawMetadata {
+                    name: "bikes".to_owned(),
+                    namespace: Some(project.to_owned()),
+                    rest: serde_json::Map::new(),
+                },
+                spec: json!({}),
+                status: None,
+            },
+            slug: "scsd2eehkx42n53z2zyd6vshfh7s7irf".to_owned(),
+            publication: serde_json::from_value(publication).expect("a publication"),
+            instance_name: "hel-fi".to_owned(),
+            instance: serde_json::from_value(json!({
+                "url": "https://data.example.fi",
+                "organizationDefault": "hel-fi",
+                "apiTokenRef": { "name": "ckan-api-token", "key": "token" },
+            }))
+            .expect("an instance"),
+            language: None,
+            instance_title: None,
+            history: Default::default(),
+            granted: Vec::new(),
+        }
+    }
+
+    /// T-6227 for the catalogue token: the publisher read every SOPS file of the staged tree, so
+    /// an `apiTokenRef` of one project resolved a secret of the same name in another.
+    #[test]
+    fn an_api_token_resolves_only_from_its_own_projects_secrets() {
+        use age::secrecy::ExposeSecret as _;
+        let identity = age::x25519::Identity::generate();
+        let tree = std::env::temp_dir().join(format!("t6227-ckan-{}", std::process::id()));
+        let folder = tree.join("projects/helsinki/secrets");
+        std::fs::create_dir_all(&folder).expect("folder");
+        let text = crate::secret_files::encrypt(
+            "ckan-api-token",
+            &BTreeMap::from([(
+                "token".to_owned(),
+                zeroize::Zeroizing::new("helsinki-ckan-token".to_owned()),
+            )]),
+            &[identity.to_public().to_string()],
+            "2026-11-08T00:00:00Z",
+        )
+        .expect("encrypted");
+        std::fs::write(folder.join("ckan-api-token.enc.yaml"), text).expect("file");
+        let key = tree.join("age.key");
+        std::fs::write(&key, identity.to_string().expose_secret()).expect("key");
+        let source = publisher::TokenSource {
+            env: None,
+            age_key_file: Some(&key),
+        };
+
+        let own = project_token(&target("helsinki"), &tree, source).expect("its own");
+        assert_eq!(own.expose(), "helsinki-ckan-token");
+        let other = project_token(&target("oulu"), &tree, source).expect_err("another");
+        assert!(other.contains("ckan-api-token"), "{other}");
+        assert!(!other.contains("helsinki-ckan-token"), "{other}");
+        assert!(project_token(&target("../helsinki"), &tree, source).is_err());
+        std::fs::remove_dir_all(&tree).ok();
+    }
 }
