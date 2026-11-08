@@ -7,7 +7,7 @@ mod common;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path, path_regex, query_param};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{encode, envelope, person, Answer, REPO};
@@ -211,21 +211,31 @@ fn branch(family: &Family, number: u64) -> String {
 }
 
 async fn forge() -> MockServer {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
 
     // Every existing resource has its file; a new one has none.
     for family in &FAMILIES {
         let file = serde_norway::to_string(&manifest(family, &existing(family))).expect("yaml");
+        // The resource's own file, `…/{name}.yaml` or `…/{name}/{file}.yaml`, by its `@p` path.
+        let own = regex::Regex::new(&format!(
+            r"^'.*/{}(/[a-z-]+)?\.yaml'$",
+            regex::escape(&existing(family))
+        ))
+        .expect("a pattern");
         Mock::given(method("GET"))
-            .and(path_regex(format!(
-                "^{REPO}/contents/.*/{}(/[a-z-]+)?\\.yaml$",
-                existing(family)
-            )))
+            .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
+            .and(move |request: &wiremock::Request| {
+                request
+                    .url
+                    .query_pairs()
+                    .any(|(key, value)| key == "@p" && own.is_match(&value))
+            })
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "sha-existing", "content": encode(&file)
+                "Sha": "sha-existing",
+                "Content": encode(&file)
             })))
             .with_priority(2)
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
     // The merge requests the approval cells decide: one by somebody else and one by each person.
@@ -239,48 +249,55 @@ async fn forge() -> MockServer {
                 None => ("someone".to_owned(), "someone@hel.fi".to_owned()),
             };
             Mock::given(method("GET"))
-                .and(path(format!("{REPO}/pulls/{number}")))
+                .and(path(format!("{REPO}/PullRequests({number})")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                    "number": number,
-                    "html_url": format!("https://gitea.example/pulls/{number}"),
-                    "state": "open",
-                    "title": format!("create {} proposed", family.kind),
-                    "head": { "ref": head },
-                    "base": { "ref": "main" },
-                    "created_at": "2026-09-14T09:00:00Z",
-                    "user": { "login": login, "full_name": login, "email": email },
-                    "mergeable": true,
-                    "merged": false
+                    "Number": number,
+                    "HtmlUrl": format!("https://shako.example/pulls/{number}"),
+                    "State": "open",
+                    "Title": format!("create {} proposed", family.kind),
+                    "Head": head,
+                    "Base": "main",
+                    "CreatedAt": "2026-09-14T09:00:00Z",
+                    "Author": login,
+                    "AuthorName": login,
+                    "AuthorEmail": email,
+                    "Mergeable": true,
+                    "Merged": false
                 })))
-                .mount(&gitea)
+                .mount(&shako)
                 .await;
             Mock::given(method("GET"))
-                .and(path(format!("{REPO}/pulls/{number}/files")))
-                .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-                    "filename": format!("projects/helsinki/{}/proposed.yaml", family.plural),
-                    "status": "added"
-                }])))
-                .mount(&gitea)
+                .and(path(format!("{REPO}/PullRequests({number})/Files")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "value": [
+                        {
+                            "Filename": format!("projects/helsinki/{}/proposed.yaml", family.plural),
+                            "Status": "added"
+                        }
+                    ]
+                })))
+                .mount(&shako)
                 .await;
             let file = serde_norway::to_string(&manifest(family, "proposed")).expect("yaml");
             Mock::given(method("GET"))
-                .and(path_regex(format!("^{REPO}/contents/.*")))
-                .and(query_param("ref", head.as_str()))
+                .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
+                .and(query_param("@r", format!("'{head}'")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                    "sha": "sha-proposed", "content": encode(&file)
+                    "Sha": "sha-proposed",
+                    "Content": encode(&file)
                 })))
                 .with_priority(1)
-                .mount(&gitea)
+                .mount(&shako)
                 .await;
         }
     }
-    gitea
+    shako
 }
 
 /// The organization's roles and a binding of each person over the whole organization, the
 /// context space the manifests read, and one existing resource of each family.
-fn state_with(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     // Entity: a pipeline writes only what its proposer may write, the space behind its target
     // Endpoint (PL-94).
     let kinds: Vec<&str> = FAMILIES
@@ -397,8 +414,8 @@ fn check(misses: &mut Vec<String>, cell: &str, answer: &Answer, expect: &Expect)
 
 #[tokio::test]
 async fn every_role_meets_every_route_and_operation_exactly_as_the_table_says() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     let mut misses = Vec::new();
 
     for (index, family) in FAMILIES.iter().enumerate() {

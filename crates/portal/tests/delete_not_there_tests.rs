@@ -17,8 +17,8 @@ const SPACES: &str = "/api/v1/projects/ovzdusie/spaces";
 
 /// `ovzdusie` holds the space `mobility`. `reader` reads spaces there, `elsewhere` reads spaces in
 /// `doprava` only, `remover` reads and deletes them in `ovzdusie`.
-fn state_with(gitea: &wiremock::MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &wiremock::MockServer) -> AppState {
+    let state = common::state_on(shako);
     state.mirror.upsert(envelope(
         "ContextSpace",
         "mobility",
@@ -66,8 +66,8 @@ fn detail(body: &str) -> String {
 /// exists, from `nothing`, which does not; the words differ only by the name they were given.
 #[tokio::test]
 async fn a_removal_by_a_caller_who_may_not_read_it_is_not_there() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     for stranger in ["nobody", "elsewhere"] {
         let mut said = Vec::new();
@@ -96,8 +96,8 @@ async fn a_removal_by_a_caller_who_may_not_read_it_is_not_there() {
 /// and one who holds it gets the removal's dry run.
 #[tokio::test]
 async fn a_reader_without_delete_gets_the_403_and_a_remover_the_dry_run() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     let url = format!("{SPACES}/mobility?dryRun=All");
 
     let reader = send(&state, person("reader"), "DELETE", &url, None).await;

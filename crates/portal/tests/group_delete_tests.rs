@@ -8,7 +8,7 @@ mod common;
 use axum::http::StatusCode;
 use base64::Engine;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path_regex};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{envelope, forge, person, send, REPO};
@@ -18,8 +18,8 @@ use joinedcontext_portal::state::AppState;
 const GROUP: &str = "/api/v1/projects/org/groups/stewards";
 
 /// `ada@hel.fi` administers the organization; `stewards` is named by two bindings and one App.
-fn state_with(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     let mirror = &state.mirror;
     mirror.upsert(envelope(
         "Role",
@@ -108,28 +108,30 @@ fn state_with(gitea: &MockServer) -> AppState {
 }
 
 /// Every manifest the forge holds reads back as a blob with a sha.
-async fn files_exist(gitea: &MockServer) {
+async fn files_exist(shako: &MockServer) {
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/contents/.+")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": base64::engine::general_purpose::STANDARD.encode("kind: Group\n"),
+            "Sha": "blob-1",
+            "Content": base64::engine::general_purpose::STANDARD.encode("kind: Group\n")
         })))
         .with_priority(5)
-        .mount(gitea)
+        .mount(shako)
         .await;
 }
 
 /// The files of the one commit the deletion made: `(operation, path, decoded content)`.
-async fn committed(gitea: &MockServer) -> Vec<(String, String, String)> {
-    let requests = gitea.received_requests().await.unwrap_or_default();
+async fn committed(shako: &MockServer) -> Vec<(String, String, String)> {
+    let requests = shako.received_requests().await.unwrap_or_default();
     let commits: Vec<Value> = requests
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/contents"))
+        .filter(|r| {
+            r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.CommitFiles")
+        })
         .filter_map(|r| serde_json::from_slice(&r.body).ok())
         .collect();
     assert_eq!(commits.len(), 1, "one commit for the whole removal");
-    commits[0]["files"]
+    commits[0]["Files"]
         .as_array()
         .expect("files")
         .iter()
@@ -157,9 +159,9 @@ fn file<'a>(
 
 #[tokio::test]
 async fn a_group_leaves_every_binding_and_access_entry_in_the_same_change() {
-    let gitea = forge().await;
-    files_exist(&gitea).await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    files_exist(&shako).await;
+    let state = state_with(&shako);
 
     let answer = send(
         &state,
@@ -171,7 +173,7 @@ async fn a_group_leaves_every_binding_and_access_entry_in_the_same_change() {
     .await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
 
-    let files = committed(&gitea).await;
+    let files = committed(&shako).await;
     let (op, _, _) = file(&files, "groups/stewards.yaml").expect("the group is removed");
     assert_eq!(op, "delete");
     let (op, _, _) = file(&files, "stewards-only.yaml").expect("the emptied binding goes");
@@ -204,9 +206,9 @@ async fn a_group_leaves_every_binding_and_access_entry_in_the_same_change() {
 /// Layout 2: an App in a project with its own repository cannot ride in the organization's Change.
 #[tokio::test]
 async fn a_reference_in_a_projects_own_repository_refuses_the_deletion_naming_it() {
-    let gitea = forge().await;
-    files_exist(&gitea).await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    files_exist(&shako).await;
+    let state = state_with(&shako);
     state
         .mirror
         .set_repositories(std::collections::BTreeMap::from([(
@@ -228,7 +230,7 @@ async fn a_reference_in_a_projects_own_repository_refuses_the_deletion_naming_it
         "{}",
         answer.text
     );
-    let wrote = gitea
+    let wrote = shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -240,9 +242,9 @@ async fn a_reference_in_a_projects_own_repository_refuses_the_deletion_naming_it
 /// PF-03: the administrators' binding names the group alone; deleting the group would empty it.
 #[tokio::test]
 async fn a_cascade_that_leaves_no_administrator_is_refused() {
-    let gitea = forge().await;
-    files_exist(&gitea).await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    files_exist(&shako).await;
+    let state = state_with(&shako);
     state.mirror.upsert(envelope(
         "RoleBinding",
         "admins",
@@ -272,9 +274,9 @@ async fn a_cascade_that_leaves_no_administrator_is_refused() {
 /// a binding or an App the deleter may not change.
 #[tokio::test]
 async fn deleting_a_group_needs_the_rights_its_cascade_needs() {
-    let gitea = forge().await;
-    files_exist(&gitea).await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    files_exist(&shako).await;
+    let state = state_with(&shako);
     state.mirror.upsert(envelope(
         "Role",
         "group-keeper",
@@ -311,9 +313,9 @@ async fn deleting_a_group_needs_the_rights_its_cascade_needs() {
 /// A group nothing names is removed alone, as before.
 #[tokio::test]
 async fn a_group_nothing_names_is_removed_alone() {
-    let gitea = forge().await;
-    files_exist(&gitea).await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    files_exist(&shako).await;
+    let state = state_with(&shako);
     state.mirror.upsert(envelope(
         "Group",
         "lonely",
@@ -330,7 +332,7 @@ async fn a_group_nothing_names_is_removed_alone() {
     )
     .await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
-    let files = committed(&gitea).await;
+    let files = committed(&shako).await;
     assert_eq!(files.len(), 1, "{files:?}");
     assert!(files[0].1.ends_with("groups/lonely.yaml"));
 }

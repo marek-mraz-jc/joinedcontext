@@ -583,20 +583,21 @@ fn user_of(persona: &str) -> String {
 /// The forge, on the realm's server: change 42 waits for approval in project `t-scn-42`, the
 /// project of S-42 and S-44.
 async fn forge(server: &MockServer) {
-    const REPO: &str = "/api/v1/repos/test-owner/test-repo";
+    const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
     const FILE: &str = "projects/t-scn-42/spaces/doprava/space.yaml";
     const BRANCH: &str = "portal/update-contextspace-doprava-42";
     let pull = json!({
-        "number": 42,
-        "html_url": "https://gitea.example.sk/pulls/42",
-        "state": "open",
-        "title": "update ContextSpace doprava",
-        "head": { "ref": BRANCH },
-        "base": { "ref": "main" },
-        "created_at": "2026-10-27T09:14:22Z",
-        "user": { "login": "scn.steward", "full_name": "Scenario Steward" },
-        "mergeable": true,
-        "merged": false
+        "Number": 42,
+        "HtmlUrl": "https://shako.example.sk/pulls/42",
+        "State": "open",
+        "Title": "update ContextSpace doprava",
+        "Head": BRANCH,
+        "Base": "main",
+        "CreatedAt": "2026-10-27T09:14:22Z",
+        "Author": "scn.steward",
+        "AuthorName": "Scenario Steward",
+        "Mergeable": true,
+        "Merged": false
     });
     let space = concat!(
         "apiVersion: joinedcontext.com/v1alpha1\n",
@@ -609,17 +610,15 @@ async fn forge(server: &MockServer) {
     );
     use base64::Engine;
     for (route, body) in [
-        (REPO.to_owned(), json!({ "default_branch": "main" })),
-        (format!("{REPO}/pulls"), json!([pull.clone()])),
-        (format!("{REPO}/pulls/42"), pull),
+        (REPO.to_owned(), json!({ "DefaultBranch": "main" })),
         (
-            format!("{REPO}/pulls/42/files"),
-            json!([{ "filename": FILE, "status": "modified" }]),
+            format!("{REPO}/PullRequests"),
+            json!({ "value": [pull.clone()] }),
         ),
+        (format!("{REPO}/PullRequests(42)"), pull),
         (
-            format!("{REPO}/contents/{FILE}"),
-            json!({ "sha": "blob-42",
-                    "content": base64::engine::general_purpose::STANDARD.encode(space) }),
+            format!("{REPO}/PullRequests(42)/Files"),
+            json!({ "value": [{ "Filename": FILE, "Status": "modified" }] }),
         ),
     ] {
         Mock::given(method("GET"))
@@ -628,12 +627,24 @@ async fn forge(server: &MockServer) {
             .mount(server)
             .await;
     }
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(wiremock::matchers::query_param("@p", format!("'{FILE}'")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-42",
+            "Content": base64::engine::general_purpose::STANDARD.encode(space)
+        })))
+        .mount(server)
+        .await;
     // A change an apply opens: a merge request over the branch the forge below holds (T-5956).
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/pulls")))
+        .and(path(format!("{REPO}/Shako.OpenPullRequest")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 77, "html_url": "https://gitea.example.sk/pulls/77", "state": "open",
-            "mergeable": true, "merged": false
+            "Number": 77,
+            "HtmlUrl": "https://shako.example.sk/pulls/77",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(server)
         .await;
@@ -641,12 +652,21 @@ async fn forge(server: &MockServer) {
     // events with a required name and start.
     let model = base64::engine::general_purpose::STANDARD.encode(MODEL);
     Mock::given(method("GET"))
-        .and(wiremock::matchers::path_regex(format!(
-            "^{REPO}/contents/.*/bike-counter\\.linkml\\.yaml$"
+        .and(wiremock::matchers::path(format!(
+            "{}/Shako.File(Path=@p,Ref=@r)",
+            REPO
         )))
+        .and(|r: &wiremock::Request| {
+            r.url.query_pairs().any(|(k, v)| {
+                k == "@p"
+                    && regex::Regex::new(r"^'.*/bike-counter\.linkml\.yaml'$")
+                        .expect("a pattern")
+                        .is_match(&v)
+            })
+        })
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "content": model, "encoding": "base64", "sha": "model-0",
-            "path": "bike-counter.linkml.yaml", "name": "bike-counter.linkml.yaml", "type": "file"
+            "Content": model,
+            "Sha": "model-0"
         })))
         .with_priority(1)
         .mount(server)
@@ -675,7 +695,8 @@ async fn forge(server: &MockServer) {
          project: t-scn-32\n  subjects:\n  - user: 7c1e4b2a-9d3f-4a6e-8b5c-2f0a1d9e3b47\n",
     );
     Mock::given(wiremock::matchers::path_regex(format!(
-        "^{REPO}/(branches|contents|git/trees)(/.*)?$"
+        r"^{}/(Branches\('.*'\)|Shako\.CreateBranch|Shako\.Tree\(.*\)|Shako\.File\(.*\)|Shako\.CommitFiles)$",
+        regex::escape(REPO)
     )))
     .respond_with(repo)
     .with_priority(9)
@@ -729,7 +750,7 @@ async fn model_tools_and_broker(server: &MockServer) {
 /// 56 changed another project's file; 57 came from a branch the Portal did not open.
 async fn merged_changes(server: &MockServer) {
     use base64::Engine;
-    const REPO: &str = "/api/v1/repos/test-owner/test-repo";
+    const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
     let space = |name: &str, sandbox: bool, label: &str| {
         format!(
             "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: {name}\n  \
@@ -772,24 +793,26 @@ async fn merged_changes(server: &MockServer) {
     main.insert(doprava, space("doprava", true, ""));
     for (number, prefix, file, status, before, after) in changes {
         let pull = json!({
-            "number": number,
-            "html_url": format!("https://gitea.example.sk/pulls/{number}"),
-            "state": "closed",
-            "title": format!("change {number}"),
-            "head": { "ref": format!("{prefix}/update-contextspace-{number}"), "sha": format!("head-{number}") },
-            "base": { "ref": "main" },
-            "created_at": "2026-10-27T09:14:22Z",
-            "closed_at": "2026-10-27T10:14:22Z",
-            "user": { "login": "scn.steward", "full_name": "Scenario Steward" },
-            "mergeable": false,
-            "merged": true,
-            "merge_commit_sha": format!("merge-{number}"),
-            "merge_base": format!("base-{number}")
+            "Number": number,
+            "HtmlUrl": format!("https://shako.example.sk/pulls/{number}"),
+            "State": "closed",
+            "Title": format!("change {number}"),
+            "Head": format!("{prefix}/update-contextspace-{number}"),
+            "HeadSha": format!("head-{number}"),
+            "Base": "main",
+            "CreatedAt": "2026-10-27T09:14:22Z",
+            "ClosedAt": "2026-10-27T10:14:22Z",
+            "Author": "scn.steward",
+            "AuthorName": "Scenario Steward",
+            "Mergeable": false,
+            "Merged": true,
+            "MergeCommitSha": format!("merge-{number}"),
+            "MergeBase": format!("base-{number}")
         });
-        let files = json!([{ "filename": file, "status": status }]);
+        let files = json!({ "value": [{ "Filename": file, "Status": status }] });
         for (route, body) in [
-            (format!("{REPO}/pulls/{number}"), pull),
-            (format!("{REPO}/pulls/{number}/files"), files),
+            (format!("{REPO}/PullRequests({number})"), pull),
+            (format!("{REPO}/PullRequests({number})/Files"), files),
         ] {
             Mock::given(method("GET"))
                 .and(path(route))
@@ -803,11 +826,12 @@ async fn merged_changes(server: &MockServer) {
         ] {
             let Some(text) = text else { continue };
             Mock::given(method("GET"))
-                .and(path(format!("{REPO}/contents/{file}")))
-                .and(wiremock::matchers::query_param("ref", at))
+                .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+                .and(wiremock::matchers::query_param("@p", format!("'{file}'")))
+                .and(wiremock::matchers::query_param("@r", format!("'{at}'")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                    "sha": format!("blob-{number}"),
-                    "content": base64::engine::general_purpose::STANDARD.encode(text)
+                    "Sha": format!("blob-{number}"),
+                    "Content": base64::engine::general_purpose::STANDARD.encode(text)
                 })))
                 .mount(server)
                 .await;
@@ -815,11 +839,12 @@ async fn merged_changes(server: &MockServer) {
     }
     for (file, text) in main {
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/contents/{file}")))
-            .and(wiremock::matchers::query_param("ref", "main"))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(wiremock::matchers::query_param("@p", format!("'{file}'")))
+            .and(wiremock::matchers::query_param("@r", "'main'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "blob-main",
-                "content": base64::engine::general_purpose::STANDARD.encode(text)
+                "Sha": "blob-main",
+                "Content": base64::engine::general_purpose::STANDARD.encode(text)
             })))
             .mount(server)
             .await;
@@ -914,12 +939,20 @@ async fn data_plane(server: &MockServer) {
         .await;
     use base64::Engine;
     Mock::given(method("GET"))
-        .and(path_regex(
-            r"^/api/v1/repos/test-owner/test-repo/contents/.*\.linkml\.yaml$",
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
+        .and(|r: &wiremock::Request| {
+            r.url.query_pairs().any(|(k, v)| {
+                k == "@p"
+                    && regex::Regex::new(r"^'.*\.linkml\.yaml'$")
+                        .expect("a pattern")
+                        .is_match(&v)
+            })
+        })
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-models",
-            "content": base64::engine::general_purpose::STANDARD.encode(MODELS_LINKML)
+            "Sha": "blob-models",
+            "Content": base64::engine::general_purpose::STANDARD.encode(MODELS_LINKML)
         })))
         .mount(server)
         .await;
@@ -1528,20 +1561,20 @@ impl Harness {
         }
         let mut state = state
             .with_mirror(mirror.clone())
-            .with_gitea(std::sync::Arc::new(
-                joinedcontext_portal::git::GiteaClient::new(
+            .with_shako(std::sync::Arc::new(
+                joinedcontext_portal::forge::ShakoClient::new(
                     server.uri().parse().expect("mock url"),
                     "test-owner",
                     "test-repo",
                     "token-scenarios",
                 )
-                .expect("gitea client"),
+                .expect("shako client"),
             ));
         // The sync loop's memory, in memory: S-25 pauses and resumes a source, and nothing
         // here runs the loop, so its origin is never fetched.
         state.sync = Some(std::sync::Arc::new(
             joinedcontext_portal::sync::driver::Driver::new(
-                state.gitea.clone().expect("gitea client"),
+                state.shako.clone().expect("shako client"),
                 std::sync::Arc::new(joinedcontext_portal::sync::state::States::new(None)),
                 std::sync::Arc::new(Unreached),
             ),
@@ -1558,7 +1591,7 @@ impl Harness {
         .map(std::sync::Arc::new);
         // The run queue of every seeded Pipeline, so a run-now has a queued pipeline to start.
         let deployer = std::sync::Arc::new(StreamDeployer::new(runner.uri()));
-        let syncer = Syncer::new(state.gitea.clone().expect("the forge"), mirror.clone())
+        let syncer = Syncer::new(state.shako.clone().expect("the forge"), mirror.clone())
             .with_streams(std::sync::Arc::clone(&deployer));
         let state = state.with_syncer(std::sync::Arc::new(syncer));
         deployer
@@ -2607,8 +2640,8 @@ async fn the_change_tools_link_the_portal_approval_page() {
     let page = format!("\"url\":\"https://portal.test/projects/{own}/approvals/chg-0000002a\"");
     let step = |call: &str, args: Value| {
         json!({ "proves": "expect", "call": call, "args": args,
-            "contains": [page, "\"mergeRequest\":\"https://gitea.example.sk/pulls/42\""],
-            "absent": ["\"url\":\"https://gitea"] })
+            "contains": [page, "\"mergeRequest\":\"https://shako.example.sk/pulls/42\""],
+            "absent": ["\"url\":\"https://shako"] })
     };
     let script = json!([
         step("jc_change_list", json!({})),

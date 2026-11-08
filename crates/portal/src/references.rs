@@ -291,12 +291,12 @@ pub async fn awaited(
     let Some(first) = missing.first() else {
         return Ok(Vec::new());
     };
-    let Some(gitea) = state.forge_for(project) else {
+    let Some(shako) = state.forge_for(project) else {
         return Err(refusal(project, first));
     };
-    let open = match gitea.list_pull_requests("open").await {
+    let open = match shako.list_pull_requests("open").await {
         Ok(open) => open,
-        Err(crate::git::GitError::NotFound) => Vec::new(),
+        Err(crate::forge::GitError::NotFound) => Vec::new(),
         Err(err) => return Err(err.into()),
     };
     let mut found = Vec::with_capacity(missing.len());
@@ -315,7 +315,7 @@ pub async fn awaited(
         else {
             return Err(refusal(project, &reference));
         };
-        let change = crate::api::changes::change_meta(state, &gitea, pr.number, project).name;
+        let change = crate::api::changes::change_meta(state, &shako, pr.number, project).name;
         found.push(Awaited {
             reference,
             number: pr.number,

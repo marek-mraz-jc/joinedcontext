@@ -6,7 +6,7 @@ mod common;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path_regex};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{envelope, person, send, REPO};
@@ -26,15 +26,21 @@ const FILE: &str = r#"pipeline:
 "#;
 
 async fn world(file: ResponseTemplate) -> (AppState, MockServer) {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(method("GET"))
-        .and(path_regex(format!(
-            "^{REPO}/contents/projects/helsinki/.*pipelines/vehicles/bento.yaml$"
-        )))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
+        .and(|r: &wiremock::Request| {
+            r.url.query_pairs().any(|(k, v)| {
+                k == "@p"
+                    && regex::Regex::new(r"^'projects/helsinki/.*pipelines/vehicles/bento.yaml'$")
+                        .expect("a pattern")
+                        .is_match(&v)
+            })
+        })
         .respond_with(file)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     state.mirror.upsert(envelope(
         "Role",
         "space-reader",
@@ -78,14 +84,14 @@ async fn world(file: ResponseTemplate) -> (AppState, MockServer) {
         "helsinki",
         pipeline("events"),
     ));
-    (state, gitea)
+    (state, shako)
 }
 
 fn file_answer() -> ResponseTemplate {
     use base64::Engine as _;
     ResponseTemplate::new(200).set_body_json(json!({
-        "sha": "sha-bento-1",
-        "content": base64::engine::general_purpose::STANDARD.encode(FILE),
+        "Sha": "sha-bento-1",
+        "Content": base64::engine::general_purpose::STANDARD.encode(FILE),
     }))
 }
 
@@ -162,7 +168,7 @@ async fn a_forge_that_fails_names_the_pipeline_whose_rows_are_missing() {
 
 #[tokio::test]
 async fn a_caller_without_read_on_the_space_is_refused_before_the_forge() {
-    let (state, gitea) = world(file_answer()).await;
+    let (state, shako) = world(file_answer()).await;
     let refused = send(&state, person("mikko"), "GET", AUDIT, None).await;
     assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text);
     let other = send(
@@ -174,7 +180,7 @@ async fn a_caller_without_read_on_the_space_is_refused_before_the_forge() {
     )
     .await;
     assert_eq!(other.status, StatusCode::NOT_FOUND, "{}", other.text);
-    let asked = gitea.received_requests().await.unwrap_or_default();
+    let asked = shako.received_requests().await.unwrap_or_default();
     assert!(
         !asked.iter().any(|r| r.url.path().ends_with("bento.yaml")),
         "the forge was asked for a mapping"

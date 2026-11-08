@@ -1854,8 +1854,8 @@
     "POST /api/v1/projects/{project}/ops/{name}": {
       "why": "the registry's door runs every operation by name, and each operation is claimed by the step whose tool it is"
     },
-    "POST /api/v1/webhooks/gitea": {
-      "why": "Gitea calls it with its signature after a push to a project repository; no person or agent sends it"
+    "POST /api/v1/webhooks/shako": {
+      "why": "shako calls it with its signature after a push to a project repository; no person or agent sends it"
     }
   }
 }

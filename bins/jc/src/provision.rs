@@ -21,7 +21,7 @@ fn err(e: impl std::fmt::Display) -> StartError {
 /// the token.
 pub async fn forge(siblings: &Siblings, setup: &Setup) -> Result<(), StartError> {
     let vars = portal_vars(siblings, setup, |key| std::env::var(key).ok());
-    let (Some(base), Some(token)) = (vars.get("JC_GITEA_URL"), setup.value(Secret::ShakoToken))
+    let (Some(base), Some(token)) = (vars.get("JC_SHAKO_URL"), setup.value(Secret::ShakoToken))
     else {
         return Ok(());
     };

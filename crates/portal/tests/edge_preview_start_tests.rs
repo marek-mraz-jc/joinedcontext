@@ -97,8 +97,8 @@ fn message_of(err: ApiError) -> String {
 /// says the node is full and, of the running previews, names only the ones this caller may see.
 #[tokio::test]
 async fn a_full_node_names_only_the_previews_this_caller_may_see() {
-    let gitea = MockServer::start().await;
-    let state = state_on(&gitea);
+    let shako = MockServer::start().await;
+    let state = state_on(&shako);
     with_roles(&state);
 
     // Two previews of another project, owned by somebody else. The caller has a binding there, but
@@ -130,8 +130,8 @@ async fn a_full_node_names_only_the_previews_this_caller_may_see() {
 /// sentence is the one thing they can act on.
 #[tokio::test]
 async fn a_full_node_names_the_callers_own_previews_so_they_know_what_to_stop() {
-    let gitea = MockServer::start().await;
-    let state = state_on(&gitea);
+    let shako = MockServer::start().await;
+    let state = state_on(&shako);
     with_roles(&state);
     opened(&state, "air-v2", PROJECT, "jana").await;
     opened(&state, "bikes-v2", PROJECT, "jana").await;
@@ -156,8 +156,8 @@ async fn a_full_node_names_the_callers_own_previews_so_they_know_what_to_stop() 
 /// rest, never a name they have no business with.
 #[tokio::test]
 async fn a_full_node_counts_what_it_may_not_name() {
-    let gitea = MockServer::start().await;
-    let state = state_on(&gitea);
+    let shako = MockServer::start().await;
+    let state = state_on(&shako);
     with_roles(&state);
     opened(&state, "air-v2", PROJECT, "jana").await;
     opened(&state, "tender-2027", ELSEWHERE, "stefan").await;
@@ -186,8 +186,8 @@ async fn a_full_node_counts_what_it_may_not_name() {
 /// another project is answered as a workspace that is not there.
 #[tokio::test]
 async fn only_the_owner_starts_a_preview_and_another_projects_is_not_there() {
-    let gitea = MockServer::start().await;
-    let state = state_on(&gitea);
+    let shako = MockServer::start().await;
+    let state = state_on(&shako);
     with_roles(&state);
     opened(&state, "stefans", PROJECT, "stefan").await;
     opened(&state, "elsewhere", ELSEWHERE, "jana").await;
@@ -220,8 +220,8 @@ async fn only_the_owner_starts_a_preview_and_another_projects_is_not_there() {
 /// that names the workspace, and the state is not touched by the refusal.
 #[tokio::test]
 async fn a_preview_that_already_runs_is_not_started_again() {
-    let gitea = MockServer::start().await;
-    let state = state_on(&gitea);
+    let shako = MockServer::start().await;
+    let state = state_on(&shako);
     with_roles(&state);
     opened(&state, "air-v2", PROJECT, "jana").await;
 

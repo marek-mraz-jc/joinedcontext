@@ -6,7 +6,7 @@ mod common;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path_regex};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{envelope, forge, person, send};
@@ -18,8 +18,8 @@ const APPS: &str = "/api/v1/projects/ovzdusie/apps";
 
 /// `wide@hel.fi` proposes and reads Apps across the organization, `narrow@hel.fi` in `ovzdusie`
 /// alone. `doprava` already declares the public App `board`.
-fn state_with(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     state.mirror.upsert(envelope(
         "Role",
         "app-editor",
@@ -85,8 +85,8 @@ fn detail(body: &str) -> String {
 
 #[tokio::test]
 async fn an_app_name_another_project_declares_is_refused_and_the_holder_named_only_to_a_reader() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     let seen = send(&state, person("wide"), "POST", APPS, Some(app("board"))).await;
     assert_eq!(seen.status, StatusCode::FORBIDDEN, "{}", seen.text);
@@ -103,8 +103,8 @@ async fn an_app_name_another_project_declares_is_refused_and_the_holder_named_on
 
 #[tokio::test]
 async fn the_dry_run_refuses_the_taken_app_name_and_passes_a_free_one() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     let checked = format!("{APPS}?dryRun=All");
 
     let taken = send(
@@ -131,15 +131,19 @@ async fn the_dry_run_refuses_the_taken_app_name_and_passes_a_free_one() {
 
 #[tokio::test]
 async fn an_import_carrying_an_app_another_project_declares_is_refused_the_same_way() {
-    let gitea = forge().await;
+    let shako = forge().await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/git/trees/.*", common::REPO)))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            common::REPO
+        )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "tree": [], "truncated": false,
+            "Tree": [],
+            "Truncated": false
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
     let import = "/api/v1/projects/ovzdusie/import?dryRun=All";
 
     let taken = send(&state, person("narrow"), "POST", import, Some(app("board"))).await;
@@ -166,15 +170,19 @@ async fn an_import_carrying_an_app_another_project_declares_is_refused_the_same_
 /// free for everything else.
 #[tokio::test]
 async fn a_new_app_whose_client_the_realm_holds_unmanaged_is_refused_at_every_door() {
-    let gitea = forge().await;
+    let shako = forge().await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/git/trees/.*", common::REPO)))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            common::REPO
+        )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "tree": [], "truncated": false,
+            "Tree": [],
+            "Truncated": false
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
     state
         .foreign_names
         .set_clients(std::collections::BTreeSet::from(["app-radar".to_owned()]));
@@ -214,8 +222,8 @@ async fn a_new_app_whose_client_the_realm_holds_unmanaged_is_refused_at_every_do
 /// instead; the same App written `ui` passes with no warning.
 #[tokio::test]
 async fn the_dry_run_warns_an_old_shape_name_and_passes_the_new_one_silently() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     let checked = format!("{APPS}?dryRun=All");
 
     let old = send(

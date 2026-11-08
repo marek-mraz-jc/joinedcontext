@@ -356,7 +356,7 @@ const ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
 ("POST", "/tools/import-sdm", "jc_model_sdm_import"),
 ("POST", "/tools/infer-schema", "the model tools the Portal proxies; jc_model_infer is the project's door"),
 ("GET", "/tools/sdm-catalog", "the wizard's whole catalogue index; jc_model_sdm_search answers the same index narrowed by q (T-6271)"),
-("POST", "/webhooks/gitea", "the forge calling in"),
+("POST", "/webhooks/shako", "the forge calling in"),
 ("POST", "/webhooks/sync/{project}/{name}", "a foreign catalogue calling in"),
 ];
 

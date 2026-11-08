@@ -523,19 +523,19 @@ pub async fn mirror_of(
 ) -> Result<crate::store::Mirror, crate::error::ApiError> {
     use crate::error::ApiError;
     let workspace = visible(state, identity, project, name).await?;
-    let gitea = state
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea: &crate::git::GiteaClient = &gitea;
+    let shako: &crate::forge::ShakoClient = &shako;
     let base = workspace.base_revision.clone();
     let view = state.mirror.snapshot();
     let branch = workspace.branch();
-    let theirs = match gitea.list_tree_blobs(&branch).await {
+    let theirs = match shako.list_tree_blobs(&branch).await {
         Ok(tree) => tree,
-        Err(crate::git::GitError::NotFound) => return Ok(view),
+        Err(crate::forge::GitError::NotFound) => return Ok(view),
         Err(err) => return Err(err.into()),
     };
-    let ours: BTreeMap<String, String> = gitea.list_tree_blobs(&base).await?.into_iter().collect();
+    let ours: BTreeMap<String, String> = shako.list_tree_blobs(&base).await?.into_iter().collect();
     let is_manifest = |path: &str| path.ends_with(".yaml") || path.ends_with(".yml");
     let mut kept = std::collections::BTreeSet::new();
     for (path, sha) in theirs {
@@ -543,7 +543,7 @@ pub async fn mirror_of(
         if !is_manifest(&path) || ours.get(&path) == Some(&sha) {
             continue;
         }
-        if let Some(file) = gitea.get_file(&path, &branch).await? {
+        if let Some(file) = shako.get_file(&path, &branch).await? {
             if let Some(envelope) = crate::store::envelope_of(&file.content) {
                 view.upsert(envelope);
             }
@@ -553,7 +553,7 @@ pub async fn mirror_of(
         .keys()
         .filter(|path| is_manifest(path) && !kept.contains(*path))
     {
-        if let Some(file) = gitea.get_file(path, &base).await? {
+        if let Some(file) = shako.get_file(path, &base).await? {
             if let Some(envelope) = crate::store::envelope_of(&file.content) {
                 view.remove(&envelope.key());
             }
@@ -573,7 +573,7 @@ use crate::api::changes::ChangeFile;
 use crate::auth::session::Identity;
 use crate::change::{Change, ChangePhase, ChangeStatus, Lane, Operation as Op, PlanSummary};
 use crate::error::ApiError;
-use crate::git::{GitError, GiteaClient};
+use crate::forge::{GitError, ShakoClient};
 use crate::ops::bounds::{text, NAME, QUERY, TERM};
 use crate::ops::{Caller, OpError, Via};
 use crate::plan::{FieldConflict, Side};
@@ -728,14 +728,14 @@ pub async fn reap_expired_at(state: &AppState, now: DateTime<Utc>) -> usize {
         state.previews.forget(&workspace.name);
         // A branch the forge no longer has is already `Ok`, so a second pass over the same record
         // cannot stall on it.
-        let gitea = match forge(state, &workspace.project) {
-            Ok(gitea) => gitea,
+        let shako = match forge(state, &workspace.project) {
+            Ok(shako) => shako,
             Err(error) => {
                 tracing::warn!(workspace = %workspace.name, %error, "an expired workspace keeps its branch");
                 continue;
             }
         };
-        if let Err(error) = gitea.delete_branch(&workspace.branch()).await {
+        if let Err(error) = shako.delete_branch(&workspace.branch()).await {
             tracing::warn!(workspace = %workspace.name, %error, "the branch of an expired workspace was not deleted; it is tried again next pass");
             continue;
         }
@@ -777,7 +777,7 @@ pub fn spawn_reaper(state: AppState) {
 
 /// The repository a workspace of `project` is a branch of (CC-87): the project repository in
 /// layout 2, the organization repository in layout 1.
-fn forge(state: &AppState, project: &str) -> Result<std::sync::Arc<GiteaClient>, ApiError> {
+fn forge(state: &AppState, project: &str) -> Result<std::sync::Arc<ShakoClient>, ApiError> {
     state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))
@@ -903,10 +903,10 @@ pub async fn open(
             MAX_TTL_HOURS / 24
         )));
     }
-    let gitea = forge(state, project)?;
-    let gitea: &GiteaClient = &gitea;
-    let main = gitea.default_branch().await?;
-    let base = gitea.branch_head(&main).await?;
+    let shako = forge(state, project)?;
+    let shako: &ShakoClient = &shako;
+    let main = shako.default_branch().await?;
+    let base = shako.branch_head(&main).await?;
     let owner = owner_of(identity);
     let workspace = match state
         .workspaces
@@ -949,9 +949,9 @@ pub async fn open(
     // A branch of this name outlived a workspace that was reaped or discarded without it: the
     // record is new and unique, so the branch is nobody's and starts again from main.
     let branch = workspace.branch();
-    let created = match gitea.create_branch(&branch, &main).await {
-        Err(GitError::Conflict(_)) => match gitea.delete_branch(&branch).await {
-            Ok(()) => gitea.create_branch(&branch, &main).await,
+    let created = match shako.create_branch(&branch, &main).await {
+        Err(GitError::Conflict(_)) => match shako.delete_branch(&branch).await {
+            Ok(()) => shako.create_branch(&branch, &main).await,
             Err(err) => Err(err),
         },
         other => other,
@@ -1013,19 +1013,19 @@ struct Trees {
     theirs: BTreeMap<String, String>,
 }
 
-async fn trees(gitea: &GiteaClient, workspace: &Workspace) -> Result<Option<Trees>, ApiError> {
-    let ours = match gitea.list_tree_blobs(&workspace.branch()).await {
+async fn trees(shako: &ShakoClient, workspace: &Workspace) -> Result<Option<Trees>, ApiError> {
+    let ours = match shako.list_tree_blobs(&workspace.branch()).await {
         Ok(tree) => tree.into_iter().collect(),
         Err(GitError::NotFound) => return Ok(None),
         Err(err) => return Err(err.into()),
     };
-    let main = gitea.default_branch().await?;
-    let base = gitea
+    let main = shako.default_branch().await?;
+    let base = shako
         .list_tree_blobs(&workspace.base_revision)
         .await?
         .into_iter()
         .collect();
-    let theirs = gitea.list_tree_blobs(&main).await?.into_iter().collect();
+    let theirs = shako.list_tree_blobs(&main).await?.into_iter().collect();
     Ok(Some(Trees {
         main,
         ours,
@@ -1040,14 +1040,14 @@ fn is_manifest(path: &str) -> bool {
 
 /// A manifest file as a document, when `path` is one and `git_ref` has it.
 async fn document(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     path: &str,
     git_ref: &str,
 ) -> Result<Option<Value>, ApiError> {
     if !is_manifest(path) {
         return Ok(None);
     }
-    let Some(file) = gitea.get_file(path, git_ref).await? else {
+    let Some(file) = shako.get_file(path, git_ref).await? else {
         return Ok(None);
     };
     Ok(serde_norway::from_str::<Value>(&file.content).ok())
@@ -1075,9 +1075,9 @@ pub async fn compare_workspace(
     state: &AppState,
     workspace: &Workspace,
 ) -> Result<Comparison, ApiError> {
-    let gitea = forge(state, &workspace.project)?;
-    let gitea: &GiteaClient = &gitea;
-    let Some(trees) = trees(gitea, workspace).await? else {
+    let shako = forge(state, &workspace.project)?;
+    let shako: &ShakoClient = &shako;
+    let Some(trees) = trees(shako, workspace).await? else {
         return Ok(Comparison::default());
     };
     let branch = workspace.branch();
@@ -1090,12 +1090,12 @@ pub async fn compare_workspace(
     let mut comparison = Comparison::default();
     for path in touched {
         let ours_doc = if trees.ours.contains_key(path) {
-            document(gitea, path, &branch).await?
+            document(shako, path, &branch).await?
         } else {
             None
         };
         let base_doc = if trees.base.contains_key(path) {
-            document(gitea, path, &workspace.base_revision).await?
+            document(shako, path, &workspace.base_revision).await?
         } else {
             None
         };
@@ -1135,7 +1135,7 @@ pub async fn compare_workspace(
             continue;
         }
         let theirs_doc = if theirs.is_some() {
-            document(gitea, path, &trees.main).await?
+            document(shako, path, &trees.main).await?
         } else {
             None
         };
@@ -1223,14 +1223,14 @@ pub async fn update_from_main(
     request: UpdateRequest,
 ) -> Result<UpdateReport, OpError> {
     let workspace = owned(state, identity, project, name, "update").await?;
-    let gitea = forge(state, &workspace.project)?;
-    let gitea: &GiteaClient = &gitea;
-    let main = gitea.default_branch().await.map_err(ApiError::from)?;
-    let head = gitea.branch_head(&main).await.map_err(ApiError::from)?;
+    let shako = forge(state, &workspace.project)?;
+    let shako: &ShakoClient = &shako;
+    let main = shako.default_branch().await.map_err(ApiError::from)?;
+    let head = shako.branch_head(&main).await.map_err(ApiError::from)?;
     let branch = workspace.branch();
     let mut taken = Vec::new();
     let mut merged = Vec::new();
-    if let Some(trees) = trees(gitea, &workspace).await? {
+    if let Some(trees) = trees(shako, &workspace).await? {
         let pick = |path: &str, field: &str| {
             request
                 .resolutions
@@ -1269,7 +1269,7 @@ pub async fn update_from_main(
                 }
             };
             let theirs_text = match t {
-                Some(_) => gitea
+                Some(_) => shako
                     .get_file(path, &trees.main)
                     .await
                     .map_err(ApiError::from)?
@@ -1281,14 +1281,14 @@ pub async fn update_from_main(
                 taken.push(path.clone());
                 continue;
             }
-            let ours_doc = document(gitea, path, &branch).await?;
+            let ours_doc = document(shako, path, &branch).await?;
             let theirs_doc = theirs_text
                 .as_deref()
                 .filter(|_| is_manifest(path))
                 .and_then(|text| serde_norway::from_str::<Value>(text).ok());
             match (ours_doc, theirs_doc) {
                 (Some(ours), Some(theirs)) => {
-                    let base_doc = document(gitea, path, &workspace.base_revision).await?;
+                    let base_doc = document(shako, path, &workspace.base_revision).await?;
                     match crate::plan::merge3(base_doc.as_ref(), &ours, &theirs, &|field| {
                         pick(path, field)
                     }) {
@@ -1341,11 +1341,11 @@ pub async fn update_from_main(
         if !uploads.is_empty() || !deletes.is_empty() {
             let (author_name, author_email) =
                 crate::api::mutate::author_credentials(identity, project);
-            gitea
+            shako
                 .change_files(
                     &branch,
                     &format!("update workspace {name} from {main}"),
-                    crate::git::gitea::Author {
+                    crate::forge::shako::Author {
                         name: &author_name,
                         email: &author_email,
                     },
@@ -1426,10 +1426,10 @@ pub async fn propose(
             "workspace '{name}' changes nothing yet"
         ))));
     }
-    let gitea = forge(state, &workspace.project)?;
-    let gitea: &GiteaClient = &gitea;
+    let shako = forge(state, &workspace.project)?;
+    let shako: &ShakoClient = &shako;
     let branch = workspace.branch();
-    if let Some(open) = crate::api::mutate::open_change_on(state, gitea, &branch, project).await? {
+    if let Some(open) = crate::api::mutate::open_change_on(state, shako, &branch, project).await? {
         return Err(OpError::Api(ApiError::Conflict(format!(
             "workspace '{name}' is already brought back as {}; approve or reject it first",
             open.name
@@ -1444,7 +1444,7 @@ pub async fn propose(
         } else {
             branch.clone()
         };
-        let doc = document(gitea, &file.path, &git_ref).await?;
+        let doc = document(shako, &file.path, &git_ref).await?;
         let verb = if file.operation == Op::Delete {
             jc_core::kinds::Verb::Delete
         } else {
@@ -1472,7 +1472,7 @@ pub async fn propose(
             Op::Delete => summary.delete += 1,
         }
     }
-    let main = gitea.default_branch().await.map_err(ApiError::from)?;
+    let main = shako.default_branch().await.map_err(ApiError::from)?;
     let title = format!(
         "workspace {name}: {}",
         workspace.title.as_deref().unwrap_or(name)
@@ -1483,7 +1483,7 @@ pub async fn propose(
         comparison.files.len(),
         workspace.base_revision
     );
-    let pr = gitea
+    let pr = shako
         .create_pull_request(&branch, &main, &title, &body)
         .await
         .map_err(ApiError::from)?;
@@ -1492,7 +1492,7 @@ pub async fn propose(
         .proposed_through(&pr.body)
         .with_merge_request(pr.url);
     Ok(Change::new(
-        crate::api::changes::change_meta(state, gitea, pr.number, project),
+        crate::api::changes::change_meta(state, shako, pr.number, project),
         status,
     ))
 }

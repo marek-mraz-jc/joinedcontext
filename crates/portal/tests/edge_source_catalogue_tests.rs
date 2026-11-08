@@ -26,7 +26,7 @@ use wiremock::MockServer;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
@@ -255,14 +255,14 @@ async fn the_catalogue_status_is_a_read_of_the_project_and_carries_no_token() {
 /// for a file — plus a model whose manifest names the file `linkml` points at.
 async fn source_world(linkml: Value) -> (MockServer, AppState) {
     let forge = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("a url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("a client");
-    let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
     state
         .mirror
         .upsert(envelope("ContextSpace", "mobility", PROJECT, json!({})));

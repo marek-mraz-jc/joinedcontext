@@ -13,7 +13,7 @@ use crate::auth::session::{Front, Identity};
 use crate::auth::CurrentUser;
 use crate::change::{self, Change, ChangePhase, ChangeStatus, Operation};
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::Author;
+use crate::forge::Author;
 use crate::plan;
 use crate::resource;
 use crate::state::AppState;
@@ -25,7 +25,7 @@ use crate::state::AppState;
 /// `{name}/` directory. A manifest name is DNS-1123 and carries no dot, so nothing else in
 /// that directory can begin with `{name}.`.
 async fn owned_beside(
-    gitea: &crate::git::GiteaClient,
+    shako: &crate::forge::ShakoClient,
     repo_path: &str,
     name: &str,
     git_ref: &str,
@@ -33,7 +33,7 @@ async fn owned_beside(
     let directory = repo_path.rsplit_once('/').map_or("", |(dir, _)| dir);
     let file_prefix = format!("{directory}/{name}.");
     let folder_prefix = format!("{directory}/{name}/");
-    Ok(gitea
+    Ok(shako
         .list_tree(git_ref)
         .await?
         .into_iter()
@@ -571,13 +571,13 @@ pub async fn delete_with_identity(
         }));
     }
 
-    // 5. Commit deletion to Git merge request via Gitea client
-    let gitea = state
+    // 5. Commit deletion to Git merge request via the forge client
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea: &crate::git::GiteaClient = &gitea;
+    let shako: &crate::forge::ShakoClient = &shako;
 
-    let default_branch = gitea.default_branch().await?;
+    let default_branch = shako.default_branch().await?;
     let repo_path = resolve_repo_path(&envelope, kind_info, project)?;
 
     // Inside a workspace, its branch is both where the file is read and where it goes (CC-76).
@@ -603,7 +603,7 @@ pub async fn delete_with_identity(
         .clone()
         .unwrap_or_else(|| default_branch.clone());
     let (repo_path, existing) =
-        crate::api::mutate::held_file(gitea, &repo_path, &envelope, kind_info, project, &read_from)
+        crate::api::mutate::held_file(shako, &repo_path, &envelope, kind_info, project, &read_from)
             .await?;
     let existing = existing.ok_or_else(not_found)?;
 
@@ -611,15 +611,15 @@ pub async fn delete_with_identity(
         Some(branch) => (branch, None),
         None => {
             let branch = branch_name(project, kind_info.kind, name, Operation::Delete);
-            let held = turn(gitea, &branch).await;
+            let held = turn(shako, &branch).await;
             // One open change per resource (CC-34, T-0883): the pending removal is decided first.
-            if let Some(pending) = open_change_on(state, gitea, &branch, project).await? {
+            if let Some(pending) = open_change_on(state, shako, &branch, project).await? {
                 return Err(ApiError::Conflict(format!(
                     "a change for {} '{name}' is already open: {}; approve or reject it first",
                     kind_info.kind, pending.name
                 )));
             }
-            let branch = create_or_reuse_branch(gitea, &held, &default_branch).await?;
+            let branch = create_or_reuse_branch(shako, &held, &default_branch).await?;
             (branch, Some(held))
         }
     };
@@ -630,12 +630,12 @@ pub async fn delete_with_identity(
     // the same name would inherit (T-0900, MF-07, CC-08). Read once the removal is going
     // ahead: a refusal must not cost a tree listing.
     let mut removals = vec![(repo_path.clone(), existing.sha.clone())];
-    for path in owned_beside(gitea, &repo_path, name, &read_from).await? {
+    for path in owned_beside(shako, &repo_path, name, &read_from).await? {
         // Judged on the mirror the delete reads, a workspace's branch included (F-POR4-016).
         if still_named(&mirror, project, kind_info.kind, name, &path) {
             continue;
         }
-        if let Some(file) = gitea.get_file(&path, &read_from).await? {
+        if let Some(file) = shako.get_file(&path, &read_from).await? {
             removals.push((path, file.sha));
         }
     }
@@ -648,7 +648,7 @@ pub async fn delete_with_identity(
                 ApiError::Internal(format!("no catalogue entry for {}", grant.kind))
             })?;
             let path = resolve_repo_path(&grant, info, project)?;
-            if let Some(file) = gitea.get_file(&path, &read_from).await? {
+            if let Some(file) = shako.get_file(&path, &read_from).await? {
                 removals.push((path, file.sha));
             }
         }
@@ -672,7 +672,7 @@ pub async fn delete_with_identity(
         })?;
         let namespace = envelope.metadata.namespace.as_deref().unwrap_or(project);
         let path = resolve_repo_path(envelope, info, namespace)?;
-        if let Some(file) = gitea.get_file(&path, &read_from).await? {
+        if let Some(file) = shako.get_file(&path, &read_from).await? {
             removals.push((path, file.sha));
         }
     }
@@ -682,7 +682,7 @@ pub async fn delete_with_identity(
 
     // One commit for every file of the resource: a removal that lands in pieces can be
     // approved in pieces, which is how an orphan survives a merged delete.
-    gitea
+    shako
         .change_files(
             &branch,
             &commit_msg,
@@ -712,11 +712,11 @@ pub async fn delete_with_identity(
         kind_info.kind
     );
 
-    let pr = gitea
+    let pr = shako
         .create_pull_request(&branch, &default_branch, &pr_title, &pr_body)
         .await?;
 
-    let change_meta = crate::api::changes::change_meta(state, gitea, pr.number, project);
+    let change_meta = crate::api::changes::change_meta(state, shako, pr.number, project);
     let change_status = ChangeStatus::new(lane, ChangePhase::PendingApproval, plan.summary)
         .in_repository(&pr.repository)
         .proposed_through(&pr.body)
@@ -741,7 +741,7 @@ mod tests {
     use crate::auth::session::{Identity, Session};
     use crate::change::Lane;
     use crate::config::Config;
-    use crate::git::GiteaClient;
+    use crate::forge::ShakoClient;
     use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 
     fn dummy_user() -> CurrentUser {
@@ -1102,9 +1102,9 @@ mod tests {
     async fn delete_with_forge_returns_202_accepted() {
         let server = MockServer::start().await;
         let base_url = server.uri().parse().unwrap();
-        let client = GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap();
+        let client = ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap();
 
-        let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+        let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
         state.mirror.upsert(ResourceEnvelope {
             api_version: API_VERSION.into(),
             kind: "ContextSpace".into(),
@@ -1118,58 +1118,66 @@ mod tests {
         });
 
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "default_branch": "main"
+                "DefaultBranch": "main"
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
-            ))
-            .and(query_param("ref", "main"))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+            )).and(query_param("@p", "'projects/ovzdusie/spaces/mobility/space.yaml'"))
+            .and(query_param("@r", "'main'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "sha-space-123",
-                "content": "YXBpVmVyc2lvbjogeW91"
+                "Sha": "sha-space-123",
+                "Content": "YXBpVmVyc2lvbjogeW91"
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("POST"))
-            .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+            ))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
             .mount(&server)
             .await;
 
         Mock::given(method("GET"))
-            .and(wiremock::matchers::path_regex(
-                r"^/api/v1/repos/test-owner/test-repo/git/trees/.*$",
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "tree": [{ "path": "projects/ovzdusie/spaces/mobility/space.yaml", "type": "blob" }],
-                "truncated": false
+                "Tree": [{ "Path": "projects/ovzdusie/spaces/mobility/space.yaml", "Type": "blob" }],
+                "Truncated": false
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("POST"))
-            .and(path("/api/v1/repos/test-owner/test-repo/contents"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "commit": { "sha": "commit-sha-deleted" }
+                "Sha": "commit-sha-deleted"
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("POST"))
-            .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+            ))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-                "number": 55,
-                "html_url": "https://gitea.example.sk/pulls/55",
-                "state": "open",
-                "mergeable": true,
-                "merged": false
+                "Number": 55,
+                "HtmlUrl": "https://shako.example.sk/pulls/55",
+                "State": "open",
+                "Mergeable": true,
+                "Merged": false
             })))
             .mount(&server)
             .await;
@@ -1198,7 +1206,7 @@ mod tests {
         assert_eq!(change.status.plan.delete, 1);
         assert_eq!(
             change.status.merge_request.as_deref(),
-            Some("https://gitea.example.sk/pulls/55")
+            Some("https://shako.example.sk/pulls/55")
         );
     }
 
@@ -1208,14 +1216,14 @@ mod tests {
     #[tokio::test]
     async fn delete_finds_a_policy_filed_under_the_space_it_names() {
         let server = MockServer::start().await;
-        let client = GiteaClient::new(
+        let client = ShakoClient::new(
             server.uri().parse().unwrap(),
             "test-owner",
             "test-repo",
             "token-xyz",
         )
         .unwrap();
-        let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+        let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
         state.mirror.upsert(ResourceEnvelope {
             api_version: API_VERSION.into(),
             kind: "Policy".into(),
@@ -1227,54 +1235,57 @@ mod tests {
             spec: json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "excel" } }),
             status: None,
         });
-        let repo = "/api/v1/repos/test-owner/test-repo";
+        let repo = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
         let filed = "projects/ovzdusie/spaces/excel/policies/excel-upload.yaml";
         let ok = |body: Value| ResponseTemplate::new(200).set_body_json(body);
         Mock::given(method("GET"))
             .and(path(repo))
-            .respond_with(ok(json!({ "default_branch": "main" })))
+            .respond_with(ok(json!({ "DefaultBranch": "main" })))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!(
-                "{repo}/contents/projects/ovzdusie/spaces/ovzdusie/policies/excel-upload.yaml"
-            )))
+            .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param(
+                "@p",
+                "'projects/ovzdusie/spaces/ovzdusie/policies/excel-upload.yaml'",
+            ))
             .respond_with(ResponseTemplate::new(404))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{repo}/contents/{filed}")))
-            .respond_with(ok(json!({ "sha": "sha-filed", "content": "YTogYg==" })))
+            .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{filed}'")))
+            .respond_with(ok(json!({ "Sha": "sha-filed", "Content": "YTogYg==" })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{repo}/branches")))
+            .and(path(format!("{repo}/Shako.CreateBranch")))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(wiremock::matchers::path_regex(format!(
-                "^{repo}/git/trees/.*$"
+            .and(path(format!(
+                "{repo}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
             )))
-            .respond_with(ok(json!({ "tree": [], "truncated": false })))
+            .respond_with(ok(json!({ "Tree": [], "Truncated": false })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{repo}/contents")))
+            .and(path(format!("{repo}/Shako.CommitFiles")))
             .and(wiremock::matchers::body_string_contains(filed))
             .and(wiremock::matchers::body_string_contains("sha-filed"))
-            .respond_with(ok(json!({ "commit": { "sha": "deleted" } })))
+            .respond_with(ok(json!({ "Sha": "deleted" })))
             .expect(1)
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{repo}/pulls")))
+            .and(path(format!("{repo}/Shako.OpenPullRequest")))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-                "number": 56,
-                "html_url": "https://gitea.example.sk/pulls/56",
-                "state": "open",
-                "mergeable": true,
-                "merged": false
+                "Number": 56,
+                "HtmlUrl": "https://shako.example.sk/pulls/56",
+                "State": "open",
+                "Mergeable": true,
+                "Merged": false
             })))
             .mount(&server)
             .await;
@@ -1296,9 +1307,9 @@ mod tests {
     async fn delete_file_missing_in_git_returns_404() {
         let server = MockServer::start().await;
         let base_url = server.uri().parse().unwrap();
-        let client = GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap();
+        let client = ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap();
 
-        let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+        let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
         state.mirror.upsert(ResourceEnvelope {
             api_version: API_VERSION.into(),
             kind: "ContextSpace".into(),
@@ -1312,18 +1323,20 @@ mod tests {
         });
 
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "default_branch": "main"
+                "DefaultBranch": "main"
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
-            ))
-            .and(query_param("ref", "main"))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+            )).and(query_param("@p", "'projects/ovzdusie/spaces/mobility/space.yaml'"))
+            .and(query_param("@r", "'main'"))
             .respond_with(ResponseTemplate::new(404).set_body_json(json!({
                 "message": "not found"
             })))

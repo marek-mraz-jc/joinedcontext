@@ -27,7 +27,7 @@ use wiremock::MockServer;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::reconciler::drift::{Difference, Drifted, Found, Kind, Store};
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
@@ -334,7 +334,7 @@ async fn a_resolution_acts_only_on_what_the_scan_reported_and_only_for_a_caller_
 #[tokio::test]
 async fn a_format_or_a_revision_that_is_not_one_never_reaches_the_forge() {
     let forge = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("a url"),
         "bb",
         "org",
@@ -353,7 +353,7 @@ async fn a_format_or_a_revision_that_is_not_one_never_reaches_the_forge() {
         json!({ "subjects": [{ "user": MEMBER }], "role": "project-reader",
                 "scope": { "project": PROJECT } }),
     ));
-    let state = state.with_gitea(Arc::new(client));
+    let state = state.with_shako(Arc::new(client));
 
     // A format nobody serves. The check is exact: `YAML` is not `yaml`.
     for format in ["tar", "YAML", "yml", "zip.gz", "", "json,yaml"] {

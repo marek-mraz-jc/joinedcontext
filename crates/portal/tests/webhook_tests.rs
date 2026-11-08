@@ -9,7 +9,7 @@ use http_body_util::BodyExt;
 use joinedcontext_portal::api::webhook::{EVENT_HEADER, SIGNATURE_HEADER};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::error::ProblemDetails;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::reconciler::Syncer;
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -37,49 +37,51 @@ async fn pr_merged_event_accepted_and_triggers_sync() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
 
     let secret = "webhook-secret-key";
     let mut config = Config::for_tests();
-    config.gitea_webhook_secret = Some(secret.to_string());
+    config.shako_webhook_secret = Some(secret.to_string());
 
     let state = AppState::new(config, None)
-        .with_gitea(client)
+        .with_shako(client)
         .with_syncer(syncer);
     let app = server::app(state);
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
-        })))
-        .mount(&server)
-        .await;
-
-    Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": "main",
-            "commit": { "id": "rev-head-pr" }
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/git/trees/rev-head-pr",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
         ))
-        .and(query_param("recursive", "true"))
-        .and(query_param("per_page", "1000"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "tree-sha-1",
-            "truncated": false,
-            "tree": [
+            "Name": "main",
+            "HeadSha": "rev-head-pr"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+        )).and(query_param("@r", "'rev-head-pr'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "tree-sha-1",
+            "Truncated": false,
+            "Tree": [
                 {
-                    "path": "projects/ovzdusie/spaces/mobility/space.yaml",
-                    "type": "blob"
+                    "Path": "projects/ovzdusie/spaces/mobility/space.yaml",
+                    "Type": "blob"
                 }
             ]
         })))
@@ -91,19 +93,23 @@ async fn pr_merged_event_accepted_and_triggers_sync() {
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "rev-head-pr"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
+        ))
+        .and(query_param("@r", "'rev-head-pr'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": b64
+            "Sha": "blob-1",
+            "Content": b64
         })))
         .mount(&server)
         .await;
 
     let pr_payload = json!({
         "action": "closed",
-        "pull_request": {
+        "pullRequest": {
             "merged": true
         }
     });
@@ -115,7 +121,7 @@ async fn pr_merged_event_accepted_and_triggers_sync() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/webhooks/gitea")
+                .uri("/api/v1/webhooks/shako")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(SIGNATURE_HEADER, signature)
                 .header(EVENT_HEADER, "pull_request")
@@ -138,7 +144,8 @@ async fn pr_merged_event_accepted_and_triggers_sync() {
     let default_branch_calls = requests
         .iter()
         .filter(|r| {
-            r.method.as_str() == "GET" && r.url.path() == "/api/v1/repos/test-owner/test-repo"
+            r.method.as_str() == "GET"
+                && r.url.path() == "/odata/Repositories(Owner='test-owner',Name='test-repo')"
         })
         .count();
     assert_eq!(default_branch_calls, 1);
@@ -151,22 +158,22 @@ async fn wrong_signature_returns_401_and_calls_no_gitea_endpoints() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
 
     let secret = "webhook-secret-key";
     let mut config = Config::for_tests();
-    config.gitea_webhook_secret = Some(secret.to_string());
+    config.shako_webhook_secret = Some(secret.to_string());
 
     let state = AppState::new(config, None)
-        .with_gitea(client)
+        .with_shako(client)
         .with_syncer(syncer);
     let app = server::app(state);
 
     let pr_payload = json!({
         "action": "closed",
-        "pull_request": {
+        "pullRequest": {
             "merged": true
         }
     });
@@ -177,7 +184,7 @@ async fn wrong_signature_returns_401_and_calls_no_gitea_endpoints() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/webhooks/gitea")
+                .uri("/api/v1/webhooks/shako")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(SIGNATURE_HEADER, wrong_signature)
                 .header(EVENT_HEADER, "pull_request")
@@ -197,22 +204,22 @@ async fn missing_signature_header_returns_401() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
 
     let secret = "webhook-secret-key";
     let mut config = Config::for_tests();
-    config.gitea_webhook_secret = Some(secret.to_string());
+    config.shako_webhook_secret = Some(secret.to_string());
 
     let state = AppState::new(config, None)
-        .with_gitea(client)
+        .with_shako(client)
         .with_syncer(syncer);
     let app = server::app(state);
 
     let pr_payload = json!({
         "action": "closed",
-        "pull_request": {
+        "pullRequest": {
             "merged": true
         }
     });
@@ -222,7 +229,7 @@ async fn missing_signature_header_returns_401() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/webhooks/gitea")
+                .uri("/api/v1/webhooks/shako")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(EVENT_HEADER, "pull_request")
                 .body(Body::from(body_bytes))
@@ -241,22 +248,22 @@ async fn invalid_hex_signature_returns_401() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
 
     let secret = "webhook-secret-key";
     let mut config = Config::for_tests();
-    config.gitea_webhook_secret = Some(secret.to_string());
+    config.shako_webhook_secret = Some(secret.to_string());
 
     let state = AppState::new(config, None)
-        .with_gitea(client)
+        .with_shako(client)
         .with_syncer(syncer);
     let app = server::app(state);
 
     let pr_payload = json!({
         "action": "closed",
-        "pull_request": {
+        "pullRequest": {
             "merged": true
         }
     });
@@ -266,7 +273,7 @@ async fn invalid_hex_signature_returns_401() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/webhooks/gitea")
+                .uri("/api/v1/webhooks/shako")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(SIGNATURE_HEADER, "not-a-valid-hex-string!")
                 .header(EVENT_HEADER, "pull_request")
@@ -290,7 +297,7 @@ async fn unconfigured_webhook_secret_returns_503() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/webhooks/gitea")
+                .uri("/api/v1/webhooks/shako")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(SIGNATURE_HEADER, "deadbeef1234")
                 .header(EVENT_HEADER, "pull_request")
@@ -320,22 +327,22 @@ async fn unhandled_event_returns_204_and_triggers_no_sync() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
 
     let secret = "webhook-secret-key";
     let mut config = Config::for_tests();
-    config.gitea_webhook_secret = Some(secret.to_string());
+    config.shako_webhook_secret = Some(secret.to_string());
 
     let state = AppState::new(config, None)
-        .with_gitea(client)
+        .with_shako(client)
         .with_syncer(syncer);
     let app = server::app(state);
 
     let opened_payload = json!({
         "action": "opened",
-        "pull_request": {
+        "pullRequest": {
             "merged": false
         }
     });
@@ -346,7 +353,7 @@ async fn unhandled_event_returns_204_and_triggers_no_sync() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/webhooks/gitea")
+                .uri("/api/v1/webhooks/shako")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(SIGNATURE_HEADER, signature)
                 .header(EVENT_HEADER, "pull_request")

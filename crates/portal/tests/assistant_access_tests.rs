@@ -24,7 +24,7 @@ use joinedcontext_portal::agents::run::AgentRunEvent;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
@@ -32,7 +32,7 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-use wiremock::matchers::{method, path, path_regex};
+use wiremock::matchers::{method, path, path_regex, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CSRF: &str = "test-csrf-token-access";
@@ -2096,15 +2096,21 @@ async fn a_data_model_is_changed_by_the_editors_operations_once_the_source_check
     let proxy = model_answering(&[refused, corrected]).await;
     let forge = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path("/odata/Repositories(Owner='owner',Name='repo')"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo/contents/projects/helsinki/spaces/helsinki/datamodels/helsinki.linkml.yaml"))
+        .and(path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/helsinki/spaces/helsinki/datamodels/helsinki.linkml.yaml'",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-linkml-1",
-            "content": STANDARD.encode(HELSINKI_LINKML)
+            "Sha": "sha-linkml-1",
+            "Content": STANDARD.encode(HELSINKI_LINKML)
         })))
         .mount(&forge)
         .await;
@@ -2138,11 +2144,11 @@ async fn a_data_model_is_changed_by_the_editors_operations_once_the_source_check
             "classes": ["BikeHireDockingStation"]
         }),
     ));
-    let gitea = GiteaClient::new(forge.uri().parse().expect("url"), "owner", "repo", "token")
+    let shako = ShakoClient::new(forge.uri().parse().expect("url"), "owner", "repo", "token")
         .expect("client");
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror)
-        .with_gitea(Arc::new(gitea));
+        .with_shako(Arc::new(shako));
 
     let id = start_conversation(
         &state,
@@ -2233,15 +2239,21 @@ async fn a_dashboard_is_created_with_its_layers_once_they_name_what_the_endpoint
     .await;
     let forge = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path("/odata/Repositories(Owner='owner',Name='repo')"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo/contents/projects/helsinki/spaces/helsinki/datamodels/helsinki.linkml.yaml"))
+        .and(path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/helsinki/spaces/helsinki/datamodels/helsinki.linkml.yaml'",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-linkml-1",
-            "content": STANDARD.encode(HELSINKI_LINKML)
+            "Sha": "sha-linkml-1",
+            "Content": STANDARD.encode(HELSINKI_LINKML)
         })))
         .mount(&forge)
         .await;
@@ -2271,11 +2283,11 @@ async fn a_dashboard_is_created_with_its_layers_once_they_name_what_the_endpoint
         "helsinki",
         json!({ "contextSpaceRef": "helsinki", "slug": "bikes", "audience": "project-list" }),
     ));
-    let gitea = GiteaClient::new(forge.uri().parse().expect("url"), "owner", "repo", "token")
+    let shako = ShakoClient::new(forge.uri().parse().expect("url"), "owner", "repo", "token")
         .expect("client");
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror)
-        .with_gitea(Arc::new(gitea));
+        .with_shako(Arc::new(shako));
 
     let id = start_conversation(
         &state,

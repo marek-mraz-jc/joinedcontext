@@ -141,19 +141,27 @@ mod at_a_revision {
         let forge = common::forge().await;
         let tree: Vec<serde_json::Value> = files
             .iter()
-            .map(|(p, _)| json!({ "path": p, "type": "blob", "sha": format!("blob-{p}") }))
+            .map(|(p, _)| json!({ "Path": p, "Type": "blob", "Sha": format!("blob-{p}") }))
             .collect();
         Mock::given(method("GET"))
-            .and(path(format!("{}/git/trees/{PAST}", common::REPO)))
+            .and(path(format!(
+                "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+                common::REPO
+            )))
+            .and(query_param("@r", format!("'{PAST}'")))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_json(json!({ "sha": PAST, "truncated": false, "tree": tree })),
+                    .set_body_json(json!({ "Sha": PAST, "Truncated": false, "Tree": tree })),
             )
             .with_priority(1)
             .mount(&forge)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{}/git/trees/{UNKNOWN}", common::REPO)))
+            .and(path(format!(
+                "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+                common::REPO
+            )))
+            .and(query_param("@r", format!("'{UNKNOWN}'")))
             .respond_with(
                 ResponseTemplate::new(404).set_body_json(json!({ "message": "sha not found" })),
             )
@@ -162,11 +170,12 @@ mod at_a_revision {
             .await;
         for (file, content) in files {
             Mock::given(method("GET"))
-                .and(path(format!("{}/contents/{file}", common::REPO)))
-                .and(query_param("ref", PAST))
+                .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+                .and(query_param("@p", format!("'{file}'")))
+                .and(query_param("@r", format!("'{}'", PAST)))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                    "sha": format!("blob-{file}"),
-                    "content": base64::engine::general_purpose::STANDARD.encode(content),
+                    "Sha": format!("blob-{file}"),
+                    "Content": base64::engine::general_purpose::STANDARD.encode(content)
                 })))
                 .with_priority(1)
                 .mount(&forge)

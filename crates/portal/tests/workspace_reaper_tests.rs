@@ -11,7 +11,7 @@ use chrono::{Duration, Utc};
 use common::{forge, state_on, REPO};
 use joinedcontext_portal::ops::workspaces::{reap_expired_at, Opening, Scope};
 use joinedcontext_portal::state::AppState;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT: &str = "ovzdusie";
@@ -19,8 +19,11 @@ const PROJECT: &str = "ovzdusie";
 /// A forge that answers the branch deletion with `status`, and the state on it.
 async fn world(name: &str, status: u16) -> (MockServer, AppState) {
     let server = forge().await;
-    Mock::given(method("DELETE"))
-        .and(path(format!("{REPO}/branches/workspace/{name}")))
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO}/Shako.DeleteBranch")))
+        .and(body_string_contains(format!(
+            r#""Branch":"workspace/{name}""#
+        )))
         .respond_with(ResponseTemplate::new(status))
         .mount(&server)
         .await;
@@ -49,8 +52,10 @@ async fn deletions(server: &MockServer, name: &str) -> usize {
         .unwrap_or_default()
         .iter()
         .filter(|request| {
-            request.method == wiremock::http::Method::DELETE
-                && request.url.path() == format!("{REPO}/branches/workspace/{name}")
+            request.method == wiremock::http::Method::POST
+                && request.url.path() == format!("{REPO}/Shako.DeleteBranch")
+                && serde_json::from_slice::<serde_json::Value>(&request.body)
+                    .is_ok_and(|body| body["Branch"] == format!("workspace/{name}"))
         })
         .count()
 }
@@ -112,8 +117,11 @@ async fn a_forge_that_cannot_be_reached_keeps_the_record_for_the_next_pass() {
 
 /// The same forge, now answering the branch deletion.
 async fn forge_deleting(name: &str, server: MockServer) -> MockServer {
-    Mock::given(method("DELETE"))
-        .and(path(format!("{REPO}/branches/workspace/{name}")))
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO}/Shako.DeleteBranch")))
+        .and(body_string_contains(format!(
+            r#""Branch":"workspace/{name}""#
+        )))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
@@ -152,8 +160,11 @@ async fn one_pass_reaps_every_expired_workspace() {
     let server = forge().await;
     let state = state_on(&server);
     for name in ["one", "two", "three"] {
-        Mock::given(method("DELETE"))
-            .and(path(format!("{REPO}/branches/workspace/{name}")))
+        Mock::given(method("POST"))
+            .and(path(format!("{REPO}/Shako.DeleteBranch")))
+            .and(body_string_contains(format!(
+                r#""Branch":"workspace/{name}""#
+            )))
             .respond_with(ResponseTemplate::new(204))
             .mount(&server)
             .await;
