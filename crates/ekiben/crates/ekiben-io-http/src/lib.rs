@@ -12,6 +12,8 @@ pub mod output;
 pub mod processor;
 #[cfg(feature = "websocket")]
 pub mod websocket;
+#[cfg(feature = "websocket")]
+pub mod mqtt;
 
 use ekiben_core::Registry;
 
@@ -22,4 +24,6 @@ pub fn register_all(registry: &Registry) {
     http_server::register(registry);
     #[cfg(feature = "websocket")]
     websocket::register(registry);
+    #[cfg(feature = "websocket")]
+    mqtt::register(registry);
 }
