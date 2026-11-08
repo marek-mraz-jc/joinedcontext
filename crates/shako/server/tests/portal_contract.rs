@@ -9,7 +9,7 @@
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::Request;
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use jc_router::{JcRouterBuilder, Mount, MountSpec};
@@ -25,7 +25,6 @@ use shako_server::{ShakoState, registry_router, router};
 use shako_store_memory::MemoryStore;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use url::Url;
 
 const OWNER: &str = "joinedcontext";
 const APPS_OWNER: &str = "joinedcontext-apps";
@@ -257,7 +256,7 @@ async fn repository_branches_contents_and_history() {
             AUTHOR,
             &[
                 ("spaces/air/endpoints/air.yaml".into(), air.clone(), None),
-                ("README.md".into(), "# Config\n".into(), None),
+                ("docs/notes.md".into(), "# Notes\n".into(), None),
             ],
         )
         .await
@@ -278,7 +277,7 @@ async fn repository_branches_contents_and_history() {
         "{blobs:?}"
     );
     let listed = forge.list_tree(&c1).await.unwrap();
-    assert!(listed.contains(&"README.md".to_owned()), "{listed:?}");
+    assert!(listed.contains(&"docs/notes.md".to_owned()), "{listed:?}");
 
     // put_file: a replacement names the blob it replaces; a stale blob is a conflict.
     let air2 = manifest("air-two");
@@ -308,14 +307,14 @@ async fn repository_branches_contents_and_history() {
 
     // update_files refuses the whole commit when one blob moved.
     let head_before = forge.branch_head(ws).await.unwrap();
-    let readme = forge.get_file("README.md", ws).await.unwrap().unwrap();
+    let readme = forge.get_file("docs/notes.md", ws).await.unwrap().unwrap();
     let refused = forge
         .update_files(
             ws,
             "Two files",
             AUTHOR,
             &[
-                ("README.md".into(), "# New\n".into(), readme.sha.clone()),
+                ("docs/notes.md".into(), "# New\n".into(), readme.sha.clone()),
                 (
                     "spaces/air/endpoints/air.yaml".into(),
                     air.clone(),
@@ -334,11 +333,11 @@ async fn repository_branches_contents_and_history() {
             "Upload and delete",
             AUTHOR,
             &[("models/air.yaml".into(), "classes: {}\n".into())],
-            &[("README.md".into(), readme.sha.clone())],
+            &[("docs/notes.md".into(), readme.sha.clone())],
         )
         .await
         .unwrap();
-    assert!(forge.get_file("README.md", ws).await.unwrap().is_none());
+    assert!(forge.get_file("docs/notes.md", ws).await.unwrap().is_none());
     assert!(forge.get_file("models/air.yaml", ws).await.unwrap().is_some());
 
     // delete_file answers the commit it made.
@@ -578,6 +577,39 @@ async fn a_webhook_signed_with_another_secret_is_refused_by_the_portal() {
     assert!(seen.iter().all(|(_, st)| *st == 401), "{seen:?}");
 }
 
+/// A hook without a secret is refused at creation, and a hook whose stored secret is gone is
+/// never delivered: nothing signed with an empty key leaves the forge.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unsigned_hook_is_refused_and_a_lost_secret_delivers_nothing() {
+    let w = World::start().await;
+    let forge = w.client("config");
+    assert!(forge.ensure_repository("Configuration").await.unwrap());
+    for body in [
+        json!({ "type": "gitea", "config": { "url": w.portal_hook, "content_type": "json" } }),
+        json!({ "type": "gitea", "config": { "url": w.portal_hook, "content_type": "json", "secret": " " } }),
+        json!({ "type": "gitea", "config": { "url": w.portal_hook, "content_type": "form", "secret": "s" } }),
+        json!({ "type": "slack", "config": { "url": w.portal_hook, "secret": "s" } }),
+        json!({ "type": "gitea", "config": { "url": w.portal_hook, "secret": "s" }, "branch_filter": "release/*" }),
+        json!({ "url": w.portal_hook }),
+    ] {
+        let (st, answer) = w.raw("POST", "api/v1/repos/joinedcontext/config/hooks", Some(body.clone())).await;
+        assert_eq!(st, 422, "{body} -> {answer}");
+    }
+    let (st, _) = w
+        .raw(
+            "POST",
+            "api/v1/repos/joinedcontext/config/hooks",
+            Some(json!({ "url": w.portal_hook, "secret_ref": "no-such-secret" })),
+        )
+        .await;
+    assert_eq!(st, 201);
+    forge
+        .write_files("main", "Direct", AUTHOR, &[("a.txt".into(), "a\n".into(), None)])
+        .await
+        .unwrap();
+    assert!(w.deliveries.lock().is_empty(), "{:?}", w.deliveries.lock());
+}
+
 /// Copies and transfers: bundle out, empty repository, push_bundle in, tags, migrate
 /// (rows 2-4, 32, 33).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -660,26 +692,21 @@ async fn push_mirrors_teams_and_permissions() {
     // Teams: the Portal reads ownership, lists, creates, links, unlinks and removes.
     let forge = w.client("config");
     assert!(forge.ensure_repository("Configuration").await.unwrap());
-    assert!(forge.owns_organization().await.unwrap());
+    // Access follows RoleBindings, not forge teams: the Portal reads "not an owner" and leaves
+    // the teams alone (project_teams.rs converge, LeftToTheBootstrap). The team calls still
+    // answer in the shapes the Portal parses, as no-ops.
+    assert!(!forge.owns_organization().await.unwrap());
     let team = forge
         .create_team("project-air-write", "Air writers", "write")
         .await
         .unwrap();
     assert_eq!(team.name, "project-air-write");
-    assert!(forge.org_teams().await.unwrap().iter().any(|t| t.id == team.id));
+    forge.org_teams().await.unwrap();
     forge.set_team_repository(team.id, "config", true).await.unwrap();
-    assert!(
-        forge
-            .team_repositories(team.id)
-            .await
-            .unwrap()
-            .contains(&"config".to_owned())
-    );
+    forge.team_repositories(team.id).await.unwrap();
     forge.set_team_repository(team.id, "config", false).await.unwrap();
-    assert!(!forge.team_repositories(team.id).await.unwrap().contains(&"config".to_owned()));
     forge.delete_team(team.id).await.unwrap();
     forge.delete_team(team.id).await.unwrap();
-    assert!(!forge.org_teams().await.unwrap().iter().any(|t| t.id == team.id));
 }
 
 /// The applications' organization: generic packages and the container registry the App
@@ -749,9 +776,11 @@ async fn generic_packages_and_container_images() {
 }
 
 /// What a SyncSource reads from a git origin (`sync/remote.rs`): the upload-pack advertisement
-/// and the archive at the repository's web path, both anonymous on a public repository.
+/// and the archive at the repository's page path. shako serves both, but only to a signed-in
+/// caller: deny by default holds for `private: false` repositories too, so the Portal's
+/// credential-free fetch of a shako origin is refused (a listed gap, PORTAL-CALLS.md).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_sync_source_reads_the_advertisement_and_the_web_archive() {
+async fn a_sync_source_origin_serves_the_advertisement_and_the_page_archive() {
     let w = World::start().await;
     let forge = w.client("blueprints");
     assert!(forge.ensure_repository("Blueprints").await.unwrap());
@@ -765,41 +794,39 @@ async fn a_sync_source_reads_the_advertisement_and_the_web_archive() {
         .await;
     assert_eq!(st, 200);
 
-    let anon = reqwest::Client::new();
-    let refs = anon
-        .get(format!("{}joinedcontext/blueprints.git/info/refs?service=git-upload-pack", w.base))
-        .send()
-        .await
-        .unwrap();
+    let refs_url = format!("{}joinedcontext/blueprints.git/info/refs?service=git-upload-pack", w.base);
+    let zip_url = format!("{}joinedcontext/blueprints/archive/{head}.zip", w.base);
+    let http = reqwest::Client::new();
+    let signed = |url: &str| {
+        http.get(url)
+            .header("authorization", format!("token {PORTAL_TOKEN}"))
+            .send()
+    };
+
+    let refs = signed(&refs_url).await.unwrap();
     assert_eq!(refs.status(), 200);
     let text = refs.text().await.unwrap();
     assert!(text.contains(&format!("{head} refs/heads/main")), "{text}");
 
-    let zip = anon
-        .get(format!("{}joinedcontext/blueprints/archive/{head}.zip", w.base))
-        .send()
-        .await
-        .unwrap();
+    let zip = signed(&zip_url).await.unwrap();
     assert_eq!(zip.status(), 200);
     let bytes = zip.bytes().await.unwrap();
     assert!(bytes.starts_with(b"PK\x03\x04"));
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
-    let names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_owned())
+    let archive = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|n| n.expect("entry name").into_owned())
         .collect();
+    // One root directory, which the Portal strips (`unpack`, strip_root).
     let root = names[0].split('/').next().unwrap().to_owned();
     assert!(names.iter().all(|n| n.starts_with(&format!("{root}/"))), "{names:?}");
     assert!(names.iter().any(|n| n.ends_with("/models/air.yaml")), "{names:?}");
 
-    // A private repository answers neither to an anonymous reader.
-    let private = w.client("private");
-    assert!(private.ensure_repository("Private").await.unwrap());
-    let hidden = anon
-        .get(format!("{}joinedcontext/private/archive/main.zip", w.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(hidden.status(), 404);
+    // Anonymous: refused, public or not.
+    for url in [&refs_url, &zip_url] {
+        let anon = http.get(url.as_str()).send().await.unwrap();
+        assert!(matches!(anon.status().as_u16(), 401 | 404), "{url}: {}", anon.status());
+    }
 }
 
 /// Actions (App builds) are not served yet: every Portal call gets the forge's "not found",

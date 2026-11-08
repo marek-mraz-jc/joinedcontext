@@ -2388,6 +2388,23 @@ async fn compat_create_pull(
             Err(e) => return gitea_error_response(&state, &e),
         };
 
+    // Gitea keeps one open pull request per head and base: a second is a 409.
+    // ponytail: two concurrent creates can both pass this read; a store constraint closes it.
+    match state
+        .store()
+        .list_pull_requests(repo.instance_id, repo.org_id, Some(repo.id), Some("open"))
+        .await
+    {
+        Ok(open) if open.iter().any(|pr| pr.head_ref == req.head && pr.base_ref == req.base) => {
+            return gitea_error_response(
+                &state,
+                &ShakoError::Conflict("pull request already exists for these targets".into()),
+            );
+        }
+        Ok(_) => {}
+        Err(e) => return gitea_error_response(&state, &e),
+    }
+
     let head = req.head.clone();
     let base = req.base.clone();
     let disk_clone = disk_path.clone();
