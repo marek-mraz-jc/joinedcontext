@@ -1,4 +1,4 @@
-import { api } from "./client";
+import { api, unwrap } from "./client";
 import type { components } from "./schema";
 export { canonicalizeJson, digestOf } from "./digest";
 
@@ -76,6 +76,16 @@ export async function putDraft(
     );
   }
   return asDraft(data);
+}
+
+/**
+ * Throws away one shared draft (AG-61), the call `jc_draft_drop` makes. The server checks the
+ * person may write drafts of the project; a refusal throws with its detail.
+ */
+export async function dropDraft(project: string, kind: string, name: string): Promise<void> {
+  await unwrap(
+    await api.DELETE("/api/v1/projects/{project}/drafts/{kind}/{name}", { params: { path: { project, kind, name } } }),
+  );
 }
 
 const DRAFT_EVENTS = ["message", "draft", "put", "verdict", "drop"] as const;

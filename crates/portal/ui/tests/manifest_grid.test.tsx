@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import "../src/i18n";
 import en from "../src/locales/en.json";
 import type { Manifest } from "../src/api/manifest";
+import { ApiError } from "../src/api/client";
 import { fieldWidget, hintText, specValue, withSpecValue } from "../src/components/grid/fieldWidget";
 import { GridFooter, GridRow, GridToolbar, ManifestGrid, example, valueCounts, visibleRows } from "../src/components/grid/ManifestGrid";
 import type { GridColumn } from "../src/components/grid/ManifestGrid";
@@ -178,6 +179,33 @@ describe("valueCounts", () => {
 });
 
 describe("ManifestGrid", () => {
+  it("keeps the page's header above a refused list, so a project out of reach still names its page", async () => {
+    const refused = { isPending: false, isError: true, error: new ApiError(404, "project helsinki not found", { type: "about:blank", title: "Not Found", status: 404, detail: "project helsinki not found" }), refetch: () => undefined };
+    renderPage(
+      <ManifestGrid<Manifest>
+        caption="Endpoints"
+        storageKey="test-refused"
+        searchLabel="Search endpoints"
+        rows={[]}
+        rowKey={(row) => row.metadata.name}
+        query={refused}
+        name={{ id: "name", label: "Name", text: (row) => row.metadata.name }}
+        columns={[]}
+        empty={<p>Nothing yet</p>}
+        header={(toolbar) => (
+          <header>
+            <h1>Endpoints</h1>
+            {toolbar}
+          </header>
+        )}
+      />,
+      { answer: async () => json({}) },
+    );
+    expect(await screen.findByRole("heading", { level: 1, name: "Endpoints" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("project helsinki not found");
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
   it("hides a column until ticked under Columns, and the panel still shows it", async () => {
     const { answer } = harness(() => json({}));
     renderPage(grid(), { answer });
