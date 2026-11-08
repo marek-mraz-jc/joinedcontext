@@ -157,12 +157,7 @@ nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.to
   --admin-listen "127.0.0.1:$((pg_port+200))" --admin-token-file "$(secret metrics-token)" \
   > "$home/jc.log" 2>&1 &
 echo $! > "$home/jc.pid"
-for _ in $(seq 180); do
-  grep -q "jc listening" "$home/jc.log" && break
-  kill -0 "$(cat "$home/jc.pid")" 2>/dev/null || { tail -40 "$home/jc.log" >&2; exit 1; }
-  sleep 1
-done
-grep -q "jc listening" "$home/jc.log" || { tail -40 "$home/jc.log" >&2; exit 1; }
+"$here/wait-jc.sh" "$(cat "$home/jc.pid")" "$home/jc.log" || exit 1
 echo "$env_name: jc on http://localhost:$port (log $home/jc.log)"
 
 

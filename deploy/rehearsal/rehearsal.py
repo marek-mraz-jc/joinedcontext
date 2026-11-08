@@ -26,6 +26,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import threading
 import sys
@@ -821,11 +822,32 @@ def bundle_settled(export: Path) -> str:
     return f"written after manifest.json: {newer[:3]}" if newer else ""
 
 
+# Measured on the prod import of 2026-11-08: 31.7 GB of pgdata for 1,669,431 entities.
+DB_BYTES_PER_ENTITY = 19_000
+DISK_MARGIN = 1.25
+DISK_RESERVE = 25 * 10**9  # left free for the other agents on the shared disk
+
+
+def disk_problem(entity_lines: int, free_bytes: int) -> str:
+    """Why an import of this many entities must not start on a disk with this much free, or "":
+    the estimated database plus a margin, and a reserve kept for everyone else."""
+    need = int(entity_lines * DB_BYTES_PER_ENTITY * DISK_MARGIN)
+    if free_bytes - need < DISK_RESERVE:
+        return (f"{entity_lines:,} entities need about {need / 1e9:.1f} GB and "
+                f"{DISK_RESERVE / 1e9:.0f} GB must stay free; {free_bytes / 1e9:.1f} GB are free")
+    return ""
+
+
 def cmd_import(a):
     loopback_only(a.base)
     export, state = Path(a.export), Path(a.state)
     if why := bundle_settled(export):
         raise SystemExit(f"the bundle is not settled ({why}): import after the exporter finishes")
+    if not a.only or "antares" in a.only.split(","):
+        with open(export / "antares" / "entities.jsonl", "rb") as f:
+            lines = sum(1 for _ in f)
+        if why := disk_problem(lines, shutil.disk_usage(Path(a.state).resolve().parent).free):
+            raise SystemExit(f"not importing: {why}")
     now = parse_time(a.now) if a.now else utcnow()
     manifest = json.loads((export / "manifest.json").read_text())
     # Only the last day: observed at most 24 h before the export, and at most 24 h before now (the

@@ -417,3 +417,29 @@ def test_only_the_guard_refusing_the_own_listener_counts_as_expected():
     assert rh.panel_class(500, {"error": "the panel's datasource did not answer"}, own, base) == "red"
     assert rh.panel_class(502, "disallowed URL scheme 'http'", own, base) == "red"
     assert rh.panel_class(200, {"frames": []}, own, base) == "data"
+
+
+@pytest.mark.parametrize("script, ok", [
+    ("echo 'config file jc.toml: unknown field `database`' >> {log}; exit 2", False),
+    ("echo 'jc listening' >> {log}; sleep 1; exit 1", False),
+    ("echo 'jc listening' >> {log}; sleep 30", True),
+])
+def test_up_stops_when_jc_exits_at_start(tmp_path, script, ok):
+    log = tmp_path / "jc.log"
+    log.write_text("")
+    jc = subprocess.Popen(["bash", "-c", script.format(log=log)])
+    try:
+        r = subprocess.run([str(HERE / "wait-jc.sh"), str(jc.pid), str(log), "20"],
+                           env=dict(os.environ, REHEARSAL_SETTLE_SECS="3"), capture_output=True, text=True, timeout=60)
+    finally:
+        jc.kill()
+        jc.wait()
+    assert (r.returncode == 0) == ok, r.stderr
+
+
+def test_an_import_that_would_fill_the_shared_disk_does_not_start():
+    # the dev bundle of 2026-11-08 on 35 GB free: refused, naming the numbers
+    why = rh.disk_problem(1_822_836, 35 * 10**9)
+    assert "1,822,836 entities" in why and "35.0 GB are free" in why
+    assert rh.disk_problem(1_822_836, 100 * 10**9) == ""
+    assert rh.disk_problem(260, 30 * 10**9) == ""
