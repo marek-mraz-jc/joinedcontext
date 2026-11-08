@@ -123,7 +123,7 @@ export function FolderView({
       ) : tree.data.entries.length === 0 ? (
         <EmptyState icon="git" title={t("repositories.files.emptyFolder")} description={t("repositories.files.emptyFolderHint")} />
       ) : (
-        <Table caption={t("repositories.files.caption", { path: path || repository.name })}>
+        <Table caption={t("repositories.files.caption", { path: path || repository.name })} zebra={false}>
           <TableHead>
             <TableHeaderCell>{t("repositories.files.name")}</TableHeaderCell>
             <TableHeaderCell className="text-right">{t("repositories.files.size")}</TableHeaderCell>
@@ -180,7 +180,12 @@ export function FolderView({
       {tree.data?.truncated ? <Alert tone="info">{t("repositories.files.truncated")}</Alert> : null}
       {!path && repository.readme ? (
         <Card as="section" aria-labelledby="repository-readme">
-          <CardHeader as="h2" titleId="repository-readme" title={repository.readme.path} />
+          <CardHeader
+            as="h2"
+            titleId="repository-readme"
+            title={<span className="font-mono text-caption font-normal text-fg-muted">{repository.readme.path}</span>}
+            className="mb-3 border-b border-border pb-2"
+          />
           {/* Markdown drawn as text and checked links, never as markup: a `<script>` or a
               `javascript:` link in a README is characters on the page (AP-53). */}
           <div className="text-body">

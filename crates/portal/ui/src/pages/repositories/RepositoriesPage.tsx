@@ -19,7 +19,7 @@ import {
   PageLoading,
 } from "../../components/ui";
 import { bytesText } from "../knowledge/knowledge";
-import { useRepositoryRead } from "./api";
+import { isNotFound, useRepositoryRead } from "./api";
 import type { Page, RepositoryRole, RepositorySummary } from "./api";
 
 const PAGE = 30;
@@ -46,6 +46,7 @@ export function RepositoriesPage({ project }: { project: string }): JSX.Element 
   return (
     <section aria-labelledby="repositories-title" className="space-y-6">
       <PageHeader title={<span id="repositories-title">{t("repositories.title")}</span>} description={t("repositories.intro")} />
+      {list.isError || (items.length === 0 && !filter.trim() && !list.isPending) ? null : (
       <Field id="repositories-filter" label={t("repositories.filter.label")} help={t("repositories.filter.help")} className="max-w-md">
         <Input
           id="repositories-filter"
@@ -58,8 +59,11 @@ export function RepositoriesPage({ project }: { project: string }): JSX.Element 
           }}
         />
       </Field>
+      )}
       {list.isError ? (
-        <PageFailed error={list.error} onRetry={() => void list.refetch()} />
+        <PageFailed error={list.error} onRetry={() => void list.refetch()}>
+          {isNotFound(list.error) ? t("repositories.refused.list", { project }) : undefined}
+        </PageFailed>
       ) : list.isPending ? (
         <PageLoading label={t("repositories.loading")} />
       ) : items.length === 0 ? (
@@ -91,12 +95,10 @@ export function RepositoriesPage({ project }: { project: string }): JSX.Element 
                     {repository.description ? <p className="mt-0.5 text-caption text-fg-muted">{repository.description}</p> : null}
                   </TableCell>
                   <TableCell data-label={t("repositories.column.role")}>
-                    <RoleBadge role={repository.role} />
-                    {repository.archived ? (
-                      <Badge tone="warning" className="ml-1">
-                        {t("repositories.archived")}
-                      </Badge>
-                    ) : null}
+                    <span className="inline-flex flex-wrap items-center gap-1">
+                      <RoleBadge role={repository.role} />
+                      {repository.archived ? <Badge tone="warning">{t("repositories.archived")}</Badge> : null}
+                    </span>
                   </TableCell>
                   <TableCell data-label={t("repositories.column.branch")} className="font-mono">
                     {repository.defaultBranch}

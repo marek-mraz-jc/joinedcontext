@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, unwrap } from "../../api/client";
+import { ApiError, api, unwrap } from "../../api/client";
 
 /**
  * The repository reads of the Portal registry (`jc_repository_*`, src/ops/repositories.rs): one
@@ -153,6 +153,11 @@ export function useRepositoryRead<T>(
     queryFn: () => readRepository<T>(project, name, input),
     enabled,
   });
+}
+
+/** Whether a read was answered 404: for these pages, not there or not open to the caller. */
+export function isNotFound(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
 }
 
 /** A commit's short id, as a forge shows it. */

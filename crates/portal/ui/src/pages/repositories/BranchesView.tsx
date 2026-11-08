@@ -26,7 +26,7 @@ export function BranchesView({ project, repository }: { project: string; reposit
                   {branch.name}
                 </RepoLink>
                 {branch.default ? <Badge tone="primary">{t("repositories.branches.default")}</Badge> : null}
-                {branch.protected ? <Badge tone="warning">{t("repositories.branches.protected")}</Badge> : null}
+                {branch.protected ? <Badge tone="info">{t("repositories.branches.protected")}</Badge> : null}
                 <code className="ml-auto font-mono text-caption text-fg-muted">{shortSha(branch.headSha)}</code>
               </li>
             ))}

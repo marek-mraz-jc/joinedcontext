@@ -1981,6 +1981,52 @@
         "evidence/deployer/T-3986/full-0500/portal-organization-groups-dialog-remove-air-quality-steward-steward-en-1440.png"
       ]
     },
+    "src/pages/repositories/PullsView.tsx": {
+      "walkedBy": "jc-shako-ui",
+      "date": "2026-11-08",
+      "screenshots": [
+        "evidence/jc-shako-ui/shots/pulls-1440.png",
+        "evidence/jc-shako-ui/shots/pulls-400.png",
+        "evidence/jc-shako-ui/shots/pulls-closed-1440.png",
+        "evidence/jc-shako-ui/shots/pulls-closed-400.png",
+        "evidence/jc-shako-ui/shots/pulls-empty-1440.png",
+        "evidence/jc-shako-ui/shots/pulls-empty-400.png",
+        "evidence/jc-shako-ui/shots/pull-1440.png",
+        "evidence/jc-shako-ui/shots/pull-400.png"
+      ]
+    },
+    "src/pages/repositories/RepositoriesPage.tsx": {
+      "walkedBy": "jc-shako-ui",
+      "date": "2026-11-08",
+      "screenshots": [
+        "evidence/jc-shako-ui/shots/list-filled-1440.png",
+        "evidence/jc-shako-ui/shots/list-filled-400.png",
+        "evidence/jc-shako-ui/shots/list-filtered-empty-1440.png",
+        "evidence/jc-shako-ui/shots/list-filtered-empty-400.png",
+        "evidence/jc-shako-ui/shots/list-empty-1440.png",
+        "evidence/jc-shako-ui/shots/list-empty-400.png",
+        "evidence/jc-shako-ui/shots/list-refused-1440.png",
+        "evidence/jc-shako-ui/shots/list-refused-400.png"
+      ]
+    },
+    "src/pages/repositories/RepositoryPage.tsx": {
+      "walkedBy": "jc-shako-ui",
+      "date": "2026-11-08",
+      "screenshots": [
+        "evidence/jc-shako-ui/shots/repo-files-1440.png",
+        "evidence/jc-shako-ui/shots/repo-files-400.png",
+        "evidence/jc-shako-ui/shots/file-1440.png",
+        "evidence/jc-shako-ui/shots/file-400.png",
+        "evidence/jc-shako-ui/shots/commit-diff-1440.png",
+        "evidence/jc-shako-ui/shots/commit-diff-400.png",
+        "evidence/jc-shako-ui/shots/settings-1440.png",
+        "evidence/jc-shako-ui/shots/settings-400.png",
+        "evidence/jc-shako-ui/shots/viewer-no-settings-1440.png",
+        "evidence/jc-shako-ui/shots/viewer-no-settings-400.png",
+        "evidence/jc-shako-ui/shots/repo-not-found-1440.png",
+        "evidence/jc-shako-ui/shots/repo-not-found-400.png"
+      ]
+    },
     "src/pages/settings/SettingsPage.tsx": {
       "walkedBy": "worker-t6344 (stub walk)",
       "date": "2026-11-01",

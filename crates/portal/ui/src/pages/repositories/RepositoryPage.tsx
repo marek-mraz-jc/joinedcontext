@@ -4,7 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { usePermissions } from "../../api/permissions";
 import { Button, Icon, PageFailed, PageHeader, PageLoading, Tabs, tabPanelProps } from "../../components/ui";
-import { useRepositoryRead } from "./api";
+import { isNotFound, useRepositoryRead } from "./api";
 import { REPOSITORY_TABS } from "./links";
 import type { RepositorySearch } from "./links";
 import type { Repository } from "./api";
@@ -70,8 +70,10 @@ export function RepositoryPage({
   if (repository.isError) {
     return (
       <section aria-labelledby="repository-title" className="space-y-6">
-        <PageHeader title={<span id="repository-title">{name}</span>} description={t("repositories.page.intro")} breadcrumb={back} />
-        <PageFailed error={repository.error} onRetry={() => void repository.refetch()} />
+        <PageHeader title={<span id="repository-title" className="font-mono">{name}</span>} description={t("repositories.refused.subtitle")} />
+        <PageFailed error={repository.error} onRetry={() => void repository.refetch()} back={back}>
+          {isNotFound(repository.error) ? t("repositories.refused.repository", { name, project }) : undefined}
+        </PageFailed>
       </section>
     );
   }

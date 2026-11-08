@@ -11793,7 +11793,6 @@
         "closed": "Geschlossen",
         "all": "Alle"
       },
-      "empty": "Keine Pull Requests",
       "emptyHint": "Eine im Portal vorgeschlagene Änderung öffnet hier einen Pull Request.",
       "line": "#{number} von {author} · {date} · {head} nach {base}",
       "all": "Alle Pull Requests",
@@ -11813,10 +11812,16 @@
         "APPROVED": "Genehmigt",
         "REQUEST_CHANGES": "Änderungen erbeten",
         "COMMENT": "Kommentiert"
-      }
+      },
+      "emptyState": {
+        "open": "Keine offenen Pull Requests",
+        "closed": "Keine geschlossenen Pull Requests",
+        "all": "Keine Pull Requests"
+      },
+      "showAll": "Alle Status anzeigen"
     },
     "settings": {
-      "intro": "Was die Forge für dieses Repository hält. Eine Änderung wird als Änderung des Projekts vorgeschlagen und genehmigt.",
+      "intro": "Was die Forge für dieses Repository hält, hier nur zum Lesen.",
       "protection": "Branch-Schutz",
       "noProtection": "Kein Branch ist geschützt.",
       "pattern": "Branch",
@@ -11839,6 +11844,11 @@
       "signed": "Signiert",
       "yes": "Erlaubt",
       "no": "Verweigert"
+    },
+    "refused": {
+      "list": "Die Repositories von {project} sind für Sie nicht freigegeben. Wer das Projekt verwaltet, kann Ihnen Lesezugriff geben.",
+      "repository": "Zu {project} gehört kein Repository namens {name}. Es gehört vielleicht zu einem anderen Projekt oder wurde entfernt.",
+      "subtitle": "Dieses Repository ließ sich nicht öffnen."
     }
   }
 }

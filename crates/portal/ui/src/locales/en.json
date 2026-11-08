@@ -11793,7 +11793,6 @@
         "closed": "Closed",
         "all": "All"
       },
-      "empty": "No pull requests",
       "emptyHint": "A change proposed in the Portal opens a pull request here.",
       "line": "#{number} by {author} · {date} · {head} into {base}",
       "all": "All pull requests",
@@ -11813,10 +11812,16 @@
         "APPROVED": "Approved",
         "REQUEST_CHANGES": "Changes asked",
         "COMMENT": "Commented"
-      }
+      },
+      "emptyState": {
+        "open": "No open pull requests",
+        "closed": "No closed pull requests",
+        "all": "No pull requests"
+      },
+      "showAll": "Show every state"
     },
     "settings": {
-      "intro": "What the forge holds for this repository. A change to it is proposed and approved as a change to the project.",
+      "intro": "What the forge holds for this repository, read-only here.",
       "protection": "Branch protection",
       "noProtection": "No branch is protected.",
       "pattern": "Branch",
@@ -11839,6 +11844,11 @@
       "signed": "Signed",
       "yes": "Allowed",
       "no": "Refused"
+    },
+    "refused": {
+      "list": "The repositories of {project} are not open to you. Whoever manages the project can grant you read access.",
+      "repository": "No repository named {name} belongs to {project}. It may belong to another project, or it was removed.",
+      "subtitle": "This repository could not be opened."
     }
   }
 }

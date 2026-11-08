@@ -11793,7 +11793,6 @@
         "closed": "Zatvorené",
         "all": "Všetky"
       },
-      "empty": "Žiadne pull requesty",
       "emptyHint": "Zmena navrhnutá v Portáli tu otvorí pull request.",
       "line": "#{number} od {author} · {date} · {head} do {base}",
       "all": "Všetky pull requesty",
@@ -11813,10 +11812,16 @@
         "APPROVED": "Schválené",
         "REQUEST_CHANGES": "Žiada zmeny",
         "COMMENT": "Komentár"
-      }
+      },
+      "emptyState": {
+        "open": "Žiadne otvorené pull requesty",
+        "closed": "Žiadne zatvorené pull requesty",
+        "all": "Žiadne pull requesty"
+      },
+      "showAll": "Zobraziť všetky stavy"
     },
     "settings": {
-      "intro": "Čo forge drží pre tento repozitár. Zmena sa navrhuje a schvaľuje ako zmena projektu.",
+      "intro": "Čo forge drží pre tento repozitár, tu len na čítanie.",
       "protection": "Ochrana vetiev",
       "noProtection": "Žiadna vetva nie je chránená.",
       "pattern": "Vetva",
@@ -11839,6 +11844,11 @@
       "signed": "Podpísaný",
       "yes": "Povolený",
       "no": "Zakázaný"
+    },
+    "refused": {
+      "list": "Repozitáre projektu {project} vám nie sú prístupné. Prístup na čítanie vám udelí ten, kto projekt spravuje.",
+      "repository": "Projektu {project} nepatrí žiadny repozitár s názvom {name}. Môže patriť inému projektu alebo bol odstránený.",
+      "subtitle": "Tento repozitár sa nepodarilo otvoriť."
     }
   }
 }

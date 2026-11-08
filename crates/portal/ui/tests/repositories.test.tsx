@@ -170,9 +170,15 @@ describe("the repositories list", () => {
     expect(seen.at(-1)).toMatchObject({ op: "jc_repository_list", filter: "zzz", cursor: 0 });
   });
 
-  it("says what lives here when the project has none", async () => {
+  it("says what lives here when the project has none, and offers no filter over nothing", async () => {
     await renderRoute({ path: P, permissions: VIEWER, answer: answering({ jc_repository_list: () => jsonResponse({ items: [], total: 0 }) }) });
     expect(await screen.findByText("No repositories yet")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Filter by name")).toBeNull();
+  });
+
+  it("a project the caller cannot read answers 404: the page says so in its own words", async () => {
+    await renderRoute({ path: P, permissions: VIEWER, answer: answering({ jc_repository_list: () => problem(404, "helsinki was not found") }) });
+    expect(await screen.findByText(/The repositories of helsinki are not open to you/)).toBeInTheDocument();
   });
 
   it("names a refusal instead of an empty list", async () => {
@@ -211,7 +217,7 @@ describe("one repository", () => {
 
   it("says the repository is not there when the server answers 404", async () => {
     await renderRoute({ path: `${P}/other-org`, permissions: VIEWER, answer: answering({ jc_repository_get: () => problem(404, "other-org was not found") }) });
-    expect(await screen.findByText(/other-org was not found|not found/i)).toBeInTheDocument();
+    expect(await screen.findByText("No repository named other-org belongs to helsinki. It may belong to another project, or it was removed.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "All repositories" })).toHaveAttribute("href", P);
   });
 

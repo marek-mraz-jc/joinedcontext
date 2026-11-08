@@ -64,6 +64,11 @@ export function CommitList({
   if (commits.isPending) return <PageLoading label={t("repositories.loading")} />;
   return (
     <div className="space-y-3">
+      {path ? (
+        <RepoLink project={project} name={repository.name} search={{ tab: "commits", ...(gitRef ? { ref: gitRef } : {}) }}>
+          {t("repositories.commits.all")}
+        </RepoLink>
+      ) : null}
       <p className="text-caption text-fg-muted">
         {path
           ? t("repositories.commits.ofPath", { path, ref: commits.data.ref ?? repository.defaultBranch })

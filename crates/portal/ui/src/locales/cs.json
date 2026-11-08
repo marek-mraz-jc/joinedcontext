@@ -11793,7 +11793,6 @@
         "closed": "Zavřené",
         "all": "Všechny"
       },
-      "empty": "Žádné pull requesty",
       "emptyHint": "Změna navržená v Portálu zde otevře pull request.",
       "line": "#{number} od {author} · {date} · {head} do {base}",
       "all": "Všechny pull requesty",
@@ -11813,10 +11812,16 @@
         "APPROVED": "Schváleno",
         "REQUEST_CHANGES": "Žádá změny",
         "COMMENT": "Komentář"
-      }
+      },
+      "emptyState": {
+        "open": "Žádné otevřené pull requesty",
+        "closed": "Žádné zavřené pull requesty",
+        "all": "Žádné pull requesty"
+      },
+      "showAll": "Zobrazit všechny stavy"
     },
     "settings": {
-      "intro": "Co forge drží pro tento repozitář. Změna se navrhuje a schvaluje jako změna projektu.",
+      "intro": "Co forge drží pro tento repozitář, zde jen ke čtení.",
       "protection": "Ochrana větví",
       "noProtection": "Žádná větev není chráněná.",
       "pattern": "Větev",
@@ -11839,6 +11844,11 @@
       "signed": "Podepsaný",
       "yes": "Povolen",
       "no": "Zakázán"
+    },
+    "refused": {
+      "list": "Repozitáře projektu {project} vám nejsou přístupné. Přístup ke čtení vám udělí ten, kdo projekt spravuje.",
+      "repository": "Projektu {project} nepatří žádný repozitář s názvem {name}. Může patřit jinému projektu, nebo byl odstraněn.",
+      "subtitle": "Tento repozitář se nepodařilo otevřít."
     }
   }
 }

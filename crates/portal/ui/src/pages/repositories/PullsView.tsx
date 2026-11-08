@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { Badge, Card, CardHeader, EmptyState, Field, PageFailed, PageLoading, Select } from "../../components/ui";
+import { Badge, Button, Card, CardHeader, EmptyState, Field, PageFailed, PageLoading, Select } from "../../components/ui";
 import { Prose } from "../apps/Prose";
 import { shortSha, useRepositoryRead } from "./api";
 import type { Page, Pull, PullRow, Repository } from "./api";
@@ -67,13 +67,29 @@ export function PullList({ project, repository }: { project: string; repository:
       ) : pulls.isPending ? (
         <PageLoading label={t("repositories.loading")} />
       ) : pulls.data.items.length === 0 ? (
-        <EmptyState icon="git" title={t("repositories.pulls.empty")} description={t("repositories.pulls.emptyHint")} />
+        <EmptyState
+          icon="git"
+          title={t(`repositories.pulls.emptyState.${state}`)}
+          description={t("repositories.pulls.emptyHint")}
+          action={
+            state === "all" ? undefined : (
+              <Button size="sm" variant="secondary" onClick={() => {
+                setState("all");
+                setCursor(0);
+              }}>
+                {t("repositories.pulls.showAll")}
+              </Button>
+            )
+          }
+        />
       ) : (
         <>
           <Card as="ul" flush className="divide-y divide-border overflow-hidden">
             {pulls.data.items.map((pull) => (
               <li key={pull.number} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3">
-                <PullStateBadge state={pull.state} />
+                <span className="w-20 shrink-0">
+                  <PullStateBadge state={pull.state} />
+                </span>
                 <div className="min-w-0 flex-1">
                   <RepoLink
                     project={project}
@@ -118,7 +134,7 @@ export function PullDetail({ project, repository, number }: { project: string; r
         <div className="flex flex-wrap items-center gap-2">
           <PullStateBadge state={data.state} />
           <h2 id="pull-title" className="min-w-0 break-words text-title font-semibold">
-            {data.title} <span className="font-normal text-fg-muted">#{data.number}</span>
+            {data.title}
           </h2>
         </div>
         <p className="text-caption text-fg-muted">

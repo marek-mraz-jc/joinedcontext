@@ -124,16 +124,17 @@ const ANSWERS: Record<string, (input: Record<string, unknown>) => unknown> = {
     ],
     tags: [{ name: "v2026.11.0", targetSha: PARENT }],
   }),
-  jc_repository_pulls: (input) =>
-    input.state === "closed"
-      ? { items: [], total: 0 }
-      : {
-          total: 2,
-          items: [
-            { number: 42, title: "Add the WeatherObserved type to air quality", state: "open", author: "eva.steward", head: "portal/air-quality-limit", base: "main", createdAt: "2026-11-07T09:30:00Z" },
-            { number: 41, title: "Add the noise Endpoint", state: "merged", author: "petra.editor", head: "portal/noise", base: "main", createdAt: "2026-11-05T14:00:00Z" },
-          ],
-        },
+  // As the op filters shako: open is `State eq 'open'`, closed every other state, all both.
+  jc_repository_pulls: (input) => {
+    const all = [
+      { number: 42, title: "Add the WeatherObserved type to air quality", state: "open", author: "eva.steward", head: "portal/air-quality-limit", base: "main", createdAt: "2026-11-07T09:30:00Z" },
+      { number: 41, title: "Add the noise Endpoint", state: "merged", author: "petra.editor", head: "portal/noise", base: "main", createdAt: "2026-11-05T14:00:00Z" },
+      { number: 40, title: "Rename the parking space", state: "closed", author: "petra.editor", head: "portal/parking", base: "main", createdAt: "2026-11-02T08:00:00Z" },
+    ];
+    const state = String(input.state ?? "open");
+    const items = all.filter((pull) => state === "all" || (state === "open") === (pull.state === "open"));
+    return { items, total: items.length };
+  },
   jc_repository_pull: () => ({
     repository: "helsinki-config",
     number: 42,
@@ -188,6 +189,7 @@ async function stubApi(p: Page, verbs: string[], override: Override = {}): Promi
 
 /** One state, shot at both widths, with the page at its full height (the sidebar stays whole). */
 async function shoot(p: Page, name: string): Promise<void> {
+  await p.mouse.move(0, 0); // no hover left on the row last clicked
   for (const width of [1440, 400]) {
     await p.setViewportSize({ width, height: 900 });
     await p.waitForTimeout(150);
@@ -258,9 +260,11 @@ test.describe("the project's repositories", () => {
     await p.getByRole("tab", { name: "Pull requests" }).click();
     await expect(p.getByRole("link", { name: "Add the WeatherObserved type to air quality" })).toBeVisible();
     await shoot(p, "pulls");
+    await expect(p.getByRole("link", { name: "Add the noise Endpoint" })).toHaveCount(0);
     await p.getByLabel("State").selectOption("closed");
-    await expect(p.getByText("No pull requests")).toBeVisible();
-    await shoot(p, "pulls-empty");
+    await expect(p.getByRole("link", { name: "Add the noise Endpoint" })).toBeVisible();
+    await expect(p.getByRole("link", { name: "Add the WeatherObserved type to air quality" })).toHaveCount(0);
+    await shoot(p, "pulls-closed");
     await p.getByLabel("State").selectOption("open");
     await p.getByRole("link", { name: "Add the WeatherObserved type to air quality" }).click();
     await expect(p.getByText("Matches the model.")).toBeVisible();
@@ -297,7 +301,8 @@ test.describe("the project's repositories", () => {
     await p.goto("/projects/helsinki/repositories?lang=en");
     await expect(p.getByRole("heading", { level: 1, name: "Repositories" })).toBeVisible();
     await expect(p.getByText("No repositories yet")).toHaveCount(0);
-    await expect(p.getByRole("alert").first()).toBeVisible();
+    await expect(p.getByRole("alert").first()).toContainText("The repositories of helsinki are not open to you");
+    await expect(p.getByLabel("Filter by name")).toHaveCount(0);
     await shoot(p, "list-refused");
   });
 
@@ -307,8 +312,8 @@ test.describe("the project's repositories", () => {
     });
     await p.goto("/projects/helsinki/repositories/other-config?lang=en");
     await expect(p.getByRole("heading", { level: 1, name: "other-config" })).toBeVisible();
-    await expect(p.getByRole("alert").first()).toBeVisible();
-    await expect(p.getByRole("link", { name: "All repositories" })).toBeVisible();
+    await expect(p.getByRole("alert").first()).toContainText("No repository named other-config belongs to helsinki");
+    await expect(p.getByRole("alert").first().getByRole("link", { name: "All repositories" })).toBeVisible();
     await shoot(p, "repo-not-found");
   });
 
@@ -322,6 +327,16 @@ test.describe("the project's repositories", () => {
     await p.goto("/projects/helsinki/repositories?lang=en");
     await expect(p.getByText("Loading from the forge")).toBeAttached();
     await shoot(p, "list-loading");
+  });
+
+  test("no closed pull request: the empty state names the state and offers every state", async ({ page: p }) => {
+    await stubApi(p, ["read"], { jc_repository_pulls: () => ({ status: 200, body: { items: [], total: 0 } }) });
+    await p.goto("/projects/helsinki/repositories/helsinki-config?tab=pulls&lang=en");
+    await p.getByLabel("State").selectOption("closed");
+    await expect(p.getByText("No closed pull requests")).toBeVisible();
+    await shoot(p, "pulls-empty");
+    await p.getByRole("button", { name: "Show every state" }).click();
+    await expect(p.getByText("No pull requests", { exact: true })).toBeVisible();
   });
 
   test("a binary file is named, not drawn", async ({ page: p }) => {

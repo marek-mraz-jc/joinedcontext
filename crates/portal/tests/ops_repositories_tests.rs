@@ -84,6 +84,9 @@ async fn world() -> (MockServer, AppState) {
             repo(CONFIG_ID, "ovzdusie-config", ""),
             repo(APP_ID, "ovzdusie_dash", ""),
             repo(OTHER_ID, "doprava_maps", ""),
+            // Another organization's repository that names this project: never this project's.
+            json!({ "Id": "5d1e2f30-0000-4000-8000-00000000b120", "Owner": "brno", "Name": "ovzdusie-brno",
+                    "Project": "ovzdusie", "DefaultBranch": "main", "Private": false }),
         ] }),
     )
     .await;
@@ -276,7 +279,7 @@ async fn another_projects_repository_and_another_organizations_project_are_not_t
         .filter_map(|r| r["name"].as_str())
         .collect();
     assert_eq!(names, vec!["ovzdusie-config", "ovzdusie_dash"]);
-    for repository in ["doprava_maps", "doprava-config", "nonexistent"] {
+    for repository in ["doprava_maps", "doprava-config", "ovzdusie-brno", "nonexistent"] {
         let answer = doors::call(
             "jc_repository_get",
             &session(steward()),
