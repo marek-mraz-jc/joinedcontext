@@ -955,26 +955,37 @@ async fn compat_ds_query(
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct RenderQueryParams {
-    panel: Option<u32>,
-    from: Option<String>,
-    to: Option<String>,
+/// The panel answer of `GET /api/dashboards/{uid}/render`: `panel`, `from`, `to`, `intervalMs`,
+/// `maxDataPoints` and Grafana's `var-<name>` template variables, which the saved panel's queries
+/// take in place of the dashboard's current values.
+fn render_range(params: Vec<(String, String)>) -> (u32, PanelTimeRange) {
+    let mut panel_id = 1;
+    let mut range = PanelTimeRange::default();
+    for (key, value) in params {
+        match key.as_str() {
+            "panel" => panel_id = value.parse().unwrap_or(1),
+            "from" => range.from = Some(value),
+            "to" => range.to = Some(value),
+            "intervalMs" => range.interval_ms = value.parse().ok(),
+            "maxDataPoints" => range.max_data_points = value.parse().ok(),
+            other => {
+                if let Some(name) = other.strip_prefix("var-") {
+                    range.variables.insert(name.to_owned(), value);
+                }
+            }
+        }
+    }
+    (panel_id, range)
 }
 
 async fn compat_render_dashboard_panel(
     State(state): State<DaiyaState>,
     headers: HeaderMap,
     Path(uid): Path<String>,
-    AxumQuery(params): AxumQuery<RenderQueryParams>,
+    AxumQuery(params): AxumQuery<Vec<(String, String)>>,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers);
-    let panel_id = params.panel.unwrap_or(1);
-    let range = PanelTimeRange {
-        from: params.from,
-        to: params.to,
-        ..PanelTimeRange::default()
-    };
+    let (panel_id, range) = render_range(params);
     match panel_view(&state, &ctx.subject, ctx.org_id, &uid, panel_id, range).await {
         Ok(pv) => (
             StatusCode::OK,
