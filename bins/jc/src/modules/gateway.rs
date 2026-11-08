@@ -341,7 +341,7 @@ pub async fn build(
             .to_path_buf();
         let work = work_dir(ctx.setup);
         crate::setup::private_dir(&work)?;
-        let repo = forge_repo(&env);
+        let repo = forge_repo(env);
         let (f, r, t, w) = (forge.clone(), repo.clone(), token.clone(), work.clone());
         tokio::task::spawn_blocking(move || sync_forge(&f, (&r.0, &r.1), &t, &w))
             .await
