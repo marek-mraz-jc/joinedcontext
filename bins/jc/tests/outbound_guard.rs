@@ -12,7 +12,7 @@ use tokio::net::TcpListener;
 async fn a_guarded_fetch_cannot_reach_jc_s_own_listener() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let port = listener.local_addr().expect("addr").port();
-    let client = reqwest::Client::builder()
+    let client = outbound::client(Duration::from_secs(2), Duration::from_secs(4))
         .build()
         .expect("client");
     for prefix in [
