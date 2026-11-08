@@ -5063,9 +5063,7 @@ version = "0.1.0"
 dependencies = [
  "antares-broker",
  "axum",
- "base64 0.22.1",
  "clap",
- "daiya-api",
  "daiya-model",
  "daiya-server",
  "daiya-store-memory",

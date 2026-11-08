@@ -37,7 +37,6 @@ dataroom = [
 ]
 daiya = [
   "dep:daiya-server",
-  "dep:daiya-api",
   "dep:daiya-model",
   "dep:daiya-store-memory",
 ]
@@ -64,7 +63,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"]
 tikv-jemallocator = { version = "0.7", optional = true }
 getrandom = "0.3"
 hex = "0.4"
-base64 = "0.22"
 serde_json = "1"
 tower = { version = "0.5", features = ["util"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -83,7 +81,6 @@ dataroom-core = { path = "../../crates/dataroom/core", optional = true }
 dataroom-store-memory = { path = "../../crates/dataroom/store-memory", optional = true }
 
 daiya-server = { path = "../../crates/daiya/server", optional = true }
-daiya-api = { path = "../../crates/daiya/api", optional = true }
 daiya-model = { path = "../../crates/daiya/model", optional = true }
 daiya-store-memory = { path = "../../crates/daiya/store-memory", optional = true }
 
