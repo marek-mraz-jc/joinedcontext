@@ -328,6 +328,21 @@ pub fn operations() -> Vec<Operation> {
     ]
 }
 
+/// The cheap half of the decision route's check (AG-63, PL-91): whoever approves no space here is
+/// neither offered the operation nor asked to confirm a call the route then refuses.
+pub(super) fn may_decide(
+    effective: &crate::permissions::Effective,
+    project: &str,
+) -> Result<(), OpError> {
+    if effective.may("ContextSpace", jc_core::kinds::Verb::Approve) {
+        return Ok(());
+    }
+    Err(OpError::Api(ApiError::Denied(format!(
+        "deciding an access request needs approve on ContextSpace in project {project}, as an \
+         owner of the space holds it (PL-91)"
+    ))))
+}
+
 /// Refuses an agent run every administration operation (AG-11, AG-70): its profile only ever
 /// narrows a person, and administering is never delegated to a run.
 pub fn refuse_agent(caller: &super::Caller, name: &str) -> Result<(), OpError> {

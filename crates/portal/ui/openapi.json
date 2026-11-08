@@ -16568,9 +16568,9 @@
           "ops"
         ],
         "x-jc-requires": {
-          "checkedBy": "project",
-          "kind": "*",
-          "verb": "propose"
+          "checkedBy": "route",
+          "kind": "ContextSpace",
+          "verb": "approve"
         }
       }
     },
