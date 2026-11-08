@@ -13,7 +13,8 @@
 //!   datasource file for another `orgId` is refused, never written to the wrong organization.
 
 use crate::provisioning::{
-    parse_dashboard_providers_yaml, parse_datasources_yaml, safe_uid_from_name,
+    DashboardProviderConfig, parse_dashboard_providers_yaml, parse_datasources_yaml,
+    safe_uid_from_name,
 };
 use crate::{DashboardImportInput, ImportReport, import_dashboards};
 use chrono::Utc;
@@ -78,22 +79,31 @@ fn yaml_files(dir: &Path) -> CrResult<Vec<PathBuf>> {
     Ok(out)
 }
 
-fn yaml_org_ids(text: &str, list_key: &str) -> CrResult<Vec<i64>> {
-    let doc = crate::yaml::parse_yaml_to_json(text)?;
-    let list = doc
-        .get(list_key)
+/// The `orgId` / `org_id` values the entries of `list_key` name, as written.
+fn org_ids(doc: &Value, list_key: &str) -> Vec<Value> {
+    doc.get(list_key)
         .and_then(Value::as_array)
-        .cloned()
-        .or_else(|| doc.as_array().cloned())
-        .unwrap_or_default();
-    Ok(list
-        .iter()
-        .filter_map(|item| item.get("orgId").or_else(|| item.get("org_id")))
-        .filter_map(Value::as_i64)
-        .collect())
+        .or_else(|| doc.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|item| item.get("orgId").or_else(|| item.get("org_id")))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// One provider's dashboards for one target folder, read and parsed but not yet written.
+struct FolderBatch {
+    provider: String,
+    folder: Option<(String, String)>,
+    inputs: Vec<DashboardImportInput>,
 }
 
 /// Loads `root` into `store` for `target`'s organization.
+///
+/// Every file is read and checked before anything is written: a refused datasource file or a
+/// dashboard with a refused feature fails the run with nothing of that kind stored.
 pub async fn load_provisioning_dir(
     store: &dyn DaiyaStore,
     target: ProvisioningTarget,
@@ -103,11 +113,16 @@ pub async fn load_provisioning_dir(
     let root = root.canonicalize().map_err(|e| io_err(root, &e))?;
     let mut report = ProvisioningLoadReport::default();
 
+    let mut ds_outcomes = Vec::new();
     for file in yaml_files(&root.join("datasources"))? {
         let text = std::fs::read_to_string(&file).map_err(|e| io_err(&file, &e))?;
-        if let Some(org) = yaml_org_ids(&text, "datasources")?
+        // A `deleteDatasources` entry for another organization must not delete in this one.
+        // Anything but the number 1 is refused, a quoted "2" included.
+        let doc = crate::yaml::parse_yaml_to_json(&text)?;
+        if let Some(org) = ["datasources", "deleteDatasources", "delete_datasources"]
             .into_iter()
-            .find(|o| *o != 1)
+            .flat_map(|key| org_ids(&doc, key))
+            .find(|o| o.as_i64() != Some(1))
         {
             return Err(CrError::BadRequest(format!(
                 "provisioning: '{}' names orgId {org}; only orgId 1 is provisioned",
@@ -131,6 +146,18 @@ pub async fn load_provisioning_dir(
                 refusal.message
             )));
         }
+        ds_outcomes.push(outcome);
+    }
+
+    let mut batches = Vec::new();
+    for file in yaml_files(&root.join("dashboards"))? {
+        let text = std::fs::read_to_string(&file).map_err(|e| io_err(&file, &e))?;
+        for provider in parse_dashboard_providers_yaml(&text, Some(&root))? {
+            batches.extend(read_provider(&root, &provider)?);
+        }
+    }
+
+    for outcome in ds_outcomes {
         for name in &outcome.delete_names {
             if let Some(ds) = store.get_datasource_by_name(target.org_id, name).await? {
                 // A provisioned datasource is read-only to the UI, not to provisioning.
@@ -148,127 +175,146 @@ pub async fn load_provisioning_dir(
         }
     }
 
-    for file in yaml_files(&root.join("dashboards"))? {
-        let text = std::fs::read_to_string(&file).map_err(|e| io_err(&file, &e))?;
-        let providers = parse_dashboard_providers_yaml(&text, Some(&root))?;
-        for provider in providers {
-            if provider.org_id != 1 {
-                return Err(CrError::BadRequest(format!(
-                    "provisioning: provider '{}' names orgId {}; only orgId 1 is provisioned",
-                    provider.name, provider.org_id
-                )));
-            }
-            let base = PathBuf::from(&provider.path);
-            let mut files = Vec::new();
-            collect_json_files(&root, &base, &base, 0, &mut files)?;
-            files.sort();
-
-            // Group by target folder.
-            let mut by_folder: BTreeMap<Option<(String, String)>, Vec<DashboardImportInput>> =
-                BTreeMap::new();
-            for (rel_dir, path) in files {
-                let text = std::fs::read_to_string(&path).map_err(|e| io_err(&path, &e))?;
-                let raw_json: Value = serde_json::from_str(&text).map_err(|e| {
-                    CrError::BadRequest(format!(
-                        "provisioning: '{}' is not JSON: {e}",
-                        path.display()
-                    ))
-                })?;
-                let folder = if provider.folders_from_files_structure {
-                    rel_dir
-                        .filter(|d| !d.is_empty())
-                        .map(|d| (safe_uid_from_name(&d), d))
-                } else if !provider.folder_uid.is_empty() || !provider.folder.is_empty() {
-                    let title = if provider.folder.is_empty() {
-                        provider.folder_uid.clone()
-                    } else {
-                        provider.folder.clone()
-                    };
-                    let uid = if provider.folder_uid.is_empty() {
-                        safe_uid_from_name(&provider.folder)
-                    } else {
-                        provider.folder_uid.clone()
-                    };
-                    Some((uid, title))
-                } else {
-                    None
-                };
-                let external_id = path
-                    .strip_prefix(&root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .into_owned();
-                by_folder
-                    .entry(folder.clone())
-                    .or_default()
-                    .push(DashboardImportInput {
-                        raw_json,
-                        folder_uid: folder.map(|(uid, _)| uid),
-                        is_provisioned: true,
-                        allow_ui_updates: provider.allow_ui_updates,
-                        external_id: Some(external_id),
-                    });
-            }
-
-            for (folder, inputs) in by_folder {
-                if let Some((uid, title)) = &folder
-                    && store.get_folder(target.org_id, uid).await?.is_none()
-                {
-                    let now = Utc::now();
-                    store
-                        .upsert_folder(FolderRecord {
-                            installation_id: target.installation_id,
-                            org_id: target.org_id,
-                            instance_id: target.instance_id,
-                            project_id: None,
-                            uid: uid.clone(),
-                            parent_uid: None,
-                            title: title.clone(),
-                            version: 1,
-                            managed_by: Some(format!("provisioning:{}", provider.name)),
-                            created_by: "provisioning".into(),
-                            updated_by: "provisioning".into(),
-                            created_at: now,
-                            updated_at: now,
-                        })
-                        .await?;
-                    report.folders += 1;
-                }
-                let imported = import_dashboards(
-                    store,
-                    target.installation_id,
-                    target.org_id,
-                    target.instance_id,
-                    "provisioning",
-                    &inputs,
-                    false,
-                    limits,
-                )
-                .await?;
-                if imported.refused_count > 0 {
-                    return Err(CrError::Unprocessable {
-                        detail: format!(
-                            "provisioning: provider '{}' has dashboards with refused features",
-                            provider.name
-                        ),
-                        errors: imported
-                            .dashboards
+    // A dry run of every batch first, against the datasources just provisioned.
+    for batch in &batches {
+        let checked = import_dashboards(
+            store,
+            target.installation_id,
+            target.org_id,
+            target.instance_id,
+            "provisioning",
+            &batch.inputs,
+            true,
+            limits,
+        )
+        .await?;
+        if checked.refused_count > 0 {
+            return Err(CrError::Unprocessable {
+                detail: format!(
+                    "provisioning: provider '{}' has dashboards with refused features",
+                    batch.provider
+                ),
+                errors: checked
+                    .dashboards
+                    .iter()
+                    .flat_map(|d| {
+                        d.findings
                             .iter()
-                            .flat_map(|d| {
-                                d.findings
-                                    .iter()
-                                    .filter(|f| f.verdict == Verdict::Refuses)
-                                    .map(|f| format!("{}: {}", d.uid, f.message))
-                            })
-                            .collect(),
-                    });
-                }
-                report.dashboards += imported.dashboards.len();
-                report.reports.push(imported);
-            }
+                            .filter(|f| f.verdict == Verdict::Refuses)
+                            .map(|f| format!("{}: {}", d.uid, f.message))
+                    })
+                    .collect(),
+            });
         }
     }
+
+    for batch in batches {
+        if let Some((uid, title)) = &batch.folder
+            && store.get_folder(target.org_id, uid).await?.is_none()
+        {
+            let now = Utc::now();
+            store
+                .upsert_folder(FolderRecord {
+                    installation_id: target.installation_id,
+                    org_id: target.org_id,
+                    instance_id: target.instance_id,
+                    project_id: None,
+                    uid: uid.clone(),
+                    parent_uid: None,
+                    title: title.clone(),
+                    version: 1,
+                    managed_by: Some(format!("provisioning:{}", batch.provider)),
+                    created_by: "provisioning".into(),
+                    updated_by: "provisioning".into(),
+                    created_at: now,
+                    updated_at: now,
+                })
+                .await?;
+            report.folders += 1;
+        }
+        let imported = import_dashboards(
+            store,
+            target.installation_id,
+            target.org_id,
+            target.instance_id,
+            "provisioning",
+            &batch.inputs,
+            false,
+            limits,
+        )
+        .await?;
+        report.dashboards += imported.dashboards.len();
+        report.reports.push(imported);
+    }
     Ok(report)
+}
+
+/// Reads one file provider's dashboards, grouped by target folder.
+fn read_provider(root: &Path, provider: &DashboardProviderConfig) -> CrResult<Vec<FolderBatch>> {
+    if provider.org_id != 1 {
+        return Err(CrError::BadRequest(format!(
+            "provisioning: provider '{}' names orgId {}; only orgId 1 is provisioned",
+            provider.name, provider.org_id
+        )));
+    }
+    let base = PathBuf::from(&provider.path);
+    let mut files = Vec::new();
+    collect_json_files(root, &base, &base, 0, &mut files)?;
+    files.sort();
+
+    let mut by_folder: BTreeMap<Option<(String, String)>, Vec<DashboardImportInput>> =
+        BTreeMap::new();
+    for (rel_dir, path) in files {
+        let text = std::fs::read_to_string(&path).map_err(|e| io_err(&path, &e))?;
+        let raw_json: Value = serde_json::from_str(&text).map_err(|e| {
+            CrError::BadRequest(format!(
+                "provisioning: '{}' is not JSON: {e}",
+                path.display()
+            ))
+        })?;
+        let folder = if provider.folders_from_files_structure {
+            rel_dir
+                .filter(|d| !d.is_empty())
+                .map(|d| (safe_uid_from_name(&d), d))
+        } else if !provider.folder_uid.is_empty() || !provider.folder.is_empty() {
+            let title = if provider.folder.is_empty() {
+                provider.folder_uid.clone()
+            } else {
+                provider.folder.clone()
+            };
+            let uid = if provider.folder_uid.is_empty() {
+                safe_uid_from_name(&provider.folder)
+            } else {
+                provider.folder_uid.clone()
+            };
+            Some((uid, title))
+        } else {
+            None
+        };
+        let external_id = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .into_owned();
+        by_folder
+            .entry(folder.clone())
+            .or_default()
+            .push(DashboardImportInput {
+                raw_json,
+                folder_uid: folder.map(|(uid, _)| uid),
+                is_provisioned: true,
+                allow_ui_updates: provider.allow_ui_updates,
+                external_id: Some(external_id),
+            });
+    }
+    Ok(by_folder
+        .into_iter()
+        .map(|(folder, inputs)| FolderBatch {
+            provider: provider.name.clone(),
+            folder,
+            inputs,
+        })
+        .collect())
 }
 
 /// Collects `*.json` files below `dir` (relative directory name for folder mapping), each

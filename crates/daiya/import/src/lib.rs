@@ -156,7 +156,9 @@ pub struct DashboardImportInput {
     pub external_id: Option<String>,
 }
 
-/// Inlines any `libraryPanel` reference on panels using `library_panels` in the organization (§1.3, §7.1).
+/// Inlines any `libraryPanel` reference on panels using `library_panels` in the organization
+/// (§1.3, §7.1), including panels inside collapsed rows (`panels[].panels`), where Grafana keeps
+/// a collapsed row's children.
 pub fn inline_library_panels(
     dash_val: &mut Value,
     library_panels: &BTreeMap<String, LibraryPanelRecord>,
@@ -182,6 +184,9 @@ pub fn inline_library_panels(
                     p_obj.entry(k.clone()).or_insert_with(|| v.clone());
                 }
             }
+        }
+        if p_obj.get("type").and_then(Value::as_str) == Some("row") {
+            inline_library_panels(p, library_panels);
         }
     }
 }
@@ -544,7 +549,18 @@ pub async fn compute_plan(
     for ds in &desired.datasources {
         let action = match live_ds.get(&ds.uid) {
             None => "create",
-            Some(ex) if ex.url != ds.url || ex.name != ds.name || ex.json_data != ds.json_data => {
+            Some(ex)
+                if ex.url != ds.url
+                    || ex.name != ds.name
+                    || ex.kind != ds.kind
+                    || ex.access != ds.access
+                    || ex.is_default != ds.is_default
+                    || ex.read_only != ds.read_only
+                    || ex.json_data != ds.json_data
+                    || ex.secret_refs != ds.secret_refs
+                    || ex.allow_hosts != ds.allow_hosts
+                    || ex.wasm_digest != ds.wasm_digest =>
+            {
                 "update"
             }
             _ => "unchanged",
@@ -568,11 +584,43 @@ pub async fn compute_plan(
     )
     .await?;
 
-    for d_rep in &dry_run_report.dashboards {
-        let action = if live_dash.contains_key(&d_rep.uid) {
-            "update"
-        } else {
-            "create"
+    let ds_index = DatasourceIndex::new(
+        live_ds
+            .values()
+            .map(|d| DataSourceInfo {
+                uid: d.uid.clone(),
+                name: d.name.clone(),
+                ds_type: d.kind.clone(),
+                api_version: String::new(),
+                is_default: d.is_default,
+            })
+            .collect(),
+    );
+    let known_uids: BTreeSet<String> = live_ds.keys().cloned().collect();
+    let lib_map: BTreeMap<String, LibraryPanelRecord> = store
+        .list_library_panels(org_id)
+        .await?
+        .into_iter()
+        .map(|l| (l.uid.clone(), l))
+        .collect();
+    for (d_rep, input) in dry_run_report.dashboards.iter().zip(&desired.dashboards) {
+        // "unchanged" only when the stored document and folder are exactly what apply would
+        // write; a plan of the live state then has no changes.
+        let action = match live_dash.get(&d_rep.uid) {
+            None => "create",
+            Some(live) => {
+                let (_, canonical, _) =
+                    prepare_dashboard(&input.raw_json, &ds_index, &known_uids, &lib_map, limits)?;
+                let folder = input
+                    .folder_uid
+                    .clone()
+                    .or_else(|| d_rep.folder_uid.clone());
+                if live.data == canonical && live.folder_uid == folder {
+                    "unchanged"
+                } else {
+                    "update"
+                }
+            }
         };
         diffs.push(PlanDiffItem {
             kind: "Dashboard".into(),
