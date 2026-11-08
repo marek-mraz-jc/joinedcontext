@@ -7,7 +7,7 @@ mod common;
 use common::*;
 use dataroom_core::ops::HarvestRunner;
 use dataroom_core::store::BoxFuture;
-use dataroom_core::Result;
+use dataroom_core::{Result, Store};
 use dataroom_harvest::{
     FetchResponse, HarvestEngine, MapFetcher, OutboundFetcher, ValidatedTarget,
 };
@@ -156,4 +156,45 @@ async fn a_record_already_withdrawn_is_not_withdrawn_again() {
     assert_eq!(run.withdrawn_count, 1);
     let run = e.run_source(&w.ctx, &w.store, &src).await.unwrap();
     assert_eq!((run.withdrawn_count, run.unchanged_count), (0, 1));
+}
+
+#[tokio::test]
+async fn records_from_the_legacy_harvester_are_recognised_by_their_extras() {
+    let w = world(&[]).await;
+    let url = "https://feeds.example.org/c.ttl";
+    let src = source("dcat-ap", "feed", url, &["feeds.example.org"]);
+    let air = "https://feeds.example.org/ds/air";
+    // Records the CKAN harvester left: no harvest fields, only `harvest_source` and an item key
+    // in `source_id`, `source_uri` or nothing (then the name).
+    for (id, name, key) in [
+        ("old-1", "air", Some(("source_id", air))),
+        (
+            "old-2",
+            "water",
+            Some(("source_uri", "https://feeds.example.org/ds/water")),
+        ),
+        ("old-3", "noise", None),
+    ] {
+        let mut ds = local_dataset(id, name, name);
+        ds.extras.insert("harvest_source".into(), "feed".into());
+        if let Some((k, v)) = key {
+            ds.extras.insert(k.into(), v.into());
+        }
+        w.store.upsert_dataset(&w.ctx, ds).await.unwrap();
+    }
+    let f = MapFetcher::new();
+    f.insert(
+        url,
+        Some("text/turtle"),
+        dcat_turtle(&[(air, "Ovzdušie")], None),
+    );
+    let run = engine(&f).run_source(&w.ctx, &w.store, &src).await.unwrap();
+    assert!(run.skipped.is_empty(), "{:?}", run.skipped);
+    assert_eq!(
+        (run.updated_count, run.created_count, run.withdrawn_count),
+        (1, 0, 2)
+    );
+    let kept = w.store.get_dataset(&w.ctx, "air").await.unwrap().unwrap();
+    assert_eq!(kept.id, "old-1", "the old record is updated in place");
+    assert_eq!(active_names(&w).await, ["air"]);
 }

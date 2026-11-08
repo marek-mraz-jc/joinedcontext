@@ -517,3 +517,28 @@ fn nkod_names_the_target_publisher_and_refuses_a_url_without_a_scheme() {
     );
     assert_eq!(publisher.name["cs"], "city");
 }
+
+#[test]
+fn a_hub_item_without_a_title_and_a_feed_dataset_without_an_iri_still_get_names() {
+    let (org, cat) = ids();
+    let src = source("arc-gis-hub", "hub", "https://hub.city.example", &[]);
+    let item = json!({"id": "abc123", "type": "Shapefile", "license": "CC0-1.0"});
+    let (kept, _) = parse_arcgis_hub_items(org, cat, &src, &[], &[item], "sk");
+    assert_eq!(kept[0].1.title["sk"], "abc123");
+    assert_eq!(kept[0].1.name, "city-abc123-abc123");
+
+    let feed = source("dcat-ap", "feed", "https://feeds.example.org/c", &[]);
+    let ttl = "@prefix dcat: <http://www.w3.org/ns/dcat#> .\n\
+               @prefix dct: <http://purl.org/dc/terms/> .\n\
+               [] a dcat:Dataset ; dct:title \"Bez IRI\"@sk .\n";
+    let (rows, _) = parse_dcat_page(org, cat, &feed, ttl, Some("text/turtle"), "sk").unwrap();
+    let (item, ds) = &rows[0];
+    assert_eq!(
+        item, &ds.name,
+        "a dataset without an IRI is known by its name"
+    );
+    assert_eq!(
+        ds.id,
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, item.as_bytes()).to_string()
+    );
+}
