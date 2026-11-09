@@ -167,10 +167,16 @@ export EKIBEN_VAR_JC_MQTT_NAMESPACE=${EKIBEN_VAR_JC_MQTT_NAMESPACE:-rehearsal-$e
 # from the deployment at the environment's ref, which the export does not hold:
 #   git -C <deployment> show origin/release:components/pipeline-runner/streams/resources.yaml \
 #     > $REHEARSAL_HOME/prod/ekiben-resources.yaml      (dev: origin/main)
+# and streams/gtfs-realtime.proto beside it as $REHEARSAL_HOME/prod/gtfs-realtime.proto.
 if [ -s "$home/ekiben-resources.yaml" ]; then
   export JCBIN_EKIBEN_RESOURCES_FILE=$home/ekiben-resources.yaml
 else
   echo "up.sh: no $home/ekiben-resources.yaml: streams naming the runner's shared resources are refused" >&2
+fi
+# The runner's other mount: /proto/gtfs-realtime.proto (streams/gtfs-realtime.proto at the same
+# ref), which a stream's `import_paths: [/proto]` reads; ekiben confines `/proto` to its file root.
+if [ -s "$home/gtfs-realtime.proto" ]; then
+  mkdir -p "$home/files/proto" && cp "$home/gtfs-realtime.proto" "$home/files/proto/"
 fi
 # The deployment's configuration repository (defaults/environment/global.yaml configRepo).
 # jc since 3a64bee5 reads JC_SHAKO_*, earlier builds JC_GITEA_*: both, so either binary starts on it.
