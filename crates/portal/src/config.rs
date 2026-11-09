@@ -1873,7 +1873,8 @@ impl Config {
         let dashboards = lookup("JC_PORTAL_DASHBOARDS").is_some_and(|v| v.trim() == "true");
         let setup = SetupStatements::from_vars(&lookup);
 
-        let apps_dir = lookup("JC_PORTAL_APPS_DIR");
+        // An explicit empty value is unset: "" would be a relative path, served from the cwd.
+        let apps_dir = lookup("JC_PORTAL_APPS_DIR").filter(|dir| !dir.trim().is_empty());
         let smtp_url = lookup("JC_PORTAL_SMTP_URL").filter(|url| !url.trim().is_empty());
         let erasure_key = lookup("JC_PORTAL_ERASURE_KEY").filter(|key| !key.trim().is_empty());
         let mail_from = match lookup("JC_PORTAL_MAIL_FROM").filter(|from| !from.trim().is_empty()) {
@@ -2608,6 +2609,19 @@ mod tests {
                 "{err}"
             );
         }
+    }
+
+    #[test]
+    fn an_empty_apps_dir_is_unset() {
+        let with = |value: &'static str| {
+            Config::from_vars(move |name| (name == "JC_PORTAL_APPS_DIR").then(|| value.to_owned()))
+                .unwrap()
+                .apps_dir
+        };
+        assert_eq!(Config::from_vars(|_| None).unwrap().apps_dir, None);
+        assert_eq!(with(""), None);
+        assert_eq!(with("  "), None);
+        assert_eq!(with("/srv/apps").as_deref(), Some("/srv/apps"));
     }
 
     #[test]
