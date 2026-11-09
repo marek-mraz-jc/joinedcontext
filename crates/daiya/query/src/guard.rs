@@ -41,11 +41,98 @@ pub struct GuardConfig {
     /// on a service network). Only an allow-listed host may still be reached, and the cloud
     /// metadata addresses stay blocked even inside these networks.
     pub allowed_networks: Vec<IpNet>,
-    /// Exact addresses (IP and port) the guard lets through, over `http` too, whatever their
-    /// address class: the host's own listener, for datasources the host provisioned itself
-    /// ([`crate::OutboundPolicy::own_addresses`]). Only a URL naming the address literally
-    /// matches; another port of the same IP stays refused, and so do the metadata addresses.
-    pub own_addresses: Vec<SocketAddr>,
+    /// Endpoint bases on the host's own listener the guard lets through, over `http` too,
+    /// whatever their address class ([`OwnReach`]). Anything else on that listener stays
+    /// refused like any loopback or private address.
+    pub own_reach: Vec<OwnReach>,
+}
+
+/// The NGSI-LD and OData Endpoints of the host's own gateway, as one base URL
+/// (`http://127.0.0.1:8080/api/endpoint/`): a request URL passes only when it names the base's
+/// IP literal and port exactly as written and goes on with one Endpoint slug, so the host's other
+/// mounts on that listener (its identity provider, the Portal, the forge, the assistant) stay out
+/// of reach. Every request URL is judged again, after parsing and dot-segment removal; encoded
+/// dots, slashes and backslashes in the path are refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnReach {
+    /// The base as the URL parser writes it (no `:80`).
+    base: String,
+    /// The base with its port always written.
+    written: String,
+    addr: SocketAddr,
+}
+
+impl OwnReach {
+    /// `base` is `http://<ip>[:<port>]/<path>/`: an IP literal and a path ending in `/`, with no
+    /// query, fragment or credentials.
+    pub fn endpoints(base: &str) -> Result<Self, DsError> {
+        let refused = |why: &str| DsError::GuardRefused(format!("own reach '{base}': {why}"));
+        let url = Url::parse(base).map_err(|_| refused("not a URL"))?;
+        let ip = match url.host() {
+            Some(url::Host::Ipv4(v4)) => IpAddr::V4(v4),
+            Some(url::Host::Ipv6(v6)) => IpAddr::V6(v6),
+            _ => return Err(refused("the host is no IP literal")),
+        };
+        let port = url
+            .port_or_known_default()
+            .ok_or_else(|| refused("no port"))?;
+        if url.scheme() != "http"
+            || !url.path().ends_with('/')
+            || ["%", "\\", "/."].iter().any(|bad| base.contains(bad))
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || is_cloud_metadata(ip)
+        {
+            return Err(refused("want http://<ip>:<port>/<path>/"));
+        }
+        let addr = SocketAddr::new(ip, port);
+        Ok(Self {
+            base: url.as_str().to_owned(),
+            written: format!("http://{addr}{}", url.path()),
+            addr,
+        })
+    }
+
+    /// The listener address this reach opens.
+    #[must_use]
+    pub const fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// `raw` as written and `parsed` both start with the base (in either spelling), followed by one slug
+    /// (`[A-Za-z0-9_-]+`) and the end of the path or `/`, and the path holds no encoded dot,
+    /// slash or backslash.
+    fn admits(&self, raw: &str, parsed: &Url) -> bool {
+        let raw = raw.trim();
+        let Some(rest) = raw
+            .strip_prefix(&self.written)
+            .or_else(|| raw.strip_prefix(&self.base))
+        else {
+            return false;
+        };
+        let Some(after) = parsed.as_str().strip_prefix(&self.base) else {
+            return false;
+        };
+        let slug_then_end = |s: &str| {
+            let end = s.find(['/', '?', '#']).unwrap_or(s.len());
+            end > 0
+                && s[..end]
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        };
+        // The path as written and as parsed: no backslash, no encoded dot, slash or backslash,
+        // no dot segment.
+        let clean = |path: &str| {
+            let path = path.to_ascii_lowercase();
+            !path.contains('\\')
+                && !["%2e", "%2f", "%5c"].iter().any(|bad| path.contains(bad))
+                && !path.split('/').any(|seg| seg == ".." || seg == ".")
+        };
+        let raw_path = &rest[..rest.find(['?', '#']).unwrap_or(rest.len())];
+        slug_then_end(rest) && slug_then_end(after) && clean(raw_path) && clean(parsed.path())
+    }
 }
 
 impl Default for GuardConfig {
@@ -57,7 +144,7 @@ impl Default for GuardConfig {
             allow_http: false,
             allow_loopback_for_tests: false,
             allowed_networks: Vec::new(),
-            own_addresses: Vec::new(),
+            own_reach: Vec::new(),
         }
     }
 }
@@ -99,6 +186,12 @@ impl OutboundGuard {
 
     /// Validates a URL and its host against the guard's scheme and allow-list rules (before DNS).
     pub fn validate_url(&self, raw_url: &str) -> Result<(Url, String, u16), DsError> {
+        self.validate(raw_url)
+            .map(|(url, host, port, _)| (url, host, port))
+    }
+
+    /// [`Self::validate_url`], plus the own listener address when one [`OwnReach`] admits the URL.
+    fn validate(&self, raw_url: &str) -> Result<(Url, String, u16, Option<SocketAddr>), DsError> {
         let parsed = Url::parse(raw_url)
             .map_err(|e| DsError::GuardRefused(format!("invalid URL '{raw_url}': {e}")))?;
 
@@ -109,8 +202,13 @@ impl OutboundGuard {
         }
 
         let scheme = parsed.scheme();
-        let own = self.own_address(&parsed);
-        if scheme != "https" && !((self.config.allow_http || own) && scheme == "http") {
+        let own = self
+            .config
+            .own_reach
+            .iter()
+            .find(|reach| reach.admits(raw_url, &parsed))
+            .map(OwnReach::addr);
+        if scheme != "https" && !((self.config.allow_http || own.is_some()) && scheme == "http") {
             return Err(DsError::GuardRefused(format!(
                 "disallowed URL scheme '{scheme}' (https required)"
             )));
@@ -138,34 +236,13 @@ impl OutboundGuard {
         }
 
         // If host is an IP literal, check it immediately
-        if let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
-            self.check_socket(SocketAddr::new(ip, port))?;
+        if own.is_none()
+            && let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>()
+        {
+            self.check_ip(ip)?;
         }
 
-        Ok((parsed, host, port))
-    }
-
-    /// `url` names one of [`GuardConfig::own_addresses`] by its IP literal and port.
-    fn own_address(&self, url: &Url) -> bool {
-        let ip = match url.host() {
-            Some(url::Host::Ipv4(v4)) => IpAddr::V4(v4),
-            Some(url::Host::Ipv6(v6)) => IpAddr::V6(v6),
-            _ => return false,
-        };
-        url.port_or_known_default().is_some_and(|port| {
-            self.config
-                .own_addresses
-                .contains(&SocketAddr::new(ip, port))
-        })
-    }
-
-    /// Checks one address and port: one of [`GuardConfig::own_addresses`] passes (never a
-    /// metadata address), anything else follows [`OutboundGuard::check_ip`].
-    pub fn check_socket(&self, addr: SocketAddr) -> Result<(), DsError> {
-        if self.config.own_addresses.contains(&addr) && !is_cloud_metadata(addr.ip()) {
-            return Ok(());
-        }
-        self.check_ip(addr.ip())
+        Ok((parsed, host, port, own))
     }
 
     /// Checks one resolved address: the metadata addresses never pass, an operator-opened
@@ -208,7 +285,7 @@ impl OutboundGuard {
             )));
         }
         if let Ok(ip) = clean_host.parse::<IpAddr>() {
-            self.check_socket(SocketAddr::new(ip, port))?;
+            self.check_ip(ip)?;
             return Ok(vec![SocketAddr::new(ip, port)]);
         }
         let resolved: Vec<SocketAddr> = tokio::net::lookup_host((clean_host, port))
@@ -231,11 +308,14 @@ impl OutboundGuard {
     /// Resolves DNS, checks every returned IP address, pins the resolved addresses on the HTTP
     /// client, sends the request with redirects disabled, and reads the response up to `max_response_bytes`.
     pub async fn send(&self, req: OutboundRequest) -> Result<OutboundResponse, DsError> {
-        let (parsed_url, host, port) = self.validate_url(&req.url)?;
+        let (parsed_url, host, port, own) = self.validate(&req.url)?;
 
-        // Resolve DNS and check every address
+        // Resolve DNS and check every address (an own reach names its IP literal)
         let clean_host = host.trim_matches(['[', ']']);
-        let addrs = self.resolve_checked(&host, port).await?;
+        let addrs = match own {
+            Some(addr) => vec![addr],
+            None => self.resolve_checked(&host, port).await?,
+        };
 
         let timeout = req
             .timeout
@@ -571,5 +651,76 @@ mod tests {
                 .validate_url("https://user:pass@metrics.example.com/api")
                 .is_err()
         );
+    }
+
+    fn own_guard() -> OutboundGuard {
+        OutboundGuard::new(GuardConfig {
+            allow_hosts: vec!["127.0.0.1".into(), "localhost".into(), "[::1]".into()],
+            own_reach: vec![
+                OwnReach::endpoints("http://127.0.0.1:8080/api/endpoint/").unwrap(),
+                OwnReach::endpoints("http://[::1]:80/api/endpoint/").unwrap(),
+            ],
+            ..GuardConfig::default()
+        })
+    }
+
+    #[test]
+    fn own_reach_admits_one_endpoint_and_nothing_else_on_the_listener() {
+        let guard = own_guard();
+        for url in [
+            "http://127.0.0.1:8080/api/endpoint/kallio",
+            "http://127.0.0.1:8080/api/endpoint/kallio/ngsi-ld/v1/entities?type=A&q=a%2Fb",
+            "http://127.0.0.1:8080/api/endpoint/k_2-x/odata/Things",
+            "http://[::1]:80/api/endpoint/kallio/ngsi-ld/v1/types",
+            "http://[::1]/api/endpoint/kallio/ngsi-ld/v1/types",
+        ] {
+            assert!(guard.validate(url).unwrap().3.is_some(), "{url}");
+        }
+        for url in [
+            "http://127.0.0.1:8080/id/realms/jc",
+            "http://127.0.0.1:8080/portal/api/v1/me",
+            "http://127.0.0.1:8080/git/api/v1/user",
+            "http://127.0.0.1:8080/api/v1/d/x",
+            "http://127.0.0.1:8080/api/endpoint/",
+            "http://127.0.0.1:8080/api/endpointx/y",
+            "http://127.0.0.1:8080/api/endpoint/x/../../id",
+            "http://127.0.0.1:8080/api/endpoint/x/%2e%2e/%2E%2E/id",
+            "http://127.0.0.1:8080/api/endpoint/x/.%2e/v1/d",
+            "http://127.0.0.1:8080/api/endpoint/x%2f..%2fid",
+            "http://127.0.0.1:8080/api/endpoint/x/a%2Fb",
+            "http://127.0.0.1:8080/api/endpoint/x%5c..%5cid",
+            "http://127.0.0.1:8080/api/endpoint/x\\..\\..\\id",
+            "http://127.0.0.1:8080/api/endpoint/x/./y",
+            "http://127.0.0.1:8081/api/endpoint/kallio",
+            "http://localhost:8080/api/endpoint/kallio",
+            "http://127.1:8080/api/endpoint/kallio",
+            "http://2130706433:8080/api/endpoint/kallio",
+            "http://127.0.0.1:08080/api/endpoint/kallio",
+            "https://127.0.0.1:8080/api/endpoint/kallio",
+            "http://user@127.0.0.1:8080/api/endpoint/kallio",
+            "http://[::ffff:127.0.0.1]:8080/api/endpoint/kallio",
+        ] {
+            assert!(guard.validate(url).is_err(), "{url} must be refused");
+        }
+    }
+
+    #[tokio::test]
+    async fn own_reach_opens_no_raw_socket_and_no_metadata_base() {
+        // The Postgres driver resolves through resolve_checked: the own address stays refused.
+        assert!(
+            own_guard()
+                .resolve_checked("127.0.0.1", 8080)
+                .await
+                .is_err()
+        );
+        for base in [
+            "http://169.254.169.254:80/api/endpoint/",
+            "http://localhost:8080/api/endpoint/",
+            "https://127.0.0.1:8080/api/endpoint/",
+            "http://127.0.0.1:8080/api/endpoint",
+            "http://127.0.0.1:8080/api/%2e%2e/",
+        ] {
+            assert!(OwnReach::endpoints(base).is_err(), "{base}");
+        }
     }
 }

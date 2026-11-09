@@ -11,7 +11,7 @@
 //!   [`SecretResolver`]; a caller's token reaches NGSI-LD and OData only through the
 //!   [`TokenExchanger`].
 
-use crate::guard::{GuardConfig, OutboundGuard};
+use crate::guard::{GuardConfig, OutboundGuard, OwnReach};
 use crate::{
     Datasource, DsError, LokiDatasource, NgsiLdDatasource, ODataDatasource, PostgresDatasource,
     PrometheusDatasource, SecretResolver, TokenExchanger,
@@ -33,10 +33,9 @@ pub struct OutboundPolicy {
     pub allowed_networks: Vec<IpNet>,
     pub timeout: Duration,
     pub max_response_bytes: usize,
-    /// The host's own listener ([`GuardConfig::own_addresses`]): empty in the operator's policy;
-    /// `DaiyaState::driver_for_record` fills it for a datasource the host provisioned from
-    /// files and nobody changed since.
-    pub own_addresses: Vec<std::net::SocketAddr>,
+    /// The host's own gateway Endpoints ([`GuardConfig::own_reach`]), for the `ngsild` and
+    /// `odata` kinds only: the guard admits a request by its URL, whoever made the record.
+    pub own_reach: Vec<OwnReach>,
 }
 
 impl Default for OutboundPolicy {
@@ -47,7 +46,7 @@ impl Default for OutboundPolicy {
             allowed_networks: Vec::new(),
             timeout: guard.timeout,
             max_response_bytes: guard.max_response_bytes,
-            own_addresses: Vec::new(),
+            own_reach: Vec::new(),
         }
     }
 }
@@ -90,7 +89,8 @@ fn host_and_port(record: &DatasourceRecord, default_port: u16) -> Result<(String
     Ok((host, port))
 }
 
-/// The guard of one datasource: its allow-list (or its URL host) and the operator policy.
+/// The guard of one datasource: its allow-list (or its URL host) and the operator policy. Only
+/// an NGSI-LD or OData datasource gets the policy's [`OutboundPolicy::own_reach`].
 pub fn guard_for(
     record: &DatasourceRecord,
     policy: &OutboundPolicy,
@@ -108,7 +108,10 @@ pub fn guard_for(
         allow_http: policy.allow_http,
         allow_loopback_for_tests: false,
         allowed_networks: policy.allowed_networks.clone(),
-        own_addresses: policy.own_addresses.clone(),
+        own_reach: match record.kind.as_str() {
+            "ngsild" | "ngsild-grafana-datasource" | "odata" => policy.own_reach.clone(),
+            _ => Vec::new(),
+        },
     }))
 }
 
