@@ -156,6 +156,8 @@ CKAN_API_TOKEN=$(cat "$(secret catalogue-token)"); export CKAN_API_TOKEN
 export JCBIN_DATAROOM_PORTAL_TOKEN_FILE=$home/secrets/catalogue-token
 # The Portal's shako token likewise: rehearsal.py import and the smoke suites read it from here.
 JCBIN_SHAKO_TOKEN_FILE=$(secret shako-token); export JCBIN_SHAKO_TOKEN_FILE
+# ekiben's admin token too: the pipelines smoke reads streams with it.
+JCBIN_EKIBEN_TOKEN_FILE=$(secret ekiben-token); export JCBIN_EKIBEN_TOKEN_FILE
 # The Portal's internal listener (/metrics, run callbacks) on loopback, one port per environment.
 export JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 100))
 export RUST_LOG=${RUST_LOG:-info,sqlx=warn}
@@ -193,6 +195,9 @@ nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.to
   > "$home/jc.log" 2>&1 &
 echo $! > "$home/jc.pid"
 "$here/wait-jc.sh" "$(cat "$home/jc.pid")" "$home/jc.log" || exit 1
+# The pipelines smoke reads ekiben's token from <state>/ekiben-token, which jc removes at start now
+# that it is given as a file: a link to the given file until the suite reads secrets/.
+ln -sfn ../secrets/ekiben-token "$home/state/ekiben-token"
 echo "$env_name: jc on http://localhost:$port (log $home/jc.log)"
 
 
