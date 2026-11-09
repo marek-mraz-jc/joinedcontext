@@ -131,6 +131,28 @@ pub(crate) fn organization_vars(
     out
 }
 
+/// `JC_PORTAL_APPS_URL`, the apex every App host sits under, from the Portal's App-host entry
+/// `*.apps.{domain}` (edge-session-design S4a): `{scheme}://{domain}`, and
+/// `JC_PORTAL_SERVE_APP_HOSTS`, since no edge composes the App routes in front of jc. Empty
+/// without one; an environment value still wins.
+pub(crate) fn apps_vars(cfg: &crate::config::Config) -> BTreeMap<String, String> {
+    cfg.mounts
+        .get(&Module::Portal)
+        .into_iter()
+        .flatten()
+        .find_map(|entry| crate::app::apps_wildcard(entry.host.as_deref()?.trim()))
+        .map(|domain| {
+            let url = format!("{}://{}", cfg.scheme, domain.to_ascii_lowercase());
+            [
+                ("JC_PORTAL_APPS_URL".to_owned(), url),
+                ("JC_PORTAL_SERVE_APP_HOSTS".to_owned(), "true".to_owned()),
+            ]
+        })
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
 /// The Portal's router behind the host jc placed the request on (`Mount`, a trusted proxy's
 /// `X-Forwarded-Host` applied), which pins an Organization's host (`organization_host`).
 pub(crate) fn with_request_host(router: Router) -> Router {

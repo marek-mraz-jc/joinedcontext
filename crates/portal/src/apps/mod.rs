@@ -2,6 +2,8 @@
 
 /// An App's mail to people of the organization (AP-168).
 pub mod ai;
+/// The App hosts answered by the Portal where no edge composes their routes (AP-133).
+pub mod app_host;
 /// The database of the server WASM Apps: a schema, roles and migrations per App (AP-149).
 pub mod apps_db;
 /// A build pod per App and its own build cache (AP-130, AP-131).
