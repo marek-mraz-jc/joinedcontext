@@ -61,6 +61,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}
+          REF: ${{ github.ref }}
           REUSE: ${{ steps.release.outputs.release == 'true' && '1' || '0' }}
           GH_TOKEN: ${{ github.token }}
         run: sh .github/scripts/changes.sh
