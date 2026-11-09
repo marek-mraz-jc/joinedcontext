@@ -475,6 +475,20 @@ impl OutboundGuard {
 mod tests {
     use super::*;
 
+    /// The pod's ServiceAccount token goes to an in-cluster host only: any other JWKS URL is
+    /// refused before a lookup, with a public host or a cluster-looking name alike.
+    #[tokio::test]
+    async fn a_cluster_jwks_is_read_from_an_in_cluster_host_only() {
+        let guard = OutboundGuard::default();
+        for url in [
+            "https://jwks.example.com/openid/v1/jwks",
+            "https://kubernetes.default.svc.cluster.local.example.com/openid/v1/jwks",
+        ] {
+            let why = guard.cluster_jwks(url, false).await.unwrap_err().to_string();
+            assert!(why.contains("not an in-cluster host"), "{url}: {why}");
+        }
+    }
+
     #[test]
     fn public_addresses_stay_allowed() {
         for ok in [
