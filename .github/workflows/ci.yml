@@ -182,8 +182,11 @@ jobs:
         with: { workspace: crates/antares, key: antares-clippy, components: "clippy, rustfmt" }
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-  # nextest with Antares' own groups (crates/antares/.config/nextest.toml), split in three jobs as
-  # root-test is, each with its own PostGIS; the first also runs the doc tests.
+  # nextest with Antares' own groups (crates/antares/.config/nextest.toml), in three jobs, each
+  # with its own PostGIS: the first runs pg_explain and the doc tests, the other two a slice each
+  # of every other test. pg_explain seeds 200 000 Entities and ANALYZEs them in one transaction
+  # held for about a minute, once per database: beside every slice it deadlocked a concurrent
+  # index build and timed out a week partition's DDL in two of three jobs (run 42610186767).
   antares-test:
     name: antares-test-${{ matrix.part }}
     needs: changes
@@ -192,7 +195,11 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix: { part: [1, 2, 3] }
+      matrix:
+        include:
+          - { part: 1, tests: "-E 'binary(pg_explain)'" }
+          - { part: 2, tests: "-E 'not binary(pg_explain)' --partition slice:1/2" }
+          - { part: 3, tests: "-E 'not binary(pg_explain)' --partition slice:2/2" }
     defaults: { run: { working-directory: crates/antares } }
     services:
       postgis:
@@ -214,7 +221,7 @@ jobs:
         with: { workspace: crates/antares, key: antares-test }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: cargo-nextest }
-      - run: cargo nextest run --workspace --locked --profile ci --partition "slice:${{ matrix.part }}/${{ strategy.job-total }}"
+      - run: cargo nextest run --workspace --locked --profile ci ${{ matrix.tests }}
       - if: matrix.part == 1
         run: cargo test --workspace --locked --no-fail-fast --doc
       - if: always()

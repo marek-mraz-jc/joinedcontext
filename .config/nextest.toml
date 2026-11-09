@@ -25,7 +25,7 @@ test-threads = 4
 path = "junit.xml"
 
 [[profile.default.overrides]]
-filter = 'package(kaisatsu-store-pg) or (package(kaisatsu-server) and binary(cli)) or (package(jc) and (binary(portal_siblings) or binary(jc)))'
+filter = 'package(kaisatsu-store-pg) or (package(kaisatsu-server) and (binary(cli) or binary(refresh_reuse))) or (package(jc) and (binary(portal_siblings) or binary(jc)))'
 test-group = 'pg-kaisatsu'
 
 [[profile.default.overrides]]
