@@ -2250,14 +2250,19 @@ mod tests {
             }
             h
         };
-        let kept = |path: &str, bearer: Option<&str>, admin: Option<&crate::admin_auth::AdminAuth>| {
-            let mut h = request(bearer);
-            drop_subject_unless_from_or_admin(path, &mut h, &names, &from, admin);
-            h.contains_key("x-jc-roles")
-        };
+        let kept =
+            |path: &str, bearer: Option<&str>, admin: Option<&crate::admin_auth::AdminAuth>| {
+                let mut h = request(bearer);
+                drop_subject_unless_from_or_admin(path, &mut h, &names, &from, admin);
+                h.contains_key("x-jc-roles")
+            };
         assert!(kept("/q/views/v/preview", Some(secret), Some(&admin)));
         // the wrong bearer, no bearer, no admin credential configured, or outside /q: dropped
-        assert!(!kept("/q/views/v/preview", Some("not-the-secret-not-the-secret-xx"), Some(&admin)));
+        assert!(!kept(
+            "/q/views/v/preview",
+            Some("not-the-secret-not-the-secret-xx"),
+            Some(&admin)
+        ));
         assert!(!kept("/q/views/v/preview", None, Some(&admin)));
         assert!(!kept("/q/views/v/preview", Some(secret), None));
         assert!(!kept("/ngsi-ld/v1/entities", Some(secret), Some(&admin)));
