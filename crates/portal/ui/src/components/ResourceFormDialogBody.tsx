@@ -153,9 +153,14 @@ export function ResourceFormDialogBody<T>({
   const kind = ownKind ?? draftKind;
   // A role that may not propose the kind reads the form and is told why it cannot send it, as
   // `PermissionGuard` says it of a button (UI-44, PF-51); the API refuses the same proposal anyway.
-  const { can, isLoading: permissionsLoading } = usePermissions(project ?? "");
+  // Nothing is sent while the permissions are on their way, as `PermissionGuard` holds a button.
+  const { can, checking, isLoading: permissionsLoading } = usePermissions(project ?? "");
   const deniedReason =
-    kind && project && !can(kind, "propose") ? refusal(t, project, "propose", kind) : undefined;
+    kind && project && checking
+      ? t("permissions.checking")
+      : kind && project && !can(kind, "propose")
+        ? refusal(t, project, "propose", kind)
+        : undefined;
   // A proposal in flight closes the form as surely as a caller's own `disabled` does; what it
   // adds is that the button says which of the two it is (T-0962).
   const disabled = closed || submitting === true || deniedReason !== undefined;

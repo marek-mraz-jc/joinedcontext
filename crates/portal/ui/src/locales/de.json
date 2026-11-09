@@ -8189,7 +8189,9 @@
     },
     "nav": {
       "back": "Zurück zu den Projekten",
-      "notAdmin": "Die Verwaltung ist für Administratoren der Organisation. Ihre Projekte sind einen Schritt zurück."
+      "notAdmin": "Die Verwaltung ist für Administratoren der Organisation. Ihre Projekte sind einen Schritt zurück.",
+      "notAdminCatalogue": "Die Verwaltung ist für Administratoren der Organisation. Der Katalog ist einen Schritt zurück.",
+      "toCatalogue": "Zurück zum Katalog"
     },
     "group": {
       "access": "Personen und Zugriff",

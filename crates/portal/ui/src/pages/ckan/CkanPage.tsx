@@ -234,7 +234,7 @@ function Instances({
   const { t } = useTranslation();
   const permissions = usePermissions(project);
   // A role that may not propose a catalogue reads why, not a form whose submit only refuses (T-4997).
-  const mayPropose = permissions.data === undefined || permissions.can("CkanInstance", "propose");
+  const mayPropose = permissions.can("CkanInstance", "propose");
   const [draft, setDraft] = useState<InstanceDraft>(EMPTY_DRAFT);
   const [shown, setShown] = useState<Partial<Record<Fault, string>>>({});
   // The CKAN organizations the Portal's catalogue lists; a new instance's own may be typed (T-4948).
@@ -303,7 +303,8 @@ function Instances({
         />
       ) : null}
 
-      {!mayPropose ? (
+      {/* Nothing to offer or refuse while the permissions are on their way. */}
+      {permissions.checking ? null : !mayPropose ? (
         <Alert role="status" tone="info">
           {t("form.mayNotCreate")}
         </Alert>

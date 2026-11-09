@@ -8189,7 +8189,9 @@
     },
     "nav": {
       "back": "Späť na projekty",
-      "notAdmin": "Správa je pre administrátorov organizácie. Vaše projekty sú o krok späť."
+      "notAdmin": "Správa je pre administrátorov organizácie. Vaše projekty sú o krok späť.",
+      "notAdminCatalogue": "Správa je pre administrátorov organizácie. Katalóg je o krok späť.",
+      "toCatalogue": "Späť na katalóg"
     },
     "group": {
       "access": "Ľudia a prístup",

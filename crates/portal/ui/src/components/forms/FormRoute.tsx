@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 import { Alert, Button, Card, Dialog, PageHeader, PageLoading } from "../ui";
 import type { DialogSize } from "../ui";
 import { failureKind } from "../ui/PageState";
-import { proposesAnything, usePermissions } from "../../api/permissions";
+import { usePermissions } from "../../api/permissions";
 
 /**
  * A bigger form is a page with an address of its own, not a popup (T-2474, UI-27).
@@ -365,7 +365,7 @@ export function FormRouteHost({
 }): JSX.Element {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const mayPropose = proposesAnything(usePermissions(project).data);
+  const mayPropose = usePermissions(project).proposesAnything();
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(0);
   const [notice, setNotice] = useState<ReactNode>(null);

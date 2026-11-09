@@ -8189,7 +8189,9 @@
     },
     "nav": {
       "back": "Back to the projects",
-      "notAdmin": "Administration is for organization administrators. Your projects are one step back."
+      "notAdmin": "Administration is for organization administrators. Your projects are one step back.",
+      "notAdminCatalogue": "Administration is for organization administrators. The catalogue is one step back.",
+      "toCatalogue": "Back to the catalogue"
     },
     "group": {
       "access": "People and access",

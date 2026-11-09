@@ -8189,7 +8189,9 @@
     },
     "nav": {
       "back": "Zpět na projekty",
-      "notAdmin": "Správa je pro administrátory organizace. Vaše projekty jsou o krok zpět."
+      "notAdmin": "Správa je pro administrátory organizace. Vaše projekty jsou o krok zpět.",
+      "notAdminCatalogue": "Správa je pro administrátory organizace. Katalog je o krok zpět.",
+      "toCatalogue": "Zpět na katalog"
     },
     "group": {
       "access": "Lidé a přístup",

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError, queryKeys, unwrap } from "./client";
 import { ORG_NAMESPACE } from "./manifest";
@@ -88,6 +89,26 @@ export function proposesAnything(effective: Effective | undefined): boolean {
   return effective.grants.some((grant) => Boolean((grant.rule as Rule).verbs?.includes("propose")));
 }
 
+/** A read of `permissions/me` as `usePermissions` holds it. */
+export interface PermissionsRead {
+  data: Effective | undefined;
+  /** The first read is on its way, retries included. */
+  checking: boolean;
+  /** The project's `permissions/me` answered 404: no binding of the caller covers it. */
+  denied: boolean;
+}
+
+/**
+ * Whether a control is offered, `decide` reading the document (jc-portal-refusals): never while the
+ * first read is on its way, never after the 404 of a project out of reach (a hidden project and
+ * one that does not exist refuse alike, so the refusal tells nothing of either), and as `decide`
+ * says once the document came. A read that failed otherwise (500, network) leaves no document
+ * and offers the control as before: the API re-checks every write (PF-51, T-5533).
+ */
+export function offered(read: PermissionsRead, decide: (effective: Effective | undefined) => boolean): boolean {
+  return !read.denied && !read.checking && decide(read.data);
+}
+
 /**
  * Whether a grant lets the caller read `kind` (PF-59): `read`, or `propose`, which implies it
  * (jc-core `Rule::grants`). `undefined` while no document has arrived: a page that must not
@@ -137,23 +158,34 @@ export function usePermissions(project: string) {
         }),
       ),
     enabled: project !== "",
+    // A refused or failed read stays the answer for every control mounted after it: asked again on
+    // each mount, it went back to pending (no document), and a refusal that mounts on the answer
+    // unmounted itself, read again and mounted again, for ever (jc-portal-refusals).
+    retryOnMount: false,
     // A fresh Portal pod answers with no grant until its first mirror sync; a page opened in
     // that window would otherwise keep every control disabled until a reload (T-0630).
     refetchInterval: (query) => emptyGrantsRetry(query.state.data, query.state.dataUpdateCount),
   });
+  const { data, isPending } = query;
+  // The first read is on its way: no document yet and none failed (T-5833), its retries
+  // included. A disabled query (no project) is never checking.
+  const checking = query.isLoading;
   // The 404 of a project no binding of the caller covers (PF-59): a known answer, reading nothing.
   const denied = query.error instanceof ApiError && query.error.status === 404;
-  return {
-    data: query.data,
-    isLoading: query.isPending,
-    // The first read is on its way: no document yet and none failed (T-5833). A disabled query
-    // (no project) is never checking.
-    checking: query.isLoading,
-    denied,
-    // A project out of reach allows nothing: without its document `allows` would offer every
-    // control, and the API's 404 would be the first the person hears of it (jc-admin-ui).
-    can: (kind: string, verb: Verb) => !denied && allows(query.data, kind, verb),
-  };
+  // One value per answer, so a page memoising on `can` or `canIn` recomputes only when it moves.
+  return useMemo(() => {
+    const read: PermissionsRead = { data, checking, denied };
+    return {
+      ...read,
+      isLoading: isPending,
+      // A project out of reach, or a document still on its way, allows nothing: `allows` alone
+      // would offer every control, and the API's 404 would be the first the person hears of it.
+      can: (kind: string, verb: Verb) => offered(read, (effective) => allows(effective, kind, verb)),
+      canIn: (kind: string, verb: Verb, space: string) =>
+        offered(read, (effective) => allowsIn(effective, kind, verb, space)),
+      proposesAnything: () => offered(read, proposesAnything),
+    };
+  }, [data, isPending, checking, denied]);
 }
 
 /**

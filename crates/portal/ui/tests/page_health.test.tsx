@@ -102,6 +102,19 @@ describe("the health log", () => {
     expect(await screen.findByText(en.grid.noMatch)).toBeInTheDocument();
   });
 
+  // The walker's row-link rule (tests/pageChecks.ts): every record of a table of records opens on a click.
+  it("gives_every_check_row_its_record_link", async () => {
+    await renderRoute({ path: "/projects/bbsk/health", answer: answering(() => jsonResponse({ items: CHECKS })) });
+    await screen.findByRole("columnheader", { name: en.health.found });
+    const table = screen.getByRole("table", { name: en.health.caption });
+    expect(table).toHaveAttribute("data-records");
+    const rows = table.querySelectorAll(":scope > tbody > tr");
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.querySelector("a[data-row-link]")).not.toBeNull();
+    }
+  });
+
   it("says_what_to_do_when_nothing_was_checked", async () => {
     await renderRoute({ path: "/projects/bbsk/health", answer: answering(() => jsonResponse({ items: [] })) });
     expect(await screen.findByText(en.health.empty)).toBeInTheDocument();
