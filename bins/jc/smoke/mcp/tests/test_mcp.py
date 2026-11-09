@@ -141,6 +141,9 @@ def test_the_by_id_sample_is_a_row_the_grant_opens():
     assert x.sample(_endpoint([scoped]), "K") is None
     whole = suite.ex.Grant("g", PUBLIC, {"retrieveOps"}, [suite.ex.Selector("K", None)])
     assert x.sample(_endpoint([scoped, whole]), "K") == "urn:ngsi-ld:K:fmi-1"
+    # An expiring type's exported row may be gone (an Alert past its expiresAt).
+    slot["expires"] = True
+    assert x.sample(_endpoint([whole]), "K") is None
 
 
 def test_the_history_sample_is_a_series_the_temporal_grant_opens():

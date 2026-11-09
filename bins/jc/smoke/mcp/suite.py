@@ -161,8 +161,11 @@ class Expect:
     def sample(self, e: ex.Endpoint, typ: str) -> str | None:
         """An exported id of `typ` the public grants open: any row when one grant opens every
         id, else the first row of a granted idPattern; None when only grants with q, scopeQ or
-        validity open it, as the export cannot say which rows pass those."""
+        validity open it, or the type expires (expiresAt), as the export cannot say which rows
+        pass those now."""
         slot = self.tenant_types(e)[typ]
+        if slot.get("expires"):
+            return None
         grants = [g for g in e.public_grants() if not g.narrowed]
         patterns = self.patterns(grants, typ)
         if patterns is None:
@@ -286,7 +289,7 @@ class Suite:
                    f"1-5 {typ} entities (export holds {slot['count']})", f"{len(got)} entities; {note}{a.brief(100)}",
                    a.ok and 0 < len(got) <= 5 and not wrong)
         sample = self.x.sample(e, typ)
-        listed = "" if sample else "an id the page listed (q, scopeQ or validity narrows the grant); "
+        listed = "" if sample else "an id the page listed (the grant's q, scopeQ or validity, or expiresAt, decides which rows are readable); "
         sample = sample or next((str(x.get("id")) for x in got if x.get("id")), None)
         if sample:
             a, note = self.hub.query({"endpoint": e.slug, "id": [sample], "type": [typ]})
@@ -294,7 +297,7 @@ class Suite:
                        "the exported entity", f"{listed}{note}{a.brief(400)}", a.ok and sample in ids_in(a.data))
         else:
             self.r.skip("hub.query.by-id", t, f"query_entities endpoint={e.slug}", "the exported entity",
-                        "q, scopeQ or validity narrows every grant of the type and the page listed no id")
+                        "the page listed no id, and the export cannot name a readable one (q, scopeQ, validity or expiresAt)")
         want = types[typ]
         a, note = self.hub.query({"endpoint": e.slug, "type": [typ], "count": True, "limit": 1})
         total = total_of(a.data)
@@ -411,7 +414,7 @@ class Suite:
             if not sample:
                 a, _ = door.query({"type": [typ], "limit": 1})
                 sample = next((str(x.get("id")) for x in entities_of(a.data) if x.get("id")), tt[typ]["sample"])
-                listed = "an id the door listed (q, scopeQ or validity narrows the grant); "
+                listed = "an id the door listed (the grant's q, scopeQ or validity, or expiresAt, decides which rows are readable); "
             a, note = door.query({"type": [typ], "id": [sample]})
             self.check("endpoint.query.by-id", t, f"query_entities type={typ} id={sample}", "the exported entity",
                        f"{listed}{note}{a.brief(400)}", a.ok and sample in ids_in(a.data))
