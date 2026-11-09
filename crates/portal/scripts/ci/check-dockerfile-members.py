@@ -9,8 +9,16 @@ nothing in the fast lane would say. Port of the platform's check (T-3366), with 
 `members = ["apps/*"]` glob expanded the way cargo does: every matching directory not excluded.
 
     python3 scripts/ci/check-dockerfile-members.py [Cargo.toml] [Dockerfile]
+    python3 scripts/ci/check-dockerfile-members.py --apps Dockerfile ../../bins/jc/Dockerfile
     python3 scripts/ci/check-dockerfile-members.py --selftest
+
+`--apps` compares the App bundles two Dockerfiles ship in /srv/apps: the Portal's (build context
+crates/portal) and jc's (context the repository root, so every source path carries
+`crates/portal/`). Both must build the same Apps from the same sources, copy /srv/apps into the
+runtime image and set JC_PORTAL_APPS_DIR to it, or one image answers 404 for an App the other
+serves.
 """
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -55,7 +63,75 @@ def missing(cargo: str, dockerfile: str, manifests: dict[str, str]) -> list[str]
     return out
 
 
+def shipped_apps(dockerfile: str, prefix: str) -> dict[str, list[str]]:
+    """What a Dockerfile ships in /srv/apps: the App names, the app sources it copies (with
+    `prefix` cut off) and the runtime lines that serve them."""
+    stage = dockerfile.split(" AS apps\n", 1)[-1].split("\nFROM ", 1)[0]
+    names = set(re.findall(r"app-integrity\.mjs \"?/srv/apps/([A-Za-z0-9_-]+)", stage))
+    for loop in re.findall(r"for name in ([^;]+); do\s*\\?\s*cp -r [^ ]+ \"/srv/apps/\$name\"", stage):
+        names |= set(loop.split())
+    sources = {
+        src.removeprefix(prefix)
+        for src in re.findall(r"^COPY (\S+) \./(?:apps|sdk|scripts)/", stage, re.MULTILINE)
+    }
+    runtime = [
+        line
+        for line in ("COPY --from=apps /srv/apps /srv/apps", "ENV JC_PORTAL_APPS_DIR=/srv/apps")
+        if line in dockerfile
+    ]
+    return {"apps": sorted(names), "sources": sorted(sources), "runtime": runtime}
+
+
+def apps_differ(portal: str, jc: str) -> list[str]:
+    ours, theirs = shipped_apps(portal, ""), shipped_apps(jc, "crates/portal/")
+    out = []
+    if not ours["apps"]:
+        out.append("the Portal Dockerfile ships no App in /srv/apps")
+    for key, what in (("apps", "app"), ("sources", "source"), ("runtime", "runtime line")):
+        for item in sorted(set(ours[key]) - set(theirs[key])):
+            out.append(f"bins/jc/Dockerfile lacks {what} `{item}` the Portal Dockerfile has")
+        for item in sorted(set(theirs[key]) - set(ours[key])):
+            out.append(f"bins/jc/Dockerfile has {what} `{item}` the Portal Dockerfile lacks")
+    return out
+
+
+def apps_selftest() -> None:
+    portal = (
+        "FROM node AS apps\n"
+        "COPY apps/a/ui/package.json apps/a/ui/pnpm-lock.yaml ./apps/a/ui/\n"
+        "COPY apps/a/ui/ ./apps/a/ui/\n"
+        "COPY scripts/app-integrity.mjs ./scripts/\n"
+        "    && node /work/scripts/app-integrity.mjs /srv/apps/a\n"
+        "RUN for name in s-one s-two; do \\\n"
+        '      cp -r apps/p/bundle "/srv/apps/$name" \\\n'
+        '      && node /work/scripts/app-integrity.mjs "/srv/apps/$name" || exit 1; \\\n'
+        "FROM scratch AS build\n"
+        "COPY sdk/template ./sdk/template\n"
+        "FROM distroless\n"
+        "COPY --from=apps /srv/apps /srv/apps\n"
+        "ENV JC_PORTAL_APPS_DIR=/srv/apps\n"
+    )
+    assert shipped_apps(portal, "")["apps"] == ["a", "s-one", "s-two"]
+    jc = re.sub(r"^COPY (apps/|scripts/)", r"COPY crates/portal/\1", portal, flags=re.MULTILINE)
+    assert apps_differ(portal, jc) == [], apps_differ(portal, jc)
+    assert apps_differ(portal, jc.replace("/srv/apps/a\n", "/srv/apps/b\n")) == [
+        "bins/jc/Dockerfile lacks app `a` the Portal Dockerfile has",
+        "bins/jc/Dockerfile has app `b` the Portal Dockerfile lacks",
+    ]
+    assert apps_differ(portal, jc.replace("s-one s-two", "s-one")) == [
+        "bins/jc/Dockerfile lacks app `s-two` the Portal Dockerfile has",
+    ]
+    assert apps_differ(portal, jc.replace("COPY crates/portal/apps/a/ui/ ./apps/a/ui/\n", "")) == [
+        "bins/jc/Dockerfile lacks source `apps/a/ui/` the Portal Dockerfile has",
+    ]
+    assert apps_differ(portal, jc.replace("ENV JC_PORTAL_APPS_DIR=/srv/apps\n", "")) == [
+        "bins/jc/Dockerfile lacks runtime line `ENV JC_PORTAL_APPS_DIR=/srv/apps` the Portal Dockerfile has",
+    ]
+    assert apps_differ("", "") == ["the Portal Dockerfile ships no App in /srv/apps"]
+
+
 def selftest() -> None:
+    apps_selftest()
     cargo = '[workspace]\nmembers = ["apps/*"]\n'
     lib_bin = '[lib]\npath = "src/lib.rs"\n[[bin]]\nname = "a"\npath = "src/main.rs"\n'
     good = (
@@ -82,6 +158,14 @@ def main(argv: list[str]) -> int:
         selftest()
         print("check-dockerfile-members selftest ok")
         return 0
+    if argv[:1] == ["--apps"]:
+        portal_path, jc_path = (argv[1:3] + ["Dockerfile", "../../bins/jc/Dockerfile"][len(argv[1:3]):])[:2]
+        problems = apps_differ(Path(portal_path).read_text(), Path(jc_path).read_text())
+        for problem in problems:
+            print(problem, file=sys.stderr)
+        if not problems:
+            print(f"{len(shipped_apps(Path(portal_path).read_text(), '')['apps'])} Apps in both Dockerfiles")
+        return 1 if problems else 0
     cargo_path, docker_path = (argv[:2] + ["Cargo.toml", "Dockerfile"][len(argv[:2]):])[:2]
     root = Path(cargo_path).parent
     cargo = Path(cargo_path).read_text()
