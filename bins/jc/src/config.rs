@@ -1284,8 +1284,8 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         .unwrap();
         assert_eq!(cfg.realm.as_str(), "smartcity");
         for bad in ["", "master", "MASTER", "a/b", "../jc", "a b", ".x", "dév"] {
-            let err = Config::merge(cli(&["--identity-realm", bad]), FileConfig::default())
-                .unwrap_err();
+            let err =
+                Config::merge(cli(&["--identity-realm", bad]), FileConfig::default()).unwrap_err();
             assert!(matches!(err, ConfigError::Realm(_)), "{bad:?}: {err}");
             let text = format!("[identity]\nrealm = {bad:?}\n");
             let err = Config::merge(cli(&[]), file(&text)).unwrap_err();

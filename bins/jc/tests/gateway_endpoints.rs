@@ -517,28 +517,22 @@ async fn open_project(jc: &Jc) {
 
     // The gateway loads the Endpoints from its checkout, the Portal writes the views into
     // Antares: the public Endpoint's types answer once both have run.
-    eventually(
-        "the public Endpoint answers its types",
-        jc,
-        120,
-        || async {
-            let (status, body) =
-                call(jc, get.clone(), &format!("{public}/types"), None, None).await;
-            if status == StatusCode::OK {
-                return Ok(());
-            }
-            let views = Client::new()
-                .get(jc.url("/broker/q/views"))
-                .bearer_auth(jc.secret("antares-admin-token"))
-                .send()
-                .await
-                .unwrap()
-                .text()
-                .await
-                .unwrap_or_default();
-            Err(format!("{status} {body}; the broker's views: {views}"))
-        },
-    )
+    eventually("the public Endpoint answers its types", jc, 120, || async {
+        let (status, body) = call(jc, get.clone(), &format!("{public}/types"), None, None).await;
+        if status == StatusCode::OK {
+            return Ok(());
+        }
+        let views = Client::new()
+            .get(jc.url("/broker/q/views"))
+            .bearer_auth(jc.secret("antares-admin-token"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap_or_default();
+        Err(format!("{status} {body}; the broker's views: {views}"))
+    })
     .await;
 }
 
@@ -1065,7 +1059,11 @@ async fn assert_dev_left_as_imported(jc: &Jc) {
         "jc overwrote the imported portal-api: {portal}"
     );
     let admins = admin_read(jc, "dev", "/users?username=admin&exact=true").await;
-    assert_eq!(admins, json!([]), "jc made a first admin in the imported realm");
+    assert_eq!(
+        admins,
+        json!([]),
+        "jc made a first admin in the imported realm"
+    );
     assert!(jc.log_has("the deployment brings the Portal's realm"));
 }
 
@@ -1133,8 +1131,13 @@ async fn kids(jc: &Jc, realm: &str) -> Vec<String> {
         .collect()
 }
 
+/// The realms kaisatsu holds beside the deployment's `dev`, each with `dev`'s clients, people and
+/// secrets: jc's default, and one whose issuer begins with dev's (an issuer prefix match admits
+/// it).
+const TWINS: [&str; 2] = ["jc", "devx"];
+
 /// A deployment whose realm is `dev` (`--identity-realm dev`) over an imported Keycloak `dev`
-/// export, with kaisatsu also holding a twin realm `jc` (same clients, people and secrets):
+/// export, with kaisatsu also holding twin realms ([`TWINS`]):
 /// jc writes nothing into `dev`, the Portal signs in there, the gateway admits `dev`'s tokens,
 /// the linker links the Endpoint scopes in `dev`; a valid `jc` token admits nowhere. A restart
 /// without the `jc` files leaves `dev` as imported and makes no `jc` realm.
@@ -1149,10 +1152,26 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
         root.join("realm-secrets"),
         root.join("state"),
     );
-    export(&realms, &secrets, &state, "dev", &base, "00-dev-export.json");
+    export(
+        &realms,
+        &secrets,
+        &state,
+        "dev",
+        &base,
+        "00-dev-export.json",
+    );
     realm_file(&realms, &secrets, "dev", "10-dev-e2e.json");
-    export(&realms, &secrets, &state, "jc", &base, "20-jc-export.json");
-    realm_file(&realms, &secrets, "jc", "30-jc-e2e.json");
+    for twin in TWINS {
+        export(
+            &realms,
+            &secrets,
+            &state,
+            twin,
+            &base,
+            &format!("20-{twin}-export.json"),
+        );
+        realm_file(&realms, &secrets, twin, &format!("30-{twin}-e2e.json"));
+    }
     let args = ["--identity-realm", "dev"];
     let envs = [("JC_TRUST_EDGE_TOKEN", "true")];
     let jc = start_at(root, port, &args, &envs).await;
@@ -1187,76 +1206,97 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
 
-    // The twin in realm jc: the same client, person, password and secret, a valid token of
-    // that realm. The gateway checks the issuer exactly: 401 on the closed Endpoint, and on the
-    // public one too (a presented token is never read as anonymous).
-    let twin = token_in(&jc, "jc", "e2e-reader", PERSON).await;
-    assert_eq!(issuer_of(&twin), format!("{base}/id/realms/jc"));
-    for path in [read.clone(), format!("{public}/entities?type=Thing")] {
-        let (status, body) = call(&jc, get.clone(), &path, Some(&twin), None).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: {body}");
+    // Each twin: the same client, person, password and secret, a valid token of its realm.
+    // The gateway checks the issuer exactly (`devx`'s begins with dev's): 401 on the closed
+    // Endpoint, and on the public one too (a presented token is never read as anonymous).
+    for realm in TWINS {
+        let twin = token_in(&jc, realm, "e2e-reader", PERSON).await;
+        assert_eq!(issuer_of(&twin), format!("{base}/id/realms/{realm}"));
+        for path in [read.clone(), format!("{public}/entities?type=Thing")] {
+            let (status, body) = call(&jc, get.clone(), &path, Some(&twin), None).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{realm} {path}: {body}");
+        }
+        let (status, body) = call(
+            &jc,
+            post.clone(),
+            &format!("{closed}/entities"),
+            Some(&twin),
+            Some(&entity("Thing", "two")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{realm}: {body}");
     }
-    let (status, body) = call(
-        &jc,
-        post.clone(),
-        &format!("{closed}/entities"),
-        Some(&twin),
-        Some(&entity("Thing", "two")),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
 
     // The Portal: dev's token for portal-api is the person, as a bearer and as the edge's
     // X-Access-Token; the twin's is 401 either way.
     let member = token_in(&jc, "dev", "e2e-mcp", PERSON).await;
-    let twin_member = token_in(&jc, "jc", "e2e-mcp", PERSON).await;
+    let mut twin_members = Vec::new();
+    for realm in TWINS {
+        twin_members.push(token_in(&jc, realm, "e2e-mcp", PERSON).await);
+    }
     for edge in [false, true] {
+        for (realm, twin) in TWINS.iter().zip(&twin_members) {
+            assert_eq!(
+                portal_me(&jc, twin, edge).await,
+                StatusCode::UNAUTHORIZED,
+                "a realm-{realm} token at the Portal, edge {edge}"
+            );
+        }
         assert_eq!(
-            portal_me(&jc, &twin_member, edge).await,
-            StatusCode::UNAUTHORIZED,
-            "a realm-jc token at the Portal, edge {edge}"
+            portal_me(&jc, &member, edge).await,
+            StatusCode::OK,
+            "edge {edge}"
         );
-        assert_eq!(portal_me(&jc, &member, edge).await, StatusCode::OK, "edge {edge}");
     }
 
     // The linker links the Endpoint's scope to portal-api in dev, and never in jc.
     let scope = format!("endpoint:{CLOSED}");
-    eventually("dev's portal-api holds the Endpoint scope", &jc, 60, || async {
-        let portal = portal_client(&jc, "dev").await;
-        portal["optionalClientScopes"]
-            .as_array()
-            .is_some_and(|s| s.contains(&json!(scope)))
-            .then_some(())
-            .ok_or(portal.to_string())
-    })
+    eventually(
+        "dev's portal-api holds the Endpoint scope",
+        &jc,
+        60,
+        || async {
+            let portal = portal_client(&jc, "dev").await;
+            portal["optionalClientScopes"]
+                .as_array()
+                .is_some_and(|s| s.contains(&json!(scope)))
+                .then_some(())
+                .ok_or(portal.to_string())
+        },
+    )
     .await;
-    let twin_portal = portal_client(&jc, "jc").await;
-    assert!(
-        !twin_portal.to_string().contains("endpoint:e2e"),
-        "the linker wrote into realm jc: {twin_portal}"
-    );
+    for realm in TWINS {
+        let twin_portal = portal_client(&jc, realm).await;
+        assert!(
+            !twin_portal.to_string().contains("endpoint:e2e"),
+            "the linker wrote into realm {realm}: {twin_portal}"
+        );
+    }
 
     // Token exchange at dev: dev's subject token is exchanged, the twin's refused.
     let (status, body) = exchange_at_dev(&jc, &member).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body) = exchange_at_dev(&jc, &twin_member).await;
-    assert!(status.is_client_error(), "{status} {body}");
-    // kaisatsu answers as Keycloak 26 does for a subject token it cannot verify (signature,
-    // exact issuer, audience): invalid_request "Invalid token".
-    let refused = (body["error"].as_str(), body["error_description"].as_str());
-    assert!(
-        matches!(refused.0, Some("invalid_grant" | "invalid_token"))
-            || refused == (Some("invalid_request"), Some("Invalid token")),
-        "{status} {body}"
-    );
-
-    // Keys stay per realm.
-    let (dev_kids, jc_kids) = (kids(&jc, "dev").await, kids(&jc, "jc").await);
-    assert!(!dev_kids.is_empty() && !jc_kids.is_empty());
-    assert!(
-        dev_kids.iter().all(|k| !jc_kids.contains(k)),
-        "{dev_kids:?} {jc_kids:?}"
-    );
+    let dev_kids = kids(&jc, "dev").await;
+    assert!(!dev_kids.is_empty());
+    for (realm, twin) in TWINS.iter().zip(&twin_members) {
+        let (status, body) = exchange_at_dev(&jc, twin).await;
+        assert!(status.is_client_error(), "{realm}: {status} {body}");
+        // kaisatsu answers as Keycloak 26 does for a subject token it cannot verify (signature,
+        // exact issuer, audience): invalid_request "Invalid token".
+        let refused = (body["error"].as_str(), body["error_description"].as_str());
+        assert!(
+            matches!(refused.0, Some("invalid_grant" | "invalid_token"))
+                || refused == (Some("invalid_request"), Some("Invalid token")),
+            "{realm}: {status} {body}"
+        );
+        // Keys stay per realm.
+        let twin_kids = kids(&jc, realm).await;
+        assert!(!twin_kids.is_empty());
+        assert!(
+            dev_kids.iter().all(|k| !twin_kids.contains(k)),
+            "{realm}: {dev_kids:?} {twin_kids:?}"
+        );
+    }
 
     // A person signs in to the Portal at /realms/dev.
     let mut browser = Browser::new();
@@ -1268,8 +1308,10 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
     // Restart on the same state, the twin's files gone: dev is still as imported, and no realm
     // jc exists (no dormant realm, no first admin anywhere).
     drop(jc);
-    std::fs::remove_file(realms.join("20-jc-export.json")).unwrap();
-    std::fs::remove_file(realms.join("30-jc-e2e.json")).unwrap();
+    for twin in TWINS {
+        std::fs::remove_file(realms.join(format!("20-{twin}-export.json"))).unwrap();
+        std::fs::remove_file(realms.join(format!("30-{twin}-e2e.json"))).unwrap();
+    }
     let jc = start_at(root, port, &args, &envs).await;
     assert_dev_left_as_imported(&jc).await;
     let (status, body) = call(

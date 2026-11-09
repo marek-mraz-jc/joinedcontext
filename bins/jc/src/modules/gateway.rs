@@ -403,7 +403,10 @@ mod tests {
         let mut dev = setup.clone();
         dev.realm = setup::Realm::parse("dev").unwrap();
         let named = vars(&siblings, &dev, true, &mount, Some(&hop), None, bind);
-        assert_eq!(named["JC_OIDC_ISSUER"], "https://city.example/id/realms/dev");
+        assert_eq!(
+            named["JC_OIDC_ISSUER"],
+            "https://city.example/id/realms/dev"
+        );
         assert_eq!(
             named["JC_OIDC_JWKS_URL"],
             "http://127.0.0.1:8443/id/realms/dev/protocol/openid-connect/certs"

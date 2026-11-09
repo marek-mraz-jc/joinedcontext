@@ -93,7 +93,10 @@ async fn apply_import_dir(
     let mut unnamed = Vec::new();
     for (name, file) in files {
         match file["realm"].as_str() {
-            Some(of) => by_realm.entry(of.to_owned()).or_default().push((name, file)),
+            Some(of) => by_realm
+                .entry(of.to_owned())
+                .or_default()
+                .push((name, file)),
             None => unnamed.push((name, file)),
         }
     }
@@ -166,18 +169,18 @@ fn realm_owner(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(err(&format!("cannot read {}: {e}", file.display()))),
     }
-    let owner = if import_brings_portal
-        || (existed_before && realm.as_str() != setup::DEFAULT_REALM)
-    {
-        RealmOwner::Import
-    } else {
-        RealmOwner::Jc
-    };
+    let owner =
+        if import_brings_portal || (existed_before && realm.as_str() != setup::DEFAULT_REALM) {
+            RealmOwner::Import
+        } else {
+            RealmOwner::Jc
+        };
     let text = match owner {
         RealmOwner::Jc => "jc\n",
         RealmOwner::Import => "import\n",
     };
-    std::fs::write(&file, text).map_err(|e| err(&format!("cannot write {}: {e}", file.display())))?;
+    std::fs::write(&file, text)
+        .map_err(|e| err(&format!("cannot write {}: {e}", file.display())))?;
     Ok(owner)
 }
 
@@ -403,7 +406,11 @@ pub async fn build(
     let kek = Kek::from_raw_bytes(kek.as_bytes()).map_err(|e| err(&e))?;
     let store = open_kaisatsu_store(cfg, kek.clone()).await?;
     let realm = &ctx.setup.realm;
-    let existed_before = store.get_realm(realm.as_str()).await.map_err(|e| err(&e))?.is_some();
+    let existed_before = store
+        .get_realm(realm.as_str())
+        .await
+        .map_err(|e| err(&e))?
+        .is_some();
     let mut import_brings_portal = false;
     if let Some(dir) = &cfg.import_dir {
         // A realm file reads no environment here: its secrets are `$(file:...)` under the
@@ -511,14 +518,22 @@ mod tests {
         let kek = Kek::from_raw_bytes(&[7u8; 32]).unwrap();
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek));
         let dev = setup::Realm::parse("dev").unwrap();
-        assert!(!apply_import_dir(&store, dir.path(), None, &dev).await.unwrap());
+        assert!(
+            !apply_import_dir(&store, dir.path(), None, &dev)
+                .await
+                .unwrap()
+        );
         assert!(store.list_realms().await.unwrap().is_empty());
         std::fs::write(
             dir.path().join("realm.json"),
             r#"{"realm": "rehearsal", "enabled": true}"#,
         )
         .unwrap();
-        assert!(!apply_import_dir(&store, dir.path(), None, &dev).await.unwrap());
+        assert!(
+            !apply_import_dir(&store, dir.path(), None, &dev)
+                .await
+                .unwrap()
+        );
         assert!(store.get_realm("rehearsal").await.unwrap().is_some());
     }
 
@@ -545,9 +560,21 @@ mod tests {
         }
         let dev = setup::Realm::parse("dev").unwrap();
         let other = setup::Realm::parse("smartcity").unwrap();
-        assert!(apply_import_dir(&store, dir.path(), None, &dev).await.unwrap());
-        assert!(!apply_import_dir(&store, dir.path(), None, &other).await.unwrap());
-        for (realm, id) in [("dev", "portal-api"), ("dev", "extra"), ("jc", "portal-api")] {
+        assert!(
+            apply_import_dir(&store, dir.path(), None, &dev)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !apply_import_dir(&store, dir.path(), None, &other)
+                .await
+                .unwrap()
+        );
+        for (realm, id) in [
+            ("dev", "portal-api"),
+            ("dev", "extra"),
+            ("jc", "portal-api"),
+        ] {
             assert!(
                 store
                     .get_client_by_client_id(realm, id)
@@ -567,7 +594,11 @@ mod tests {
         );
         // A file naming no realm is ambiguous among several.
         std::fs::write(dir.path().join("30-none.json"), r#"{"enabled": true}"#).unwrap();
-        assert!(apply_import_dir(&store, dir.path(), None, &dev).await.is_err());
+        assert!(
+            apply_import_dir(&store, dir.path(), None, &dev)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -782,7 +813,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_linker_works_in_the_configured_realm_only() {
-        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(Kek::from_raw_bytes(&[7; 32]).unwrap()));
+        let store: Arc<dyn Store> =
+            Arc::new(MemoryStore::new(Kek::from_raw_bytes(&[7; 32]).unwrap()));
         for name in ["jc", "dev"] {
             store
                 .upsert_realm(kaisatsu_core::RealmConfig {
@@ -830,7 +862,8 @@ mod tests {
     #[test]
     fn the_account_console_client_is_public_pkce_and_bound_to_kaisatsus_own_path() {
         let mount = Mount::new("kaisatsu", "https", "jc.example", "/id").unwrap();
-        let (name, file) = account_console_realm_file(&mount.public_base(), &setup::Realm::default());
+        let (name, file) =
+            account_console_realm_file(&mount.public_base(), &setup::Realm::default());
         assert!(name.ends_with(".json"));
         let client = &file["clients"][0];
         assert_eq!(client["clientId"], "account-console");
