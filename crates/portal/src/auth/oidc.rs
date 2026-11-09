@@ -746,6 +746,14 @@ pub async fn callback(
         )));
     }
 
+    // The provider's way back after a logout (`post_logout_redirect_uri` in [`logout`]): no
+    // login in flight and nothing presented, so the person goes home.
+    if jar.get(FLOW_COOKIE).is_none() && query.code.is_none() && query.state.is_none() {
+        return Ok(
+            Redirect::to(crate::organization_host::public_base(&state.config).as_str())
+                .into_response(),
+        );
+    }
     let flow_cookie = jar
         .get(FLOW_COOKIE)
         .ok_or_else(|| ApiError::BadRequest("no login is in flight".into()))?;
@@ -1000,10 +1008,9 @@ pub async fn logout(
         .map(|mut url| {
             {
                 let mut params = url.query_pairs_mut();
-                params.append_pair(
-                    "post_logout_redirect_uri",
-                    crate::organization_host::public_base(&state.config).as_str(),
-                );
+                // The callback, the one URI the client registers (Keycloak's `+` post-logout
+                // rule, kept exact in kaisatsu); it sends the person home.
+                params.append_pair("post_logout_redirect_uri", &redirect_uri_here(&state));
                 if let Some(hint) = session.as_ref().and_then(|s| state.take_id_token(s)) {
                     params.append_pair("id_token_hint", &hint);
                 }

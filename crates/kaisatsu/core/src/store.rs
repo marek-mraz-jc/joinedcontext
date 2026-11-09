@@ -288,6 +288,27 @@ pub trait Store: Send + Sync {
         request_uri_hash: &'a str,
     ) -> StoreFuture<'a, Option<ParRequestRecord>>;
 
+    /// Stores a new device authorization; a user code another pending one holds is `Conflict`.
+    fn put_device_code<'a>(&'a self, rec: DeviceCodeRecord) -> StoreFuture<'a, ()>;
+    fn get_device_code_by_user_code<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_code_hash: &'a str,
+    ) -> StoreFuture<'a, Option<DeviceCodeRecord>>;
+    /// Replaces the record of `rec.device_code_hash` only while the stored one is still pending
+    /// and unused (the person's answer, compare-and-swap); `false` when it was answered first.
+    fn decide_device_code<'a>(&'a self, rec: DeviceCodeRecord) -> StoreFuture<'a, bool>;
+    /// One poll by `client_id` at `now`, applied atomically ([`DeviceCodeRecord::polled`]): the
+    /// record as it stood before the poll and the answer. `None` for an unknown code or one
+    /// issued to another client, which the poll leaves untouched.
+    fn poll_device_code<'a>(
+        &'a self,
+        realm_id: &'a str,
+        device_code_hash: &'a str,
+        client_id: &'a str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> StoreFuture<'a, Option<(DeviceCodeRecord, DevicePoll)>>;
+
     fn upsert_sso_session<'a>(&'a self, session: SsoSession) -> StoreFuture<'a, ()>;
     fn get_sso_session<'a>(
         &'a self,
