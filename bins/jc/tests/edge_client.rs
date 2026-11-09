@@ -103,18 +103,14 @@ fn an_edge_client_without_rs256_stops_jc_and_with_it_jc_starts() {
     let dir = tempfile::tempdir().unwrap();
     let import = dir.path().join("import");
     realm_file(&import, json!({}));
-    let (code, log) = run(jc(&dir.path().join("state"), &import))
-        .err()
-        .expect("refused");
+    let (code, log) = run(jc(&dir.path().join("state"), &import)).expect_err("refused");
     assert_eq!(code, Some(1), "{log}");
     assert!(log.contains("client edge"), "{log}");
     assert!(log.contains(ID_ALG), "{log}");
     assert!(!log.contains("jc listening"), "{log}");
 
     realm_file(&import, json!({ ID_ALG: "RS256", ACCESS_ALG: "ES256" }));
-    let (code, log) = run(jc(&dir.path().join("state"), &import))
-        .err()
-        .expect("refused");
+    let (code, log) = run(jc(&dir.path().join("state"), &import)).expect_err("refused");
     assert_eq!(code, Some(1), "{log}");
     assert!(log.contains(ACCESS_ALG), "{log}");
 
