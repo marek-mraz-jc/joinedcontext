@@ -74,11 +74,8 @@ pub async fn world_of(test: &str, shards: u32) -> World {
         )
         .await;
     }
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let name = format!("apps_{test}_{nanos}");
+    let id = super::unique::unique();
+    let name = format!("apps_{test}_{id}");
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE DATABASE {name} OWNER {ADMIN}"
     )))
@@ -137,6 +134,6 @@ pub async fn world_of(test: &str, shards: u32) -> World {
         db,
         superuser,
         host: here,
-        run: nanos.to_string(),
+        run: id,
     }
 }

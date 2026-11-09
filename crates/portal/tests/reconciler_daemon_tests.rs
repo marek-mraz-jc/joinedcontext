@@ -97,12 +97,15 @@ fn database_url() -> Option<String> {
 }
 
 /// A lock key of this test alone, so tests sharing one database never elect each other.
+/// The counter keeps two tests of this binary apart when they read the same clock.
 fn private_key(tag: u8) -> i64 {
+    static NEXT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or_default();
-    ((nanos as i64) & 0x0000_ffff_ffff_ff00) | i64::from(tag)
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    ((nanos as i64) & 0x0000_ffff_ffff_0000) | ((n & 0xff) << 8) | i64::from(tag)
 }
 
 #[tokio::test]

@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{header, HeaderMap, Method, Request, StatusCode};
@@ -16,6 +16,9 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::Value;
 use tower::ServiceExt;
+
+#[path = "common/unique.rs"]
+mod unique;
 
 const PROJECT: &str = "helsinki";
 
@@ -154,13 +157,7 @@ async fn not_configured_answers_404_problem_on_both_routes() {
 #[tokio::test]
 async fn style_json_carries_attribution_and_tile_url() {
     let (addr, _) = start_upstream().await;
-    let temp_dir = std::env::temp_dir().join(format!(
-        "jc-bm-style-{}",
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let temp_dir = std::env::temp_dir().join(format!("jc-bm-style-{}", crate::unique::unique()));
     let mut config = Config::for_tests();
     config.basemap = Some(BasemapConfig::for_tests(
         format!("http://{addr}/{{z}}/{{x}}/{{y}}.png?key={{key}}"),
@@ -202,13 +199,7 @@ async fn style_json_carries_attribution_and_tile_url() {
 #[tokio::test]
 async fn configured_tile_served_and_cached_and_key_redacted() {
     let (addr, calls) = start_upstream().await;
-    let temp_dir = std::env::temp_dir().join(format!(
-        "jc-bm-cache-{}",
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let temp_dir = std::env::temp_dir().join(format!("jc-bm-cache-{}", crate::unique::unique()));
     let mut config = Config::for_tests();
     let secret_key = "super-secret-basemap-key-98765";
     let mut bm = BasemapConfig::for_tests(
@@ -299,13 +290,7 @@ async fn an_unreachable_upstream_answers_502_without_the_key() {
 #[tokio::test]
 async fn out_of_range_coordinates_refused_before_upstream_call() {
     let (addr, calls) = start_upstream().await;
-    let temp_dir = std::env::temp_dir().join(format!(
-        "jc-bm-range-{}",
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let temp_dir = std::env::temp_dir().join(format!("jc-bm-range-{}", crate::unique::unique()));
     let mut config = Config::for_tests();
     config.basemap = Some(BasemapConfig::for_tests(
         format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
@@ -366,13 +351,7 @@ async fn out_of_range_coordinates_refused_before_upstream_call() {
 #[tokio::test]
 async fn cache_evicts_past_its_cap() {
     let (addr, _) = start_upstream().await;
-    let temp_dir = std::env::temp_dir().join(format!(
-        "jc-bm-evict-{}",
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let temp_dir = std::env::temp_dir().join(format!("jc-bm-evict-{}", crate::unique::unique()));
     let mut config = Config::for_tests();
     let mut bm = BasemapConfig::for_tests(
         format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
@@ -423,13 +402,7 @@ async fn cache_evicts_past_its_cap() {
 #[tokio::test]
 async fn an_oversized_tile_is_refused_before_its_body_is_read() {
     let (addr, _) = start_upstream().await;
-    let temp_dir = std::env::temp_dir().join(format!(
-        "jc-bm-big-{}",
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let temp_dir = std::env::temp_dir().join(format!("jc-bm-big-{}", crate::unique::unique()));
     let mut config = Config::for_tests();
     config.basemap = Some(BasemapConfig::for_tests(
         format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
@@ -458,13 +431,7 @@ async fn an_oversized_tile_is_refused_before_its_body_is_read() {
 #[tokio::test]
 async fn non_image_upstream_answer_refused_with_502() {
     let (addr, calls) = start_upstream().await;
-    let temp_dir = std::env::temp_dir().join(format!(
-        "jc-bm-502-{}",
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let temp_dir = std::env::temp_dir().join(format!("jc-bm-502-{}", crate::unique::unique()));
     let mut config = Config::for_tests();
     config.basemap = Some(BasemapConfig::for_tests(
         format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),

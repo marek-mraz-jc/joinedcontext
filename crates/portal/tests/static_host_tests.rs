@@ -50,12 +50,9 @@ mod tempdir {
     impl Dir {
         pub fn new(case: &str) -> Self {
             let path = std::env::temp_dir().join(format!(
-                "jc-apps-{case}-{}-{:?}",
+                "jc-apps-{case}-{}-{}",
                 std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or_default()
+                crate::common::unique::unique()
             ));
             std::fs::create_dir_all(&path).expect("temp dir");
             Self(path)

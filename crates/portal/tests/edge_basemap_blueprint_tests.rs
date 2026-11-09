@@ -21,7 +21,6 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use axum::body::Body;
 use axum::http::{header, HeaderMap, Request, StatusCode};
@@ -36,6 +35,9 @@ use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
+
+#[path = "common/unique.rs"]
+mod unique;
 
 const PROJECT: &str = "helsinki";
 const UPSTREAM_KEY: &str = "basemap-key-no-answer-carries";
@@ -91,10 +93,7 @@ async fn upstream() -> (String, Arc<AtomicUsize>) {
 fn cache_dir(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "jc-edge-basemap-{name}-{}",
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|since| since.as_nanos())
-            .unwrap_or_default()
+        crate::unique::unique()
     ))
 }
 

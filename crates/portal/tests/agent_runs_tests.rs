@@ -4422,11 +4422,8 @@ async fn drop_refusal(pool: &sqlx::PgPool, name: &str) {
 /// the same application from another test.
 async fn create_run_of_own_app(app: &axum::Router, cookie: &str) -> String {
     let mut body = create_body();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or_default();
-    body["appName"] = json!(format!("ending-{nanos}"));
+    let id = crate::common::unique::unique();
+    body["appName"] = json!(format!("ending-{id}"));
     let (status, run) = call(
         app,
         cookie,
@@ -4557,11 +4554,8 @@ mod filtered_list_edges {
 
     /// A project name no other run of any test has used.
     fn fresh(tag: &str) -> String {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default();
-        format!("t2502-{tag}-{nanos}")
+        let id = crate::common::unique::unique();
+        format!("t2502-{tag}-{id}")
     }
 
     /// `(id, app, kind, status, created_by, created_at)`
@@ -5211,11 +5205,8 @@ async fn two_concurrent_creates_of_one_apps_run_start_one() {
         .expect("connect + migrate");
     let (_state, app, cookie, _api, _) = ending_world(200, Some(pool)).await;
     let mut body = create_body();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or_default();
-    body["appName"] = json!(format!("twice-{nanos}"));
+    let id = crate::common::unique::unique();
+    body["appName"] = json!(format!("twice-{id}"));
     let uri = format!("/api/v1/projects/{PROJECT}/agent-runs");
     let (one, two) = tokio::join!(
         call(&app, &cookie, Method::POST, &uri, Some(body.clone())),

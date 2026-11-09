@@ -4,7 +4,6 @@
 mod common;
 
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -24,10 +23,7 @@ fn linkml(commit: &str) -> String {
 
 /// A mirror on disk: one model at its pin, one at another commit, one listed without a file, one failed.
 fn mirror(tag: &str) -> PathBuf {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let stamp = crate::common::unique::unique();
     let root = std::env::temp_dir().join(format!("sdm-mirror-{tag}-{stamp}"));
     let folder = |name: &str| root.join("dataModel.Environment").join(name);
     for (name, commit) in [("AirQualityObserved", PIN), ("WaterObserved", OTHER)] {

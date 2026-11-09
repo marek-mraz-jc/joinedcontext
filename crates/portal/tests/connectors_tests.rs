@@ -100,11 +100,8 @@ async fn sign_in(state: &AppState, who: &str) -> common::Answer {
 
 /// A person no other run of this suite uses, so runs share one database.
 fn fresh(tag: &str) -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    format!("{tag}{nanos}")
+    let id = crate::common::unique::unique();
+    format!("{tag}{id}")
 }
 
 /// A 26-character slug of base32 letters.

@@ -6,6 +6,7 @@
 
 pub mod apps_db;
 pub mod build_lane;
+pub mod unique;
 
 use std::sync::Arc;
 
