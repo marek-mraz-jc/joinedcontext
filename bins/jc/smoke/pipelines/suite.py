@@ -47,7 +47,7 @@ from common import (
     short,
 )
 
-from manifests import Pipeline, load_pipelines  # noqa: E402
+from manifests import Pipeline, cron_out_of_range, load_pipelines  # noqa: E402
 from people import Admin  # noqa: E402
 
 SECRET_WORDS = ("secret", "sops", "decrypt", "envVar", "credential")
@@ -73,7 +73,12 @@ def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline) 
     bad = [c for c in conditions(item) if c.get("type") == "StreamDeployed" and c.get("status") == "False"]
     said = "; ".join(f"{c.get('reason')}: {c.get('message')}" for c in bad)
     actual = f"phase {status.get('phase')}" + (f", {said}" if said else "")
-    if bad and p.secret_refs and any(w.lower() in said.lower() for w in SECRET_WORDS):
+    out_of_range = cron_out_of_range(p.spec.get("schedule"))
+    if bad and out_of_range and "schedule" in said:
+        r.skip("status", p.key, f"GET {base} (status)", "no StreamDeployed=False",
+               f"same on prod: schedule {out_of_range} out of range (`{p.spec.get('schedule')}` in {p.file}); "
+               "prod's Portal (run_queue.rs Cron::parse) refuses it the same way, the seed fix is the deployment's")
+    elif bad and p.secret_refs and any(w.lower() in said.lower() for w in SECRET_WORDS):
         r.skip("status", p.key, f"GET {base} (status)", "no StreamDeployed=False",
                f"secretRefs {p.secret_refs}: {said[:200]}")
     else:

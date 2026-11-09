@@ -169,3 +169,29 @@ def test_the_admin_signs_in_at_the_realm_the_state_names(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="401"):
         people.Admin("http://127.0.0.1:9", tmp_path)
     assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]
+
+
+def test_a_schedule_prods_portal_refuses_too_is_a_named_same_on_prod_skip(monkeypatch):
+    import suite
+    assert manifests.cron_out_of_range("77 3 * * 3") == "minute"
+    assert manifests.cron_out_of_range("0 25 * * *") == "hour"
+    for ok in ("0 5 * * *", "*/15 0-23 1,15 * 7", "", "0 5 * *"):
+        assert manifests.cron_out_of_range(ok) is None, ok
+
+    class H:
+        def call(self, method, path, *a, **k):
+            if path.endswith("/bento"):
+                return 404, {}, b""
+            return 200, {}, json.dumps({"metadata": {"name": "noise-rail"}, "status": {
+                "phase": "Error", "conditions": [{"type": "StreamDeployed", "status": "False", "reason": "RunnerRefused",
+                                                  "message": "schedule `77 3 * * 3` is not five cron fields"}]}}).encode()
+
+    def rows(schedule):
+        r = suite.Results("pipelines", "http://x")
+        p = manifests.Pipeline("helsinki", "noise-rail", "p.yaml", {"schedule": schedule}, False)
+        suite.check_pipeline(r, H(), None, p)
+        return {c["id"]: c for c in r.rows}
+    status = rows("77 3 * * 3")["status"]
+    assert status["result"] == "skip" and status["reason"].startswith("same on prod: schedule minute out of range")
+    # A refusal of a schedule prod would take stays a fail.
+    assert rows("7 3 * * 3")["status"]["result"] == "fail"
