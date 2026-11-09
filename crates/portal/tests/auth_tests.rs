@@ -1566,7 +1566,6 @@ async fn a_refused_callback_never_mints_a_session() {
         ("no login in flight", "?code=c&state=s".to_owned()),
         ("a code and no state", "?code=c".to_owned()),
         ("a state and no code", "?state=s".to_owned()),
-        ("neither", String::new()),
         (
             "a login the provider refused",
             "?error=access_denied&error_description=the%20person%20said%20no".to_owned(),
@@ -1620,6 +1619,58 @@ async fn a_refused_callback_never_mints_a_session() {
             "{what}: the body carries a raw line break: {raw}",
         );
     }
+}
+
+/// The provider's way back after a logout: the callback with nothing presented and no login in
+/// flight sends the person home and mints nothing; the same with a login in flight stays refused.
+#[tokio::test]
+async fn the_callback_after_a_logout_goes_home() {
+    let realm = realm().await;
+    let app = app_with_realm(&realm).await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/callback")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let home = response.headers().get(header::LOCATION).unwrap();
+    assert_eq!(home.to_str().unwrap().trim_end_matches('/'), "https://portal.test");
+    assert!(set_cookie_values(&response).is_empty(), "{:?}", set_cookie_values(&response));
+
+    // A login in flight: its callback without a code is still a refusal.
+    let login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/login")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let flow = set_cookie_values(&login)
+        .into_iter()
+        .filter_map(|c| c.split(';').next().map(str::to_owned))
+        .collect::<Vec<_>>()
+        .join("; ");
+    assert!(!flow.is_empty(), "the login set no flow cookie");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/callback")
+                .header(header::COOKIE, flow)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 /// `/auth/me` answers who, and never with what: T-2060.
@@ -1726,7 +1777,11 @@ async fn logout_clears_the_cookies_without_a_session_and_hints_at_no_token() {
         );
     }
     let url = target["endSessionUrl"].as_str().unwrap_or_default();
-    assert!(url.contains("post_logout_redirect_uri="), "{url}");
+    // The client's registered callback, which the realm's exact check accepts.
+    assert!(
+        url.contains("post_logout_redirect_uri=https%3A%2F%2Fportal.test%2Fapi%2Fv1%2Fauth%2Fcallback"),
+        "{url}"
+    );
     assert!(url.contains("client_id=joinedcontext-portal"), "{url}");
     assert!(
         !url.contains("id_token_hint"),
