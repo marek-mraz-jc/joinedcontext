@@ -430,7 +430,11 @@ pub async fn build_router(
         #[cfg(feature = "shako")]
         if plan.module == Module::Shako {
             let state = modules::shako::build_state(&cfg.shako, ctx.setup, ctx.secrets).await?;
-            let (main_router, v2_router) = modules::shako::build(state, plan.mount.clone());
+            let (main_router, v2_router) = modules::shako::build(
+                state,
+                plan.mount.clone(),
+                &ctx.siblings.portal_base().unwrap_or_default(),
+            );
             let (main_router, v2_router) = match ctx.door {
                 Some(door) => (
                     door.guard(Module::Shako, main_router, ctx.setup),

@@ -134,7 +134,12 @@ pub async fn build(
         #[cfg(feature = "shako")]
         Module::Shako => {
             let state = shako::build_state(&cfg.shako, ctx.setup, ctx.secrets).await?;
-            Ok(shako::build(state, mount).0)
+            Ok(shako::build(
+                state,
+                mount,
+                &ctx.siblings.portal_base().unwrap_or_default(),
+            )
+            .0)
         }
         #[cfg(feature = "viz")]
         Module::Viz => Ok(viz::build(

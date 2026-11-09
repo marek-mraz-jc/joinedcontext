@@ -44,6 +44,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urljoin, urlsplit
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -268,7 +269,7 @@ def walk_persona(w: Walker, p: dict, password: str | None):
         admin_only(w, page, who)
         if who == "admin":
             dashboards(w, page, who, project)
-            other_uis(w, page, who)
+            other_uis(w, page, who, project)
     finally:
         ctx.close()
 
@@ -294,13 +295,21 @@ def dashboards(w: Walker, page, who: str, project: str):
         w.judge(page, who, "daiya", "/dashboards/d/$uid", f"/dashboards/d/{uid}", portal=False, viewer=False)
 
 
-def other_uis(w: Walker, page, who: str):
-    """dataroom and shako, as the signed-in admin's browser (dataroom also anonymously, below)."""
-    st = page.request.get(f"{w.base}/git/")
-    w.res.check(f"shako.browser:{who}", "shako", f"GET /git/ in a signed-in browser as {who}",
-                "200 (a signed-in person reads the repositories)", str(st.status), st.status == 200,
-                "" if st.status == 200 else "shako web authenticates a bearer token only: a browser person "
-                "signed in to the Portal meets 404 (crates/shako/web web_repo_list)")
+def other_uis(w: Walker, page, who: str, project: str):
+    """shako as the signed-in person's browser. shako keeps no sessions, so a browser without a bearer
+    is sent (302, from the path alone) to the Portal's page for the same repository, and that page
+    answers the person 200 (crates/shako/web browser_to_portal)."""
+    for path, want in (("/git/", "/"),
+                       (f"/git/joinedcontext/{project}", f"/projects/{project}/repositories/{project}")):
+        r = page.request.get(f"{w.base}{path}", max_redirects=0)
+        target = urljoin(f"{w.base}{path}", r.headers.get("location", ""))
+        moved = r.status == 302 and urlsplit(target).path == want \
+            and urlsplit(target).netloc == urlsplit(w.base).netloc
+        landed = page.request.get(target).status if moved else None
+        w.res.check(f"shako.browser:{who}" + ("" if path == "/git/" else ":repository"), "shako",
+                    f"GET {path} in a signed-in browser as {who}",
+                    f"302 to the Portal's {want}, which answers 200", f"{r.status} -> {target} {landed or ''}".strip(),
+                    moved and landed == 200)
 
 
 def dataroom(w: Walker):

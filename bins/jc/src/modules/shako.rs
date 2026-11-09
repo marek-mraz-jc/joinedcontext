@@ -14,7 +14,7 @@ use shako_core::{
     Action, LocalAuthorizer, OrgId, RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject,
     TokenVerifier,
 };
-use shako_server::{ShakoState, registry_router, router};
+use shako_server::{PortalBase, ShakoState, registry_router, router};
 use shako_store_memory::MemoryStore;
 use shako_store_pg::PgStore;
 use std::path::{Path, PathBuf};
@@ -112,8 +112,11 @@ pub async fn build_state(
     ))
 }
 
-pub fn build(state: ShakoState, mount: Mount) -> (Router, Router) {
-    let main_router = router(state.clone(), mount.clone());
+/// `portal` is the Portal's public base: a browser asking shako's pages without a credential is
+/// sent there (shako keeps no sessions).
+pub fn build(state: ShakoState, mount: Mount, portal: &str) -> (Router, Router) {
+    let main_router =
+        router(state.clone(), mount.clone()).layer(axum::Extension(PortalBase(portal.into())));
     let v2_router = registry_router(state, mount);
     (main_router, v2_router)
 }
