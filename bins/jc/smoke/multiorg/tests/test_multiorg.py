@@ -1,0 +1,61 @@
+"""Unit tests of the multiorg suite's host mode (the live proof is a rehearsal run).
+
+    python3 -m pytest bins/jc/smoke/multiorg/tests -q
+"""
+
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+HERE = Path(__file__).resolve().parent
+
+_spec = importlib.util.spec_from_file_location("smoke_multiorg_suite", HERE.parent / "suite.py")
+suite = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(suite)
+
+TOML = """
+[[organizations]]
+name = "hel"
+catalogue_id = "00000000-0000-7000-8000-0000000000a1"
+hosts = { portal = "Portal.Hel.localhost:42301", opendata = "opendata.hel.localhost:42301", api = "api.hel.localhost:42301", mcp = "mcp.hel.localhost:42301" }
+"""
+
+
+def test_the_hosts_of_each_organization_are_read_lowercased(tmp_path):
+    (tmp_path / "jc.toml").write_text(TOML)
+    hosts = suite.organization_hosts(tmp_path / "jc.toml")
+    assert hosts == {"hel": {"portal": "portal.hel.localhost:42301", "opendata": "opendata.hel.localhost:42301",
+                             "api": "api.hel.localhost:42301", "mcp": "mcp.hel.localhost:42301"}}
+    (tmp_path / "none.toml").write_text("")
+    assert suite.organization_hosts(tmp_path / "none.toml") == {}
+
+
+def test_a_request_goes_to_loopback_with_its_hosts_header_and_jar(monkeypatch):
+    sent = []
+
+    def call(self, method, path, body=None, headers=None, form=None, timeout=60):
+        sent.append((method, path, headers["Host"], id(self.jar)))
+        self.jar["seen"] = headers["Host"]
+
+    monkeypatch.setattr(suite.R.Http, "call", call)
+    http = suite.HostHttp("http://127.0.0.1:42301", "portal.hel.localhost:42301",
+                          ["portal.hel.localhost:42301", "portal.ba.localhost:42301"])
+    http.call("GET", "/api/v1/projects?x=1")
+    http.call("GET", "http://portal.ba.localhost:42301/api/v1/me")
+    http.call("GET", "/api/v1/me")
+    assert [s[:3] for s in sent] == [
+        ("GET", "http://127.0.0.1:42301/api/v1/projects?x=1", "portal.hel.localhost:42301"),
+        ("GET", "http://127.0.0.1:42301/api/v1/me", "portal.ba.localhost:42301"),
+        ("GET", "http://127.0.0.1:42301/api/v1/me", "portal.hel.localhost:42301"),
+    ]
+    # One jar per host: hel's cookies are never sent to ba.
+    assert sent[0][3] == sent[2][3] != sent[1][3]
+    assert http.jars["portal.ba.localhost:42301"] == {"seen": "portal.ba.localhost:42301"}
+
+
+def test_an_address_off_this_jc_is_refused_and_never_sent(monkeypatch):
+    monkeypatch.setattr(suite.R.Http, "call", lambda *a, **k: pytest.fail("sent"))
+    http = suite.HostHttp("http://127.0.0.1:42301", "portal.hel.localhost:42301", ["portal.hel.localhost:42301"])
+    with pytest.raises(RuntimeError, match="not a host of this jc"):
+        http.call("GET", "https://dev.joinedcontext.com/api/v1/me")

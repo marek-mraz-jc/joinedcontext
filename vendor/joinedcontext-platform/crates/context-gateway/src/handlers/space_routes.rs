@@ -37,7 +37,7 @@ pub(crate) async fn space_catalog(
         })
         .collect();
 
-    let catalog = space_surface::catalog(&visible, gateway.base_url());
+    let catalog = space_surface::catalog(&visible, &gateway.base_url());
     let mut response = json_response(&catalog);
     response.headers_mut().insert(
         axum::http::header::CONTENT_TYPE,
@@ -64,6 +64,7 @@ pub(crate) async fn space_record(
         .get(axum::http::header::ACCEPT)
         .and_then(|value| value.to_str().ok());
     let base = gateway.base_url();
+    let base: &str = &base;
     let format = space_surface::negotiate(accept);
     let body = match format {
         space_surface::Format::JsonLd => {

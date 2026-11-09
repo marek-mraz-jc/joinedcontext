@@ -101,6 +101,11 @@ pub struct Cli {
     /// `JC_CLIENT_SECRET_<PROJECT>`, read once at start.
     #[arg(long, env = "JCBIN_EKIBEN_CLIENT_SECRETS_DIR")]
     pub ekiben_client_secrets_dir: Option<PathBuf>,
+    /// ekiben: a resources file (Bento's `streams -r`): its caches, rate limits and processors
+    /// are shared by every stream, as the deployment's `components/pipeline-runner/streams/
+    /// resources.yaml` (`helsinki__gtfs`, `zilina_opendata`, `events_tail`, ...).
+    #[arg(long, env = "JCBIN_EKIBEN_RESOURCES_FILE")]
+    pub ekiben_resources_file: Option<PathBuf>,
     /// ekiben: the pipeline client the pipeline-test harness runs as (`JC_CLIENT_ID` and
     /// `JC_CLIENT_SECRET`), one of the client secrets directory's files.
     #[arg(long, env = "JCBIN_EKIBEN_HARNESS_CLIENT")]
@@ -239,6 +244,8 @@ pub struct EkibenSection {
     pub client_secrets_dir: Option<PathBuf>,
     /// The pipeline client the pipeline-test harness runs as (`JC_CLIENT_ID`).
     pub harness_client: Option<String>,
+    /// The shared resources every stream may name (Bento's `streams -r`).
+    pub resources_file: Option<PathBuf>,
     /// Postgres for the stream definitions (else they live only in memory).
     pub database: Option<DatabaseSection>,
 }
@@ -744,6 +751,7 @@ impl Config {
                 .or(file.ekiben.client_secrets_dir)
                 .or_else(|| kaisatsu.import_secrets_dir.clone()),
             harness_client: cli.ekiben_harness_client.or(file.ekiben.harness_client),
+            resources_file: cli.ekiben_resources_file.or(file.ekiben.resources_file),
             database: file.ekiben.database,
         };
         let antares = AntaresSection {

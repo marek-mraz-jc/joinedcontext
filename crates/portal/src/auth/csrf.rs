@@ -53,9 +53,16 @@ impl std::fmt::Debug for Token {
 }
 
 impl Token {
-    /// Fresh token, minted with the same CSPRNG the OIDC state uses.
+    /// Fresh token, minted with the same CSPRNG the OIDC state uses. On an Organization's own
+    /// Portal host it starts with that Organization's name and a `.` (a name is `[a-z0-9-]`, a
+    /// random part base64url, so neither holds one): [`double_submitted`] accepts a token only
+    /// on the host it was minted for.
     pub fn mint() -> Self {
-        Self(CsrfToken::new_random().secret().clone())
+        let random = CsrfToken::new_random().secret().clone();
+        Self(match crate::organization_host::organization() {
+            Some(organization) => format!("{organization}.{random}"),
+            None => random,
+        })
     }
 
     /// The token as the page echoes it back in `X-CSRF-Token`.
@@ -64,9 +71,14 @@ impl Token {
     }
 }
 
-/// Fresh token as a string, for a caller that only hands it to the page.
+/// Fresh random string from the same CSPRNG, for a caller that needs an unguessable value.
 pub fn new_token() -> String {
-    Token::mint().0
+    CsrfToken::new_random().secret().clone()
+}
+
+/// The Organization a token was minted for ([`Token::mint`]), `None` for one of no host's.
+fn minted_for(token: &str) -> Option<&str> {
+    token.split_once('.').map(|(organization, _)| organization)
 }
 
 /// The cookie the UI reads; `HttpOnly` is deliberately off, `Secure` and `Lax` are not.
@@ -122,7 +134,9 @@ pub fn double_submitted(headers: &HeaderMap) -> bool {
     let Some(presented) = headers.get(CSRF_HEADER).and_then(|v| v.to_str().ok()) else {
         return false;
     };
-    !expected.is_empty() && constant_time_eq(&expected, presented)
+    !expected.is_empty()
+        && minted_for(&expected) == crate::organization_host::organization().as_deref()
+        && constant_time_eq(&expected, presented)
 }
 
 /// Middleware for the `/api/v1` router. Rejects with problem+json, never with a bare 403 body.
@@ -190,6 +204,30 @@ mod tests {
             "Bearer planted".parse().expect("bearer"),
         );
         assert!(double_submitted(&headers));
+    }
+
+    /// jc-multiorg-portal: a token minted on Organization A's Portal host passes there alone,
+    /// never on B's or on the deployment's own address, nor an unpinned one on A's.
+    #[tokio::test]
+    async fn a_token_of_one_organizations_host_is_refused_on_another() {
+        use crate::organization_host::{scope, OrganizationHost};
+        let host = |name: &str| OrganizationHost {
+            organization: name.to_owned(),
+            base: format!("https://portal.{name}.example")
+                .parse()
+                .expect("url"),
+        };
+        let on_a = scope(host("a"), async { Token::mint() }).await;
+        assert!(on_a.as_str().starts_with("a."));
+        let unpinned = Token::mint();
+        let both = |t: &Token| headers_with(Some(t.as_str()), Some(t.as_str()));
+        let (a, b) = (both(&on_a), both(&on_a));
+        assert!(scope(host("a"), async move { double_submitted(&a) }).await);
+        assert!(!scope(host("b"), async move { double_submitted(&b) }).await);
+        assert!(!double_submitted(&both(&on_a)));
+        let u = both(&unpinned);
+        assert!(!scope(host("a"), async move { double_submitted(&u) }).await);
+        assert!(double_submitted(&both(&unpinned)));
     }
 
     #[test]

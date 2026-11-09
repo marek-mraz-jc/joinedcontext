@@ -150,7 +150,7 @@ fn collect(value: &Value, out: &mut Vec<(String, Option<String>)>) {
 
 /// The form's address for one reference, on this Portal.
 pub fn form_url(state: &AppState, project: &str, name: &str, key: Option<&str>) -> String {
-    let mut url = state.config.public_base_url.clone();
+    let mut url = state.config.public_base();
     url.set_path(&format!("/projects/{project}/secrets/new"));
     url.query_pairs_mut().append_pair("name", name);
     if let Some(key) = key {

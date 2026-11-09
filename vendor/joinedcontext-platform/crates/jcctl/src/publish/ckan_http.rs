@@ -46,6 +46,17 @@ impl HttpCkan {
     /// is one error at start-up and not one per endpoint. A URL carrying credentials is
     /// refused: the token is the only credential and it does not live in a URL (EP-67).
     pub fn new(base_url: &str, token: SecretValue) -> Result<Self, CkanError> {
+        Self::reaching(base_url, token, None)
+    }
+
+    /// [`HttpCkan::new`], with the URL's host reached at `addr` instead of through DNS when one
+    /// is given: one Organization's catalogue inside a `jc` is called on jc's own listener under
+    /// the catalogue's own host name, which is what tells jc whose catalogue it is.
+    pub fn reaching(
+        base_url: &str,
+        token: SecretValue,
+        addr: Option<std::net::SocketAddr>,
+    ) -> Result<Self, CkanError> {
         let base = Url::parse(base_url.trim_end_matches('/'))
             .map_err(|e| CkanError::Unavailable(format!("'{base_url}' is not a URL: {e}")))?;
         if !base.username().is_empty() || base.password().is_some() {
@@ -68,13 +79,17 @@ impl HttpCkan {
         // The manifest names the instance, so a redirect is judged like an outside URL: never to
         // an address inside the cluster or the cloud's metadata, never from https down to http
         // (T-4776). The first URL stays the operator's to choose, a local CKAN included.
-        let client = Client::builder()
+        let mut builder = Client::builder()
             .redirect(jc_core::outbound::redirects(
                 jc_core::outbound::MAX_REDIRECTS,
             ))
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
-            .user_agent(super::ckan::GENERATOR)
+            .user_agent(super::ckan::GENERATOR);
+        if let (Some(addr), Some(host)) = (addr, base.host_str()) {
+            builder = builder.resolve(host, addr);
+        }
+        let client = builder
             .build()
             .map_err(|e| CkanError::Unavailable(format!("HTTP client: {e}")))?;
         Ok(Self {

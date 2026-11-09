@@ -130,7 +130,7 @@ fn problem_response(
 /// Returns the absolute style URL for a given project if basemap proxying is configured.
 pub fn style_url(config: &Config, project: &str) -> Option<String> {
     config.basemap.as_ref()?;
-    Some(style_url_at(config.public_base_url.as_str(), project))
+    Some(style_url_at(config.public_base().as_str(), project))
 }
 
 /// The style URL of `project` under the Portal's public `base`, for a caller that knows the
@@ -144,7 +144,7 @@ pub fn style_url_at(base: &str, project: &str) -> String {
 /// preview document may connect to (SDK-16).
 pub fn route_prefix(config: &Config, project: &str) -> Option<String> {
     config.basemap.as_ref()?;
-    Some(route_prefix_at(config.public_base_url.as_str(), project))
+    Some(route_prefix_at(config.public_base().as_str(), project))
 }
 
 /// The route prefix of `project` under the Portal's public `base`, for a caller that knows the
@@ -200,7 +200,8 @@ pub async fn get_style(
         );
     }
 
-    let base = state.config.public_base_url.as_str().trim_end_matches('/');
+    let base = state.config.public_base();
+    let base = base.as_str().trim_end_matches('/');
     let tile_url =
         format!("{base}/api/v1/projects/{project}/basemap/default/{{z}}/{{x}}/{{y}}.png");
     let style_json = serde_json::json!({

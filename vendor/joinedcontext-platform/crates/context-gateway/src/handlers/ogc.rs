@@ -400,7 +400,7 @@ async fn answered(
     };
     let mut text = text.replace(&from, &to).replace(&view_from, &view_to);
     if surface.representation == Representation::Feed {
-        text = public_feed_host(&text, authority(gateway.broker.base()), gateway.base_url());
+        text = public_feed_host(&text, authority(gateway.broker.base()), &gateway.base_url());
     }
     proxy::with_body(parts, text.into_bytes())
 }
