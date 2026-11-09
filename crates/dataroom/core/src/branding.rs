@@ -129,6 +129,133 @@ pub struct BrandingBlock {
     pub mcp_server: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub samples: BTreeMap<String, Vec<String>>,
+    /// The assistant widget a host installation frames (`jc`, G2): `Some(url)` docks that page,
+    /// `Some("")` shows no launcher, `None` keeps `https://assistant.{domain}/d/data/widget`. Only
+    /// the host sets it: serde skips it, so no catalogue, override or API reads or writes it.
+    #[serde(skip)]
+    pub assistant_widget: Option<String>,
+    /// The live parts' bases one by one; each left empty falls back to `{label}.{domain}`.
+    #[serde(default, skip_serializing_if = "BrandingAddresses::is_empty")]
+    pub addresses: BrandingAddresses,
+}
+
+/// Where the live parts of a catalogue answer (G1), each a base URL without a trailing slash
+/// ([`is_base_url`]) or empty: the chart and explorer host, the gateway (`/api/endpoint/...`,
+/// `/api/mcp`), the basemap tiles, the assistant (`/d/data/widget`) and the Portal. An
+/// installation without a `domain` (jc) names each one it serves; one it does not serve stays
+/// empty, and the page shows nothing that would point at it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct BrandingAddresses {
+    pub viz: String,
+    pub api: String,
+    pub tiles: String,
+    pub assistant: String,
+    pub portal: String,
+}
+
+impl BrandingAddresses {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// One live part of [`BrandingAddresses`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Address {
+    Viz,
+    Api,
+    Tiles,
+    Assistant,
+    Portal,
+}
+
+impl Address {
+    pub const ALL: [Address; 5] = [
+        Address::Viz,
+        Address::Api,
+        Address::Tiles,
+        Address::Assistant,
+        Address::Portal,
+    ];
+
+    /// The key in `addresses` and the host label under `domain`.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Address::Viz => "viz",
+            Address::Api => "api",
+            Address::Tiles => "tiles",
+            Address::Assistant => "assistant",
+            Address::Portal => "portal",
+        }
+    }
+
+    fn of(self, a: &BrandingAddresses) -> &str {
+        match self {
+            Address::Viz => &a.viz,
+            Address::Api => &a.api,
+            Address::Tiles => &a.tiles,
+            Address::Assistant => &a.assistant,
+            Address::Portal => &a.portal,
+        }
+    }
+
+    fn of_mut(self, a: &mut BrandingAddresses) -> &mut String {
+        match self {
+            Address::Viz => &mut a.viz,
+            Address::Api => &mut a.api,
+            Address::Tiles => &mut a.tiles,
+            Address::Assistant => &mut a.assistant,
+            Address::Portal => &mut a.portal,
+        }
+    }
+}
+
+/// A base URL a page may build links, frames and its CSP from: `http(s)://host[:port][/path]`,
+/// a lowercase host name, no user, query, fragment, quote or trailing slash.
+#[must_use]
+pub fn is_base_url(v: &str) -> bool {
+    let Some(rest) = v
+        .strip_prefix("https://")
+        .or_else(|| v.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    let (host, port) = match authority.split_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (authority, None),
+    };
+    // One label or more (`localhost`, a container name, `api.city.example`), as jc's own check.
+    let host_ok = host.split('.').all(|l| {
+        !l.is_empty()
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+            && l.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    });
+    let port_ok =
+        port.is_none_or(|p| (1..=5).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit()));
+    let path_ok = !path.ends_with('/')
+        && path.bytes().all(|b| {
+            b.is_ascii_lowercase()
+                || b.is_ascii_digit()
+                || matches!(b, b'/' | b'-' | b'_' | b'.' | b'~')
+        })
+        && !path.contains("//")
+        && !path.split('/').any(|seg| seg == "." || seg == "..");
+    host_ok && port_ok && path_ok
+}
+
+/// The origin (`scheme://host[:port]`) of a [`is_base_url`] value.
+#[must_use]
+pub fn origin_of(base: &str) -> &str {
+    let after = base.find("://").map_or(0, |i| i + 3);
+    base[after..]
+        .find('/')
+        .map_or(base, |end| &base[..after + end])
 }
 
 impl Default for BrandingBlock {
@@ -163,6 +290,8 @@ impl Default for BrandingBlock {
             site_issued: None,
             mcp_server: None,
             samples: BTreeMap::new(),
+            assistant_widget: None,
+            addresses: BrandingAddresses::default(),
         }
     }
 }
@@ -571,6 +700,19 @@ impl BrandingBlock {
         {
             self.mcp_server = Some(mcp);
         }
+        // Each address on its own, like `domain`: one that is not a base URL keeps the level above.
+        if let Some(Value::Object(addrs)) = obj.get("addresses") {
+            for which in Address::ALL {
+                if let Some(v) = addrs
+                    .get(which.label())
+                    .and_then(Value::as_str)
+                    .map(|v| v.trim().trim_end_matches('/'))
+                    .filter(|v| is_base_url(v))
+                {
+                    *which.of_mut(&mut self.addresses) = v.to_owned();
+                }
+            }
+        }
         if let Some(Value::Object(samp)) = obj.get("samples") {
             for (lang, arr) in samp {
                 if let Some(items) = arr.as_array() {
@@ -589,6 +731,17 @@ impl BrandingBlock {
         }
 
         self.recompute_derived();
+    }
+
+    /// The base of one live part: the address named, else `https://{label}.{domain}` when the
+    /// block has a domain, else none.
+    #[must_use]
+    pub fn address(&self, which: Address) -> Option<String> {
+        let named = which.of(&self.addresses);
+        if !named.is_empty() {
+            return Some(named.to_owned());
+        }
+        is_host_name(&self.domain).then(|| format!("https://{}.{}", which.label(), self.domain))
     }
 
     pub fn recompute_derived(&mut self) {
@@ -1286,6 +1439,76 @@ mod tests {
                 "mcpServer {bad:?} must be ignored"
             );
         }
+    }
+
+    #[test]
+    fn g1_each_address_is_named_on_its_own_or_follows_the_domain() {
+        let mut block = BrandingBlock::default();
+        for which in Address::ALL {
+            assert_eq!(block.address(which), None, "no domain, no {which:?}");
+        }
+        block.apply_override_json(&json!({ "addresses": {
+            "viz": "http://localhost:42241/viz/",
+            "api": "https://api.city.example",
+            "tiles": "https://tiles.example:8443",
+        }}));
+        assert_eq!(
+            block.address(Address::Viz).as_deref(),
+            Some("http://localhost:42241/viz")
+        );
+        assert_eq!(
+            block.address(Address::Api).as_deref(),
+            Some("https://api.city.example")
+        );
+        assert_eq!(
+            block.address(Address::Tiles).as_deref(),
+            Some("https://tiles.example:8443")
+        );
+        assert_eq!(
+            block.address(Address::Assistant),
+            None,
+            "an assistant nobody named stays empty"
+        );
+        assert_eq!(block.address(Address::Portal), None);
+
+        let mut dom = BrandingBlock::default();
+        dom.apply_override_json(&json!({ "domain": "dev.joinedcontext.com" }));
+        assert_eq!(
+            dom.address(Address::Assistant).as_deref(),
+            Some("https://assistant.dev.joinedcontext.com")
+        );
+        dom.apply_override_json(&json!({ "addresses": { "api": "https://gw.example" } }));
+        assert_eq!(
+            dom.address(Address::Api).as_deref(),
+            Some("https://gw.example"),
+            "named wins"
+        );
+
+        for bad in [
+            "javascript:alert(1)",
+            "https://x.example/a?b",
+            "https://x.example/#a",
+            "https://user@x.example",
+            "https://x.example/a/../b",
+            "https://x.example/a b",
+            "https://x.example\"; script-src *",
+            "https://X.example",
+            "ftp://x.example",
+            "https://x.example:99999999",
+            "//x.example",
+        ] {
+            let mut b = block.clone();
+            b.apply_override_json(&json!({ "addresses": { "api": bad } }));
+            assert_eq!(
+                b.addresses.api, "https://api.city.example",
+                "{bad:?} must be ignored"
+            );
+        }
+        assert_eq!(
+            origin_of("http://localhost:42241/viz"),
+            "http://localhost:42241"
+        );
+        assert_eq!(origin_of("https://api.example"), "https://api.example");
     }
 
     #[test]

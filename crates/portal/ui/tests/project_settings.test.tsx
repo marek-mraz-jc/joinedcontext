@@ -68,6 +68,8 @@ const STEWARD = {
   ],
 } as unknown as Effective;
 
+const ORG_READER = { role: "viewer", binding: "viewers", scope: "organization", rule: { kinds: ["Project"], verbs: ["read"] } };
+
 const VIEWER = {
   project: PROJECT,
   bootstrap: false,
@@ -80,6 +82,11 @@ function renderTab(tab: ProjectSettingsTab, permissions: Effective = STEWARD) {
     path: `/projects/${PROJECT}/settings/${tab}`,
     answer: (url, request) => {
       requests.push(`${request.method} ${url.pathname}`);
+      // The project's manifest is the organization's: read with the organization's `viewer`, which
+      // every person of it holds (the server reads `Project` at `org`, as the page asks first).
+      if (url.pathname === "/api/v1/projects/org/permissions/me") {
+        return json({ ...permissions, project: "org", grants: [...permissions.grants, ORG_READER] });
+      }
       if (url.pathname.endsWith("/permissions/me")) return json(permissions);
       if (url.pathname === `/api/v1/projects/org/projects/${PROJECT}`) return json(PROJECT_MANIFEST);
       if (url.pathname === "/api/v1/projects/org/organizations") {

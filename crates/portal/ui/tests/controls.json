@@ -185,7 +185,7 @@
     },
     "src/components/ResourceFormDialogBody.tsx": {
       "controls": {
-        "Button": 1,
+        "Button": 2,
         "Checkbox": 1
       },
       "tests": [

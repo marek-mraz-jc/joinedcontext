@@ -16,6 +16,8 @@ members = [
   "crates/dataroom/server",
   "crates/shared/jc-router",
   "crates/shared/jc-secret",
+  "crates/shared/jc-door",
+  "crates/embedder",
   "crates/kaisatsu/core",
   "crates/kaisatsu/crypto",
   "crates/kaisatsu/store-pg",

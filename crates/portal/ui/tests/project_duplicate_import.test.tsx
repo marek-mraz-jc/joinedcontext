@@ -47,7 +47,11 @@ function renderAt(where: string, spec: Record<string, unknown>, importAnswer?: (
       return json({
         project: "banskabystrica",
         bootstrap: false,
-        grants: [{ role: "org-admin", binding: "admins", rule: { kinds: ["RoleBinding"], verbs: ["approve", "delete"] } }],
+        grants: [
+          { role: "org-admin", binding: "admins", rule: { kinds: ["RoleBinding"], verbs: ["approve", "delete"] } },
+          // org-admin reads the projects' manifests too, which the General tab asks first.
+          { role: "org-admin", binding: "admins", rule: { kinds: ["Project"], verbs: ["read"] } },
+        ],
         projects: { creation: { allowed: true } },
       });
     }

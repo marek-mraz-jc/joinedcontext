@@ -323,6 +323,10 @@ fn every_page_escapes_publisher_text_and_nonces_every_script() {
     }
     for (name, html) in &pages {
         assert_safe_page(name, html, "sk");
+        // One h1 per page (smoke ui one-h1): a count above a list is an h2; the framable map
+        // has none.
+        let h1 = usize::from(*name != "map");
+        assert_eq!(html.matches("<h1").count(), h1, "{name}: h1 count");
     }
     let page = |n: &str| pages.iter().find(|(k, _)| *k == n).expect(n).1.clone();
     // A theme, a filter value or a query reaches the topics page, the filter pills, the hidden
@@ -697,12 +701,13 @@ fn d3_dataset_page_shows_every_block_for_a_platform_dataset() {
         "jc-resources-title",
         "jc-subscribe-calendar",
         "jc-subscribe-news",
-        "jc-map-embed",
         "jc-more-title",
         "shacl-heading",
     ] {
         assert!(html.contains(&format!("id=\"{id}\"")), "{id}");
     }
+    // The explorer draws the map: no second map card asks the same reads (as on CKAN).
+    assert!(!html.contains("id=\"jc-map-embed\""));
     assert!(
         html.contains("<meta name=\"robots\" content=\"noindex, nofollow\">"),
         "B4 noindex"
@@ -772,6 +777,143 @@ fn d3_dataset_page_without_domain_or_resources_leaves_platform_blocks_out() {
         html.contains("id=\"shacl-heading\""),
         "editor panel without reports"
     );
+}
+
+/// G1: an installation without a domain (jc) names each live part on its own; the dataset page
+/// frames, links and reads exactly those, and leaves out what nobody serves.
+#[test]
+fn g1_dataset_page_follows_the_addresses_named_one_by_one() {
+    let api = "http://localhost:42241";
+    let ep_local = |path: &str| format!("{api}/api/endpoint/{SLUG}/{path}");
+    let mut c = cat();
+    c.branding = Some(json!({ "addresses": {
+        "viz": "http://localhost:42241/viz",
+        "api": api,
+        "tiles": "https://tiles.city.example",
+    }}));
+    let ds = with_dists(
+        dataset("air", json!({ "endpointUrl": ep_local("") })),
+        vec![
+            dist("csv", &ep_local("file.csv"), json!({})),
+            dist(
+                "ogc",
+                &ep_local("ogc/features/collections/AirQualityObserved"),
+                json!({}),
+            ),
+        ],
+    );
+    let html = render_dataset_page_full(
+        &c,
+        None,
+        &ds,
+        None,
+        &[],
+        &[],
+        false,
+        "sk",
+        false,
+        "/opendata",
+        NONCE,
+    );
+    assert_safe_page("dataset-g1", &html, "sk");
+    for id in ["jc-explorer-title", "jc-live-title", "jc-mcp-title"] {
+        assert!(html.contains(&format!("id=\"{id}\"")), "{id}");
+    }
+    assert!(html.contains(&format!(
+        "src=\"http://localhost:42241/viz/explore.html#{SLUG}&amp;inline&amp;lang=sk&amp;theme=light&amp;dataset=air\""
+    )));
+    assert!(
+        html.contains("data-jc-viz=\"http://localhost:42241\""),
+        "the height messages come from the viz origin"
+    );
+    assert!(html.contains("http://localhost:42241/api/mcp"));
+    // Snippets carry no credential.
+    for secret in ["token", "Bearer", "apikey", "Authorization"] {
+        let curl = html
+            .split("jc-live-title")
+            .nth(1)
+            .unwrap_or_default()
+            .split("jc-mcp-title")
+            .next()
+            .unwrap_or_default();
+        assert!(!curl.contains(secret), "{secret} in the live box");
+    }
+    // Nobody serves an assistant: no launcher points at nothing.
+    assert!(!html.contains("id=\"jc-assistant\"") && !html.contains("/d/data/widget"));
+
+    // A dataset on another gateway is not this platform's: no live parts.
+    let foreign = dataset(
+        "far",
+        json!({ "endpointUrl": format!("https://api.other.example/api/endpoint/{SLUG}/") }),
+    );
+    let html = render_dataset_page_full(
+        &c,
+        None,
+        &foreign,
+        None,
+        &[],
+        &[],
+        false,
+        "sk",
+        false,
+        "/opendata",
+        NONCE,
+    );
+    for id in ["jc-explorer-title", "jc-live-title"] {
+        assert!(
+            !html.contains(&format!("id=\"{id}\"")),
+            "{id} for a foreign gateway"
+        );
+    }
+
+    // An assistant named on its own gets its launcher.
+    c.branding = Some(json!({ "addresses": { "assistant": "https://assistant.city.example" } }));
+    let html = render_dataset_page_full(
+        &c,
+        None,
+        &ds,
+        None,
+        &[],
+        &[],
+        false,
+        "sk",
+        false,
+        "/opendata",
+        NONCE,
+    );
+    assert!(html.contains("src=\"https://assistant.city.example/d/data/widget?embed=1&amp;dock=1&amp;lang=sk&amp;scheme=light\""));
+}
+
+#[test]
+fn g1_csp_names_the_named_origins_and_is_unchanged_without_them() {
+    let none = BrandingBlock::default();
+    assert_eq!(
+        csp_header_for_branding("n", &none, false),
+        csp_header_for_domain("n", None, false)
+    );
+    let mut dom = BrandingBlock::default();
+    dom.apply_override_json(&json!({ "domain": DOMAIN }));
+    assert_eq!(
+        csp_header_for_branding("n", &dom, true),
+        csp_header_for_domain("n", Some(DOMAIN), true),
+        "a domain alone gives the old header byte for byte"
+    );
+    let mut jc = BrandingBlock::default();
+    jc.apply_override_json(&json!({ "addresses": {
+        "viz": "http://localhost:42241/viz",
+        "api": "https://api.dev.example",
+        "tiles": "https://tiles.dev.example:8443",
+    }}));
+    let h = csp_header_for_branding("n", &jc, false);
+    let own = " http://localhost:42241 https://api.dev.example https://tiles.dev.example:8443";
+    assert!(h.contains(&format!("connect-src 'self'{own};")), "{h}");
+    assert!(h.contains(&format!("frame-src 'self'{own};")), "{h}");
+    assert!(h.contains(&format!("img-src 'self' data:{own};")), "{h}");
+    assert!(
+        h.contains("script-src 'self' 'nonce-n';") && h.contains("frame-ancestors 'self';"),
+        "{h}"
+    );
+    assert!(!h.contains('*') && !h.contains("unsafe"), "{h}");
 }
 
 // ---- D4 resource page ----
@@ -1249,6 +1391,77 @@ fn installation_branding_and_mount_prefix_reach_the_chrome() {
         .lang_options
         .iter()
         .any(|o| o.selected && o.code == "cs" && o.url == "/data/cs/x?q=1"));
+}
+
+#[test]
+fn a_host_widget_replaces_the_domain_widget_and_an_empty_one_shows_no_launcher() {
+    let mut inst = BrandingBlock::default();
+    inst.apply_override_json(&json!({ "domain": DOMAIN }));
+    let c = catalogue(json!(null));
+    let page = |inst: &BrandingBlock| {
+        render_home_page_mounted(&c, Some(inst), &[], &[], "", "sk", false, "/data/", NONCE)
+    };
+    inst.assistant_widget = Some("https://city.example/d/data/widget".into());
+    let on = page(&inst);
+    assert!(on.contains(
+        "src=\"https://city.example/d/data/widget?embed=1&amp;dock=1&amp;lang=sk&amp;scheme=light\""
+    ));
+    assert!(on.contains("/data/jc-assistant.js"), "the launcher script");
+    // The theme shows this icon in place of the words on a narrow screen (a blank tile without it).
+    assert!(
+        on.contains("<svg class=\"jc-assistant-icon\""),
+        "the launcher icon"
+    );
+    assert!(
+        !on.contains(&format!("assistant.{DOMAIN}")),
+        "no domain widget"
+    );
+    // Off: no launcher, though the domain would have named one.
+    inst.assistant_widget = Some(String::new());
+    let off = page(&inst);
+    assert!(!off.contains("id=\"jc-assistant\""));
+    assert!(!off.contains("jc-assistant.js"));
+    // The override JSON never sets it.
+    let mut set = BrandingBlock::default();
+    set.apply_override_json(&json!({ "assistantWidget": "https://evil.example/" }));
+    assert_eq!(set.assistant_widget, None);
+    let read: BrandingBlock = serde_json::from_value(serde_json::to_value(&inst).unwrap()).unwrap();
+    assert_eq!(read.assistant_widget, None, "serde skips it both ways");
+}
+
+#[test]
+fn the_csp_frames_the_host_widget_origin_and_nothing_odd() {
+    let with = |widget: &str| BrandingBlock {
+        assistant_widget: Some(widget.to_owned()),
+        ..BrandingBlock::default()
+    };
+    let h = csp_header_for_branding(
+        "n",
+        &with("https://assistant.city.example/d/data/widget"),
+        false,
+    );
+    assert!(
+        h.contains("frame-src 'self' https://assistant.city.example;"),
+        "{h}"
+    );
+    for odd in [
+        "https://a.example; script-src *",
+        "javascript:x",
+        "https://",
+        "https://a b",
+        "",
+    ] {
+        let h = csp_header_for_branding("n", &with(odd), false);
+        assert!(h.contains("frame-src 'self';"), "{odd:?}: {h}");
+    }
+    let plain = BrandingBlock {
+        domain: DOMAIN.to_owned(),
+        ..BrandingBlock::default()
+    };
+    assert_eq!(
+        csp_header_for_branding("n", &plain, true),
+        csp_header_for_domain("n", Some(DOMAIN), true)
+    );
 }
 
 // ---- C17 profile editor form ----

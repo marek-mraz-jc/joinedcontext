@@ -37,10 +37,11 @@ use dataroom_shacl::ProfileRegistry;
 use dataroom_web::helpers::{jc_robots_txt, jc_sitemap_xml};
 use dataroom_web::i18n::{resolve_request_language, LanguageResolution};
 use dataroom_web::{
-    csp_header_for_domain, render_about_page, render_assistant_guide_page, render_assistants_page,
-    render_dataset_list_page, render_dataset_page_full, render_home_page_mounted, render_map_page,
-    render_organization_list_page, render_organization_read_page, render_resource_page,
-    render_static_page, JC_ENUMS_JSON, JC_LOGO_SVG, JC_THEME_CSS,
+    csp_header_for_branding, render_about_page, render_assistant_guide_page,
+    render_assistants_page, render_dataset_list_page, render_dataset_page_full,
+    render_home_page_mounted, render_map_page, render_organization_list_page,
+    render_organization_read_page, render_resource_page, render_static_page, JC_ENUMS_JSON,
+    JC_LOGO_SVG, JC_THEME_CSS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1184,8 +1185,8 @@ async fn login_redirect(state: &DataroomState, headers: &HeaderMap) -> Response 
         Err(e) => return problem_response(e),
     };
     let branding = cat.effective_branding(Some(&state.installation_branding));
-    let target = if !branding.domain.is_empty() {
-        format!("https://portal.{}/login", branding.domain)
+    let target = if let Some(portal) = branding.address(dataroom_core::branding::Address::Portal) {
+        format!("{portal}/login")
     } else {
         format!("{}/", state.mount_prefix)
     };
@@ -1246,8 +1247,7 @@ fn html_response_with_csp(
     branding: &BrandingBlock,
     framable_map: bool,
 ) -> Response {
-    let domain = (!branding.domain.is_empty()).then_some(branding.domain.as_str());
-    let csp = csp_header_for_domain(nonce, domain, framable_map);
+    let csp = csp_header_for_branding(nonce, branding, framable_map);
     (
         StatusCode::OK,
         [

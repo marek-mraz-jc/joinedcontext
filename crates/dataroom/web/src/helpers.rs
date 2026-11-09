@@ -7,6 +7,7 @@
 
 use crate::i18n::{format_date_localized, jc_t, normalize_lang_code};
 use chrono::{DateTime, Datelike, Duration, Utc};
+use dataroom_core::branding::{origin_of, Address};
 use dataroom_core::vocab::find_licence;
 use dataroom_core::{
     localized_text, resolve_publisher_branding, BrandingBlock, Catalogue, Dataset, Distribution,
@@ -175,24 +176,20 @@ fn on_platform(host: &str, branding: &BrandingBlock) -> bool {
     !domain.is_empty() && (host == domain || host.ends_with(&format!(".{domain}")))
 }
 
-/// The Endpoint slug of `https://api.{domain}/api/endpoint/{slug}/...` on this platform's domain
-/// (`_API_ENDPOINT` in `plugin.py`: a slug of 16 to 64 `[a-z0-9]`).
+/// The Endpoint slug of `{api}/api/endpoint/{slug}/...` on this platform's gateway (the `api`
+/// address, `https://api.{domain}` by default; `_API_ENDPOINT` in `plugin.py`: a slug of 16 to 64
+/// `[a-z0-9]`).
 fn api_endpoint_slug<'a>(url: &'a str, branding: &BrandingBlock) -> Option<&'a str> {
+    let api = branding.address(Address::Api)?;
     let rest = url
-        .strip_prefix("https://api.")?
-        .strip_prefix(branding.domain.as_str())?
+        .strip_prefix(api.as_str())?
         .strip_prefix("/api/endpoint/")?;
     let (slug, _) = rest.split_once('/')?;
-    let domain_ok = !branding.domain.is_empty()
-        && branding
-            .domain
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-');
     let slug_ok = (16..=64).contains(&slug.len())
         && slug
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
-    (domain_ok && slug_ok).then_some(slug)
+    slug_ok.then_some(slug)
 }
 
 /// An entity type name a URL fragment may carry (`[A-Za-z][A-Za-z0-9_]{0,127}`).
@@ -208,11 +205,18 @@ fn is_type_name(value: &str) -> bool {
 }
 
 /// An https address on the platform's own domain.
+/// Whether the reader's browser may be pointed at `url`: under the gateway's `api` address, or an
+/// https address on the platform's domain.
 fn https_on_platform(url: &str, branding: &BrandingBlock) -> bool {
-    url.starts_with("https://")
-        && url::Url::parse(url)
-            .ok()
-            .is_some_and(|u| u.host_str().is_some_and(|h| on_platform(h, branding)))
+    let under_api = branding.address(Address::Api).is_some_and(|api| {
+        url.strip_prefix(api.as_str())
+            .is_some_and(|r| r.starts_with('/'))
+    });
+    under_api
+        || (url.starts_with("https://")
+            && url::Url::parse(url)
+                .ok()
+                .is_some_and(|u| u.host_str().is_some_and(|h| on_platform(h, branding))))
 }
 
 /// `value` as one shell word (`shlex.quote`): as it is when every character is safe, else in
@@ -1277,8 +1281,7 @@ pub fn jc_live(ds: &Dataset, branding: &BrandingBlock) -> Option<LiveEndpointBox
         .endpoint_url
         .as_deref()
         .or_else(|| ds.extras.get("endpoint").map(String::as_str))?;
-    let host = ep.strip_prefix("https://")?.split('/').next()?;
-    if !on_platform(host, branding) {
+    if !https_on_platform(ep, branding) {
         return None;
     }
     let base = if ep.ends_with('/') {
@@ -1317,9 +1320,10 @@ pub fn jc_explorer(
 ) -> Option<ExplorerView> {
     let live = jc_live(ds, branding)?;
     let slug = api_endpoint_slug(&live.url, branding)?;
-    let origin = format!("https://viz.{}", branding.domain);
+    let viz = branding.address(Address::Viz)?;
+    let origin = origin_of(&viz).to_owned();
     let code = normalize_lang_code(lang);
-    let mut src = format!("{origin}/explore.html#{slug}&inline&lang={code}&theme=light");
+    let mut src = format!("{viz}/explore.html#{slug}&inline&lang={code}&theme=light");
     let name_ok = (2..=100).contains(&ds.name.len())
         && ds
             .name
@@ -1381,10 +1385,8 @@ pub fn jc_developer_page(ds: &Dataset, branding: &BrandingBlock, lang: &str) -> 
     let live = jc_live(ds, branding)?;
     let slug = api_endpoint_slug(&live.url, branding)?;
     let code = normalize_lang_code(lang);
-    Some(format!(
-        "https://portal.{}/d/{slug}?lang={code}",
-        branding.domain
-    ))
+    let portal = branding.address(Address::Portal)?;
+    Some(format!("{portal}/d/{slug}?lang={code}"))
 }
 
 /// Published chart view (`jc_visualization` in `plugin.py` line 1030, D3).
@@ -1406,18 +1408,19 @@ pub fn jc_visualizations(
     lang: &str,
     lang_prefix: &str,
 ) -> Vec<ChartView> {
-    if branding.domain.is_empty() {
+    let Some(viz) = branding.address(Address::Viz) else {
         return Vec::new();
-    }
-    let origin = format!("https://viz.{}", branding.domain);
+    };
+    // The frame's height messages come from the viz origin; its pages may sit under a path.
+    let origin = origin_of(&viz).to_owned();
     let code_lang = normalize_lang_code(lang);
     let mut out = Vec::new();
     for v in views {
         if v.view_type != "jc_visualization" {
             continue;
         }
-        let src = format!("{origin}/#{}&inline&lang={code_lang}", v.id);
-        let embed = format!("{origin}/#{}&lang={code_lang}", v.id);
+        let src = format!("{viz}/#{}&inline&lang={code_lang}", v.id);
+        let embed = format!("{viz}/#{}&lang={code_lang}", v.id);
         let code = format!(
             "<iframe src=\"{embed}\" title=\"{}\" width=\"100%\" height=\"480\" style=\"border:0\" loading=\"lazy\" referrerpolicy=\"no-referrer\" sandbox=\"allow-scripts allow-same-origin allow-downloads allow-popups allow-popups-to-escape-sandbox\"></iframe>",
             html_escape(&v.title)
@@ -1667,11 +1670,7 @@ pub fn url_parts(url: &str) -> Vec<&str> {
 }
 
 pub fn jc_mcp_install(branding: &BrandingBlock) -> Option<McpInstallView> {
-    let domain = branding.domain.trim();
-    if !dataroom_core::branding::is_host_name(domain) {
-        return None;
-    }
-    let mut url = format!("https://api.{domain}/api/mcp");
+    let mut url = format!("{}/api/mcp", branding.address(Address::Api)?);
     if let Some(ref own) = branding.mcp_server {
         if dataroom_core::branding::is_mcp_server(own) {
             url.push('/');
@@ -1966,10 +1965,10 @@ pub fn jc_map_config(
         "schema": format!("{base_url}/schema"),
         "tiles": format!("{base_url}/tiles/WebMercatorQuad"),
     });
-    let basemap = if !branding.domain.is_empty() {
-        json!({ "style": format!("https://tiles.{}/style.json", branding.domain) })
-    } else {
-        json!({})
+    let tiles = branding.address(Address::Tiles);
+    let basemap = match &tiles {
+        Some(t) => json!({ "style": format!("{t}/style.json") }),
+        None => json!({}),
     };
     let mut t = Map::new();
     for key in [
@@ -1991,7 +1990,7 @@ pub fn jc_map_config(
         "layers": [layer],
         "basemap": basemap,
         "lib": "/maplibre-gl-6.14.0/maplibre-gl.mjs",
-        "pmtiles": if !branding.domain.is_empty() { "/pmtiles-4.5.0.js" } else { "" },
+        "pmtiles": if tiles.is_some() { "/pmtiles-4.5.0.js" } else { "" },
         "enums": "/jc-enums.json",
         "lang": normalize_lang_code(lang),
         "title": title,

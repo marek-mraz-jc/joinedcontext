@@ -30,6 +30,9 @@ const PERSON_PASSWORD: &str = "e2e-person-password-not-secret";
 /// A person in none of the project's groups: no Policy of the space names them.
 const STRANGER: &str = "e2e.stranger";
 const READER_SECRET: &str = "e2e-reader-client-secret-not-secret";
+/// The project's pipeline client secret (`{PROJECT}-pipelines`), and another project's.
+const PIPELINES_SECRET: &str = "e2e-pipelines-client-secret-not-secret";
+const OTHER_PIPELINES_SECRET: &str = "other-pipelines-client-secret-not-secret";
 /// The organization repository, not jc's default `jc/config`: the gateway must check out the
 /// repository the Portal is told to use (`JC_SHAKO_OWNER`, `JC_SHAKO_REPO`).
 const FORGE_OWNER: &str = "e2e-city";
@@ -110,6 +113,12 @@ fn realm_file(dir: &Path, secrets: &Path) {
     std::fs::write(&person_password, PERSON_PASSWORD).unwrap();
     let client_secret = format!("$(file:{})", client_secret.display());
     let person_password = format!("$(file:{})", person_password.display());
+    // Each project's pipeline client, its secret a file named by the client: kaisatsu reads it
+    // for the client, jc hands it to ekiben as `JC_CLIENT_SECRET_<PROJECT>`.
+    let pipelines_secret = secrets.join(format!("{PROJECT}-pipelines"));
+    std::fs::write(&pipelines_secret, PIPELINES_SECRET).unwrap();
+    std::fs::write(secrets.join("other-pipelines"), OTHER_PIPELINES_SECRET).unwrap();
+    let pipelines_secret = format!("$(file:{})", pipelines_secret.display());
     let audience = |name: &str, slug: &str| {
         json!({
             "name": name,
@@ -163,6 +172,22 @@ fn realm_file(dir: &Path, secrets: &Path) {
         // `e2e-mcp` stands in for an MCP client: its person tokens name the Portal's client, which
         // `/api/v1/mcp` takes and exchanges for one Endpoint (`endpoint:{slug}`).
         "clients": [
+            {
+                "clientId": format!("{PROJECT}-pipelines"),
+                "enabled": true,
+                "protocol": "openid-connect",
+                "publicClient": false,
+                "clientAuthenticatorType": "client-secret",
+                "secret": pipelines_secret,
+                "standardFlowEnabled": false,
+                "directAccessGrantsEnabled": false,
+                "serviceAccountsEnabled": true,
+                "fullScopeAllowed": false,
+                "redirectUris": [],
+                "webOrigins": [],
+                "defaultClientScopes": ["basic"],
+                "protocolMappers": [audience("endpoint", CLOSED)]
+            },
             client("e2e-reader", CLOSED),
             client("e2e-elsewhere", ELSEWHERE),
             client("e2e-mcp", "portal-api"),
@@ -200,13 +225,26 @@ fn realm_file(dir: &Path, secrets: &Path) {
 }
 
 async fn start() -> Jc {
+    start_with(false).await
+}
+
+/// As [`start`]; `pipelines` sets the Portal's proposal validation to lax (`JC_BRANDING_FILE`),
+/// since a Pipeline's check cannot run inside jc yet (`jc_pipeline_test` needs
+/// `JC_PORTAL_PIPELINE_TEST_CAPTURE_URL`, which jc does not fill), and names the public host by
+/// the listener's own address: a stream asks kaisatsu's public token endpoint, and ekiben refuses
+/// a loopback name such as `localhost`.
+async fn start_with(pipelines: bool) -> Jc {
     let dir = tempfile::tempdir().unwrap();
     let state = dir.path().join("state");
     let realms = dir.path().join("realms");
     let realm_secrets = dir.path().join("realm-secrets");
     realm_file(&realms, &realm_secrets);
     let port = free_port();
-    let base_host = format!("localhost:{port}");
+    let base_host = if pipelines {
+        format!("127.0.0.1:{port}")
+    } else {
+        format!("localhost:{port}")
+    };
     let config = dir.path().join("jc.toml");
     std::fs::write(&config, "[mounts.portal]\npath_prefix = \"\"\n").unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
@@ -221,6 +259,19 @@ async fn start() -> Jc {
     )
     .unwrap();
     cmd.arg("--shako-token-file").arg(&shako);
+    if pipelines {
+        // The runner's token as a file, so the test reads the runner's API as the Portal does.
+        let ekiben = given.join("ekiben-token");
+        std::fs::write(
+            &ekiben,
+            format!("test-ekiben-token-{:032x}", std::process::id()),
+        )
+        .unwrap();
+        cmd.arg("--ekiben-token-file").arg(&ekiben);
+        let branding = dir.path().join("branding.yaml");
+        std::fs::write(&branding, "instanceName: \"e2e\"\nvalidation: lax\n").unwrap();
+        cmd.env("JC_BRANDING_FILE", &branding);
+    }
     for (key, _) in std::env::vars() {
         if key.starts_with("JCBIN_") || key.starts_with("JC_") || key.starts_with("ANTARES_") {
             cmd.env_remove(key);
@@ -893,4 +944,403 @@ async fn a_modelled_endpoint_answers_ogc_and_odata_inside_jc() {
     assert_eq!(status, StatusCode::OK, "{metadata}");
     assert!(metadata.contains("EntitySet"), "{metadata}");
     assert!(metadata.contains("Thing"), "{metadata}");
+}
+
+/// [`manifests`] with the space modelled (a Pipeline's output type must be a class of the
+/// space's model, or the Endpoint's view shows it whole and the writer refuses the view), plus
+/// what a pipeline of the project needs: its `pipelines` account, the account's write Policy on
+/// the space and a clock DataSource.
+fn pipeline_manifests() -> Vec<(String, String)> {
+    let at = |rel: &str| format!("projects/{PROJECT}/{rel}");
+    let model = |rel: &str| {
+        modelled_manifests()
+            .into_iter()
+            .find(|(path, _)| path.ends_with(rel))
+            .map(|(_, text)| text.replace(MODELLED, SPACE))
+            .unwrap()
+    };
+    let mut out: Vec<(String, String)> = manifests()
+        .into_iter()
+        .map(|(path, text)| {
+            if path.ends_with(&format!("{SPACE}/space.yaml")) {
+                let text = format!("{text}  dataModelRef: {{ kind: DataModel, name: things }}\n");
+                (path, text)
+            } else {
+                (path, text)
+            }
+        })
+        .collect();
+    out.push((
+        at(&format!("spaces/{SPACE}/datamodels/things.yaml")),
+        model("datamodels/things.yaml"),
+    ));
+    out.push((
+        at(&format!("spaces/{SPACE}/datamodels/things.linkml.yaml")),
+        model("datamodels/things.linkml.yaml"),
+    ));
+    out.extend([
+        (
+            at("access/serviceaccounts/pipelines.yaml"),
+            format!(
+                "{HEADER}\nkind: ServiceAccount\nmetadata:\n  name: pipelines\n  namespace: {PROJECT}\n\
+                 spec:\n  owner: {{ user: e2e-owner }}\n  purpose: The project's streams write Things\n  \
+                 roles:\n    - role: steward\n      scope: {{ contextSpace: {SPACE} }}\n  credentials:\n    - kind: oauth-client\n      name: main\n"
+            ),
+        ),
+        (
+            at(&format!("spaces/{SPACE}/policies/pipelines-write.yaml")),
+            format!(
+                "{HEADER}\nkind: Policy\nmetadata:\n  name: pipelines-write\n  namespace: {PROJECT}\n\
+                 spec:\n  contextSpaceRef: {SPACE}\n  assigner: did:web:jc.invalid\n  \
+                 assignee: {{ kind: serviceAccount, id: pipelines }}\n  \
+                 operations: [upsertBatch, createBatch, queryBatch]\n  information:\n    \
+                 - entities:\n        - type: Thing\n      propertyNames: [name]\n"
+            ),
+        ),
+        (
+            at("datasources/clock.yaml"),
+            format!(
+                "{HEADER}\nkind: DataSource\nmetadata:\n  name: clock\n  namespace: {PROJECT}\n\
+                 spec:\n  type: generate\n  input:\n    interval: 2s\n    \
+                 mapping: 'root = {{\"n\": 1}}'\n"
+            ),
+        ),
+    ]);
+    out
+}
+
+/// The Pipeline a person proposes in the Portal: one Thing per tick of the clock, written
+/// through the closed Endpoint as the project's `pipelines` client.
+fn pipeline() -> Value {
+    json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "Pipeline",
+        "metadata": { "name": "feed", "namespace": PROJECT },
+        "spec": {
+            "class": "resident",
+            "source": { "dataSourceRef": { "kind": "DataSource", "name": "clock" } },
+            "compute": {
+                "kind": "bloblang",
+                "bloblang": "root = {\"id\": \"urn:ngsi-ld:Thing:fed\", \"type\": \"Thing\", \"name\": {\"type\": \"Property\", \"value\": \"fed\"}}"
+            },
+            "targetEndpoint": format!("urn:ngsi-ld:Endpoint:jc.invalid:{SPACE}:closed"),
+            "output": { "type": "Thing", "mode": "upsert" }
+        }
+    })
+}
+
+/// A kaisatsu admin token of the Portal's own people client.
+async fn kaisatsu_admin_token(jc: &Jc) -> String {
+    let resp = Client::new()
+        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .form(&[
+            ("grant_type", "client_credentials"),
+            ("client_id", "portal-reconciler"),
+            (
+                "client_secret",
+                jc.secret("portal-admin-client-secret").as_str(),
+            ),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    body["access_token"]
+        .as_str()
+        .expect("admin token")
+        .to_owned()
+}
+
+/// A second administrator (PF-58: a proposer never approves their own change), made through
+/// kaisatsu's admin API; answers the username.
+async fn second_admin(jc: &Jc, password: &str) -> String {
+    let token = kaisatsu_admin_token(jc).await;
+    let admin = |m: reqwest::Method, path: &str| {
+        Client::new()
+            .request(m, jc.url(&format!("/id/admin/realms/jc{path}")))
+            .bearer_auth(&token)
+    };
+    let username = "e2e.approver@jc.invalid";
+    let made = admin(reqwest::Method::POST, "/users")
+        .json(&json!({
+            "username": username, "email": username, "firstName": "Second", "lastName": "Admin",
+            "enabled": true, "emailVerified": true,
+            "credentials": [{"type": "password", "value": password, "temporary": false}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        made.status().is_success(),
+        "create approver: {}",
+        made.status()
+    );
+    let found: Value = admin(
+        reqwest::Method::GET,
+        &format!("/users?username={username}&exact=true"),
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let id = found[0]["id"].as_str().expect("approver id").to_owned();
+    let reset = admin(reqwest::Method::PUT, &format!("/users/{id}/reset-password"))
+        .json(&json!({"type": "password", "value": password, "temporary": false}))
+        .send()
+        .await
+        .unwrap();
+    assert!(reset.status().is_success(), "password: {}", reset.status());
+    let groups: Value = admin(
+        reqwest::Method::GET,
+        "/groups?search=platform-admins&exact=true",
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let group = groups[0]["id"].as_str().expect("bootstrap group");
+    let joined = admin(reqwest::Method::PUT, &format!("/users/{id}/groups/{group}"))
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert!(joined.status().is_success(), "join: {}", joined.status());
+    username.to_owned()
+}
+
+/// A Pipeline proposed and approved in the Portal runs on ekiben inside jc and its Entities land
+/// in Antares: the stream reads `JC_GATEWAY_URL`, `JC_TOKEN_URL` and `JC_CLIENT_SECRET_E2E`
+/// from jc's mounts and its client secrets directory (the realm file's own secret file), reaches
+/// jc's own listener only at the gateway door and the token endpoint, and names no other
+/// project's secret. No secret value shows in the runner's API or jc's log.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
+    let jc = start_with(true).await;
+    eventually(
+        "shako holds the organization repository",
+        &jc,
+        120,
+        || async {
+            let resp = Client::new()
+                .get(jc.url(&format!("/git/api/v1/repos/{FORGE_OWNER}/{FORGE_REPO}")))
+                .header(
+                    "authorization",
+                    format!("token {}", jc.secret("shako-token")),
+                )
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            resp.status()
+                .is_success()
+                .then_some(())
+                .ok_or(resp.status().to_string())
+        },
+    )
+    .await;
+    for (path, content) in pipeline_manifests() {
+        put_file(&jc, &path, &content).await;
+    }
+    let closed = format!("/api/endpoint/{CLOSED}/ngsi-ld/v1");
+    let reader = token(&jc, "e2e-reader").await;
+    eventually("the closed Endpoint answers", &jc, 120, || async {
+        let (status, body) = call(
+            &jc,
+            reqwest::Method::GET,
+            &format!("{closed}/types"),
+            Some(&reader),
+            None,
+        )
+        .await;
+        (status == StatusCode::OK)
+            .then_some(())
+            .ok_or(format!("{status} {body}"))
+    })
+    .await;
+
+    // The administrator proposes the Pipeline, a second administrator approves it.
+    let mut proposer = Browser::new();
+    sign_in(
+        &|p| jc.url(p),
+        &mut proposer,
+        "admin",
+        &jc.secret("first-admin-password"),
+    )
+    .await;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let source = proposer
+            .get(&jc.url(&format!("/api/v1/projects/{PROJECT}/datasources/clock")))
+            .await;
+        if source.status == StatusCode::OK {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the DataSource in the Portal: {} {}\n{}",
+            source.status,
+            source.text,
+            jc.tail()
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let proposed = proposer
+        .send(
+            reqwest::Method::POST,
+            &jc.url(&format!("/api/v1/projects/{PROJECT}/pipelines")),
+            Some(common::Body::Json(&pipeline())),
+            true,
+        )
+        .await;
+    assert!(
+        proposed.status.is_success(),
+        "propose: {} {}",
+        proposed.status,
+        proposed.text
+    );
+    let change = proposed.json()["metadata"]["name"]
+        .as_str()
+        .expect("the Change's name")
+        .to_owned();
+    let approver_pw = "Second-admin-pw-0123456789";
+    let approver_name = second_admin(&jc, approver_pw).await;
+    let mut approver = Browser::new();
+    sign_in(&|p| jc.url(p), &mut approver, &approver_name, approver_pw).await;
+    let approved = approver
+        .send(
+            reqwest::Method::POST,
+            &jc.url(&format!(
+                "/api/v1/projects/{PROJECT}/changes/{change}/approve"
+            )),
+            Some(common::Body::Json(&json!({"confirm": "feed"}))),
+            true,
+        )
+        .await;
+    assert!(
+        approved.status.is_success(),
+        "approve: {} {}",
+        approved.status,
+        approved.text
+    );
+
+    // The stream writes the Thing; the reader finds it through the same Endpoint.
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(180);
+    let mut rendered = None;
+    let entity = loop {
+        // The stream first: it is held before it writes, so a Thing that lands between two
+        // polls never leaves the stream unseen.
+        if rendered.is_none() {
+            let held = Client::new()
+                .get(jc.url(&format!("/streams/streams/{PROJECT}.feed")))
+                .bearer_auth(jc.secret("ekiben-token"))
+                .send()
+                .await
+                .unwrap();
+            if held.status().is_success() {
+                rendered = Some(held.text().await.unwrap_or_default());
+            }
+        }
+        let (status, body) = call(
+            &jc,
+            reqwest::Method::GET,
+            &format!("{closed}/entities?type=Thing&limit=5"),
+            Some(&reader),
+            None,
+        )
+        .await;
+        if status == StatusCode::OK && body.contains("Thing:") {
+            break body;
+        }
+        if Instant::now() > deadline {
+            let pipeline = proposer
+                .get(&jc.url(&format!("/api/v1/projects/{PROJECT}/pipelines/feed")))
+                .await;
+            let endpoint = proposer
+                .get(&jc.url(&format!("/api/v1/projects/{PROJECT}/endpoints/closed")))
+                .await;
+            println!("the Endpoint: {}", endpoint.text);
+            // What the stream's own write answers, for the reader of a failure.
+            let tok: Value = Client::new()
+                .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+                .form(&[
+                    ("grant_type", "client_credentials"),
+                    ("client_id", &format!("{PROJECT}-pipelines")),
+                    ("client_secret", PIPELINES_SECRET),
+                ])
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let (wstatus, wbody) = call(
+                &jc,
+                reqwest::Method::POST,
+                &format!("{closed}/entityOperations/upsert?options=update"),
+                tok["access_token"].as_str(),
+                Some(&json!([{"id": "urn:ngsi-ld:Thing:probe", "type": "Thing", "name": {"type": "Property", "value": "p"}}])),
+            )
+            .await;
+            let view = Client::new()
+                .get(jc.url(&format!("/broker/q/views/{CLOSED}")))
+                .bearer_auth(jc.secret("antares-admin-token"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap_or_default();
+            panic!(
+                "the pipeline's Thing is not in Antares: {status} {body}\nthe stream's write by hand: {wstatus} {wbody}\nthe view: {view}\nthe Pipeline: {}\nthe stream: {rendered:?}\n{}",
+                pipeline.text,
+                jc.tail()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    println!("landed after {:?}: {entity}", started.elapsed());
+    assert!(entity.contains("fed"), "{entity}");
+    let counted = Client::new()
+        .get(jc.url(&format!("{closed}/entities?type=Thing&count=true&limit=0")))
+        .bearer_auth(&reader)
+        .send()
+        .await
+        .unwrap();
+    let total = counted
+        .headers()
+        .get("ngsild-results-count")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    println!(
+        "count of Thing through the closed Endpoint: {} {total}",
+        counted.status()
+    );
+    assert_eq!(total, "1", "one Thing, upserted on every tick");
+
+    // The runner held the stream as the Portal rendered it: the project's own client, no other
+    // project's, and the secret only as ekiben's redaction.
+    let stream = rendered.expect("the runner held the stream while it ran");
+    assert!(
+        stream.contains(&format!("\"client_key\":\"{PROJECT}-pipelines\"")),
+        "{stream}"
+    );
+    assert!(
+        stream.contains("\"client_secret\":\"REDACTED\""),
+        "{stream}"
+    );
+    assert!(!stream.contains("other-pipelines"), "{stream}");
+    for secret in [PIPELINES_SECRET, OTHER_PIPELINES_SECRET] {
+        assert!(!stream.contains(secret), "the runner's API serves a secret");
+        assert!(!jc.log_has(secret), "jc's log holds a secret");
+    }
+    assert!(
+        jc.log_has("ekiben runner variables from jc"),
+        "{}",
+        jc.tail()
+    );
 }

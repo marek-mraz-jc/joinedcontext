@@ -5,8 +5,8 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { api, queryKeys, unwrap } from "../../api/client";
 import { localized, ORG_NAMESPACE, plainTitle } from "../../api/manifest";
-import { useProjectOrganization } from "../../api/projects";
-import { administersOrganization, usePermissions } from "../../api/permissions";
+import { useProjectOrganization, useProjectTitles } from "../../api/projects";
+import { administersOrganization, readsOnceKnown, usePermissions } from "../../api/permissions";
 import type { Rule } from "../../api/permissions";
 import { RuleInWords, granteeName } from "../../components/AccessWords";
 import { DeleteProjectAction } from "../../components/DeleteProjectDialog";
@@ -185,8 +185,15 @@ export function toProject(form: Record<string, unknown>, stored: unknown): unkno
 function General({ project }: { project: string }): JSX.Element {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language ?? "en";
+  // The project's manifest lives in the organization's repository, which a project's own member
+  // may not read: asked only once the organization's permissions say so, or the API's 404 would
+  // read as a project that is gone (jc-portal-refusals, as `useReadableList` asks a list).
+  const reads = readsOnceKnown(usePermissions(ORG_NAMESPACE), "Project");
+  const hidden = reads === false;
+  const projectTitle = useProjectTitles();
   const manifest = useQuery({
     queryKey: [...queryKeys.list(ORG_NAMESPACE, "projects"), project],
+    enabled: reads === true,
     queryFn: async () =>
       unwrap(
         await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
@@ -198,8 +205,12 @@ function General({ project }: { project: string }): JSX.Element {
   const { organization } = useProjectOrganization(project);
   const orgSpec = (organization?.spec ?? {}) as { domain?: string; projects?: { visibility?: string } };
   const stored = (manifest.data ?? {}) as ProjectManifest;
-  const title = localized(stored.metadata?.title as string | Record<string, string> | undefined, locale, project);
-  const description = plainTitle(stored.metadata?.description);
+  // Hidden, the title is the one the project list gives every member, the rest is not theirs to read.
+  const title = hidden
+    ? projectTitle(project)
+    : localized(stored.metadata?.title as string | Record<string, string> | undefined, locale, project);
+  const description = hidden ? t("projectSettings.general.unknown") : plainTitle(stored.metadata?.description);
+  const loading = manifest.isPending && !hidden;
   // The anonymous catalogue the gateway serves on this host once a publisher is saved (API/08 §6).
   const catalogUrl = stored.spec?.catalog
     ? `${window.location.origin}/catalog/${encodeURIComponent(project)}.jsonld`
@@ -249,10 +260,10 @@ function General({ project }: { project: string }): JSX.Element {
         ) : null}
         <dl className="grid gap-x-6 gap-y-3 text-body sm:grid-cols-[max-content_1fr]">
           <dt className="font-medium text-fg">{t("projectSettings.field.title")}</dt>
-          <dd className="text-fg">{manifest.isPending ? t("app.loading") : title}</dd>
+          <dd className="text-fg">{loading ? t("app.loading") : title}</dd>
           <dt className="font-medium text-fg">{t("projectSettings.field.description")}</dt>
           <dd className="text-fg">
-            {manifest.isPending ? t("app.loading") : (description ?? t("projectSettings.general.noDescription"))}
+            {loading ? t("app.loading") : (description ?? t("projectSettings.general.noDescription"))}
           </dd>
           <dt className="font-medium text-fg">{t("projectSettings.general.organization")}</dt>
           <dd className="text-fg">{orgSpec.domain ?? t("projectSettings.general.unknown")}</dd>
@@ -262,8 +273,10 @@ function General({ project }: { project: string }): JSX.Element {
           </dd>
           <dt className="font-medium text-fg">{t("projectSettings.general.catalogUrl")}</dt>
           <dd className="break-all text-fg">
-            {manifest.isPending ? (
+            {loading ? (
               t("app.loading")
+            ) : hidden ? (
+              t("projectSettings.general.unknown")
             ) : catalogUrl ? (
               <a className="focus-ring underline" href={safeHref(catalogUrl)}>
                 {catalogUrl}
