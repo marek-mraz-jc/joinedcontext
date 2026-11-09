@@ -1548,6 +1548,7 @@ mod tests {
     use uuid::Uuid;
 
     #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // The test database URL; jc never runs this.
     async fn a6_postgres_rls_tenant_isolation_and_boot_check() {
         let Some(db_url) = std::env::var("DATAROOM_TEST_DATABASE_URL")
             .ok()

@@ -9,6 +9,7 @@
 pub mod access;
 pub mod app;
 pub mod config;
+pub mod door;
 pub mod module;
 mod modules;
 pub mod pg;

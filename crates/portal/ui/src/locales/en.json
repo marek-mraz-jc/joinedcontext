@@ -121,7 +121,8 @@
     "mappings": "Mappings",
     "layers": "Map layers",
     "csrs": "Context sources",
-    "health": "Health"
+    "health": "Health",
+    "repositories": "Repositories"
   },
   "auth": {
     "lead": "Sign in with your organisation account to manage this platform.",
@@ -6926,6 +6927,9 @@
         "capture": {
           "deleted": "MQTT capture deleted"
         }
+      },
+      "repository": {
+        "read": "Repository read"
       }
     },
     "sources": {
@@ -11787,6 +11791,182 @@
       "30d": "Last 30 days",
       "90d": "Last 90 days",
       "1y": "Last year"
+    }
+  },
+  "repositories": {
+    "title": "Repositories",
+    "intro": "The project's repositories on the forge: its configuration, its own and its applications'.",
+    "loading": "Loading from the forge",
+    "filter": {
+      "label": "Filter by name",
+      "help": "Part of a name or description, for example config or dash."
+    },
+    "empty": {
+      "title": "No repositories yet",
+      "description": "A repository appears here once the project's configuration or an application is created.",
+      "filtered": "No repository matches",
+      "filteredHint": "Try a shorter part of the name, for example config."
+    },
+    "column": {
+      "name": "Name",
+      "role": "Role",
+      "branch": "Default branch",
+      "size": "Size"
+    },
+    "role": {
+      "configuration": "Configuration",
+      "project": "Project",
+      "application": "Application"
+    },
+    "archived": "Archived",
+    "pager": {
+      "label": "Pages",
+      "previous": "Previous",
+      "next": "Next",
+      "position": "{from}–{to} of {total}",
+      "firstPage": "This is the first page.",
+      "lastPage": "This is the last page."
+    },
+    "back": "All repositories",
+    "page": {
+      "intro": "A repository of the project on the forge.",
+      "views": "Repository views"
+    },
+    "tab": {
+      "files": "Files",
+      "commits": "Commits",
+      "branches": "Branches and tags",
+      "pulls": "Pull requests",
+      "settings": "Settings"
+    },
+    "clone": {
+      "label": "Clone",
+      "copy": "Copy the clone address",
+      "copied": "Copied",
+      "copyShort": "Copy"
+    },
+    "files": {
+      "breadcrumb": "Folder path",
+      "atRef": "At {ref}",
+      "emptyFolder": "This folder is empty",
+      "caption": "Files in {path}",
+      "name": "Name",
+      "size": "Size",
+      "up": "Up one folder",
+      "truncated": "The folder holds more entries than are shown; open a subfolder to see the rest.",
+      "history": "History of this file",
+      "emptyRepository": "This repository has no commits yet",
+      "emptyRepositoryHint": "Files appear once the first change is approved and merged.",
+      "emptyFolderHint": "A folder holds files once a change adds them."
+    },
+    "file": {
+      "tooLarge": "This file is too large to show",
+      "binary": "This file is binary",
+      "notShown": "Its {size} are not shown here; clone the repository to read it."
+    },
+    "commits": {
+      "ofPath": "Commits that changed {path} on {ref}",
+      "atRef": "Commits on {ref}",
+      "empty": "No commits on this branch",
+      "noMessage": "(no message)",
+      "by": "{author} · {date}",
+      "all": "All commits",
+      "sha": "Commit",
+      "parent": "Parent",
+      "files": "{count, plural, one {# file changed} other {# files changed}}",
+      "truncated": "This commit changes more than can be shown; the rest is left out.",
+      "emptyHint": "Commits appear once a change is merged into this branch."
+    },
+    "status": {
+      "added": "Added",
+      "deleted": "Deleted",
+      "renamed": "Renamed",
+      "modified": "Modified"
+    },
+    "diff": {
+      "binary": "Binary file, no text change shown.",
+      "notShown": "The change is too large to show.",
+      "noChange": "Only the file's mode or name changed.",
+      "label": "Changes in {path}",
+      "added": "added",
+      "removed": "removed"
+    },
+    "branches": {
+      "title": "Branches",
+      "empty": "No branches",
+      "default": "Default",
+      "protected": "Protected",
+      "emptyHint": "A branch appears once a change is proposed, for example portal/edit-air."
+    },
+    "tags": {
+      "title": "Tags",
+      "empty": "No tags",
+      "emptyHint": "A tag marks a release, for example v1.2.0."
+    },
+    "pulls": {
+      "filter": {
+        "label": "State",
+        "help": "Which pull requests to list, for example Open.",
+        "open": "Open",
+        "closed": "Closed",
+        "all": "All"
+      },
+      "emptyHint": "A change proposed in the Portal opens a pull request here.",
+      "line": "#{number} by {author} · {date} · {head} into {base}",
+      "all": "All pull requests",
+      "state": {
+        "open": "Open",
+        "closed": "Closed",
+        "merged": "Merged"
+      },
+      "change": "This pull request is a Portal change.",
+      "openChange": "Open the change",
+      "noBody": "No description.",
+      "files": "{count, plural, one {# file} other {# files}}",
+      "noFiles": "No files changed.",
+      "reviews": "Reviews",
+      "noReviews": "No reviews yet.",
+      "verdict": {
+        "APPROVED": "Approved",
+        "REQUEST_CHANGES": "Changes asked",
+        "COMMENT": "Commented"
+      },
+      "emptyState": {
+        "open": "No open pull requests",
+        "closed": "No closed pull requests",
+        "all": "No pull requests"
+      },
+      "showAll": "Show every state"
+    },
+    "settings": {
+      "intro": "What the forge holds for this repository, read-only here.",
+      "protection": "Branch protection",
+      "noProtection": "No branch is protected.",
+      "pattern": "Branch",
+      "push": "Direct push",
+      "forcePush": "Force push",
+      "approvals": "Approvals needed",
+      "webhooks": "Webhooks",
+      "webhooksHint": "Each address is shown without its secret, which is never read back.",
+      "noWebhooks": "No webhooks.",
+      "active": "Active",
+      "inactive": "Inactive",
+      "collaborators": "Who has access",
+      "noCollaborators": "No group has access of its own.",
+      "packages": "Packages and images",
+      "noPackages": "Nothing published from this repository.",
+      "version": "Package",
+      "kind": "Kind",
+      "digest": "Digest and size",
+      "published": "Published",
+      "signed": "Signed",
+      "yes": "Allowed",
+      "no": "Refused"
+    },
+    "refused": {
+      "list": "The repositories of {project} are not open to you. Whoever manages the project can grant you read access.",
+      "repository": "No repository named {name} belongs to {project}. It may belong to another project, or it was removed.",
+      "subtitle": "This repository could not be opened."
     }
   }
 }

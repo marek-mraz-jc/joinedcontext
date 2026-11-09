@@ -198,7 +198,11 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
 
     // The admin listener is separate: metrics (behind the admin token: they carry Antares'
     // series, which the broker serves only behind its own token) and open liveness there, never
-    // on the public listener.
+    // on the public listener, the Portal's own scrape included.
+    for public in ["/metrics", "/portal/metrics"] {
+        let (status, body) = get(addr, "city.test", public).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{public}: {body}");
+    }
     let admin = running.admin_addr.expect("admin listener");
     let (status, body) = get(admin, "localhost", "/healthz").await;
     assert_eq!((status, body.as_str()), (StatusCode::OK, "ok"));
@@ -426,16 +430,9 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
         .await
         .err()
         .expect("refused");
-    assert!(
-        matches!(
-            err,
-            StartError::Module {
-                module: Module::Kaisatsu,
-                ..
-            }
-        ),
-        "{err}"
-    );
+    // jc's one secret reader refuses the file before any module is built.
+    assert!(matches!(err, StartError::Config(_)), "{err}");
+    assert!(err.to_string().contains("missing-kek"), "{err}");
 
     // No file named: first-start setup generates one (0600, in the state dir) and jc starts.
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
@@ -532,6 +529,15 @@ async fn a_bad_antares_environment_refuses_to_start() {
         let mode = std::fs::metadata(&generated).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
+
+    // Without the Portal (the one reader of that file) the token is made per boot in memory,
+    // and the file a start with the Portal left is removed.
+    cfg.roles.retain(|m| *m != Module::Portal);
+    let running = jc::start(&cfg, CancellationToken::new())
+        .await
+        .expect("starts with an in-memory token");
+    running.stop().await.expect("stop");
+    assert!(!generated.exists(), "{}", generated.display());
 }
 
 #[tokio::test]
@@ -577,7 +583,7 @@ async fn an_admin_listener_without_a_readable_token_is_refused() {
         .await
         .err()
         .expect("refused");
-    assert!(matches!(err, StartError::Admin(_)), "{err}");
+    assert!(matches!(err, StartError::Config(_)), "{err}");
     assert!(err.to_string().contains("is empty"), "{err}");
 }
 
@@ -670,4 +676,35 @@ async fn another_modules_secret_is_not_readable_through_an_ekiben_stream() {
     assert!(!written.contains(SECRET), "{written}");
 
     running.stop().await.expect("clean stop");
+}
+
+/// The Portal's age identity is read once at start: a missing or unusable file refuses the start,
+/// naming the file and never its content.
+#[tokio::test]
+async fn a_missing_or_unusable_age_key_file_refuses_start() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
+    let fx = fixture();
+    let garbage = fx._dir.path().join("not-an-identity");
+    std::fs::write(&garbage, "jc-test-not-an-age-identity-7Qx2\n").unwrap();
+    for path in [fx._dir.path().join("missing-age-key"), garbage] {
+        let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
+        cfg.portal.age_key_file = Some(path.clone());
+        let err = jc::start(&cfg, CancellationToken::new())
+            .await
+            .err()
+            .expect("refused");
+        assert!(
+            matches!(
+                err,
+                StartError::Module {
+                    module: Module::Portal,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        let said = err.to_string();
+        assert!(said.contains(&path.display().to_string()), "{said}");
+        assert!(!said.contains("7Qx2"), "{said}");
+    }
 }

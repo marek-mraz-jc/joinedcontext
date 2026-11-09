@@ -556,7 +556,13 @@ impl ShakoSigningKey {
                 path.display()
             ))
         })?;
-        if let Ok(text) = std::str::from_utf8(&bytes) {
+        Self::from_text(&bytes)
+    }
+
+    /// Parses a P-256 key as [`ShakoSigningKey::from_file`] reads one (raw 32 bytes, 64-char hex,
+    /// or PKCS#8 PEM), from the bytes a host already holds.
+    pub fn from_text(bytes: &[u8]) -> ShakoResult<Self> {
+        if let Ok(text) = std::str::from_utf8(bytes) {
             let trimmed = text.trim();
             if trimmed.starts_with("-----BEGIN") {
                 use p256::pkcs8::DecodePrivateKey;
@@ -570,7 +576,7 @@ impl ShakoSigningKey {
                 return Self::from_secret_bytes(&decoded);
             }
         }
-        Self::from_secret_bytes(&bytes)
+        Self::from_secret_bytes(bytes)
     }
 
     pub fn from_secret_bytes(raw: &[u8]) -> ShakoResult<Self> {

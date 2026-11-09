@@ -53,6 +53,7 @@ fn setup(test: &str) -> (PathBuf, PathBuf, PathBuf, Options) {
     let options = Options {
         forge: format!("file://{}", forge.display()),
         token_file: None,
+        token: None,
         secrets_dir: None,
         only: None,
     };
@@ -237,4 +238,14 @@ fn a_pass_waits_for_the_one_holding_the_lock() {
     let linked = pass.join().expect("the pass ends").expect("a pass");
     assert!(linked[0].moved);
     assert!(projects.join("ovzdusie/project.yaml").is_file());
+}
+
+#[test]
+fn a_token_held_in_memory_is_used_and_no_token_file_is_read() {
+    let (_forge, work, org, mut options) = setup("checkouts-memory-token");
+    let projects = temp_dir("checkouts-memory-token-projects");
+    options.token = Some(jc_core::Secret::new("held-by-the-host".to_owned()));
+    options.token_file = Some(work.join("no-token-file-here"));
+    let pass = sync(&org, &projects, &options).expect("a pass without reading the file");
+    assert!(pass[0].result.is_ok(), "{:?}", pass[0].result);
 }

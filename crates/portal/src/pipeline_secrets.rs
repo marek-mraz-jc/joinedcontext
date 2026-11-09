@@ -101,7 +101,7 @@ type Environment = BTreeMap<String, String>;
 
 /// `projects/{project}/secrets` of the staged tree, where [`crate::secret_files`] writes a
 /// project's secrets (CC-06): the only files a reference of that project resolves against.
-fn secrets_folder(
+pub(crate) fn secrets_folder(
     repository: &Path,
     project: &str,
     references: &[SecretRef],
@@ -116,6 +116,42 @@ fn secrets_folder(
         });
     }
     Ok(repository.join("projects").join(project).join("secrets"))
+}
+
+/// Checks that `path` holds an age identity, for a host that refuses to start a secret store
+/// without one. The error names the file and the reason, never a key line.
+pub fn check_age_key_file(path: &Path) -> Result<(), String> {
+    identities_from_file(path)
+        .map(|_| ())
+        .map_err(|err| format!("the age identity is unusable: {err}"))
+}
+
+/// Where a host that runs the pipeline runner in its own process (`jc`, ekiben beside the
+/// Portal) takes the runner's environment, in place of the Kubernetes Secret
+/// [`SECRET_NAME`]. Each sync hands the whole environment, an empty one included, so a
+/// credential no pipeline names any more is gone from the runner too.
+pub trait RunnerSecrets: Send + Sync {
+    /// Replaces the runner's variables with `values`. Values are secret: an implementation
+    /// logs names at most.
+    fn replace(&self, values: BTreeMap<String, String>);
+}
+
+static HOST_RUNNER: std::sync::RwLock<Option<std::sync::Arc<dyn RunnerSecrets>>> =
+    std::sync::RwLock::new(None);
+
+/// Hands the runner's environment to `sink` from now on, in place of a Kubernetes Secret. One
+/// Portal runs per process; a host that starts a new one (a restart in a test) replaces the
+/// sink of the stopped one.
+pub fn hand_runner_secrets_to(sink: std::sync::Arc<dyn RunnerSecrets>) {
+    *HOST_RUNNER.write().unwrap_or_else(|e| e.into_inner()) = Some(sink);
+}
+
+/// The host's runner, when one took the environment.
+pub(crate) fn host_runner() -> Option<std::sync::Arc<dyn RunnerSecrets>> {
+    HOST_RUNNER
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 
 /// Resolves references against the configured backend.
@@ -376,6 +412,11 @@ impl RunnerEnvironment {
         self.values.is_empty()
     }
 
+    /// The resolved values, for a host runner ([`RunnerSecrets`]).
+    pub fn values(&self) -> &BTreeMap<String, String> {
+        &self.values
+    }
+
     /// The variables in the Secret, sorted. Names are not secret; values are.
     pub fn variables(&self) -> impl Iterator<Item = &str> {
         self.values.keys().map(String::as_str)
@@ -590,6 +631,28 @@ mod tests {
             .await
             .is_err());
         std::fs::remove_dir_all(&tree).ok();
+    }
+
+    #[test]
+    fn an_age_key_file_is_checked_without_echoing_it() {
+        use age::secrecy::ExposeSecret as _;
+        let dir = std::env::temp_dir().join(format!("jc-age-check-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let good = dir.join("good");
+        std::fs::write(
+            &good,
+            age::x25519::Identity::generate()
+                .to_string()
+                .expose_secret(),
+        )
+        .expect("key");
+        assert_eq!(check_age_key_file(&good), Ok(()));
+        let bad = dir.join("bad");
+        std::fs::write(&bad, "jc-test-not-an-identity-9Kq\n").expect("bad");
+        let said = check_age_key_file(&bad).expect_err("refused");
+        assert!(!said.contains("9Kq"), "{said}");
+        assert!(check_age_key_file(&dir.join("missing")).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -81,6 +81,9 @@ pub(super) fn offered(
         // and connectors; this prompt keeps its 4k-token turn (AG-72), a person reads them on
         // their pages and writes entities on the Endpoint's own.
         .filter(|op| !MCP_ONLY.contains(&op.name.as_str()))
+        // The repository reads reach MCP clients and the Repositories pages; this prompt keeps
+        // its 4k-token turn (AG-72).
+        .filter(|op| !op.name.starts_with("jc_repository_"))
         .collect()
 }
 

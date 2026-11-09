@@ -183,16 +183,18 @@ pub fn config(
 pub fn sync_forge(
     forge: &str,
     repo: &setup::ForgeRepo,
-    token_file: &Path,
+    token: &jc_secret::Secret,
     work: &Path,
 ) -> Result<PathBuf, String> {
     use jc_manifest::assemble::{GitCheckouts, Resolver};
-    let token = crate::runtime::read_secret_file(token_file)?;
     let owner = format!("{}/{}", forge.trim_end_matches('/'), repo.owner);
     let resolver = GitCheckouts {
         cache: work.join("org-cache"),
         forge: owner.clone(),
-        forge_credential: Some(("jc".to_owned(), jc_core::Secret::new(token))),
+        forge_credential: Some((
+            "jc".to_owned(),
+            jc_core::Secret::new(token.expose().to_owned()),
+        )),
         secrets: &|_| Err("jc names no Secret for an outside repository".to_owned()),
     };
     let entry: jc_core::kinds::ProjectSpec = serde_json::from_value(serde_json::json!({
@@ -214,7 +216,8 @@ pub fn sync_forge(
     if layout.trim() == "2" {
         let options = jcctl::commands::checkouts::Options {
             forge: owner,
-            token_file: Some(token_file.to_path_buf()),
+            token_file: None,
+            token: Some(jc_core::Secret::new(token.expose().to_owned())),
             secrets_dir: None,
             only: None,
         };
@@ -246,18 +249,16 @@ fn newly_failed(failed: BTreeSet<String>) -> Vec<String> {
 }
 
 /// Fetches the forge every [`SYNC_EVERY`]; a failed pass keeps the last tree and says why.
-async fn follow_forge(forge: String, repo: setup::ForgeRepo, token_file: PathBuf, work: PathBuf) {
+async fn follow_forge(
+    forge: String,
+    repo: setup::ForgeRepo,
+    token: jc_secret::Secret,
+    work: PathBuf,
+) {
     loop {
         tokio::time::sleep(SYNC_EVERY).await;
-        let (forge, repo, token_file, work) = (
-            forge.clone(),
-            repo.clone(),
-            token_file.clone(),
-            work.clone(),
-        );
-        match tokio::task::spawn_blocking(move || sync_forge(&forge, &repo, &token_file, &work))
-            .await
-        {
+        let (forge, repo, token, work) = (forge.clone(), repo.clone(), token.clone(), work.clone());
+        match tokio::task::spawn_blocking(move || sync_forge(&forge, &repo, &token, &work)).await {
             Ok(Ok(_)) => {}
             Ok(Err(why)) => tracing::warn!(%why, "gateway: the forge checkout failed"),
             Err(e) => tracing::warn!(error = %e, "gateway: the forge checkout stopped"),
@@ -302,7 +303,7 @@ pub async fn build(
     hop: Option<Hop>,
     portal: Option<std::net::SocketAddr>,
 ) -> Result<Router, StartError> {
-    let env = |key: &str| std::env::var(key).ok();
+    let env = crate::config::portal_env;
     let filled = vars(
         ctx.siblings,
         ctx.setup,
@@ -333,11 +334,13 @@ pub async fn build(
             .get(Module::Shako)
             .map(|s| s.internal.clone())
             .ok_or_else(|| err("no shako"))?;
+        // The shako token is held in memory (per boot, or the operator's file read at start).
         let token = ctx
             .setup
-            .path(Secret::ShakoToken)
+            .get(Secret::ShakoToken)
             .ok_or_else(|| err("no shako token"))?
-            .to_path_buf();
+            .value
+            .clone();
         // The repository the Portal writes, read the same way (JC_SHAKO_OWNER, JC_SHAKO_REPO).
         let repo = setup::forge_repo(env).map_err(err)?;
         let work = work_dir(ctx.setup);
@@ -401,7 +404,8 @@ mod tests {
             .unwrap();
         let siblings = Siblings::new(&plans, "0.0.0.0:8443".parse().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let setup = Setup::prepare(dir.path(), &Module::ALL).unwrap();
+        let setup =
+            Setup::prepare(dir.path(), &Module::ALL, &std::collections::BTreeMap::new()).unwrap();
         (siblings, setup, mount, dir)
     }
 

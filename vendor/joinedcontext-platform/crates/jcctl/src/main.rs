@@ -70,6 +70,7 @@ fn repository_command(words: &[&str]) -> ExitCode {
                     &jcctl::commands::checkouts::Options {
                         forge: (*forge).to_owned(),
                         token_file,
+                        token: None,
                         secrets_dir,
                         only,
                     },

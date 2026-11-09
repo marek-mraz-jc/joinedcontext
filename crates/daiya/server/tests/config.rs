@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! The standalone configuration (R2, R8, R11): parsing, the tokens file, datasource secrets
 //! from files, provisioning loaded at start, the Postgres store with its boot check, and the
 //! per-address client identity the public rate limit needs.

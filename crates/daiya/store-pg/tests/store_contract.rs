@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! One behaviour contract for every `DaiyaStore`: the memory store always, the Postgres store
 //! (on the application login role, so forced RLS applies) when `DAIYA_TEST_DATABASE_URL` is
 //! set, with a `SKIP` line otherwise (R8). Postgres-only checks follow: RLS seen through raw
