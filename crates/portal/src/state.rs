@@ -860,8 +860,10 @@ impl AppState {
                 Some(internal) => {
                     deployer.with_validation(internal, Arc::clone(&self.model_schemas))
                 }
-                // jc: the runner beside it posts to the loopback listener once that is bound.
-                None => deployer.with_own_validation(Arc::clone(&self.model_schemas)),
+                None => {
+                    tracing::warn!("no internal listener address for the runner: pipelines are not validated before they write");
+                    deployer.with_models(Arc::clone(&self.model_schemas))
+                }
             };
             let deployer = Arc::new(deployer);
             // The run-and-delete pipelines run from the queue (PL-78).

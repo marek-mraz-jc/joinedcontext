@@ -43,9 +43,8 @@ pub(crate) fn internal_listener_bound(addr: std::net::SocketAddr) {
 /// The capture route's base: `JC_PORTAL_PIPELINE_TEST_CAPTURE_URL`, else this process's own
 /// internal listener when it is bound on loopback, so a runner beside the Portal in one process
 /// (jc, which binds `127.0.0.1:0`) reaches it with no setting; never a guess at a remote address.
-/// [`capture_base`] on this process's internal listener: the capture route's base and the
-/// address the validation stage and the run logs post to.
-pub(crate) fn internal_base(configured: Option<&str>) -> Option<String> {
+/// [`capture_base`] on this process's internal listener: the capture route's base.
+fn internal_base(configured: Option<&str>) -> Option<String> {
     capture_base(configured, INTERNAL_LISTENER.get().copied())
 }
 
