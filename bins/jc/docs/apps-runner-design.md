@@ -30,6 +30,7 @@ two need a build runner.
 | D. own repository, `ui-rust` | 2: air-quality, hsl-transport | 404 | The build is an OCI image in the forge's registry, run as Service `app-{name}` in the project namespace (`reconciler/edge_file.rs:166-175,758-771`). That needs Kubernetes. A standalone jc cannot run it. |
 
 Three side findings:
+
 - The 403s are correct behaviour. A `visibility: roles` App refuses a caller who lacks its role before the root lookup (`static_host.rs:78-106,144-157`). After the fix these Apps stay 403 for the suite's person. The suite should sign in as a role holder, or count 403 on a roles App as "kept out".
 - `repositoryUrl` reads `…/git/user/oauth2/keycloak?redirect_to=%2Fgit%2Fjc-apps%2F…`, which is Gitea's sign-in path (`forge/shako.rs:700-724`). shako-web only redirects there (`crates/shako/web/src/lib.rs:768-797`), so the link works. It is cosmetic.
 - jc names the apps owner `jc-apps` (`bins/jc/src/setup.rs:31`). Dev names it `joinedcontext-apps` (D `_layers/hosted/gitea.yaml.gotmpl:9`). The App binds its repository by `{project}_{app}`, so the import works under either owner. Any carried package must also go under `jc-apps`.
@@ -82,6 +83,7 @@ Every limit above is per deployment. None is per organization.
 ## 2. Options
 
 jc's current state:
+
 - shako serves no Actions at all. `api/src/compat.rs:64-74` answers rows 6-11 with 404, and S16/S17 are "out of scope, run 4" (`crates/shako/STATUS.md:11-17`).
 - shako does serve a generic package registry and OCI `/v2/` with cosign (`crates/shako/registry`).
 - The Portal's build-pod dispatcher, check-and-publish and fetch code are all present in `crates/portal`.
@@ -107,6 +109,7 @@ The reason for d over c2: the Portal already decides what a build is (three fixe
 If the owner later wants arbitrary workflows (CI for App repositories), c2 can come then. d does not block it.
 
 Placement in d:
+
 - **Kubernetes (dev, stage, prod):** the Portal module inside jc creates the same Job as `build_pods.rs` today, in the runner namespace, with the same Role.
 - **Standalone jc (rehearsal, compose):** a slice-5 `jc-builder` container. It takes one build, runs it and exits, and `restart: always` brings it back fresh. This is the same "once" model as `GITEA_RUNNER_ONCE`, with no docker.sock.
 - **The wasm host** stays the separate `jc-wasm-host` (D `components/wasm-host`, unchanged limits), beside jc. It is not a jc module: a wasmtime fault, or N × 64 MiB instances, must not take down the forge, the IdP and the broker together.
@@ -148,6 +151,7 @@ that, fix the suite: `app.repo` needs the shako token in `--state`, which today 
 repository checks, and a role holder must sign in for the 4 + 1 roles Apps.
 
 ### Slice 1: ship the 27 bundles in the jc image (option f)
+
 - **Brief:**
   - Copy the `apps` stage of `crates/portal/Dockerfile:54-190` into `bins/jc/Dockerfile`, with the same `app-integrity.mjs` step, and `COPY --from=apps /srv/apps /srv/apps`. Prefer one shared stage file over a second copy.
   - Set `JC_PORTAL_APPS_DIR=/srv/apps` in jc's Portal sibling wiring (owner of `portal.rs`: jc-portal-integrate).
@@ -159,6 +163,7 @@ repository checks, and a role holder must sign in for the 4 + 1 roles Apps.
 - **Measures:** the image size before and after, and the image build time; `app.served` pass count (expected 27, with 4 as 403-by-design).
 
 ### Slice 2: carry dev's builds (option e)
+
 - **Brief:**
   - jc-migrate's export reads, for every App with `status.build`, generic package `app-{name}` version `{commit}-{digest12}`, and image `app-{name}@{digest}` for the 2 ui-rust Apps. It writes them into the export.
   - The import publishes them to shako under the `jc-apps` owner.
@@ -171,6 +176,7 @@ repository checks, and a role holder must sign in for the 4 + 1 roles Apps.
 - **Measures:** `app.served` (expected 27 + 14), the package bytes carried, and the fetch time per App on the first sync.
 
 ### Slice 3: wasm host beside jc
+
 - **Brief:**
   - Run `jc-wasm-host` (the platform image) and apps-db beside jc, with an S3 store (RustFS in the rehearsal), as `CUTOVER.md` keeps them.
   - Wire `JC_PORTAL_ARTIFACT_STORE_*`, `JC_PORTAL_APPS_DB_URL` and `JC_PORTAL_WASM_*`.
@@ -183,6 +189,7 @@ repository checks, and a role holder must sign in for the 4 + 1 roles Apps.
 - **Measures:** host RSS with 10 Apps, the first-request latency (cold component), and the p50 of the steady state.
 
 ### Slice 4: the fixed build lane, Kubernetes mode (option d)
+
 - **Brief:**
   - **Trigger:** a reconciler pass compares each published forge App's default-branch head (one ref read from shako) with `status.build.commit` and the pending build. Rebuild sets a pending build.
   - **Dispatch:** `build_pods.rs` keeps its pod spec. The `runner` container runs `build-app` and then `lane.mjs put` instead of act_runner. The Secret holds the build token in place of the registration token.
@@ -201,6 +208,7 @@ repository checks, and a role holder must sign in for the 4 + 1 roles Apps.
 - **Measures:** build wall time and peak RSS per class (node, wasm, rust) on helsinki-events, kpi-forecast and air-quality; the `/tmp` peak bytes (which sets the storage limit); the source.tar size; whether each build is reproducible (digest equal to dev's committed digest).
 
 ### Slice 5: standalone builder (compose / rehearsal)
+
 - **Brief:**
   - A `jc-builder` service on the builder image, non-root, read-only root, no docker.sock, on a compose network that reaches only jc.
   - It long-polls `POST /internal/app-builds/claim` with a builder credential read from a file. The Portal keeps one per deployment and rotates it per claim. It gets one build token, runs, and exits.
@@ -211,5 +219,6 @@ repository checks, and a role holder must sign in for the 4 + 1 roles Apps.
 - **Measures:** the same as slice 4, so the two modes can be compared.
 
 ### Not in these slices
+
 - **ui-rust serving in a standalone jc** (class D, 2 Apps). It needs a container runtime. On Kubernetes, slice 4 builds and pushes the image, and the existing reconciler runs it. Standalone stays a documented gap.
 - **Arbitrary workflows (c2):** only if the owner asks for CI in App repositories.
