@@ -206,6 +206,8 @@ printf '[mounts.portal]\npath_prefix = ""\n%s\n' "$db_config" > "$home/jc.toml"
 if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then
   cat "$REHEARSAL_JC_TOML_EXTRA" >> "$home/jc.toml"
 fi
+# shellcheck source=deploy/rehearsal/apps.sh
+. "$here/apps.sh"  # the Apps: image bundles, apps cache, prod builds, roles person (jc-apps-export)
 # The service tokens jc would hold in memory only (shako, ekiben, daiya's Portal password) come
 # from files here instead, so the import and the smoke suites can call those modules too.
 nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \
