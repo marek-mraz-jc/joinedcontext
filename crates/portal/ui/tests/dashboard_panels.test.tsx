@@ -10,7 +10,7 @@ import type { TopLevelSpec } from "vega-lite";
 import "../src/i18n";
 import { loadVega } from "../src/components/panels/VegaChart";
 import type { Spec } from "../src/components/panels/specs";
-import { barChartSpec, gaugeSpec, heatmapSpec, histogramSpec, pieChartSpec, stateTimelineSpec, timeSeriesSpec } from "../src/components/panels/specs";
+import { autoPoints, spanned, barChartSpec, gaugeSpec, heatmapSpec, histogramSpec, pieChartSpec, stateTimelineSpec, timeSeriesSpec } from "../src/components/panels/specs";
 import { FALLBACK } from "../src/components/panels/palette";
 import { PanelView } from "../src/components/panels/PanelView";
 import type { PanelDefinition } from "../src/components/panels/PanelView";
@@ -252,6 +252,33 @@ describe("bargauge", () => {
     render(<BarGaugePanel title="Memory" frames={frames.memory} fieldConfig={{ defaults: { unit: "bytes", thresholds }, overrides: [] }} options={{}} height={120} locale="en" />);
     const key = screen.getByRole("list", { name: "Colours by value" });
     expect(within(key).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["below 715 MiB", "from 715 MiB"]);
+  });
+});
+
+describe("Grafana's auto points", () => {
+  it("draws points while they are no closer than uPlot's 10 px at line width 1", () => {
+    // A 540 px plot holds 55 points at 10 px; Grafana's 1440 shots dot their 50-point lines.
+    expect(autoPoints(55, 540, 1)).toBe(true);
+    expect(autoPoints(56, 540, 1)).toBe(false);
+    expect(autoPoints(25, 540, 3)).toBe(true);
+    expect(autoPoints(31, undefined, 1)).toBe(false);
+  });
+
+  it("connects over nulls as spanNulls says: all when true, gaps up to its ms when a number", () => {
+    const points = [0, 1, 2, 3, 6, 7].map((t) => ({ t: t * 1000, v: t === 2 || t === 6 ? null : t }));
+    expect(spanned(points, false)).toEqual(points);
+    expect(spanned(points, true).map((point) => point.t / 1000)).toEqual([0, 1, 3, 7]);
+    // 1 s..3 s is 2 s, within 2500 ms; 3 s..7 s is 4 s, past it, so that null still breaks.
+    expect(spanned(points, 2500).map((point) => point.t / 1000)).toEqual([0, 1, 3, 6, 7]);
+  });
+
+  it("dots a lone reading between gaps where the line draws no points", () => {
+    const t = (i: number) => frames.FROM + i * 60_000;
+    const gappy: Frame[] = [{ name: "a", fields: [{ name: "Time", type: "time", values: Array.from({ length: 40 }, (_, i) => t(i)) }, { name: "a", type: "number", values: Array.from({ length: 40 }, (_, i) => (i === 20 ? 5 : i > 18 && i < 22 ? null : i)) }] }];
+    const built = timeSeriesSpec(gappy, { options: {}, locale: "en", theme, height: 200, width: 400, from: frames.FROM, to: frames.FROM + 40 * 60_000 });
+    const layers = (built.spec as { layer: { mark: { type: string }; transform?: unknown[] }[] }).layer;
+    expect(layers.filter((layer) => layer.mark.type === "point" && JSON.stringify(layer.transform).includes("lone"))).toHaveLength(1);
+    expect((built.spec as { data: { values: { lone?: boolean; v: number | null }[] } }).data.values.filter((value) => value.lone).map((value) => value.v)).toEqual([5]);
   });
 });
 

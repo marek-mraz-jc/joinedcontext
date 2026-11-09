@@ -234,7 +234,7 @@ export function barGradient(thresholds: Thresholds, value: number, min: number, 
 }
 
 /** The panel's width, read once it is laid out and again when it changes. */
-function useWidth(): [(element: HTMLElement | null) => (() => void) | undefined, number] {
+export function useWidth(): [(element: HTMLElement | null) => (() => void) | undefined, number] {
   const [width, setWidth] = useState(0);
   const ref = useCallback((element: HTMLElement | null) => {
     if (!element) return;
@@ -279,7 +279,7 @@ export function BarGaugePanel({ title, frames, fieldConfig, options, height, loc
               <Tinted color={one.color} className="text-title font-medium tabular-nums">
                 {one.text}
               </Tinted>
-              <span className="flex w-full flex-1 items-end overflow-hidden rounded-sm bg-surface-muted" {...meter(one)}>
+              <span className="flex min-h-32 w-full flex-1 items-end overflow-hidden rounded-sm bg-surface-muted" {...meter(one)}>
                 <Fill share={one.share} color={one.color} paint={paint(one)} vertical />
               </span>
               <span className="max-w-full truncate text-caption">{one.reduced.name}</span>

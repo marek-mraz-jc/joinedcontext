@@ -11866,6 +11866,7 @@
     "timePicker": {
       "search": "Schnellbereiche suchen",
       "noQuick": "Kein Schnellbereich passt.",
+      "browserTime": "Browserzeit",
       "between": "{from} bis {to}",
       "rangeShifted": "{range} + Zeitverschiebung -{shift}",
       "shifted": "Zeitverschiebung -{shift}",

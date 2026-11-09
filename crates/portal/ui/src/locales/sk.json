@@ -11866,6 +11866,7 @@
     "timePicker": {
       "search": "Hľadať rýchle rozsahy",
       "noQuick": "Žiadny rýchly rozsah sa nezhoduje.",
+      "browserTime": "Čas prehliadača",
       "between": "{from} až {to}",
       "rangeShifted": "{range} + posun -{shift}",
       "shifted": "Posun -{shift}",

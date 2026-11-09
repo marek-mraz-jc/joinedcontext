@@ -116,8 +116,27 @@ export function TimePicker({ from, to, now, onChange }: TimePickerProps): JSX.El
           </ul>
         </nav>
       </div>
+      <p className="mt-3 flex flex-wrap gap-x-2 border-t border-border pt-2 text-caption text-fg-muted">
+        <span className="font-semibold text-fg">{t("dashboardView.timePicker.browserTime")}</span>
+        <span>{zoneWords(now)}</span>
+      </p>
     </ToolbarPopover>
   );
+}
+
+/**
+ * The browser's zone as Grafana's time picker footer names it: the zone, its short name and its
+ * offset from UTC at `at` (`Europe/Bratislava, CET UTC+01:00`).
+ */
+export function zoneWords(at: number, zone?: string): string {
+  const format = new Intl.DateTimeFormat("en-GB", { timeZone: zone, timeZoneName: "short" });
+  const name = format.resolvedOptions().timeZone;
+  const short = format.formatToParts(at).find((part) => part.type === "timeZoneName")?.value ?? "";
+  const local = new Date(new Date(at).toLocaleString("en-US", { timeZone: name })).getTime();
+  const utc = new Date(new Date(at).toLocaleString("en-US", { timeZone: "UTC" })).getTime();
+  const minutes = Math.round((local - utc) / 60_000);
+  const offset = `UTC${minutes < 0 ? "-" : "+"}${String(Math.floor(Math.abs(minutes) / 60)).padStart(2, "0")}:${String(Math.abs(minutes) % 60).padStart(2, "0")}`;
+  return `${name}, ${short === offset ? "" : `${short} `}${offset}`;
 }
 
 /** The popover around `target` closes, as a picked menu item closes Grafana's. */
@@ -143,7 +162,7 @@ export function RefreshPicker({ value, onChange, onRefresh }: { value: string; o
         <Icon name="refresh" className="size-4" />
         {t("dashboardView.refreshNow")}
       </Button>
-      <ToolbarPopover label={words(value)} chevron outlined end closeLabel={t("dashboardView.timePicker.close")}>
+      <ToolbarPopover label={words(value)} chevron outlined end tall closeLabel={t("dashboardView.timePicker.close")}>
         <ul role="menu" aria-label={t("dashboardView.refreshEvery")} className="flex flex-col">
           {choices.map((every) => (
             <li key={every} role="none">

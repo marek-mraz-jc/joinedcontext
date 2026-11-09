@@ -9,7 +9,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../src/i18n";
 import { panelQuery, toggled } from "../src/pages/grafana/DashboardPage";
-import { overrideWords, RefreshPicker, rangeWords, TimePicker, TimeRangeControls } from "../src/components/panels/TimePicker";
+import { overrideWords, RefreshPicker, rangeWords, TimePicker, TimeRangeControls, zoneWords } from "../src/components/panels/TimePicker";
 import { absoluteWords, panelRange, QUICK_RANGES, REFRESHES, refreshMs, resolveTime, roundInterval, shiftedRange, zoomedOutRange } from "../src/components/panels/timeRange";
 import timePicker from "./fixtures/grafana-reference/time-picker.json";
 import refreshPicker from "./fixtures/grafana-reference/refresh-picker.json";
@@ -122,6 +122,14 @@ describe("Grafana's time words", () => {
     expect(refreshMs("auto", 7 * 86_400_000, 1440)).toBe(300_000);
     expect(refreshMs("auto", 5 * 60_000, 1440)).toBe(5000);
     expect([refreshMs("1d"), refreshMs("30s"), refreshMs(""), refreshMs("soon")]).toEqual([86_400_000, 30_000, 0, 0]);
+  });
+});
+
+describe("Grafana's time picker footer", () => {
+  it("names the browser's zone, its short name and its UTC offset", () => {
+    expect(zoneWords(Date.UTC(2026, 10, 8), "Europe/Bratislava")).toBe("Europe/Bratislava, CET UTC+01:00");
+    expect(zoneWords(Date.UTC(2026, 6, 8), "Europe/Bratislava")).toBe("Europe/Bratislava, CEST UTC+02:00");
+    expect(zoneWords(Date.UTC(2026, 6, 8), "UTC")).toBe("UTC, UTC UTC+00:00");
   });
 });
 

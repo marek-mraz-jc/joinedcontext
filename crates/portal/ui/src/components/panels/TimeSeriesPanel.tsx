@@ -17,6 +17,7 @@ import { formatWith, timeSeriesSpec } from "./specs";
 import { chartTheme, VegaChart } from "./VegaChart";
 import { Swatch } from "./paint";
 import { useIsPhone } from "../../phone";
+import { useWidth } from "./ValuePanels";
 
 export interface LegendOptions {
   displayMode?: string;
@@ -144,11 +145,14 @@ export function TimeSeriesPanel({ title, frames, fieldConfig, options, from, to,
   const phone = useIsPhone();
   const right = asked.placement === "right" && !phone;
   const legend = right ? asked : { ...asked, placement: "bottom" };
+  const [measure, panelWidth] = useWidth();
+  // A right legend takes two fifths of the panel.
+  const width = right ? Math.round(panelWidth * 0.6) : panelWidth;
   const rows = legend.showLegend === false || legend.displayMode === "hidden" ? 0 : legend.displayMode === "table" ? 30 + 26 * (phone ? count : Math.min(count, 6)) : 36;
   const chartHeight = Math.max(120, right ? height : height - rows);
   const built = useMemo(
-    () => timeSeriesSpec(frames, { fieldConfig, options, from, to, locale, theme: chartTheme(), height: chartHeight, hidden }),
-    [frames, fieldConfig, options, from, to, locale, chartHeight, hidden],
+    () => timeSeriesSpec(frames, { fieldConfig, options, from, to, locale, theme: chartTheme(), height: chartHeight, width: width || undefined, hidden }),
+    [frames, fieldConfig, options, from, to, locale, chartHeight, width, hidden],
   );
   const dateTime = useMemo(
     () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
@@ -179,7 +183,7 @@ export function TimeSeriesPanel({ title, frames, fieldConfig, options, from, to,
     );
   };
   return (
-    <div className={clsx("flex h-full min-w-0 gap-3", right ? "flex-row" : "flex-col")}>
+    <div ref={measure} className={clsx("flex h-full min-w-0 gap-3", right ? "flex-row" : "flex-col")}>
       <VegaChart
         className="min-w-0 flex-1"
         spec={built.spec}

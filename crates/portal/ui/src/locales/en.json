@@ -11866,6 +11866,7 @@
     "timePicker": {
       "search": "Search quick ranges",
       "noQuick": "No quick range matches.",
+      "browserTime": "Browser time",
       "between": "{from} to {to}",
       "rangeShifted": "{range} + timeshift -{shift}",
       "shifted": "Timeshift -{shift}",

@@ -119,8 +119,34 @@ export interface TimeSeriesOptions {
   locale: string;
   theme: ChartTheme;
   height: number;
+  /** The plot's width in px, once laid out: Grafana's `showPoints: auto` reads it. */
+  width?: number;
   /** `timeseries`, or `barchart` drawn over time. */
   hidden?: ReadonlySet<string>;
+}
+
+/**
+ * The points with the nulls Grafana's `spanNulls` connects over taken out: every null when true,
+ * those inside a gap no longer than the number of ms when a number. A null left in breaks the line.
+ */
+export function spanned(points: Series["points"], spanNulls: unknown): Series["points"] {
+  if (spanNulls !== true && typeof spanNulls !== "number") return points;
+  return points.filter((point, at) => {
+    if (point.v !== null) return true;
+    if (spanNulls === true) return false;
+    const before = points.slice(0, at).filter((one) => one.v !== null).pop();
+    const after = points.slice(at + 1).find((one) => one.v !== null);
+    return !before || !after || after.t - before.t > spanNulls;
+  });
+}
+
+/**
+ * Whether `showPoints: auto` draws points, as uPlot decides it: when the points are no closer than
+ * twice the default point size, 2 × (3 + 2 × lineWidth) px. Unmeasured, up to 30 points.
+ */
+export function autoPoints(count: number, width: number | undefined, lineWidth: number): boolean {
+  if (width === undefined || width <= 0) return count <= 30;
+  return count - 1 <= width / (2 * (3 + 2 * lineWidth));
 }
 
 /** The colour of each series: an override's fixed colour, else the palette's next. */
@@ -154,10 +180,18 @@ export function timeSeriesSpec(frames: Frame[], opts: TimeSeriesOptions): { spec
   const custom = first.custom;
   const formatKey = formatterKey(first.unit, first.decimals, opts.locale);
   const shown = series.filter((one) => !opts.hidden?.has(one.name));
-  const values = shown.flatMap((one) => one.points.map((point) => ({ t: point.t, s: one.name, v: point.v })));
+  // A reading with no neighbour on either side is `lone`: Grafana dots it even where it draws no points.
+  const present = (points: Series["points"], at: number) => points[at] !== undefined && points[at].v !== null;
+  const values = shown.flatMap((one) => {
+    const points = spanned(one.points, settingsFor(opts.fieldConfig, one.field).custom.spanNulls);
+    return points.map((point, at) => ({ t: point.t, s: one.name, v: point.v, ...(point.v !== null && !present(points, at - 1) && !present(points, at + 1) ? { lone: true } : {}) }));
+  });
   const drawStyle = custom.drawStyle === "bars" || custom.drawStyle === "points" ? custom.drawStyle : "line";
   const pointCount = Math.max(0, ...shown.map((one) => one.points.length));
-  const showPoints = custom.showPoints === "always" || (custom.showPoints !== "never" && drawStyle === "line" && pointCount <= 30);
+  const lineWidth = typeof custom.lineWidth === "number" ? custom.lineWidth : 1;
+  // The y axis takes ~50 px of the panel, as uPlot's.
+  const plot = opts.width === undefined ? undefined : opts.width - 50;
+  const showPoints = custom.showPoints === "always" || (custom.showPoints !== "never" && drawStyle === "line" && autoPoints(pointCount, plot, lineWidth));
   const fillOpacity = typeof custom.fillOpacity === "number" ? custom.fillOpacity / 100 : 0;
   const stacked = (custom.stacking as { mode?: string } | undefined)?.mode === "normal";
   const domain = shown.map((one) => one.name);
@@ -196,6 +230,9 @@ export function timeSeriesSpec(frames: Frame[], opts: TimeSeriesOptions): { spec
       },
       encoding: { x, y: stacked ? { ...y, stack: "zero" } : y, color },
     });
+    if (!showPoints && values.some((value) => value.lone)) {
+      marks.push({ transform: [{ filter: "datum.lone" }], mark: { type: "point", filled: true, size: 20 }, encoding: { x, y, color } });
+    }
   }
   const tooltipMode = (opts.options?.tooltip as { mode?: string } | undefined)?.mode;
   if (tooltipMode !== "hidden" && tooltipMode !== "none" && values.length > 0) {
