@@ -15,3 +15,4 @@
 ^pipelines/(status|history|held)$  # every run RunnerRefused: the runner lacks JC_GATEWAY_URL, JC_TOKEN_URL, JC_CLIENT_SECRET_<PROJECT> (jc hands ekiben only EKIBEN_VAR_*; jc-portal-1 + jc-migrate, jc-smoke-gate REPORT)
 ^logs/(metrics\.ekiben\.own|rid\.flow\.ekiben-antares)$  # no stream runs in the rehearsal (the pipelines line above), so ekiben has no series and no write reaches the broker
 ^logs/secrets\.log\.shapes$  # false positive: jc's start lists each secret's name and source (`secret="dashboards-password" source="generated"`), no value (jc-smoke-logs)
+^restore/control\.relocatable$  # a restored state dir names the source home: the realm files' $(file:<abs>) secrets (deploy/rehearsal/rehearsal.py:441; kaisatsu resolves only absolute ones, crates/kaisatsu/import/src/lib.rs:372) and the gateway's absolute repo/current link (bins/jc/src/modules/gateway.rs:520); handed to @supervisor (jc-smoke-restore REPORT)
