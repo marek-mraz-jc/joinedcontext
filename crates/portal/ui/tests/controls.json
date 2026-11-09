@@ -59,7 +59,6 @@
     },
     "src/components/ActivityFeed.tsx": {
       "controls": {
-        "Button": 1,
         "Switch": 1
       },
       "tests": [

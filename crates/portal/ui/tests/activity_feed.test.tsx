@@ -371,6 +371,31 @@ describe("a feed of a project out of reach", () => {
   });
 });
 
+// The feed's failure goes through the shared panel (jc-ui-tables): a server failure still offers
+// Retry, and Retry asks the feed again.
+describe("a feed whose read failed on the server", () => {
+  it("offers Retry, which reads the feed again", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({ type: "https://joinedcontext.com/errors/internal", title: "Internal Server Error", status: 500, detail: "the activity store did not answer" }),
+        { status: 500, headers: { "Content-Type": "application/problem+json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <I18nextProvider i18n={i18n}>
+          <ActivityFeed project={PROJECT} />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    const retry = await screen.findByRole("button", { name: en.app.error.retry });
+    const before = fetchMock.mock.calls.length;
+    await userEvent.setup().click(retry);
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(before));
+  });
+});
+
 describe("the tail's reducer", () => {
   it("keeps one copy of an event the page already showed", () => {
     const known = [event({ summary: "One." })];
