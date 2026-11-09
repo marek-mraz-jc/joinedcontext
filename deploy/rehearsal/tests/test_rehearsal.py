@@ -12,6 +12,7 @@ import http.server
 import json
 import os
 import subprocess
+import re
 import sys
 import threading
 import time
@@ -292,6 +293,57 @@ def test_antares_deletes_history_older_than_24_hours_and_never_the_current_state
     assert st == 200 and current["reading"]["value"] == 42, current
 
 
+# ------------------------------------------------------------------------------------------------
+# live: one source for the secrets of the clients jc signs in as, across a restart (F5)
+
+RS_PORT, RS_PG_PORT = 42118, 55448
+JC_CLIENTS = {"portal-api": "KC_PORTAL_API_SECRET", "portal-reconciler": "KC_PORTAL_RECONCILER_SECRET",
+              "context-gateway": "KC_CONTEXT_GATEWAY_SECRET", "jc-assistant": "KC_JC_ASSISTANT_SECRET"}
+
+
+def grant(base, realm, client, secret):
+    st, _ = rh.Http(base).json("POST", f"/id/realms/{realm}/protocol/openid-connect/token", form={
+        "grant_type": "client_credentials", "client_id": client, "client_secret": secret})
+    return st
+
+
+def test_a_restart_signs_jc_in_with_the_realms_secret_of_each_of_its_clients(tmp_path):
+    if not LIVE:
+        pytest.skip("REHEARSAL_LIVE=1 starts a jc and a PostgreSQL container")
+    home = tmp_path / "home"
+    keycloak = home / "rs" / "export" / "keycloak"
+    keycloak.mkdir(parents=True)
+    (keycloak / "realm-rsrealm.json").write_text(json.dumps({"realm": "rsrealm", "enabled": True, "clients": [
+        {"clientId": c, "enabled": True, "publicClient": False, "serviceAccountsEnabled": True,
+         "clientAuthenticatorType": "federated-jwt", "secret": f"$(env:{v})"} for c, v in JC_CLIENTS.items()]}))
+    run_env = dict(os.environ, REHEARSAL_HOME=str(home))
+    up = [str(HERE / "up.sh"), "rs", str(RS_PORT), str(RS_PG_PORT)]
+    base, rs = f"http://localhost:{RS_PORT}", home / "rs"
+    files = dict(rh.STATE_CLIENT_SECRETS)
+    try:
+        subprocess.run(up, env=run_env, check=True, timeout=900)
+        old = {}
+        for client, var in JC_CLIENTS.items():
+            old[client] = (rs / "secrets" / "realm" / var).read_text().strip()
+            assert (rs / "state" / files[client]).read_text().strip() == old[client], client
+            assert grant(base, "rsrealm", client, old[client]) == 200, client
+        # The realm's value changes (a rotated export): the next start signs every client in with it.
+        (rs / "secrets" / "realm" / JC_CLIENTS["jc-assistant"]).write_text("rotated-" + old["jc-assistant"][:8])
+        subprocess.run(up, env=run_env, check=True, timeout=900)
+        new = (rs / "secrets" / "realm" / JC_CLIENTS["jc-assistant"]).read_text().strip()
+        assert (rs / "state" / files["jc-assistant"]).read_text().strip() == new
+        assert grant(base, "rsrealm", "jc-assistant", new) == 200
+        assert grant(base, "rsrealm", "jc-assistant", old["jc-assistant"]) == 401
+        for client in ("portal-api", "portal-reconciler", "context-gateway"):
+            assert grant(base, "rsrealm", client, old[client]) == 200, client
+    finally:
+        for name in ("jc.pid", "retain.pid"):
+            pid = rs / name
+            if pid.exists():
+                subprocess.run(["kill", pid.read_text().strip()], check=False)
+        subprocess.run(["docker", "rm", "-f", "rh-pg-rs"], check=False, capture_output=True)
+
+
 
 def test_a_bundle_still_being_written_is_not_imported(tmp_path):
     (tmp_path / "antares").mkdir()
@@ -331,7 +383,9 @@ def test_the_old_history_check_fails_when_it_cannot_read(tmp_path):
 def test_a_datasource_reads_the_same_endpoint_on_the_rehearsal():
     gw = "http://context-gateway.smartcity.svc.cluster.local:8080/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
     assert rh.rehearsal_endpoint_url(gw, "http://localhost:42102/") == \
-        "http://localhost:42102/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
+        "http://127.0.0.1:42102/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
+    assert rh.rehearsal_endpoint_url(gw, "http://127.0.0.1:42102") == \
+        "http://127.0.0.1:42102/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
     assert rh.rehearsal_endpoint_url("http://prometheus:9090", "http://localhost:42102") == "http://prometheus:9090"
 
 
@@ -807,6 +861,146 @@ def test_a_service_token_jc_holds_in_memory_is_read_from_the_kit_secrets(tmp_pat
     assert rh.read_secret(tmp_path / "state", "antares-admin-token") == "on-disk"
 
 
+def test_every_secret_up_sh_makes_is_long_enough_for_a_jc_token(tmp_path):
+    # dataroom refuses a Portal publisher token under 32 printable characters; up.sh's secret()
+    # makes every token, so each one it makes has 64.
+    fn = subprocess.run(["sed", "-n", "/^secret()/,/^}/p", str(HERE / "up.sh")], capture_output=True, text=True).stdout
+    (tmp_path / "secrets").mkdir()
+    script = f'home={tmp_path}\n{fn}\nfor i in $(seq 30); do cat "$(secret t$i)"; echo; done'
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout.split()
+    assert len(out) == 30 and all(len(t) == 64 and t.isalnum() for t in out)
+
+
+def test_each_pipelines_client_names_the_secret_the_runner_reads():
+    realm = {"clients": [
+        {"clientId": "praha-pipelines", "secret": "$(env:KC_PRAHA_PIPELINES_SECRET)"},
+        {"clientId": "bbsk-pipelines", "secret": "$(KC_BBSK_PIPELINES_SECRET)"},
+        {"clientId": "portal", "secret": "$(env:KC_PORTAL_SECRET)"},
+        {"clientId": "x-pipelines", "secret": "literal"},
+        {"clientId": "y-pipelines"},
+    ]}
+    assert rh.pipeline_clients(realm) == [("bbsk-pipelines", "KC_BBSK_PIPELINES_SECRET"),
+                                          ("praha-pipelines", "KC_PRAHA_PIPELINES_SECRET")]
+
+
+def test_an_imported_realm_hands_its_client_secrets_to_jcs_state_files():
+    realm = {"clients": [
+        {"clientId": "portal-api", "secret": "$(env:KC_PORTAL_API_SECRET)"},
+        {"clientId": "portal-reconciler", "secret": "$(env:KC_PORTAL_RECONCILER_SECRET)"},
+        {"clientId": "context-gateway", "secret": "$(env:KC_CONTEXT_GATEWAY_SECRET)"},
+        {"clientId": "jc-assistant", "secret": "$(env:KC_JC_ASSISTANT_SECRET)"},
+        {"clientId": "agent-proxy", "secret": "$(env:KC_AGENT_PROXY_SECRET)"},
+        {"clientId": "edge", "secret": "$(env:KC_EDGE_SECRET)"},
+    ]}
+    # Every client jc signs in as takes the realm's secret: jc's own state value would clash with
+    # it in the one realm (jc-smoke-live F5: the assistant got no service token).
+    assert rh.state_client_secrets(realm) == [
+        ("assistant-client-secret", "KC_JC_ASSISTANT_SECRET"),
+        ("gateway-client-secret", "KC_CONTEXT_GATEWAY_SECRET"),
+        ("portal-admin-client-secret", "KC_PORTAL_RECONCILER_SECRET"),
+        ("portal-client-secret", "KC_PORTAL_API_SECRET"),
+        ("proxy-client-secret", "KC_AGENT_PROXY_SECRET")]
+
+
+def test_the_rehearsal_signs_in_at_the_realm_of_the_export(tmp_path):
+    assert rh.realm_of(tmp_path) == "jc"
+    (tmp_path / "realm-name.txt").write_text("smartcity\n")
+    assert rh.realm_of(tmp_path) == "smartcity"
+    (tmp_path / "portal-admin-client-secret").write_text("s\n")
+    seen = []
+
+    class H:
+        def json(self, method, path, form=None):
+            seen.append(path)
+            return 200, {"access_token": "t"}
+
+    assert rh.admin_token(H(), tmp_path) == "t"
+    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]
+
+
+def test_an_imported_realm_gets_the_test_persons_admin_group_once():
+    out = rh.add_tester({"realm": "smartcity", "groups": [{"name": "bbsk"}]})
+    assert [g["name"] for g in out["groups"]] == ["bbsk", "platform-admins"]
+    again = rh.add_tester({"groups": out["groups"]})
+    assert [g["name"] for g in again["groups"]].count("platform-admins") == 1
+
+
+def test_up_sh_gives_jc_every_secret_it_holds_only_in_memory():
+    """jc keeps these in memory and removes a stale state copy (jc-secrets), so the suites and the
+    smoke read them only from the file up.sh gives jc."""
+    text = (HERE / "up.sh").read_text()
+    for var in ("JCBIN_SHAKO_TOKEN_FILE", "JCBIN_DATAROOM_PORTAL_TOKEN_FILE", "JCBIN_EKIBEN_TOKEN_FILE",
+                "JCBIN_DAIYA_PORTAL_PASSWORD_FILE"):
+        assert re.search(rf"\bexport {var}\b|{var}=.*; export {var}\b", text), var
+
+
+def test_up_sh_hands_jc_the_deployments_age_identity_in_place_and_refuses_an_open_one(tmp_path):
+    key = tmp_path / "age.key"
+    key.write_text("AGE-SECRET-KEY-1X\n")
+    text = (HERE / "up.sh").read_text()
+    block = text[text.index('if [ -n "${REHEARSAL_AGE_KEY_FILE:-}" ]'):]
+    block = block[:block.index("\nfi\n") + 4]
+    run = lambda mode: subprocess.run(["bash", "-c", f"set -e; {block}\necho \"$JCBIN_PORTAL_AGE_KEY_FILE\""],
+                                      env=dict(os.environ, REHEARSAL_AGE_KEY_FILE=str(key)),
+                                      capture_output=True, text=True) if not key.chmod(mode) else None
+    ok = run(0o600)
+    assert ok.returncode == 0 and ok.stdout.strip() == str(key)
+    bad = run(0o644)
+    assert bad.returncode == 1 and "refused" in bad.stderr
+
+
+def test_only_the_clients_jc_signs_in_as_trade_federated_jwt_for_their_secret():
+    k8s = {"jwt.credential.sub": "system:serviceaccount:smartcity:portal", "jwt.credential.issuer": "kubernetes"}
+    realm = {"clients": [
+        {"clientId": "portal-api", "clientAuthenticatorType": "federated-jwt", "secret": "$(env:A)",
+         "attributes": {**k8s, "post.logout.redirect.uris": "+"}},
+        {"clientId": "context-gateway", "clientAuthenticatorType": "federated-jwt", "attributes": dict(k8s)},
+        {"clientId": "pl-zilina-osm", "clientAuthenticatorType": "federated-jwt", "attributes": dict(k8s)},
+        {"clientId": "praha-pipelines", "clientAuthenticatorType": "client-secret"},
+    ]}
+    out, changed = rh.jc_clients_by_secret(realm)
+    by = {c["clientId"]: c for c in out["clients"]}
+    assert changed == ["context-gateway", "portal-api"]
+    assert by["portal-api"]["clientAuthenticatorType"] == "client-secret"
+    assert by["portal-api"]["attributes"] == {"post.logout.redirect.uris": "+"}
+    assert by["portal-api"]["secret"] == "$(env:A)"
+    assert by["pl-zilina-osm"] == realm["clients"][2]
+    assert by["praha-pipelines"] == realm["clients"][3]
+    assert realm["clients"][0]["clientAuthenticatorType"] == "federated-jwt"
+
+
+def test_an_export_without_service_accounts_gets_the_portals_from_jcs_shipped_realm():
+    shipped = json.loads(rh.SHIPPED_REALM.read_text())
+    realm = {"clients": [{"clientId": "portal-api"}, {"clientId": "portal-reconciler"}],
+             "users": [{"username": "service-account-portal-api", "serviceAccountClientId": "portal-api",
+                        "clientRoles": {"x": ["y"]}}]}
+    out, added = rh.add_service_accounts(realm, shipped)
+    assert added == ["portal-reconciler"]
+    rec = [u for u in out["users"] if u.get("serviceAccountClientId") == "portal-reconciler"][0]
+    assert rec["clientRoles"]["realm-management"] == ["manage-users", "query-groups"]
+    assert [u["clientRoles"] for u in out["users"] if u["serviceAccountClientId"] == "portal-api"] == [{"x": ["y"]}]
+    assert rh.add_service_accounts({"clients": []}, shipped)[1] == []
+
+
+def test_client_urls_of_the_source_host_get_a_twin_on_the_rehearsal_and_keep_their_own():
+    p, d = "https://portal.smartcity.joinedcontext.com", "https://smartcity.joinedcontext.com"
+    realm = {"clients": [
+        {"clientId": "portal-api", "rootUrl": p, "redirectUris": [f"{p}/api/v1/auth/callback"], "webOrigins": [p]},
+        {"clientId": "edge", "redirectUris": [f"{p}/*", f"{d}/apps/*"],
+         "attributes": {"post.logout.redirect.uris": f"{p}/*##https://elsewhere.example/*"}},
+        {"clientId": "other", "redirectUris": ["https://evil.example/smartcity.joinedcontext.com/x"]},
+    ]}
+    out, n = rh.add_rehearsal_origin(realm, "http://localhost:42102/")
+    by = {c["clientId"]: c for c in out["clients"]}
+    assert by["portal-api"]["redirectUris"] == [f"{p}/api/v1/auth/callback", "http://localhost:42102/api/v1/auth/callback"]
+    assert by["portal-api"]["webOrigins"] == [p, "http://localhost:42102"]
+    assert by["edge"]["redirectUris"] == [f"{p}/*", f"{d}/apps/*", "http://localhost:42102/*", "http://localhost:42102/apps/*"]
+    assert by["edge"]["attributes"]["post.logout.redirect.uris"] == f"{p}/*##https://elsewhere.example/*##http://localhost:42102/*"
+    assert by["other"] == realm["clients"][2]
+    assert n == 5
+    assert rh.add_rehearsal_origin({"clients": [{"clientId": "x"}]}, "http://localhost:1") == ({"clients": [{"clientId": "x"}]}, 0)
+
+
 def test_every_kit_secret_is_long_enough_for_the_strictest_reader(tmp_path):
     """up.sh secret(): dataroom refuses a Portal publisher token under 32 printable characters, and
     a base64 secret with its / + = stripped came out shorter about two times in three."""
@@ -820,3 +1014,40 @@ def test_every_kit_secret_is_long_enough_for_the_strictest_reader(tmp_path):
     assert len(values) == 200
     assert all(len(v) >= 32 and v.isascii() and v.isprintable() and " " not in v for v in values)
     assert all((tmp_path / "secrets" / f"s{i}").stat().st_mode & 0o777 == 0o600 for i in range(1, 201))
+
+
+CATALOG = (b"apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: catalog\n"
+           b"  namespace: zilina\n  title: { sk: K }\nspec:\n  publish:\n    ckan:\n"
+           b"      instanceRef: { kind: CkanInstance, name: zilina }\n      license: cc-zero\n"
+           b"  catalog:\n    license: CC0\n")
+
+
+def test_each_catalog_endpoint_publishes_its_own_ckan_name_and_the_old_one_is_an_alias():
+    import yaml
+    named = rh.name_datasets(CATALOG)
+    ckan = yaml.safe_load(named)["spec"]["publish"]["ckan"]
+    assert ckan == {"name": "zilina-catalog", "instanceRef": {"kind": "CkanInstance", "name": "zilina"},
+                    "license": "cc-zero"}
+    assert rh.name_datasets(named) == named
+    # A name already set, another city, another Endpoint, another kind: left as they are.
+    for data in (named.replace(b"zilina-catalog", b"own"), CATALOG.replace(b"namespace: zilina", b"namespace: bbsk"),
+                 CATALOG.replace(b"  name: catalog\n", b"  name: air\n"),
+                 CATALOG.replace(b"kind: Endpoint", b"kind: CkanInstance")):
+        assert rh.name_datasets(data) == data
+    names = sorted(rh.CKAN_NAMES.values())
+    assert len(set(names)) == len(names) == 3
+    assert set(rh.DATASET_ALIASES.values()) <= set(names)
+    assert not set(rh.DATASET_ALIASES) & set(names)
+
+
+def test_the_hub_sources_are_the_deployments_and_a_malformed_list_stops(tmp_path):
+    f = tmp_path / rh.GATEWAY_VALUES
+    f.parent.mkdir(parents=True)
+    f.write_text('env:\n  JC_GATEWAY_ASSISTANT_URL: "http://x"\n  JC_GATEWAY_HUB_KNOWLEDGE_SOURCES: "bbsk/web, praha/web"\n')
+    assert rh.hub_sources(tmp_path) == "bbsk/web,praha/web"
+    f.write_text("env:\n  OTHER: 1\n")
+    assert rh.hub_sources(tmp_path) == ""
+    for bad in ("web", "bbsk/web,../x/y", "bbsk/web/x", "Bbsk/web"):
+        f.write_text(f'  JC_GATEWAY_HUB_KNOWLEDGE_SOURCES: "{bad}"\n')
+        with pytest.raises(SystemExit):
+            rh.hub_sources(tmp_path)

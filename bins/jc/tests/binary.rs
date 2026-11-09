@@ -50,6 +50,30 @@ fn a_start_failure_exits_1() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("cannot listen"));
 }
 
+#[test]
+fn a_dataset_alias_table_a_reader_could_not_trust_stops_the_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("jc.toml");
+    for (table, why) in [
+        ("catalog = \"catalog\"", "an alias of itself"),
+        ("a1 = \"b1\"\nb1 = \"c1\"", "is an alias too"),
+        ("catalog = \"../x\"", "a dataset name is"),
+    ] {
+        std::fs::write(
+            &config,
+            format!("role = \"dataroom\"\nlisten = \"127.0.0.1:0\"\n[dataroom.aliases]\n{table}\n"),
+        )
+        .unwrap();
+        let out = jc().env("JCBIN_CONFIG", &config).output().expect("run jc");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{stderr}");
+        assert!(
+            stderr.contains("[dataroom.aliases]") && stderr.contains(why),
+            "{stderr}"
+        );
+    }
+}
+
 /// Waits for the "jc listening" log line and returns the address it names.
 fn listening_addr(lines: &mut impl Iterator<Item = std::io::Result<String>>) -> String {
     for line in lines.by_ref() {

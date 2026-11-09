@@ -100,6 +100,8 @@ pub async fn build(
     assistant_widget: Option<String>,
 ) -> Result<Router, StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Dataroom, e);
+    dataroom_api::check_aliases(&cfg.aliases)
+        .map_err(|e| err(&format!("[dataroom.aliases] {e}")))?;
     let org_id = OrgId::parse_verified(&cfg.org_id).map_err(|e| err(&e))?;
     let catalogue_id = CatalogueId::parse_verified(&cfg.catalogue_id).map_err(|e| err(&e))?;
     let store = open_store(cfg).await?;
@@ -165,7 +167,10 @@ pub async fn build(
     .with_loopback_default(organizations.is_empty())
     .with_public_base(mount.public_base())
     .with_mount_prefix(mount.path_prefix);
-    Ok(dataroom_api::router(state))
+    Ok(dataroom_api::with_dataset_aliases(
+        dataroom_api::router(state),
+        cfg.aliases.clone(),
+    ))
 }
 
 fn bare_host(host: &str) -> &str {

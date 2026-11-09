@@ -3549,3 +3549,53 @@ async fn a_huge_page_number_answers_an_empty_page() {
         assert_eq!(a.status, StatusCode::OK, "{uri}");
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Renamed datasets (evidence/jc-dev/RENAMES.md).
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn an_old_dataset_name_answers_every_read_as_its_new_one_and_no_write() {
+    let w = world_with(|s| {
+        dataroom_api::with_dataset_aliases(
+            router(s),
+            [("before".to_owned(), "open".to_owned())].into(),
+        )
+    })
+    .await;
+    let app = &w.app;
+    let a = get(app, "/api/3/action/package_show?id=before", None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert_eq!(a.json()["result"]["name"], "open");
+    for uri in [
+        "/dataset/before",
+        "/sk/dataset/before",
+        "/dataset/before.ttl",
+        "/dataset/before/resource/res-open-0",
+        "/api/v1/catalogue/datasets/before",
+    ] {
+        let a = get(app, uri, None).await;
+        assert_eq!(a.status, StatusCode::OK, "{uri}: {}", a.body);
+    }
+    // The alias opens nothing the new name does not: a hidden dataset stays hidden.
+    let w2 = world_with(|s| {
+        dataroom_api::with_dataset_aliases(
+            router(s),
+            [("before".to_owned(), "secret".to_owned())].into(),
+        )
+    })
+    .await;
+    let a = get(&w2.app, "/api/3/action/package_show?id=before", None).await;
+    assert_eq!(ckan_error(&a)["__type"], "Not Found Error", "{}", a.body);
+    // A write names its dataset by its own name: the old one is unknown.
+    let a = ckan(
+        app,
+        "package_patch",
+        Some("tok-admin"),
+        json!({"id": "before", "notes": "x"}),
+    )
+    .await;
+    assert_eq!(ckan_error(&a)["__type"], "Not Found Error", "{}", a.body);
+    let a = get(app, "/api/3/action/package_show?id=open", None).await;
+    assert_ne!(a.json()["result"]["notes"], "x");
+}

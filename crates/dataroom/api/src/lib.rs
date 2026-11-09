@@ -12,9 +12,12 @@
 //! - MCP JSON-RPC 2.0 endpoint (`/mcp`)
 //! - Server-rendered HTML UI (`/`, `/dataset`, `/dataset/{name}`, `/publisher/{name}`)
 
+mod aliases;
 pub mod ckan;
 pub mod feeds;
 pub mod odata_routes;
+
+pub use aliases::{aliased, check_aliases, with_dataset_aliases};
 
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};

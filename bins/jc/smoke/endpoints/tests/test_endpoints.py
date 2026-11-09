@@ -325,3 +325,19 @@ def test_a_person_holds_a_group_grant_by_bare_or_full_path():
     assert p.holds(ex.Grant("g", {"kind": "group", "id": "staff"}, {"retrieveOps"}, []))
     assert p.holds(ex.Grant("u", {"kind": "user", "id": "u1"}, {"retrieveOps"}, []))
     assert not p.holds(ex.Grant("o", {"kind": "group", "id": "others"}, {"retrieveOps"}, []))
+
+
+def test_the_person_realm_and_its_token_call_name_the_state_realm(tmp_path, monkeypatch):
+    import argparse
+    import common
+    import person
+    (tmp_path / "realm-name.txt").write_text("smartcity")
+    assert person.realm_file([], common.realm_of(tmp_path))["realm"] == "smartcity"
+    seen = []
+    monkeypatch.setattr(common.Http, "call", lambda self, m, path, *a, **k: seen.append(path) or (401, {}, b""))
+    for f in (person.PASSWORD_FILE, person.SECRET_FILE):
+        (tmp_path / f).write_text("x")
+    a = argparse.Namespace(base_url="http://127.0.0.1:9", secrets_dir=str(tmp_path), state=str(tmp_path),
+                           out=str(tmp_path / "tok"))
+    assert person.cmd_token(a) == 1
+    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]

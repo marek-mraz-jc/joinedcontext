@@ -337,13 +337,48 @@ pub const KNOWN_FLOW_ALIASES: &[&str] = &[
 ];
 
 fn sha256_json(val: &Value) -> String {
-    let bytes = serde_json::to_vec(val).unwrap_or_default();
-    let digest = Sha256::digest(&bytes);
+    hex(&Sha256::digest(serde_json::to_vec(val).unwrap_or_default()))
+}
+
+fn hex(digest: &[u8]) -> String {
     let mut s = String::with_capacity(64);
     for b in digest {
         s.push_str(&format!("{b:02x}"));
     }
     s
+}
+
+/// What the apply's fast path compares with the last apply: the documents and the current value
+/// of each secret reference in them (`$(file:...)`, `$(env:NAME)`, `$(NAME)`), each value only
+/// as its hash. A rotated secret file or variable behind an unchanged document so re-applies,
+/// where the documents alone read "unchanged" and kept the old secret (jc-smoke-live F5).
+fn apply_checksum(merged: &Value, opts: &ApplyOptions) -> String {
+    fn refs<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
+        match v {
+            Value::String(s) if s.trim().starts_with("$(") && s.trim().ends_with(')') => {
+                out.push(s)
+            }
+            Value::Array(a) => a.iter().for_each(|v| refs(v, out)),
+            Value::Object(o) => o.values().for_each(|v| refs(v, out)),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    refs(merged, &mut found);
+    let mut h = Sha256::new();
+    h.update(sha256_json(merged));
+    for raw in found {
+        h.update([0]);
+        h.update(raw);
+        match resolve_secret_value(raw, "secret", opts) {
+            Ok(value) => {
+                h.update([1]);
+                h.update(Sha256::digest(value));
+            }
+            Err(_) => h.update([2]),
+        }
+    }
+    hex(&h.finalize())
 }
 
 /// True when `raw` is a `$(NAME)` / `$(env:NAME)` reference to a variable that is set nowhere.
@@ -905,7 +940,7 @@ pub async fn apply_realm_files(
 ) -> Result<ApplyReport> {
     let merged = merge_realm_files(files)?;
     let warnings = check_realm_value(&merged, opts)?;
-    let file_checksum = sha256_json(&merged);
+    let file_checksum = apply_checksum(&merged, opts);
 
     let obj = merged
         .as_object()

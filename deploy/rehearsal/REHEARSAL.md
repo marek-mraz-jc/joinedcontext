@@ -83,8 +83,40 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   personas of `demo-users.yaml` (`$REHEARSAL_HOME/demo-users.yaml`) keep e-mail and names; anyone
   else becomes `person-<id>`. The realm file is 0600 in `state/realms`; the counts are in
   `state/realm-<name>-people.json`. Prod gets no people.
+- Realm: jc runs on the export's realm (`[identity] realm` in `jc.toml`: `dev` for dev, `smartcity`
+  for prod; `realms` writes it to `state/realm-name.txt`). That realm keeps its own clients, so each
+  start copies the realm's `portal-api`, `portal-reconciler` and `context-gateway` secrets into jc's
+  state files `portal-client-secret`, `portal-admin-client-secret` and `gateway-client-secret`, and
+  each `<project>-pipelines` client's secret into `secrets/realm/<project>-pipelines`, which jc's
+  `--ekiben-client-secrets-dir` reads for the runner's `JC_CLIENT_SECRET_<PROJECT>`.
+  Those three clients sign in by `federated-jwt` on dev and prod (Keycloak trusts the pod's
+  Kubernetes service account token); jc has no Kubernetes issuer, so `realms` switches only them to
+  `client-secret` and drops their `jwt.credential.*` attributes. Every other client keeps its own.
+  The export carries no users, so the Portal's two service accounts (`service-account-portal-api`,
+  `service-account-portal-reconciler`, with prod's `realm-management` roles) come from jc's shipped
+  realm `crates/kaisatsu/import/realms/jc-portal.json` when the realm lacks them.
+  The rehearsal answers on `http://localhost:<port>`, so each client URL on the source Portal's
+  host (or its domain, where the Apps live) gets a twin on that address beside it (`realms
+  --public-base`); the source URLs stay. Rehearsal only: the cutover runs jc on the source hosts.
+- Dataset names (evidence/jc-dev/RENAMES.md): prod's `helsinki/catalog`, `praha/catalog` and
+  `zilina/catalog` all publish the CKAN name `catalog`, which jc refuses as a collision. `import`
+  writes `spec.publish.ckan.name` `helsinki-catalog`, `praha-catalog` and `zilina-catalog` into
+  them (`rehearsal.py CKAN_NAMES`; listed under `renamed` in the import report), and `jc.toml`
+  gets `[dataroom.aliases] catalog = "zilina-catalog"` (`rehearsal.py aliases`), so a read of
+  `catalog` (package_show, the dataset page, its DCAT files) answers zilina-catalog. The cutover
+  needs the same two changes in the configuration repository and in jc's config.
+- Hub `search_documents`: jc gives the gateway its assistant's internal address
+  (`JC_GATEWAY_ASSISTANT_URL`); up.sh exports `JC_GATEWAY_HUB_KNOWLEDGE_SOURCES` from the
+  deployment clone's context-gateway base-values (`REHEARSAL_DEPLOYMENT`, default
+  `/workspace/joinedcontext-deployment`, main; prod runs the `release` branch).
+- Project secrets (`secretRef`, SOPS files such as praha's `golemio.enc.yaml`): release's files
+  are encrypted to dev's age recipient. `REHEARSAL_AGE_KEY_FILE` names that identity (mode 0600 or
+  0400; up.sh refuses any other); up.sh hands it to jc as `JCBIN_PORTAL_AGE_KEY_FILE` in place, never
+  copied or printed, and the Portal decrypts per sync. Without it those pipelines read
+  SecretUnresolved. The dev cutover gives jc the age identity dev's Portal holds today.
 - Test persons: `smoke` and `shots.py` create their own (`rehearsal-*`, random passwords kept in
-  memory) in realm `jc`; the imported realm gets `rehearsal-tester`.
+  memory) in that realm, in group `platform-admins` (the Portal's default bootstrap admins; added
+  to an imported realm without it, as `rehearsal-tester` is).
 
 ## 3. The 24-hour rule (Antares history only)
 

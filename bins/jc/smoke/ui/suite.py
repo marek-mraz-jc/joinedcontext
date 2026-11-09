@@ -52,7 +52,7 @@ sys.path.insert(0, str(HERE.parent))
 import checks  # noqa: E402
 import personas as ps  # noqa: E402
 import walk  # noqa: E402
-from common import FAIL, SKIP, Http, Results, loopback_only, read_token  # noqa: E402
+from common import FAIL, SKIP, Http, Results, loopback_only, read_token, realm_of  # noqa: E402
 
 LOGIN = "/api/v1/auth/login"
 HEIGHT = {400: 860, 1440: 900}
@@ -74,6 +74,18 @@ def expected_4xx(who: str, status: int, method: str, url: str) -> bool:
     if status == 404 and method == "GET" and re.search(r"/drafts/[A-Za-z]+/[^/?]+$", path):
         return True
     return status == 410 or (status == 404 and re.search(r"/agent-runs/[^/]+/(preview|events)", url) is not None)
+
+
+# The assistant stays a separate component on dev (bins/jc/CUTOVER.md section 1, tasks/GOAL-jc-dev.md
+# "Scope of jc on dev"): its answers behind the Portal's knowledge pages are proven on dev, not on
+# the rehearsal, so a 5xx of one of them is a named skip, as the names suite's search_documents.
+KEPT_ASSISTANT = "kept component: assistant (stays a separate component on dev; the rehearsal runs no assistant)"
+ASSISTANT_PATH = re.compile(r"^http-5xx: \d+ [A-Z]+ /api/v1/projects/[^/]+/knowledge(/|\?|$)")
+
+
+def kept_component(finding: str) -> bool:
+    """Whether `finding` is a 5xx of a kept component's address (the assistant's knowledge reads)."""
+    return bool(ASSISTANT_PATH.match(finding))
 
 
 class Walker:
@@ -157,9 +169,17 @@ class Walker:
                 e = checks.excuse(route, f, self.allow) if portal else None
                 (excused if e else kept).append(f"{f} (excused: {e['task']})" if e else f)
             h1 = self.h1(page)
+            component = [f for f in kept if kept_component(f)]
+            kept = [f for f in kept if not kept_component(f)]
             self.shots.append({"page": f"{area}:{who}:{address}", "area": area, "persona": who, "route": route,
                                "address": address, "width": width, "status": doc_status, "h1": h1,
-                               "file": str(shot.relative_to(self.out)), "findings": kept, "excused": excused})
+                               "file": str(shot.relative_to(self.out)), "findings": kept, "excused": excused,
+                               "kept_component": component})
+            if component and not kept:
+                self.res.skip(f"{area}.page:{who}:{width}:{address}", area, f"{call} at {width} px",
+                              "document < 400, no 5xx, no console error, no page-check finding",
+                              f"{KEPT_ASSISTANT}: {'; '.join(component)[:300]}")
+                continue
             self.res.check(f"{area}.page:{who}:{width}:{address}", area, f"{call} at {width} px",
                            "document < 400, no 5xx, no console error, no page-check finding",
                            "; ".join(kept)[:600] or f"clean (h1 {h1!r}{', ' + str(len(excused)) + ' excused' if excused else ''})",
@@ -409,6 +429,7 @@ def main(argv=None) -> int:
     p.add_argument("--person-token-file", help="unused: the walk signs in through the browser")
     p.add_argument("--shako-token-file")
     p.add_argument("--export", type=Path)
+    p.add_argument("--state", help="the rehearsal's state dir: realm-name.txt names the realm the personas are made in")
     p.add_argument("--project")
     p.add_argument("--personas", default="admin,viewer,outsider")
     p.add_argument("--widths", default="1440,400")
@@ -424,7 +445,7 @@ def main(argv=None) -> int:
     plan = [x for x in ps.plan(a.export, a.project) if x["name"] in a.personas.split(",")]
     passwords: dict[str, str | None] = {}
     token = read_token(a.admin_token_file)
-    admin = ps.Admin(h, token) if token else None
+    admin = ps.Admin(h, token, realm_of(a.state)) if token else None
     for x in plan:
         if not admin:
             x["skip"] = "no --admin-token-file: no test person can be made"
