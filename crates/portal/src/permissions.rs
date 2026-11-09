@@ -2170,4 +2170,87 @@ mod tests {
         assert!(at("t-full").check("Endpoint", Verb::Read, None).is_err());
         assert!(at("espoo").check("RoleBinding", Verb::Read, None).is_err());
     }
+
+    /// T-6692: an Organization administrator's permissions at the organization scope read the
+    /// mirror inside `Mirror::matching` (the Policy and App groups of other Organizations). With a
+    /// reconciler write racing it, the nested read once froze every route of the Portal.
+    #[test]
+    fn an_organization_admins_permissions_finish_while_the_mirror_is_written() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+        let mirror = Arc::new(Mirror::new());
+        mirror.upsert(org(
+            "Organization",
+            "hel",
+            serde_json::json!({ "installation": true }),
+        ));
+        mirror.upsert(org("Organization", "bratislava", serde_json::json!({})));
+        for (project, owner) in [("helsinki", "hel"), ("bratislava", "bratislava")] {
+            mirror.upsert(org(
+                "Project",
+                project,
+                serde_json::json!({ "organizationRef": owner }),
+            ));
+        }
+        mirror.upsert(org(
+            "Role",
+            "org-admin",
+            serde_json::json!({ "rules": [{ "kinds": ["Group", "RoleBinding"],
+                                            "verbs": ["read", "propose"] }] }),
+        ));
+        mirror.upsert(org(
+            "RoleBinding",
+            "bo",
+            serde_json::json!({ "subjects": [{ "user": "bo@ba.sk" }], "role": "org-admin",
+                                "scope": { "organization": "bratislava" } }),
+        ));
+        let policy = |name: &str| {
+            let mut env = org("Policy", name, serde_json::json!({}));
+            env.metadata.namespace = Some("helsinki".to_owned());
+            env
+        };
+        for n in 0..50 {
+            mirror.upsert(policy(&format!("p{n}")));
+        }
+        let bo = Identity {
+            client: None,
+            subject: "sub-bo".to_owned(),
+            username: "bo@ba.sk".to_owned(),
+            email: Some("bo@ba.sk".to_owned()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        };
+        let expected = effective(&mirror, "no-bootstrap", &bo, ORG_NAMESPACE, Utc::now());
+        assert!(expected.check("Group", Verb::Read, None).is_ok());
+        let stop = Arc::new(AtomicBool::new(false));
+        let writer = {
+            let (mirror, stop) = (Arc::clone(&mirror), Arc::clone(&stop));
+            std::thread::spawn(move || {
+                let mut n = 0u32;
+                while !stop.load(Ordering::Relaxed) {
+                    mirror.upsert(policy(&format!("p{}", n % 50)));
+                    n = n.wrapping_add(1);
+                }
+            })
+        };
+        let (done, finished) = mpsc::channel();
+        let reader = Arc::clone(&mirror);
+        std::thread::spawn(move || {
+            let granted = (0..200)
+                .map(|_| effective(&reader, "no-bootstrap", &bo, ORG_NAMESPACE, Utc::now()))
+                .all(|grants| grants.check("Group", Verb::Read, None).is_ok());
+            let _ = done.send(granted);
+        });
+        let outcome = finished.recv_timeout(Duration::from_secs(5));
+        stop.store(true, Ordering::Relaxed);
+        assert_eq!(
+            outcome,
+            Ok(true),
+            "the permission check deadlocked with a mirror write"
+        );
+        writer.join().expect("writer");
+    }
 }
