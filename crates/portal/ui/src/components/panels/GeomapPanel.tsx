@@ -22,7 +22,7 @@ import { colorOf, displayValue, settingsFor } from "./fieldConfig";
 /** Grafana's markers defaults where the layer names none (`green`, 5 px, 0.4). */
 const DEFAULT_MARKER = { color: "green", size: 5, opacity: 0.4 };
 /** The tallest map on a phone, in px: a panel's desktop height is mostly empty ground there. */
-const PHONE_HEIGHT = 360;
+const PHONE_HEIGHT = 440;
 /** The fields a tooltip shows besides the name, Grafana's way: the row's values, a few. */
 const TOOLTIP_FIELDS = 6;
 
@@ -190,18 +190,19 @@ export function GeomapPanel({ title, frames, fieldConfig, options, height, local
   }
   return (
     <div className="flex h-full min-h-0 flex-col gap-1" style={{ height: phone ? Math.min(height, PHONE_HEIGHT) : height }}>
+      {/* What the map shows and what it could not, above it: an overlay would sit under the map's controls on a phone. */}
+      <p className="text-caption text-fg-muted" data-geomap-caption="">
+        {t("dashboardView.geomap.count", { n: markers.features.features.length })}
+        {plain ? ` · ${t("dashboardView.geomap.plain")}` : null}
+      </p>
       {markers.notes.length > 0 ? (
         <p className="flex min-w-0 items-start gap-1 text-caption text-fg" data-geomap-note="">
           <Icon name="info" className="mt-0.5 size-3.5 shrink-0" />
           <span className="min-w-0">{markers.notes.map((note) => t(`dashboardView.geomap.${note.key}`, note.values)).join(" ")}</span>
         </p>
       ) : null}
-      <div className="relative min-h-0 flex-1 overflow-hidden rounded-sm">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-sm">
         <MapLibreView layers={layers} label={t("dashboardView.geomap.label", { title, n: markers.features.features.length })} project={project} fill onReady={onReady} onPlainGround={onPlainGround} />
-        <p className="pointer-events-none absolute left-2 right-12 top-2 w-fit rounded-sm bg-surface px-1.5 py-0.5 text-caption text-fg shadow-1" data-geomap-caption="">
-          {t("dashboardView.geomap.count", { n: markers.features.features.length })}
-          {plain ? ` · ${t("dashboardView.geomap.plain")}` : null}
-        </p>
       </div>
     </div>
   );

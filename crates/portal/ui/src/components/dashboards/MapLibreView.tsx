@@ -416,7 +416,7 @@ export function MapLibreView({
         count.className = "mb-1 pr-6 text-body text-fg-muted";
         count.textContent = t("dashboards.stackedHere", { n: features.length });
         // The list scrolls under a fade, so a cut reading reads as more below, not as a broken line.
-        root.className = "flex max-h-48 flex-col gap-2 divide-y divide-border overflow-y-auto pb-4 [mask-image:linear-gradient(to_bottom,black_80%,transparent)] [&>*+*]:pt-2";
+        root.className = "flex max-h-64 flex-col gap-2 divide-y divide-border overflow-y-auto pb-4 [mask-image:linear-gradient(to_bottom,black_80%,transparent)] [&>*+*]:pt-2";
         for (const feature of features.slice(0, STACKED)) {
           root.append(popupNode(feature, layer.popupProperties, layer.open, layer.titleProperty));
         }

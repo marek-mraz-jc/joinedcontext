@@ -3723,7 +3723,7 @@
     },
     "emptyHint": "Nástěnka je stránka s mapami a čísly, postavená z endpointů, které tento projekt umí čist. Vytvořte jednu nebo požádejte asistenta o nástěnku z toho, co už zveřejňujete.",
     "layerEndpointGone": "Endpoint „{name}“ už v tomto projektu není, proto tato vrstva nemá z čeho vybrat typ ani filtr. Vyberte pro tuto vrstvu jiný endpoint.",
-    "moreHere": "Další zde: {n}",
+    "moreHere": "Další na tomto místě: {n}; přibližte mapu, abyste je rozlišili",
     "stackedHere": "Na tomto místě: {n}"
   },
   "access": {

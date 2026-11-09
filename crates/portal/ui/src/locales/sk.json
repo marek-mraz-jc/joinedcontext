@@ -3723,7 +3723,7 @@
     },
     "emptyHint": "Dashboard je stránka s mapami a číslami, postavená z endpointov, ktoré tento projekt vie čítať. Vytvorte jeden alebo požiadajte asistenta o dashboard z toho, čo už zverejňujete.",
     "layerEndpointGone": "Endpoint „{name}“ už v tomto projekte nie je, preto táto vrstva nemá z čoho vybrať typ ani filter. Vyberte pre túto vrstvu iný endpoint.",
-    "moreHere": "Ďalšie tu: {n}",
+    "moreHere": "Ďalšie na tomto mieste: {n}; priblížte mapu, aby ste ich rozlíšili",
     "stackedHere": "Na tomto mieste: {n}"
   },
   "access": {
