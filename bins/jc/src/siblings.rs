@@ -195,13 +195,19 @@ pub(crate) fn origin(url: &str) -> String {
     }
 }
 
+/// The batch-lane runs the Portal hands jc's own ekiben at once: the deployment's value on dev
+/// and prod (components/portal development-values `JC_PORTAL_PIPELINES_BATCH_CONCURRENCY`,
+/// T-5778). The Portal's default of one ran about four runs a minute against the seed's 5,400
+/// batch runs a day, so a run asked now waited behind the queue for hours.
+const PIPELINE_BATCH_RUNS: &str = "3";
+
 /// The Portal settings `jc` fills from its siblings, for the keys `env` leaves unset.
 ///
 /// | Portal setting | sibling |
 /// |---|---|
 /// | `JC_OIDC_ISSUER`, `JC_OIDC_CLIENT_*`, `JC_KEYCLOAK_ADMIN_URL`, `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_*`, `JC_PORTAL_COOKIE_KEY` | kaisatsu |
 /// | `JC_SHAKO_URL`, `_PUBLIC_URL`, `_OWNER`, `_REPO`, `_TOKEN`, `_APPS_OWNER`, `_APPS_TOKEN`, `_WEBHOOK_SECRET` | shako |
-/// | `JC_PORTAL_PIPELINE_RUNNER_URL`, `JC_PORTAL_PIPELINE_RUNNER_TOKEN` | ekiben |
+/// | `JC_PORTAL_PIPELINE_RUNNER_URL`, `JC_PORTAL_PIPELINE_RUNNER_TOKEN`, `JC_PORTAL_PIPELINES_BATCH_CONCURRENCY` (3) | ekiben |
 /// | `JC_PORTAL_CKAN_URL`, `JC_PORTAL_CKAN_API_URL` (https, EP-67; http only with `JC_PORTAL_CKAN_ALLOW_HTTP=true`) | dataroom |
 /// | `JC_PORTAL_GRAFANA_URL`, `_PUBLIC_URL`, `_USER`, `_PASSWORD` | daiya |
 /// | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | antares |
@@ -291,6 +297,10 @@ pub fn portal_vars(
                     Some(streams.internal.clone()),
                 ),
                 ("JC_PORTAL_PIPELINE_RUNNER_TOKEN", token),
+                (
+                    "JC_PORTAL_PIPELINES_BATCH_CONCURRENCY",
+                    Some(PIPELINE_BATCH_RUNS.to_owned()),
+                ),
             ],
         );
     }
@@ -687,6 +697,7 @@ mod tests {
             &[
                 "JC_PORTAL_PIPELINE_RUNNER_URL",
                 "JC_PORTAL_PIPELINE_RUNNER_TOKEN",
+                "JC_PORTAL_PIPELINES_BATCH_CONCURRENCY",
             ],
             "https",
         );
@@ -694,6 +705,8 @@ mod tests {
             v["JC_PORTAL_PIPELINE_RUNNER_URL"],
             "http://127.0.0.1:8443/streams"
         );
+        // Three batch runs at once, as the deployment runs prod's Portal (T-5778).
+        assert_eq!(v["JC_PORTAL_PIPELINES_BATCH_CONCURRENCY"], "3");
         assert!(!v["JC_PORTAL_PIPELINE_RUNNER_TOKEN"].trim().is_empty());
     }
 
