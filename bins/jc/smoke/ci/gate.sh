@@ -41,6 +41,8 @@ args=(--base-url "http://localhost:$port" --out "$out" --export "$export_dir" --
 [ "${SMOKE_E2E:-0}" = 1 ] && args+=(--e2e)
 # The logs suite also looks for every secret value of the rehearsal in the log.
 args+=(--with "logs=--secrets-dir $home/secrets")
+# The names suite reads the imported realm's client list as its own portal-reconciler.
+args+=(--with "names=--realm-secrets-dir $home/secrets/realm")
 # Bounded: each run is polled until it ends, so ten runs of five minutes outlast the job.
 args+=(--with "pipelines=--runs 3 --wait 120")
 # Failures the gate knows, each with where it is filed; only a new one turns the verdict red.

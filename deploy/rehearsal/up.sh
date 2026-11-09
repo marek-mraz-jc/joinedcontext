@@ -147,7 +147,11 @@ export JC_PORTAL_CKAN_URL=https://catalogue.rehearsal.invalid JC_PORTAL_CKAN_API
 # The CkanInstances name apiTokenRef.envVar CKAN_API_TOKEN: here it is jc's own dataroom publisher
 # token (Read and Propose on the rehearsal's default catalogue), given to jc as a file: jc holds its
 # own per boot in memory only.
-CKAN_API_TOKEN=$(cat "$(secret catalogue-token)"); export CKAN_API_TOKEN
+# dataroom wants at least 32 printable characters: 32 random bytes as hex, made once.
+if [ ! -s "$home/secrets/catalogue-token" ]; then
+  (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$home/secrets/catalogue-token")
+fi
+CKAN_API_TOKEN=$(cat "$home/secrets/catalogue-token"); export CKAN_API_TOKEN
 # The Portal's shako token likewise: rehearsal.py import and the smoke suites read it from here.
 export JCBIN_DATAROOM_PORTAL_TOKEN_FILE=$home/secrets/catalogue-token
 JCBIN_SHAKO_TOKEN_FILE=$(secret shako-token); export JCBIN_SHAKO_TOKEN_FILE
