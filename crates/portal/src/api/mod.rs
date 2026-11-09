@@ -25,6 +25,7 @@ pub mod basemap;
 pub mod blueprints;
 pub mod branding;
 pub mod brokers;
+pub mod build_listener;
 pub mod bundle_models;
 pub mod catalogue;
 pub mod catalogue_draft;

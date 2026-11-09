@@ -1,5 +1,5 @@
 {
- "fetchedAt": "2026-11-09T10:31:57Z",
+ "fetchedAt": "2026-11-09T18:37:06Z",
  "base": "https://opendata.smartcity.joinedcontext.com",
  "organizations": [
   "banskabystrica",
@@ -712,7 +712,7 @@
   "zilina-uniza",
   "zilina-zeleznicne-stanice"
  ],
- "searchCount": 627,
+ "searchCount": 626,
  "listedNotFound": [
   "bb-aktuality",
   "bb-dtm-bb-register-adries",
@@ -788,11 +788,14 @@
   "bbsk-zoznam-poskytovatelov-socialnych-sluzieb-v-bbk-9ab090",
   "bbsk-zoznam-ucinnych-vseobecne-zavaznych-nariadeni-vzn-80db50"
  ],
+ "searchDuplicates": {
+  "bratislava-pocet-nevybavenych-ziadosti-do-ms-podla": 2
+ },
  "perOrganization": {
   "barcelona": 18,
   "bbsk": 22,
   "hel-fi": 31,
-  "bratislava": 451,
+  "bratislava": 450,
   "praha": 41,
   "banskabystrica": 6,
   "zilina": 9,
@@ -802,7 +805,8 @@
   "pages": 7,
   "totalItems": 627,
   "catalogNodes": 7,
-  "datasetNodes": 626
+  "datasetNodes": 626,
+  "distinctDatasets": 626
  },
  "datasets": {
   "air-quality": {
@@ -1652,8 +1656,8 @@
   },
   "bratislava-pocet-nevybavenych-ziadosti-do-ms-podla": {
    "organization": "bratislava",
-   "resources": 7,
-   "dcatDistributions": 7
+   "resources": 15,
+   "dcatDistributions": 15
   },
   "bratislava-pocet-obyvatelov-v-mestskych-castiach-v": {
    "organization": "bratislava",

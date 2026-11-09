@@ -647,6 +647,7 @@ impl HarvestEngine {
         source: &HarvestSource,
         cat_allowed_hosts: &[String],
         lang: &str,
+        hidden: &BTreeMap<String, String>,
         kept: Vec<(String, Dataset)>,
         mut skipped: Vec<HarvestSkippedItem>,
     ) -> Result<Gathered> {
@@ -713,6 +714,26 @@ impl HarvestEngine {
                 continue;
             }
             ds.distributions = dists;
+            // prod's sheet (`od_sheet`): for a dataset the publish gate leaves visible whose
+            // Endpoint answers the file. A refusal (a 4xx, a body over the cap) means none, as on
+            // prod; a 429, 5xx or broken read, where prod retries and then fails the whole run,
+            // means none this run and is asked again on the next (C9: the other datasets go on).
+            // ponytail: the probe reads the whole file under MAX_HARVEST_BYTES; prod's cap is 50 MB.
+            if !hidden.contains_key(&ds.name) {
+                let url = crate::converted::sheet_address(&root, entry);
+                if self
+                    .checked_fetch(&url, source, cat_allowed_hosts, "text/csv")
+                    .await
+                    .is_ok()
+                {
+                    let n = ds.distributions.len();
+                    ds.distributions
+                        .push(crate::converted::sheet(&root, entry, &ds.id, lang, n));
+                }
+            }
+            // The platform's own dataset, not a copy of the source's: its IRI is the catalogue's
+            // (prod's DCAT names it by its CKAN address), the source stays its landing page.
+            ds.uri = None;
             ds.endpoint_url = Some(root.clone());
             ds.extras.insert("endpoint".into(), root);
             let hash = crate::sources::compute_harvest_hash(&ds);
@@ -854,6 +875,7 @@ impl HarvestEngine {
                         source,
                         &cat.allowed_outbound_hosts,
                         &cat.default_language,
+                        &cat.hidden_datasets,
                         kept,
                         skipped,
                     )

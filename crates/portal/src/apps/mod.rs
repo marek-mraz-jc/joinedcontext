@@ -6,6 +6,8 @@ pub mod ai;
 pub mod apps_db;
 /// A build pod per App and its own build cache (AP-130, AP-131).
 pub mod build_pods;
+/// The builds the Portal starts itself, in place of the forge's workflow runs (AP-130).
+pub mod build_records;
 /// A lane's `status.build`, checked against the forge and published (AP-101, AP-104).
 pub mod built;
 /// The reconciler that compiles an App into its runtime and its grants (T-0227).

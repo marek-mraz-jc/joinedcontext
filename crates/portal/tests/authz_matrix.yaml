@@ -138,6 +138,22 @@ routes:
   - route: GET /internal/agent-runs/{id}/diagnostics/{component}/{name}
     rule: "workload:agent-proxy"
     expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: GET /builds/{id}/source
+    rule: "build-token"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the build listener's own port alone serves it, to the one running build whose token it is; the Portal's listener answers 404 to everyone (DESIGN.md option d)"
+  - route: PUT /builds/{id}/artifacts/{name}
+    rule: "build-token"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the build listener's own port alone serves it, to the one running build whose token it is; the Portal's listener answers 404 to everyone (DESIGN.md option d)"
+  - route: PUT /builds/{id}/log
+    rule: "build-token"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the build listener's own port alone serves it, to the one running build whose token it is; the Portal's listener answers 404 to everyone (DESIGN.md option d)"
+  - route: POST /builds/{id}/finish
+    rule: "build-token"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the build listener's own port alone serves it, to the one running build whose token it is; the Portal's listener answers 404 to everyone (DESIGN.md option d)"
   - route: POST /internal/model-key
     rule: "workload:agent-proxy"
     expect: [401, 401, 401, 401, 401, 401, 401, 401]
@@ -962,6 +978,9 @@ routes:
     rule: "project-verb:propose:App"
     expect: [403, 403, 403, allow, 403, allow, 404, 403]
   - route: GET /projects/{project}/apps/{name}/builds
+    rule: "project-verb:read:App"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/apps/{name}/builds/{id}/log
     rule: "project-verb:read:App"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]
   - route: POST /projects/{project}/apps/{name}/restore

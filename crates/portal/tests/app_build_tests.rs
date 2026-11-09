@@ -1,14 +1,19 @@
-//! The App page's build: the repository, the newest run and the package, and Rebuild as a
-//! dispatch of the application's own workflow (AP-103, ADR-N-028, T-2609).
+//! The App page's build: the repository, the newest build and the package, and Rebuild as a
+//! build the Portal queues itself (AP-103, ADR-N-028, T-2609, jc build lane). The builds come
+//! from the Portal's own record; the tests that read it skip without
+//! `JC_PORTAL_TEST_DATABASE_URL`.
 
 mod common;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
-use wiremock::matchers::{body_json, method, path, query_param};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use common::build_lane::Work;
 use common::{checked_send as send, envelope, person};
+use joinedcontext_portal::apps::build_pods::Class;
+use joinedcontext_portal::apps::build_records::{self, Trigger};
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::state::AppState;
@@ -76,6 +81,53 @@ fn state_with(shako: &MockServer, git: bool) -> AppState {
     state
 }
 
+/// [`state_with`] on a Portal that builds Apps, its builds in `db`.
+fn lane_state(shako: &MockServer, git: bool, db: &sqlx::PgPool, work: &Work) -> AppState {
+    let state = state_with(shako, git);
+    let mut config = (*state.config).clone();
+    config.build_pods = Some(common::build_lane::settings(work.path()));
+    let mut lane = state.with_db(db.clone());
+    lane.config = std::sync::Arc::new(config);
+    lane
+}
+
+/// A build of bikes at `commit` that ended `Ok(digest)` or `Err(reason)`, started at `started`
+/// and finished `seconds` later; its id.
+async fn recorded(
+    db: &sqlx::PgPool,
+    commit: &str,
+    outcome: Result<&str, &str>,
+    started: &str,
+    seconds: i64,
+) -> i64 {
+    let id = build_records::enqueue(
+        db,
+        "helsinki",
+        "bikes",
+        commit,
+        Class::Node,
+        Trigger::Push,
+        None,
+    )
+    .await
+    .expect("queued");
+    build_records::start(db, id, "t", chrono::Duration::minutes(25))
+        .await
+        .expect("started");
+    build_records::finish(db, id, outcome).await.expect("ended");
+    sqlx::query(
+        "UPDATE app_builds SET started_at = $2::timestamptz, \
+         finished_at = $2::timestamptz + make_interval(secs => $3) WHERE id = $1",
+    )
+    .bind(id)
+    .bind(started)
+    .bind(seconds as f64)
+    .execute(db)
+    .await
+    .expect("times");
+    id
+}
+
 async fn forge_with_a_run() -> MockServer {
     let shako = MockServer::start().await;
     Mock::given(method("GET"))
@@ -115,12 +167,16 @@ async fn dispatches(shako: &MockServer) -> Vec<String> {
         .collect()
 }
 
-/// AP-103, PF-81: the page links the repository, the newest run and the package of the build,
-/// each behind the forge's sign-in, and offers Rebuild only to a person who may propose an App.
+/// AP-103, PF-81: the page links the repository behind the forge's sign-in, the newest build
+/// with its log, and the package of the build, and offers Rebuild only to a person who may
+/// propose an App.
 #[tokio::test]
-async fn the_build_links_the_repository_the_run_and_the_package_behind_the_forge_sign_in() {
+async fn the_build_links_the_repository_the_newest_build_and_the_package() {
+    let db = db_or_skip!();
+    let work = Work::new();
     let shako = forge_with_a_run().await;
-    let state = state_with(&shako, true);
+    let state = lane_state(&shako, true, &db, &work);
+    let id = recorded(&db, COMMIT, Ok("sha256:ab"), "2026-10-07T08:00:00Z", 185).await;
     const URI: &str = "/api/v1/projects/helsinki/apps/bikes/build";
 
     let answer = send(&state, person("jana"), "GET", URI, None).await;
@@ -143,8 +199,13 @@ async fn the_build_links_the_repository_the_run_and_the_package_behind_the_forge
             "status": "completed",
             "conclusion": "success",
             "commit": COMMIT,
-            "url": login("%2Ftest-owner%2Fhelsinki_bikes%2Factions%2Fruns%2F7"),
-            "number": 7,
+            "url": format!(
+                "{}/api/v1/projects/helsinki/apps/bikes/builds/{id}/log",
+                state.config.public_base_url.as_str().trim_end_matches('/')
+            ),
+            "number": id,
+            "startedAt": "2026-10-07T08:00:00Z",
+            "completedAt": "2026-10-07T08:03:05Z",
         })
     );
     assert_eq!(
@@ -183,34 +244,158 @@ async fn the_build_links_the_repository_the_run_and_the_package_behind_the_forge
     );
 }
 
-/// AP-103: Rebuild dispatches `build.yml` of the App's own repository on its default branch,
-/// whatever repository the manifest names; a reader is refused and nothing is dispatched.
+/// AP-103: a build's log is the App's readers' to read; a stranger and a build of another App
+/// get the same 404.
 #[tokio::test]
-async fn rebuild_dispatches_the_apps_own_workflow_on_its_default_branch() {
+async fn a_builds_log_is_read_by_the_apps_readers_only() {
+    let db = db_or_skip!();
+    let work = Work::new();
     let shako = forge_with_a_run().await;
-    Mock::given(method("POST"))
-        .and(path(format!("{REPO}/Shako.DispatchWorkflow")))
-        .and(body_json(json!({ "File": "build.yml", "Ref": "main" })))
-        .respond_with(ResponseTemplate::new(204))
-        .expect(1)
-        .mount(&shako)
+    let state = lane_state(&shako, true, &db, &work);
+    let id = recorded(
+        &db,
+        COMMIT,
+        Err("vitest: 2 failed"),
+        "2026-10-07T08:00:00Z",
+        20,
+    )
+    .await;
+    let other = build_records::enqueue(
+        &db,
+        "helsinki",
+        "trams",
+        COMMIT,
+        Class::Node,
+        Trigger::Push,
+        None,
+    )
+    .await
+    .expect("queued");
+    let uri = |id: i64| format!("/api/v1/projects/helsinki/apps/bikes/builds/{id}/log");
+
+    let read = send(&state, person("vera"), "GET", &uri(id), None).await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+    assert!(
+        read.text.contains("failed: vitest: 2 failed"),
+        "{}",
+        read.text
+    );
+    let stranger = send(&state, person("otto"), "GET", &uri(id), None).await;
+    assert_eq!(stranger.status, StatusCode::NOT_FOUND);
+    let foreign = send(&state, person("vera"), "GET", &uri(other), None).await;
+    assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+}
+
+/// The repository's head and the template's build workflow at it.
+async fn head_with_workflow(shako: &MockServer, workflow: Option<&str>) {
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Branches('main')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": COMMIT })))
+        .mount(shako)
         .await;
-    let state = state_with(&shako, true);
+    use base64::Engine;
+    let file = match workflow {
+        Some(text) => ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "f1",
+            "Content": base64::engine::general_purpose::STANDARD.encode(text),
+        })),
+        None => ResponseTemplate::new(404),
+    };
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", "'.gitea/workflows/build.yml'"))
+        .and(query_param("@r", format!("'{COMMIT}'")))
+        .respond_with(file)
+        .mount(shako)
+        .await;
+}
+
+/// AP-103: Rebuild queues a build of the head of the App's own repository, of the class its
+/// workflow names, whatever repository the manifest names; a reader is refused and nothing is
+/// queued; a second Rebuild keeps one build waiting.
+#[tokio::test]
+async fn rebuild_queues_a_build_of_the_head_of_the_apps_own_repository() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let shako = forge_with_a_run().await;
+    head_with_workflow(
+        &shako,
+        Some("jobs:\n  build:\n    runs-on: app-build-rust\n"),
+    )
+    .await;
+    let state = lane_state(&shako, true, &db, &work);
     const URI: &str = "/api/v1/projects/helsinki/apps/bikes/rebuild";
 
     let refused = send(&state, person("vera"), "POST", URI, None).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
     assert!(
-        dispatches(&shako).await.is_empty(),
-        "a reader dispatched a build"
+        build_records::next_pending(&db)
+            .await
+            .expect("read")
+            .is_none(),
+        "a reader queued a build"
     );
 
-    let accepted = send(&state, person("jana"), "POST", URI, None).await;
-    assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
+    for _ in 0..2 {
+        let accepted = send(&state, person("jana"), "POST", URI, None).await;
+        assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
+    }
+    let builds = build_records::latest(&db, "helsinki", "bikes", 10)
+        .await
+        .expect("read");
+    assert_eq!(builds.len(), 1, "one build waits per App");
+    let build = &builds[0];
     assert_eq!(
-        dispatches(&shako).await,
-        vec![format!("{REPO}/Shako.DispatchWorkflow")]
+        (
+            build.commit.as_str(),
+            build.class(),
+            build.trigger.as_str(),
+            build.requested_by.as_deref(),
+            build.state.as_str()
+        ),
+        (COMMIT, Class::Rust, "rebuild", Some("jana"), "pending")
     );
+    let page = body(
+        &send(
+            &state,
+            person("jana"),
+            "GET",
+            "/api/v1/projects/helsinki/apps/bikes/build",
+            None,
+        )
+        .await
+        .text,
+    );
+    assert_eq!(page["run"]["status"], "queued");
+}
+
+/// AP-100: a repository whose head carries no App build workflow has nothing to build: 409 with
+/// the reason, and nothing queued.
+#[tokio::test]
+async fn a_head_without_the_build_workflow_is_not_rebuilt() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let shako = forge_with_a_run().await;
+    head_with_workflow(&shako, None).await;
+    let state = lane_state(&shako, true, &db, &work);
+    let refused = send(
+        &state,
+        person("jana"),
+        "POST",
+        "/api/v1/projects/helsinki/apps/bikes/rebuild",
+        None,
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text);
+    assert!(
+        refused.text.contains(".gitea/workflows/build.yml"),
+        "{}",
+        refused.text
+    );
+    assert!(build_records::latest(&db, "helsinki", "bikes", 10)
+        .await
+        .expect("read")
+        .is_empty());
 }
 
 /// AP-100, AP-103: an App that names no repository of its own has no build on the forge; the
@@ -257,28 +442,11 @@ async fn an_app_not_built_on_the_forge_has_no_links_and_no_rebuild() {
         .is_empty());
 }
 
-/// AP-103: a dispatch the forge refuses is a `503` with the forge's own words, and a repository
-/// without a run yet is a page with no run rather than an error.
+/// AP-103: on a Portal that builds nothing, Rebuild is a `503` that says so, nothing reaches the
+/// forge, and the page shows no build rather than an error.
 #[tokio::test]
-async fn a_refused_dispatch_says_the_forges_reason_and_no_run_is_no_error() {
+async fn without_builds_configured_rebuild_says_so_and_the_page_has_no_build() {
     let shako = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path(format!("{REPO}/WorkflowRuns")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
-        .mount(&shako)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(REPO))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
-        .mount(&shako)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(format!("{REPO}/Shako.DispatchWorkflow")))
-        .respond_with(
-            ResponseTemplate::new(422).set_body_string("Actions are disabled for this repository"),
-        )
-        .mount(&shako)
-        .await;
     let state = state_with(&shako, true);
 
     let page = body(
@@ -309,10 +477,15 @@ async fn a_refused_dispatch_says_the_forges_reason_and_no_run_is_no_error() {
         refused.text
     );
     assert!(
-        refused.text.contains("Actions are disabled"),
+        refused.text.contains("JC_PORTAL_BUILD_NAMESPACE"),
         "{}",
         refused.text
     );
+    assert!(shako
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .is_empty());
 }
 
 const BUILD: &str = "/api/v1/projects/helsinki/apps/bikes/build";
@@ -391,37 +564,35 @@ async fn in_layout_2_the_configuration_link_is_the_projects_own_repository_for_i
     );
 }
 
-/// T-3245: a running build is shown against the newest finished successful run, and the run
-/// carries its number and times, so a client tells the run it started from the one before.
+/// T-3245: a running build is shown against the newest finished successful build, and the run
+/// carries its number and times, so a client tells the build it started from the one before.
 #[tokio::test]
-async fn a_build_carries_its_runs_number_and_times_and_the_estimate_of_the_last_success() {
+async fn a_build_carries_its_number_and_times_and_the_estimate_of_the_last_success() {
+    let db = db_or_skip!();
+    let work = Work::new();
     let shako = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path(format!("{REPO}/WorkflowRuns")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "value": [
-                { "Number": 9, "Status": "in_progress", "HeadSha": COMMIT, "StartedAt": "2026-10-07T10:00:00Z" },
-                {
-                    "Number": 8,
-                    "Status": "completed",
-                    "Conclusion": "failure",
-                    "HeadSha": COMMIT,
-                    "StartedAt": "2026-10-07T09:00:00Z",
-                    "CompletedAt": "2026-10-07T09:00:20Z"
-                },
-                {
-                    "Number": 7,
-                    "Status": "completed",
-                    "Conclusion": "success",
-                    "HeadSha": COMMIT,
-                    "StartedAt": "2026-10-07T08:00:00Z",
-                    "CompletedAt": "2026-10-07T08:03:05Z"
-                }
-            ]
-        })))
-        .mount(&shako)
-        .await;
-    let state = state_with(&shako, true);
+    let state = lane_state(&shako, true, &db, &work);
+    recorded(&db, COMMIT, Ok("sha256:ab"), "2026-10-07T08:00:00Z", 185).await;
+    recorded(&db, COMMIT, Err("tests failed"), "2026-10-07T09:00:00Z", 20).await;
+    let running = build_records::enqueue(
+        &db,
+        "helsinki",
+        "bikes",
+        COMMIT,
+        Class::Node,
+        Trigger::Rebuild,
+        Some("jana"),
+    )
+    .await
+    .expect("queued");
+    build_records::start(&db, running, "t", chrono::Duration::minutes(25))
+        .await
+        .expect("started");
+    sqlx::query("UPDATE app_builds SET started_at = '2026-10-07T10:00:00Z' WHERE id = $1")
+        .bind(running)
+        .execute(&db)
+        .await
+        .expect("time");
     let answer = send(
         &state,
         person("jana"),
@@ -432,26 +603,32 @@ async fn a_build_carries_its_runs_number_and_times_and_the_estimate_of_the_last_
     .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
     let build = body(&answer.text);
-    assert_eq!(build["run"]["number"], json!(9));
+    assert_eq!(build["run"]["number"], json!(running));
     assert_eq!(build["run"]["status"], json!("in_progress"));
     assert_eq!(build["run"]["startedAt"], json!("2026-10-07T10:00:00Z"));
     assert!(build["run"].get("completedAt").is_none(), "{build}");
-    // The failed run is no estimate; the last success took 3 min 5 s.
+    // The failed build is no estimate; the last success took 3 min 5 s.
     assert_eq!(build["typicalSeconds"], json!(185), "{build}");
 }
 
-/// No successful run yet is no estimate rather than a guess.
+/// No successful build yet is no estimate rather than a guess.
 #[tokio::test]
 async fn without_a_finished_success_there_is_no_estimate() {
+    let db = db_or_skip!();
+    let work = Work::new();
     let shako = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path(format!("{REPO}/WorkflowRuns")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "value": [{ "Number": 1, "Status": "queued", "HeadSha": COMMIT }]
-        })))
-        .mount(&shako)
-        .await;
-    let state = state_with(&shako, true);
+    let state = lane_state(&shako, true, &db, &work);
+    let queued = build_records::enqueue(
+        &db,
+        "helsinki",
+        "bikes",
+        COMMIT,
+        Class::Node,
+        Trigger::Push,
+        None,
+    )
+    .await
+    .expect("queued");
     let answer = send(
         &state,
         person("jana"),
@@ -462,32 +639,25 @@ async fn without_a_finished_success_there_is_no_estimate() {
     .await;
     let build = body(&answer.text);
     assert!(build.get("typicalSeconds").is_none(), "{build}");
-    assert_eq!(build["run"]["number"], json!(1));
+    assert_eq!(build["run"]["number"], json!(queued));
 }
 
 const OLD: &str = "9a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
 const OTHER: &str = "1111111111111111111111111111111111111111";
 
-/// A forge with the current build, an earlier one built twice, a failed run, the two trees and
-/// the forge's write routes.
+/// The current build, an earlier one built twice and a failed build of another commit, in the
+/// Portal's record; their ids.
+async fn builds_recorded(db: &sqlx::PgPool) -> (i64, i64) {
+    recorded(db, OLD, Ok("sha256:01"), "2026-10-05T08:00:00Z", 60).await;
+    let old = recorded(db, OLD, Ok("sha256:02"), "2026-10-05T08:10:00Z", 60).await;
+    let current = recorded(db, COMMIT, Ok("sha256:ab"), "2026-10-05T08:20:00Z", 60).await;
+    recorded(db, OTHER, Err("tests failed"), "2026-10-05T08:30:00Z", 60).await;
+    (current, old)
+}
+
+/// A forge with the two trees and the forge's write routes.
 async fn forge_with_builds() -> MockServer {
     let shako = MockServer::start().await;
-    let run = |number: u64, commit: &str, conclusion: &str| {
-        json!({ "Number": number, "Status": "completed", "Conclusion": conclusion,
-                "HeadSha": commit, "CompletedAt": "2026-10-05T08:12:40Z" })
-    };
-    Mock::given(method("GET"))
-        .and(path(format!("{REPO}/WorkflowRuns")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "value": [
-                run(9, OTHER, "failure"),
-                run(8, COMMIT, "success"),
-                run(7, OLD, "success"),
-                run(6, OLD, "success")
-            ]
-        })))
-        .mount(&shako)
-        .await;
     Mock::given(method("GET"))
         .and(path(REPO))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
@@ -569,12 +739,15 @@ async fn posted(shako: &MockServer, route: &str) -> Vec<Value> {
         .collect()
 }
 
-/// AP-171: the builds are the successful runs, one per commit, newest first, the current one
+/// AP-171: the builds are the successful builds, one per commit, newest first, the current one
 /// marked, and Restore is offered to a person who may propose an App, never to a reader.
 #[tokio::test]
-async fn the_builds_are_the_successful_runs_once_per_commit_and_restore_needs_propose() {
+async fn the_builds_are_the_successful_builds_once_per_commit_and_restore_needs_propose() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let (_, old_id) = builds_recorded(&db).await;
     let shako = forge_with_builds().await;
-    let state = state_with(&shako, true);
+    let state = lane_state(&shako, true, &db, &work);
     const URI: &str = "/api/v1/projects/helsinki/apps/bikes/builds";
 
     let answer = send(&state, person("jana"), "GET", URI, None).await;
@@ -592,7 +765,7 @@ async fn the_builds_are_the_successful_runs_once_per_commit_and_restore_needs_pr
         })
         .collect();
     assert_eq!(listed, vec![(COMMIT, true), (OLD, false)]);
-    assert_eq!(builds["builds"][1]["number"], 7);
+    assert_eq!(builds["builds"][1]["number"], old_id);
     assert_eq!(builds["restore"], json!({ "allowed": true }));
     assert!(builds["dataNote"]
         .as_str()
@@ -614,8 +787,11 @@ async fn the_builds_are_the_successful_runs_once_per_commit_and_restore_needs_pr
 /// never writes `status.build`.
 #[tokio::test]
 async fn restore_opens_a_merge_request_back_to_the_builds_commit() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    builds_recorded(&db).await;
     let shako = forge_with_builds().await;
-    let state = state_with(&shako, true);
+    let state = lane_state(&shako, true, &db, &work);
     const URI: &str = "/api/v1/projects/helsinki/apps/bikes/restore";
 
     let answer = send(
@@ -687,8 +863,11 @@ async fn restore_opens_a_merge_request_back_to_the_builds_commit() {
 /// none of them reaches the forge's write routes.
 #[tokio::test]
 async fn restore_refuses_a_reader_a_foreign_or_failed_commit_and_the_current_build() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    builds_recorded(&db).await;
     let shako = forge_with_builds().await;
-    let state = state_with(&shako, true);
+    let state = lane_state(&shako, true, &db, &work);
     const URI: &str = "/api/v1/projects/helsinki/apps/bikes/restore";
 
     let reader = send(
@@ -774,6 +953,9 @@ async fn an_app_not_built_on_the_forge_has_no_builds_to_restore() {
 /// files equal the default branch has nothing to restore; neither opens a branch.
 #[tokio::test]
 async fn restore_refuses_a_binary_change_and_a_build_equal_to_the_default_branch() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    builds_recorded(&db).await;
     const URI: &str = "/api/v1/projects/helsinki/apps/bikes/restore";
     let shako = forge_with_builds().await;
     Mock::given(method("GET"))
@@ -785,7 +967,7 @@ async fn restore_refuses_a_binary_change_and_a_build_equal_to_the_default_branch
         .with_priority(1)
         .mount(&shako)
         .await;
-    let state = state_with(&shako, true);
+    let state = lane_state(&shako, true, &db, &work);
     let binary = send(
         &state,
         person("jana"),
@@ -812,7 +994,7 @@ async fn restore_refuses_a_binary_change_and_a_build_equal_to_the_default_branch
         .with_priority(1)
         .mount(&shako)
         .await;
-    let state = state_with(&shako, true);
+    let state = lane_state(&shako, true, &db, &work);
     let same = send(
         &state,
         person("jana"),
@@ -879,5 +1061,34 @@ async fn a_grant_for_another_app_neither_rebuilds_nor_restores_this_one() {
         page.text.contains("propose on App"),
         "Rebuild is offered: {}",
         page.text
+    );
+}
+
+/// AP-171: a build carried over from the forge's runs (status.build names it, the Portal kept no
+/// record of it) is still listed as the current one, in its place by time.
+#[tokio::test]
+async fn the_current_build_is_listed_even_when_built_before_the_portal_kept_records() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let shako = MockServer::start().await;
+    let state = lane_state(&shako, true, &db, &work);
+    recorded(&db, OLD, Ok("sha256:01"), "2026-09-01T08:00:00Z", 60).await;
+    let listed = body(
+        &send(
+            &state,
+            person("jana"),
+            "GET",
+            "/api/v1/projects/helsinki/apps/bikes/builds",
+            None,
+        )
+        .await
+        .text,
+    );
+    assert_eq!(
+        listed["builds"],
+        json!([
+            { "commit": COMMIT, "completedAt": "2026-09-22T06:00:00Z", "current": true },
+            { "commit": OLD, "number": listed["builds"][1]["number"], "completedAt": "2026-09-01T08:01:00Z", "current": false },
+        ])
     );
 }
