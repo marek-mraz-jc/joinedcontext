@@ -270,7 +270,7 @@ RUN touch src/lib.rs src/main.rs build.rs \
  && install -m 0755 target/release/joinedcontext-portal /joinedcontext-portal \
  && rm -rf target
 
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab
 COPY --from=build /joinedcontext-portal /usr/local/bin/joinedcontext-portal
 COPY --from=apps /srv/apps /srv/apps
 # The Smart Data Models mirror (T-6353): every model converted ahead of time, read from disk. The
