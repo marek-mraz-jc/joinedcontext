@@ -4,9 +4,9 @@
 Per public Endpoint: NGSI-LD types (exactly the types its public Policies open, of those the export
 holds rows of), each type's details, the entity count per type (`count=true`, equal to the export),
 one entity per type by id, GeoJSON for a type with a location, the temporal API over the last 24 h
-(answers) and before it (nothing), OGC API Features collections + items, OData $metadata + one
-query per type, SensorThings and iCal where the Endpoint serves them, and an anonymous write that
-must be refused. Per closed Endpoint: 401 anonymously; with --person-token-file, 200 where the
+(answers) and before it (nothing), OGC API Features collections + items, the smallest type's items
+as CSV and Parquet and /collections narrowed to it as a ZIP, OData $metadata + one query per type,
+SensorThings and iCal where the Endpoint serves them, and an anonymous write that must be refused. Per closed Endpoint: 401 anonymously; with --person-token-file, 200 where the
 token names the Endpoint and a Policy grants its holder, 403 for a write outside the Policy.
 Per published Endpoint: its datasets in the dataroom catalogue (`/opendata`), one per Endpoint or
 one per `spec.catalog.datasets` entry."""
@@ -15,12 +15,15 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import csv
 import datetime as dt
+import io
 import json
 import re
 import secrets
 import sys
 import urllib.parse
+import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -306,6 +309,11 @@ class Suite:
                         ok = int(matched) == count or (int(matched) <= count and self.expires(e, t))
                     self.r.check(f"{who}.ogc.items", f"{e.slug} {t}", f"GET {path}",
                                  f"200 FeatureCollection, numberMatched {count}", f"{st} numberMatched={matched} {short(raw, 80) if st != 200 else ''}", ok)
+                shown = {t: c for t, c in want.items() if t in ids}
+                if shown:
+                    # A file holds the whole collection: the smallest type keeps the run short.
+                    t = min(shown, key=lambda t: (shown[t] is None, shown[t] or 0, t))
+                    self.files(e, token, who, base, t, None if narrowed else shown[t])
         if "odata" in reps:
             st, h, raw = self.get(f"{base}/odata/v4/$metadata", token, "application/xml")
             ok = st == 200 and b"EntitySet" in raw
@@ -341,6 +349,33 @@ class Suite:
             self.r.check(f"{who}.ical", f"{e.slug} {name}", f"GET {path}", "200 text/calendar VCALENDAR",
                          f"{st} {h.get('content-type', '')} {short(raw, 60)}",
                          st == 200 and raw.lstrip().startswith(b"BEGIN:VCALENDAR"))
+
+    def files(self, e, token, who, base, t, count):
+        """OGC items of `t` as a CSV and a Parquet file, and /collections narrowed to `t` as a ZIP,
+        as prod's broker writes them (features `tabular` and `parquet`)."""
+        items = f"{base}/ogc/features/collections/{q(t)}/items"
+        st, h, raw = self.get(f"{items}?f=csv", token, "*/*")
+        rows = list(csv.reader(io.StringIO(raw.decode("utf-8", "replace")))) if st == 200 else []
+        n = len(rows) - 1
+        ok = st == 200 and h.get("content-type", "").startswith("text/csv") and bool(rows) and "id" in rows[0]
+        if ok and count is not None:
+            ok = n == count or (n <= count and self.expires(e, t))
+        self.r.check(f"{who}.ogc.csv", f"{e.slug} {t}", f"GET {items}?f=csv", f"200 text/csv, {count} rows",
+                     f"{st} {h.get('content-type', '')} rows={n} {short(raw, 80) if st != 200 else ''}", ok)
+        st, h, raw = self.get(f"{items}?f=parquet", token, "*/*")
+        ok = st == 200 and h.get("content-type", "").startswith("application/vnd.apache.parquet") \
+            and raw[:4] == b"PAR1" and raw[-4:] == b"PAR1"
+        self.r.check(f"{who}.ogc.parquet", f"{e.slug} {t}", f"GET {items}?f=parquet", "200 Parquet (PAR1 ... PAR1)",
+                     f"{st} {h.get('content-type', '')} {len(raw)} bytes {short(raw, 80) if st != 200 else ''}", ok)
+        path = f"{base}/ogc/features/collections?f=zip&collections={q(t)}"
+        st, h, raw = self.get(path, token, "*/*")
+        try:
+            names = zipfile.ZipFile(io.BytesIO(raw)).namelist() if st == 200 else []
+        except zipfile.BadZipFile:
+            names = []
+        ok = st == 200 and h.get("content-type", "").startswith("application/zip") and f"{t}.csv" in names
+        self.r.check(f"{who}.ogc.zip", f"{e.slug} {t}", f"GET {path}", f"200 application/zip holding {t}.csv",
+                     f"{st} {h.get('content-type', '')} {names} {short(raw, 80) if st != 200 else ''}", ok)
 
     def expires(self, e, t) -> bool:
         return bool(((self.index["tenants"].get(e.tenant) or {}).get(t) or {}).get("expires"))
