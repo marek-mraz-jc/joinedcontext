@@ -225,9 +225,11 @@ pub fn check_manifest_bundle(
         }
         for m in &r.mirrors {
             state.outbound_guard.validate_url(&m.remote_address, None)?;
+            shako_core::check_secret_ref("credentialSecretRef", &m.credential_secret_ref)?;
         }
         for w in &r.webhooks {
             state.outbound_guard.validate_url(&w.url, None)?;
+            shako_core::check_secret_ref("secretRef", &w.secret_ref)?;
         }
     }
     Ok(())
