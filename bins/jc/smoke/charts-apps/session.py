@@ -14,6 +14,9 @@ import urllib.request
 REALM = "jc"
 ADMIN_CLIENT = "portal-reconciler"
 PERSON = "smoke-charts-apps"
+# The imported realm's rehearsal persons (deploy/rehearsal: rehearsal.py add_tester, apps.py person).
+TESTER = "rehearsal-tester"
+HOLDER = "rehearsal-app-roles"
 
 
 class Session:
@@ -155,3 +158,78 @@ def sign_in(s: Session, password: str) -> tuple[bool, str]:
         return False, f"POST login -> {st}"
     _, st, _ = s.follow(urllib.parse.urljoin(login_url, loc))
     return st < 400, f"callback -> {st}"
+
+
+# ---- a person's token of one App's own client (what the edge holds for an App on prod) ----------
+
+FILE_REF = re.compile(r"\$\(file:([^)]+)\)")
+
+
+class Realm:
+    """The realm file kaisatsu imported (<state>/realms/<realm>.json, 0600): an App client's secret
+    and a rehearsal person's password, each read from the file its `$(file:...)` names."""
+
+    def __init__(self, state):
+        from pathlib import Path
+
+        files = sorted((Path(state) / "realms").glob("*.json")) if state else []
+        self.doc = json.loads(files[0].read_text()) if files else {}
+        self.name = self.doc.get("realm", "")
+        self.clients = {c.get("clientId"): c for c in self.doc.get("clients") or []}
+        self.users = {u.get("username"): u for u in self.doc.get("users") or []}
+
+    @staticmethod
+    def _read(ref: str) -> str | None:
+        from pathlib import Path
+
+        m = FILE_REF.fullmatch((ref or "").strip())
+        f = Path(m[1]) if m else None
+        return f.read_text().strip() if f and f.is_file() else None
+
+    def client(self, client_id: str) -> tuple[str | None, str | None]:
+        """(secret, redirect URI) of a confidential client, or Nones."""
+        c = self.clients.get(client_id) or {}
+        uris = [u for u in c.get("redirectUris") or [] if u.startswith("https://")]
+        redirect = uris[0].replace("/*", "/callback") if uris else None
+        return self._read(c.get("secret", "")), redirect
+
+    def password(self, username: str) -> str | None:
+        creds = (self.users.get(username) or {}).get("credentials") or []
+        return next((self._read(c.get("value", "")) for c in creds if c.get("type") == "password"), None)
+
+
+def app_token(base: str, realm: Realm, client_id: str, username: str, timeout: float = 60) -> str:
+    """An access token of `client_id` for `username`: the code flow with PKCE the edge runs for an
+    App on prod, its redirect read from the Location header and never followed (it names the
+    source environment's host). Raises RuntimeError naming the step that failed."""
+    import base64
+    import hashlib
+
+    secret, redirect = realm.client(client_id)
+    password = realm.password(username)
+    if not (secret and redirect and password):
+        raise RuntimeError(f"no {'secret' if not secret else 'redirect URI' if not redirect else 'password'} "
+                           f"for {client_id if password else username} in the realm file")
+    s = Session(base, timeout)
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    q = urllib.parse.urlencode({"client_id": client_id, "redirect_uri": redirect, "response_type": "code",
+                                "scope": "openid", "state": secrets.token_hex(8), "code_challenge": challenge,
+                                "code_challenge_method": "S256"})
+    login_url, st, page = s.follow(f"/id/realms/{realm.name}/protocol/openid-connect/auth?{q}")
+    if st != 200:
+        raise RuntimeError(f"authorize {client_id}: {st}")
+    text = page.decode(errors="replace")
+    st, hdrs, _ = s.call("POST", login_url, form={"csrf_token": _hidden(text, "csrf_token"),
+                                                  "session_code": _hidden(text, "session_code"),
+                                                  "username": username, "password": password})
+    loc = hdrs.get("location") or ""
+    code = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query).get("code", [None])[0]
+    if st not in (302, 303) or not code or not loc.startswith(redirect):
+        raise RuntimeError(f"login of {username} at {client_id}: {st}")
+    st, body = s.json("POST", f"/id/realms/{realm.name}/protocol/openid-connect/token", form={
+        "grant_type": "authorization_code", "code": code, "redirect_uri": redirect, "client_id": client_id,
+        "client_secret": secret, "code_verifier": verifier})
+    if st != 200 or not isinstance(body, dict) or "access_token" not in body:
+        raise RuntimeError(f"token of {username} at {client_id}: {st}")
+    return body["access_token"]

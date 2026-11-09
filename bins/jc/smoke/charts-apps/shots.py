@@ -26,8 +26,10 @@ class Browser:
         self._browser.close()
         self._pw.stop()
 
-    def _page(self, width: int):
-        ctx = self._browser.new_context(viewport={"width": width, "height": 900}, locale="en-GB")
+    def _page(self, width: int, token: str | None = None):
+        headers = {"Authorization": f"Bearer {token}"} if token else None
+        ctx = self._browser.new_context(viewport={"width": width, "height": 900}, locale="en-GB",
+                                        extra_http_headers=headers)
         ctx.add_cookies(self.cookies)
         page = ctx.new_page()
         page.set_default_timeout(self.timeout)
@@ -73,10 +75,11 @@ class Browser:
             rows.append(row)
         return rows
 
-    def app(self, path: str, name: str, out_dir: Path) -> list[dict]:
+    def app(self, path: str, name: str, out_dir: Path, token: str | None = None) -> list[dict]:
+        """`token`: a person's token of the App's own client, sent as the edge sends it on prod."""
         rows = []
         for width in WIDTHS:
-            ctx, page = self._page(width)
+            ctx, page = self._page(width, token)
             data, bad, console = [], [], []
             page.on("console", lambda m, errors=console: errors.append(m.text[:160]) if m.type == "error" else None)
 
