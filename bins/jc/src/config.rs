@@ -303,6 +303,10 @@ pub struct DataroomSection {
     /// `[[dataroom.harvest]]`: the harvest sources held from the start, each run on its
     /// `schedule` by dataroom's harvest scheduler (prod's CKAN harvest CronJobs).
     pub harvest: Vec<HarvestSeed>,
+    /// `[dataroom.hidden]`: `name = "reason"` per dataset the publish gate hides (prod's CKAN chart
+    /// value `hidden`, T-4318; bins/jc/docs/catalogue-hidden.toml), written over the default
+    /// catalogue's list on every start. Left out, the stored list stays.
+    pub hidden: Option<BTreeMap<String, String>>,
 }
 
 /// One `[[dataroom.harvest]]` source, written over the stored one on every start: prod's
@@ -407,6 +411,7 @@ impl Default for DataroomSection {
             addresses: DataroomAddresses::default(),
             aliases: BTreeMap::new(),
             harvest: Vec::new(),
+            hidden: None,
         }
     }
 }

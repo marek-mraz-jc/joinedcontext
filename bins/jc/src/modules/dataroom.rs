@@ -110,6 +110,11 @@ pub async fn build(
     dataroom_server::ensure_default_catalogue(store.as_ref(), org_id, catalogue_id, &mount.host)
         .await
         .map_err(|e| err(&e))?;
+    if let Some(hidden) = &cfg.hidden {
+        seed_hidden(store.as_ref(), org_id, catalogue_id, hidden)
+            .await
+            .map_err(|e| err(&format!("[dataroom.hidden] {e}")))?;
+    }
     let (mut grants, mut bindings) = match setup.value(Secret::CatalogueToken) {
         None => (Vec::new(), Vec::new()),
         Some(token) => {
@@ -279,6 +284,25 @@ async fn ensure_publisher(
 /// source naming a scheme other than https, a URL or gateway host outside its own
 /// `allowed_hosts`, a schedule that is not cron or a converted file that does not read is
 /// refused.
+/// Writes `hidden` over the publish gate's list of catalogue `catalogue_id` (prod's `hidden`
+/// chart value, `jc_hide`): each named dataset answers its editors only, as on prod.
+pub async fn seed_hidden(
+    store: &dyn Store,
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    hidden: &BTreeMap<String, String>,
+) -> dataroom_core::Result<()> {
+    let Some(mut cat) = store.get_catalogue(org_id, catalogue_id).await? else {
+        return Err(DataroomError::NotFound(format!("catalogue {catalogue_id}")));
+    };
+    if cat.hidden_datasets != *hidden {
+        cat.hidden_datasets = hidden.clone();
+        cat.modified = chrono::Utc::now();
+        store.upsert_catalogue(cat).await?;
+    }
+    Ok(())
+}
+
 pub async fn seed_harvest(
     store: &dyn Store,
     org_id: OrgId,
@@ -627,5 +651,64 @@ mod tests {
         );
         // Nothing but converted datasets: each listed name is one prod's mapping converted.
         assert!(listed.keys().all(|n| prod.contains_key(*n)), "{more:?}");
+        // prod's publish gate hides the rest (`[dataroom.hidden]`, prod's chart value): what a
+        // visitor sees is what prod serves, no more.
+        seed_hidden(&store, ctx.org_id, ctx.catalogue_id, &prod_hidden())
+            .await
+            .unwrap();
+        let cat = store
+            .get_catalogue(ctx.org_id, ctx.catalogue_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let shown: BTreeSet<&str> = listed
+            .keys()
+            .copied()
+            .filter(|n| !cat.hidden_datasets.contains_key(*n))
+            .collect();
+        assert_eq!(
+            shown,
+            served
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<BTreeSet<_>>()
+        );
+    }
+
+    /// prod's publish-gate hidden list, as jc.toml carries it (`[dataroom.hidden]`).
+    fn prod_hidden() -> BTreeMap<String, String> {
+        #[derive(serde::Deserialize)]
+        struct File {
+            dataroom: DataroomSection,
+        }
+        let raw = include_str!("../../docs/catalogue-hidden.toml");
+        toml::from_str::<File>(raw)
+            .expect("the block parses")
+            .dataroom
+            .hidden
+            .expect("[dataroom.hidden]")
+    }
+
+    #[tokio::test]
+    async fn the_hidden_list_is_written_over_the_stored_one() {
+        let (store, ctx) = catalogue().await;
+        let one = BTreeMap::from([("a".to_owned(), "gate".to_owned())]);
+        seed_hidden(&store, ctx.org_id, ctx.catalogue_id, &one)
+            .await
+            .unwrap();
+        let get = || async {
+            store
+                .get_catalogue(ctx.org_id, ctx.catalogue_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .hidden_datasets
+        };
+        assert_eq!(get().await, one);
+        seed_hidden(&store, ctx.org_id, ctx.catalogue_id, &BTreeMap::new())
+            .await
+            .unwrap();
+        assert!(get().await.is_empty());
+        assert_eq!(prod_hidden().len(), 100);
     }
 }
