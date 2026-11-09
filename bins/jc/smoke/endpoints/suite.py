@@ -22,6 +22,7 @@ import json
 import re
 import secrets
 import sys
+import time
 import urllib.parse
 import zipfile
 from pathlib import Path
@@ -36,6 +37,7 @@ from common import Http, Results, as_json, jwt_claims, loopback_only, read_token
 LD = "application/ld+json"
 GEO = "application/geo+json"
 OUTSIDE = "SmokeOutsidePolicy"
+FILE_TRIES = 5
 # One iCal feed reads at most RESIDUAL_SCAN entities (antares-ops/src/scan.rs, 10_000 in jc and in
 # prod's broker, deployment release components/context-broker/images.yaml dev-140 = Antares dc1da08)
 # and answers 413 past it: a feed over more entities than that is refused on prod the same way.
@@ -385,11 +387,21 @@ class Suite:
                          f"{st} {h.get('content-type', '')} {short(raw, 60)}",
                          st == 200 and raw.lstrip().startswith(b"BEGIN:VCALENDAR"))
 
+    def file(self, path, token):
+        """GET a file; the broker writes ANTARES_EXPORT_FILES (default 2) files at once and answers
+        503 past it, so a busy answer is asked again a few times before it counts."""
+        for _ in range(FILE_TRIES - 1):
+            st, h, raw = self.get(path, token, "*/*")
+            if st != 503:
+                return st, h, raw
+            time.sleep(min(float(h.get("retry-after") or 2), 10))
+        return self.get(path, token, "*/*")
+
     def files(self, e, token, who, base, t, count):
         """OGC items of `t` as a CSV and a Parquet file, and /collections narrowed to `t` as a ZIP,
         as prod's broker writes them (features `tabular` and `parquet`)."""
         items = f"{base}/ogc/features/collections/{q(t)}/items"
-        st, h, raw = self.get(f"{items}?f=csv", token, "*/*")
+        st, h, raw = self.file(f"{items}?f=csv", token)
         rows = list(csv.reader(io.StringIO(raw.decode("utf-8", "replace")))) if st == 200 else []
         n = len(rows) - 1
         ok = st == 200 and h.get("content-type", "").startswith("text/csv") and bool(rows) and "id" in rows[0]
@@ -397,13 +409,13 @@ class Suite:
             ok = n == count or (n <= count and self.expires(e, t))
         self.r.check(f"{who}.ogc.csv", f"{e.slug} {t}", f"GET {items}?f=csv", f"200 text/csv, {count} rows",
                      f"{st} {h.get('content-type', '')} rows={n} {short(raw, 80) if st != 200 else ''}", ok)
-        st, h, raw = self.get(f"{items}?f=parquet", token, "*/*")
+        st, h, raw = self.file(f"{items}?f=parquet", token)
         ok = st == 200 and h.get("content-type", "").startswith("application/vnd.apache.parquet") \
             and raw[:4] == b"PAR1" and raw[-4:] == b"PAR1"
         self.r.check(f"{who}.ogc.parquet", f"{e.slug} {t}", f"GET {items}?f=parquet", "200 Parquet (PAR1 ... PAR1)",
                      f"{st} {h.get('content-type', '')} {len(raw)} bytes {short(raw, 80) if st != 200 else ''}", ok)
         path = f"{base}/ogc/features/collections?f=zip&collections={q(t)}"
-        st, h, raw = self.get(path, token, "*/*")
+        st, h, raw = self.file(path, token)
         try:
             names = zipfile.ZipFile(io.BytesIO(raw)).namelist() if st == 200 else []
         except zipfile.BadZipFile:

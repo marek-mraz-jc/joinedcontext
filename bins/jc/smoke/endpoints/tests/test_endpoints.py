@@ -111,6 +111,7 @@ class Fake:
     def __init__(self, broken: str = "", temporal: bool = True):
         self.broken = broken
         self.temporal = temporal  # whether the open Endpoint's view serves a temporal read
+        self.busy_seen = False  # "busy-once" answers 503 to the first file only
 
     def answer(self, method, path, headers):
         u = urllib.parse.urlparse(path)
@@ -171,6 +172,9 @@ class Fake:
             body = "id,geometry\n" + "".join(f'urn:x:{i},"{{""type"":""Point""}}"\n' for i in range(rows))
             return 200, {"Content-Type": "text/csv; charset=utf-8; header=present"}, body.encode()
         if rest.endswith("/items") and qs.get("f") == ["parquet"]:
+            if self.broken in ("busy", "busy-once") and not self.busy_seen:
+                self.busy_seen = self.broken == "busy-once"
+                return 503, {"Retry-After": "0"}, {"title": "busy"}
             if self.broken == "no-files":
                 return 400, {}, {"title": "unknown parameter f"}
             return 200, {"Content-Type": "application/vnd.apache.parquet"}, b"PAR1" + b"\0" * 8 + b"PAR1"
@@ -247,7 +251,7 @@ def test_a_healthy_gateway_is_green(tmp_path, serve):
     ("count", "anon.count"), ("extra-type", "anon.types.match"), ("closed-open", "anon.refused"),
     ("write-open", "anon.write-outside"), ("old-history", "anon.temporal.none-older"),
     ("no-files", "anon.ogc.csv"), ("no-files", "anon.ogc.parquet"), ("no-files", "anon.ogc.zip"),
-    ("csv-rows", "anon.ogc.csv")])
+    ("csv-rows", "anon.ogc.csv"), ("busy", "anon.ogc.parquet")])
 def test_each_broken_rule_turns_its_check_red(tmp_path, serve, broken, check):
     code, res = run(tmp_path, serve(Fake(broken)), now_iso())
     red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
@@ -338,6 +342,11 @@ def test_a_query_only_grant_answers_an_id_404_as_prod_does(tmp_path, serve, monk
     # The same grant answering the entity by id serves more than the Policy grants.
     _, res = run(tmp_path / "served", serve(Fake()), now_iso())
     assert {r["result"] for r in res["checks"] if r["id"] == "anon.by-id"} == {"fail"}
+
+
+def test_a_busy_file_is_asked_again(tmp_path, serve):
+    code, res = run(tmp_path, serve(Fake("busy-once")), now_iso())
+    assert code == 0, [r for r in res["checks"] if r["result"] == "fail"]
 
 
 def test_a_stopped_gateway_fails_and_never_passes(tmp_path):
