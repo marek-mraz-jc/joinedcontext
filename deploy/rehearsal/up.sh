@@ -26,10 +26,10 @@ mkdir -p "$home"/secrets "$home"/state/realms "$home"/import "$home"/repos "$hom
 chmod 700 "$home/state" "$home/state/realms"
 chmod 700 "$home" "$home"/secrets "$home"/state
 
-secret() { # secret <name>: a random secret file, made once
+secret() { # secret <name>: a random secret file (64 hex digits), made once
   local f="$home/secrets/$1"
   if [ ! -s "$f" ]; then
-    (umask 077; head -c 24 /dev/urandom | base64 | tr -d '/+=\n' > "$f")
+    (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$f")
   fi
   printf '%s' "$f"
 }
