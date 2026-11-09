@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import urllib.parse
@@ -51,6 +52,16 @@ from manifests import Pipeline, cron_out_of_range, load_pipelines  # noqa: E402
 from people import Admin  # noqa: E402
 
 SECRET_WORDS = ("secret", "sops", "decrypt", "envVar", "credential")
+# jc-core validate_runner_reads' refusal of a `${NAME}` in an author's step (PL-16).
+RUNNER_READ = re.compile(r"`\$\{([A-Za-z0-9_]+)\}`: a step names no runner variable but ")
+
+
+def own_source_read(said: str, p: Pipeline) -> str | None:
+    """The variable a RunnerRefused names when it is the one its own DataSource's credential
+    reaches the runner as: prod's Portal (dd7d5ce5 render.rs bento_processors) lets a step read
+    only its pipeline's secretRefs envVar and refuses that read the same way. None otherwise."""
+    m = RUNNER_READ.search(said)
+    return m.group(1) if m and m.group(1) in p.source_vars else None
 
 
 def conditions(item: dict) -> list[dict]:
@@ -78,6 +89,11 @@ def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline) 
         r.skip("status", p.key, f"GET {base} (status)", "no StreamDeployed=False",
                f"same on prod: schedule {out_of_range} out of range (`{p.spec.get('schedule')}` in {p.file}); "
                "prod's Portal (run_queue.rs Cron::parse) refuses it the same way, the seed fix is the deployment's")
+    elif bad and len(bad) == 1 and (var := own_source_read(said, p)):
+        r.skip("status", p.key, f"GET {base} (status)", "no StreamDeployed=False",
+               f"same on prod: a step reads `${{{var}}}`, its DataSource's credential, which no secretRefs "
+               "envVar declares; prod's Portal (render.rs bento_processors, own_variables) refuses it alike, "
+               "the seed fix is the deployment's")
     elif bad and p.secret_refs and any(w.lower() in said.lower() for w in SECRET_WORDS):
         r.skip("status", p.key, f"GET {base} (status)", "no StreamDeployed=False",
                f"secretRefs {p.secret_refs}: {said[:200]}")
