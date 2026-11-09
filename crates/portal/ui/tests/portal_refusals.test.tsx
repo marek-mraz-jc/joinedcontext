@@ -5,10 +5,12 @@
  * API re-checks every write. An outsider's refusal for a hidden project reads the same as for a
  * project that does not exist, and Administration refuses inside the Portal's own frame.
  */
-import { screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import en from "../src/locales/en.json";
 import { offered } from "../src/api/permissions";
+import { ProjectHidden } from "../src/components/ProjectHidden";
 import type { Effective } from "../src/api/permissions";
 import { jsonResponse, list, problem, renderRoute } from "./pageHarness";
 
@@ -40,6 +42,19 @@ describe("offered", () => {
     expect(offered({ data: doc, checking: false, denied: false }, (e) => e === doc)).toBe(true);
     expect(offered({ data: doc, checking: false, denied: false }, () => false)).toBe(false);
     expect(offered({ data: undefined, checking: false, denied: false }, yes)).toBe(true);
+  });
+});
+
+describe("ProjectHidden", () => {
+  it("says the project is not open, whether or not it exists, and leads to the start", async () => {
+    const router = createRouter({
+      routeTree: createRootRoute({ component: ProjectHidden }),
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+    });
+    render(<RouterProvider router={router} />);
+    const said = (await screen.findByText(en.form.projectHidden)).closest("[role=status]") as HTMLElement;
+    expect(within(said).getByRole("link", { name: en.app.notFound.home })).toHaveAttribute("href", "/");
+    expect(said.textContent).not.toMatch(/not found|exist(s|ed)? in/);
   });
 });
 

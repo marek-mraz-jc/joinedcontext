@@ -475,10 +475,11 @@ export function ResourceFormDialogBody<T>({
                 onChange?.(next);
               }}
               // What a page adds below the fields is held with them: a native disabled fieldset
-              // disables every control inside it.
+              // disables every control inside it. Always the same element, so a hold that ends
+              // does not remount what it holds (a preview kept its first answer for ever).
               afterFields={
-                disabled && afterFields ? (
-                  <fieldset disabled className="contents">
+                afterFields ? (
+                  <fieldset disabled={disabled} className="contents">
                     {afterFields}
                   </fieldset>
                 ) : (
