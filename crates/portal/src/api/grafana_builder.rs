@@ -341,8 +341,8 @@ fn check_choices(
             return Err(refused(
                 &format!("{at}kind"),
                 format!(
-                    "a {} cannot draw {}; choose another kind",
-                    panel.kind.as_str(),
+                    "{} cannot draw {}; choose another kind",
+                    panel.kind.words(),
                     panel.attribute
                 ),
             ));

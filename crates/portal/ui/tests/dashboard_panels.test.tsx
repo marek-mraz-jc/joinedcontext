@@ -612,6 +612,10 @@ describe("the builder's kinds, drawn from the file the Portal wrote and frames r
     const svg = await svgOf(built.spec);
     expect(count(svg, /<path [^>]*role="graphics-symbol"/)).toBe(bikes[0].fields[0].values.length);
     expect(svg).toContain("Kaivopuisto");
+    // Five names under the bars slant, so neighbours never run into each other.
+    const axis = (built.spec.encoding as { x: { axis: { labelAngle: number } } }).x.axis;
+    expect(bikes[0].fields[0].values.length).toBeGreaterThan(3);
+    expect(axis.labelAngle).toBe(-35);
   });
 
   it("shows a text panel as plain text with its Markdown taken out", () => {

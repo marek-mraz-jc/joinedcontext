@@ -135,6 +135,7 @@ describe("the builder's new kinds", () => {
     expect(fieldId("panels[0].piechart", board)).toBe("builder-panel-1-pieType");
     expect(fieldId("panels[0].text.content", board)).toBe("builder-panel-1-content");
     expect(fieldId("panels[0].min", board)).toBe("builder-panel-1-min");
+    expect(fieldId("panels[0].kind", board)).toBe("builder-panel-1-kind");
   });
 
   it("offers a bar gauge's style and direction, a pie's shape, and text attributes to name bars", async () => {

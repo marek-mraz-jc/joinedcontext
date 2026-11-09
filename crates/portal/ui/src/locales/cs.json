@@ -12217,6 +12217,7 @@
     "preview": "Náhled",
     "previewing": "Čte se…",
     "previewHelp": "Přečte tento panel teď s vašimi oprávněními.",
+    "previewHelpText": "Zobrazí text tak, jak ho ukáže nástěnka; textový panel nečte žádná data.",
     "previewFailedTitle": "Náhled se nepodařilo přečíst",
     "removePanel": "Odebrat panel",
     "removePanelAsk": "Odebrat tento panel?",

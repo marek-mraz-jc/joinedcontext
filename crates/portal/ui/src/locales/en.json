@@ -12217,6 +12217,7 @@
     "preview": "Preview",
     "previewing": "Reading…",
     "previewHelp": "Reads this panel now with your own permissions.",
+    "previewHelpText": "Shows the text as the dashboard will; a text panel reads no data.",
     "previewFailedTitle": "The preview could not be read",
     "removePanel": "Remove panel",
     "removePanelAsk": "Remove this panel?",

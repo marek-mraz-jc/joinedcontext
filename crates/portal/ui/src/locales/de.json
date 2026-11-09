@@ -12217,6 +12217,7 @@
     "preview": "Vorschau",
     "previewing": "Wird gelesen…",
     "previewHelp": "Liest dieses Panel jetzt mit Ihren eigenen Rechten.",
+    "previewHelpText": "Zeigt den Text wie das Dashboard; ein Textpanel liest keine Daten.",
     "previewFailedTitle": "Die Vorschau konnte nicht gelesen werden",
     "removePanel": "Panel entfernen",
     "removePanelAsk": "Dieses Panel entfernen?",

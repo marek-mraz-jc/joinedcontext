@@ -814,7 +814,7 @@ export function PanelPreviewCard({ project, board, panel }: { project: string; b
           <Icon name="refresh" className="size-4" />
           {t("builder.preview")}
         </Button>
-        <span className="text-caption text-fg-muted">{t("builder.previewHelp")}</span>
+        <span className="text-caption text-fg-muted">{t(panel.kind === "text" ? "builder.previewHelpText" : "builder.previewHelp")}</span>
       </div>
       {run.isError ? (
         <Alert tone="danger" title={t("builder.previewFailedTitle")}>
@@ -847,6 +847,7 @@ export function PanelEditor({ project, board, panel, start, onChange, onPlace, o
       <CardHeader as="h2" titleId={`${id}-heading`} title={t("builder.panelTitle", { title: panel.title.trim() || t("builder.untitledPanel") })} />
       <RadioGroup<PanelKind>
         name={`${id}-kind`}
+        id={`${id}-kind`}
         legend={t("builder.field.kind")}
         layout="row"
         value={panel.kind}

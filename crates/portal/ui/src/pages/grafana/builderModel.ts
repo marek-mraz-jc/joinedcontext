@@ -225,7 +225,7 @@ export function fieldId(path: string, board: Board): string | undefined {
     const leaf = panel[2] || "title";
     if (leaf === "filters" && panel[3] !== undefined) return `builder-filter-${id}-${panel[3]}-${panel[4] || "attribute"}`;
     if (leaf === "grid" || leaf === "id") return `builder-panel-${id}-x`;
-    if (leaf === "thresholds" || leaf === "kind") return `builder-panel-${id}-title`;
+    if (leaf === "thresholds") return `builder-panel-${id}-title`;
     if (KIND_FIRST[leaf]) return `builder-panel-${id}-${new RegExp(`\\.${leaf}\\.([a-zA-Z]+)`).exec(path)?.[1] ?? KIND_FIRST[leaf]}`;
     return `builder-panel-${id}-${leaf}`;
   }

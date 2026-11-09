@@ -24,6 +24,8 @@ export interface RadioGroupProps<T extends string> {
   /** `row` when the labels are one word each; the default stacks them. */
   layout?: "row" | "column";
   className?: string;
+  /** The id of the chosen button (the first when none is chosen), so a refusal can focus the group. */
+  id?: string;
 }
 
 /**
@@ -51,7 +53,9 @@ export function RadioGroup<T extends string>({
   onChange,
   layout = "column",
   className,
+  id,
 }: RadioGroupProps<T>): JSX.Element {
+  const focused = options.some((option) => option.value === value) ? value : options[0]?.value;
   const describedBy = description ? `${name}__description` : undefined;
   const labelledBy = `${name}__legend`;
   const optionId = `${useId()}-option`;
@@ -82,6 +86,7 @@ export function RadioGroup<T extends string>({
             <input
               type="radio"
               name={name}
+              id={option.value === focused ? id : undefined}
               value={option.value}
               checked={value === option.value}
               disabled={option.disabled}

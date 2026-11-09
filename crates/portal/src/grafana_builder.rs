@@ -119,6 +119,20 @@ impl PanelKind {
         }
     }
 
+    /// The kind in a refusal's words: "a pie chart", never the wire name.
+    pub fn words(self) -> &'static str {
+        match self {
+            PanelKind::Timeseries => "a time series",
+            PanelKind::Stat => "a stat",
+            PanelKind::Table => "a table",
+            PanelKind::Gauge => "a gauge",
+            PanelKind::Bargauge => "a bar gauge",
+            PanelKind::Piechart => "a pie chart",
+            PanelKind::Barchart => "a bar chart",
+            PanelKind::Text => "a text panel",
+        }
+    }
+
     fn parse(text: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.as_str() == text)
     }
@@ -711,11 +725,11 @@ fn check_panel(at: &str, panel: &BoardPanel, variables: &BTreeSet<&str>) -> Resu
 }
 
 /// The members each kind's own choices sit under, and the kind that takes them.
-const KIND_OPTIONS: [(&str, PanelKind, &str); 4] = [
-    ("bargauge", PanelKind::Bargauge, "a bar gauge"),
-    ("piechart", PanelKind::Piechart, "a pie chart"),
-    ("barchart", PanelKind::Barchart, "a bar chart"),
-    ("text", PanelKind::Text, "a text panel"),
+const KIND_OPTIONS: [(&str, PanelKind); 4] = [
+    ("bargauge", PanelKind::Bargauge),
+    ("piechart", PanelKind::Piechart),
+    ("barchart", PanelKind::Barchart),
+    ("text", PanelKind::Text),
 ];
 
 /// Each kind's own choices: given for that kind, for no other.
@@ -726,7 +740,8 @@ fn check_kind_options(at: &str, panel: &BoardPanel) -> Result<(), Refusal> {
         panel.barchart.is_some(),
         panel.text.is_some(),
     ];
-    for ((field, owner, words), given) in KIND_OPTIONS.into_iter().zip(given) {
+    for ((field, owner), given) in KIND_OPTIONS.into_iter().zip(given) {
+        let words = owner.words();
         if given && panel.kind != owner {
             return Err(refuse(
                 format!("{at}.{field}"),
