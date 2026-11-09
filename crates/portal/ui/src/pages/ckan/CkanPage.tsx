@@ -485,6 +485,8 @@ function Publications({
   const { t, i18n } = useTranslation();
   const time = new Intl.DateTimeFormat(i18n.language, { dateStyle: "short", timeStyle: "short" });
   const [publishing, setPublishing] = useState(false);
+  // Publishing again is a publisher's step; a viewer is told whom it waits on (UI judge 2026-11-09).
+  const mayPublish = usePermissions(project).can("Endpoint", "propose");
   return (
     <section aria-labelledby="ckan-publications" className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -512,86 +514,89 @@ function Publications({
         />
       ) : null}
       <ul className="space-y-4">
-        {publications.map((publication) => (
-          <li key={publication.endpoint}>
-            <Card padding="sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono font-semibold">{publication.endpoint}</span>
-                <StatusChip publication={publication} />
-                {publication.phase ? <LifecycleBadge kind="phase" value={publication.phase} /> : null}
-                {publication.datasetUrl ? (
-                  <ExternalLink
-                    href={publication.datasetUrl}
-                    hideIcon
-                    className="hover:no-underline"
-                  >
-                    {publication.dataset}
-                  </ExternalLink>
-                ) : (
-                  <span className="font-mono">{publication.dataset}</span>
-                )}
-              </div>
-              {(() => {
-                const last = lastRuns?.[publication.endpoint];
-                if (!last) return null;
-                const failedRun = last.severity === "error";
-                return (
+        {publications.map((publication) => {
+          const last = lastRuns?.[publication.endpoint];
+          const failedRun = last?.severity === "error";
+          return (
+            <li key={publication.endpoint}>
+              <Card padding="sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono font-semibold">{publication.endpoint}</span>
+                  <StatusChip publication={publication} failed={failedRun} />
+                  {publication.phase ? <LifecycleBadge kind="phase" value={publication.phase} /> : null}
+                  {publication.datasetUrl ? (
+                    <ExternalLink
+                      href={publication.datasetUrl}
+                      hideIcon
+                      className="hover:no-underline"
+                    >
+                      {publication.dataset}
+                    </ExternalLink>
+                  ) : (
+                    <span className="font-mono">{publication.dataset}</span>
+                  )}
+                </div>
+                {last ? (
                   <p
                     className={`mt-1 text-sm [overflow-wrap:anywhere] ${failedRun ? "text-danger" : "text-fg-muted"}`}
                     data-testid="ckan-last-run"
                   >
-                    {t(failedRun ? "ckan.publications.lastFailed" : "ckan.publications.lastChange", {
-                      time: time.format(new Date(last.time)),
-                      summary: last.summary,
-                    })}
+                    {t(
+                      failedRun
+                        ? mayPublish
+                          ? "ckan.publications.lastFailed"
+                          : "ckan.publications.lastFailedAsk"
+                        : "ckan.publications.lastChange",
+                      { time: time.format(new Date(last.time)), summary: last.summary },
+                    )}
                   </p>
-                );
-              })()}
-              <ul className="mt-2 flex flex-wrap gap-2">
-                {publication.resources.map((resource) => (
-                  <li key={resource.url}>
-                    <ExternalLink
-                      href={resource.url}
-                      hideIcon
-                      className="rounded border border-border px-2 py-1 text-sm hover:no-underline"
-                    >
-                      {resource.name && resource.name !== resource.format
-                        ? `${resource.name} (${resource.format})`
-                        : resource.format}
-                    </ExternalLink>
-                  </li>
-                ))}
-                {/* The theme draws the map and the explorer on the dataset page itself
-                    (T-4639, T-5059), so that page is where both open. */}
-                {publication.datasetUrl ? (
-                  <li>
-                    <ExternalLink
-                      href={publication.datasetUrl}
-                      hideIcon
-                      className="rounded border border-border px-2 py-1 text-sm hover:no-underline"
-                    >
-                      {t("ckan.publications.mapAndTable")}
-                    </ExternalLink>
-                  </li>
                 ) : null}
-              </ul>
-            </Card>
-          </li>
-        ))}
+                <ul className="mt-2 flex flex-wrap gap-2">
+                  {publication.resources.map((resource) => (
+                    <li key={resource.url}>
+                      <ExternalLink
+                        href={resource.url}
+                        hideIcon
+                        className="rounded border border-border px-2 py-1 text-sm hover:no-underline"
+                      >
+                        {resource.name && resource.name !== resource.format
+                          ? `${resource.name} (${resource.format})`
+                          : resource.format}
+                      </ExternalLink>
+                    </li>
+                  ))}
+                  {/* The theme draws the map and the explorer on the dataset page itself
+                      (T-4639, T-5059), so that page is where both open. */}
+                  {publication.datasetUrl ? (
+                    <li>
+                      <ExternalLink
+                        href={publication.datasetUrl}
+                        hideIcon
+                        className="rounded border border-border px-2 py-1 text-sm hover:no-underline"
+                      >
+                        {t("ckan.publications.mapAndTable")}
+                      </ExternalLink>
+                    </li>
+                  ) : null}
+                </ul>
+              </Card>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
 }
 
 /** Published, or the reason it is not: a dangling instance is the usual one. */
-function StatusChip({ publication }: { publication: PublicationStatus }): JSX.Element {
+function StatusChip({ publication, failed }: { publication: PublicationStatus; failed: boolean }): JSX.Element {
   const { t } = useTranslation();
   const missing = publication.instanceMissing;
   return (
-    <Badge tone={missing ? "danger" : "neutral"}>
+    <Badge tone={missing || failed ? "danger" : "neutral"}>
       {missing
         ? t("ckan.publications.missingInstance", { instance: publication.instance })
-        : t("ckan.publications.publishedTo", { instance: publication.instance })}
+        : t(failed ? "ckan.publications.notPublishedTo" : "ckan.publications.publishedTo", { instance: publication.instance })}
     </Badge>
   );
 }

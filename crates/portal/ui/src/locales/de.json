@@ -5453,6 +5453,8 @@
       "emptyHint": "Drücken Sie „Datensatz veröffentlichen“, wählen Sie einen Endpunkt, prüfen Sie seine Beschreibung und schlagen Sie ihn vor. Der Datensatz erscheint hier und in CKAN nach der Freigabe.",
       "lastChange": "Letzte Änderung {time}: {summary}",
       "lastFailed": "Letzter Lauf fehlgeschlagen {time}: {summary}. Beheben Sie die Ursache und veröffentlichen Sie erneut.",
+      "lastFailedAsk": "Letzter Lauf fehlgeschlagen {time}: {summary}. Eine Projektverantwortliche Person veröffentlicht erneut, sobald die Ursache behoben ist.",
+      "notPublishedTo": "nicht veröffentlicht in {instance}",
       "needsCatalogue": "Fügen Sie zuerst oben einen Katalog hinzu: ein Datensatz braucht ein CKAN-Portal.",
       "mapAndTable": "Karte und Tabelle auf der Seite des Datensatzes"
     },

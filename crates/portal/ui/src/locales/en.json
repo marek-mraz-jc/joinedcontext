@@ -5453,6 +5453,8 @@
       "emptyHint": "Press \"Publish a dataset\", pick an endpoint, check its description and propose it. The dataset appears here and in CKAN after the approval.",
       "lastChange": "Last change {time}: {summary}",
       "lastFailed": "Last run failed {time}: {summary}. Fix the cause, then publish again.",
+      "lastFailedAsk": "Last run failed {time}: {summary}. A project steward publishes it again once the cause is fixed.",
+      "notPublishedTo": "not published to {instance}",
       "needsCatalogue": "Add a catalogue above first: a dataset needs a CKAN portal to land in.",
       "mapAndTable": "Map and table on the dataset page"
     },

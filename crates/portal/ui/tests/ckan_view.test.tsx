@@ -230,6 +230,20 @@ describe("ckan publishing manager", () => {
     expect(failed).toHaveClass("text-danger");
   });
 
+  // UI judge 2026-11-09: a green Live beside "published to …" and a red failed run read as two
+  // answers, and "Fix the cause" told a viewer to do what only a publisher may.
+  it("says an endpoint whose last run failed is not published, and whom a viewer asks", async () => {
+    const failing = structuredClone(STATUS);
+    Object.assign(failing.publications[1], { instance: "open-data", instanceMissing: false, phase: "Live" });
+    renderCkan(failing, { project: "banskabystrica", bootstrap: false, grants: [] });
+    const entry = (await screen.findByText("hluk-public")).closest("li") as HTMLElement;
+    expect(await within(entry).findByText("not published to open-data")).toBeInTheDocument();
+    expect(within(entry).queryByText("published to open-data")).not.toBeInTheDocument();
+    expect(await within(entry).findByTestId("ckan-last-run")).toHaveTextContent(
+      /A project steward publishes it again once the cause is fixed\.$/,
+    );
+  });
+
   it("says which endpoint points at a catalogue that is not there", async () => {
     renderCkan();
 

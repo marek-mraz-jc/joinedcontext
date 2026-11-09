@@ -5453,6 +5453,8 @@
       "emptyHint": "Stiskněte „Zveřejnit datovou sadu“, vyberte endpoint, zkontrolujte jeho popis a navrhněte ho. Dataset se zde a v CKAN objeví po schválení.",
       "lastChange": "Poslední změna {time}: {summary}",
       "lastFailed": "Poslední běh selhal {time}: {summary}. Odstraňte příčinu a zveřejněte znovu.",
+      "lastFailedAsk": "Poslední běh selhal {time}: {summary}. Po odstranění příčiny jej znovu zveřejní správce projektu.",
+      "notPublishedTo": "nepublikováno do {instance}",
       "needsCatalogue": "Nejprve výše přidejte katalog: dataset potřebuje portál CKAN, kam se zveřejní.",
       "mapAndTable": "Mapa a tabulka na stránce datové sady"
     },
