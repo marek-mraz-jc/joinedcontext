@@ -3722,7 +3722,8 @@
       "timeAxisUnit": "Čas v pásmu {zone}; hodnoty v jednotce {unit}."
     },
     "emptyHint": "Nástěnka je stránka s mapami a čísly, postavená z endpointů, které tento projekt umí čist. Vytvořte jednu nebo požádejte asistenta o nástěnku z toho, co už zveřejňujete.",
-    "layerEndpointGone": "Endpoint „{name}“ už v tomto projektu není, proto tato vrstva nemá z čeho vybrat typ ani filtr. Vyberte pro tuto vrstvu jiný endpoint."
+    "layerEndpointGone": "Endpoint „{name}“ už v tomto projektu není, proto tato vrstva nemá z čeho vybrat typ ani filtr. Vyberte pro tuto vrstvu jiný endpoint.",
+    "moreHere": "Další zde: {n}"
   },
   "access": {
     "title": "Přístup",
@@ -11903,7 +11904,7 @@
     "geomap": {
       "label": "Mapa {title}: {n} značek",
       "noneTitle": "Žádný řádek nemá polohu",
-      "none": "Žádný z {rows} řádků nemá bod v poli polohy.",
+      "none": "Žádný z {rows} řádků nemá polohu: bod GeoJSON (location, geometry) ani pole zeměpisné šířky a délky. Řádky uvidíte přes „Otevřít jako tabulky“.",
       "mode": "Tato mapa čte polohu z bodu GeoJSON nebo z polí zeměpisné šířky a délky, ne způsobem „{mode}“.",
       "missing": "{n} z {rows} řádků nemá polohu a není vykresleno.",
       "basemap": "Podklad „{type}“ se zde nekreslí.",

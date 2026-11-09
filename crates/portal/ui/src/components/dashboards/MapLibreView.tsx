@@ -189,6 +189,9 @@ export function popupNode(
   return root;
 }
 
+/** The features one popup lists when markers stack under a click; the rest are counted. */
+const STACKED = 5;
+
 /** The layer a clustered source adds beside its own: the circles that grow with what they hold. */
 const clusterLayers = (name: string) => [`${name}--clusters`];
 
@@ -388,13 +391,24 @@ export function MapLibreView({
         });
       }
       listen(layer.name, "click", (event) => {
-        const feature = event.features?.[0];
-        if (!feature || layer.popup === false) {
+        const features = event.features ?? [];
+        if (features.length === 0 || layer.popup === false) {
           return;
+        }
+        // Every feature under the click, a few: stacked markers each get their rows, not only the top one.
+        const root = document.createElement("div");
+        root.className = "flex flex-col gap-2";
+        for (const feature of features.slice(0, STACKED)) {
+          root.append(popupNode(feature, layer.popupProperties, layer.open));
+        }
+        if (features.length > STACKED) {
+          const more = document.createElement("p");
+          more.textContent = t("dashboards.moreHere", { n: features.length - STACKED });
+          root.append(more);
         }
         new Popup()
           .setLngLat(event.lngLat)
-          .setDOMContent(popupNode(feature, layer.popupProperties, layer.open))
+          .setDOMContent(features.length === 1 ? popupNode(features[0], layer.popupProperties, layer.open) : root)
           .addTo(instance);
       });
       drawn.current.set(layer.name, layer);
@@ -409,7 +423,7 @@ export function MapLibreView({
         instance.fitBounds([box[0], box[1], box[2], box[3]], { padding: 40, maxZoom: 14, duration: 0 });
       }
     }
-  }, [layers, loaded, center]);
+  }, [layers, loaded, center, t]);
 
   if (failed) {
     return (

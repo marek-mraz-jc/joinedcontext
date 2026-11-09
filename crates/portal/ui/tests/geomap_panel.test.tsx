@@ -141,6 +141,14 @@ describe("the helsinki air quality geomap", () => {
     expect(calls.popups[0].textContent).toMatch(/µg\/m³|μg\/m³/);
   });
 
+  it("lists every stacked marker under a tap, five and a count of the rest", () => {
+    draw(frames);
+    const under = calls.sources[0].source.data.features.slice(0, 7).map((feature) => ({ properties: feature.properties }));
+    calls.clicks.get("markers")!({ features: under, lngLat: [0, 0] });
+    expect(calls.popups[0].querySelectorAll("dl")).toHaveLength(5);
+    expect(calls.popups[0].textContent).toContain("2 more here");
+  });
+
   it("opens no tooltip when the layer has it off", () => {
     const off = structuredClone(panel);
     (off.options!.layers as { tooltip: boolean }[])[0].tooltip = false;

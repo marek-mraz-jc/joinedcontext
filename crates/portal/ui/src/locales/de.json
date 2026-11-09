@@ -3722,7 +3722,8 @@
       "timeAxisUnit": "Zeit in {zone}; Werte in {unit}."
     },
     "emptyHint": "Ein Dashboard ist eine Seite aus Karten und Zahlen, gebaut aus Endpunkten, die dieses Projekt lesen kann. Erstellen Sie eines, oder bitten Sie die Assistentin um ein Dashboard aus dem, was Sie schon veröffentlichen.",
-    "layerEndpointGone": "Der Endpoint „{name}“ gehört nicht mehr zu diesem Projekt, daher hat diese Ebene weder Typ noch Filter zur Auswahl. Wählen Sie für diese Ebene einen anderen Endpoint."
+    "layerEndpointGone": "Der Endpoint „{name}“ gehört nicht mehr zu diesem Projekt, daher hat diese Ebene weder Typ noch Filter zur Auswahl. Wählen Sie für diese Ebene einen anderen Endpoint.",
+    "moreHere": "Weitere hier: {n}"
   },
   "access": {
     "title": "Zugriff",
@@ -11903,7 +11904,7 @@
     "geomap": {
       "label": "Karte von {title}: {n} Markierungen",
       "noneTitle": "Keine Zeile hat einen Ort",
-      "none": "Keine der {rows} Zeilen hat einen Punkt in einem Ortsfeld.",
+      "none": "Keine der {rows} Zeilen hat einen Ort: einen GeoJSON-Punkt (location, geometry) oder Breiten- und Längenfelder. „Als Tabellen öffnen“ zeigt die Zeilen.",
       "mode": "Diese Karte liest Orte aus einem GeoJSON-Punkt oder aus Breiten- und Längenfeldern, nicht über „{mode}“.",
       "missing": "{n} von {rows} Zeilen haben keinen Ort und werden nicht gezeichnet.",
       "basemap": "Die Grundkarte „{type}“ wird hier nicht gezeichnet.",

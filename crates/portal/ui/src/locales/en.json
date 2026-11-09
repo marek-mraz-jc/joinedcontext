@@ -3722,7 +3722,8 @@
       "timeAxisUnit": "Time in {zone}; values in {unit}."
     },
     "emptyHint": "A dashboard is a page of maps and numbers built from endpoints this project can read. Make one, or ask the assistant for a dashboard of what you already publish.",
-    "layerEndpointGone": "The endpoint “{name}” is not in this project any more, so this layer has no type or filter to choose from. Choose another endpoint for this layer."
+    "layerEndpointGone": "The endpoint “{name}” is not in this project any more, so this layer has no type or filter to choose from. Choose another endpoint for this layer.",
+    "moreHere": "{n} more here"
   },
   "access": {
     "title": "Access",
@@ -11903,7 +11904,7 @@
     "geomap": {
       "label": "Map of {title}: {n} markers",
       "noneTitle": "No row has a location",
-      "none": "None of the {rows} rows has a point in a location field.",
+      "none": "None of the {rows} rows has a location: a GeoJSON point (location, geometry) or latitude and longitude fields. Use “Open as tables” to see the rows.",
       "mode": "This map reads locations from a GeoJSON point or latitude and longitude fields, not by “{mode}”.",
       "missing": "{n} of {rows} rows have no location and are not drawn.",
       "basemap": "The “{type}” basemap is not drawn here.",

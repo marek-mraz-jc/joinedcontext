@@ -3722,7 +3722,8 @@
       "timeAxisUnit": "Čas v pásme {zone}; hodnoty v jednotke {unit}."
     },
     "emptyHint": "Dashboard je stránka s mapami a číslami, postavená z endpointov, ktoré tento projekt vie čítať. Vytvorte jeden alebo požiadajte asistenta o dashboard z toho, čo už zverejňujete.",
-    "layerEndpointGone": "Endpoint „{name}“ už v tomto projekte nie je, preto táto vrstva nemá z čoho vybrať typ ani filter. Vyberte pre túto vrstvu iný endpoint."
+    "layerEndpointGone": "Endpoint „{name}“ už v tomto projekte nie je, preto táto vrstva nemá z čoho vybrať typ ani filter. Vyberte pre túto vrstvu iný endpoint.",
+    "moreHere": "Ďalšie tu: {n}"
   },
   "access": {
     "title": "Prístup",
@@ -11903,7 +11904,7 @@
     "geomap": {
       "label": "Mapa {title}: {n} značiek",
       "noneTitle": "Žiadny riadok nemá polohu",
-      "none": "Žiadny z {rows} riadkov nemá bod v poli polohy.",
+      "none": "Žiadny z {rows} riadkov nemá polohu: bod GeoJSON (location, geometry) ani polia zemepisnej šírky a dĺžky. Riadky uvidíte cez „Otvoriť ako tabuľky“.",
       "mode": "Táto mapa číta polohu z bodu GeoJSON alebo z polí zemepisnej šírky a dĺžky, nie spôsobom „{mode}“.",
       "missing": "{n} z {rows} riadkov nemá polohu a nie je vykreslených.",
       "basemap": "Podklad „{type}“ sa tu nekreslí.",

@@ -371,7 +371,7 @@ for (const width of [1440, 400]) {
           await expect(map.getByText("No data")).toBeVisible();
         } else if (state === "nolocation") {
           await expect(map.getByText("No row has a location")).toBeVisible();
-          await expect(map.getByText("None of the 100 rows has a point in a location field.")).toBeVisible();
+          await expect(map.getByText("None of the 100 rows has a location: a GeoJSON point (location, geometry) or latitude and longitude fields. Use “Open as tables” to see the rows.")).toBeVisible();
           await expect(map.locator("canvas")).toHaveCount(0);
         } else {
           await expect(map.getByRole("application", { name: `Map of Air quality map (t6516-mw3xzrhm): ${state === "filled" ? 100 : 88} markers` })).toBeVisible();
