@@ -649,9 +649,35 @@ impl Gateway {
         self
     }
 
-    /// The gateway's public base URL, or the empty string when none is configured.
-    pub(crate) fn base_url(&self) -> &str {
-        self.public_url.as_deref().unwrap_or_default()
+    /// The gateway's public base URL, or the empty string when none is configured. On an
+    /// Organization's own host ([`HostBase`]) that host's base: an answer there links only its
+    /// own addresses.
+    pub(crate) fn base_url(&self) -> std::borrow::Cow<'_, str> {
+        match HOST_BASE.try_with(Clone::clone) {
+            Ok(base) => std::borrow::Cow::Owned(base),
+            Err(_) => std::borrow::Cow::Borrowed(self.public_url.as_deref().unwrap_or_default()),
+        }
+    }
+}
+
+/// The public base of the Organization's own API host a request came in on (`jc`'s
+/// `[[organizations]]`), placed beside [`HostOrganization`] by the host in front of the gateway:
+/// every link of the answer is built on it instead of the one configured public URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostBase(pub String);
+
+tokio::task_local! {
+    static HOST_BASE: String;
+}
+
+/// Runs the request with its [`HostBase`], outermost, so every layer and handler links it.
+async fn host_base(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response<Body> {
+    match request.extensions().get::<HostBase>().cloned() {
+        Some(base) => HOST_BASE.scope(base.0, next.run(request)).await,
+        None => next.run(request).await,
     }
 }
 
@@ -774,6 +800,7 @@ pub fn router(gateway: Arc<Gateway>) -> Router {
             gateway_for_telemetry,
             telemetry::record,
         ))
+        .layer(axum::middleware::from_fn(host_base))
 }
 
 /// gzip or br when the client's Accept-Encoding asks for it (T-5847). A WebSocket upgrade has an

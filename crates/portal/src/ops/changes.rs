@@ -202,7 +202,8 @@ fn change_list_output_schema() -> Value {
 /// The Portal page where a person decides change `id` (T-6293): the `url` every change tool
 /// answers, while the forge's merge request stays `mergeRequest`.
 pub(super) fn approval_url(state: &AppState, project: &str, id: &str) -> String {
-    let base = state.config.public_base_url.as_str().trim_end_matches('/');
+    let base = state.config.public_base();
+    let base = base.as_str().trim_end_matches('/');
     format!("{base}/projects/{project}/approvals/{id}")
 }
 

@@ -63,6 +63,10 @@ impl std::fmt::Display for Realm {
 }
 /// The Portal's sign-in client in kaisatsu's shipped realm file (confidential, code + PKCE).
 pub const PORTAL_CLIENT: &str = "portal-api";
+/// The Portal's public client of the silent sign-in check (AP-122).
+pub const PORTAL_UI_CLIENT: &str = "portal-ui";
+/// The one page the sign-in check lands on (the Portal's `oidc::SSO_CHECK_DONE`).
+const SSO_CHECK_DONE: &str = "/api/v1/auth/sso-check/done";
 /// The Portal's people-administration client (service account only).
 pub const PORTAL_ADMIN_CLIENT: &str = "portal-reconciler";
 /// The Context Gateway's client (client_credentials), the Portal's `JC_PORTAL_GATEWAY_CLIENT_ID`.
@@ -492,12 +496,35 @@ const SHIPPED_HOST: &str = "https://portal.jc.localhost";
 /// privilege the Portal needs: `portal-reconciler` has `manage-users` and `query-groups`,
 /// `portal-api` `view-clients`, `query-users` and `query-groups`, no realm-admin. Both files name
 /// `realm` (the shipped file's `id` and `realm` included).
+///
+/// `organization_portals` are the Portal's bases on the `[[organizations]]` hosts: the Portal's
+/// clients (`portal-api` and the sign-in check's `portal-ui`) register one exact redirect URI per
+/// Portal host, never a path wildcard, and each host as a web origin and a logout target.
 pub fn portal_realm_files(
     portal_base: &str,
+    organization_portals: &[String],
     realm: &Realm,
 ) -> Result<Vec<(String, Value)>, serde_json::Error> {
     let shipped = SHIPPED_REALM.replace(SHIPPED_HOST, portal_base.trim_end_matches('/'));
     let mut shipped: Value = serde_json::from_str(&shipped)?;
+    let bases: Vec<&str> = std::iter::once(portal_base)
+        .chain(organization_portals.iter().map(String::as_str))
+        .map(|b| b.trim_end_matches('/'))
+        .collect();
+    let at =
+        |suffix: &str| -> Vec<String> { bases.iter().map(|b| format!("{b}{suffix}")).collect() };
+    for client in shipped["clients"].as_array_mut().into_iter().flatten() {
+        let redirect = match client["clientId"].as_str() {
+            Some(PORTAL_CLIENT) => "/api/v1/auth/callback",
+            Some(PORTAL_UI_CLIENT) => SSO_CHECK_DONE,
+            _ => continue,
+        };
+        client["redirectUris"] = json!(at(redirect));
+        client["webOrigins"] = json!(at(""));
+        if client["clientId"] == PORTAL_CLIENT {
+            client["attributes"]["post.logout.redirect.uris"] = json!(at("/").join("##"));
+        }
+    }
     shipped["id"] = json!(realm.as_str());
     shipped["realm"] = json!(realm.as_str());
     let first_admin = json!({
@@ -658,7 +685,7 @@ mod tests {
     #[test]
     fn the_portals_client_gains_the_assistant_audience_once() {
         let mut files =
-            portal_realm_files("https://portal.example.test", &Realm::default()).unwrap();
+            portal_realm_files("https://portal.example.test", &[], &Realm::default()).unwrap();
         add_assistant_audience(&mut files);
         add_assistant_audience(&mut files);
         let portal = files[0].1["clients"]
@@ -865,9 +892,53 @@ mod tests {
         assert!(e.contains("kaisatsu-kek"), "{e}");
     }
 
+    /// jc-multiorg-portal: one exact redirect URI per Portal host, the deployment's own and each
+    /// Organization's, for both Portal clients; the sign-in check's `{base}/*` is gone.
+    #[test]
+    fn each_portal_host_has_one_exact_redirect_uri_and_no_wildcard() {
+        let orgs = [
+            "http://portal.a.localhost:42150".to_owned(),
+            "http://portal.b.localhost:42150".to_owned(),
+        ];
+        let files =
+            portal_realm_files("http://localhost:42150/", &orgs, &Realm::default()).unwrap();
+        let client = |id: &str| {
+            files[0].1["clients"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["clientId"] == id)
+                .unwrap()
+                .clone()
+        };
+        let bases = [
+            "http://localhost:42150",
+            "http://portal.a.localhost:42150",
+            "http://portal.b.localhost:42150",
+        ];
+        assert_eq!(
+            client(PORTAL_CLIENT)["redirectUris"],
+            json!(bases.map(|b| format!("{b}/api/v1/auth/callback")))
+        );
+        assert_eq!(
+            client(PORTAL_UI_CLIENT)["redirectUris"],
+            json!(bases.map(|b| format!("{b}/api/v1/auth/sso-check/done")))
+        );
+        assert_eq!(client(PORTAL_UI_CLIENT)["webOrigins"], json!(bases));
+        assert_eq!(
+            client(PORTAL_CLIENT)["attributes"]["post.logout.redirect.uris"],
+            json!(bases.map(|b| format!("{b}/")).join("##"))
+        );
+        let text = serde_json::to_string(&files).unwrap();
+        assert!(
+            !text.contains("/*\""),
+            "a wildcard redirect URI is left: {text}"
+        );
+    }
+
     #[test]
     fn the_realm_holds_no_literal_secret_and_least_privilege_roles() {
-        let files = portal_realm_files("https://city.example/", &Realm::default()).unwrap();
+        let files = portal_realm_files("https://city.example/", &[], &Realm::default()).unwrap();
         let text = serde_json::to_string(&files).unwrap();
         assert!(!text.contains("realm-admin"), "no realm-admin");
         assert!(
@@ -921,7 +992,7 @@ mod tests {
     #[test]
     fn every_first_start_file_names_the_configured_realm() {
         let dev = Realm::parse("dev").unwrap();
-        let files = portal_realm_files("https://city.example/", &dev).unwrap();
+        let files = portal_realm_files("https://city.example/", &[], &dev).unwrap();
         for (name, file) in files.iter().chain([&gateway_realm_file(&dev)]) {
             assert_eq!(file["realm"], "dev", "{name}");
             if let Some(id) = file.get("id") {
