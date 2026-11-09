@@ -707,6 +707,68 @@ async fn the_gateway_reads_the_forge_with_no_program_on_the_path() {
     assert!(!jc.log_has("git does not run"), "{}", jc.tail());
 }
 
+/// ADR-N-052: the gateway's anonymous OAuth server, as prod runs it, signs with a key jc
+/// generates and keeps (0600) and never logs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_anonymous_oauth_server_runs_on_a_key_jc_keeps() {
+    let jc = start().await;
+    let (status, body) = call(
+        &jc,
+        reqwest::Method::GET,
+        "/.well-known/oauth-authorization-server",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}\n{}", jc.tail());
+    let document: Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        document["registration_endpoint"]
+            .as_str()
+            .is_some_and(|u| u.ends_with("/oauth/register")),
+        "{document}"
+    );
+    let register = json!({
+        "redirect_uris": ["http://127.0.0.1:8976/callback"],
+        "client_name": "jc e2e",
+    });
+    let (status, body) = call(
+        &jc,
+        reqwest::Method::POST,
+        "/oauth/register",
+        None,
+        Some(&register),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let client: Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        client["client_id"].as_str().is_some_and(|c| !c.is_empty()),
+        "{client}"
+    );
+    let (status, body) = call(
+        &jc,
+        reqwest::Method::GET,
+        "/oauth/authorize?client_id=not-issued-by-this-server&redirect_uri=http%3A%2F%2Flocalhost%2Fcallback&response_type=code",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let key = jc.secret("gateway-oauth-key");
+    assert!(key.len() >= 32);
+    assert!(!jc.log_has(&key), "the OAuth key appears in the log");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(jc.state.join("gateway-oauth-key"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn endpoints_answer_inside_jc_as_on_dev() {
     let jc = start().await;

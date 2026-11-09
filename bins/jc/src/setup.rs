@@ -143,6 +143,9 @@ pub enum Secret {
     GatewayClientSecret,
     /// What the gateway's hop to Antares presents (`modules::antares::Hop`).
     GatewayHopToken,
+    /// The key the gateway's anonymous OAuth server signs with (`JC_GATEWAY_OAUTH_KEY`,
+    /// ADR-N-052 §2.2.6): kept, so a client it registered stays valid across a restart.
+    GatewayOauthKey,
     /// The assistant's `jc-assistant` client in kaisatsu.
     AssistantClientSecret,
     /// Its proxy's `agent-proxy` client in kaisatsu.
@@ -150,7 +153,7 @@ pub enum Secret {
 }
 
 impl Secret {
-    pub const ALL: [Secret; 16] = [
+    pub const ALL: [Secret; 17] = [
         Secret::KaisatsuKek,
         Secret::PortalClientSecret,
         Secret::PortalAdminClientSecret,
@@ -165,6 +168,7 @@ impl Secret {
         Secret::PortalAgeKey,
         Secret::GatewayClientSecret,
         Secret::GatewayHopToken,
+        Secret::GatewayOauthKey,
         Secret::AssistantClientSecret,
         Secret::ProxyClientSecret,
     ];
@@ -206,6 +210,7 @@ impl Secret {
             Secret::PortalAgeKey => "portal-age-key",
             Secret::GatewayClientSecret => "gateway-client-secret",
             Secret::GatewayHopToken => "gateway-hop-token",
+            Secret::GatewayOauthKey => "gateway-oauth-key",
             Secret::AssistantClientSecret => "assistant-client-secret",
             Secret::ProxyClientSecret => "proxy-client-secret",
         }
@@ -248,6 +253,7 @@ impl Secret {
             Secret::PortalAgeKey => &[Module::Portal],
             Secret::GatewayClientSecret => &[Module::Kaisatsu, Module::Gateway, Module::Portal],
             Secret::GatewayHopToken => &[Module::Antares, Module::Gateway],
+            Secret::GatewayOauthKey => &[Module::Gateway],
             // kaisatsu applies the realm only beside the Portal (`modules::kaisatsu`).
             Secret::AssistantClientSecret | Secret::ProxyClientSecret => {
                 &[Module::Kaisatsu, Module::Assistant, Module::Portal]
