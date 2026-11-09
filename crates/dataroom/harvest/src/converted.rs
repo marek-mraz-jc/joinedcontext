@@ -270,6 +270,42 @@ fn model_files(
         .collect()
 }
 
+/// Where the sheet of `entry` reads its rows: its Endpoint's `file.csv`, filtered as the CSV
+/// distribution is (prod's `od_sheet`).
+pub fn sheet_address(root: &str, entry: &ConvertedDataset) -> String {
+    let filter = (entry.filtered && !entry.sole).then_some(Filter::Q);
+    address(root, entry, "file.csv", filter)
+}
+
+/// The sheet prod's harvest gives a converted dataset whose Endpoint answers its `file.csv` (its
+/// DataStore table, T-4742): one CSV named by the entity type. dataroom keeps no copy of rows
+/// (C3), so the distribution reads the rows where prod's sheet copied them from.
+pub fn sheet(
+    root: &str,
+    entry: &ConvertedDataset,
+    dataset_id: &str,
+    lang: &str,
+    n: usize,
+) -> Distribution {
+    let mut d = distribution(
+        dataset_id,
+        n,
+        lang,
+        entry.entity_type.clone(),
+        sheet_address(root, entry),
+        "CSV",
+        Some("text/csv".into()),
+    );
+    d.description = BTreeMap::from([(
+        lang.to_owned(),
+        format!(
+            "The public rows of {} as one table, read live from the platform's Endpoint.",
+            entry.entity_type
+        ),
+    )]);
+    d
+}
+
 /// The distributions of a converted dataset on `root` (`{gateway}/api/endpoint/{slug}/`) whose
 /// Endpoint's model index is `index`; none when the model lacks an artefact (prod's
 /// `od_standards`).

@@ -1,0 +1,100 @@
+{
+ "bb-dtm-bb-register-statickej-dopravy": {
+  "resources": 14,
+  "sheet": [
+   "OffStreetParking"
+  ]
+ },
+ "bbsk-clenovia-samospravy-efc2f3": {
+  "resources": 12,
+  "sheet": []
+ },
+ "bbsk-cykloscitace-miesta-6e967d": {
+  "resources": 14,
+  "sheet": [
+   "PointOfInterest"
+  ]
+ },
+ "bbsk-ekologicky-stav-vodnych-utvarov-48bbbd": {
+  "resources": 14,
+  "sheet": [
+   "WaterBodyStatus"
+  ]
+ },
+ "bbsk-kontaktne-miesta-2128a0": {
+  "resources": 14,
+  "sheet": [
+   "PointOfInterest"
+  ]
+ },
+ "bbsk-kulturne-institucie-bbsk-a-ich-pobocky-2f9362": {
+  "resources": 14,
+  "sheet": [
+   "PointOfInterest"
+  ]
+ },
+ "bbsk-materske-skoly-v-banskobystrickom-kraji-3f7d07": {
+  "resources": 14,
+  "sheet": [
+   "Organization"
+  ]
+ },
+ "bbsk-nehodovost-v-bbk-0ea72d": {
+  "resources": 14,
+  "sheet": [
+   "RoadAccident"
+  ]
+ },
+ "bbsk-podjazdy-v-banskobystrickom-kraji-public-view-e6fb8f": {
+  "resources": 14,
+  "sheet": [
+   "RoadStructure"
+  ]
+ },
+ "bbsk-priepusty-v-banskobystrickom-kraji-public-view-a9ed8e": {
+  "resources": 14,
+  "sheet": [
+   "RoadStructure"
+  ]
+ },
+ "bbsk-stredne-skoly-v-banskobystrickom-kraji-581554": {
+  "resources": 14,
+  "sheet": [
+   "Organization"
+  ]
+ },
+ "bbsk-uradne-hodiny-c912ed": {
+  "resources": 12,
+  "sheet": []
+ },
+ "bbsk-vysoke-skoly-v-banskobystrickom-kraji-b0be47": {
+  "resources": 14,
+  "sheet": [
+   "Organization"
+  ]
+ },
+ "bbsk-zakladne-skoly-v-banskobystrickom-kraji-13a8b6": {
+  "resources": 14,
+  "sheet": [
+   "Organization"
+  ]
+ },
+ "bbsk-zeleznicne-priecestia-v-banskobystrickom-kraji-public-view-89feb8": {
+  "resources": 14,
+  "sheet": [
+   "RoadStructure"
+  ]
+ },
+ "bbsk-zoznam-lekarni-v-bbk-c564de": {
+  "resources": 14,
+  "sheet": [
+   "PointOfInterest"
+  ]
+ },
+ "bbsk-zoznam-zdravotnickych-zariadeni-v-bbk-701db2": {
+  "resources": 14,
+  "sheet": [
+   "PointOfInterest"
+  ]
+ }
+}
