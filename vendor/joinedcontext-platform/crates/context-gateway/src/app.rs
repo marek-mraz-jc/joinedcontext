@@ -655,6 +655,55 @@ impl Gateway {
     }
 }
 
+/// The Organization whose host a request came in on, placed in the request extensions by the
+/// host in front of the gateway (`jc`'s `[[organizations]]`, from the host its router resolved,
+/// never a raw header). On such a host every listing holds that Organization's Endpoints alone
+/// and an Endpoint, space or MCP server of another answers the 404 an unknown one does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostOrganization(pub String);
+
+impl Gateway {
+    /// Whether `project`'s Endpoints show on a request's host: any on no Organization's host,
+    /// only that Organization's on one.
+    pub(crate) fn on_host(&self, host: Option<&HostOrganization>, project: &str) -> bool {
+        host.is_none_or(|h| self.organization_of(project).as_deref() == Some(h.0.as_str()))
+    }
+}
+
+/// The project an address names (`/api/endpoint/{slug}`, `/cs/{space}`, `/api/mcp/{project}/..`),
+/// when it names one the gateway holds.
+fn project_of_path(gateway: &Gateway, path: &str) -> Option<String> {
+    let mut segments = path.trim_start_matches('/').split('/');
+    match (segments.next(), segments.next(), segments.next()) {
+        (Some("api"), Some("endpoint"), Some(slug)) => {
+            gateway.resolver.resolve(slug).map(|e| e.project.clone())
+        }
+        (Some("cs"), Some(space), _) => gateway
+            .resolver
+            .resolve_space(space)
+            .map(|s| s.endpoint.project.clone()),
+        (Some("api"), Some("mcp"), Some(project)) if project != "me" => Some(project.to_owned()),
+        _ => None,
+    }
+}
+
+/// Answers an address of another Organization's Endpoint, space or MCP server on an
+/// Organization's host as an unknown one: nothing says it exists.
+async fn host_scope(
+    axum::extract::State(gateway): axum::extract::State<Arc<Gateway>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response<Body> {
+    if let Some(host) = request.extensions().get::<HostOrganization>() {
+        if let Some(project) = project_of_path(&gateway, request.uri().path()) {
+            if !gateway.on_host(Some(host), &project) {
+                return ProblemDetails::not_found().into_response();
+            }
+        }
+    }
+    next.run(request).await
+}
+
 /// The router: two probes and the endpoint surface.
 pub fn router(gateway: Arc<Gateway>) -> Router {
     // The outermost layer resolves the endpoint of a path itself, to write the `describedby`
@@ -709,6 +758,10 @@ pub fn router(gateway: Arc<Gateway>) -> Router {
         // no request of anyone's; and outermost of the two layers, so a request refused by the
         // rate limiter is still counted.
         .route("/metrics", get(telemetry::metrics))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&gateway),
+            host_scope,
+        ))
         .with_state(gateway)
         .fallback(missing)
         // Outside every handler, so nothing the gateway concluded for itself — the tenant,

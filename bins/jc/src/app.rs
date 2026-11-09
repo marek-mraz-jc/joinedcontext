@@ -153,7 +153,7 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
         }
         let roots = module.root_paths();
         let at_root = !roots.is_empty();
-        let mut specs = match cfg.mounts.get(&module) {
+        let specs = match cfg.mounts.get(&module) {
             Some(entries) => {
                 let specs = entries
                     .iter()
@@ -165,6 +165,7 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
                         )
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                // Checked alone first: an empty list is no address, Organization hosts or not.
                 check_entries(cfg.mode, module, &specs)?;
                 specs
             }
@@ -182,7 +183,11 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
                 )?],
             },
         }
-        .into_iter();
+        .into_iter()
+        .chain(organization_specs(cfg, module))
+        .collect::<Vec<_>>();
+        check_entries(cfg.mode, module, &specs)?;
+        let mut specs = specs.into_iter();
         let spec = specs
             .next()
             .ok_or(RouterError::InvalidPrefix(String::new()))?;
@@ -206,6 +211,7 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
             at_root,
         });
     }
+    check_organization_hosts(cfg, &plans)?;
     // Dry run of the router table: overlap is refused before any module state exists.
     let mut dry = JcRouterBuilder::new(cfg.scheme.clone(), cfg.base_host.clone());
     for spec in plans.iter().flat_map(MountPlan::specs) {
@@ -213,6 +219,67 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
     }
     dry.build()?;
     Ok(plans)
+}
+
+/// The entries of `module` on the `[[organizations]]` hosts: each answers its whole host, and
+/// the gateway also answers its root paths on the Organization's Portal host, as on dev, where
+/// the Portal's pages read the gateway as the person on their own host.
+fn organization_specs(cfg: &Config, module: Module) -> Vec<MountSpec> {
+    let spec = |host: &str, prefix: Option<&str>| MountSpec {
+        module: module.name().to_owned(),
+        host: Some(host.to_owned()),
+        path_prefix: prefix.map(str::to_owned),
+    };
+    let mut out = Vec::new();
+    for org in &cfg.organizations {
+        for (m, host) in org.hosts.by_module() {
+            if m == module {
+                out.push(spec(host, None));
+            }
+        }
+        if module == Module::Gateway && cfg.roles.contains(&Module::Portal) {
+            for prefix in ["/cs", "/api/endpoint", "/api/mcp"] {
+                out.push(spec(&org.hosts.portal, Some(prefix)));
+            }
+        }
+    }
+    out
+}
+
+/// Refuses an entry on an `[[organizations]]` host that jc did not place there (another
+/// module's mount, a mode default): an Organization's host answers its own modules alone.
+fn check_organization_hosts(cfg: &Config, plans: &[MountPlan]) -> Result<(), StartError> {
+    let bare = |h: &str| h.split(':').next().unwrap_or_default().to_owned();
+    let hosts: std::collections::BTreeMap<String, &str> = cfg
+        .organizations
+        .iter()
+        .flat_map(|org| {
+            org.hosts
+                .by_module()
+                .map(|(_, host)| (bare(host), org.name.as_str()))
+        })
+        .collect();
+    let placed: Vec<MountSpec> = cfg
+        .roles
+        .iter()
+        .flat_map(|&module| organization_specs(cfg, module))
+        .collect();
+    for spec in plans.iter().flat_map(MountPlan::specs) {
+        let Some(host) = spec.host.as_deref().map(bare) else {
+            continue;
+        };
+        if let Some(org) = hosts.get(&host)
+            && !placed.contains(spec)
+        {
+            return Err(StartError::Config(
+                crate::config::ConfigError::Organization(format!(
+                    "{org}: host '{host}' is also used by another mount ({})",
+                    spec.module
+                )),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Mounts `router` at every entry of `plan`, behind the whole-path rewrite for a module that
@@ -406,7 +473,11 @@ pub async fn build_router(
         }
         if plan.module == Module::Gateway {
             let late = LateRouter::default();
-            builder = mount_all(builder, &plan, &late.router());
+            #[cfg(feature = "gateway")]
+            let router = modules::gateway::by_organization(late.router(), &cfg.organizations);
+            #[cfg(not(feature = "gateway"))]
+            let router = late.router();
+            builder = mount_all(builder, &plan, &router);
             gateway = Some(LateGateway {
                 slot: late,
                 mount: plan.mount,
@@ -1112,6 +1183,103 @@ mod tests {
     fn refusal(file: &str) -> String {
         let cfg = dev_config("gateway,portal", file);
         plan_mounts(&cfg).unwrap_err().to_string()
+    }
+
+    const TWO_ORGS: &str = include_str!("../tests/fixtures/two-orgs.toml");
+
+    fn org_refusal(file: &str) -> String {
+        let cfg = dev_config("kaisatsu,portal,dataroom,daiya,gateway", file);
+        plan_mounts(&cfg).unwrap_err().to_string()
+    }
+
+    #[tokio::test]
+    async fn each_organization_answers_on_its_own_hosts_and_an_unknown_host_is_404() {
+        for mode in ["slug", "host"] {
+            let file = format!("mode = \"{mode}\"\nbase_host = \"city.test\"\n{TWO_ORGS}");
+            let cfg = dev_config("kaisatsu,portal,dataroom,gateway", &file);
+            let plans = plan_mounts(&cfg).unwrap();
+            // Each module's own address stays its first entry.
+            let dataroom = plans.iter().find(|p| p.module == Module::Dataroom).unwrap();
+            assert_ne!(dataroom.mount.host, "opendata.alpha.test", "{mode}");
+            for org in ["alpha", "beta"] {
+                for (host, path, want) in [
+                    ("portal", "/", "portal /".to_owned()),
+                    ("portal", "/projects/x", "portal /projects/x".to_owned()),
+                    // The Portal's pages read the gateway on their own host, as on dev.
+                    (
+                        "portal",
+                        "/api/endpoint/x",
+                        "gateway /api/endpoint/x".to_owned(),
+                    ),
+                    ("portal", "/api/mcp", "gateway /api/mcp".to_owned()),
+                    ("opendata", "/dataset/x", "dataroom /dataset/x".to_owned()),
+                    // The whole host is the Organization's catalogue: no other module's slug.
+                    ("opendata", "/portal/x", "dataroom /portal/x".to_owned()),
+                    (
+                        "opendata",
+                        "/id/realms/x",
+                        "dataroom /id/realms/x".to_owned(),
+                    ),
+                    (
+                        "api",
+                        "/catalog.jsonld",
+                        "gateway /catalog.jsonld".to_owned(),
+                    ),
+                    ("api", "/oauth/token", "gateway /oauth/token".to_owned()),
+                    ("mcp", "/api/mcp", "gateway /api/mcp".to_owned()),
+                ] {
+                    let host = format!("{host}.{org}.test");
+                    let (status, body) = routed(&plans, &host, path).await;
+                    assert_eq!(
+                        (status, body.as_str()),
+                        (StatusCode::OK, want.as_str()),
+                        "{mode} {host}{path}"
+                    );
+                }
+            }
+            for host in ["gamma.test", "opendata.gamma.test", "alpha.test"] {
+                let (status, body) = routed(&plans, host, "/dataset/x").await;
+                if mode == "host" {
+                    assert_eq!(status, StatusCode::NOT_FOUND, "{mode} {host}: {body}");
+                } else {
+                    // Slug mode answers its slugs on any host; the Organization hosts are not that.
+                    assert!(!body.starts_with("dataroom"), "{mode} {host}: {body}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_organization_host_another_mount_uses_refuses_to_start() {
+        let host_mode = "mode = \"host\"\nbase_host = \"city.test\"\n";
+        for (extra, says) in [
+            // An explicit mount of another module on an Organization's host, any prefix.
+            (
+                "[mounts.daiya]\nhost = \"opendata.alpha.test\"\npath_prefix = \"/grafana\"\n",
+                "also used by another mount (daiya)",
+            ),
+            (
+                "[[mounts.portal]]\nhost = \"portal.city.test\"\n[[mounts.portal]]\nhost = \"api.beta.test\"\npath_prefix = \"/p\"\n",
+                "also used by another mount (portal)",
+            ),
+            // Its own module's mount on its host twice.
+            (
+                "[[mounts.dataroom]]\nhost = \"opendata.city.test\"\n[[mounts.dataroom]]\nhost = \"opendata.beta.test\"\n",
+                "two equal entries",
+            ),
+        ] {
+            let err = org_refusal(&format!("{host_mode}{extra}{TWO_ORGS}"));
+            assert!(err.contains(says), "{extra}: {err}");
+        }
+        // A mode default host: host mode places dataroom on opendata.{base_host}.
+        let err = org_refusal(&format!(
+            "{host_mode}{}",
+            TWO_ORGS.replace("opendata.alpha.test", "id.city.test")
+        ));
+        assert!(
+            err.contains("also used by another mount (kaisatsu)"),
+            "{err}"
+        );
     }
 
     #[test]

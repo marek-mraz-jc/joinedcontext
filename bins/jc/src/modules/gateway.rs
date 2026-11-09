@@ -362,6 +362,44 @@ pub fn at_root(router: Router) -> Router {
         .layer(axum::middleware::from_fn(whole_path))
 }
 
+/// `router` with the Organization of each request's host in its extensions
+/// (`context_gateway::app::HostOrganization`), from the host `jc-router` resolved (its
+/// `Mount`), for the `[[organizations]]` API, MCP and Portal hosts: there the gateway lists that
+/// Organization's Endpoints alone.
+pub fn by_organization(router: Router, orgs: &[crate::config::OrganizationSection]) -> Router {
+    let hosts: std::sync::Arc<BTreeMap<String, String>> = std::sync::Arc::new(
+        orgs.iter()
+            .flat_map(|org| {
+                [&org.hosts.api, &org.hosts.mcp, &org.hosts.portal]
+                    .map(|h| (bare(h).to_owned(), org.name.clone()))
+            })
+            .collect(),
+    );
+    router.layer(axum::middleware::from_fn(
+        move |mut req: Request, next: Next| {
+            let hosts = hosts.clone();
+            async move {
+                // Only jc places it: whatever a request carried is dropped first.
+                req.extensions_mut()
+                    .remove::<context_gateway::app::HostOrganization>();
+                let org = req
+                    .extensions()
+                    .get::<Mount>()
+                    .and_then(|m| hosts.get(bare(&m.host)).cloned());
+                if let Some(org) = org {
+                    req.extensions_mut()
+                        .insert(context_gateway::app::HostOrganization(org));
+                }
+                next.run(req).await
+            }
+        },
+    ))
+}
+
+fn bare(host: &str) -> &str {
+    host.split(':').next().unwrap_or(host)
+}
+
 pub async fn build(
     ctx: BuildCtx<'_>,
     wire: bool,

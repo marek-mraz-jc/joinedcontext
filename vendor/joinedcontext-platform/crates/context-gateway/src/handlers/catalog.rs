@@ -1,6 +1,6 @@
 //! Each Endpoint's DCAT record and the organization's catalogue a harvester reads (EP-01, EP-84).
 
-use crate::app::Gateway;
+use crate::app::{Gateway, HostOrganization};
 use crate::auth::subject::admit;
 use crate::auth::subject::Subject;
 use crate::handlers::{endpoint_surface, schema_routes, space_surface};
@@ -149,9 +149,11 @@ async fn public_records(
     gateway: &Gateway,
     profile: Profile,
     project: Option<&str>,
+    host: Option<&HostOrganization>,
 ) -> Vec<serde_json::Value> {
     let table = gateway.resolver.table();
-    let key = format!("{profile:?}/{}", project.unwrap_or_default());
+    // Debug quotes the names, so no project can pass for an Organization.
+    let key = format!("{profile:?}/{:?}/{:?}", project, host.map(|h| &h.0));
     if let Some(records) = gateway.catalog_records.get(&key, &table) {
         return records.as_ref().clone();
     }
@@ -169,6 +171,7 @@ async fn public_records(
             || endpoint.roles.app_client.is_some()
             || endpoint.catalog.as_deref().is_some_and(|c| !c.harvested())
             || project.is_some_and(|project| endpoint.project != project)
+            || !gateway.on_host(host, &endpoint.project)
         {
             continue;
         }
@@ -211,9 +214,13 @@ async fn public_records(
         .clone()
 }
 
-async fn catalog_feed(gateway: &Gateway, profile: Profile) -> serde_json::Value {
+async fn catalog_feed(
+    gateway: &Gateway,
+    profile: Profile,
+    host: Option<&HostOrganization>,
+) -> serde_json::Value {
     endpoint_surface::feed(
-        public_records(gateway, profile, None).await,
+        public_records(gateway, profile, None, host).await,
         gateway.base_url(),
         &gateway.org_domain,
     )
@@ -227,7 +234,9 @@ pub(crate) async fn catalog_feed_jsonld(
     let Some(profile) = profile_of(&gateway, request.uri().query()) else {
         return ProblemDetails::not_found().into_response();
     };
-    let body = serde_json::to_string(&catalog_feed(&gateway, profile).await).unwrap_or_default();
+    let body =
+        serde_json::to_string(&catalog_feed(&gateway, profile, request.extensions().get()).await)
+            .unwrap_or_default();
     (
         [(axum::http::header::CONTENT_TYPE, "application/ld+json")],
         body,
@@ -243,7 +252,9 @@ pub(crate) async fn catalog_feed_turtle(
     let Some(profile) = profile_of(&gateway, request.uri().query()) else {
         return ProblemDetails::not_found().into_response();
     };
-    let body = endpoint_surface::feed_turtle(&catalog_feed(&gateway, profile).await);
+    let body = endpoint_surface::feed_turtle(
+        &catalog_feed(&gateway, profile, request.extensions().get()).await,
+    );
     ([(axum::http::header::CONTENT_TYPE, "text/turtle")], body).into_response()
 }
 
@@ -267,7 +278,8 @@ pub(crate) async fn publisher_catalog(
     ) else {
         return ProblemDetails::not_found().into_response();
     };
-    let records = public_records(&gateway, profile, Some(project)).await;
+    let records =
+        public_records(&gateway, profile, Some(project), request.extensions().get()).await;
     if records.is_empty() {
         return ProblemDetails::not_found().into_response();
     }

@@ -111,6 +111,7 @@ mod foreign_model_tests;
 mod form_creates_tests;
 mod geo_parameters_tests;
 mod geo_tests;
+mod host_organization_tests;
 mod hub_federation_tests;
 mod identity_attrs_tests;
 mod leak_sweep_tests;

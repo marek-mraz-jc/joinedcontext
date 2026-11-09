@@ -105,58 +105,89 @@ pub async fn ensure_default_catalogue(
     host: &str,
 ) -> Result<()> {
     if store.get_catalogue(org_id, catalogue_id).await?.is_none() {
-        let host = host.to_owned();
         store
-            .upsert_catalogue(Catalogue {
-                org_id,
-                id: catalogue_id,
-                name: "default".into(),
-                host,
-                title: BTreeMap::from([
-                    ("sk".into(), "Katalóg otvorených dát".into()),
-                    ("cs".into(), "Katalog otevřených dat".into()),
-                    ("en".into(), "Open Data Catalogue".into()),
-                ]),
-                description: BTreeMap::from([
-                    ("sk".into(), "Katalóg dát".into()),
-                    ("cs".into(), "Katalog dat".into()),
-                    ("en".into(), "Data catalogue".into()),
-                ]),
-                homepage: None,
-                default_language: "sk".into(),
-                languages: vec!["sk".into(), "cs".into(), "en".into()],
-                main_profile: "dcat-ap-3.0.1".into(),
-                active_profiles: vec![
-                    ProfilePin {
-                        profile_id: "dcat-ap-3.0.1".into(),
-                        version: "3.0.1".into(),
-                    },
-                    ProfilePin {
-                        profile_id: "dcat-ap-cz".into(),
-                        version: "2026-09-23".into(),
-                    },
-                    ProfilePin {
-                        profile_id: "dcat-ap-sk-2.0".into(),
-                        version: "2.0.1".into(),
-                    },
-                ],
-                default_licence: Some("cc-by".into()),
-                publisher_uri: Some("https://data.gov.sk/id/legal-subject/00000000".into()),
-                publisher_name: None,
-                contact_point: None,
-                theme: ThemeTokens::default(),
-                branding: None,
-                hidden_datasets: BTreeMap::new(),
-                allow_cross_org_harvest: true,
-                allowed_outbound_hosts: Vec::new(),
-                applicable_legislation: Vec::new(),
-                modified: Utc::now(),
-                public_base: None,
-            })
+            .upsert_catalogue(new_catalogue(org_id, catalogue_id, "default", host))
             .await?;
     }
 
     Ok(())
+}
+
+/// Holds catalogue `catalogue_id` of `org_id` as `name` on `host`: created as the default one is
+/// when the store has none, else renamed and moved to `host` when the configuration says so (the
+/// configuration names every catalogue of a deployment with several, `jc`'s `[[organizations]]`).
+pub async fn ensure_catalogue(
+    store: &dyn Store,
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    name: &str,
+    host: &str,
+) -> Result<Catalogue> {
+    match store.get_catalogue(org_id, catalogue_id).await? {
+        None => {
+            store
+                .upsert_catalogue(new_catalogue(org_id, catalogue_id, name, host))
+                .await
+        }
+        Some(cat) if cat.name == name && cat.host == host => Ok(cat),
+        Some(mut cat) => {
+            cat.name = name.to_owned();
+            cat.host = host.to_owned();
+            cat.modified = Utc::now();
+            store.upsert_catalogue(cat).await
+        }
+    }
+}
+
+/// A fresh catalogue with the default titles, languages and profiles.
+fn new_catalogue(org_id: OrgId, catalogue_id: CatalogueId, name: &str, host: &str) -> Catalogue {
+    let host = host.to_owned();
+    Catalogue {
+        org_id,
+        id: catalogue_id,
+        name: name.into(),
+        host,
+        title: BTreeMap::from([
+            ("sk".into(), "Katalóg otvorených dát".into()),
+            ("cs".into(), "Katalog otevřených dat".into()),
+            ("en".into(), "Open Data Catalogue".into()),
+        ]),
+        description: BTreeMap::from([
+            ("sk".into(), "Katalóg dát".into()),
+            ("cs".into(), "Katalog dat".into()),
+            ("en".into(), "Data catalogue".into()),
+        ]),
+        homepage: None,
+        default_language: "sk".into(),
+        languages: vec!["sk".into(), "cs".into(), "en".into()],
+        main_profile: "dcat-ap-3.0.1".into(),
+        active_profiles: vec![
+            ProfilePin {
+                profile_id: "dcat-ap-3.0.1".into(),
+                version: "3.0.1".into(),
+            },
+            ProfilePin {
+                profile_id: "dcat-ap-cz".into(),
+                version: "2026-09-23".into(),
+            },
+            ProfilePin {
+                profile_id: "dcat-ap-sk-2.0".into(),
+                version: "2.0.1".into(),
+            },
+        ],
+        default_licence: Some("cc-by".into()),
+        publisher_uri: Some("https://data.gov.sk/id/legal-subject/00000000".into()),
+        publisher_name: None,
+        contact_point: None,
+        theme: ThemeTokens::default(),
+        branding: None,
+        hidden_datasets: BTreeMap::new(),
+        allow_cross_org_harvest: true,
+        allowed_outbound_hosts: Vec::new(),
+        applicable_legislation: Vec::new(),
+        modified: Utc::now(),
+        public_base: None,
+    }
 }
 
 /// Imports a CKAN JSON dump (an array of packages, or a `package_search` envelope `{"result": {"results": [...]}}`)

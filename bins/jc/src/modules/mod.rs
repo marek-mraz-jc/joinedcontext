@@ -90,7 +90,16 @@ pub async fn build(
         Module::Dataroom => {
             let widget =
                 dataroom::assistant_widget(ctx.siblings, &cfg.assistant.catalogue_deployment);
-            dataroom::build(&cfg.dataroom, ctx.setup, ctx.siblings, mount, widget).await
+            dataroom::build(
+                &cfg.dataroom,
+                &cfg.organizations,
+                &ctx.secrets.organization_tokens,
+                ctx.setup,
+                ctx.siblings,
+                mount,
+                widget,
+            )
+            .await
         }
         #[cfg(feature = "daiya")]
         Module::Daiya => daiya::build(&cfg.daiya, ctx.setup, ctx.siblings, mount)
