@@ -101,6 +101,8 @@ const BOARD = {
       interval: "auto",
       min: 0,
       max: 40,
+      // Few bikes is bad: the gradient blends red to green along a well-stocked station's bar.
+      thresholds: { base: "red", steps: [{ value: 5, color: "orange" }, { value: 10, color: "green" }] },
       bargauge: { displayMode: "gradient", orientation: "horizontal" },
     },
     {
@@ -371,7 +373,7 @@ for (const width of [1440, 400]) {
 
     const REFUSALS = {
       bargauge: { id: 5, title: "Free bikes per station", line: "panels[4].max: the maximum must be above the minimum 50", field: "#builder-panel-5-max", words: "Panel “Free bikes per station”, Maximum:" },
-      piechart: { id: 6, title: "Where the free bikes are", line: "panels[5].kind: a pie chart cannot draw availableBikeNumber; choose another kind", field: "#builder-panel-6-kind", words: "Panel “Where the free bikes are”, Panel type:" },
+      piechart: { id: 6, title: "Where the free bikes are", line: "panels[5].kind: a pie chart cannot draw availableBikeNumber: the data model holds it as text; choose another kind", field: "#builder-panel-6-kind", words: "Panel “Where the free bikes are”, Panel type:" },
       barchart: { id: 7, title: "Free docks by station", line: "panels[6].barchart.xField: stationCode is not a text attribute of BikeHireDockingStation; name the bars by one such as name", field: "#builder-panel-7-xField", words: "Panel “Free docks by station”, Bars named by:" },
       text: { id: 8, title: "About these stations", line: "panels[7].text.content: this reads like a credential; write something else", field: "#builder-panel-8-content", words: "Panel “About these stations”, Text:" },
     } as const;

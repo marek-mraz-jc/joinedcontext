@@ -341,9 +341,10 @@ fn check_choices(
             return Err(refused(
                 &format!("{at}kind"),
                 format!(
-                    "{} cannot draw {}; choose another kind",
+                    "{} cannot draw {}: the data model holds it as {}; choose another kind",
                     panel.kind.words(),
-                    panel.attribute
+                    panel.attribute,
+                    held_as(&kind, value_type.as_deref())
                 ),
             ));
         }
@@ -1120,4 +1121,15 @@ pub fn router() -> Router<AppState> {
             "/projects/{project}/grafana/builder/{uid}",
             get(builder_get).put(builder_update).delete(builder_delete),
         )
+}
+
+/// What the data model holds an attribute as, in a refusal's words: text, a number, a link.
+fn held_as(kind: &str, value_type: Option<&str>) -> String {
+    match (kind, value_type) {
+        ("Property", Some("string")) => "text".to_owned(),
+        ("Property", Some(other)) => format!("a {other}"),
+        ("Relationship", _) => "a link to another entity".to_owned(),
+        ("GeoProperty", _) => "a location".to_owned(),
+        (other, _) => format!("a {other}"),
+    }
 }

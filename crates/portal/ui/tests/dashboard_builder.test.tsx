@@ -226,13 +226,13 @@ describe("the dashboard builder page", () => {
     await user.click(screen.getByRole("button", { name: "Add panel" }));
     const editor = await screen.findByRole("region", { name: "Panel: Panel 1" });
     await within(editor).findByRole("option", { name: "Bike stations" });
-    await user.selectOptions(within(editor).getByLabelText("Endpoint"), "bikes");
-    await waitFor(() => expect(within(editor).getByLabelText("Type")).toBeEnabled());
-    await user.selectOptions(within(editor).getByLabelText("Type"), "BikeHireDockingStation");
-    await waitFor(() => expect(within(editor).getByLabelText("Attribute")).toBeEnabled());
+    await user.selectOptions(within(editor).getByRole("combobox", { name: "Endpoint" }), "bikes");
+    await waitFor(() => expect(within(editor).getByRole("combobox", { name: "Type" })).toBeEnabled());
+    await user.selectOptions(within(editor).getByRole("combobox", { name: "Type" }), "BikeHireDockingStation");
+    await waitFor(() => expect(within(editor).getByRole("combobox", { name: "Attribute" })).toBeEnabled());
     // A time series takes numbers only: the text and the place are not offered.
-    expect(within(within(editor).getByLabelText("Attribute")).queryByRole("option", { name: "status" })).toBeNull();
-    await user.selectOptions(within(editor).getByLabelText("Attribute"), "availableBikeNumber");
+    expect(within(within(editor).getByRole("combobox", { name: "Attribute" })).queryByRole("option", { name: "status" })).toBeNull();
+    await user.selectOptions(within(editor).getByRole("combobox", { name: "Attribute" }), "availableBikeNumber");
     await user.click(within(editor).getByRole("button", { name: "Preview" }));
     await waitFor(async () => expect(await sentTo(view.fetchMock, "POST", `${BUILDER}/preview`)).toHaveLength(1));
     const [asked] = (await sentTo(view.fetchMock, "POST", `${BUILDER}/preview`)) as { board: Record<string, unknown>; panel: number }[];

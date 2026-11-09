@@ -1184,4 +1184,24 @@ async fn a_preview_of_a_bar_chart_reads_one_row_per_entity_and_a_text_panel_read
         answer.text
     );
     assert!(committed_files(&shako, REPO).await.is_empty());
+
+    // A pie chart over a text attribute names the kind and what the model holds, in words.
+    let mut sent = board();
+    sent["panels"][5]["attribute"] = json!("status");
+    let answer = send(
+        &state,
+        person("eva"),
+        "POST",
+        BUILDER,
+        Some(json!({ "board": sent })),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", answer.text);
+    assert!(
+        answer.text.contains(
+            "panels[5].kind: a pie chart cannot draw status: the data model holds it as text"
+        ),
+        "{}",
+        answer.text
+    );
 }

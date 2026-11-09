@@ -130,7 +130,7 @@ export function SourcePicker({
   return (
     <div className="@container">
     <div className="grid gap-3 @2xl:grid-cols-3 [&>*]:min-w-0">
-      <BField id={`${id}-endpoint`} label={t("builder.field.endpoint")} help={choices.isError ? reasonOf(choices.error) : hints === "variable" ? t("builder.hint.variableEndpoint") : t("builder.hint.endpoint")}>
+      <BField id={`${id}-endpoint`} label={t("builder.field.endpoint")} required help={choices.isError ? reasonOf(choices.error) : hints === "variable" ? t("builder.hint.variableEndpoint") : t("builder.hint.endpoint")}>
         <Select id={`${id}-endpoint`} value={value.endpoint} onChange={(event) => onChange({ endpoint: event.target.value, type: "", attribute: "" })}>
           <option value="">{t("builder.choose")}</option>
           {endpoints.map((endpoint) => (
@@ -141,7 +141,7 @@ export function SourcePicker({
           {value.endpoint && !endpoints.some((endpoint) => endpoint.name === value.endpoint) ? <option value={value.endpoint}>{value.endpoint}</option> : null}
         </Select>
       </BField>
-      <BField id={`${id}-type`} label={t("builder.field.type")} help={hints === "variable" ? t("builder.hint.variableType") : t("builder.hint.type")}>
+      <BField id={`${id}-type`} label={t("builder.field.type")} required help={hints === "variable" ? t("builder.hint.variableType") : t("builder.hint.type")}>
         <Select id={`${id}-type`} value={value.type} disabled={!value.endpoint} title={value.endpoint ? undefined : t("builder.chooseEndpointFirst")} onChange={(event) => onChange({ ...value, type: event.target.value, attribute: "" })}>
           <option value="">{t("builder.choose")}</option>
           {(choices.data?.types ?? []).map((type) => (
@@ -152,7 +152,7 @@ export function SourcePicker({
           {value.type && !(choices.data?.types ?? []).includes(value.type) ? <option value={value.type}>{value.type}</option> : null}
         </Select>
       </BField>
-      <BField id={`${id}-attribute`} label={t("builder.field.attribute")} help={hints === "variable" ? t("builder.hint.variableAttribute") : t("builder.hint.attribute")}>
+      <BField id={`${id}-attribute`} label={t("builder.field.attribute")} required help={hints === "variable" ? t("builder.hint.variableAttribute") : t("builder.hint.attribute")}>
         <Select id={`${id}-attribute`} value={value.attribute} disabled={!value.type} title={value.type ? undefined : t("builder.chooseTypeFirst")} onChange={(event) => onChange({ ...value, attribute: event.target.value })}>
           <option value="">{t("builder.choose")}</option>
           {attributes.map((attribute) => (
@@ -814,7 +814,8 @@ export function PanelPreviewCard({ project, board, panel }: { project: string; b
           <Icon name="refresh" className="size-4" />
           {t("builder.preview")}
         </Button>
-        <span className="text-caption text-fg-muted">{t(panel.kind === "text" ? "builder.previewHelpText" : "builder.previewHelp")}</span>
+        {/* Until the panel is complete the line says what it still needs, not what Preview would do. */}
+        <span className="text-caption text-fg-muted">{need.length > 0 ? t(need[0]) : t(panel.kind === "text" ? "builder.previewHelpText" : "builder.previewHelp")}</span>
       </div>
       {run.isError ? (
         <Alert tone="danger" title={t("builder.previewFailedTitle")}>
