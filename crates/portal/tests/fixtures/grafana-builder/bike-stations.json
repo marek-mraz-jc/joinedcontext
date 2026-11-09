@@ -210,7 +210,7 @@
     }
   ],
   "refresh": "5m",
-  "schemaVersion": 39,
+  "schemaVersion": 42,
   "tags": [],
   "templating": {
     "list": [

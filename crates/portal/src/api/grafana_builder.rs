@@ -294,7 +294,7 @@ fn check_choices(
     let endpoint = |field: &str, name: &str| {
         readable_endpoint(state, effective, project, name).ok_or_else(|| {
             ApiError::Denied(format!(
-                "{field}: {name} is not an Endpoint of {project} you may read; choose one from the list"
+                "{field}: {name} is not an Endpoint of {project} you may read; choose another from the list, or ask a project owner for read access"
             ))
         })
     };

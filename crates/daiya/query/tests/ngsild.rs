@@ -8,7 +8,7 @@ mod common;
 use common::{Reply, closed_port, ctx, loopback_guard, mock, q};
 use daiya_model::{FieldType, Subject};
 use daiya_query::ngsild::{
-    build_ngsild_request, extract_ngsi_value, grafana_unit, normalize_query_type,
+    build_ngsild_request, extract_ngsi_value, grafana_unit, normalize_query_type, with_variables,
 };
 use daiya_query::{
     Datasource, DenyTokenExchanger, DsError, HealthState, NgsiLdDatasource,
@@ -639,5 +639,25 @@ fn import_keeps_every_target_field_and_warns_on_what_it_does_not_know() {
             .field_hints
             .iter()
             .any(|h| h.resource_path.as_deref() == Some("types"))
+    );
+}
+
+#[test]
+fn a_dashboard_variable_reaches_the_q_as_grafana_replaces_it() {
+    let model = json!({ "queryType": "entity", "entityType": "AirQualityObserved",
+        "customQuery": "station~=\"^${station:regex}$\";pm25>$floor;x==\"$unknown\";y==\"${open\"" });
+    let vars = BTreeMap::from([
+        ("station".to_owned(), "(Kallio|Vallila\\.2)".to_owned()),
+        ("floor".to_owned(), "5".to_owned()),
+    ]);
+    let (_, params) = params(&with_variables(&model, &vars));
+    assert_eq!(
+        params["q"],
+        "station~=\"^(Kallio|Vallila\\.2)$\";pm25>5;x==\"$unknown\";y==\"${open\""
+    );
+    assert_eq!(
+        with_variables(&model, &BTreeMap::new()),
+        model,
+        "no variables, no change"
     );
 }

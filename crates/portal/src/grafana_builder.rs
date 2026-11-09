@@ -21,6 +21,9 @@ use crate::grafana::Client;
 /// The datasource type of the NGSI-LD plugin, as `crate::grafana` names it.
 const PLUGIN: &str = "ngsild-grafana-datasource";
 
+/// The dashboard schema version a builder file carries: daiya's and Grafana 12.4's latest.
+const SCHEMA_VERSION: u32 = 42;
+
 /// Every builder dashboard's uid starts so; nothing else in an organization does (`pv-` is the
 /// visualization page's, provisioned dashboards carry their own), so the sync removes only its own.
 pub const UID_PREFIX: &str = "jcd-";
@@ -907,7 +910,9 @@ pub fn compile(uid: &str, board: &Board, sources: &[Source], values: &[Vec<Strin
         "title": board.title.trim(),
         "tags": [],
         "editable": true,
-        "schemaVersion": 39,
+        // The version daiya stores and Grafana 12.4 migrates to: an older one comes back
+        // migrated, `meaning` differs, and the sync saves the file again on every pass.
+        "schemaVersion": SCHEMA_VERSION,
         "timezone": "browser",
         "time": { "from": board.from, "to": board.to },
         "refresh": board.refresh,

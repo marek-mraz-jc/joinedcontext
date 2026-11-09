@@ -168,6 +168,11 @@ function VariablePicker({ project, uid, variable, value, onChange }: { project: 
   );
 }
 
+/** A uid the builder minted (`jcd-` and 16 hex digits), the only kind it edits. */
+export function isBuilderUid(uid: string): boolean {
+  return /^jcd-[0-9a-f]{16}$/.test(uid);
+}
+
 /** A search member as text: TanStack reads `from=1762581600000` as a number. */
 function word(value: unknown): string | undefined {
   return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
@@ -225,6 +230,13 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
     }
     return { from, to, vars: picked };
   }, [data, from, to, vars]);
+  // Only a dashboard the builder wrote opens in the builder, and only for a person who may propose one.
+  const builder = useQuery({
+    queryKey: ["projects", project, "grafana", "builder"],
+    enabled: isBuilderUid(uid),
+    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/grafana/builder", { params: { path: { project } } })),
+  });
+  const mayEdit = isBuilderUid(uid) && builder.data?.mayEdit === true;
   // The tables page lives in the dashboards service, in the organization that holds the dashboard.
   const safe = data
     ? safeHref(`/dashboards/d/${encodeURIComponent(uid)}?${new URLSearchParams({ orgId: String(data.orgId), from, to })}`)
@@ -234,12 +246,20 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
       title={data?.title || t("dashboardView.title")}
       description={data?.description || t("dashboardView.lead")}
       actions={
-        safe ? (
-          <a className={buttonClass("ghost", "sm")} href={safe} target="_blank" rel="noopener noreferrer">
-            <Icon name="external" className="size-4" />
-            {t("dashboardView.asTables")}
-          </a>
-        ) : null
+        <>
+          {mayEdit ? (
+            <Link to="/projects/$project/grafana/dashboards/$uid/edit" params={{ project, uid }} className={buttonClass("secondary", "sm")}>
+              <Icon name="pencil" className="size-4" />
+              {t("builder.edit")}
+            </Link>
+          ) : null}
+          {safe ? (
+            <a className={buttonClass("ghost", "sm")} href={safe} target="_blank" rel="noopener noreferrer">
+              <Icon name="external" className="size-4" />
+              {t("dashboardView.asTables")}
+            </a>
+          ) : null}
+        </>
       }
     />
   );

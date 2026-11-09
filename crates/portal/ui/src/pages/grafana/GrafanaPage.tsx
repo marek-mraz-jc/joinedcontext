@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { Link } from "@tanstack/react-router";
 import { api, reasonOf, unwrap } from "../../api/client";
 import type { components } from "../../api/schema";
 import { DashboardList } from "./DashboardList";
@@ -14,6 +15,7 @@ import {
   CardHeader,
   EmptyState,
   Field,
+  Icon,
   InlineError,
   Input,
   PageFailed,
@@ -27,6 +29,7 @@ import {
 type Item = components["schemas"]["VisualizationItem"];
 type Kind = components["schemas"]["Kind"];
 type Options = components["schemas"]["GrafanaOptions"];
+type Pending = components["schemas"]["PendingDashboard"];
 
 const KINDS: readonly Kind[] = ["timeseries", "stat", "table", "map"];
 
@@ -385,6 +388,30 @@ export function VisualizationForm({ project }: { project: string }): JSX.Element
   );
 }
 
+/** The builder dashboards whose Change waits for approval, each opening its next edit. */
+export function PendingDashboards({ project, pending }: { project: string; pending: readonly Pending[] }): JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <div className="mb-3 rounded-md border border-border bg-surface-subtle p-3">
+      <h3 className="text-body font-semibold text-fg">{t("builder.waiting")}</h3>
+      <ul>
+        {pending.map((item) => (
+          <li key={item.uid} className="flex flex-wrap items-center gap-2 border-b border-border py-2 last:border-b-0">
+            <span className="min-w-0 flex-1 break-words text-body text-fg">{item.title}</span>
+            <Badge tone="warning">{t("builder.pending")}</Badge>
+            <Link to="/projects/$project/grafana/dashboards/$uid/edit" params={{ project, uid: item.uid }} className={buttonClass("secondary", "sm")}>
+              {t("builder.open")}
+            </Link>
+            <Link to="/projects/$project/approvals/$id" params={{ project, id: item.change }} className={buttonClass("ghost", "sm")}>
+              {t("builder.openChange")}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** The project's visualizations in Grafana, and the form that adds one (T-6509). */
 /** The dashboards of the project's organization, each drawn in the Portal (item 15). */
 export function ProjectDashboards({ project }: { project: string }): JSX.Element | null {
@@ -394,9 +421,31 @@ export function ProjectDashboards({ project }: { project: string }): JSX.Element
     queryFn: async () =>
       unwrap(await api.GET("/api/v1/projects/{project}/grafana/dashboards", { params: { path: { project } } })),
   });
+  // Who may build a dashboard here, and which wait for approval: the builder's own start.
+  const builder = useQuery({
+    queryKey: [...pageKey(project), "builder"],
+    queryFn: async () =>
+      unwrap(await api.GET("/api/v1/projects/{project}/grafana/builder", { params: { path: { project } } })),
+  });
+  const mayBuild = builder.data?.mayEdit === true;
   return (
     <Card as="section" aria-labelledby="project-dashboards">
-      <CardHeader as="h2" titleId="project-dashboards" title={t("grafana.dashboards.title")} description={t("grafana.dashboards.lead")} className="mb-1" />
+      <CardHeader
+        as="h2"
+        titleId="project-dashboards"
+        title={t("grafana.dashboards.title")}
+        description={t("grafana.dashboards.lead")}
+        className="mb-1"
+        actions={
+          mayBuild ? (
+            <Link to="/projects/$project/grafana/new" params={{ project }} className={buttonClass("primary", "sm")}>
+              <Icon name="plus" className="size-4" />
+              {t("builder.newDashboard")}
+            </Link>
+          ) : null
+        }
+      />
+      {mayBuild && builder.data && builder.data.pending.length > 0 ? <PendingDashboards project={project} pending={builder.data.pending} /> : null}
       {list.isPending ? (
         <div role="status" aria-label={t("grafana.dashboards.loading")} className="flex flex-col gap-2 py-3">
           <Skeleton className="h-5 w-1/2" />
