@@ -6280,6 +6280,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "zeroize",
+ "zip",
 ]
 
 [[package]]
