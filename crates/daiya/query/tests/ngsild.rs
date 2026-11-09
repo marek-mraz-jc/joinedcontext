@@ -641,3 +641,49 @@ fn import_keeps_every_target_field_and_warns_on_what_it_does_not_know() {
             .any(|h| h.resource_path.as_deref() == Some("types"))
     );
 }
+
+/// The geomap panel of dev's Grafana ("Air quality map", T-6516) as daiya answers it: its target
+/// over the first 100 AirQualityObserved of the dev export's helsinki tenant, compacted the way a
+/// broker answers with the default context. The Portal's geomap tests read the frame this writes
+/// (crates/portal/ui/tests/fixtures/geomap_frame.json), so the map is tested on daiya's own
+/// frame code; `DAIYA_WRITE_FIXTURES=1` rewrites it, otherwise a drift fails here.
+#[tokio::test]
+async fn the_helsinki_geomap_target_answers_the_frame_the_portal_map_reads() {
+    let body: Vec<Value> = include_str!("fixtures/helsinki_air_quality_100.jsonl")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(body.len(), 100);
+    let m = mock(vec![(
+        "/ngsi-ld/v1/entities",
+        Reply::json(200, &Value::Array(body)),
+    )])
+    .await;
+    let sets = driver(&format!("{}/ngsi-ld/v1", m.base))
+        .query(
+            &ctx(Subject::anonymous()),
+            &q(json!({
+                "entityName": "name", "entityType": "AirQualityObserved", "geoproperty": "location",
+                "limit": 100, "namePattern": "entity_name", "queryType": "geo"
+            })),
+        )
+        .await
+        .unwrap();
+    let frame = &sets[0].frames[0];
+    let location = frame.fields.iter().find(|f| f.name == "location").unwrap();
+    assert_eq!(location.values.len(), 100);
+    assert!(location.values.iter().all(|v| v["type"] == "Point"));
+    let text = serde_json::to_string_pretty(&sets[0].frames).unwrap() + "\n";
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../portal/ui/tests/fixtures/geomap_frame.json"
+    );
+    if std::env::var_os("DAIYA_WRITE_FIXTURES").is_some() {
+        std::fs::write(path, &text).unwrap();
+    }
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        text,
+        "rerun with DAIYA_WRITE_FIXTURES=1"
+    );
+}
