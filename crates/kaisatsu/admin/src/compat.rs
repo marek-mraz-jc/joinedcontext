@@ -2049,7 +2049,7 @@ async fn compat_list_clients(
     );
     // The list names no one client to hide: a signed-in admin of this realm without the right to
     // list clients is told so, 403, as Keycloak answers (ClientPermissions.requireList), never
-    // the 404 of a route that does not exist (D3).
+    // the 404 of a route that does not exist.
     check_decision(Decision {
         visible: true,
         ..decision
