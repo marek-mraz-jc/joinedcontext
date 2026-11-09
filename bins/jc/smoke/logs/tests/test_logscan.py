@@ -77,6 +77,18 @@ def test_credential_shapes_and_personal_data():
     assert ls.credential_shapes("Authorization: Bearer abcdefghijklmnop1234") == ["bearer"]
     assert ls.credential_shapes('password="hunter2hunter2"') == ["password-field"]
     assert ls.credential_shapes("password=<redacted> secret=$(env:X_SECRET)") == []
+
+
+def test_a_challenges_auth_params_are_no_bearer_value_and_a_value_of_that_shape_still_is():
+    # WWW-Authenticate (RFC 6750, RFC 9728) names parameters after the scheme, not a credential.
+    assert ls.credential_shapes('401 Bearer resource_metadata="http://localhost:42102/api/endpoint/x"') == []
+    assert ls.credential_shapes('401 Bearer resource_metadata=\\"http://localhost/x\\"') == []
+    assert ls.credential_shapes('Bearer error_description="the access token expired"') == []
+    # A value in the same place still fails, padded or quoted, whatever it starts with.
+    assert ls.credential_shapes('"Authorization": "Bearer abcdefghijklmnop1234="') == ["bearer"]
+    assert ls.credential_shapes('Bearer AbCdEfGhIjKlMnOp12==, x') == ["bearer"]
+    assert ls.credential_shapes('Bearer resource_metadataAbCdEfGh12') == ["bearer"]
+    assert ls.credential_shapes('Bearer errorAbCdEfGhIjKlMnOp="') == ["bearer"]
     found = ls.personal_data("user anna.k@example.org from 8.8.4.4 via 127.0.0.1 and 10.1.2.3, crate foo@1.2.3")
     assert found == ["email a***@example.org", "ip 8.8.x.x"]
     assert ls.personal_data("noreply@joinedcontext.com subject=01a1bd0f-c305") == []

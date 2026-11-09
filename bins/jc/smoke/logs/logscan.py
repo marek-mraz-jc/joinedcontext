@@ -240,7 +240,10 @@ class SecretIndex:
 
 # A bearer credential printed anywhere: a JWT, an `Authorization: Bearer` value, a password field.
 JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")
-BEARER = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/-]{16,}")
+# A challenge's auth-param (`401 Bearer resource_metadata="…"`, RFC 6750 and RFC 9728) is a name, not a
+# value: only those names, each followed by `=`, are skipped.
+BEARER = re.compile(r"(?i)\bbearer\s+(?!(?:realm|scope|error|error_description|error_uri|resource_metadata)=)"
+                    r"[A-Za-z0-9._~+/-]{16,}")
 PW_FIELD = re.compile(r"(?i)\b(?:password|passwd|client_secret|secret|token)\s*[=:]\s*\"?([^\s\",}]{8,})")
 REDACTED = re.compile(r"(?i)^(?:\*+|<redacted>|\[redacted\]|redacted|xxx+|\.\.\.)$")
 EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b")
