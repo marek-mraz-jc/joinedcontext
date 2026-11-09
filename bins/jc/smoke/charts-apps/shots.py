@@ -132,6 +132,8 @@ class Browser:
             except Exception as e:  # noqa: BLE001
                 row["error"] = str(e).splitlines()[0][:200]
             finally:
+                # a page still polling has routes in flight: they end quietly, not in the next shot
+                ctx.unroute_all(behavior="ignoreErrors")
                 ctx.close()
             rows.append(row)
         return rows
