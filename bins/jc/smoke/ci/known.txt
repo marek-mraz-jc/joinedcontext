@@ -2,6 +2,8 @@
 # A known failure stays in the report and does not turn the verdict red; a pattern nothing
 # matches any more is listed under "known and now passing", so the line can go.
 # Each reason names where the gap is filed. Keep the list short: a new failure is a red gate.
+# assistant/*: no line. The assistant is a kept component on dev beside jc (tasks/GOAL-jc-dev.md scope
+# decision); its rehearsal rows are named skips "kept component: assistant" (gate.sh --kept-component).
 
 ^endpoints/dataset$  # the Portal publishes no catalogue into dataroom in jc (jc-smoke-endpoints gap 2)
 ^endpoints/anon\.temporal\.last-\d+h$  # the synthetic bundle's DataService rows carry no history in the window (bundle, jc-smoke-gate)
@@ -17,5 +19,4 @@
 ^logs/secrets\.log\.shapes$  # false positive: jc's start lists each secret's name and source (`secret="dashboards-password" source="generated"`), no value (jc-smoke-logs)
 ^restore/control\.relocatable$  # a restored state dir names the source home: the realm files' $(file:<abs>) secrets (deploy/rehearsal/rehearsal.py:441; kaisatsu resolves only absolute ones, crates/kaisatsu/import/src/lib.rs:372) and the gateway's absolute repo/current link (bins/jc/src/modules/gateway.rs:520); handed to @supervisor (jc-smoke-restore REPORT)
 ^kaisatsu/discovery\.(endpoint\.device_authorization_endpoint|grant\.urn:ietf:params:oauth:grant-type:device_code)$  # kaisatsu has no device grant, prod's jcctl uses it (crates/kaisatsu/oidc/src/handlers.rs grant match; jc-smoke-logins D1)
-^kaisatsu/(gateway\.document|anonymous\.register|authorize\.gateway-unknown-client)$  # jc hands the gateway no JC_GATEWAY_OAUTH_KEY, so prod's DCR server answers 404 (bins/jc/src/setup.rs Secret, modules/gateway.rs env; jc-smoke-logins D2)
 ^kaisatsu/authorize\.mcp-hub$  # jc's shipped realm has mcp-hub bearer-only with no standard flow; prod's is the public PKCE connector client (crates/kaisatsu/import/realms/jc-portal.json; jc-smoke-logins D6)
