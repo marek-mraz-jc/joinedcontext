@@ -127,6 +127,16 @@ pub const TOOLS_LIFE: Duration = Duration::from_secs(1800);
 const BACKOFF_FIRST: Duration = Duration::from_secs(60);
 const BACKOFF_MAX: Duration = Duration::from_secs(600);
 
+/// How long after the assistant starts a failed listing is asked again within seconds: a
+/// gateway that has not loaded the Endpoints yet answers 503 to every list at start, and the
+/// minute backoff kept the data out of answers for up to ten minutes after a start (F6). Past
+/// it, or after [`STARTUP_TRIES`] quick tries, the backoff above holds a shedding gateway off.
+const STARTUP_WINDOW: Duration = Duration::from_secs(180);
+const STARTUP_TRIES: u32 = 4;
+/// The first quick wait, doubled on each try and spread by up to as much again per Endpoint, so
+/// a hundred Endpoints do not come back in the same instant.
+const STARTUP_FIRST: Duration = Duration::from_secs(2);
+
 /// What the router is told. It never changes, so it is the cached prefix of every router call.
 const ROUTER_RULES: &str = "You prepare the searches of a city's assistant. Reply with one JSON object and nothing else:\n\
 {\"route\": \"direct\" | \"rag\" | \"data\" | \"both\" | \"catalogue\" | \"out\", \"lang\": \"sk\", \"queries\": [\"...\"], \"data\": [{\"endpoint\": \"...\", \"type\": \"...\", \"q\": \"...\", \"order\": \"...\"}], \"followups\": [{\"text\": \"...\", \"attrs\": [\"...\"]}]}\n\
@@ -1302,9 +1312,10 @@ pub struct AnswerCache {
     languages: Mutex<HashMap<String, (Instant, Vec<String>)>>,
     /// Each Endpoint's public `tools/list`, by slug, for [`TOOLS_LIFE`] (T-4683).
     tools: Mutex<HashMap<String, (Instant, Vec<Value>)>>,
-    /// The Endpoints, by slug, whose last listing failed: how many times in a row, and until
-    /// when they are left alone (T-4611, T-4683).
-    backoff: Mutex<HashMap<String, (u32, Instant)>>,
+    /// The Endpoints, by slug, whose last listing failed: how many times in a row past the
+    /// start-up tries, until when they are left alone, and the start-up tries spent (T-4611,
+    /// T-4683, F6).
+    backoff: Mutex<HashMap<String, (u32, Instant, u32)>>,
     /// The Endpoints, by slug, whose type list missed a question's [`ROUTING_DEADLINE`]: the
     /// next questions within `BACKOFF_FIRST` do not wait on them again, and warming, which
     /// waits as long as the connector allows, still lists them (T-4611).
@@ -1316,6 +1327,16 @@ pub struct AnswerCache {
     digests: Mutex<HashMap<String, (Instant, String)>>,
     /// Each catalogue Endpoint's organizations, by slug, read while warming (T-4746).
     publishers: Mutex<HashMap<String, (Instant, Vec<Publisher>)>>,
+    /// When the cache was made, which is when the assistant started (F6).
+    born: Born,
+}
+
+struct Born(Instant);
+
+impl Default for Born {
+    fn default() -> Self {
+        Born(Instant::now())
+    }
 }
 
 /// When a model was read, and the model.
@@ -1424,19 +1445,28 @@ impl AnswerCache {
             .lock()
             .ok()
             .and_then(|backoff| backoff.get(slug).copied())
-            .is_some_and(|(_, until)| Instant::now() < until)
+            .is_some_and(|(_, until, _)| Instant::now() < until)
     }
 
     /// The Endpoint failed to list: it is left alone for `BACKOFF_FIRST`, doubled for each
-    /// failure in a row, at most `BACKOFF_MAX`. Its last lists stay what routing names.
+    /// failure in a row, at most `BACKOFF_MAX`; inside [`STARTUP_WINDOW`] its first
+    /// [`STARTUP_TRIES`] failures wait only seconds. Its last lists stay what routing names.
     pub fn failed(&self, slug: &str) {
         if let Ok(mut backoff) = self.backoff.lock() {
-            let failures = backoff.get(slug).map_or(0, |(n, _)| *n).saturating_add(1);
-            let wait = BACKOFF_FIRST
-                .saturating_mul(1 << failures.saturating_sub(1).min(4))
-                .min(BACKOFF_MAX);
+            let (failures, _, tries) = backoff.get(slug).copied().unwrap_or((0, Instant::now(), 0));
+            let starting = self.born.0.elapsed() < STARTUP_WINDOW && tries < STARTUP_TRIES;
+            let held = match starting {
+                true => (failures, Instant::now() + startup_wait(slug, tries), tries + 1),
+                false => {
+                    let failures = failures.saturating_add(1);
+                    let wait = BACKOFF_FIRST
+                        .saturating_mul(1 << failures.saturating_sub(1).min(4))
+                        .min(BACKOFF_MAX);
+                    (failures, Instant::now() + wait, tries)
+                }
+            };
             // One entry per connector's Endpoint, like the type lists.
-            backoff.insert(slug.to_owned(), (failures, Instant::now() + wait));
+            backoff.insert(slug.to_owned(), held);
         }
     }
 
@@ -1604,6 +1634,15 @@ async fn search_index(
         began.elapsed().as_millis()
     );
     Ok((hits, took))
+}
+
+/// The wait after the start-up try `tries` (from 0) of the Endpoint `slug`: [`STARTUP_FIRST`]
+/// doubled per try, plus up to as much again by the slug's hash, so Endpoints that failed together
+/// are asked again apart.
+fn startup_wait(slug: &str, tries: u32) -> Duration {
+    let base = STARTUP_FIRST.saturating_mul(1 << tries.min(STARTUP_TRIES));
+    let spread = Sha256::digest(slug.as_bytes())[0];
+    base + base.mul_f64(f64::from(spread) / 256.0)
 }
 
 /// One INFO line per connector a question lists (T-5779): `cached` (a list younger than
@@ -5457,8 +5496,68 @@ mod tests {
         );
     }
 
+    /// F6: at start the gateway answers 503 until it has loaded the Endpoints. Inside the
+    /// start-up window a failed listing is asked again within seconds, so the tools are listed
+    /// as soon as the gateway answers; the quick tries are bounded, and a hundred Endpoints that
+    /// failed together are asked again apart.
+    #[tokio::test]
+    async fn a_listing_refused_at_start_is_asked_again_within_seconds() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let gateway = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .mount(&gateway)
+            .await;
+        let body = json!({"jsonrpc": "2.0", "id": 1, "result": {
+            "tools": [{"name": "list_types"}, {"name": "query_entities"}]}});
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&gateway)
+            .await;
+        let (cache, http) = (AnswerCache::default(), reqwest::Client::new());
+        let surface = super::super::mcp::Surface {
+            gateway: gateway.uri(),
+            slug: "bbsk".into(),
+            timeout: Duration::from_secs(5),
+            token: None,
+        };
+        assert!(listing(&cache, &http, &surface).await.is_err(), "the 503");
+        let wait = |cache: &AnswerCache, slug: &str| {
+            let backoff = cache.backoff.lock().expect("backoff");
+            backoff[slug].1.saturating_duration_since(Instant::now())
+        };
+        let first = wait(&cache, "bbsk");
+        assert!(first <= STARTUP_FIRST * 2, "waited {first:?}");
+        tokio::time::sleep(first).await;
+        let listed = listing(&cache, &http, &surface)
+            .await
+            .expect("listed once the gateway answers");
+        assert_eq!(listed.len(), 2);
+        assert!(!cache.waits("bbsk"));
+
+        // A hundred Endpoints refused together come back spread over the first wait's range.
+        let spread: HashSet<u128> = (0..100)
+            .map(|n| {
+                let slug = format!("endpoint-{n}");
+                cache.failed(&slug);
+                wait(&cache, &slug).as_millis() / 100
+            })
+            .collect();
+        assert!(spread.len() >= 10, "{spread:?}");
+        // The quick tries are bounded: after them the minute backoff holds.
+        for _ in 0..STARTUP_TRIES {
+            cache.failed("praha");
+            assert!(wait(&cache, "praha") < BACKOFF_FIRST);
+        }
+        cache.failed("praha");
+        assert!(wait(&cache, "praha") > BACKOFF_FIRST - Duration::from_secs(2));
+    }
+
     /// T-4683: a failing Endpoint keeps its last types and tools, is not called while its
-    /// backoff runs, and waits longer after each failure, at most ten minutes.
+    /// backoff runs, and waits longer after each failure, at most ten minutes. Past the start-up
+    /// window (F6), so a 503 storm into a shedding gateway is held off from the first failure.
     #[tokio::test]
     async fn a_failing_endpoint_keeps_its_last_lists_and_backs_off_longer_each_time() {
         use wiremock::matchers::method;
@@ -5468,7 +5567,12 @@ mod tests {
             .respond_with(ResponseTemplate::new(503))
             .mount(&gateway)
             .await;
-        let (cache, http) = (AnswerCache::default(), reqwest::Client::new());
+        let (mut cache, http) = (AnswerCache::default(), reqwest::Client::new());
+        cache.born = Born(
+            Instant::now()
+                .checked_sub(STARTUP_WINDOW * 2)
+                .expect("an old instant"),
+        );
         cache.keep_types("bbsk", vec!["CycleRoute".to_owned()]);
         cache.keep_listing("bbsk", vec![json!({"name": "list_types"})]);
         let old = Instant::now()
