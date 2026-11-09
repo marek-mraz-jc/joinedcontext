@@ -8,10 +8,11 @@
 #    checks each package's SHA-256 against status.build before it unpacks): JC_PORTAL_APPS_CACHE_DIR.
 #    Nothing here writes into it.
 # 3. The export's prod builds (<export>/apps, made read only by prod-deployer) published as generic
-#    packages of shako's jc-apps owner, once jc answers, in the background (apps-publish.log).
-# 4. rehearsal-app-roles: a person of the imported realm holding the access groups of every
-#    `visibility: roles` App and every viewer RoleBinding, for the suite's refused/served pairs
-#    (rehearsal-tester holds none).
+#    packages of shako's jc-apps owner, once jc answers, in the background (apps-publish.log), and
+#    rehearsal-app-roles named in the roles Apps' Group manifests of the rehearsal's own repository.
+# 4. rehearsal-app-roles: a person of the imported realm in the groups of every viewer RoleBinding,
+#    and (3) in the roles Apps' groups, for the suite's refused/served pairs (rehearsal-tester is in
+#    none).
 # REHEARSAL_APPS=off leaves all of it out.
 # shellcheck disable=SC2154  # here, home, port, export_dir: up.sh's
 
@@ -55,8 +56,15 @@ if [ "${REHEARSAL_APPS:-on}" != off ]; then
       --password-file "$home/secrets/realm/REHEARSAL_APP_ROLES_PASSWORD"
   fi
 
-  if [ -s "$export_dir/apps/builds.json" ]; then
-    nohup python3 -I "$here/apps.py" publish --base "http://localhost:$port" --export "$export_dir" \
-      --token-file "$JCBIN_SHAKO_TOKEN_FILE" --report "$home/apps-publish.json" > "$home/apps-publish.log" 2>&1 &
-  fi
+  # Once jc answers: the prod builds into shako, then the holder into the roles Apps' groups.
+  (
+    if [ -d "$export_dir/apps" ]; then
+      python3 -I "$here/apps.py" publish --base "http://localhost:$port" --export "$export_dir" \
+        --token-file "$JCBIN_SHAKO_TOKEN_FILE" --report "$home/apps-publish.json"
+    fi
+    if [ -n "$realm_file" ]; then
+      python3 -I "$here/apps.py" grant --base "http://localhost:$port" --export "$export_dir" \
+        --token-file "$JCBIN_SHAKO_TOKEN_FILE" --realm-file "$realm_file"
+    fi
+  ) > "$home/apps-publish.log" 2>&1 &
 fi

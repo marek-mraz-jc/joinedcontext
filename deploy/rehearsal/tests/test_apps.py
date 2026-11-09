@@ -123,3 +123,33 @@ def test_publish_writes_only_to_a_loopback_base(tmp_path):
     with pytest.raises(SystemExit):
         apps.main(["publish", "--base", "https://portal.smartcity.joinedcontext.com", "--export", str(exp),
                    "--token-file", str(tmp_path / "tok")])
+
+
+GROUP = """apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: alerts-viewer
+  namespace: org
+spec:
+  description: The viewers.
+  members:
+    - user: fc3b55df-5fd4-4679-af5e-bb9dca22b0d7
+"""
+
+
+def test_grant_names_the_holder_once_in_the_roles_apps_group_manifests(tmp_path):
+    exp = export_with(tmp_path, None, b"x")
+    groups = exp / "gitea" / "files" / "joinedcontext" / "configuration" / "users" / "groups"
+    groups.mkdir(parents=True)
+    (groups / "alerts-viewer.yaml").write_text(GROUP)
+    (groups / "other.yaml").write_text(GROUP.replace("alerts-viewer", "other"))
+    found = apps.group_files(exp / "gitea" / "files", apps.role_groups(exp / "gitea" / "files"))
+    assert found == {"alerts-viewer": ("joinedcontext", "configuration", "users/groups/alerts-viewer.yaml")}
+    holder = "0d6e2a6c-1111-4222-8333-944455556666"
+    once = apps.with_member(GROUP, holder)
+    assert once == GROUP + f"    - user: {holder}\n" or f"- user: {holder}" in once
+    assert "# " not in once and once.count("- user:") == 2
+    assert apps.with_member(once, holder) == once, "never twice"
+    empty = GROUP.replace("  members:\n    - user: fc3b55df-5fd4-4679-af5e-bb9dca22b0d7\n", "  members: []\n")
+    import yaml
+    assert yaml.safe_load(apps.with_member(empty, holder))["spec"]["members"] == [{"user": holder}]

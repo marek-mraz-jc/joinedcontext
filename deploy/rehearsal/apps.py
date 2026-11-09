@@ -2,18 +2,24 @@
 
     apps.py person  --realm-file <state/realms/R.json> --files <export>/gitea/files --password-file F
     apps.py publish --base http://localhost:P --export <export> --token-file <shako token> [--report F]
+    apps.py grant   --base http://localhost:P --export <export> --token-file <shako token> --realm-file R
 
-person   adds rehearsal-app-roles to the realm file kaisatsu imports: a member of every group the
-         `spec.access` of a published `visibility: roles` App names and of every group a `viewer`
-         RoleBinding names (what opens a `project` or `organization` App), with a password from a
-         file (`$(file:...)`, never the value). rehearsal-tester stays the person in no group.
+person   adds rehearsal-app-roles to the realm file kaisatsu imports: a member of every group a
+         `viewer` RoleBinding names (the realm's own groups, which open a `project` or
+         `organization` App), with a password from a file (`$(file:...)`, never the value).
+         rehearsal-tester stays the person in no group. Its roles come from `grant`.
 publish  publishes each prod build the export carries (<export>/apps/<name>/bundle.tar.gz, read only
          from prod by prod-deployer) as shako's generic package `app-<name>`, version
          `<commit>-<digest12>` of the App's `status.build`, under the applications' owner (jc-apps),
          as the build lane published it on prod. The bytes go as they are: jc's Portal checks them
          against status.build when it fetches them (crates/portal/src/apps/fetch.rs) and serves
          nothing that does not match. A version already there answers 409 and is left alone.
-         Only to a loopback base; the token is read from its file and never printed."""
+         Only to a loopback base; the token is read from its file and never printed.
+grant    names rehearsal-app-roles, by its id, a member of each Group manifest those roles Apps'
+         access names, in the rehearsal's own configuration repository in shako: on prod a Group
+         manifest is the membership, and the Portal takes out of a group whoever it does not
+         name. The id is the `sub` of the person's token (admin-cli, the realm's direct grant).
+         A rehearsal re-import puts the prod file back; the next up.sh grants again."""
 
 from __future__ import annotations
 
@@ -103,7 +109,7 @@ def with_person(realm: dict, groups: list[str], password_file: Path) -> tuple[di
 def cmd_person(a) -> int:
     path = Path(a.realm_file)
     realm = json.loads(path.read_text())
-    groups = sorted(set(role_groups(Path(a.files))) | set(viewer_groups(Path(a.files))))
+    groups = viewer_groups(Path(a.files))
     realm, missing = with_person(realm, groups, Path(a.password_file))
     fd = os.open(path, os.O_WRONLY | os.O_TRUNC)  # the file keeps its 0600
     with os.fdopen(fd, "w") as f:
@@ -186,6 +192,111 @@ def cmd_publish(a) -> int:
     return 1 if failed else 0
 
 
+def group_files(files: Path, names: list[str]) -> dict[str, tuple[str, str, str]]:
+    """name -> (owner, repo, path in the repo) of each Group manifest of `names` in the export."""
+    import yaml
+
+    out = {}
+    for f in sorted(files.glob("*/*/**/*.yaml")):
+        text = f.read_text(errors="replace")
+        if "kind: Group" not in text:
+            continue
+        try:
+            docs = list(yaml.safe_load_all(text))
+        except yaml.YAMLError:
+            continue
+        for d in docs:
+            name = isinstance(d, dict) and d.get("kind") == "Group" and (d.get("metadata") or {}).get("name")
+            if name in names:
+                owner, repo, *rest = f.relative_to(files).parts
+                out[name] = (owner, repo, "/".join(rest))
+    return out
+
+
+def with_member(text: str, user: str) -> str:
+    """The Group manifest with `- user: <user>` in spec.members (the text otherwise as it was)."""
+    import yaml
+
+    doc = yaml.safe_load(text)
+    if any(m.get("user") == user for m in (doc.get("spec") or {}).get("members") or []):
+        return text
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("members:"):
+            pad = " " * (len(line) - len(line.lstrip()) + 2)
+            item = f"{pad}- user: {user}\n"
+            if stripped == "members:":
+                return "".join(lines[: i + 1] + [item] + lines[i + 1:])
+            if stripped.replace(" ", "") == "members:[]":
+                return "".join(lines[:i] + [line.split("members:")[0] + "members:\n", item] + lines[i + 1:])
+    doc.setdefault("spec", {}).setdefault("members", []).append({"user": user})
+    return yaml.safe_dump(doc, sort_keys=False)
+
+
+def call(base: str, method: str, path: str, headers: dict, body=None, form=None, timeout: float = 60):
+    data = urllib.parse.urlencode(form).encode() if form else json.dumps(body).encode() if body is not None else None
+    headers = {**headers, "Content-Type": "application/x-www-form-urlencoded" if form else "application/json"}
+    req = urllib.request.Request(base.rstrip("/") + path, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, json.loads(r.read() or b"null")
+    except urllib.error.HTTPError as e:
+        return e.code, None
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0, None
+
+
+def person_id(base: str, realm: dict) -> str | None:
+    """The `sub` of PERSON's token from the realm's admin-cli (a direct grant, no client secret)."""
+    user = next((u for u in realm.get("users") or [] if u.get("username") == PERSON), {})
+    ref = next((c.get("value", "") for c in user.get("credentials") or [] if c.get("type") == "password"), "")
+    pw_file = Path(ref[len("$(file:"):-1]) if ref.startswith("$(file:") else None
+    if not pw_file or not pw_file.is_file():
+        return None
+    st, body = call(base, "POST", f"/id/realms/{realm.get('realm')}/protocol/openid-connect/token", {}, form={
+        "grant_type": "password", "client_id": "admin-cli", "username": PERSON,
+        "password": pw_file.read_text().strip()})
+    token = (body or {}).get("access_token") if st == 200 else None
+    if not token:
+        return None
+    claims = token.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(claims + "=" * (-len(claims) % 4))).get("sub")
+
+
+def cmd_grant(a) -> int:
+    loopback_only(a.base)
+    if not wait_for(a.base, a.wait):
+        print(f"apps.py: {a.base} did not answer within {a.wait} s", file=sys.stderr)
+        return 1
+    realm = json.loads(Path(a.realm_file).read_text())
+    user = person_id(a.base, realm)
+    if not user:
+        print(f"apps.py: no token for {PERSON} in realm {realm.get('realm')}: nothing granted", file=sys.stderr)
+        return 1
+    auth = {"Authorization": f"token {Path(a.token_file).read_text().strip()}"}
+    files = Path(a.export) / "gitea" / "files"
+    failed = 0
+    for name, (owner, repo, path) in sorted(group_files(files, role_groups(files)).items()):
+        url = f"/git/api/v1/projects/{owner}/repositories/{repo}/contents/{path}"
+        st, held = call(a.base, "GET", url, auth)
+        if st != 200 or not isinstance(held, dict):
+            print(f"apps.py: {owner}/{repo}/{path}: {st}", file=sys.stderr)
+            failed += 1
+            continue
+        text = base64.b64decode(held["content"]).decode()
+        new = with_member(text, user)
+        if new == text:
+            print(f"apps.py: {name}: {PERSON} already a member")
+            continue
+        st, _ = call(a.base, "PUT", url, auth, body={
+            "content": base64.b64encode(new.encode()).decode(), "sha": held["sha"],
+            "message": f"rehearsal: {PERSON} in {name} (apps.py grant)"})
+        failed += st not in (200, 201)
+        print(f"apps.py: {name}: {PERSON} added ({st})")
+    return 1 if failed else 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -200,8 +311,14 @@ def main(argv=None) -> int:
     s.add_argument("--owner", default=APPS_OWNER)
     s.add_argument("--report")
     s.add_argument("--wait", type=float, default=600)
+    s = sub.add_parser("grant")
+    s.add_argument("--base", required=True)
+    s.add_argument("--export", required=True)
+    s.add_argument("--token-file", required=True)
+    s.add_argument("--realm-file", required=True)
+    s.add_argument("--wait", type=float, default=600)
     a = p.parse_args(argv)
-    return cmd_person(a) if a.cmd == "person" else cmd_publish(a)
+    return {"person": cmd_person, "publish": cmd_publish, "grant": cmd_grant}[a.cmd](a)
 
 
 if __name__ == "__main__":
