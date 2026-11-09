@@ -3283,8 +3283,21 @@ async fn a_domain_that_is_no_header_value_never_becomes_a_redirect() {
     })
     .await;
     let a = get(&w.app, "/user/login", None).await;
-    assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
-    assert!(a.body.contains("redirect target is not a valid URL"));
+    // A domain that is no host name names no Portal: the login stays on the catalogue.
+    assert_eq!(a.status, StatusCode::TEMPORARY_REDIRECT, "{}", a.body);
+    assert_eq!(a.header("location"), "/");
+}
+
+#[tokio::test]
+async fn the_login_goes_to_the_portal_address_named_on_its_own() {
+    let mut branding = BrandingBlock::default();
+    branding.apply_override_json(
+        &serde_json::json!({ "addresses": { "portal": "http://localhost:42241/portal" } }),
+    );
+    let w = world_with(|s| router(s.with_installation_branding(branding))).await;
+    let a = get(&w.app, "/user/login", None).await;
+    assert_eq!(a.status, StatusCode::TEMPORARY_REDIRECT, "{}", a.body);
+    assert_eq!(a.header("location"), "http://localhost:42241/portal/login");
 }
 
 #[tokio::test]

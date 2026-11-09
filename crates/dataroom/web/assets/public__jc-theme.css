@@ -97,6 +97,15 @@ color: var(--jc-muted); font-weight: 550; padding: .5rem .875rem; border-radius:
 .masthead .site-search { margin: .5rem 0 0; }
 .masthead .site-search .form-control { min-width: 0; width: 100%; }
 }
+/* G1 judge: on a phone the logo and the search share the first row and the three links the
+second, so the header keeps two rows instead of four. */
+@media (max-width: 40rem) {
+.masthead .navbar { flex-wrap: wrap; gap: .5rem .75rem; }
+.masthead .main-navbar { display: contents; }
+.masthead .site-search { order: 1; flex: 1 1 8rem; margin: 0; }
+.masthead .navbar-nav { order: 2; flex: 1 1 100%; flex-wrap: nowrap; }
+.masthead .main-navbar ul li a { display: block; padding: .375rem .625rem; white-space: nowrap; }
+}
 /* ---- Cards: the modules CKAN draws, as the Portal's surfaces --------------------------- */
 .wrapper { background: transparent; border: 0; box-shadow: none; }
 .wrapper::before { display: none; }

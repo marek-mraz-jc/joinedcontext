@@ -17,11 +17,12 @@ pub enum Module {
     Shako,
     ModelTools,
     Assistant,
+    Viz,
 }
 
 impl Module {
     /// Every module in mount order.
-    pub const ALL: [Module; 10] = [
+    pub const ALL: [Module; 11] = [
         Module::Kaisatsu,
         Module::Dataroom,
         Module::Daiya,
@@ -32,6 +33,7 @@ impl Module {
         Module::Shako,
         Module::ModelTools,
         Module::Assistant,
+        Module::Viz,
     ];
 
     /// The module's name as `--role` and the config file spell it.
@@ -48,6 +50,7 @@ impl Module {
             Module::Shako => "shako",
             Module::ModelTools => "model-tools",
             Module::Assistant => "assistant",
+            Module::Viz => "viz",
         }
     }
 
@@ -67,6 +70,7 @@ impl Module {
             Module::Shako => "git",
             Module::ModelTools => "model-tools",
             Module::Assistant => "assistant",
+            Module::Viz => "viz",
         }
     }
 
@@ -115,6 +119,7 @@ impl Module {
             Module::Shako => cfg!(feature = "shako"),
             Module::ModelTools => cfg!(feature = "model-tools"),
             Module::Assistant => cfg!(feature = "assistant"),
+            Module::Viz => cfg!(feature = "viz"),
         }
     }
 }
@@ -129,7 +134,7 @@ impl fmt::Display for Module {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RoleError {
     #[error(
-        "unknown module '{0}' (known: kaisatsu, dataroom, daiya, ekiben, antares, gateway, portal, shako, model-tools, assistant)"
+        "unknown module '{0}' (known: kaisatsu, dataroom, daiya, ekiben, antares, gateway, portal, shako, model-tools, assistant, viz)"
     )]
     Unknown(String),
     #[error("module '{0}' is not compiled into this jc binary (Cargo feature '{0}')")]

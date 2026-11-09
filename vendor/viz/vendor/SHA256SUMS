@@ -1,0 +1,26 @@
+# The browser builds of the pinned releases, byte for byte as npm publishes them (package/build/*.min.js):
+#   vega 6.4.0 (2026-08-14), vega-lite 6.5.0 (2026-10-08), vega-embed 7.3.0 (2026-09-23).
+#   Re-check with: npm pack <name>@<version>, then sha256sum package/build/<name>.min.js.
+#   tests/test_viz.py holds every file to its line. They replace vega 5.33.1, vega-lite 5.23.0,
+#   vega-embed 6.29.0 and vega-interpreter 1.2.1: GHSA-m9rg-mr6g-75gm (HIGH, setdata XSS, fixed in
+#   vega-functions 6.1.1) and GHSA-7f2v-3qq3-vvjf (HIGH, toString XSS, fixed in vega 6.2.0 and
+#   vega-interpreter 2.2.1).
+# vega-interpreter 2.3.2 (2026-08-14) ships only an ES module importing 'vega-util'
+#   (package/build/vega-interpreter.js, sha256
+#   c0bdb735a63f9276f136e8d90d7fdf5d8e9df8031eb069048fc9975c876fd7f9): vega-interpreter-2.3.2.js
+#   is `scripts/viz-vega-interpreter.sh package/build/vega-interpreter.js`, the same code as a
+#   classic script over the vega global.
+# The map page (T-4657): MapLibre GL JS 6.14.0 (BSD-3-Clause, the tarball of T-4639, sha256
+#   f799682e7a2d189e43d18ccf6889d09d1e8547e2cab4ba79d7360cc96630207e) and pmtiles 4.5.0
+#   (BSD-3-Clause, 2026-08-10, package/dist/pmtiles.js). The two ES modules are `gzip -9 -n` of
+#   package/dist/maplibre-gl.mjs (sha256 244d36122c1398da3a8259817cc6d71e04321afe6404f32606b4b6c6cc4f26fb)
+#   and package/dist/maplibre-gl-worker.mjs (sha256 5f1e2f0e1624082b7e88a06e4c86085992b0f8c02929801e552f3f7a119856a9):
+#   the main one is over a ConfigMap's megabyte, and nginx serves the .gz files as they are.
+8f6a3587cf8d4f42c7e08120e3eb05d067e746d554e39d2dcf52acc0bd5ba28f  vega-6.4.0.min.js
+b1455caba2fb1a72fb46025ba0ba1316e2dbc7f0dd40a3f6040172bf9c08ba91  vega-embed-7.3.0.min.js
+8019dbb6a790da8f4020648df582b47dc82fb7553f40ab217664540270970750  vega-interpreter-2.3.2.js
+83e215e84e308ee8688fa6503ba0f1cf8a3c05c0d61df2841a0b92bf86809e00  vega-lite-6.5.0.min.js
+bacba6a85a867fcf602f2ff88331b8acf7edf3fbd063a519888cfbff39970193  maplibre-gl-6.14.0.css
+3457078e0aa524a24ca8d55f52356b0b0776ebbaafb14d961982155ad7453a5c  maplibre-gl-6.14.0.mjs.gz
+f908a56aacc79059bc6f7349ce5de77b74a76ffc68b8e6669e50e2065df338b9  maplibre-gl-worker-6.14.0.mjs.gz
+caf981bc46f6327ee7e65d5dc964d89d38a69f60edca2bd4c5c890c21b554c6c  pmtiles-4.5.0.js

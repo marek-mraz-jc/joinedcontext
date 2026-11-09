@@ -626,7 +626,7 @@ mod tests {
         assert!(!portal.contains_key("JC_PORTAL_KNOWLEDGE_URL"));
         assert_eq!(
             crate::modules::dataroom::assistant_widget(&siblings, "data"),
-            ""
+            None
         );
         assert!(tasks.is_empty(), "nothing was spawned");
     }
@@ -840,8 +840,8 @@ mod tests {
         let portal = crate::siblings::portal_vars(&siblings, &setup, |_| None);
         assert_eq!(portal["JC_PORTAL_KNOWLEDGE_URL"], internal);
         assert_eq!(
-            crate::modules::dataroom::assistant_widget(&siblings, "data"),
-            "https://city.example/d/data/widget"
+            crate::modules::dataroom::assistant_widget(&siblings, "data").as_deref(),
+            Some("https://city.example/d/data/widget")
         );
 
         // Publicly only the widget's and the chat's paths.
