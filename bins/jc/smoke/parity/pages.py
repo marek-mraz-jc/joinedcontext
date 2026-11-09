@@ -182,10 +182,11 @@ ASSIST_PAGES = [
     {"id": "assistants-guide", "prod": "/assistants", "old": f"https://opendata.{DOMAIN}/assistants", "new": "/opendata/assistants",
      "features": [F("client list", "h2, h3"), J("Claude / ChatGPT / Copilot", "['Claude','ChatGPT','Copilot'].every(w=>document.body.innerText.includes(w))", "all three names")]},
     {"id": "assistant-page", "prod": "https://assistant.smartcity.joinedcontext.com/d/data", "old": f"https://assistant.{DOMAIN}/d/data",
-     "new": None, "why": "jc serves no assistant module: no public assistant page (assistant.<domain>/d/<deployment>)", "features": ASSIST_PAGE, "settle": 5000},
+     "new": "/d/data", "features": ASSIST_PAGE, "settle": 5000},
     {"id": "assistant-widget", "prod": "https://assistant.smartcity.joinedcontext.com/d/data/widget?embed=1&scheme=light",
-     "old": f"https://assistant.{DOMAIN}/d/data/widget?embed=1&scheme=light", "new": None,
-     "why": "jc serves no assistant module: no widget the catalogue launcher can open", "features": ASSIST_PAGE, "settle": 5000},
+     "old": f"https://assistant.{DOMAIN}/d/data/widget?embed=1&scheme=light",
+     # jc's assistant module serves /d/... at the root in slug mode (bins/jc/src/modules/assistant.rs).
+     "new": "/d/data/widget?embed=1&scheme=light", "features": ASSIST_PAGE, "settle": 5000},
 ]
 
 # --- Grafana vs daiya ----------------------------------------------------------------------------
