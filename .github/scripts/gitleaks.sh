@@ -16,15 +16,21 @@ tar -xzf "$tmp/gl.tgz" -C "$tmp" gitleaks
 case "${EVENT:-}" in
   pull_request) range="${PR_BASE}..HEAD" ;;
   push)
+    # Commits another remote branch holds were scanned when that branch got them, and are public
+    # there already: a fast-forward of main to jc-portal-1 scans only what neither held. No
+    # trailing space: gitleaks splits --log-opts on single spaces, and an empty argument makes its
+    # git log fail, which it reports as "no leaks found".
+    others=$(git for-each-ref --format='%(refname)' refs/remotes/origin | grep -vx "refs/remotes/origin/${BRANCH}" | grep -vx refs/remotes/origin/HEAD | paste -sd' ' - || true)
     if [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "$zero" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-      range="${BEFORE}..HEAD"
+      range="${BEFORE}..HEAD${others:+ --not $others}"
     else
-      others=$(git for-each-ref --format='%(refname)' refs/remotes/origin | grep -vx "refs/remotes/origin/${BRANCH}" | grep -vx refs/remotes/origin/HEAD | tr '\n' ' ' || true)
-      # shellcheck disable=SC2086
       range="HEAD --not $others"
     fi ;;
   # a dispatch: the newest commit
   *) range="HEAD~1..HEAD" ;;
 esac
-echo "gitleaks over: $range"
+# A range git cannot read would scan nothing and pass: refuse it here.
+# shellcheck disable=SC2086
+n=$(git rev-list --count $range)
+echo "gitleaks over: $range ($n commits)"
 "$tmp/gitleaks" detect --no-banner --redact --log-opts="$range"
