@@ -190,7 +190,11 @@ fn variables(
 /// the gateway as the Portal reaches it, kaisatsu's public token endpoint of the Portal's realm
 /// (kaisatsu names the issuer by the host a request reached it on, and the gateway verifies the
 /// public one, as dev's runner asks the public `idm` host), the Organization's domain and the
-/// harness client. None is a secret. `JC_MQTT_NAMESPACE` stays unset: `jc` runs no MQTT broker.
+/// harness client. None is a secret. `JC_MQTT_NAMESPACE` is the Organization's domain as a DNS
+/// label: a DataSource on a broker outside the platform (HSL's `mqtt.hsl.fi`) renders its client
+/// id `jc-<project>-<pipeline>-${JC_MQTT_NAMESPACE}`, which the runner refused unset (400 on every
+/// pass), and the id must differ per installation or the broker drops one session for the other's
+/// (T-4678). `EKIBEN_VAR_JC_MQTT_NAMESPACE` replaces it (a rehearsal of prod's domain must).
 fn runner_defaults(
     siblings: &Siblings,
     realm: &crate::setup::Realm,
@@ -215,11 +219,24 @@ fn runner_defaults(
     let org_domain = org_domain
         .filter(|d| !d.trim().is_empty())
         .unwrap_or_else(|| crate::provision::domain(siblings.portal_base().as_deref()));
+    out.insert("JC_MQTT_NAMESPACE".to_owned(), dns_label(&org_domain));
     out.insert("JC_ORG_DOMAIN".to_owned(), org_domain);
     if let Some(client) = harness_client {
         out.insert("JC_CLIENT_ID".to_owned(), client.to_owned());
     }
     out
+}
+
+/// `text` as one DNS label: lowercase, every other character than `[a-z0-9]` a `-`, no edge `-`,
+/// at most 63 characters.
+fn dns_label(text: &str) -> String {
+    let label: String = text
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .take(63)
+        .collect();
+    label.trim_matches('-').to_owned()
 }
 
 /// The part of `jc`'s listener a stream may call: the gateway's Endpoint door and kaisatsu's
@@ -305,10 +322,8 @@ mod tests {
         // The domain first-start provisioning gives the Organization.
         assert_eq!(vars["JC_ORG_DOMAIN"], "city.example");
         assert_eq!(vars["JC_CLIENT_ID"], "helsinki-pipelines");
-        assert!(
-            !vars.contains_key("JC_MQTT_NAMESPACE"),
-            "jc runs no MQTT broker"
-        );
+        // An outside broker's client id names the installation, so the runner takes the stream.
+        assert_eq!(vars["JC_MQTT_NAMESPACE"], "city-example");
         assert!(!vars.keys().any(|k| k.starts_with("JC_CLIENT_SECRET")));
         let named = runner_defaults(
             &siblings,
@@ -317,6 +332,7 @@ mod tests {
             Some("hel.fi".into()),
         );
         assert_eq!(named["JC_ORG_DOMAIN"], "hel.fi");
+        assert_eq!(named["JC_MQTT_NAMESPACE"], "hel-fi");
         assert!(!named.contains_key("JC_CLIENT_ID"));
         // Without the gateway and kaisatsu nothing points at them.
         let alone = runner_defaults(
@@ -325,7 +341,10 @@ mod tests {
             None,
             None,
         );
-        assert_eq!(alone.keys().collect::<Vec<_>>(), ["JC_ORG_DOMAIN"]);
+        assert_eq!(
+            alone.keys().collect::<Vec<_>>(),
+            ["JC_MQTT_NAMESPACE", "JC_ORG_DOMAIN"]
+        );
     }
 
     #[test]
