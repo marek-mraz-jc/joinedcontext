@@ -110,6 +110,12 @@ demo_users=${REHEARSAL_DEMO_USERS:-$(dirname "$home")/demo-users.yaml}
 people_args=()
 [ -d "$people" ] && people_args+=(--people "$people")
 [ -f "$demo_users" ] && people_args+=(--demo-users "$demo_users")
+# Deployment main's realm lines over the export (supervisor 2026-11-09: the cutover carries main's
+# realm, not the release prod runs): REHEARSAL_REALM_LINES_FROM / _TO are the rendered
+# keycloak-config values of release and main for this environment (rehearsal.py render).
+if [ -n "${REHEARSAL_REALM_LINES_FROM:-}" ] && [ -n "${REHEARSAL_REALM_LINES_TO:-}" ]; then
+  people_args+=(--lines-from "$REHEARSAL_REALM_LINES_FROM" --lines-to "$REHEARSAL_REALM_LINES_TO")
+fi
 if [ -d "$export_dir/keycloak" ]; then
   python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/state/realms" \
     --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}" --secrets-dir "$home/secrets/realm" \

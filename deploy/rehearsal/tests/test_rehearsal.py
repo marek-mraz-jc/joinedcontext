@@ -1051,3 +1051,49 @@ def test_the_hub_sources_are_the_deployments_and_a_malformed_list_stops(tmp_path
         f.write_text(f'  JC_GATEWAY_HUB_KNOWLEDGE_SOURCES: "{bad}"\n')
         with pytest.raises(SystemExit):
             rh.hub_sources(tmp_path)
+
+
+def test_mains_realm_lines_go_over_the_export_and_nothing_else_moves():
+    release = {"realm": "smartcity", "clients": [
+        {"clientId": "portal-api", "optionalClientScopes": ["address"], "attributes": {"a": "1"},
+         "protocolMappers": [{"name": "groups", "config": {"full.path": "false", "claim.name": "groups"}}]},
+        {"clientId": "same", "redirectUris": ["https://x/*"]}],
+        "clientScopes": [{"name": "mcp:portal"}], "roles": {"realm": [{"name": "r1"}]},
+        "users": [{"username": "u"}]}
+    main = {"realm": "smartcity", "clients": [
+        {"clientId": "portal-api", "optionalClientScopes": ["address", "gateway-hub"],
+         "attributes": {"a": "1", "standard.token.exchange.enabled": "true"},
+         "protocolMappers": [{"name": "groups", "config": {"full.path": "true", "claim.name": "groups"}},
+                             {"name": "jc_org", "config": {}}]},
+        {"clientId": "same", "redirectUris": ["https://x/*"]},
+        {"clientId": "grafana", "secret": "$(CLIENT_SECRET_GRAFANA)"}],
+        "clientScopes": [{"name": "mcp:portal"}, {"name": "gateway-hub"}],
+        "defaultOptionalClientScopes": ["connector", "offline_access"],
+        "roles": {"realm": [{"name": "r1"}, {"name": "r2"}]},
+        "users": [{"username": "u"}, {"username": "presenter@hel.fi"}]}
+    export = {"realm": "smartcity", "clients": [
+        {"clientId": "portal-api", "secret": "$(env:KC_PORTAL_API_SECRET)", "optionalClientScopes": ["address"],
+         "attributes": {"a": "1", "live": "kept"},
+         "protocolMappers": [{"name": "groups", "id": "m1", "config": {"full.path": "false", "claim.name": "groups"}},
+                             {"name": "prod-only", "config": {}}]},
+        {"clientId": "same", "redirectUris": ["https://prod-live/*"]},
+        {"clientId": "prod-only"}],
+        "clientScopes": [{"name": "mcp:portal", "id": "s1"}], "roles": {"realm": [{"name": "r1"}, {"name": "live"}]}}
+    out, lines = rh.realm_lines(export, release, main)
+    by = {c["clientId"]: c for c in out["clients"]}
+    api = by["portal-api"]
+    assert api["optionalClientScopes"] == ["address", "gateway-hub"]
+    assert api["attributes"] == {"a": "1", "live": "kept", "standard.token.exchange.enabled": "true"}
+    assert api["secret"] == "$(env:KC_PORTAL_API_SECRET)"
+    mappers = {m["name"]: m for m in api["protocolMappers"]}
+    assert mappers["groups"]["config"]["full.path"] == "true" and mappers["groups"]["id"] == "m1"
+    assert set(mappers) == {"groups", "prod-only", "jc_org"}
+    # What main did not change keeps prod's live value; what prod has alone stays.
+    assert by["same"]["redirectUris"] == ["https://prod-live/*"] and "prod-only" in by
+    assert by["grafana"]["secret"] == "$(CLIENT_SECRET_GRAFANA)"
+    assert [s["name"] for s in out["clientScopes"]] == ["mcp:portal", "gateway-hub"]
+    assert out["defaultOptionalClientScopes"] == ["connector", "offline_access"]
+    assert [r["name"] for r in out["roles"]["realm"]] == ["r1", "live", "r2"]
+    assert "users" not in out, "no person comes in with the realm lines"
+    assert "clients[grafana] (added)" in lines and "defaultOptionalClientScopes" in lines
+    assert export["clients"][0]["optionalClientScopes"] == ["address"], "the export is not changed in place"

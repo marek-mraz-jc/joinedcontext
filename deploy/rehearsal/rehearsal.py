@@ -653,6 +653,69 @@ def kaisatsu_check(kaisatsu_bin: str, tmp: Path):
     return check
 
 
+# The realm lists keyed by a member's name, as keycloak-config-cli matches them (people never: the
+# realm lines carry no person into an export, prod gets none).
+REALM_LIST_KEYS = {"clients": "clientId", "clientScopes": "name", "groups": "name",
+                   "identityProviders": "alias", "authenticationFlows": "alias"}
+MEMBER_LIST_KEYS = {"protocolMappers": "name", "subGroups": "name"}
+# The keyed lists inside a realm's dicts (`roles.realm`); a client's roles are a dict of such lists.
+NESTED_KEYS = {"roles": {"realm": "name"}}
+
+
+def rendered_realm(values_file: Path, realm: str) -> dict:
+    """The realm `realm` of a deployment's rendered keycloak-config values (rehearsal.py render)."""
+    import yaml  # PyYAML is in the CI venv; only render/synth/realm lines need it
+
+    inline = yaml.safe_load(values_file.read_text())["config"][realm]["inline"]
+    return yaml.safe_load(inline) if isinstance(inline, str) else inline
+
+
+def _overlay(have: dict, old: dict, new: dict, keys: dict, where: str, lines: list[str]) -> dict:
+    """`have` with every member `new` adds or changes against `old` put in: a changed scalar or list
+    takes `new`'s value, a keyed list adds its new members and overlays its changed ones by key, a
+    dict overlays its changed keys. What `new` removed stays (keycloak-config-cli prunes nothing)."""
+    out = dict(have)
+    for k in new:
+        if k in old and old[k] == new[k]:
+            continue
+        key = keys.get(k)
+        if isinstance(new[k], list) and k in keys and key:
+            byold = {m.get(key): m for m in old.get(k) or [] if isinstance(m, dict)}
+            items = [dict(m) if isinstance(m, dict) else m for m in out.get(k) or []]
+            index = {m.get(key): i for i, m in enumerate(items) if isinstance(m, dict)}
+            for m in new[k]:
+                name = m.get(key)
+                if name in byold and byold[name] == m:
+                    continue
+                if name in index and name in byold:
+                    items[index[name]] = _overlay(items[index[name]], byold[name], m, MEMBER_LIST_KEYS,
+                                                  f"{where}{k}[{name}].", lines)
+                elif name in index:
+                    items[index[name]] = m
+                    lines.append(f"{where}{k}[{name}] (taken whole)")
+                else:
+                    items.append(m)
+                    lines.append(f"{where}{k}[{name}] (added)")
+            out[k] = items
+        elif isinstance(new[k], dict) and isinstance(old.get(k), dict) and isinstance(out.get(k), dict):
+            out[k] = _overlay(out[k], old[k], new[k], NESTED_KEYS.get(k, {}), f"{where}{k}.", lines)
+        else:
+            out[k] = new[k]
+            lines.append(f"{where}{k}")
+    return out
+
+
+def realm_lines(realm: dict, release: dict, main: dict) -> tuple[dict, list[str]]:
+    """The export's realm with every line the deployment's main realm has that its release realm
+    lacks (supervisor 2026-11-09 16:1xZ: the cutover carries main's realm, as the next prod release
+    would apply it over prod's live realm). People stay out; the export's own values elsewhere stay.
+    Answers the realm and one line per member put in."""
+    lines: list[str] = []
+    old = {k: v for k, v in release.items() if k not in PEOPLE_KEYS}
+    new = {k: v for k, v in main.items() if k not in PEOPLE_KEYS and k != "realm"}
+    return _overlay(realm, old, new, REALM_LIST_KEYS, "", lines), lines
+
+
 def cmd_realms(a):
     src, dst = Path(a.export) / "keycloak", Path(a.out)
     dst.mkdir(parents=True, exist_ok=True)
@@ -666,6 +729,11 @@ def cmd_realms(a):
         if name in SKIPPED_REALMS:
             continue
         clean = strip_people(realm)
+        if a.lines_from and a.lines_to:
+            clean, lines = realm_lines(clean, rendered_realm(Path(a.lines_from), name),
+                                       rendered_realm(Path(a.lines_to), name))
+            (dst.parent / f"realm-{name}-lines.json").write_text(json.dumps(lines, indent=1))
+            print(f"realm {name}: {len(lines)} realm lines of the deployment's main put in (realm-{name}-lines.json)")
         people_file = Path(a.people) / f"users-{name}.jsonl" if a.people else None
         if people_file and people_file.exists():
             clean, counts = add_people(clean, _jsonl(people_file), personas(Path(a.demo_users) if a.demo_users else None))
@@ -1878,6 +1946,8 @@ def main(argv=None):
     s.add_argument("--people", help="a 0700 dir holding users-<realm>.jsonl (dev only): people without credentials")
     s.add_argument("--demo-users", help="the deployment's demo-users.yaml: the personas that keep e-mail and names")
     s.add_argument("--secrets-dir", help="write each secret as $(file:<dir>/NAME), the form kaisatsu in jc reads")
+    s.add_argument("--lines-from", help="the release's rendered keycloak-config values (rehearsal.py render)")
+    s.add_argument("--lines-to", help="main's rendered keycloak-config values: its realm lines go over the export")
     s = sub.add_parser("import"); s.add_argument("--export", required=True); s.add_argument("--base", required=True)
     s.add_argument("--state", required=True); s.add_argument("--report", required=True)
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin")
