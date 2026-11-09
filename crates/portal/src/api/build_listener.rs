@@ -153,7 +153,8 @@ async fn write_capped(body: Body, to: &FsPath, limit: u64) -> Result<(), ApiErro
     let mut written: u64 = 0;
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|err| ApiError::BadRequest(format!("the upload broke off: {err}")))?;
+        let chunk =
+            chunk.map_err(|err| ApiError::BadRequest(format!("the upload broke off: {err}")))?;
         written = written.saturating_add(chunk.len() as u64);
         if written > limit {
             drop(file);
@@ -177,7 +178,9 @@ async fn artifact(
     body: Body,
 ) -> Result<Response, ApiError> {
     let limit = cap(&name).ok_or_else(|| {
-        ApiError::NotFound(format!("a build uploads bundle, image or sbom, not '{name}'"))
+        ApiError::NotFound(format!(
+            "a build uploads bundle, image or sbom, not '{name}'"
+        ))
     })?;
     let (db, settings, _) = admitted(&state, id, &headers).await?;
     let declared = headers
@@ -195,11 +198,10 @@ async fn artifact(
         .map_err(|err| ApiError::Internal(format!("the build's folder: {err}")))?;
     let partial = dir.join(format!("{name}.part"));
     write_capped(body, &partial, limit).await?;
-    let landed = build_records::while_running(&db, id, || {
-        std::fs::rename(&partial, dir.join(&name))
-    })
-    .await
-    .map_err(store)?;
+    let landed =
+        build_records::while_running(&db, id, || std::fs::rename(&partial, dir.join(&name)))
+            .await
+            .map_err(store)?;
     if !landed {
         let _ = tokio::fs::remove_file(&partial).await;
         return Err(ApiError::Conflict(format!(
@@ -266,7 +268,9 @@ async fn finish(
 ) -> Result<Json<Outcome>, ApiError> {
     let (db, settings, build) = admitted(&state, id, &headers).await?;
     if !build_records::freeze(&db, id).await.map_err(store)? {
-        return Err(ApiError::Conflict(format!("build {id} is no longer running")));
+        return Err(ApiError::Conflict(format!(
+            "build {id} is no longer running"
+        )));
     }
     let concluded = tokio::spawn(conclude(state, db, settings, build, report));
     concluded
@@ -285,7 +289,13 @@ async fn conclude(
 ) -> Outcome {
     let dir = folder(&settings, build.id);
     let outcome = if report.succeeded {
-        publish(&state, &dir, &build, report.sdk_version.as_deref().unwrap_or_default()).await
+        publish(
+            &state,
+            &dir,
+            &build,
+            report.sdk_version.as_deref().unwrap_or_default(),
+        )
+        .await
     } else {
         Err(report
             .reason
@@ -293,18 +303,27 @@ async fn conclude(
             .unwrap_or_else(|| "the build failed; its log says why".to_owned()))
     };
     let _ = tokio::fs::remove_dir_all(&dir).await;
-    let ended = build_records::finish(&db, build.id, outcome.as_deref().map_err(String::as_str)).await;
+    let ended =
+        build_records::finish(&db, build.id, outcome.as_deref().map_err(String::as_str)).await;
     if let Err(err) = ended {
         tracing::warn!(build = build.id, error = %err, "the build's end was not recorded");
     }
     match outcome {
         Ok(digest) => {
             tracing::info!(build = build.id, app = %build.app, commit = %build.commit, %digest, "build published");
-            Outcome { state: "succeeded", digest: Some(digest), reason: None }
+            Outcome {
+                state: "succeeded",
+                digest: Some(digest),
+                reason: None,
+            }
         }
         Err(reason) => {
             tracing::info!(build = build.id, app = %build.app, commit = %build.commit, %reason, "build failed");
-            Outcome { state: "failed", digest: None, reason: Some(reason) }
+            Outcome {
+                state: "failed",
+                digest: None,
+                reason: Some(reason),
+            }
         }
     }
 }
@@ -337,9 +356,14 @@ pub fn digest_of(artifact: &[u8], image: bool) -> Result<String, String> {
         return Ok(format!("sha256:{:x}", Sha256::digest(artifact)));
     }
     let mut archive = tar::Archive::new(artifact);
-    for entry in archive.entries().map_err(|e| format!("the image is not a tar: {e}"))? {
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("the image is not a tar: {e}"))?
+    {
         let mut entry = entry.map_err(|e| format!("the image is not a tar: {e}"))?;
-        let path = entry.path().map(|p| p.to_string_lossy().trim_start_matches("./").to_owned());
+        let path = entry
+            .path()
+            .map(|p| p.to_string_lossy().trim_start_matches("./").to_owned());
         if path.as_deref().ok() != Some("index.json") {
             continue;
         }
@@ -360,15 +384,31 @@ pub fn digest_of(artifact: &[u8], image: bool) -> Result<String, String> {
 
 /// Hashes the frozen uploads, then checks, publishes and writes `status.build` through the
 /// propose door as the Portal's lane, holding exactly these bytes. Returns the digest.
-async fn publish(state: &AppState, dir: &FsPath, build: &Record, sdk: &str) -> Result<String, String> {
+async fn publish(
+    state: &AppState,
+    dir: &FsPath,
+    build: &Record,
+    sdk: &str,
+) -> Result<String, String> {
     if !is_sdk_version(sdk) {
-        return Err(format!("the build reported no SDK version it was built against ('{sdk}')"));
+        return Err(format!(
+            "the build reported no SDK version it was built against ('{sdk}')"
+        ));
     }
     let app = state
         .mirror
         .get(&build.project, "App", &build.app)
-        .ok_or_else(|| format!("project {} holds no App '{}' on main any more", build.project, build.app))?;
-    let image = app.spec.get("kind").and_then(Value::as_str).map(jc_core::kinds::AppClass::parse)
+        .ok_or_else(|| {
+            format!(
+                "project {} holds no App '{}' on main any more",
+                build.project, build.app
+            )
+        })?;
+    let image = app
+        .spec
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(jc_core::kinds::AppClass::parse)
         == Some(Ok(jc_core::kinds::AppClass::UiRust));
     let name = if image { "image" } else { "bundle" };
     let read = |file: &str| {
@@ -446,7 +486,8 @@ mod tests {
             header.set_size(index.len() as u64);
             header.set_mode(0o644);
             header.set_cksum();
-            tar.append_data(&mut header, "./index.json", index.as_bytes()).expect("append");
+            tar.append_data(&mut header, "./index.json", index.as_bytes())
+                .expect("append");
             tar.into_inner().expect("tar")
         };
         let one = layout(r#"{"manifests":[{"digest":"sha256:aa"}]}"#);

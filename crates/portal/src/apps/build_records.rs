@@ -9,11 +9,12 @@
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::{AssertSqlSafe, PgPool};
+use time::OffsetDateTime;
 
 use crate::apps::build_pods::Class;
 
 /// One build, as the store holds it. The token itself is never held: only its SHA-256.
-#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     pub id: i64,
     pub project: String,
@@ -29,6 +30,50 @@ pub struct Record {
     pub finished_at: Option<DateTime<Utc>>,
     pub digest: Option<String>,
     pub reason: Option<String>,
+}
+
+/// A row as the database answers it: its times as `time`, which the Portal's sqlx reads.
+#[derive(sqlx::FromRow)]
+struct Row {
+    id: i64,
+    project: String,
+    app: String,
+    commit: String,
+    class: String,
+    trigger: String,
+    requested_by: Option<String>,
+    state: String,
+    expires_at: Option<OffsetDateTime>,
+    created_at: OffsetDateTime,
+    started_at: Option<OffsetDateTime>,
+    finished_at: Option<OffsetDateTime>,
+    digest: Option<String>,
+    reason: Option<String>,
+}
+
+fn utc(at: OffsetDateTime) -> DateTime<Utc> {
+    DateTime::from_timestamp(at.unix_timestamp(), at.nanosecond()).unwrap_or_default()
+}
+
+impl From<Row> for Record {
+    fn from(row: Row) -> Self {
+        Self {
+            id: row.id,
+            project: row.project,
+            app: row.app,
+            commit: row.commit,
+            class: row.class,
+            trigger: row.trigger,
+            requested_by: row.requested_by,
+            state: row.state,
+            expires_at: row.expires_at.map(utc),
+            created_at: utc(row.created_at),
+            started_at: row.started_at.map(utc),
+            finished_at: row.finished_at.map(utc),
+            digest: row.digest,
+            reason: row.reason,
+        }
+    }
 }
 
 const COLUMNS: &str = "id, project, app, commit, class, trigger, requested_by, state, expires_at, \
@@ -119,7 +164,12 @@ pub async fn enqueue(
 
 /// Whether any build of `commit` of the App was ever queued: a push is built once, and a
 /// failed build waits for the next push or a Rebuild, as a workflow run does.
-pub async fn known(db: &PgPool, project: &str, app: &str, commit: &str) -> Result<bool, sqlx::Error> {
+pub async fn known(
+    db: &PgPool,
+    project: &str,
+    app: &str,
+    commit: &str,
+) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM app_builds WHERE project = $1 AND app = $2 AND commit = $3)",
     )
@@ -132,10 +182,13 @@ pub async fn known(db: &PgPool, project: &str, app: &str, commit: &str) -> Resul
 
 /// One build by id.
 pub async fn get(db: &PgPool, id: i64) -> Result<Option<Record>, sqlx::Error> {
-    sqlx::query_as(AssertSqlSafe(format!("SELECT {COLUMNS} FROM app_builds WHERE id = $1")))
-        .bind(id)
-        .fetch_optional(db)
-        .await
+    let row: Option<Row> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM app_builds WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(Record::from))
 }
 
 /// One build of the App by id: `None` for a build of another App.
@@ -157,36 +210,39 @@ pub async fn latest(
     app: &str,
     limit: i64,
 ) -> Result<Vec<Record>, sqlx::Error> {
-    sqlx::query_as(AssertSqlSafe(format!(
+    let rows: Vec<Row> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM app_builds WHERE project = $1 AND app = $2 ORDER BY id DESC LIMIT $3"
     )))
     .bind(project)
     .bind(app)
     .bind(limit)
     .fetch_all(db)
-    .await
+    .await?;
+    Ok(rows.into_iter().map(Record::from).collect())
 }
 
 /// Every build in `state`, oldest first.
 pub async fn in_state(db: &PgPool, state: &str) -> Result<Vec<Record>, sqlx::Error> {
-    sqlx::query_as(AssertSqlSafe(format!(
+    let rows: Vec<Row> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM app_builds WHERE state = $1 ORDER BY id"
     )))
     .bind(state)
     .fetch_all(db)
-    .await
+    .await?;
+    Ok(rows.into_iter().map(Record::from).collect())
 }
 
 /// The oldest pending build of an App that has none running: the next to start (FIFO, one
 /// build at a time per App).
 pub async fn next_pending(db: &PgPool) -> Result<Option<Record>, sqlx::Error> {
-    sqlx::query_as(AssertSqlSafe(format!(
+    let row: Option<Row> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM app_builds p WHERE state = 'pending' AND NOT EXISTS ( \
            SELECT 1 FROM app_builds r WHERE r.project = p.project AND r.app = p.app \
            AND r.state IN ('running', 'verifying')) ORDER BY id LIMIT 1"
     )))
     .fetch_optional(db)
-    .await
+    .await?;
+    Ok(row.map(Record::from))
 }
 
 /// Starts a pending build with the hash of its token, valid for `valid_for`; `false` when it is
@@ -197,15 +253,13 @@ pub async fn start(
     token: &str,
     valid_for: chrono::Duration,
 ) -> Result<bool, sqlx::Error> {
-    let now = Utc::now();
     let started = sqlx::query(
-        "UPDATE app_builds SET state = 'running', token_sha256 = $2, started_at = $3, \
-         expires_at = $4 WHERE id = $1 AND state = 'pending'",
+        "UPDATE app_builds SET state = 'running', token_sha256 = $2, started_at = now(), \
+         expires_at = now() + make_interval(secs => $3) WHERE id = $1 AND state = 'pending'",
     )
     .bind(id)
     .bind(token_hash(token))
-    .bind(now)
-    .bind(now + valid_for)
+    .bind(valid_for.num_milliseconds() as f64 / 1000.0)
     .execute(db)
     .await?;
     Ok(started.rows_affected() == 1)
@@ -271,11 +325,7 @@ pub async fn while_running(
 
 /// Ends a build: `succeeded` with its digest, or `failed` with the reason; its token admits
 /// nothing more. Only a build not ended already is ended.
-pub async fn finish(
-    db: &PgPool,
-    id: i64,
-    outcome: Result<&str, &str>,
-) -> Result<(), sqlx::Error> {
+pub async fn finish(db: &PgPool, id: i64, outcome: Result<&str, &str>) -> Result<(), sqlx::Error> {
     let (state, digest, reason) = match outcome {
         Ok(digest) => ("succeeded", Some(digest), None),
         Err(reason) => ("failed", None, Some(reason)),

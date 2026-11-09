@@ -417,7 +417,9 @@ pub async fn spawn_build_listener(
         return Ok(None);
     };
     if state.db.is_none() {
-        tracing::warn!("JC_PORTAL_BUILD_NAMESPACE is set and the Portal has no database: no App builds");
+        tracing::warn!(
+            "JC_PORTAL_BUILD_NAMESPACE is set and the Portal has no database: no App builds"
+        );
         return Ok(None);
     }
     let listener = tokio::net::TcpListener::bind(settings.bind).await?;

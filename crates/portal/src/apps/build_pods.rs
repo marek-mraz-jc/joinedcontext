@@ -96,16 +96,15 @@ impl Class {
     /// The class an App's workflow file asks for in its build job's `runs-on`, or `None` when it
     /// is not an App's build workflow (one of the three the Portal writes, AP-100).
     pub fn of_workflow(text: &str) -> Option<Self> {
-        text.lines().find_map(|line| {
-            match line.trim().strip_prefix("runs-on:")?.trim() {
+        text.lines()
+            .find_map(|line| match line.trim().strip_prefix("runs-on:")?.trim() {
                 "app-build-node" => Some(Self::Node),
                 "app-build-rust" => Some(Self::Rust),
                 _ => None,
-            }
-        })
+            })
     }
 
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Node => "node",
             Self::Rust => "rust",
@@ -427,18 +426,38 @@ async fn settle(db: &PgPool, jobs: &[Value]) -> Result<Vec<(i64, String)>, Dispa
         let why = match job.and_then(ended) {
             Some((kind, reason)) => Some(format!(
                 "the build Job {name} ended ({kind}{}) before the build reported",
-                if reason.is_empty() { String::new() } else { format!(": {reason}") }
+                if reason.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {reason}")
+                }
             )),
-            None if build.expires_at.is_some_and(|at| at <= now) => {
-                Some(format!("the build did not report before its token expired ({name})"))
-            }
+            None if build.expires_at.is_some_and(|at| at <= now) => Some(format!(
+                "the build did not report before its token expired ({name})"
+            )),
             // A Job applied in this pass is not listed yet; one gone after its start is.
-            None if job.is_none() && build.started_at.is_some_and(|at| now - at > chrono::Duration::minutes(2)) => {
+            None if job.is_none()
+                && build
+                    .started_at
+                    .is_some_and(|at| now - at > chrono::Duration::minutes(2)) =>
+            {
                 Some(format!("the build Job {name} is gone"))
             }
             None => None,
         };
         if let Some(why) = why {
+            build_records::finish(db, build.id, Err(&why)).await?;
+            ended_now.push((build.id, why));
+        }
+    }
+    // A build being verified is concluded on a task of the Portal's own; one the Portal stopped
+    // during (a restart) would hold its App's slot for good.
+    for build in build_records::in_state(db, "verifying").await? {
+        if build
+            .expires_at
+            .is_some_and(|at| at + chrono::Duration::minutes(30) <= now)
+        {
+            let why = "the Portal stopped while it published the build".to_owned();
             build_records::finish(db, build.id, Err(&why)).await?;
             ended_now.push((build.id, why));
         }
@@ -458,11 +477,15 @@ async fn start(
     let name = job_name(&build.app, build.id);
     // A Job of this build whose token never arrived (a pass that stopped half way) would wait
     // for it until its deadline: it goes, and this pass starts the build again.
-    if let Some(existing) = kube.get("batch/v1", "Job", &settings.namespace, &name).await? {
+    if let Some(existing) = kube
+        .get("batch/v1", "Job", &settings.namespace, &name)
+        .await?
+    {
         if token_was_written(&existing) {
             return Ok(());
         }
-        kube.delete("batch/v1", "Job", &settings.namespace, &name).await?;
+        kube.delete("batch/v1", "Job", &settings.namespace, &name)
+            .await?;
     }
     let token = build_records::new_token();
     if !build_records::start(db, build.id, &token, build.class().token_lifetime()).await? {
@@ -502,7 +525,10 @@ async fn apply_job(
 
 /// The class of a build of `commit` of the App's repository, read from its workflow file at
 /// that commit, or `None` when the repository carries no App build workflow there.
-pub async fn class_at(repo: &ShakoClient, commit: &str) -> Result<Option<Class>, crate::forge::GitError> {
+pub async fn class_at(
+    repo: &ShakoClient,
+    commit: &str,
+) -> Result<Option<Class>, crate::forge::GitError> {
     Ok(repo
         .get_file(WORKFLOW_PATH, commit)
         .await?
@@ -539,7 +565,11 @@ pub async fn trigger_once(
             Err(crate::forge::GitError::NotFound) => continue,
             Err(err) => return Err(err.into()),
         };
-        let built = app.status.as_ref().and_then(|s| s.build.as_ref()).map(|b| b.commit.as_str());
+        let built = app
+            .status
+            .as_ref()
+            .and_then(|s| s.build.as_ref())
+            .map(|b| b.commit.as_str());
         if built == Some(head.as_str()) || build_records::known(db, project, name, &head).await? {
             continue;
         }
@@ -786,8 +816,14 @@ mod tests {
                 "on:\n  push:\n    branches: [main]\njobs:\n  build:\n    runs-on: {build}\n  propose:\n    runs-on: node-22\n"
             )
         };
-        assert_eq!(Class::of_workflow(&workflow("app-build-node")), Some(Class::Node));
-        assert_eq!(Class::of_workflow(&workflow("app-build-rust")), Some(Class::Rust));
+        assert_eq!(
+            Class::of_workflow(&workflow("app-build-node")),
+            Some(Class::Node)
+        );
+        assert_eq!(
+            Class::of_workflow(&workflow("app-build-rust")),
+            Some(Class::Rust)
+        );
         assert_eq!(
             Class::of_workflow(&workflow("ubuntu-latest")),
             None,
@@ -900,15 +936,26 @@ mod tests {
             .as_array()
             .expect("env")
             .iter()
-            .map(|e| (e["name"].as_str().unwrap_or_default().to_owned(), e["value"].as_str().unwrap_or_default().to_owned()))
+            .map(|e| {
+                (
+                    e["name"].as_str().unwrap_or_default().to_owned(),
+                    e["value"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
             .collect();
         assert_eq!(
             env,
             [
                 ("JC_BUILD_API".to_owned(), settings().api),
                 ("JC_BUILD_ID".to_owned(), "7".to_owned()),
-                ("JC_APP_COMMIT".to_owned(), "8c56954a1f0e3d2c1b0a99887766554433221100".to_owned()),
-                ("JC_BUILD_TOKEN_FILE".to_owned(), "/tmp/build-secret/token".to_owned()),
+                (
+                    "JC_APP_COMMIT".to_owned(),
+                    "8c56954a1f0e3d2c1b0a99887766554433221100".to_owned()
+                ),
+                (
+                    "JC_BUILD_TOKEN_FILE".to_owned(),
+                    "/tmp/build-secret/token".to_owned()
+                ),
             ],
             "no forge address, no forge or lane token, no install source"
         );
@@ -926,9 +973,14 @@ mod tests {
         assert!(!running(&with(
             json!({ "conditions": [{ "type": "Complete", "status": "True" }] })
         )));
-        let failed = with(json!({ "conditions": [{ "type": "Failed", "status": "True", "reason": "DeadlineExceeded" }] }));
+        let failed = with(
+            json!({ "conditions": [{ "type": "Failed", "status": "True", "reason": "DeadlineExceeded" }] }),
+        );
         assert!(!running(&failed));
-        assert_eq!(ended(&failed), Some(("Failed".into(), "DeadlineExceeded".into())));
+        assert_eq!(
+            ended(&failed),
+            Some(("Failed".into(), "DeadlineExceeded".into()))
+        );
         assert!(!running(&json!({
             "metadata": { "name": "build-a-1", "deletionTimestamp": "2026-10-26T19:06:00Z" }
         })));
@@ -954,7 +1006,13 @@ mod tests {
 
     #[test]
     fn a_token_admits_its_pod_until_the_deadline_and_a_grace() {
-        assert_eq!(Class::Node.token_lifetime(), chrono::Duration::seconds(1200 + 300));
-        assert_eq!(Class::Rust.token_lifetime(), chrono::Duration::seconds(1800 + 300));
+        assert_eq!(
+            Class::Node.token_lifetime(),
+            chrono::Duration::seconds(1200 + 300)
+        );
+        assert_eq!(
+            Class::Rust.token_lifetime(),
+            chrono::Duration::seconds(1800 + 300)
+        );
     }
 }

@@ -300,7 +300,10 @@ pub async fn with_held<F: std::future::Future>(held: Held, work: F) -> F::Output
 /// The build the Portal's lane holds for exactly this App, commit and digest, if any.
 pub fn held_for(project: &str, app: &str, commit: &str, digest: &str) -> Option<Held> {
     HELD.try_with(|held| {
-        (held.project == project && held.app == app && held.commit == commit && held.digest == digest)
+        (held.project == project
+            && held.app == app
+            && held.commit == commit
+            && held.digest == digest)
             .then(|| held.clone())
     })
     .ok()

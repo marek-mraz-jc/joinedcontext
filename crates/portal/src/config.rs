@@ -1029,7 +1029,8 @@ fn build_pod_settings(
                  build listener at this in-cluster URL, e.g. http://jc-build.smartcity.svc:9092"
             .into(),
     })?;
-    if !(api.starts_with("http://") || api.starts_with("https://")) || url::Url::parse(&api).is_err()
+    if !(api.starts_with("http://") || api.starts_with("https://"))
+        || url::Url::parse(&api).is_err()
     {
         return Err(ConfigError::Invalid {
             var: "JC_PORTAL_BUILD_API_URL",

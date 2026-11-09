@@ -134,18 +134,19 @@ fn literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
-/// A workflow run of an application's repository, as the App page links it (AP-86, AP-103).
+/// A build of an application, as the App page links it (AP-86, AP-103): the shape the forge's
+/// workflow runs had, now filled from the Portal's own build record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowRun {
-    /// `queued`, `in_progress`, `waiting` or `completed`, as the forge says it.
+    /// `queued`, `in_progress` or `completed`.
     pub status: String,
     /// `success`, `failure`, `cancelled`… once the run is completed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conclusion: Option<String>,
     /// The commit the run built.
     pub commit: String,
-    /// The run's page, behind the forge's sign-in (PF-81).
+    /// The build's log.
     pub url: String,
     /// The run's number in its repository, so a client tells the run it started from the one
     /// before it (T-3245).
@@ -159,61 +160,11 @@ pub struct WorkflowRun {
     pub completed_at: Option<String>,
 }
 
-impl WorkflowRun {
-    /// How long a completed run took, in seconds.
-    pub fn seconds(&self) -> Option<u64> {
-        let at = |text: &Option<String>| {
-            text.as_deref()
-                .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
-        };
-        let took = at(&self.completed_at)? - at(&self.started_at)?;
-        u64::try_from(took.num_seconds()).ok()
-    }
-}
-
-/// A forge job waiting for a runner, as the build-pod dispatcher reads it (AP-130).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QueuedJob {
-    /// The forge's id of the job, unique in the installation.
-    pub id: u64,
-    /// The `runs-on` labels the job asks for.
-    pub labels: Vec<String>,
-    /// The repository of the organization the job belongs to.
-    pub repository: String,
-}
-
 /// An OData collection answer.
 #[derive(Deserialize)]
 struct Collection<T> {
     #[serde(default = "Vec::new")]
     value: Vec<T>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct JobRow {
-    id: u64,
-    #[serde(default)]
-    labels: Vec<String>,
-    #[serde(default)]
-    repository: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct WorkflowRunRow {
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    conclusion: Option<String>,
-    #[serde(default)]
-    head_sha: String,
-    #[serde(default)]
-    number: Option<u64>,
-    #[serde(default)]
-    started_at: Option<String>,
-    #[serde(default)]
-    completed_at: Option<String>,
 }
 
 /// An Actions artifact of a repository and the commit its run built (AP-104).
@@ -1144,94 +1095,6 @@ impl ShakoClient {
             self.public_base.as_str().trim_end_matches('/'),
             self.owner,
         ))
-    }
-
-    /// `GET R/WorkflowRuns?$orderby=Number desc&$top={limit}`: the newest workflow runs of the
-    /// repository, newest first; what a build's estimate is read from (T-3245). shako answers
-    /// 404 until it runs workflows (`PORTAL-CALLS.md` gap 2).
-    pub async fn latest_runs(&self, limit: u32) -> Result<Vec<WorkflowRun>, GitError> {
-        let mut url = self.repo_url(&["WorkflowRuns"])?;
-        url.query_pairs_mut()
-            .append_pair("$orderby", "Number desc")
-            .append_pair("$top", &limit.to_string());
-        let runs: Collection<WorkflowRunRow> = self.get_json(url, "the workflow runs").await?;
-        let page = format!(
-            "{}/{}/{}/actions",
-            self.public_base.as_str().trim_end_matches('/'),
-            self.owner,
-            self.repo
-        );
-        Ok(runs
-            .value
-            .into_iter()
-            .map(|run| WorkflowRun {
-                url: self.signed_in(&match run.number {
-                    Some(number) => format!("{page}/runs/{number}"),
-                    None => page.clone(),
-                }),
-                status: run.status,
-                conclusion: run.conclusion.filter(|c| !c.is_empty()),
-                commit: run.head_sha,
-                number: run.number,
-                started_at: run.started_at.filter(|at| !at.is_empty()),
-                completed_at: run.completed_at.filter(|at| !at.is_empty()),
-            })
-            .collect())
-    }
-
-    /// `POST R/Shako.DispatchWorkflow`: runs the workflow `file` on `git_ref` (AP-103). A
-    /// refusal keeps the forge's own words, which is what a person acts on.
-    pub async fn dispatch_workflow(&self, file: &str, git_ref: &str) -> Result<(), GitError> {
-        self.act(
-            self.repo_url(&["Shako.DispatchWorkflow"])?,
-            &json!({ "File": file, "Ref": git_ref }),
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// `GET Jobs?$filter=Owner eq '{owner}' and Status eq 'queued'&$top=50`: every job of the
-    /// organization that waits for a runner, each with its labels and the repository it belongs
-    /// to (AP-130). One page of 50: a queue longer than that is served on the next pass.
-    pub async fn queued_jobs(&self) -> Result<Vec<QueuedJob>, GitError> {
-        let mut url = self.odata_url(&["Jobs"])?;
-        url.query_pairs_mut()
-            .append_pair(
-                "$filter",
-                &format!("Owner eq {} and Status eq 'queued'", literal(&self.owner)),
-            )
-            .append_pair("$top", "50");
-        let page: Collection<JobRow> = self.get_json(url, "the queued jobs").await?;
-        Ok(page
-            .value
-            .into_iter()
-            .filter(|job| !job.repository.is_empty())
-            .map(|job| QueuedJob {
-                id: job.id,
-                labels: job.labels,
-                repository: job.repository,
-            })
-            .collect())
-    }
-
-    /// `POST R/Shako.RunnerRegistrationToken`: a token a runner registers with to take this
-    /// repository's jobs and no other's (AP-130). It is a credential, so it is returned to be
-    /// written into one Secret and never logged.
-    pub async fn repository_registration_token(&self) -> Result<String, GitError> {
-        let res = self
-            .act(
-                self.repo_url(&["Shako.RunnerRegistrationToken"])?,
-                &json!({}),
-            )
-            .await?;
-        let body: Value = res.json().await.map_err(|e| {
-            GitError::Transport(format!("failed to parse the registration token: {e}"))
-        })?;
-        body.get("Token")
-            .and_then(Value::as_str)
-            .filter(|token| !token.trim().is_empty())
-            .map(str::to_owned)
-            .ok_or_else(|| GitError::Transport("the forge answered no registration token".into()))
     }
 
     /// `GET R/Artifacts?$filter=Name eq '{name}'`: the repository's artifacts of that exact

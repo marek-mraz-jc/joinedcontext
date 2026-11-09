@@ -17,9 +17,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::agents::repository;
+use crate::apps::build_records::{self, Record, Trigger};
 use crate::auth::CurrentUser;
 use crate::error::{ApiError, ProblemDetails};
-use crate::apps::build_records::{self, Record, Trigger};
 use crate::forge::{Author, GitError, ShakoClient, WorkflowRun};
 use crate::permissions::ORG_NAMESPACE;
 use crate::state::AppState;
@@ -59,7 +59,10 @@ pub fn router() -> Router<AppState> {
         .route("/projects/{project}/apps/{name}/rebuild", post(rebuild))
         .route("/projects/{project}/apps/{name}/builds", get(builds))
         .route("/projects/{project}/apps/{name}/restore", post(restore))
-        .route("/projects/{project}/apps/{name}/builds/{id}/log", get(build_log))
+        .route(
+            "/projects/{project}/apps/{name}/builds/{id}/log",
+            get(build_log),
+        )
 }
 
 /// The build store, or `None` on a Portal that builds nothing.
@@ -644,7 +647,10 @@ pub async fn build_log(
             .unwrap_or_default()
     );
     Ok((
-        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
         text,
     )
         .into_response())
