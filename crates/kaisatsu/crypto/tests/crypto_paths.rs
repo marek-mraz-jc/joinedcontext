@@ -483,3 +483,30 @@ fn handles_and_comparisons() {
     assert!(!constant_time_str_eq("abc", "abcd"));
     assert_eq!(sha256_hex("").len(), 64);
 }
+
+/// D1: device user codes are `XXXX-XXXX` over the 20-letter alphabet, and the page compares them
+/// case- and hyphen-blind.
+#[test]
+fn user_codes_are_eight_letters_of_the_alphabet() {
+    use kaisatsu_crypto::{USER_CODE_ALPHABET, normalize_user_code, random_user_code};
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..200 {
+        let code = random_user_code();
+        assert_eq!(code.len(), 9, "{code}");
+        assert_eq!(&code[4..5], "-", "{code}");
+        let plain = normalize_user_code(&code);
+        assert_eq!(plain.len(), 8, "{code}");
+        assert!(
+            plain.bytes().all(|b| USER_CODE_ALPHABET.contains(&b)),
+            "{code}"
+        );
+        seen.insert(plain);
+    }
+    assert!(seen.len() > 190, "codes repeat: {}", seen.len());
+    assert_eq!(normalize_user_code(" bcdf-ghjk "), "BCDFGHJK");
+    assert_eq!(
+        normalize_user_code("A1E0-OIU<>"),
+        "",
+        "vowels, digits and markup are no letters of a code"
+    );
+}

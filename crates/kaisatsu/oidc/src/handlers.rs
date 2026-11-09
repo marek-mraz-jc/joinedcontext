@@ -68,6 +68,14 @@ pub fn oidc_router(state: OidcState) -> Router {
             get(authorize_get),
         )
         .route(
+            "/realms/{realm}/protocol/openid-connect/auth/device",
+            post(crate::device::device_authorization),
+        )
+        .route(
+            "/realms/{realm}/device",
+            get(crate::device::device_page).post(crate::device::device_submit),
+        )
+        .route(
             "/realms/{realm}/protocol/openid-connect/ext/par/request",
             post(par_endpoint),
         )
@@ -140,6 +148,7 @@ async fn openid_configuration(
         "end_session_endpoint": format!("{oidc_base}/logout"),
         "revocation_endpoint": format!("{oidc_base}/revoke"),
         "pushed_authorization_request_endpoint": format!("{oidc_base}/ext/par/request"),
+        "device_authorization_endpoint": format!("{oidc_base}/auth/device"),
         "jwks_uri": format!("{oidc_base}/certs"),
         "response_types_supported": ["code"],
         "response_modes_supported": ["query", "fragment", "form_post"],
@@ -148,7 +157,8 @@ async fn openid_configuration(
             "refresh_token",
             "client_credentials",
             "urn:ietf:params:oauth:grant-type:token-exchange",
-            "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            crate::device::DEVICE_CODE_GRANT
         ],
         "subject_types_supported": ["public", "pairwise"],
         "id_token_signing_alg_values_supported": ["ES256", "RS256", "EdDSA"],
@@ -574,7 +584,7 @@ pub(crate) fn html_escape(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
-fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
+pub(crate) fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
     let target = mount.cookie_name("sso");
     for val in headers.get_all(header::COOKIE) {
         if let Ok(s) = val.to_str() {
@@ -1785,6 +1795,18 @@ async fn token_endpoint(
             )
             .await?
         }
+        crate::device::DEVICE_CODE_GRANT => {
+            handle_device_code_grant(
+                &state,
+                &mount,
+                &realm,
+                &client,
+                &form,
+                dpop_jkt.as_deref(),
+                &client_ip,
+            )
+            .await?
+        }
         "password" => {
             handle_password_grant(
                 &state,
@@ -1957,6 +1979,105 @@ async fn handle_authorization_code_grant(
         Some(&code_rec.sso_session_id),
         code_rec.nonce.as_deref(),
         Some(code_rec.auth_time),
+        dpop_jkt,
+        None,
+        true,
+        None,
+    )
+    .await
+}
+
+/// RFC 8628 §3.4/§3.5 (D1): one poll of a device code by the client it was issued to. The
+/// answer is `authorization_pending`, `slow_down`, `access_denied` or `expired_token` until the
+/// person allowed it; then the tokens, once.
+async fn handle_device_code_grant(
+    state: &OidcState,
+    mount: &Mount,
+    realm: &RealmConfig,
+    client: &ClientRepresentation,
+    form: &BTreeMap<String, String>,
+    dpop_jkt: Option<&str>,
+    client_ip: &ClientIp,
+) -> Result<Value> {
+    crate::device::ensure_device_enabled(client)?;
+    let raw = form
+        .get("device_code")
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| KaisatsuError::invalid_request("missing device_code"))?;
+    let (rec, answer) = state
+        .store
+        .poll_device_code(&realm.id, &sha256_hex(raw), &client.client_id, Utc::now())
+        .await?
+        .ok_or_else(|| KaisatsuError::invalid_grant("Device code not valid"))?;
+    let pending = |error: &str, text: &str| Err(KaisatsuError::oauth(400, error, text));
+    match answer {
+        DevicePoll::Pending => {
+            return pending(
+                "authorization_pending",
+                "The authorization request is still pending",
+            );
+        }
+        DevicePoll::SlowDown => return pending("slow_down", "Slow down"),
+        DevicePoll::Denied => {
+            return pending(
+                "access_denied",
+                "The end user denied the authorization request",
+            );
+        }
+        DevicePoll::Expired => return pending("expired_token", "Device code is expired"),
+        DevicePoll::Used => return Err(KaisatsuError::invalid_grant("Device code already used")),
+        DevicePoll::Approved => {}
+    }
+    let (Some(user_id), Some(sso_id)) = (rec.user_id.as_deref(), rec.sso_session_id.as_deref())
+    else {
+        return Err(KaisatsuError::invalid_grant("Device code not valid"));
+    };
+    let user = state
+        .store
+        .get_user_by_id(&realm.id, None, user_id)
+        .await?
+        .filter(|u| u.enabled)
+        .ok_or_else(|| KaisatsuError::invalid_grant("User disabled or not found"))?;
+    // The tokens hang on the session the person allowed the device in: a logout since ends them.
+    let mut sso = state
+        .store
+        .get_sso_session(&realm.id, sso_id)
+        .await?
+        .ok_or_else(|| KaisatsuError::invalid_grant("Session not active"))?;
+    sso.clients
+        .insert(client.client_id.clone(), client.client_id.clone());
+    state.store.upsert_sso_session(sso).await?;
+    let (active_scopes, granted_scope_str) =
+        resolve_stored_scopes(&state.store, realm, client, &rec.scope, &rec.mapper_scopes).await?;
+    state
+        .store
+        .append_event(AuditEvent {
+            id: uuid::Uuid::now_v7().to_string(),
+            realm_id: realm.id.clone(),
+            org_id: user.org_id.clone(),
+            time: Utc::now().timestamp_millis(),
+            event_type: "OAUTH2_DEVICE_CODE_TO_TOKEN".into(),
+            client_id: Some(client.client_id.clone()),
+            user_id: Some(user.id.clone()),
+            session_id: Some(sso_id.to_owned()),
+            ip_address: client_ip.for_audit(),
+            error: None,
+            details: BTreeMap::new(),
+        })
+        .await?;
+    mint_tokens_for_principal(
+        state,
+        mount,
+        realm,
+        client,
+        &user,
+        &active_scopes,
+        &granted_scope_str,
+        &rec.acr,
+        &rec.amr,
+        Some(sso_id),
+        None,
+        Some(rec.auth_time),
         dpop_jkt,
         None,
         true,

@@ -29,6 +29,7 @@ struct State {
     signing_keys: Vec<SigningKeyRecord>,
     auth_sessions: Vec<AuthSession>,
     auth_codes: Vec<AuthorizationCodeRecord>,
+    device_codes: Vec<DeviceCodeRecord>,
     par_requests: Vec<ParRequestRecord>,
     sso_sessions: Vec<SsoSession>,
     client_sessions: Vec<ClientSession>,
@@ -1715,6 +1716,77 @@ impl Store for MemoryStore {
             }
             rec.consumed = true;
             Ok((Some(rec.clone()), false))
+        })
+    }
+
+    fn put_device_code<'a>(&'a self, rec: DeviceCodeRecord) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            if st.device_codes.iter().any(|d| {
+                d.realm_id == rec.realm_id
+                    && (d.user_code_hash == rec.user_code_hash
+                        || d.device_code_hash == rec.device_code_hash)
+            }) {
+                return Err(KaisatsuError::Conflict("device code exists".into()));
+            }
+            st.device_codes.push(rec);
+            Ok(())
+        })
+    }
+
+    fn get_device_code_by_user_code<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_code_hash: &'a str,
+    ) -> StoreFuture<'a, Option<DeviceCodeRecord>> {
+        Box::pin(async move {
+            let st = self.inner.read();
+            Ok(st
+                .device_codes
+                .iter()
+                .find(|d| d.realm_id == realm_id && d.user_code_hash == user_code_hash)
+                .cloned())
+        })
+    }
+
+    fn decide_device_code<'a>(&'a self, rec: DeviceCodeRecord) -> StoreFuture<'a, bool> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            let Some(stored) = st
+                .device_codes
+                .iter_mut()
+                .find(|d| d.realm_id == rec.realm_id && d.device_code_hash == rec.device_code_hash)
+            else {
+                return Ok(false);
+            };
+            if stored.status != DeviceStatus::Pending || stored.consumed {
+                return Ok(false);
+            }
+            *stored = rec;
+            Ok(true)
+        })
+    }
+
+    fn poll_device_code<'a>(
+        &'a self,
+        realm_id: &'a str,
+        device_code_hash: &'a str,
+        client_id: &'a str,
+        now: chrono::DateTime<Utc>,
+    ) -> StoreFuture<'a, Option<(DeviceCodeRecord, DevicePoll)>> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            let Some(stored) = st.device_codes.iter_mut().find(|d| {
+                d.realm_id == realm_id
+                    && d.device_code_hash == device_code_hash
+                    && d.client_id == client_id
+            }) else {
+                return Ok(None);
+            };
+            let before = stored.clone();
+            let (next, answer) = before.polled(now);
+            *stored = next;
+            Ok(Some((before, answer)))
         })
     }
 

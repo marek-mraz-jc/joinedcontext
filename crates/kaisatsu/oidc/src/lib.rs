@@ -24,6 +24,7 @@ pub mod broker_routes;
 pub mod brute_force;
 pub mod cimd;
 pub mod client_ip;
+pub mod device;
 pub mod dpop;
 pub mod dpop_guard;
 pub mod guard;

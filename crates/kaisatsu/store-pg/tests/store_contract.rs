@@ -1750,12 +1750,154 @@ async fn config_events_and_sweeper(store: &dyn Store) {
     assert!(store.is_token_revoked(R, "jti-1").await.expect("is"));
 }
 
+fn device(device: &str, user_code: &str, client: &str, ttl: i64) -> DeviceCodeRecord {
+    let now = Utc::now();
+    DeviceCodeRecord {
+        device_code_hash: device.into(),
+        user_code_hash: user_code.into(),
+        realm_id: R.into(),
+        client_id: client.into(),
+        scope: "openid".into(),
+        mapper_scopes: Vec::new(),
+        status: DeviceStatus::Pending,
+        user_id: None,
+        sso_session_id: None,
+        acr: String::new(),
+        amr: Vec::new(),
+        auth_time: 0,
+        interval_secs: 5,
+        last_poll_at: None,
+        consumed: false,
+        created_at: now,
+        expires_at: now + Duration::seconds(ttl),
+    }
+}
+
+/// RFC 8628 device codes (D1): unique user codes, polls only by the client the code was issued
+/// to, `slow_down` on a poll inside the interval, one answer per code, single-use tokens.
+async fn device_codes(store: &dyn Store) {
+    let now = Utc::now();
+    store
+        .put_device_code(device("dev-a", "user-a", "jcctl", 600))
+        .await
+        .expect("put");
+    assert!(
+        matches!(
+            store
+                .put_device_code(device("dev-b", "user-a", "jcctl", 600))
+                .await,
+            Err(KaisatsuError::Conflict(_))
+        ),
+        "a user code two pending codes share"
+    );
+    let got = store
+        .get_device_code_by_user_code(R, "user-a")
+        .await
+        .expect("get")
+        .expect("found");
+    assert_eq!(got.device_code_hash, "dev-a");
+    assert!(
+        store
+            .get_device_code_by_user_code("other-realm", "user-a")
+            .await
+            .unwrap_or(None)
+            .is_none(),
+        "another realm's user code"
+    );
+
+    // Another client's poll is no poll: nothing answered, nothing changed.
+    assert!(
+        store
+            .poll_device_code(R, "dev-a", "intruder", now)
+            .await
+            .expect("poll")
+            .is_none()
+    );
+    let (_, first) = store
+        .poll_device_code(R, "dev-a", "jcctl", now)
+        .await
+        .expect("poll")
+        .expect("known");
+    assert_eq!(first, DevicePoll::Pending);
+    let (_, fast) = store
+        .poll_device_code(R, "dev-a", "jcctl", now + Duration::seconds(1))
+        .await
+        .expect("poll")
+        .expect("known");
+    assert_eq!(fast, DevicePoll::SlowDown);
+    let after = store
+        .get_device_code_by_user_code(R, "user-a")
+        .await
+        .expect("get")
+        .expect("found");
+    assert_eq!(after.interval_secs, 10, "slow_down adds 5 s");
+
+    let mut approved = after.clone();
+    approved.status = DeviceStatus::Approved;
+    approved.user_id = Some("u1".into());
+    assert!(
+        store
+            .decide_device_code(approved.clone())
+            .await
+            .expect("decide")
+    );
+    let mut denied = after;
+    denied.status = DeviceStatus::Denied;
+    assert!(
+        !store.decide_device_code(denied).await.expect("decide"),
+        "a code answers once"
+    );
+    let (before, ok) = store
+        .poll_device_code(R, "dev-a", "jcctl", now + Duration::seconds(30))
+        .await
+        .expect("poll")
+        .expect("known");
+    assert_eq!(ok, DevicePoll::Approved);
+    assert_eq!(before.user_id.as_deref(), Some("u1"));
+    let (_, again) = store
+        .poll_device_code(R, "dev-a", "jcctl", now + Duration::seconds(60))
+        .await
+        .expect("poll")
+        .expect("known");
+    assert_eq!(again, DevicePoll::Used, "the tokens go once");
+
+    store
+        .put_device_code(device("dev-c", "user-c", "jcctl", -1))
+        .await
+        .expect("put");
+    let (_, expired) = store
+        .poll_device_code(R, "dev-c", "jcctl", now)
+        .await
+        .expect("poll")
+        .expect("known");
+    assert_eq!(expired, DevicePoll::Expired);
+
+    store
+        .put_device_code(device("dev-d", "user-d", "jcctl", 600))
+        .await
+        .expect("put");
+    let mut no = store
+        .get_device_code_by_user_code(R, "user-d")
+        .await
+        .expect("get")
+        .expect("found");
+    no.status = DeviceStatus::Denied;
+    assert!(store.decide_device_code(no).await.expect("decide"));
+    let (_, denied) = store
+        .poll_device_code(R, "dev-d", "jcctl", now)
+        .await
+        .expect("poll")
+        .expect("known");
+    assert_eq!(denied, DevicePoll::Denied);
+}
+
 async fn run_contract(store: Arc<dyn Store>) {
     realms_orgs_and_memberships(store.as_ref()).await;
     people_and_credentials(store.as_ref()).await;
     groups(store.as_ref()).await;
     roles_and_clients(store.as_ref()).await;
     sessions_and_tokens(store.as_ref()).await;
+    device_codes(store.as_ref()).await;
     config_events_and_sweeper(store.as_ref()).await;
 }
 
