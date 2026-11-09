@@ -4,7 +4,7 @@ name: ci
 # Four Cargo workspaces live here: the root (bins/jc and the modules it links) and the nested
 # crates/antares, crates/ekiben and crates/portal, each with its own lockfile; each is its own job.
 # Jobs are gated by the paths changed since the base (`changes`): a docs-only change runs only
-# gitleaks. A dispatch runs every job (the repository is private and its minutes are metered, so
+# `lint` (gitleaks). A dispatch runs every job (the repository is private and its minutes are metered, so
 # there is no schedule; to put one back: `schedule: [{ cron: "7 2 * * *" }]`).
 #
 # A push to main ships (ship-proof/** behaves like main, for measuring the pipeline without
@@ -266,30 +266,38 @@ jobs:
       - run: cd ui && pnpm install --frozen-lockfile
       - run: cd ui && pnpm lint
       - run: cd ui && pnpm build && test -s dist/index.html
-  # Advisories, licenses, bans and sources of every lockfile. No ignore is added at the root; the
+  # Advisories, licenses, bans and sources of every lockfile, one job for the four workspaces (one
+  # runner slot of the account's 20, not four): each workspace runs deny and audit whatever the one
+  # before it answered, and the job fails if any of them did. No ignore is added at the root; the
   # nested workspaces read their own deny.toml and .cargo/audit.toml.
   supply-chain:
     needs: changes
     if: needs.changes.outputs.supply == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        dir: [".", crates/antares, crates/ekiben, crates/portal]
-    defaults: { run: { working-directory: "${{ matrix.dir }}" } }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: "cargo-audit,cargo-deny" }
-      - run: cargo deny --locked check advisories bans licenses sources
-      - run: cargo audit
-        if: always()
-  # Every commit this push or pull request brings, not the repository's history: the imported
-  # trees carry upstream test vectors their own repositories allow-list.
-  gitleaks:
+      - run: |
+          red=
+          for dir in . crates/antares crates/ekiben crates/portal; do
+            echo "::group::cargo deny $dir"
+            (cd "$dir" && cargo deny --locked check advisories bans licenses sources) || red="$red deny:$dir"
+            echo "::endgroup::"
+            echo "::group::cargo audit $dir"
+            (cd "$dir" && cargo audit) || red="$red audit:$dir"
+            echo "::endgroup::"
+          done
+          if [ -n "$red" ]; then echo "::error::red:$red"; exit 1; fi
+  # The checks that need no build, one job: gitleaks over every commit this push or pull request
+  # brings (not the repository's history: the imported trees carry upstream test vectors their own
+  # repositories allow-list); actionlint when a workflow changed; the App bundles both images ship
+  # in /srv/apps, from the same sources, when a Dockerfile or an App changed.
+  lint:
+    needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { fetch-depth: 0 }
@@ -299,29 +307,18 @@ jobs:
           BEFORE: ${{ github.event.before }}
           BRANCH: ${{ github.ref_name }}
         run: sh .github/scripts/gitleaks.sh
-  actionlint:
-    needs: changes
-    if: needs.changes.outputs.workflows == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest
-      - run: >-
+      - if: needs.changes.outputs.workflows == 'true'
+        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest
+      - if: needs.changes.outputs.workflows == 'true'
+        run: >-
           docker run --rm -v "$PWD:/repo" -w /repo
           rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 -color
-  # The Portal image and the jc image ship the same App bundles in /srv/apps, from the same sources.
-  dockerfiles:
-    needs: changes
-    if: needs.changes.outputs.dockerfiles == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    defaults: { run: { working-directory: crates/portal } }
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: python3 scripts/ci/check-dockerfile-members.py --selftest
-      - run: python3 scripts/ci/check-dockerfile-members.py
-      - run: python3 scripts/ci/check-dockerfile-members.py --apps Dockerfile ../../bins/jc/Dockerfile
+      - if: needs.changes.outputs.dockerfiles == 'true'
+        working-directory: crates/portal
+        run: |
+          python3 scripts/ci/check-dockerfile-members.py --selftest
+          python3 scripts/ci/check-dockerfile-members.py
+          python3 scripts/ci/check-dockerfile-members.py --apps Dockerfile ../../bins/jc/Dockerfile
   # A branch that changes the Dockerfile or its ignore file: the full `docker build` (every stage,
   # no push), which the shipped image skips by handing in its compiled binary.
   dockerfile:
@@ -357,7 +354,7 @@ jobs:
   # it deployable (deployment verify-pinned-images.py). A skipped gate is one this push's paths
   # do not reach, or one another run of this commit passed (changes.sh REUSE).
   promote:
-    needs: [changes, gitleaks, root-clippy, root-test, antares-clippy, antares-test, ekiben, portal-clippy, portal-test, ui, supply-chain, actionlint, image, scan]
+    needs: [changes, lint, root-clippy, root-test, antares-clippy, antares-test, ekiben, portal-clippy, portal-test, ui, supply-chain, image, scan]
     if: >-
       always() && needs.image.result == 'success' && needs.scan.result == 'success' &&
       !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
