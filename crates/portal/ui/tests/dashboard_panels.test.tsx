@@ -479,8 +479,8 @@ describe("a panel card", () => {
   });
 
   it("draws a type it does not know as a table and says so", async () => {
-    render(<PanelView panel={{ ...panel, type: "geomap" }} data={{ frames: frames.stations }} {...common} />);
-    expect(screen.getByText("geomap, shown as a table")).toBeInTheDocument();
+    render(<PanelView panel={{ ...panel, type: "nodeGraph" }} data={{ frames: frames.stations }} {...common} />);
+    expect(screen.getByText("nodeGraph, shown as a table")).toBeInTheDocument();
     expect(await screen.findByText("Vartiokylä", {}, { timeout: 5000 })).toBeInTheDocument();
   });
 

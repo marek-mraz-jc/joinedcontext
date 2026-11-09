@@ -110,6 +110,11 @@
       "lines": 1,
       "group": "ui-parts",
       "reason": "a threshold or mapping colour from the dashboard JSON painted as a swatch, a bar's fill and a tinted value, and the bar's length as the value's share of min to max: computed values, one component per use, so no other panel file writes a style"
+    },
+    "src/components/panels/GeomapPanel.tsx": {
+      "lines": 1,
+      "group": "ui-parts",
+      "reason": "computed sizes: the map's height, and the empty map frame's, is the panel's gridPos height in px (capped on a phone), as VegaChart's chart host"
     }
   },
   "panel_is_a_card": {
