@@ -266,6 +266,16 @@ async fn two_organizations_publish_and_read_only_their_own_catalogue() {
         "{body}"
     );
 
+    // Each catalogue frames its own Organization's Portal and API.
+    for org in ["alpha", "beta"] {
+        let (status, body) = get(addr, &format!("opendata.{org}.test"), "/api/v1/branding").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let branding: Value = serde_json::from_str(&body).unwrap();
+        let addresses = &branding["addresses"];
+        assert_eq!(addresses["api"], format!("http://api.{org}.test"), "{body}");
+        assert_eq!(addresses["portal"], format!("http://portal.{org}.test"), "{body}");
+    }
+
     // Behind a trusted proxy the forwarded host names the catalogue, not the raw Host: the
     // router routed on alpha's, so dataroom answers alpha's.
     let call = Call {
