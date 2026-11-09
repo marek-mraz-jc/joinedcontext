@@ -644,25 +644,6 @@ def test_org_1_panels_count_data_and_red_apart(tmp_path):
     assert (o["data"], o["red"]) == (1, 1) and [r["panel"] for r in o["rows"]] == [1, 3]
 
 
-def test_realm_secrets_become_files_under_the_import_secrets_dir(tmp_path):
-    text = json.dumps({"clients": [{"secret": "$(env:CLIENT_A)"}, {"secret": "$(CLIENT_B)"}],
-                       "users": [{"credentials": [{"value": "$(env:REHEARSAL_TESTER_PASSWORD)"}]}]})
-    out = json.loads(rh.secrets_as_files(text, tmp_path / "realm"))
-    base = (tmp_path / "realm").resolve()
-    assert out["clients"][0]["secret"] == f"$(file:{base / 'CLIENT_A'})"
-    assert out["clients"][1]["secret"] == f"$(file:{base / 'CLIENT_B'})"
-    assert out["users"][0]["credentials"][0]["value"] == f"$(file:{base / 'REHEARSAL_TESTER_PASSWORD'})"
-    assert "env:" not in json.dumps(out)
-
-
-def test_a_service_token_jc_holds_in_memory_is_read_from_the_kit_secrets(tmp_path):
-    (tmp_path / "state").mkdir(); (tmp_path / "secrets").mkdir()
-    (tmp_path / "secrets" / "shako-token").write_text("given\n")
-    (tmp_path / "state" / "antares-admin-token").write_text("on-disk\n")
-    assert rh.read_secret(tmp_path / "state", "shako-token") == "given"
-    assert rh.read_secret(tmp_path / "state", "antares-admin-token") == "on-disk"
-
-
 def test_a_portal_made_dashboard_goes_into_the_org_of_its_source_project(tmp_path):
     seen = []
 
@@ -787,3 +768,40 @@ def test_a_jc_that_ignores_sigterm_is_killed_before_the_next_starts():
     r = subprocess.run([str(HERE / "stop-jc.sh"), str(stuck.pid)], capture_output=True, text=True, timeout=60)
     stuck.wait(timeout=5)
     assert r.returncode == 0 and "SIGKILL" in r.stderr and stuck.returncode == -9
+
+
+def test_synth_puts_the_sample_apps_in_the_apps_organization():
+    job = ('            - name: ORG\n              value: "joinedcontext"\n'
+           '            - name: APPS_ORG\n              value: "joinedcontext-apps"\n')
+    assert rh.apps_owner_of(job, "joinedcontext") == "joinedcontext-apps"
+    assert rh.apps_owner_of('            - name: ORG\n              value: "x"\n', "x") == "x"
+
+
+def test_realm_secrets_become_file_references_under_the_secrets_dir(tmp_path):
+    realm = {"realm": "r", "clients": [{"clientId": "a", "secret": "$(env:A_SECRET)"},
+                                        {"clientId": "b", "secret": "$(B_SECRET)"}]}
+    out = rh.to_file_refs(realm, tmp_path)
+    assert [c["secret"] for c in out["clients"]] == [f"$(file:{tmp_path}/A_SECRET)", f"$(file:{tmp_path}/B_SECRET)"]
+    (tmp_path / "A_SECRET").write_text("s3\n")
+    assert rh.secret_file(out["clients"][0]["secret"], tmp_path / "x").read_text() == "s3\n"
+    assert rh.secret_file("$(env:A_SECRET)", tmp_path) == tmp_path / "realm-A_SECRET"
+
+
+def test_every_jc_of_one_config_is_found_whatever_the_pid_file_says(tmp_path):
+    mine, other = tmp_path / "a" / "jc.toml", tmp_path / "b" / "jc.toml"
+    sleep = [sys.executable, "-c", "import time; time.sleep(60)"]
+    p1 = subprocess.Popen(sleep + ["--config", str(mine)])
+    p2 = subprocess.Popen(sleep + ["--config", str(other)])
+    try:
+        out = subprocess.run([str(HERE / "jcs-of.sh"), str(mine)], capture_output=True, text=True, timeout=30).stdout
+        assert out.split() == [str(p1.pid)]
+    finally:
+        p1.kill(); p2.kill()
+
+
+def test_a_service_token_jc_holds_in_memory_is_read_from_the_kit_secrets(tmp_path):
+    (tmp_path / "state").mkdir(); (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets" / "shako-token").write_text("given\n")
+    (tmp_path / "state" / "antares-admin-token").write_text("on-disk\n")
+    assert rh.read_secret(tmp_path / "state", "shako-token") == "given"
+    assert rh.read_secret(tmp_path / "state", "antares-admin-token") == "on-disk"
