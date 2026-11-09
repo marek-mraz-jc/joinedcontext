@@ -5,7 +5,7 @@
 #![allow(clippy::unwrap_used)] // an unwrap here is the assertion
 
 use antares_api::policy::{
-    Decision, DecisionFuture, NotifyDecision, Operation, PolicyEngine, Subject,
+    DecisionFuture, NotifyDecision, Operation, PolicyEngine, Subject,
 };
 use antares_api::AppState;
 use antares_store::Kind;

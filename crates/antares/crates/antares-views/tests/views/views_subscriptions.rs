@@ -248,7 +248,7 @@ fn to_people(id: &str, uri: &str) -> Value {
 
 /// Rule 9, entityCreated: an Entity created with no Attribute the view shows
 /// (a bare {id, type}, or one with hidden Attributes only) reaches a view
-/// Subscription that watches nothing, as the Entity the view reads; one
+/// Subscription that watches nothing and asks entityCreated, as the Entity the view reads; one
 /// with watchedAttributes waits for a watched one; one the view does not
 /// select (a Car its q refuses) reaches nobody; and a later change of a
 /// hidden Attribute alone stays silent. Each silence is proven by the next
@@ -259,7 +259,15 @@ async fn a_bare_create_reaches_a_view_subscription_that_watches_nothing() -> Res
     let (all_uri, mut all) = sink().await?;
     let (named_uri, mut named) = sink().await?;
     let (cars_uri, mut cars) = sink().await?;
-    subscribe(&f, FLEET, &to_people("urn:ngsi-ld:Subscription:bare", &all_uri)).await?;
+    // the triggers the gateway hub's own Subscription asks (fanout/socket.rs): the default
+    // ones (attributeCreated, attributeUpdated) never fire on an Entity with no Attribute
+    let every_change = with(
+        to_people("urn:ngsi-ld:Subscription:bare", &all_uri),
+        "",
+        "notificationTrigger",
+        json!(["entityCreated", "entityUpdated", "entityDeleted"]),
+    );
+    subscribe(&f, FLEET, &every_change).await?;
     let watching = with(
         to_people("urn:ngsi-ld:Subscription:named", &named_uri),
         "",
