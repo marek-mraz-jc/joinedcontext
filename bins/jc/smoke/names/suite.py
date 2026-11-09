@@ -34,6 +34,7 @@ import concurrent.futures as cf
 import json
 import secrets
 import sys
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -192,6 +193,12 @@ def run(a, prod: dict, jc: Jc, res: Results, renames, prod_tools: dict | None, e
 
     # ---- projects and everything the Portal lists per project
     projects, why = jc.projects()
+    # A Portal that just started lists nothing until its first sync of the configuration
+    # repositories ends: wait (bounded) for the projects to appear, then compare what is there.
+    deadline = time.monotonic() + getattr(a, "settle", 0)
+    while projects is not None and not projects & set(prod["projects"]) and time.monotonic() < deadline:
+        time.sleep(5)
+        projects, why = jc.projects()
     extra["project"] = cmp.compare(res, "project", prod["projects"], projects, renames,
                                    lambda old: jc.portal_answers(f"/api/v1/projects/{q(old)}"),
                                    "GET /api/v1/projects", why)
@@ -386,6 +393,8 @@ def main(argv=None) -> int:
     ap.add_argument("--repo", default=str(REPO), help="the clone jc was built from (its tool sources)")
     ap.add_argument("--timeout", type=float, default=30)
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--settle", type=float, default=300,
+                    help="seconds to wait for a fresh Portal's first sync to list a prod project")
     a = ap.parse_args(argv)
     loopback_only(a.base_url)
     a.repo = Path(a.repo)
