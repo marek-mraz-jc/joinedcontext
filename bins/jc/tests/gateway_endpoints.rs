@@ -739,6 +739,76 @@ async fn the_gateway_reads_the_forge_with_no_program_on_the_path() {
     assert!(!jc.log_has("git does not run"), "{}", jc.tail());
 }
 
+/// ADR-N-052: the gateway's anonymous OAuth server, as prod runs it, signs with a key jc
+/// generates and keeps (0600) and never logs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_anonymous_oauth_server_runs_on_a_key_jc_keeps() {
+    let jc = start().await;
+    // The gateway answers 503 until its first load; then the document, not a 404.
+    let body = eventually("the OAuth server's document", &jc, 60, || async {
+        let (status, body) = call(
+            &jc,
+            reqwest::Method::GET,
+            "/.well-known/oauth-authorization-server",
+            None,
+            None,
+        )
+        .await;
+        match status {
+            StatusCode::OK => Ok(body),
+            StatusCode::SERVICE_UNAVAILABLE => Err(body),
+            other => panic!("{other} {body}\n{}", jc.tail()),
+        }
+    })
+    .await;
+    let document: Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        document["registration_endpoint"]
+            .as_str()
+            .is_some_and(|u| u.ends_with("/oauth/register")),
+        "{document}"
+    );
+    let register = json!({
+        "redirect_uris": ["http://127.0.0.1:8976/callback"],
+        "client_name": "jc e2e",
+    });
+    let (status, body) = call(
+        &jc,
+        reqwest::Method::POST,
+        "/oauth/register",
+        None,
+        Some(&register),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let client: Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        client["client_id"].as_str().is_some_and(|c| !c.is_empty()),
+        "{client}"
+    );
+    let (status, body) = call(
+        &jc,
+        reqwest::Method::GET,
+        "/oauth/authorize?client_id=not-issued-by-this-server&redirect_uri=http%3A%2F%2Flocalhost%2Fcallback&response_type=code",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let key = jc.secret("gateway-oauth-key");
+    assert!(key.len() >= 32);
+    assert!(!jc.log_has(&key), "the OAuth key appears in the log");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(jc.state.join("gateway-oauth-key"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn endpoints_answer_inside_jc_as_on_dev() {
     let jc = start().await;
@@ -780,6 +850,52 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     let other = entity("Other", "one");
     let (status, body) = call(&jc, post.clone(), &writes, Some(&person), Some(&other)).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    // A write no Policy grants the caller is refused before the view, which would answer 405
+    // with the writes it serves somebody else: 401 without a token, 403 with one, and no
+    // `Allow` (prod's zilina-doprava and praha-mesto answered 405 to an anonymous create).
+    // The writer's token names the closed Endpoint, where the writers' Policy applies.
+    for (who, root, token, want) in [
+        ("anonymous", &public, None, StatusCode::UNAUTHORIZED),
+        (
+            "a writer",
+            &closed,
+            Some(person.as_str()),
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let one = format!("{root}/entities/urn:ngsi-ld:Thing:one");
+        for (method, path, body) in [
+            (post.clone(), format!("{root}/entities"), Some(&thing)),
+            (reqwest::Method::DELETE, one.clone(), None),
+            (reqwest::Method::PATCH, format!("{one}/attrs"), Some(&thing)),
+            (
+                post.clone(),
+                format!("{root}/entityOperations/delete"),
+                None,
+            ),
+        ] {
+            if token.is_some() && method == post && path.ends_with("/entities") {
+                continue; // the writers' Policy grants this create
+            }
+            let mut req = Client::new()
+                .request(method.clone(), jc.url(&path))
+                .header("jc-reason", "smoke");
+            if let Some(token) = token {
+                req = req.bearer_auth(token);
+            }
+            if let Some(body) = body {
+                req = req
+                    .header("content-type", "application/json")
+                    .body(body.to_string());
+            }
+            let resp = req.send().await.unwrap();
+            let (status, allow) = (resp.status(), resp.headers().get("allow").cloned());
+            let text = resp.text().await.unwrap_or_default();
+            assert_eq!(status, want, "{who} {method} {path}: {text}");
+            assert!(allow.is_none(), "{who} {method} {path}: Allow {allow:?}");
+        }
+    }
 
     // Anonymous: the public Endpoint answers types and an entity query, the closed one 401.
     let (status, body) = call(&jc, get.clone(), &format!("{public}/types"), None, None).await;

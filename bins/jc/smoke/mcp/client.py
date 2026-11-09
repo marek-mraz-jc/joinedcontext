@@ -7,6 +7,7 @@ from __future__ import annotations
 import itertools
 import json
 import re
+import threading
 import time
 
 from common import Http, short
@@ -139,11 +140,39 @@ class Answer:
         return f"{self.status} {short(self.raw, n)}"
 
 
+# The hub spends one bucket per subject, an anonymous caller's keyed by its address: 600 a
+# minute, burst 60 (context-gateway HUB_RATE_LIMIT; prod's hub answers RateLimit-Limit 600 as
+# well). Every worker of a run shares the loopback address, so the run paces its hub calls
+# under the refill rate instead of spending the bucket and waiting out 429s.
+HUB_PATH = "/api/mcp"
+HUB_INTERVAL = 0.11
+D10 = "larger than this endpoint returns at once"
+
+
+class Pacer:
+    """At most one call per `interval` seconds across every thread."""
+
+    def __init__(self, interval: float):
+        self.interval, self.lock, self.next = interval, threading.Lock(), 0.0
+
+    def wait(self):
+        with self.lock:
+            now = time.monotonic()
+            at = max(now, self.next)
+            self.next = at + self.interval
+        if at > now:
+            time.sleep(at - now)
+
+
+HUB_PACER = Pacer(HUB_INTERVAL)
+
+
 class Mcp:
     """One MCP door (`/api/mcp`, `/api/endpoint/{slug}/mcp`, `/api/v1/mcp`, `/c/{id}`)."""
 
     def __init__(self, http: Http, path: str, token: str | None = None, retries: int = 4):
         self.http, self.path, self.token, self.retries = http, path, token, retries
+        self.pacer = HUB_PACER if path == HUB_PATH else None
 
     def send(self, method: str, params: dict | None = None, notification: bool = False) -> Answer:
         msg = {"jsonrpc": "2.0", "method": method}
@@ -153,6 +182,8 @@ class Mcp:
             msg["params"] = params
         headers = {"Accept": ACCEPT, "MCP-Protocol-Version": PROTOCOL}
         for attempt in range(self.retries + 1):
+            if self.pacer:
+                self.pacer.wait()
             st, h, raw = self.http.call("POST", self.path, token=self.token, headers=headers, body=msg)
             if st != 429 or attempt == self.retries:
                 return Answer(st, h, raw)
@@ -175,3 +206,13 @@ class Mcp:
 
     def call(self, name: str, arguments: dict) -> Answer:
         return self.send("tools/call", {"name": name, "arguments": arguments})
+
+    def query(self, arguments: dict) -> tuple[Answer, str]:
+        """query_entities; an answer over the result budget (antares-mcp D-10: "narrow it with
+        pick or attrs", prod answers the same) is asked again as its hint says, with only id and
+        type. Answers the reply and a note of the narrowing, empty when there was none."""
+        a = self.call("query_entities", arguments)
+        if a.refused and D10 in text_of(a.result) and "pick" not in arguments:
+            return self.call("query_entities", {**arguments, "pick": ["id", "type"]}), \
+                "over the result budget, asked again with pick id,type; "
+        return a, ""
