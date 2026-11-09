@@ -417,7 +417,10 @@ def other_type_rows(w: Walker, page, frame) -> tuple[int, str]:
     # Through about:blank: a src that differs only after `#` would not load the page again.
     el = page.locator("iframe.jc-explorer-frame").first
     el.evaluate("f => { f.src = 'about:blank'; }")
-    page.wait_for_function("f => f.contentWindow && f.contentWindow.location.href === 'about:blank'", arg=el.element_handle())
+    for _ in range(40):  # the frame is cross-origin to the page: its address is Playwright's to read
+        if frame.url == "about:blank":
+            break
+        page.wait_for_timeout(250)
     el.evaluate("(f, u) => { f.src = u; }", other)
     for _ in range(60):
         frame = next((f for f in page.frames if "/explore.html" in f.url and f"type={full}" in f.url), None)

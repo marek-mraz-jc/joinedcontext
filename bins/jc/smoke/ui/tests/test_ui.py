@@ -197,7 +197,8 @@ def viz_server(held: dict, drawn: dict):
             path, _, query = self.path.partition("?")
             headers, body = {"Content-Type": "text/html"}, ""
             if path == "/opendata/dataset/x":
-                body = '<iframe class="jc-explorer-frame" src="/viz/explore.html#slug1&inline&type=Alert"></iframe>'
+                # Another origin than the page, as an opaque sandboxed frame is: its location is not the page's to read.
+                body = f'<iframe class="jc-explorer-frame" src="http://localhost:{self.server.server_port}/viz/explore.html#slug1&inline&type=Alert"></iframe>'
             elif path in suite.SANDBOX_PAGES:
                 headers["Content-Security-Policy"] = "sandbox allow-scripts"
                 body = EXPLORE.replace("DRAWN", json.dumps(drawn))
