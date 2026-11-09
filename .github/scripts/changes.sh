@@ -54,7 +54,7 @@ covered() {
       jobs["root"] = "root-clippy root-test-1 root-test-2 root-test-3"
       jobs["antares"] = "antares-clippy antares-test-1 antares-test-2 antares-test-3"
       jobs["platform"] = "platform-test"
-      jobs["ekiben"] = "ekiben"; jobs["portal"] = "portal-clippy portal-test-1 portal-test-2"; jobs["ui"] = "ui"
+      jobs["ekiben"] = "ekiben"; jobs["portal"] = "portal-clippy portal-test-1 portal-test-2"; jobs["ui"] = "ui ui-test-1 ui-test-2 ui-test-3 ui-test-4"
     }
     {
       split($0, kv, "=")

@@ -366,6 +366,32 @@ jobs:
       - run: cd ui && pnpm install --frozen-lockfile
       - run: cd ui && pnpm lint
       - run: cd ui && pnpm build && test -s dist/index.html
+      # The SDK's own suite (the standalone Portal's sdk job, about 70 s): it reads only sdk/.
+      - run: cd sdk && pnpm vitest run
+  # The whole UI vitest in four shards (vitest --shard splits the files: every file once, in one
+  # of them), as the standalone Portal ran it. The ui job above ran none of it, so a branch went
+  # green with 46 red files (jc-multiorg-portal 42601018361, merged as 12aa4b3e). Shard job names
+  # are listed in changes.sh (covered).
+  ui-test:
+    name: ui-test-${{ matrix.shard }}
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix: { shard: [1, 2, 3, 4] }
+    defaults: { run: { working-directory: crates/portal } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { package_json_file: crates/portal/ui/package.json }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 24 }
+      # The UI links the SDK's sources and build.
+      - run: cd sdk && pnpm install --frozen-lockfile && pnpm build
+      - run: cd ui && pnpm install --frozen-lockfile
+      - run: cd ui && pnpm vitest run --shard=${{ matrix.shard }}/${{ strategy.job-total }}
   # Advisories, licenses, bans and sources of every lockfile, one job for the four workspaces (one
   # runner slot of the account's 20, not four): each workspace runs deny and audit whatever the one
   # before it answered, and the job fails if any of them did. No ignore is added at the root; the
@@ -429,7 +455,7 @@ jobs:
   # it deployable (deployment verify-pinned-images.py). A skipped gate is one this push's paths
   # do not reach, or one another run of this commit passed (changes.sh REUSE).
   promote:
-    needs: [changes, root-clippy, root-test, platform-test, antares-clippy, antares-test, ekiben, portal-clippy, portal-test, ui, supply-chain, image, scan]
+    needs: [changes, root-clippy, root-test, platform-test, antares-clippy, antares-test, ekiben, portal-clippy, portal-test, ui, ui-test, supply-chain, image, scan]
     if: >-
       always() && needs.image.result == 'success' && needs.scan.result == 'success' &&
       !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
