@@ -635,6 +635,100 @@ impl HarvestEngine {
     }
 }
 
+type Gathered = (Vec<(String, Dataset)>, Vec<HarvestSkippedItem>);
+
+impl HarvestEngine {
+    /// Keeps the items the platform converted (`source.converted`), each with its Endpoint's
+    /// distributions in place of the source's links (prod's `od_standards`, EP-118); the others
+    /// are skipped and, when an earlier run listed them, withdrawn. An Endpoint's model index
+    /// that does not read fails the run: an outage, not a catalogue to empty.
+    async fn convert(
+        &self,
+        source: &HarvestSource,
+        cat_allowed_hosts: &[String],
+        lang: &str,
+        kept: Vec<(String, Dataset)>,
+        mut skipped: Vec<HarvestSkippedItem>,
+    ) -> Result<Gathered> {
+        let gateway = source
+            .gateway
+            .as_deref()
+            .map(|g| g.trim_end_matches('/'))
+            .filter(|g| !g.is_empty())
+            .ok_or_else(|| {
+                DataroomError::field_error(
+                    "gateway",
+                    "a source with converted datasets needs the gateway their Endpoints answer under",
+                )
+            })?;
+        let total = kept.len();
+        let mut indexes: BTreeMap<String, Value> = BTreeMap::new();
+        let mut out = Vec::new();
+        for (item_id, mut ds) in kept {
+            let title = dataroom_core::text_in_lang(&ds.title, None)
+                .unwrap_or(&ds.name)
+                .to_owned();
+            let Some(entry) = source.converted.get(&ds.name) else {
+                skipped.push(HarvestSkippedItem {
+                    item_id,
+                    title,
+                    reason: "not converted to NGSI-LD, so not listed (EP-118)".into(),
+                });
+                continue;
+            };
+            let root = format!("{gateway}/api/endpoint/{}/", entry.endpoint);
+            if !indexes.contains_key(&entry.endpoint) {
+                let (_, body) = self
+                    .checked_fetch(
+                        &format!("{root}schema/index.json"),
+                        source,
+                        cat_allowed_hosts,
+                        "application/json",
+                    )
+                    .await?;
+                let index: Value = serde_json::from_str(&body).map_err(|e| {
+                    DataroomError::OutboundRefused(format!(
+                        "the schema index of Endpoint {} is not JSON: {e}",
+                        entry.endpoint
+                    ))
+                })?;
+                indexes.insert(entry.endpoint.clone(), index);
+            }
+            let dists = crate::converted::distributions(
+                &root,
+                entry,
+                &indexes[&entry.endpoint],
+                &ds.id,
+                lang,
+            );
+            if dists.is_empty() {
+                skipped.push(HarvestSkippedItem {
+                    item_id,
+                    title,
+                    reason: format!(
+                        "the model of {} on its Endpoint lacks an artefact, so not listed (EP-118)",
+                        entry.entity_type
+                    ),
+                });
+                continue;
+            }
+            ds.distributions = dists;
+            ds.endpoint_url = Some(root.clone());
+            ds.extras.insert("endpoint".into(), root);
+            let hash = crate::sources::compute_harvest_hash(&ds);
+            ds.harvest_hash = Some(hash.clone());
+            ds.extras.insert("harvest_hash".into(), hash);
+            out.push((item_id, ds));
+        }
+        if out.is_empty() {
+            return Err(DataroomError::OutboundRefused(format!(
+                "none of {total} datasets lists the platform's distributions; nothing is written or withdrawn"
+            )));
+        }
+        Ok((out, skipped))
+    }
+}
+
 impl HarvestRunner for HarvestEngine {
     /// One run of `source`: refused with a conflict while another run of it holds the source's
     /// Running row, stopped and recorded failed after the deadline, a failure always leaves a
@@ -754,6 +848,19 @@ impl HarvestEngine {
                 )
                 .await;
 
+            let gather_res = match gather_res {
+                Ok((kept, skipped)) if !source.converted.is_empty() => {
+                    self.convert(
+                        source,
+                        &cat.allowed_outbound_hosts,
+                        &cat.default_language,
+                        kept,
+                        skipped,
+                    )
+                    .await
+                }
+                other => other,
+            };
             let gather_res = gather_res.and_then(|(kept, skipped)| {
                 if kept.is_empty() {
                     // An answer with nothing to keep is an outage, not a catalogue to empty.
@@ -1098,6 +1205,8 @@ mod tests {
             title_overrides: BTreeMap::new(),
             spelling_fixes: BTreeMap::new(),
             require_column: BTreeMap::new(),
+            converted: BTreeMap::new(),
+            gateway: None,
             schedule: "23 3 * * *".into(),
             enabled: true,
             modified: Utc::now(),
@@ -1257,6 +1366,8 @@ mod tests {
             title_overrides: BTreeMap::new(),
             spelling_fixes: BTreeMap::new(),
             require_column: BTreeMap::new(),
+            converted: BTreeMap::new(),
+            gateway: None,
             schedule: "23 3 * * *".into(),
             enabled: true,
             modified: Utc::now(),

@@ -2,6 +2,7 @@
 //! Catalogue harvesters (DCAT-AP, NKOD SPARQL, CKAN Action API, ArcGIS Hub) with SSRF guard,
 //! content-hash idempotency, and withdrawal on complete read (C9).
 
+pub mod converted;
 pub mod guard;
 pub mod runner;
 pub mod scheduler;
