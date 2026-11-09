@@ -1251,8 +1251,20 @@ async fn an_app_that_loses_its_jobs_loses_its_principals_client() {
 #[tokio::test]
 async fn a_portal_without_the_namespaces_keeps_the_pipeline_and_app_job_clients() {
     let keycloak = realm(json!([
-        managed_client("uuid-pl", "zilina", "pl-drepo", PIPELINES, "pl-zilina-drepo"),
-        managed_client("uuid-aj", "zilina", "appjob-kpi", IDENTITIES, "appjob-zilina-kpi"),
+        managed_client(
+            "uuid-pl",
+            "zilina",
+            "pl-drepo",
+            PIPELINES,
+            "pl-zilina-drepo"
+        ),
+        managed_client(
+            "uuid-aj",
+            "zilina",
+            "appjob-kpi",
+            IDENTITIES,
+            "appjob-zilina-kpi"
+        ),
         managed_client("uuid-air", "helsinki", "air-adapter", "env-dept", "adapter"),
     ]))
     .await;

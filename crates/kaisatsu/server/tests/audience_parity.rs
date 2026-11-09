@@ -278,7 +278,11 @@ async fn check_every_workload_on(realm: Value, store: Arc<dyn Store>, kek: Kek) 
     for client in realm["clients"].as_array().unwrap() {
         let id = client["clientId"].as_str().unwrap();
         let q: String = url::form_urlencoded::Serializer::new(String::new())
-            .extend_pairs([("client_id", id), ("response_type", "code"), ("scope", "openid")])
+            .extend_pairs([
+                ("client_id", id),
+                ("response_type", "code"),
+                ("scope", "openid"),
+            ])
             .finish();
         let resp = tower::ServiceExt::oneshot(
             app.clone(),
@@ -289,13 +293,21 @@ async fn check_every_workload_on(realm: Value, store: Arc<dyn Store>, kek: Kek) 
         )
         .await
         .unwrap();
-        let bytes = http_body_util::BodyExt::collect(resp.into_body()).await.unwrap().to_bytes();
+        let bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
         let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         if body["error"] == "invalid_client" {
             unknown.push(format!("{id}: {body}"));
         }
     }
-    assert!(unknown.is_empty(), "{} clients unknown:\n{}", unknown.len(), unknown.join("\n"));
+    assert!(
+        unknown.is_empty(),
+        "{} clients unknown:\n{}",
+        unknown.len(),
+        unknown.join("\n")
+    );
     let mut checked = 0;
     let mut wrong = Vec::new();
     for client in realm["clients"].as_array().unwrap() {
