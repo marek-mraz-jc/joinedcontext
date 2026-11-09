@@ -873,6 +873,14 @@ pub struct AuthSession {
     /// Broker flow state (`idp_alias`, `state`, `nonce`, `pkce_verifier`, pending link claims).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub broker_state_json: Option<String>,
+    /// Application-initiated action (`kc_action`: `UPDATE_PASSWORD`, `CONFIGURE_TOTP`) the
+    /// client asked for; the login runs it once after the factors and reports it back as
+    /// `kc_action_status`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kc_action: Option<String>,
+    /// True once the `kc_action` step completed in this session.
+    #[serde(default)]
+    pub kc_action_done: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(default)]
@@ -938,6 +946,9 @@ pub struct SsoSession {
     pub user_id: String,
     pub username: String,
     pub ip_address: String,
+    /// The browser's User-Agent at sign-in, capped, for the account console's device list.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub user_agent: String,
     pub start: i64,
     pub last_access: i64,
     pub auth_time: i64,

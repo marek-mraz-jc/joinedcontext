@@ -462,9 +462,21 @@ async fn step_up_enrols_a_totp_credential() {
         .pending_totp_secret
         .clone()
         .expect("the page generated a secret");
-    assert!(html.contains(&secret), "the secret is shown once");
+    let grouped = |secret: &str| {
+        secret
+            .as_bytes()
+            .chunks(4)
+            .map(|c| std::str::from_utf8(c).unwrap())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    assert!(
+        html.contains(&grouped(&secret)),
+        "the secret is shown once, in groups of four"
+    );
     let (_, _, html) = a.post(&app, &[("otp", "123456")]).await;
-    assert!(html.contains("role=\"alert\""));
+    // The wrong code is shown on the code field.
+    assert!(html.contains("id=\"input-error-otp\""), "{html}");
     // Without a generated secret (page never rendered) the page is shown again, with one.
     let mut no_secret = session.clone();
     no_secret.pending_totp_secret = None;
@@ -478,7 +490,7 @@ async fn step_up_enrols_a_totp_credential() {
         .unwrap()
         .pending_totp_secret
         .unwrap();
-    assert!(html.contains(&fresh));
+    assert!(html.contains(&grouped(&fresh)));
     let cred = CredentialRecord {
         secret_data: serde_json::json!({ "value": fresh }).to_string(),
         credential_data:
@@ -533,7 +545,7 @@ async fn temporary_password_terms_and_consent() {
         let (st, _, html) = a.post(&app, &[("new_password", bad)]).await;
         assert_eq!(st, StatusCode::OK);
         assert_eq!(page_id(&html), "update-password", "{bad}");
-        assert!(html.contains("role=\"alert\""), "{bad}");
+        assert!(html.contains("id=\"input-error-new_password\""), "{bad}");
     }
     let (st, _, html) = a.post(&app, &[("new_password", "BrandNewPass456!")]).await;
     assert_eq!(st, StatusCode::OK);

@@ -617,6 +617,7 @@ async fn issue_broker_session_and_code(
         user_id: user.id.clone(),
         username: user.username.clone(),
         ip_address: client_ip.for_audit(),
+        user_agent: String::new(),
         start: now.timestamp_millis(),
         last_access: now.timestamp_millis(),
         auth_time: now.timestamp(),
