@@ -13,7 +13,7 @@ use context_gateway::app::{router, Gateway, HostOrganization};
 use context_gateway::auth::accounts::ServiceAccounts;
 use context_gateway::pdp::PolicyPdp;
 use context_gateway::proxy::Broker;
-use context_gateway::resolver::Endpoint;
+use context_gateway::resolver::{Endpoint, Space};
 use context_gateway::store::Provenance;
 use jc_core::kinds::{Audience, PolicySpec, Representation};
 use serde_json::{json, Value};
@@ -66,6 +66,20 @@ fn endpoint(slug: &str, title: &str, project: &str) -> Endpoint {
     }
 }
 
+/// The public space `space-{project}`, which `/cs` lists anonymously.
+fn space(project: &str) -> Space {
+    let name = format!("space-{project}");
+    let mut endpoint = endpoint(&name, &format!("Space of {project}"), project);
+    endpoint.base_path = format!("/cs/{name}");
+    Space {
+        endpoint: Arc::new(endpoint),
+        title: [("en".to_owned(), format!("Space of {project}"))].into(),
+        description: Default::default(),
+        is_sandbox: false,
+        default_locale: None,
+    }
+}
+
 fn app(realm: &common::Realm) -> Router {
     let gateway = Gateway::new(
         Broker::new("http://127.0.0.1:1"),
@@ -76,6 +90,7 @@ fn app(realm: &common::Realm) -> Router {
         endpoint(ALPHA, "Alphabox", "pa"),
         endpoint(BETA, "Betabox", "pb"),
     ])
+    .serve_spaces([space("pa"), space("pb")])
     .authenticate(
         Arc::new(realm.verifier()),
         ServiceAccounts::new(),
@@ -167,16 +182,24 @@ async fn every_listing_on_one_host_holds_nothing_of_the_other_organization() {
         ("alpha", ALPHA, BETA, "Betabox"),
         ("beta", BETA, ALPHA, "Alphabox"),
     ] {
+        let space = if other == BETA {
+            "space-pb"
+        } else {
+            "space-pa"
+        };
         for path in ["/api/endpoints", "/catalog.jsonld", "/catalog.ttl", "/cs"] {
             let (status, body) = send(&app, Some(host), Method::GET, path, None).await;
             assert_eq!(status, StatusCode::OK, "{host}{path}: {body}");
             assert!(
-                !body.contains(other) && !body.contains(other_title),
+                !body.contains(other) && !body.contains(other_title) && !body.contains(space),
                 "{host}{path} shows the other Organization: {body}"
             );
         }
         let (_, body) = send(&app, Some(host), Method::GET, "/catalog.jsonld", None).await;
         assert!(body.contains(own), "{host}: {body}");
+        let own_space = if own == ALPHA { "space-pa" } else { "space-pb" };
+        let (_, body) = send(&app, Some(host), Method::GET, "/cs", None).await;
+        assert!(body.contains(own_space), "{host}/cs: {body}");
         // The hub's tools reach no Endpoint of the other Organization either.
         for (name, arguments) in [
             ("get_endpoint", json!({ "endpoint": other })),
@@ -201,11 +224,6 @@ async fn every_listing_on_one_host_holds_nothing_of_the_other_organization() {
             None,
         )
         .await;
-        let space = if other == BETA {
-            "space-pb"
-        } else {
-            "space-pa"
-        };
         let project = if other == BETA { "pb" } else { "pa" };
         for path in [
             format!("/api/endpoint/{other}/"),
