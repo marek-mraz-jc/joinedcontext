@@ -442,6 +442,18 @@ def to_file_refs(realm: dict, secrets_dir: Path) -> dict:
     return json.loads(text)
 
 
+def pipeline_clients(realm: dict) -> list[tuple[str, str]]:
+    """(clientId, NAME) of each `<project>-pipelines` client whose secret is `$(env:NAME)`: jc's
+    `[ekiben] client_secrets_dir` reads `<project>-pipelines` files for the runner's
+    `JC_CLIENT_SECRET_<PROJECT>`, as dev's runner Deployment takes them from the realm's Secret."""
+    out = []
+    for c in realm.get("clients", []):
+        cid, m = c.get("clientId", ""), SECRET_VAR.fullmatch(str(c.get("secret", "")).strip())
+        if cid.endswith("-pipelines") and m:
+            out.append((cid, m[1]))
+    return sorted(out)
+
+
 def secret_file(ref: str, secrets: Path) -> Path:
     """The file a realm secret reference names: `$(file:path)`, or the rehearsal's realm-NAME."""
     m = re.fullmatch(r"\$\(file:(.+)\)", ref.strip())
@@ -565,6 +577,8 @@ def cmd_realms(a):
         # The secret variables the realm names ($(env:NAME)): up.sh makes a value for each.
         names = sorted(set(SECRET_VAR.findall(json.dumps(clean))))
         (dst.parent / "realm-vars.txt").write_text("".join(n + "\n" for n in names))
+        (dst.parent / "realm-pipeline-clients.txt").write_text(
+            "".join(f"{cid} {var}\n" for cid, var in pipeline_clients(clean)))
         if a.secrets_dir:
             clean = to_file_refs(clean, Path(a.secrets_dir))
         write_private(dst / f"{name}.json", json.dumps(clean, indent=1))

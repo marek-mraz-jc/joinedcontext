@@ -124,6 +124,12 @@ if [ -d "$export_dir/keycloak" ]; then
     secret "realm/$name" > /dev/null
     ln -sfn "realm/$name" "$home/secrets/realm-$name"
   done < "$home/state/realm-vars.txt"
+  # The pipeline runner's JC_CLIENT_SECRET_<PROJECT>: jc's [ekiben] client_secrets_dir reads
+  # <project>-pipelines files (a copy, it refuses a link), each the realm client's secret.
+  while read -r client name; do
+    [ -n "$client" ] || continue
+    install -m 600 "$home/secrets/realm/$name" "$home/secrets/realm/$client"
+  done < "$home/state/realm-pipeline-clients.txt"
 fi
 
 url() { printf 'postgres://%s:%s@127.0.0.1:%s/%s' "$1" "$(cat "$(secret "$1-pw")")" "$pg_port" "$2"; }
@@ -188,6 +194,7 @@ nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.to
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" \
   --kaisatsu-import-secrets-dir "$home/secrets/realm" \
+  --ekiben-client-secrets-dir "$home/secrets/realm" \
   --kaisatsu-database-url-file "$home/secrets/kaisatsu-db-url" \
   --kaisatsu-db-password-file "$(secret kaisatsu-app-pw)" \
   --shako-repo-root "$home/repos" --ekiben-file-root "$home/files" \

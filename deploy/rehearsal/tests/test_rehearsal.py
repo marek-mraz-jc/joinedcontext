@@ -817,3 +817,15 @@ def test_every_secret_up_sh_makes_is_long_enough_for_a_jc_token(tmp_path):
     script = f'home={tmp_path}\n{fn}\nfor i in $(seq 30); do cat "$(secret t$i)"; echo; done'
     out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout.split()
     assert len(out) == 30 and all(len(t) == 64 and t.isalnum() for t in out)
+
+
+def test_each_pipelines_client_names_the_secret_the_runner_reads():
+    realm = {"clients": [
+        {"clientId": "praha-pipelines", "secret": "$(env:KC_PRAHA_PIPELINES_SECRET)"},
+        {"clientId": "bbsk-pipelines", "secret": "$(KC_BBSK_PIPELINES_SECRET)"},
+        {"clientId": "portal", "secret": "$(env:KC_PORTAL_SECRET)"},
+        {"clientId": "x-pipelines", "secret": "literal"},
+        {"clientId": "y-pipelines"},
+    ]}
+    assert rh.pipeline_clients(realm) == [("bbsk-pipelines", "KC_BBSK_PIPELINES_SECRET"),
+                                          ("praha-pipelines", "KC_PRAHA_PIPELINES_SECRET")]
