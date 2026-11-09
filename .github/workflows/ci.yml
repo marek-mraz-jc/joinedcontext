@@ -102,7 +102,7 @@ jobs:
   # Postgres for the store tests of each module (each its own database; kaisatsu and the Portal's
   # apps tests create their own roles). nextest runs the binaries side by side; the tests sharing
   # one module's database stay one at a time (.config/nextest.toml). The tests are split in
-  # two jobs, each with its own Postgres: every job compiles the same warm build (no archive to
+  # three jobs (two took 333 s of tests each, run 42616261654), each with its own Postgres: every job compiles the same warm build (no archive to
   # upload and download) and runs its `--partition slice:k/N` (round robin over all tests; count:
   # deals each binary's first test to job 1); the first also runs the doc tests. The partition job
   # names are listed in changes.sh (covered).
@@ -114,7 +114,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix: { part: [1, 2] }
+      matrix: { part: [1, 2, 3] }
     services:
       postgres:
         image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
