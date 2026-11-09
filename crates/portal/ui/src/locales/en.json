@@ -2777,6 +2777,8 @@
     "emptyHint": "Add a data source and a pipeline with the button, or ask the assistant to build one from what you already have.",
     "expiryRemoves": "Entities not updated for {window} are removed",
     "expiryRefused": "Nothing is removed: the runner refused the sweep: {reason}",
+    "errorReason": "Why: {reason}",
+    "errorOpen": "Open the pipeline",
     "writesType": "Writes",
     "notWriting": "Writes nothing",
     "rejected": {

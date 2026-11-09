@@ -309,6 +309,12 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
     const stalled = notWriting(pipeline);
     const counted = running && klass === "resident";
     const source = dataSourceOf(spec);
+    const failure = ["error", "failed"].includes((pipeline.status?.phase ?? "").toLowerCase())
+      ? (pipeline.status?.conditions ?? []).find(
+          (condition) => condition.status === "False" && condition.type !== "ExpirySweep" && (condition.message ?? condition.reason),
+        )
+      : undefined;
+    const failureText = failure ? (failure.message ?? failure.reason ?? "") : "";
     const phase = (
       <>
         {/* The row said "Live" beside a stream that said "Paused" (T-2759): a paused
@@ -323,6 +329,18 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
         />
         {/* Live says the stream is deployed; whether anything lands is this condition
             (T-2967): hsl-hfp-vehicles read Live for half an hour of writing nothing. */}
+        {/* An Error badge alone left the person guessing (UI judge 2026-11-09): the condition the
+            reconciler wrote says why, and the pipeline's page is where it is fixed. */}
+        {failureText ? (
+          <div className="mt-1 max-w-64 text-caption">
+            <p className="line-clamp-3 text-danger [overflow-wrap:anywhere]" title={failureText} data-testid="pipeline-error-reason">
+              {t("pipelines.errorReason", { reason: failureText })}
+            </p>
+            <RecordLink project={project} plural="pipelines" name={pipeline.metadata.name}>
+              {t("pipelines.errorOpen")}
+            </RecordLink>
+          </div>
+        ) : null}
         {stalled !== null ? (
           <div className="mt-1">
             <Badge tone="warning" title={stalled || undefined}>

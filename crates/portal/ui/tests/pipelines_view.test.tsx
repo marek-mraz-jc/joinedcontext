@@ -181,6 +181,29 @@ describe("pipelines view", () => {
     expect(within(await rowOf("aq-mqtt-ingest")).queryByText(/are removed/)).toBeNull();
   });
 
+  it("says in the row why a pipeline is in Error, and where to fix it", async () => {
+    // The row said Error and nothing else (jc-ui-states, UI judge 2026-11-09): the reason was
+    // only in the reconciler's condition.
+    const failed = structuredClone(PIPELINES);
+    failed.items[0].status = {
+      phase: "Error",
+      conditions: [
+        { type: "SourceReachable", status: "True", reason: "Reached" },
+        { type: "StreamDeployed", status: "False", reason: "RunnerRefused", message: "environment variable 'JC_MQTT_NAMESPACE' was not defined" },
+      ],
+    } as never;
+    renderPipelines(METRICS, 200, failed);
+    const row = await rowOf("aq-mqtt-ingest");
+    expect(within(row).getByTestId("pipeline-error-reason")).toHaveTextContent(
+      "Why: environment variable 'JC_MQTT_NAMESPACE' was not defined",
+    );
+    expect(within(row).getByRole("link", { name: en.pipelines.errorOpen })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/pipelines/aq-mqtt-ingest"),
+    );
+    expect(within(await rowOf("parking-daily")).queryByTestId("pipeline-error-reason")).toBeNull();
+  });
+
   it("says in the row that the runner refused the sweep, with its reason", async () => {
     // The `.expiry` stream failing left the pipeline writing and nothing removed; only the
     // reconciler's condition knew (PL-64, T-3091).

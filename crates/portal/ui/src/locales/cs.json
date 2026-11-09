@@ -2777,6 +2777,8 @@
     "emptyHint": "Přidejte datový zdroj a pipeline tlačítkem, nebo požádejte asistenta, aby ji postavil z toho, co už máte.",
     "expiryRemoves": "Entity, které se neaktualizovaly {window}, se odstraňují",
     "expiryRefused": "Nic se neodstraňuje: runner odmítl úklid: {reason}",
+    "errorReason": "Proč: {reason}",
+    "errorOpen": "Otevřít pipeline",
     "writesType": "Zapisuje",
     "notWriting": "Nezapisuje nic",
     "rejected": {

@@ -2777,6 +2777,8 @@
     "emptyHint": "Fügen Sie mit der Schaltfläche eine Datenquelle und eine Pipeline hinzu, oder lassen Sie den Assistenten eine aus dem bauen, was Sie schon haben.",
     "expiryRemoves": "Entitäten, die {window} lang nicht aktualisiert wurden, werden entfernt",
     "expiryRefused": "Nichts wird entfernt: Der Runner hat die Bereinigung abgelehnt: {reason}",
+    "errorReason": "Grund: {reason}",
+    "errorOpen": "Pipeline öffnen",
     "writesType": "Schreibt",
     "notWriting": "Schreibt nichts",
     "rejected": {
