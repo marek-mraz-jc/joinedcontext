@@ -300,6 +300,69 @@ pub struct DataroomSection {
     /// `[dataroom.aliases]`: `old = "new"` per renamed dataset (evidence/jc-dev/RENAMES.md); a
     /// read of the old name answers the new dataset.
     pub aliases: BTreeMap<String, String>,
+    /// `[[dataroom.harvest]]`: the harvest sources held from the start, each run on its
+    /// `schedule` by dataroom's harvest scheduler (prod's CKAN harvest CronJobs).
+    pub harvest: Vec<HarvestSeed>,
+}
+
+/// One `[[dataroom.harvest]]` source, written over the stored one on every start: prod's
+/// `harvest.sources` entry (deployment `components/ckan/values/catalogue/*.yaml.gotmpl`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarvestSeed {
+    pub name: String,
+    /// `nkod-sparql` (the SPARQL endpoint), `arcgis-hub` (the Hub's base), `ckan-action`, `dcat-ap`.
+    pub kind: String,
+    pub url: String,
+    /// The CKAN organisation the datasets land in; created with the next three when missing.
+    pub publisher: String,
+    pub publisher_title: String,
+    /// The publisher's IRI: the one NKOD lists the datasets under, and the publisher's `uri`.
+    pub publisher_uri: String,
+    #[serde(default)]
+    pub publisher_description: Option<String>,
+    /// An `[[organizations]]` name: the source belongs to that Organization's catalogue; none,
+    /// the `[dataroom]` default catalogue.
+    #[serde(default)]
+    pub organization: Option<String>,
+    #[serde(default)]
+    pub spatial_uri: Option<String>,
+    #[serde(default)]
+    pub name_prefix: String,
+    /// Every host a run may fetch from, the `url`'s own included (dataroom's outbound guard).
+    pub allowed_hosts: Vec<String>,
+    #[serde(default)]
+    pub rewrite_hosts: BTreeMap<String, String>,
+    /// Items left out (title, IRI or item id) with the reason the run log gives.
+    #[serde(default)]
+    pub skip: BTreeMap<String, String>,
+    #[serde(default)]
+    pub titles: BTreeMap<String, String>,
+    #[serde(default)]
+    pub spelling: BTreeMap<String, String>,
+    #[serde(default)]
+    pub require_column: BTreeMap<String, String>,
+    /// Five-field cron, UTC (prod: `23 3 * * *`).
+    #[serde(default = "default_harvest_schedule")]
+    pub schedule: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// prod's `od-datasets.json` (deployment `charts/ckan/files/`): the converted datasets by
+    /// name. Set: only those are listed, with their Endpoint's distributions on `gateway`.
+    #[serde(default)]
+    pub converted_file: Option<PathBuf>,
+    /// The catalogue base the file's `dataset` URLs name, replaced by this catalogue's own
+    /// (prod's `harvest.datasetsBase`).
+    #[serde(default)]
+    pub datasets_base: Option<String>,
+    /// The public base the Endpoints answer under (prod's `harvest.gateway`); its host must be
+    /// in `allowed_hosts`.
+    #[serde(default)]
+    pub gateway: Option<String>,
+}
+
+fn default_harvest_schedule() -> String {
+    "23 3 * * *".into()
 }
 
 /// `[dataroom.addresses]`: the bases (`http(s)://host[:port][/path]`) the dataset pages frame,
@@ -343,6 +406,7 @@ impl Default for DataroomSection {
             database: None,
             addresses: DataroomAddresses::default(),
             aliases: BTreeMap::new(),
+            harvest: Vec::new(),
         }
     }
 }
@@ -1280,6 +1344,10 @@ pub(crate) fn valid_host(host: &str) -> bool {
         && !name.starts_with('.')
         && !name.ends_with('.')
         && port.is_none_or(|p| p.parse::<u16>().is_ok())
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]

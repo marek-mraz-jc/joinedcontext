@@ -268,6 +268,61 @@ fn incomplete(what: String) -> DataroomError {
     DataroomError::OutboundRefused(format!("incomplete read: {what}"))
 }
 
+/// The publisher's datasets with their distributions and licence terms: prod's
+/// `harvest-nkod.py` QUERY, `%s` the publisher IRI.
+const NKOD_QUERY: &str = "PREFIX dcat: <http://www.w3.org/ns/dcat#>
+PREFIX dct: <http://purl.org/dc/terms/>
+PREFIX l: <https://data.gov.sk/def/ontology/legislation/>
+SELECT ?ds ?title ?description ?modified ?issued ?landing ?keyword
+       ?dist ?distTitle ?url ?format ?work ?database ?special WHERE {
+  ?ds a dcat:Dataset ; dct:publisher <%s> ; dct:title ?title .
+  OPTIONAL { ?ds dct:description ?description }
+  OPTIONAL { ?ds dct:modified ?modified }
+  OPTIONAL { ?ds dct:issued ?issued }
+  OPTIONAL { ?ds dcat:landingPage ?landing }
+  OPTIONAL { ?ds dcat:keyword ?keyword }
+  OPTIONAL {
+    ?ds dcat:distribution ?dist .
+    OPTIONAL { ?dist dct:title ?distTitle }
+    OPTIONAL { ?dist dcat:downloadURL ?url }
+    OPTIONAL { ?dist dct:format ?format }
+    OPTIONAL { ?dist l:termsOfUse ?terms .
+               OPTIONAL { ?terms l:authorsWorkType ?work }
+               OPTIONAL { ?terms l:originalDatabaseType ?database }
+               OPTIONAL { ?terms l:databaseProtectedBySpecialRightsType ?special } }
+  }
+}
+";
+
+/// The SPARQL GET of an NKOD source: its `url` as given when it carries a `query`, else the
+/// endpoint asked [`NKOD_QUERY`] for `target_publisher_iri`. The IRI goes into the query between
+/// `<` and `>`, so one that is not an absolute http(s) IRI free of the characters SPARQL forbids
+/// in an IRI is refused.
+pub fn nkod_query_url(source: &HarvestSource) -> Result<String> {
+    let mut url = url::Url::parse(&source.url).map_err(|e| {
+        DataroomError::field_error("url", format!("'{}' is not a URL: {e}", source.url))
+    })?;
+    if url.query_pairs().any(|(k, _)| k == "query") {
+        return Ok(source.url.clone());
+    }
+    let iri = source.target_publisher_iri.as_deref().ok_or_else(|| {
+        DataroomError::field_error(
+            "targetPublisherIri",
+            "an NKOD source without a query in its url needs the publisher IRI",
+        )
+    })?;
+    let forbidden = |c: char| c.is_whitespace() || c.is_control() || "<>\"{}|^`\\".contains(c);
+    if !(iri.starts_with("https://") || iri.starts_with("http://")) || iri.contains(forbidden) {
+        return Err(DataroomError::field_error(
+            "targetPublisherIri",
+            format!("'{iri}' is not an IRI the query can hold"),
+        ));
+    }
+    url.query_pairs_mut()
+        .append_pair("query", &NKOD_QUERY.replace("%s", iri));
+    Ok(url.into())
+}
+
 /// Harvest runner engine implementing [`HarvestRunner`] (C9, A2).
 pub struct HarvestEngine {
     fetcher: Arc<dyn OutboundFetcher>,
@@ -275,7 +330,12 @@ pub struct HarvestEngine {
     custom_dns: Option<CustomDnsResolver>,
     max_bytes: usize,
     timeout: Duration,
+    deadline: Duration,
 }
+
+/// How long one run may take before it is stopped and recorded failed (prod's CronJob
+/// `activeDeadlineSeconds`).
+pub const HARVEST_DEADLINE: Duration = Duration::from_secs(3600);
 
 impl HarvestEngine {
     pub fn new(fetcher: Arc<dyn OutboundFetcher>) -> Self {
@@ -285,7 +345,13 @@ impl HarvestEngine {
             custom_dns: None,
             max_bytes: MAX_HARVEST_BYTES,
             timeout: Duration::from_secs(60),
+            deadline: HARVEST_DEADLINE,
         }
+    }
+
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = deadline;
+        self
     }
 
     pub fn with_dns_resolution(mut self, resolve_dns: bool) -> Self {
@@ -467,9 +533,10 @@ impl HarvestEngine {
                 ))
             }
             HarvestSourceKind::NkodSparql => {
+                let url = nkod_query_url(source)?;
                 let (_, body) = self
                     .checked_fetch(
-                        &source.url,
+                        &url,
                         source,
                         cat_allowed_hosts,
                         "application/sparql-results+json",
@@ -568,7 +635,104 @@ impl HarvestEngine {
     }
 }
 
+type Gathered = (Vec<(String, Dataset)>, Vec<HarvestSkippedItem>);
+
+impl HarvestEngine {
+    /// Keeps the items the platform converted (`source.converted`), each with its Endpoint's
+    /// distributions in place of the source's links (prod's `od_standards`, EP-118); the others
+    /// are skipped and, when an earlier run listed them, withdrawn. An Endpoint's model index
+    /// that does not read fails the run: an outage, not a catalogue to empty.
+    async fn convert(
+        &self,
+        source: &HarvestSource,
+        cat_allowed_hosts: &[String],
+        lang: &str,
+        kept: Vec<(String, Dataset)>,
+        mut skipped: Vec<HarvestSkippedItem>,
+    ) -> Result<Gathered> {
+        let gateway = source
+            .gateway
+            .as_deref()
+            .map(|g| g.trim_end_matches('/'))
+            .filter(|g| !g.is_empty())
+            .ok_or_else(|| {
+                DataroomError::field_error(
+                    "gateway",
+                    "a source with converted datasets needs the gateway their Endpoints answer under",
+                )
+            })?;
+        let total = kept.len();
+        let mut indexes: BTreeMap<String, Value> = BTreeMap::new();
+        let mut out = Vec::new();
+        for (item_id, mut ds) in kept {
+            let title = dataroom_core::text_in_lang(&ds.title, None)
+                .unwrap_or(&ds.name)
+                .to_owned();
+            let Some(entry) = source.converted.get(&ds.name) else {
+                skipped.push(HarvestSkippedItem {
+                    item_id,
+                    title,
+                    reason: "not converted to NGSI-LD, so not listed (EP-118)".into(),
+                });
+                continue;
+            };
+            let root = format!("{gateway}/api/endpoint/{}/", entry.endpoint);
+            if !indexes.contains_key(&entry.endpoint) {
+                let (_, body) = self
+                    .checked_fetch(
+                        &format!("{root}schema/index.json"),
+                        source,
+                        cat_allowed_hosts,
+                        "application/json",
+                    )
+                    .await?;
+                let index: Value = serde_json::from_str(&body).map_err(|e| {
+                    DataroomError::OutboundRefused(format!(
+                        "the schema index of Endpoint {} is not JSON: {e}",
+                        entry.endpoint
+                    ))
+                })?;
+                indexes.insert(entry.endpoint.clone(), index);
+            }
+            let dists = crate::converted::distributions(
+                &root,
+                entry,
+                &indexes[&entry.endpoint],
+                &ds.id,
+                lang,
+            );
+            if dists.is_empty() {
+                skipped.push(HarvestSkippedItem {
+                    item_id,
+                    title,
+                    reason: format!(
+                        "the model of {} on its Endpoint lacks an artefact, so not listed (EP-118)",
+                        entry.entity_type
+                    ),
+                });
+                continue;
+            }
+            ds.distributions = dists;
+            ds.endpoint_url = Some(root.clone());
+            ds.extras.insert("endpoint".into(), root);
+            let hash = crate::sources::compute_harvest_hash(&ds);
+            ds.harvest_hash = Some(hash.clone());
+            ds.extras.insert("harvest_hash".into(), hash);
+            out.push((item_id, ds));
+        }
+        if out.is_empty() {
+            return Err(DataroomError::OutboundRefused(format!(
+                "none of {total} datasets lists the platform's distributions; nothing is written or withdrawn"
+            )));
+        }
+        Ok((out, skipped))
+    }
+}
+
 impl HarvestRunner for HarvestEngine {
+    /// One run of `source`: refused with a conflict while another run of it holds the source's
+    /// Running row, stopped and recorded failed after the deadline, a failure always leaves a
+    /// Failed row behind.
     fn run_source<'a>(
         &'a self,
         ctx: &'a RequestCtx,
@@ -578,6 +742,83 @@ impl HarvestRunner for HarvestEngine {
         Box::pin(async move {
             let started_at = Utc::now();
             let run_id = format!("run-{}", Uuid::now_v7());
+            let mut run = HarvestRun {
+                org_id: ctx.org_id,
+                catalogue_id: ctx.catalogue_id,
+                id: run_id.clone(),
+                source_id: source.id.clone(),
+                state: HarvestRunState::Running,
+                started_at,
+                finished_at: None,
+                created_count: 0,
+                updated_count: 0,
+                unchanged_count: 0,
+                withdrawn_count: 0,
+                skipped: Vec::new(),
+                error: None,
+                logs: Vec::new(),
+            };
+            let deadline = chrono::Duration::from_std(self.deadline)
+                .unwrap_or_else(|_| chrono::Duration::hours(1));
+            if !store
+                .claim_harvest_run(ctx, run.clone(), started_at - deadline)
+                .await?
+            {
+                return Err(DataroomError::Conflict(format!(
+                    "harvest source '{}' has a run in progress",
+                    source.name
+                )));
+            }
+            let (err, fingerprint) = match tokio::time::timeout(
+                self.deadline,
+                self.execute(ctx, store, source, run_id, started_at),
+            )
+            .await
+            {
+                Ok(Ok(done)) => return Ok(done),
+                Ok(Err(err)) => (err, "harvest.error"),
+                Err(_) => (
+                    DataroomError::OutboundRefused(format!(
+                        "the run passed its deadline of {} s",
+                        self.deadline.as_secs()
+                    )),
+                    "harvest.deadline",
+                ),
+            };
+            // A fetch failure wrote its own Failed row; anything else still holds the lock.
+            let still_running = store
+                .get_harvest_run(ctx, &run.id)
+                .await
+                .ok()
+                .flatten()
+                .is_none_or(|r| r.state == HarvestRunState::Running);
+            if still_running {
+                run.state = HarvestRunState::Failed;
+                run.finished_at = Some(Utc::now());
+                run.error = Some(err.to_string());
+                run.logs.push(HarvestLogLine {
+                    at: Utc::now(),
+                    level: "error".into(),
+                    fingerprint: fingerprint.into(),
+                    message: err.to_string(),
+                });
+                store.upsert_harvest_run(ctx, run).await?;
+            }
+            Err(err)
+        })
+    }
+}
+
+impl HarvestEngine {
+    async fn execute(
+        &self,
+        ctx: &RequestCtx,
+        store: &dyn Store,
+        source: &HarvestSource,
+        run_id: String,
+        started_at: chrono::DateTime<Utc>,
+    ) -> Result<HarvestRun> {
+        {
             let mut logs = Vec::new();
 
             let cat = store
@@ -607,6 +848,19 @@ impl HarvestRunner for HarvestEngine {
                 )
                 .await;
 
+            let gather_res = match gather_res {
+                Ok((kept, skipped)) if !source.converted.is_empty() => {
+                    self.convert(
+                        source,
+                        &cat.allowed_outbound_hosts,
+                        &cat.default_language,
+                        kept,
+                        skipped,
+                    )
+                    .await
+                }
+                other => other,
+            };
             let gather_res = gather_res.and_then(|(kept, skipped)| {
                 if kept.is_empty() {
                     // An answer with nothing to keep is an outage, not a catalogue to empty.
@@ -789,7 +1043,7 @@ impl HarvestRunner for HarvestEngine {
                 )
                 .await?;
             Ok(saved_run)
-        })
+        }
     }
 }
 
@@ -951,6 +1205,8 @@ mod tests {
             title_overrides: BTreeMap::new(),
             spelling_fixes: BTreeMap::new(),
             require_column: BTreeMap::new(),
+            converted: BTreeMap::new(),
+            gateway: None,
             schedule: "23 3 * * *".into(),
             enabled: true,
             modified: Utc::now(),
@@ -1110,6 +1366,8 @@ mod tests {
             title_overrides: BTreeMap::new(),
             spelling_fixes: BTreeMap::new(),
             require_column: BTreeMap::new(),
+            converted: BTreeMap::new(),
+            gateway: None,
             schedule: "23 3 * * *".into(),
             enabled: true,
             modified: Utc::now(),

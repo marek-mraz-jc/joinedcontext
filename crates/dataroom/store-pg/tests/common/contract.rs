@@ -384,6 +384,69 @@ pub async fn datasets(store: &dyn Store) {
 }
 
 /// Harvest sources and runs, activity, SHACL reports, profiles, pages and plugins.
+/// One Running run per source: two claims at once, one wins; a finished run frees the source;
+/// a Running run older than the deadline is marked failed and frees it too.
+pub async fn harvest_lock(store: &dyn Store) {
+    let (org, cat) = tenant();
+    store
+        .upsert_catalogue(catalogue(org, cat, "lock", &unique_host("lock")))
+        .await
+        .unwrap();
+    let ctx = member_ctx(org, cat);
+    let running = |id: &str, started: &str| {
+        let mut r = harvest_run(id, "hs-nkod", started);
+        r.state = dataroom_core::HarvestRunState::Running;
+        r.finished_at = None;
+        r
+    };
+    let stale_before = chrono::DateTime::parse_from_rfc3339("2026-11-09T02:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let (a, b) = tokio::join!(
+        store.claim_harvest_run(&ctx, running("run-a", "2026-11-09T03:23:00Z"), stale_before),
+        store.claim_harvest_run(&ctx, running("run-b", "2026-11-09T03:23:00Z"), stale_before),
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert!(a ^ b, "exactly one claim wins: {a} {b}");
+    let winner = if a { "run-a" } else { "run-b" };
+    assert_eq!(
+        store
+            .list_harvest_runs(&ctx, Some("hs-nkod"))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    // Another source is not held by it.
+    let mut other = running("run-o", "2026-11-09T03:23:00Z");
+    other.source_id = "hs-arcgis".into();
+    assert!(store
+        .claim_harvest_run(&ctx, other, stale_before)
+        .await
+        .unwrap());
+
+    // Finished: the source is free.
+    let mut done = store.get_harvest_run(&ctx, winner).await.unwrap().unwrap();
+    done.state = dataroom_core::HarvestRunState::Succeeded;
+    store.upsert_harvest_run(&ctx, done).await.unwrap();
+    assert!(store
+        .claim_harvest_run(&ctx, running("run-c", "2026-11-09T03:24:00Z"), stale_before)
+        .await
+        .unwrap());
+
+    // run-c is left Running; a claim whose deadline has passed it abandons run-c.
+    let later = chrono::DateTime::parse_from_rfc3339("2026-11-09T05:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert!(store
+        .claim_harvest_run(&ctx, running("run-d", "2026-11-09T06:00:00Z"), later)
+        .await
+        .unwrap());
+    let c = store.get_harvest_run(&ctx, "run-c").await.unwrap().unwrap();
+    assert_eq!(c.state, dataroom_core::HarvestRunState::Failed);
+    assert!(c.error.unwrap().contains("abandoned"));
+}
+
 pub async fn records(store: &dyn Store) {
     let (org, cat) = tenant();
     store
