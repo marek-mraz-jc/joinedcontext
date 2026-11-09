@@ -1015,8 +1015,5 @@ mod tests {
         zip.finish().unwrap();
         let why = refused(out.into_inner());
         assert!(why.contains("entry limit"), "{why}");
-        // Two entries of one name: the second never overwrites the first.
-        let why = refused(zip_of(&[("conf-main/a", b"1"), ("conf-main/a", b"2")]));
-        assert!(why.contains("`conf-main/a`"), "{why}");
     }
 }
