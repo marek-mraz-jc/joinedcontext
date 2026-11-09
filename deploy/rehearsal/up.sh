@@ -183,6 +183,11 @@ if compgen -G "$REHEARSAL_DASHBOARDS/*.datasource.*.json" >/dev/null; then
   db_config+=$(printf '\n[daiya]\nprovisioning_dir = "%s"\n' "$home/daiya-provisioning")
 fi
 printf '[mounts.portal]\npath_prefix = ""\n%s\n' "$db_config" > "$home/jc.toml"
+# REHEARSAL_JC_TOML_EXTRA: a file appended to jc.toml as is, e.g. the [[organizations]] of a
+# host-mode multiorg run (each Organization on its own *.localhost hosts).
+if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then
+  cat "$REHEARSAL_JC_TOML_EXTRA" >> "$home/jc.toml"
+fi
 # The service tokens jc would hold in memory only (shako, ekiben, daiya's Portal password) come
 # from files here instead, so the import and the smoke suites can call those modules too.
 nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \

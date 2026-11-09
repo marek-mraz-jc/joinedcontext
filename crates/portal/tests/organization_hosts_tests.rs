@@ -58,7 +58,7 @@ fn state() -> AppState {
         "Role",
         "reader",
         ORG_NAMESPACE,
-        json!({ "rules": [{ "kinds": ["*"], "verbs": ["read", "propose"] }] }),
+        json!({ "rules": [{ "kinds": ["Project", "ContextSpace", "Endpoint", "Workspace"], "verbs": ["read", "propose"] }] }),
     ));
     m.upsert(envelope(
         "Organization",
@@ -196,8 +196,8 @@ async fn each_host_lists_and_opens_only_its_own_organizations_projects() {
         );
         for uri in [
             "/api/v1/projects/helsinki",
-            "/api/v1/projects/helsinki/contextspaces",
-            "/api/v1/projects/helsinki/contextspaces/helsinki-air",
+            "/api/v1/projects/helsinki/spaces",
+            "/api/v1/projects/helsinki/spaces/helsinki-air",
         ] {
             let (st, body) = call(&state, BA, &on_ba, "GET", uri).await;
             assert!(
@@ -210,7 +210,7 @@ async fn each_host_lists_and_opens_only_its_own_organizations_projects() {
             BA,
             &on_ba,
             "GET",
-            "/api/v1/projects/bratislava/contextspaces",
+            "/api/v1/projects/bratislava/spaces",
         )
         .await;
         assert_eq!(
