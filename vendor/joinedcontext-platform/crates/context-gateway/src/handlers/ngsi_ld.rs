@@ -926,39 +926,17 @@ fn anonymous_subscription_refusal(
             | Operation::DeleteSubscription
     );
     (changes && principal_of(subject) == "anonymous").then(|| {
-        sign_in_first("sign in to register or change a subscription; anonymous callers only read")
+        let mut answer = ProblemDetails::new(401, "unauthorized", "Unauthorized")
+            .with_detail(
+                "sign in to register or change a subscription; anonymous callers only read",
+            )
+            .into_response();
+        answer.headers_mut().insert(
+            axum::http::header::WWW_AUTHENTICATE,
+            axum::http::HeaderValue::from_static("Bearer"),
+        );
+        answer
     })
-}
-
-/// A 401 with a Bearer challenge: the caller is anonymous and the request needs a caller.
-fn sign_in_first(detail: &str) -> Response<Body> {
-    let mut answer = ProblemDetails::new(401, "unauthorized", "Unauthorized")
-        .with_detail(detail)
-        .into_response();
-    answer.headers_mut().insert(
-        axum::http::header::WWW_AUTHENTICATE,
-        axum::http::HeaderValue::from_static("Bearer"),
-    );
-    answer
-}
-
-/// An anonymous write no Policy of the Endpoint grants is a 401 before anything else judges it:
-/// before the body's checks (DM-61 would answer 400 naming the space's model) and before the
-/// broker's view (405 for an operation it does not list). The anonymous caller holds the public
-/// role alone, so the gateway's decision point sees every grant they could have.
-fn anonymous_write_refusal(
-    gateway: &Gateway,
-    endpoint: &Endpoint,
-    subject: &Subject,
-    operation: Operation,
-) -> Option<Response<Body>> {
-    let refused = operation.is_write()
-        && principal_of(subject) == "anonymous"
-        && gateway
-            .pdp
-            .decide(subject, operation, &query::requested(&[]), endpoint)
-            .is_deny();
-    refused.then(|| sign_in_first("sign in to write; this Endpoint grants no anonymous write"))
 }
 
 /// The longest `JC-Reason` the gateway takes, in characters once decoded (DM-113).
@@ -1047,10 +1025,6 @@ pub(crate) async fn view_request(
     }
     if let Some(refusal) = anonymous_subscription_refusal(subject, operation) {
         tracing::info!(slug = %endpoint.slug, %operation, "refused: an anonymous subscription");
-        return Err(Box::new(refusal));
-    }
-    if let Some(refusal) = anonymous_write_refusal(gateway, endpoint, subject, operation) {
-        tracing::info!(slug = %endpoint.slug, %operation, "write refused: anonymous, no grant");
         return Err(Box::new(refusal));
     }
     if operation.is_write() {

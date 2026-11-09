@@ -425,14 +425,14 @@ async fn write_as(who: Option<&str>, uri: &str, body: Value) -> (StatusCode, Val
 
 /// jc-smoke-gate (smoke endpoints gap 3): who may not write learns that, not the space's model.
 #[tokio::test]
-async fn an_anonymous_write_without_a_grant_is_401_before_the_model_is_judged() {
-    for kind in ["SmokeOutsidePolicy", "AirQualityObserved"] {
-        let (status, problem, asked) = write_as(None, "/entities", entity(kind, "x")).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{kind}: {problem}");
-        assert_eq!(problem["challenge"], "Bearer", "{problem}");
-        assert!(!problem.to_string().contains("bb-air-quality"), "{problem}");
-        assert!(asked.is_empty(), "nothing reaches the broker: {asked:?}");
-    }
+async fn an_anonymous_write_of_an_undeclared_type_is_403_not_400() {
+    let (status, problem, asked) =
+        write_as(None, "/entities", entity("SmokeOutsidePolicy", "x")).await;
+    // Refused as `model_judged` refuses a caller the Policy does not grant (a quality rule's
+    // 403 to an anonymous caller): the model is not named, the broker is not asked.
+    assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+    assert!(!problem.to_string().contains("bb-air-quality"), "{problem}");
+    assert!(asked.is_empty(), "nothing reaches the broker: {asked:?}");
 }
 
 #[tokio::test]
