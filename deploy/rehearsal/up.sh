@@ -163,6 +163,15 @@ export RUST_LOG=${RUST_LOG:-info,sqlx=warn}
 # The client id a stream gives a broker outside the platform ends in JC_MQTT_NAMESPACE: prod and
 # dev read mqtt.hsl.fi too, and a rehearsal sharing their id would drop their session in a loop.
 export EKIBEN_VAR_JC_MQTT_NAMESPACE=${EKIBEN_VAR_JC_MQTT_NAMESPACE:-rehearsal-$env_name-$port-$(hostname -s | tr -c 'a-z0-9\n' -)}
+# The runner's shared resources (its `-r` file: project caches, source rate limits, events_tail),
+# from the deployment at the environment's ref, which the export does not hold:
+#   git -C <deployment> show origin/release:components/pipeline-runner/streams/resources.yaml \
+#     > $REHEARSAL_HOME/prod/ekiben-resources.yaml      (dev: origin/main)
+if [ -s "$home/ekiben-resources.yaml" ]; then
+  export JCBIN_EKIBEN_RESOURCES_FILE=$home/ekiben-resources.yaml
+else
+  echo "up.sh: no $home/ekiben-resources.yaml: streams naming the runner's shared resources are refused" >&2
+fi
 # The deployment's configuration repository (defaults/environment/global.yaml configRepo).
 # jc since 3a64bee5 reads JC_SHAKO_*, earlier builds JC_GITEA_*: both, so either binary starts on it.
 export JC_SHAKO_OWNER=${REHEARSAL_CONFIG_OWNER:-joinedcontext} JC_SHAKO_REPO=${REHEARSAL_CONFIG_REPO:-configuration}
