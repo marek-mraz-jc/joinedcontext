@@ -774,6 +774,14 @@ fn schema_max(raw: Option<String>) -> Result<Option<usize>, String> {
     }
 }
 
+static HOSTED_SCHEMA_MAX: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Names [`SCHEMA_MAX_ENV`] for a host whose environment leaves it unset (`jc` takes dev's
+/// value). Only the first call counts, and only before [`install`].
+pub fn default_schema_max(bytes: &str) {
+    let _ = HOSTED_SCHEMA_MAX.set(bytes.to_owned());
+}
+
 /// [`HISTORY_DEFAULT_ENV`]: `None` unset; a value that is no duration is an
 /// error, so a typo never silently keeps or deletes everything.
 fn platform_history(raw: Option<String>) -> Result<Option<std::time::Duration>, String> {
@@ -844,7 +852,11 @@ pub(crate) async fn install_with(
         cache: tokio::sync::Mutex::new(HashMap::new()),
         fetched: std::sync::atomic::AtomicU64::new(0),
         policy: tokio::sync::Mutex::new(rule_documents::Cache::new()),
-        schema_max: schema_max(std::env::var(SCHEMA_MAX_ENV).ok())?,
+        schema_max: schema_max(
+            std::env::var(SCHEMA_MAX_ENV)
+                .ok()
+                .or_else(|| HOSTED_SCHEMA_MAX.get().cloned()),
+        )?,
         retention: std::sync::RwLock::default(),
         deleted: std::sync::Mutex::default(),
         turns: std::sync::Mutex::default(),

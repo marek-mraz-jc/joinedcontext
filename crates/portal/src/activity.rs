@@ -43,6 +43,7 @@ pub const KINDS: &[&str] = &[
     "person.changed",
     "model.key",
     "assistant.transcript",
+    "repository.read",
 ];
 
 /// Which component said so.

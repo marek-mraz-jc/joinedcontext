@@ -1,0 +1,51 @@
+[package]
+name = "agent-proxy"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "jc-agent-proxy"
+path = "src/main.rs"
+
+[features]
+# The stub endpoint token the suites run on. Only this crate's own dev-dependency below turns it
+# on, so the image (`cargo build --release --workspace`) never compiles it, and a binary built
+# with it anyway refuses to start (T-1480).
+test-stub = []
+
+[dependencies]
+jc-core = { path = "../jc-core", version = "0.1.0", features = ["axum", "logs", "outbound"] }
+argon2 = "0.5"
+# `password_hash::rand_core::OsRng` (the data credential's random bytes) only exists with getrandom on.
+rand_core = { version = "0.6", features = ["getrandom"] }
+base64 = "0.22"
+axum = { version = "0.8", features = ["macros"] }
+bytes = "1"
+futures = "0.3"
+http-body-util = "0.1"
+regex.workspace = true
+# Native roots, like `jcctl`: `rustls-tls` would bundle `webpki-roots`, whose Mozilla root data
+# carries CDLA-Permissive-2.0 and is not on this workspace's licence allow-list. The distroless
+# base carries the system trust store the proxy needs for the model provider.
+reqwest = { workspace = true, features = ["json", "rustls-tls-native-roots", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+sha2 = "0.10"
+thiserror.workspace = true
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tracing = "0.1"
+url = "2"
+
+[dev-dependencies]
+agent-proxy = { path = ".", features = ["test-stub"] }
+tower = { version = "0.5", features = ["util"] }
+# Captures the proxy's log lines, to prove no token is written to one; already in the tree via jc-core.
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+wiremock = "0.6"
+
+[package.metadata.cargo-machete]
+# Declared only to turn on its getrandom feature for argon2's OsRng (data_credential.rs).
+ignored = ["rand_core"]

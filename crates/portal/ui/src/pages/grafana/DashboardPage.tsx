@@ -183,7 +183,8 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
     />
   );
   if (view.isPending) return <PageLoading label={t("dashboardView.title")} />;
-  if (view.isError || !data) {
+  // An answer without its panels or variables (an older Portal, a stub) is a failed read, not a crash.
+  if (view.isError || !data || !Array.isArray(data.panels) || !Array.isArray(data.variables)) {
     const bare = <PageHeader title={t("dashboardView.title")} description={t("dashboardView.lead")} />;
     if (view.error instanceof ApiError && view.error.status === 404) {
       return (

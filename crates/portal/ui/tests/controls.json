@@ -2117,6 +2117,30 @@
         "policies_try_a_person.test.tsx"
       ]
     },
+    "src/pages/repositories/PullsView.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "repositories.test.tsx"
+      ]
+    },
+    "src/pages/repositories/RepositoriesPage.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "repositories.test.tsx"
+      ]
+    },
+    "src/pages/repositories/RepositoryPage.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "repositories.test.tsx"
+      ]
+    },
     "src/pages/spaces/Comments.tsx": {
       "controls": {
         "Button": 3

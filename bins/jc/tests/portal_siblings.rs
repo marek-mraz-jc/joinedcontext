@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)] // These tests start the jc binary and read their database URL.
 //! End to end: the `jc` binary with `--role all` on a free port, the Portal wired to its sibling
 //! modules by `jc` (no external Keycloak, Gitea, Bento, CKAN or Grafana), driven only through the
 //! public mounts, each step asserted on the module it lands in.
@@ -59,11 +60,15 @@ impl Drop for Jc {
 }
 
 impl Jc {
+    /// A secret this test gave jc (`given/`), else one jc keeps in its state directory.
     fn secret(&self, name: &str) -> String {
-        std::fs::read_to_string(self.state.join(name))
-            .unwrap()
-            .trim()
-            .to_owned()
+        let given = self._dir.path().join("given").join(name);
+        let path = if given.exists() {
+            given
+        } else {
+            self.state.join(name)
+        };
+        std::fs::read_to_string(path).unwrap().trim().to_owned()
     }
 
     /// The public URL of `path` as slug mode spells it (`/id/...` is kaisatsu, anything else the
@@ -198,7 +203,21 @@ async fn start_placed(placement: Placement) -> Jc {
         ),
     };
     std::fs::write(&config, mounts).unwrap();
+    // The service tokens between modules live in jc's memory only; the test acts as the Portal
+    // with tokens it gives jc as files (the split-role way of pinning them).
+    let given = dir.path().join("given");
+    std::fs::create_dir(&given).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+    for (name, flag) in [
+        ("shako-token", "--shako-token-file"),
+        ("ekiben-token", "--ekiben-token-file"),
+        ("catalogue-token", "--dataroom-portal-token-file"),
+        ("dashboards-password", "--daiya-portal-password-file"),
+    ] {
+        let file = given.join(name);
+        std::fs::write(&file, format!("test-{name}-{:032x}", std::process::id())).unwrap();
+        cmd.arg(flag).arg(file);
+    }
     for (key, _) in std::env::vars() {
         if key.starts_with("JCBIN_") || key.starts_with("JC_") {
             cmd.env_remove(key);
@@ -350,19 +369,30 @@ async fn the_portal_runs_on_its_sibling_modules() {
     let mut browser = Browser::new();
     let mut gaps: Vec<String> = Vec::new();
 
-    // Setup: secrets are private files, never in the log.
-    for name in ["portal-client-secret", "shako-token", "ekiben-token"] {
-        let value = jc.secret(name);
-        assert!(!jc.log_has(&value), "{name} appears in the log");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(jc.state.join(name))
-                .unwrap()
-                .permissions()
-                .mode();
-            assert_eq!(mode & 0o777, 0o600, "{name}");
-        }
+    // Setup: secrets are never in the log; the kept ones are private files, the given service
+    // tokens are not copied into the state directory.
+    for name in [
+        "shako-token",
+        "ekiben-token",
+        "catalogue-token",
+        "dashboards-password",
+    ] {
+        assert!(!jc.log_has(&jc.secret(name)), "{name} appears in the log");
+        assert!(
+            !jc.state.join(name).exists(),
+            "{name} written to the state dir"
+        );
+    }
+    let kept = "portal-client-secret";
+    assert!(!jc.log_has(&jc.secret(kept)), "{kept} appears in the log");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(jc.state.join(kept))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "{kept}");
     }
 
     // a. Sign-in through kaisatsu.

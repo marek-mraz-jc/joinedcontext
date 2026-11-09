@@ -57,7 +57,12 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// four administration tools (owner order 2026-11-08, MCP-ADMIN.md): jc_organization_read 980
 /// (eight Administration-page readings in one tool, by `aspect`), jc_access_request_decide 722,
 /// jc_serviceaccount_access 411, jc_access_request_list 316. An agent run is offered none of them.
-const RATCHET: usize = 66_446;
+/// 73,062 with the ten repository reads over shako (jc-shako-ui, 6,617 bytes):
+/// jc_repository_commits 1,004, _pulls 777, _tree 755, _file 748, _list 654, _commit 638,
+/// _pull 604, _get 490, _settings 490, _refs 457. Each bounds a repository name, a ref, a path or
+/// a sha by pattern, which is most of their bytes; the assistant's own turn lists none of them
+/// (tools_registry.rs).
+const RATCHET: usize = 73_063;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]

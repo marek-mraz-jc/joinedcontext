@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! PostgreSQL store isolation, boot RLS check, `shako.org` unset zero-row check,
 //! and leakproof `(instance_id, owner, name)` index plan test (Contract S2).
 //!

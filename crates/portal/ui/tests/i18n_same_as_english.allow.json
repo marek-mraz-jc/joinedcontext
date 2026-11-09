@@ -376,6 +376,13 @@
     "VS Code (.vscode/mcp.json)",
     "Client",
     "QoS {level}",
-    "cameras/${clientid}/frames"
+    "cameras/${clientid}/frames",
+    "Branch",
+    "Branches",
+    "Commit",
+    "Commits",
+    "Repositories",
+    "Reviews",
+    "Tags"
   ]
 }

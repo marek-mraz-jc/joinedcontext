@@ -1,0 +1,352 @@
+//! Git forge route mediation for Gitea (/v1/forge/*).
+
+use crate::audit::{log_request, AuditEntry};
+use crate::auth::authenticate;
+use crate::ProxyState;
+use axum::body::Body;
+use axum::extract::{Path, State};
+use axum::http::{HeaderMap, Method, Request, StatusCode};
+use axum::response::{IntoResponse, Response};
+use std::time::Instant;
+
+/// The methods a `contents/` write uses: Gitea creates with POST, updates with PUT and removes
+/// with DELETE, and all three take `branch`, `author`, `committer` and `message`.
+const CONTENT_WRITES: [Method; 3] = [Method::POST, Method::PUT, Method::DELETE];
+
+/// The body fields a `contents/` write may carry (F-R2PLT1-001). `branch`, `author` and
+/// `committer` are overwritten with the run's own; the rest of Gitea's file options is refused,
+/// since `from_path` would move a file from outside the directory and `new_branch` would commit
+/// to a branch that is not the run's.
+const CONTENT_FIELDS: [&str; 6] = ["content", "sha", "message", "branch", "author", "committer"];
+
+/// The request body as a JSON object, or the refusal to send back (AG-64, T-2362).
+///
+/// Four forge operations do not forward the body as it arrived: a `contents/` write gains the
+/// run's branch, its author, its committer and the `Co-Proposed-By` trailer, a new branch is
+/// checked against the run's own, and a pull request has its `head` forced to it. A body this
+/// proxy cannot read as an object is a body it cannot pin to the run, so it stops here rather
+/// than reaching the forge with the platform's token and no branch at all, on whichever ref
+/// Gitea calls default. An empty body is an empty object: a `DELETE` that carries everything in
+/// its query is still pinned, because the fields are inserted into what it then has.
+fn object_body(bytes: &[u8]) -> Result<serde_json::Map<String, serde_json::Value>, Box<Response>> {
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Ok(serde_json::Map::new());
+    }
+    match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(serde_json::Value::Object(map)) => Ok(map),
+        Ok(_) => Err(Box::new(
+            jc_core::ProblemDetails::new(400, "invalid-body", "Bad Request")
+                .with_detail("this forge operation takes a JSON object as its body")
+                .into_response(),
+        )),
+        Err(error) => Err(Box::new(
+            jc_core::ProblemDetails::new(400, "invalid-body", "Bad Request")
+                .with_detail(format!("the body is not JSON: {error}"))
+                .into_response(),
+        )),
+    }
+}
+
+/// The run's application directory with its closing `/`, or `None` for a run that names none.
+///
+/// An empty prefix (an assistant conversation, an application the Portal writes in its own
+/// repository) is no directory at all: such a run writes nothing through this door, since the
+/// configuration repository is what the door would otherwise reach whole (F-PLT1-003). The
+/// closing `/` makes the comparison one of whole segments, so `apps/foo` never admits
+/// `apps/foobar/` (F-PLT1-004).
+fn directory_of(prefix: &str) -> Option<String> {
+    let trimmed = prefix.trim_end_matches('/');
+    (!trimmed.is_empty()).then(|| format!("{trimmed}/"))
+}
+
+/// A `contents/` write's body pinned to the run: its fields checked against `CONTENT_FIELDS`, the
+/// run's branch, the agent as author and committer, and the proposer's trailer (AG-64).
+fn pinned_write(
+    bytes: &[u8],
+    run: &crate::runs::RunContext,
+) -> Result<serde_json::Map<String, serde_json::Value>, Box<Response>> {
+    let mut map = object_body(bytes)?;
+    if let Some(field) = map
+        .keys()
+        .find(|key| !CONTENT_FIELDS.contains(&key.as_str()))
+    {
+        return Err(Box::new(
+            jc_core::ProblemDetails::new(400, "invalid-body", "Bad Request")
+                .with_detail(format!(
+                    "a file write carries only content, sha and message; '{field}' is refused"
+                ))
+                .into_response(),
+        ));
+    }
+    map.insert("branch".to_string(), serde_json::json!(run.branch));
+    map.insert(
+        "author".to_string(),
+        serde_json::json!({
+            "name": format!("agent:app-builder@{}", run.project),
+            "email": format!("agent-builder@{}.local", run.project)
+        }),
+    );
+    map.insert(
+        "committer".to_string(),
+        serde_json::json!({
+            "name": format!("agent:app-builder@{}", run.project),
+            "email": format!("agent-builder@{}.local", run.project)
+        }),
+    );
+    let msg = map
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("agent commit");
+    let trailer = format!("\n\nCo-Proposed-By: {}", run.created_by);
+    if !msg.contains("Co-Proposed-By:") {
+        let message = format!("{msg}{trailer}");
+        map.insert("message".to_string(), serde_json::json!(message));
+    }
+    Ok(map)
+}
+
+/// The branch a file read asks for: `None` reads the default branch (the state the run started
+/// from), `Some` the run's own branch. A `ref` naming any other branch or commit is refused, so a
+/// run reads its directory on main and on its own branch alone (F-R2PLT1-003).
+fn read_ref_of<'a>(query: &str, branch: &'a str) -> Result<Option<&'a str>, Box<Response>> {
+    let mut asked = None;
+    for (key, value) in reqwest::Url::parse(&format!("http://q.invalid/?{query}"))
+        .map(|url| url.query_pairs().into_owned().collect::<Vec<_>>())
+        .unwrap_or_default()
+    {
+        if key != "ref" || value != branch || branch.is_empty() {
+            return Err(Box::new(
+                jc_core::ProblemDetails::forbidden()
+                    .with_detail(format!(
+                        "a file read takes only ref={branch}, the run's own branch; '{key}={value}' is refused"
+                    ))
+                    .into_response(),
+            ));
+        }
+        asked = Some(branch);
+    }
+    Ok(asked)
+}
+
+fn no_directory() -> Response {
+    jc_core::ProblemDetails::forbidden()
+        .with_detail("this run has no application directory, so it reaches no file in the forge")
+        .into_response()
+}
+
+pub async fn handler(
+    State(state): State<ProxyState>,
+    method: Method,
+    headers: HeaderMap,
+    Path(rest): Path<String>,
+    req: Request<Body>,
+) -> Response {
+    let start = Instant::now();
+    let run = match authenticate(&headers, &state.runs, &state.config).await {
+        Ok(r) => r,
+        Err(p) => return (*p).into_response(),
+    };
+
+    let query = req.uri().query().unwrap_or_default().to_owned();
+    let body_bytes = match super::body::bounded(req.into_body()).await {
+        Ok(bytes) => bytes,
+        Err(refusal) => return *refusal,
+    };
+
+    // The body is only read where an operation rewrites or checks it; a read forwards what
+    // arrived, untouched.
+    let mut pinned: Option<serde_json::Map<String, serde_json::Value>> = None;
+    // The one query this door forwards: a file read on the run's own branch (F-R2PLT1-003).
+    let mut read_ref: Option<&str> = None;
+    let directory = directory_of(&run.path_prefix);
+    let writes = CONTENT_WRITES.contains(&method);
+
+    if let Some(file_path) = rest.strip_prefix("contents/") {
+        // A run with no directory reads nothing either: the empty prefix would admit the whole
+        // configuration repository, every project's manifests included (F-R2PLT1-002).
+        if directory.is_none() {
+            return no_directory();
+        }
+        // Nothing encoded, no backslash, no dot or empty segment (T-0817, `super::escapes`).
+        if super::escapes(file_path)
+            || !file_path.starts_with(directory.as_deref().unwrap_or_default())
+        {
+            return jc_core::ProblemDetails::forbidden()
+                .with_detail("file path outside assigned application directory")
+                .into_response();
+        }
+        // A workflow is the Portal's, never a run's: a run that wrote one could rewrite what the
+        // forge runs and reach the lane's secret before anybody reviewed it (AP-100, ADR-N-028).
+        // `.github/` too: Gitea Actions also runs the workflows it finds there.
+        if file_path
+            .split('/')
+            .any(|segment| segment == ".gitea" || segment == ".github")
+        {
+            return jc_core::ProblemDetails::forbidden()
+                .with_detail(
+                    "a run never writes under .gitea/ or .github/: the build is the Portal's (AP-100)",
+                )
+                .into_response();
+        }
+        let pinning = if writes {
+            pinned_write(&body_bytes, &run).map(|map| pinned = Some(map))
+        } else {
+            read_ref_of(&query, &run.branch).map(|branch| read_ref = branch)
+        };
+        if let Err(refusal) = pinning {
+            return *refusal;
+        }
+    } else if rest == "branches" && method == Method::POST {
+        if directory.is_none() {
+            return no_directory();
+        }
+        let map = match object_body(&body_bytes) {
+            Ok(map) => map,
+            Err(refusal) => return *refusal,
+        };
+        if map.get("new_branch_name").and_then(|n| n.as_str()) != Some(run.branch.as_str()) {
+            return jc_core::ProblemDetails::forbidden()
+                .with_detail("cannot create branches other than run assigned branch")
+                .into_response();
+        }
+        pinned = Some(map);
+    } else if rest == "pulls" && method == Method::POST {
+        if directory.is_none() {
+            return no_directory();
+        }
+        let mut map = match object_body(&body_bytes) {
+            Ok(map) => map,
+            Err(refusal) => return *refusal,
+        };
+        map.insert("head".to_string(), serde_json::json!(run.branch));
+        pinned = Some(map);
+    } else if (rest.starts_with("pulls/") || rest.starts_with("commits/")) && method == Method::GET
+    {
+        // Read-only inspection of what the run proposed, and nothing past it: a dot segment would
+        // walk out of the repository with the platform's token (AG-86, T-3021).
+        if super::escapes(&rest) {
+            return jc_core::ProblemDetails::forbidden()
+                .with_detail("a forge read names its pull request or commit, and no path out of it")
+                .into_response();
+        }
+    } else {
+        return jc_core::ProblemDetails::forbidden()
+            .with_detail("forge operation not permitted")
+            .into_response();
+    }
+
+    // The run's one repository: its project's own in layout 2, the configuration repository
+    // otherwise. Never a name the request carries, so a run reaches no other (AG-86).
+    let repository = match &run.repository {
+        Some(name) => {
+            if name.is_empty() || name.contains(['/', '.', '%', '\\']) {
+                return jc_core::ProblemDetails::forbidden()
+                    .with_detail("the run names no repository this door reaches")
+                    .into_response();
+            }
+            let owner = state
+                .config
+                .forge_repo
+                .split_once('/')
+                .map_or(state.config.forge_repo.as_str(), |(owner, _)| owner);
+            format!("{owner}/{name}")
+        }
+        None => state.config.forge_repo.clone(),
+    };
+    let base = state.config.forge_base.as_str().trim_end_matches('/');
+    let mut target_url = format!(
+        "{base}/api/v1/repos/{repository}/{}",
+        rest.trim_start_matches('/')
+    );
+    if let Some(mut url) = read_ref.and_then(|_| reqwest::Url::parse(&target_url).ok()) {
+        url.query_pairs_mut()
+            .append_pair("ref", read_ref.unwrap_or_default());
+        target_url = url.into();
+    }
+    // Whatever the operation, the URL the forge will see, after its parser had its say, is in
+    // the run's one repository or the request stops here (AG-86, T-3021). Both sides are parsed,
+    // so a base with a path of its own compares the same way.
+    let inside_repository = reqwest::Url::parse(&format!("{base}/api/v1/repos/{repository}/"))
+        .ok()
+        .zip(reqwest::Url::parse(&target_url).ok())
+        .is_some_and(|(root, target)| target.path().starts_with(root.path()));
+    if !inside_repository {
+        return jc_core::ProblemDetails::forbidden()
+            .with_detail("the forge operation leaves the run's repository")
+            .into_response();
+    }
+    // The URL the forge will see, after its parser had its say, is inside the application
+    // directory or the request stops here (T-0817).
+    if rest.starts_with("contents/") {
+        let inside = format!(
+            "/api/v1/repos/{repository}/contents/{}",
+            directory.as_deref().unwrap_or_default()
+        );
+        if !reqwest::Url::parse(&target_url).is_ok_and(|url| url.path().starts_with(&inside)) {
+            return jc_core::ProblemDetails::forbidden()
+                .with_detail("file path outside assigned application directory")
+                .into_response();
+        }
+    }
+
+    let forge_token = state.credentials.get_forge_token();
+    let mut client_req = state
+        .http
+        .request(method.clone(), &target_url)
+        .header("Authorization", format!("token {forge_token}"))
+        .header("Accept", "application/json");
+
+    if let Some(map) = pinned {
+        client_req = client_req.json(&serde_json::Value::Object(map));
+    } else if !body_bytes.is_empty() {
+        client_req = client_req.body(body_bytes);
+    }
+
+    let upstream_resp = match client_req.send().await {
+        Ok(r) => r,
+        Err(e) => return super::upstream_unavailable(super::FORGE, &e),
+    };
+
+    let status =
+        StatusCode::from_u16(upstream_resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    if let Some(refusal) =
+        super::refused_redirect(status, super::location_of(&upstream_resp), "forge")
+    {
+        return refusal;
+    }
+    // Past the cap the run gets the refusal, and the audit line says 502 like any other outage.
+    let (resp_bytes, refusal) = match super::upstream_body(
+        super::FORGE,
+        upstream_resp,
+        super::GATEWAY_ANSWER_BYTES,
+    )
+    .await
+    {
+        Ok(bytes) => (bytes, None),
+        Err(refusal) => (Vec::new(), Some(*refusal)),
+    };
+
+    log_request(&AuditEntry {
+        run_id: &run.id,
+        user: &run.created_by,
+        upstream: "gitea",
+        method: method.as_str(),
+        path: &rest,
+        status: if refusal.is_some() {
+            502
+        } else {
+            status.as_u16()
+        },
+        bytes: resp_bytes.len(),
+        duration_ms: start.elapsed().as_millis(),
+    });
+    if let Some(refusal) = refusal {
+        return refusal;
+    }
+
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .body(Body::from(resp_bytes))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}

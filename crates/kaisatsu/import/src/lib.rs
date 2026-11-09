@@ -46,6 +46,20 @@ pub struct ApplyOptions {
     pub env_vars: BTreeMap<String, String>,
 }
 
+impl ApplyOptions {
+    /// Fills [`ApplyOptions::env_vars`] from the whole process environment, as the standalone
+    /// `kaisatsu` CLI and server resolve `$(env:NAME)`. `jc` never calls it: it hands the importer
+    /// only the values it names, so a realm file cannot read another module's secret.
+    #[must_use]
+    #[allow(clippy::disallowed_methods)] // The standalone binary's own environment reader.
+    pub fn with_process_env(mut self) -> Self {
+        for (name, value) in std::env::vars() {
+            self.env_vars.entry(name).or_insert(value);
+        }
+        self
+    }
+}
+
 impl Default for ApplyOptions {
     fn default() -> Self {
         Self {
@@ -345,7 +359,7 @@ fn secret_variable_unset(raw: &str, opts: &ApplyOptions) -> bool {
         return false;
     }
     let name = inner.strip_prefix("env:").unwrap_or(inner).trim();
-    !opts.env_vars.contains_key(name) && std::env::var(name).is_err()
+    !opts.env_vars.contains_key(name)
 }
 
 /// Resolves `$(env:NAME)`, `$(NAME)`, and `$(file:/path)` in a secret field (W1b).
@@ -380,12 +394,7 @@ fn resolve_secret_value(raw: &str, field_path: &str, opts: &ApplyOptions) -> Res
             return Ok(content.trim().to_owned());
         }
         let var_name = inner.strip_prefix("env:").unwrap_or(inner).trim();
-        if let Some(v) = opts
-            .env_vars
-            .get(var_name)
-            .cloned()
-            .or_else(|| std::env::var(var_name).ok())
-        {
+        if let Some(v) = opts.env_vars.get(var_name).cloned() {
             return Ok(v);
         }
         // A dry run (plan, check) may lack the variable and validates with a placeholder; a real

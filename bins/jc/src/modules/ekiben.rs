@@ -1,10 +1,14 @@
 //! ekiben (stream processor) inside `jc`, hardened for a shared process:
 //! - the API refuses every request without the configured bearer token (`require_auth`), even
 //!   the read-only endpoints; only `/ping` is open;
-//! - a posted config and Bloblang `env()` read only `EKIBEN_VAR_*` from the process environment,
-//!   never another module's secret (`EnvAccess::AllowListed`);
+//! - a posted config and Bloblang `env()` read no process environment (`EnvAccess::None`): `jc`'s
+//!   config loader reads the `EKIBEN_VAR_*` values and hands them over as the default
+//!   organization's variable map, so a stream never reads another module's secret;
 //! - `file` inputs and outputs are confined to one directory (`file_root`), so a stream cannot
 //!   read another module's key file or `/proc/self/environ`;
+//! - with the Portal in the same process, the pipeline credentials its reconciler resolves from
+//!   each project's own SOPS files reach that same map ([`HostRunner`]), in place of the
+//!   Kubernetes Secret the Portal writes for a runner in a cluster;
 //! - private and loopback HTTP targets stay refused (ekiben's default quotas), so a stream cannot
 //!   call the other modules' listeners from inside the process.
 //!
@@ -15,20 +19,16 @@ use crate::app::StartError;
 use crate::config::EkibenSection;
 use crate::module::Module;
 use axum::Router;
-use ekiben_core::{EnvAccess, ResourceManager};
+use ekiben_core::{EnvAccess, OrgContext, OrgId, ResourceManager};
 use ekiben_server::{
     ServerAuthConfig, ServerState, StreamManager, build_full_registry, build_router,
 };
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 fn err(e: impl std::fmt::Display) -> StartError {
     StartError::module(Module::Ekiben, e)
-}
-
-/// Reads the bearer token: the whole file, trimmed; an empty file is refused. The token is never
-/// logged or put into an error.
-fn read_token(path: &Path) -> Result<String, StartError> {
-    crate::runtime::read_secret_file(path).map_err(err)
 }
 
 /// The sandbox directory for `file` components: the configured one, or a private (0700)
@@ -51,20 +51,32 @@ fn file_root(configured: Option<&Path>) -> Result<PathBuf, StartError> {
     Ok(dir)
 }
 
-pub async fn build(cfg: &EkibenSection, setup: &crate::setup::Setup) -> Result<Router, StartError> {
-    let token_file = cfg
-        .token_file
-        .as_deref()
-        .or_else(|| setup.path(crate::setup::Secret::EkibenToken))
-        .ok_or_else(|| err("no token_file"))?;
-    let token = read_token(token_file)?;
+pub async fn build(
+    cfg: &EkibenSection,
+    setup: &crate::setup::Setup,
+    vars: &BTreeMap<String, jc_secret::Secret>,
+    portal_beside: bool,
+) -> Result<Router, StartError> {
+    let token = setup
+        .value(crate::setup::Secret::EkibenToken)
+        .ok_or_else(|| err("no API token"))?
+        .to_owned();
     let root = file_root(cfg.file_root.as_deref())?;
     tracing::info!(file_root = %root.display(), "ekiben file components confined");
+    let resources = ResourceManager::new();
+    let runner = HostRunner {
+        org: resources.get_or_create_org(&OrgId::default()),
+        given: variables(vars),
+    };
+    runner.org.replace_secrets(runner.given.clone());
+    if portal_beside {
+        hand_to_portal(runner);
+    }
     let mut manager = StreamManager::new(
         build_full_registry(),
-        ResourceManager::new(),
+        resources,
         Some(root),
-        EnvAccess::AllowListed,
+        EnvAccess::None,
     );
     if let Some(db) = &cfg.database {
         if let Some(opts) = db.migrate_options().map_err(err)? {
@@ -96,22 +108,68 @@ pub async fn build(cfg: &EkibenSection, setup: &crate::setup::Setup) -> Result<R
     Ok(build_router(state))
 }
 
+/// The default organization's variable map, as the Portal's reconciler sees the runner: what
+/// `jc` was given (`EKIBEN_VAR_*`) plus the pipeline credentials of the last sync. A given name
+/// wins over a pipeline's, so a project cannot replace a variable the operator set.
+pub struct HostRunner {
+    org: Arc<OrgContext>,
+    given: HashMap<String, String>,
+}
+
+impl HostRunner {
+    /// The variables after a sync handed `resolved`.
+    fn merged(&self, resolved: BTreeMap<String, String>) -> HashMap<String, String> {
+        let mut out: HashMap<String, String> = resolved.into_iter().collect();
+        for (name, value) in &self.given {
+            if out.insert(name.clone(), value.clone()).is_some() {
+                tracing::warn!(variable = %name, "a pipeline credential names a variable jc was given; jc's value is kept");
+            }
+        }
+        out
+    }
+}
+
+#[cfg(feature = "portal")]
+impl joinedcontext_portal::pipeline_secrets::RunnerSecrets for HostRunner {
+    fn replace(&self, values: BTreeMap<String, String>) {
+        self.org.replace_secrets(self.merged(values));
+    }
+}
+
+#[cfg(feature = "portal")]
+fn hand_to_portal(runner: HostRunner) {
+    joinedcontext_portal::pipeline_secrets::hand_runner_secrets_to(Arc::new(runner));
+}
+
+#[cfg(not(feature = "portal"))]
+fn hand_to_portal(_: HostRunner) {}
+
+/// The default organization's variable map: what `jc` read from `EKIBEN_VAR_*`.
+fn variables(vars: &BTreeMap<String, jc_secret::Secret>) -> HashMap<String, String> {
+    vars.iter()
+        .map(|(k, v)| (k.clone(), v.expose().to_owned()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn token_file_must_exist_and_hold_a_token() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("missing");
-        assert!(read_token(&missing).is_err());
-        let empty = dir.path().join("empty");
-        std::fs::write(&empty, " \n").unwrap();
-        let e = read_token(&empty).unwrap_err().to_string();
-        assert!(e.contains("is empty"), "{e}");
-        let ok = dir.path().join("tok");
-        std::fs::write(&ok, "s3cret\n").unwrap();
-        assert_eq!(read_token(&ok).unwrap(), "s3cret");
+    fn a_given_variable_wins_over_a_pipeline_credential_of_the_same_name() {
+        let resources = ResourceManager::new();
+        let runner = HostRunner {
+            org: resources.get_or_create_org(&OrgId::default()),
+            given: HashMap::from([("SHARED".to_owned(), "operator".to_owned())]),
+        };
+        let merged = runner.merged(BTreeMap::from([
+            ("SHARED".to_owned(), "pipeline".to_owned()),
+            ("GOLEMIO_KEY".to_owned(), "k".to_owned()),
+        ]));
+        assert_eq!(merged["SHARED"], "operator");
+        assert_eq!(merged["GOLEMIO_KEY"], "k");
+        // A later sync without the credential drops it again.
+        assert_eq!(runner.merged(BTreeMap::new()).len(), 1);
     }
 
     #[test]
@@ -130,5 +188,67 @@ mod tests {
         let blocker = dir.path().join("file");
         std::fs::write(&blocker, "x").unwrap();
         assert!(file_root(Some(&blocker.join("sub"))).is_err());
+    }
+
+    /// The Portal's stream deletes reach jc's ekiben: the deployer sends the bearer of the token
+    /// file siblings.rs hands the Portal (`JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE`); a deployer
+    /// without it is refused 401 and the stream stays (jc-migrate's rehearsal, G15).
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn a_portal_issued_delete_reaches_ekiben() {
+        use crate::setup::{Secret, Setup};
+        use joinedcontext_portal::reconciler::streams::StreamDeployer;
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &[Module::Ekiben], &Default::default()).unwrap();
+        let cfg = EkibenSection {
+            file_root: Some(dir.path().join("files")),
+            ..Default::default()
+        };
+        let app = build(&cfg, &setup, &BTreeMap::new(), false).await.unwrap();
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let runner = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await });
+        let token = setup.value(Secret::EkibenToken).unwrap().to_owned();
+        let url = format!("{runner}/streams/helsinki.gone");
+        let client = reqwest::Client::new();
+        let stream = serde_json::json!({
+            "input": {"generate": {"interval": "1h", "mapping": "root = {}"}},
+            "output": {"drop": {}}
+        });
+        let r = client
+            .post(&url)
+            .bearer_auth(&token)
+            .json(&stream)
+            .send()
+            .await
+            .unwrap();
+        assert!(r.status().is_success(), "{}", r.status());
+        let held = || async {
+            client
+                .get(&url)
+                .bearer_auth(&token)
+                .send()
+                .await
+                .unwrap()
+                .status()
+        };
+
+        StreamDeployer::new(runner.clone())
+            .retire("helsinki", &["gone".to_owned()])
+            .await;
+        assert!(
+            held().await.is_success(),
+            "a delete without the bearer is refused"
+        );
+
+        StreamDeployer::new(runner)
+            .with_runner_token(Some(token.clone()))
+            .retire("helsinki", &["gone".to_owned()])
+            .await;
+        assert_eq!(
+            held().await,
+            reqwest::StatusCode::NOT_FOUND,
+            "the Portal's delete reached ekiben"
+        );
     }
 }

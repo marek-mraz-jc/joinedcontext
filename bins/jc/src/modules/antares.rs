@@ -43,6 +43,9 @@ fn err(e: impl std::fmt::Display) -> StartError {
 /// `parquet` and `tabular` (OGC `f=parquet|csv|zip`), which this build leaves out.
 pub const SURFACES: &str = "admin,views,mcp,access,ws,ws-views,ogc,linkml,odata,sta,ical,feed";
 
+/// The largest Tenant schema the broker stores, dev's 1 MiB (`linkml_model::SURFACE_LIMITS`).
+pub const SCHEMA_MAX_BYTES: &str = "1048576";
+
 /// The subject headers the gateway sends and the engine reads, as dev names them.
 pub const SUBJECT_HEADERS: &str = "x-jc-subject,x-jc-groups,x-jc-roles,x-jc-client,x-jc-restricted,x-jc-did,x-jc-read-only,x-jc-member";
 
@@ -58,6 +61,9 @@ pub fn defaults() -> BTreeMap<String, String> {
             "ANTARES_POLICY_SUBJECT_FROM",
             crate::modules::GATEWAY_IDENTITY,
         ),
+        // The Portal PUTs each Tenant's schema to /q/schemas/{tenant}; unset, the broker takes
+        // none and serves no OGC or OData collection (dev's value).
+        ("ANTARES_SCHEMA_MAX_BYTES", SCHEMA_MAX_BYTES),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_owned(), v.to_owned()))
@@ -90,7 +96,7 @@ async fn hop_guard(secret: Arc<str>, mut req: Request, next: Next) -> Response {
     let admitted = req
         .headers()
         .get(crate::modules::GATEWAY_HOP_HEADER)
-        .is_some_and(|v| crate::runtime::secret_eq(v.as_bytes(), secret.as_bytes()));
+        .is_some_and(|v| jc_secret::constant_time_eq(v.as_bytes(), secret.as_bytes()));
     if !admitted {
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -117,13 +123,14 @@ pub async fn build(
     let render = antares_broker::telemetry::init_hosted();
     let mut broker_cfg = antares_broker::config_from_env().map_err(err)?;
     broker_cfg.defaults = defaults();
-    // The `/q` admin credential is mandatory in a shared process.
-    let token_file = cfg
-        .admin_token_file
-        .as_deref()
-        .or_else(|| setup.path(crate::setup::Secret::AntaresAdminToken))
-        .ok_or_else(|| err("no admin_token_file"))?;
-    broker_cfg.admin_token_file = Some(token_file.display().to_string());
+    // The `/q` admin credential is mandatory in a shared process: the operator's, else the one
+    // setup holds (a file while the Portal, which reads it from one, runs beside it; else made
+    // per boot in memory).
+    let token = setup
+        .value(crate::setup::Secret::AntaresAdminToken)
+        .ok_or_else(|| err("no admin token"))?;
+    broker_cfg.admin_token_file = None;
+    broker_cfg.admin_token = Some(antares_broker::AdminToken(token.to_owned()));
     if let Some(db) = &cfg.database {
         match broker_cfg.store_name.as_str() {
             "memory" => broker_cfg.store_name = "postgres".into(),
@@ -136,8 +143,8 @@ pub async fn build(
         }
         // As standalone (`config_from_env`): bus=local over a shared database double-fires
         // notifications when a second process serves it, unless the deployment says it runs one.
-        let one_process = std::env::var("ANTARES_ALLOW_SHARED_LOCAL")
-            .is_ok_and(|v| matches!(v.as_str(), "1" | "true"));
+        let one_process = crate::config::antares_env("ANTARES_ALLOW_SHARED_LOCAL")
+            .is_some_and(|v| matches!(v.as_str(), "1" | "true"));
         if broker_cfg.bus_mode == "local" && !one_process {
             return Err(err(
                 "[antares.database] with ANTARES_BUS=local double-fires notifications when more \
@@ -146,7 +153,7 @@ pub async fn build(
             ));
         }
         let url = db.app_url_with_password().map_err(err)?;
-        broker_cfg.database_url = Some(antares_broker::Secret::new(url));
+        broker_cfg.database_url = Some(antares_broker::Secret::new(url.expose().to_owned()));
         // Unset: ANTARES_PG_POOL (default 20), as standalone.
         broker_cfg.pg_pool = db.max_connections;
     }
@@ -245,6 +252,7 @@ mod tests {
         );
         assert_eq!(d["ANTARES_POLICY"], "joinedcontext");
         assert!(d["ANTARES_API_SURFACES"].split(',').any(|s| s == "views"));
+        assert_eq!(d["ANTARES_SCHEMA_MAX_BYTES"], "1048576");
     }
 
     /// The `l5d-client-id` a request reaches the broker with, behind `guard`.

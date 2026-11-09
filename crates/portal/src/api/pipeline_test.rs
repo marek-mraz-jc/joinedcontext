@@ -26,7 +26,6 @@ use utoipa::ToSchema;
 
 use crate::agents::share;
 use crate::api::dry_run::Probe;
-use crate::api::pipelines::http;
 use crate::auth::CurrentUser;
 use crate::error::{ApiError, ProblemDetails};
 use crate::resource::is_dns1123;
@@ -492,7 +491,8 @@ pub(crate) async fn run_stream_within(
     let id = share::slug();
     let config = config(&format!("{capture}/internal/pipeline-tests/{id}"))?;
     // The project's write budget a step's `rate_limit: pipeline_egress` names (T-5803).
-    if let Some(why) = crate::reconciler::streams::declare_egress(http(), &runner, project)
+    let http = &crate::api::pipelines::runner_http(&state.config);
+    if let Some(why) = crate::reconciler::streams::declare_egress(http, &runner, project)
         .await
         .unwrap_or_else(Some)
     {
@@ -510,8 +510,16 @@ pub(crate) async fn run_stream_within(
     // above keeps this Portal to one test per project; another replica's test answers 409.
     let stream = format!("{runner}/streams/{STREAM_PREFIX}{project}");
     let identity = state.config.pipeline_identity;
-    let outcome =
-        create_and_trace(project, &stream, &config, identity, window, &mut receiver).await;
+    let outcome = create_and_trace(
+        http,
+        project,
+        &stream,
+        &config,
+        identity,
+        window,
+        &mut receiver,
+    )
+    .await;
     // Another replica's test in flight: its stream is not this test's to delete.
     if matches!(outcome, Err(ApiError::Conflict(_))) {
         return outcome;
@@ -520,7 +528,7 @@ pub(crate) async fn run_stream_within(
     // Gone whatever happened: a runner that timed out or answered 5xx may still have created the
     // stream, and one it keeps answers 409 on the next test's create. A delete it refuses (anything
     // but 2xx, or 404 for a stream it never made) is a log line and a runner error in the trace.
-    let deleted = match http().delete(&stream).send().await {
+    let deleted = match http.delete(&stream).send().await {
         Ok(answer) if answer.status().is_success() || answer.status() == StatusCode::NOT_FOUND => {
             Ok(())
         }
@@ -547,6 +555,7 @@ pub(crate) async fn run_stream_within(
 /// runner: a left-over one is removed and the create sent again, a live one (another Portal
 /// replica's test) is the caller's 409.
 async fn create_and_trace(
+    http: &reqwest::Client,
     project: &str,
     stream: &str,
     config: &Value,
@@ -555,9 +564,9 @@ async fn create_and_trace(
     receiver: &mut mpsc::UnboundedReceiver<Captured>,
 ) -> Result<(TestTrace, bool), ApiError> {
     let config = credentialed(config, project, identity);
-    let (mut status, mut refusal) = create(project, stream, &config).await?;
-    if held(status, &refusal) && left_over_removed(stream).await {
-        (status, refusal) = create(project, stream, &config).await?;
+    let (mut status, mut refusal) = create(http, project, stream, &config).await?;
+    if held(status, &refusal) && left_over_removed(http, stream).await {
+        (status, refusal) = create(http, project, stream, &config).await?;
     }
     if held(status, &refusal) {
         return Err(ApiError::Conflict(format!(
@@ -604,11 +613,12 @@ fn silent_runner(window: Window) -> TestError {
 
 /// The runner's answer to the create: its status and its words.
 async fn create(
+    http: &reqwest::Client,
     project: &str,
     stream: &str,
     config: &Value,
 ) -> Result<(StatusCode, String), ApiError> {
-    let created = http().post(stream).json(config).send().await.map_err(|err| {
+    let created = http.post(stream).json(config).send().await.map_err(|err| {
         tracing::warn!(project = %project, error = %err, "pipeline runner unreachable for a test");
         ApiError::Unavailable("the pipeline runner did not answer".into())
     })?;
@@ -624,8 +634,8 @@ fn held(status: StatusCode, refusal: &str) -> bool {
 /// A test stream older than any test lives (the longest window is seconds) is one whose delete
 /// failed: removed here, `true` when it is gone. A younger one, or one the runner will not
 /// describe, is left alone.
-async fn left_over_removed(stream: &str) -> bool {
-    let uptime = match http().get(stream).send().await {
+async fn left_over_removed(http: &reqwest::Client, stream: &str) -> bool {
+    let uptime = match http.get(stream).send().await {
         Ok(answer) if answer.status().is_success() => answer
             .json::<Value>()
             .await
@@ -636,7 +646,7 @@ async fn left_over_removed(stream: &str) -> bool {
     if uptime.is_none_or(|seconds| seconds < LEFT_OVER.as_secs_f64()) {
         return false;
     }
-    matches!(http().delete(stream).send().await, Ok(answer) if answer.status().is_success())
+    matches!(http.delete(stream).send().await, Ok(answer) if answer.status().is_success())
 }
 
 /// The harness as the runner gets it: the project's `pipelines` client, or with the pipelines'

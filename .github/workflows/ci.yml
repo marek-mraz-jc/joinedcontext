@@ -64,9 +64,34 @@ jobs:
       DATAROOM_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/dataroom
       DAIYA_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/daiya
       SHAKO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/shako
+      # The assistant's store wants pgvector: the server the step below starts.
+      JC_ASSISTANT_TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5433/postgres
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: sh .github/scripts/free-disk.sh
+      # The assistant (vendor/joinedcontext-platform/crates/assistant), as the platform's ci-full
+      # runs it: the PDFium kreuzberg links, pinned and checked (without it kreuzberg's build
+      # fetches whatever release is newest, unchecked), the embedding model and the ONNX Runtime
+      # its tests load, each checked against its SHA-256.
+      - run: |
+          sh vendor/joinedcontext-platform/scripts/ci/pdfium.sh "$RUNNER_TEMP/pdfium"
+          sh vendor/joinedcontext-platform/scripts/ci/e5-small.sh "$RUNNER_TEMP/e5-small"
+          sh vendor/joinedcontext-platform/scripts/ci/onnxruntime.sh "$RUNNER_TEMP/onnxruntime"
+          {
+            echo "KREUZBERG_PDFIUM_PREBUILT=$RUNNER_TEMP/pdfium"
+            echo "JC_ASSISTANT_TEST_MODEL_DIR=$RUNNER_TEMP/e5-small"
+            echo "ORT_DYLIB_PATH=$RUNNER_TEMP/onnxruntime/libonnxruntime.so"
+          } >> "$GITHUB_ENV"
+      # The cluster's own PostgreSQL image (pgvector 0.8.6, pinned in deployment's
+      # components/postgres/images.yaml). It has no entrypoint of its own (CloudNativePG drives
+      # it), so the step initialises and starts it.
+      - run: >-
+          docker run -d --name assistant-pg -p 5433:5432 --entrypoint bash
+          ghcr.io/cloudnative-pg/postgis@sha256:9d597fcf4350e4bae9ff40cbe0e4383746a9c7f9c60da72483b0e966e4c20765
+          -c 'export PATH=/usr/lib/postgresql/16/bin:$PATH; initdb -D /tmp/pg -U postgres --auth=trust >/dev/null
+          && echo "host all all 0.0.0.0/0 trust" >> /tmp/pg/pg_hba.conf
+          && exec postgres -D /tmp/pg -c listen_addresses=* -c unix_socket_directories=/tmp'
+          && for _ in $(seq 1 30); do docker exec assistant-pg /usr/lib/postgresql/16/bin/pg_isready -h 127.0.0.1 -U postgres && break; sleep 1; done
       - run: |
           for db in kaisatsu dataroom daiya shako; do
             psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"

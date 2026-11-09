@@ -384,6 +384,10 @@ pub struct BrokerConfig {
     /// ANTARES_ADMIN_TOKEN_FILE: the `/q` admin credential. A host may set
     /// it from its own configuration before [`build_state`].
     pub admin_token_file: Option<String>,
+    /// The `/q` admin credential itself, which a host that holds it in memory sets instead of
+    /// [`BrokerConfig::admin_token_file`] (it wins over the file). Never read from the
+    /// environment; `Debug` of the config never prints it.
+    pub admin_token: Option<AdminToken>,
     /// Values a host supplies for `ANTARES_*` keys its environment leaves unset (`jc` names
     /// its gateway and the platform's engine this way, never by writing the environment). An
     /// environment value always wins; an unknown key is refused by [`build_state`]. Read for
@@ -399,6 +403,16 @@ pub struct BrokerConfig {
     /// The pool size a host gives in place of ANTARES_PG_POOL (that
     /// variable is read when this is `None`).
     pub pg_pool: Option<u32>,
+}
+
+/// A host-given `/q` admin token: `Debug` prints `<redacted>`.
+#[derive(Clone)]
+pub struct AdminToken(pub String);
+
+impl std::fmt::Debug for AdminToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<redacted>")
+    }
 }
 
 impl BrokerConfig {
@@ -502,6 +516,7 @@ pub fn config_from_env() -> Result<BrokerConfig, Box<dyn std::error::Error>> {
         drain_delay,
         drain_deadline,
         admin_token_file: std::env::var("ANTARES_ADMIN_TOKEN_FILE").ok(),
+        admin_token: None,
         defaults: std::collections::BTreeMap::new(),
         database_url: None,
         require_rls: std::env::var("ANTARES_REQUIRE_RLS").is_ok_and(|v| !is_off(&v)),
@@ -1317,7 +1332,13 @@ pub async fn build_state(
     // pod's table within one interval of the store. After the engine: the
     // reload hands it its rule documents (ADR-0020 amendment).
     #[cfg(feature = "views")]
-    antares_ops::views::install(&state).await?;
+    {
+        // The host's schema cap when the environment names none (`jc`, T-3628).
+        if let Some(bytes) = cfg.defaults.get(antares_ops::views::SCHEMA_MAX_ENV) {
+            antares_ops::views::default_schema_max(bytes);
+        }
+        antares_ops::views::install(&state).await?;
+    }
     // The MCP write decisions a deployment's decision page records
     // (`/q/mcp-confirmations/{id}`, T-5816), behind the admin credential.
     #[cfg(feature = "mcp")]
@@ -1344,10 +1365,21 @@ pub async fn build_state(
     }
     // The /q admin credential, before the router mounts the admin surface.
     // Unconfigured, /q serves as before and says so once, here.
-    match antares_api::admin_auth::AdminAuth::from_config(
-        cfg.admin_token_file.as_deref(),
-        std::env::var("ANTARES_ADMIN_METRICS").ok().as_deref(),
-    )? {
+    let admin_metrics = std::env::var("ANTARES_ADMIN_METRICS").ok();
+    let admin = match &cfg.admin_token {
+        Some(token) => {
+            antares_api::admin_auth::AdminAuth::from_config(None, admin_metrics.as_deref())
+                .and_then(|_| {
+                    let open = admin_metrics.as_deref().map(str::trim) == Some("open");
+                    antares_api::admin_auth::AdminAuth::new(&token.0, open).map(Some)
+                })?
+        }
+        None => antares_api::admin_auth::AdminAuth::from_config(
+            cfg.admin_token_file.as_deref(),
+            admin_metrics.as_deref(),
+        )?,
+    };
+    match admin {
         Some(auth) => {
             tracing::info!("/q admin routes require the admin token ({auth:?})");
             state = state.with_admin_auth(auth);

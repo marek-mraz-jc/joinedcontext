@@ -1,0 +1,10 @@
+# Secrets design (bins/jc/STATUS.md "Secrets"): in jc only src/config.rs reads the environment
+# (`process_env`, `portal_env`), and only `jc_secret::spawn` starts a child process. Tests that run
+# the jc binary take `#[allow(clippy::disallowed_methods)]` with their reason beside it.
+disallowed-methods = [
+  { path = "std::env::var", reason = "jc's config loader reads the environment; take the value from your config section" },
+  { path = "std::env::var_os", reason = "jc's config loader reads the environment; take the value from your config section" },
+  { path = "std::env::vars", reason = "jc's config loader reads the environment; take the value from your config section" },
+  { path = "std::env::vars_os", reason = "jc's config loader reads the environment; take the value from your config section" },
+  { path = "std::process::Command::new", reason = "start children through jc_secret::spawn::command (cleared environment, allow-list)" },
+]
