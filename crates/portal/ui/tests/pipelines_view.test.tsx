@@ -141,6 +141,10 @@ describe("pipelines view", () => {
   it("keeps a row's failure to its cause, and the whole sentence when the cause is too short to read", () => {
     expect(failureCause("the last run, ended 2026-11-09T11:20:02Z, failed: the runner refused the run: environment variable 'X' was not defined"))
       .toBe("environment variable 'X' was not defined");
+    expect(failureCause("the last run, ended 2026-11-09T11:20:02Z, failed: the runner refused the run: environment variable 'X' was not defined; next run 2026-11-15T02:41:00Z"))
+      .toBe("environment variable 'X' was not defined");
+    expect(failureCause("the runner refused the run: variable 'A' was not defined; variable 'B' was not defined; no further run until it changes"))
+      .toBe("variable 'A' was not defined; variable 'B' was not defined");
     expect(failureCause("runner answered 502: busy")).toBe("runner answered 502: busy");
     expect(failureCause("SourceUnreachable")).toBe("SourceUnreachable");
   });
@@ -222,8 +226,9 @@ describe("pipelines view", () => {
         conditions: [{ type: "StreamDeployed", status: "False", reason: "RunnerRefused", message: `the runner refused the run: ${cause}` }],
       }) as never;
     const failed = structuredClone(PIPELINES);
-    failed.items[0].status = status("environment variable 'JC_CLIENT_SECRET_BB' was not defined");
-    failed.items[1].status = status("environment variable 'JC_CLIENT_SECRET_BB' was not defined");
+    // Each says its own next run: the cause is what the rows share.
+    failed.items[0].status = status("environment variable 'JC_CLIENT_SECRET_BB' was not defined; next run 2026-11-15T02:41:00Z");
+    failed.items[1].status = status("environment variable 'JC_CLIENT_SECRET_BB' was not defined; next run 2026-11-16T04:43:00Z");
     renderPipelines(METRICS, 200, failed);
     const banner = await screen.findByTestId("pipelines-shared-failure");
     expect(banner).toHaveTextContent("(2): environment variable 'JC_CLIENT_SECRET_BB' was not defined");
@@ -232,6 +237,8 @@ describe("pipelines view", () => {
     }
 
     expect(sharedFailureOf([failed.items[0], { ...failed.items[1], status: status("source unreachable at all") }] as never)).toBeNull();
+    expect(sharedFailureOf([failed.items[0], failed.items[1], { ...failed.items[1], status: status("source unreachable at all") }] as never))
+      .toBe("environment variable 'JC_CLIENT_SECRET_BB' was not defined");
     expect(sharedFailureOf([failed.items[0]] as never)).toBeNull();
   });
 
