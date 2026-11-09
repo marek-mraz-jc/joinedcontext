@@ -4,8 +4,8 @@
 import i18next from "i18next";
 import ICU from "i18next-icu";
 import { initReactI18next } from "react-i18next";
-import { app as enApp, endpoints as enEndpoints, entityGrid as enGrid, spaces as enSpaces } from "../locales/en.json";
-import { app as skApp, endpoints as skEndpoints, entityGrid as skGrid, spaces as skSpaces } from "../locales/sk.json";
+import { app as enApp, endpoints as enEndpoints, entityGrid as enGrid, problem as enProblem, spaces as enSpaces } from "../locales/en.json";
+import { app as skApp, endpoints as skEndpoints, entityGrid as skGrid, problem as skProblem, spaces as skSpaces } from "../locales/sk.json";
 
 const i18n = i18next.createInstance().use(ICU).use(initReactI18next);
 
@@ -13,9 +13,10 @@ void i18n.init({
   lng: "en",
   fallbackLng: "en",
   resources: {
-    // The Data section's toolbar (T-6303) reads spaces.toolbar and spaces.saved (T-6313).
-    en: { translation: { app: enApp, endpoints: enEndpoints, entityGrid: enGrid, spaces: { toolbar: enSpaces.toolbar, saved: enSpaces.saved } } },
-    sk: { translation: { app: skApp, endpoints: skEndpoints, entityGrid: skGrid, spaces: { toolbar: skSpaces.toolbar, saved: skSpaces.saved } } },
+    // The Data section's toolbar (T-6303) reads spaces.toolbar and spaces.saved (T-6313); a
+    // refusal reads its problem type's sentence (PageState problemHint), else the API's English.
+    en: { translation: { app: enApp, endpoints: enEndpoints, entityGrid: enGrid, problem: enProblem, spaces: { toolbar: enSpaces.toolbar, saved: enSpaces.saved } } },
+    sk: { translation: { app: skApp, endpoints: skEndpoints, entityGrid: skGrid, problem: skProblem, spaces: { toolbar: skSpaces.toolbar, saved: skSpaces.saved } } },
   },
   interpolation: { escapeValue: false },
   returnNull: false,

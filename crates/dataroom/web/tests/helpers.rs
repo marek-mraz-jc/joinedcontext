@@ -211,6 +211,40 @@ fn jc_explorer_frames_viz_on_the_platform_with_checked_slug_type_and_name() {
     assert!(!ex.src.contains("dataset="), "{}", ex.src);
 }
 
+/// jc in slug mode: viz, the gateway and the Portal on one origin. The explorer and chart frames
+/// drop `allow-same-origin` (jc serves those pages sandboxed to an opaque origin, whose messages
+/// come from `null`); on dev's own viz origin they keep it.
+#[test]
+fn a_viz_frame_on_the_portals_origin_asks_for_no_origin() {
+    let mut b = branding();
+    b.apply_override_json(&json!({ "addresses": {
+        "viz": "https://city.example/viz",
+        "api": "https://city.example",
+        "portal": "https://city.example/portal",
+    } }));
+    let ds = live_ds(&format!("https://city.example/api/endpoint/{SLUG}/"));
+    let ex = jc_explorer(&ds, None, &b, "sk", "/o").expect("explorer");
+    assert_eq!(
+        ex.sandbox,
+        "allow-scripts allow-popups allow-popups-to-escape-sandbox"
+    );
+    assert_eq!(ex.origin, "null");
+    let views = [view("c1", "jc_visualization", "Air")];
+    let c = &jc_visualizations(&ds, &views, &b, "sk", "")[0];
+    assert_eq!(c.sandbox, "allow-scripts allow-downloads");
+    assert_eq!(c.origin, "null");
+    assert!(!c.code.contains("allow-same-origin"), "{}", c.code);
+
+    let ex = jc_explorer(&live_ds(&ep("")), None, &branding(), "sk", "/o").expect("explorer");
+    assert_eq!(
+        ex.sandbox,
+        "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+    );
+    let c = &jc_visualizations(&ds, &views, &branding(), "sk", "")[0];
+    assert_eq!(c.sandbox, "allow-scripts allow-same-origin allow-downloads");
+    assert!(c.code.contains("allow-same-origin"), "{}", c.code);
+}
+
 #[test]
 fn jc_explorer_and_developer_page_need_an_api_endpoint_address() {
     let b = branding();

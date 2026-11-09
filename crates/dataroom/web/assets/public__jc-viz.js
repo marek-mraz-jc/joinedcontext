@@ -1,5 +1,6 @@
 // The charts' frames (T-4641): the renderer's host page says how tall it is. Only a message from
-// that frame itself, from the renderer's own origin, sets its height. The live data widget with a
+// that frame itself, from the renderer's own origin, sets its height. A frame on the Portal's
+// origin (jc) is sandboxed to an opaque origin: its data-jc-viz is "null", as its messages say. The live data widget with a
 // 25-row page and its map runs past 2000 px (T-5192: the map was cut off and the frame scrolled
 // inside itself), so the cap is a guard against a runaway frame, not a layout limit.
 var JC_VIZ_MAX = 20000;
@@ -22,7 +23,9 @@ function jcVizViewport() {
     var top = Math.max(0, -rect.top);
     var height = Math.min(window.innerHeight, rect.bottom) - Math.max(0, rect.top);
     if (frame.contentWindow && height > 0) {
-      frame.contentWindow.postMessage({ type: "jc-viz-viewport", top: Math.round(top), height: Math.round(height) }, frame.getAttribute("data-jc-viz"));
+      // An opaque origin cannot be named as a target: the message (two numbers) goes to "*".
+      var target = frame.getAttribute("data-jc-viz");
+      frame.contentWindow.postMessage({ type: "jc-viz-viewport", top: Math.round(top), height: Math.round(height) }, target === "null" ? "*" : target);
     }
   });
 }

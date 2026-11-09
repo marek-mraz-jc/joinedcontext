@@ -13,6 +13,11 @@
   var VIEWS = ["both", "table"];
   var HEIGHT = { min: 240, max: 2000, fallback: 640 };
   var SANDBOX = "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox";
+  // jc's viz mount at /viz shares its host with the Portal: the server sandboxes the page to an
+  // opaque origin (CSP sandbox), and the frame asks for no origin either.
+  function sandboxOf(origin) {
+    return /\/viz$/.test(origin) ? "allow-scripts allow-popups allow-popups-to-escape-sandbox" : SANDBOX;
+  }
 
   function attr(value) {
     return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -73,7 +78,7 @@
       return '<script src="' + origin + '/embed.js" defer></script>\n<jc-data-explorer ' + a.join(" ") + "></jc-data-explorer>";
     }
     return '<iframe src="' + origin + "/embed.html" + attr(hash(o)) + '" title="' + name + '" width="100%" height="' + s.height +
-      '" style="border:0;max-width:100%" loading="lazy" referrerpolicy="no-referrer" sandbox="' + SANDBOX + '"></iframe>';
+      '" style="border:0;max-width:100%" loading="lazy" referrerpolicy="no-referrer" sandbox="' + sandboxOf(origin) + '"></iframe>';
   }
 
   // The web component: reads its attributes once, refuses wrong ones with a visible message, and
@@ -103,12 +108,13 @@
         frame.title = get("title") || "Live data";
         frame.loading = "lazy";
         frame.referrerPolicy = "no-referrer";
-        frame.setAttribute("sandbox", SANDBOX);
+        frame.setAttribute("sandbox", sandboxOf(origin));
         frame.style.height = settings(o).height + "px";
         shadow.appendChild(frame);
         this._listen = function (event) {
           var h = event.data && event.data.type === "jc-viz-height" && Number(event.data.height);
-          if (event.origin === new URL(origin).origin && event.source === frame.contentWindow && h > 0) frame.style.height = Math.min(Math.max(h, HEIGHT.min), 4000) + "px";
+          var from = /\/viz$/.test(origin) ? "null" : new URL(origin).origin;
+          if (event.origin === from && event.source === frame.contentWindow && h > 0) frame.style.height = Math.min(Math.max(h, HEIGHT.min), 4000) + "px";
         };
         win.addEventListener("message", this._listen);
       }
