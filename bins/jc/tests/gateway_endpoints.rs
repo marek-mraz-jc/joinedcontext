@@ -650,6 +650,23 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     let (status, body) = call(&jc, get.clone(), &format!("{public}/types"), None, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("Thing"), "{body}");
+    // The catalogue's explorer reads from a sandboxed page (viz beside the Portal): `Origin: null`
+    // gets the same public answer with CORS for `null` and no credentials.
+    let resp = Client::new()
+        .get(jc.url(&format!("{public}/entities?type=Thing")))
+        .header("origin", "null")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()["access-control-allow-origin"], "null");
+    assert!(
+        resp.headers()
+            .get("access-control-allow-credentials")
+            .is_none()
+    );
+    let body = resp.text().await.unwrap_or_default();
+    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
     let (status, body) = call(
         &jc,
         get.clone(),

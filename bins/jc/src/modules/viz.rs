@@ -8,6 +8,14 @@
 //! (`viz.{domain}` → `api.`, `tiles.`, `opendata.{domain}`). Here they answer beside other modules,
 //! so `/explore.html` and `/embed.html` carry `<meta name="jc-viz">` naming those three addresses
 //! (never a URL parameter), and each page's CSP names exactly them.
+//!
+//! The pages render untrusted Endpoint data. On dev and prod they live on `viz.{domain}`, an
+//! origin of their own. When this mount shares its origin with the Portal, the catalogue or the
+//! gateway (slug mode: one host for all), every page also gets a CSP `sandbox` without
+//! `allow-same-origin`, so it runs in an opaque origin and reads no cookie and makes no
+//! credentialed call there, framed or opened on its own. Its reads then go out as `Origin: null`:
+//! the gateway answers those anonymously (`modules::gateway`) and `vendor/` answers CORS for the
+//! MapLibre module `import()`.
 
 use crate::siblings::LiveAddresses;
 use axum::Router;
@@ -120,6 +128,9 @@ const FILES: &[(&str, &[u8])] = &[
 const PERMISSIONS: &str = "camera=(), microphone=(), geolocation=(), payment=(), usb=()";
 /// Everything that is not one of the pages: nothing it could run or frame.
 const INERT: &str = "default-src 'none'; frame-ancestors 'none'";
+/// A page on an origin it shares with the Portal: an opaque origin, never `allow-same-origin`.
+const SANDBOX: &str =
+    "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads";
 
 /// The addresses a page reads, and the CSP of each page, fixed at start.
 struct Site {
@@ -149,7 +160,14 @@ impl Site {
             origin(&live.tiles),
             origin(&live.catalogue),
         );
-        let tail = "base-uri 'none'; form-action 'none'";
+        let shared = [&api, &cat, &origin(&live.portal)]
+            .iter()
+            .any(|o| o.as_str() == own);
+        let tail = if shared {
+            format!("base-uri 'none'; form-action 'none'; {SANDBOX}")
+        } else {
+            "base-uri 'none'; form-action 'none'".to_owned()
+        };
         let page = |img: &str, connect: &str, ancestors: &str| {
             format!(
                 "default-src 'none'; script-src {own}; style-src {own} 'unsafe-inline'; img-src {own}{img} data: blob:; connect-src {connect}; worker-src blob: {own}; {tail}; frame-ancestors {ancestors}"
@@ -227,6 +245,15 @@ fn answer(status: StatusCode, ctype: &str, cache: &str, csp: &str, body: Body) -
     res
 }
 
+/// A public release under `vendor/` for any reader: a sandboxed page `import()`s MapLibre's module
+/// and starts its worker as `Origin: null`, which needs CORS even on its own host.
+fn public(res: &mut Response) {
+    res.headers_mut().insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+}
+
 fn serve(site: &Site, method: &Method, path: &str) -> Response {
     let not_found = || {
         answer(
@@ -296,16 +323,23 @@ fn serve(site: &Site, method: &Method, path: &str) -> Response {
                 );
                 res.headers_mut()
                     .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+                public(&mut res);
                 return res;
             }
             match file(p) {
                 Some(b) if !p.ends_with(".gz") => {
-                    let cache = if p.starts_with("vendor/") {
+                    let vendor = p.starts_with("vendor/");
+                    let cache = if vendor {
                         "public, max-age=31536000, immutable"
                     } else {
                         "no-cache"
                     };
-                    answer(StatusCode::OK, content_type(p), cache, INERT, Body::from(b))
+                    let mut res =
+                        answer(StatusCode::OK, content_type(p), cache, INERT, Body::from(b));
+                    if vendor {
+                        public(&mut res);
+                    }
+                    res
                 }
                 _ => not_found(),
             }
@@ -383,7 +417,8 @@ mod tests {
         }
     }
 
-    /// The releases and the explorer bundle are the deployment's byte for byte: its own sums hold.
+    /// The releases are the deployment's byte for byte and the explorer bundle is the one built
+    /// from crates/portal/ui: the sums beside each hold.
     #[test]
     fn the_deployment_sums_of_vendor_and_explorer_hold() {
         for (dir, sums) in [
@@ -443,6 +478,83 @@ mod tests {
         );
         assert!(csp.ends_with("frame-ancestors *"), "{csp}");
         assert!(text(embed).await.contains("jc-viz"));
+    }
+
+    /// Beside the Portal or the catalogue (one origin, slug mode) every page is a CSP sandbox
+    /// without `allow-same-origin`, so its scripts run in an opaque origin, framed or not; on an
+    /// origin of its own (dev's viz.{domain}) none is.
+    #[test]
+    fn a_page_on_an_origin_it_shares_is_sandboxed_to_an_opaque_origin() {
+        let sandbox =
+            "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads;";
+        for shared in [
+            LiveAddresses {
+                catalogue: "http://localhost:42102/opendata".into(),
+                ..LiveAddresses::default()
+            },
+            LiveAddresses {
+                portal: "http://localhost:42102/portal".into(),
+                ..LiveAddresses::default()
+            },
+            LiveAddresses {
+                api: "http://localhost:42102".into(),
+                ..LiveAddresses::default()
+            },
+        ] {
+            let site = Site::new("http://localhost:42102", &shared);
+            for path in [
+                "/explore.html",
+                "/embed.html",
+                "/",
+                "/map.html",
+                "/render.html",
+            ] {
+                let res = serve(&site, &Method::GET, path);
+                let csp = header(&res, "content-security-policy");
+                assert!(csp.contains(sandbox), "{path}: {csp}");
+                assert!(!csp.contains("allow-same-origin"), "{path}: {csp}");
+            }
+        }
+        let own = Site::new("https://viz.city.test", &live());
+        for path in ["/explore.html", "/embed.html", "/", "/map.html"] {
+            let res = serve(&own, &Method::GET, path);
+            let csp = header(&res, "content-security-policy");
+            assert!(!csp.contains("sandbox"), "{path}: {csp}");
+        }
+    }
+
+    /// A sandboxed page asks MapLibre's module and worker as `Origin: null`: the releases answer
+    /// CORS, the pages and the explorer bundle (classic scripts, no CORS read) do not.
+    #[test]
+    fn the_releases_answer_cors_and_the_rest_does_not() {
+        for path in [
+            "/vendor/maplibre-gl-6.14.0.mjs",
+            "/vendor/maplibre-gl-worker-6.14.0.mjs",
+            "/vendor/pmtiles-4.5.0.js",
+        ] {
+            let res = get(path);
+            assert_eq!(res.status(), StatusCode::OK, "{path}");
+            assert_eq!(header(&res, "access-control-allow-origin"), "*", "{path}");
+            assert!(
+                res.headers()
+                    .get("access-control-allow-credentials")
+                    .is_none()
+            );
+        }
+        for path in [
+            "/explore.html",
+            "/explore.js",
+            "/explorer/explorer.js",
+            "/x",
+        ] {
+            assert!(
+                get(path)
+                    .headers()
+                    .get("access-control-allow-origin")
+                    .is_none(),
+                "{path}"
+            );
+        }
     }
 
     #[tokio::test]
