@@ -22,7 +22,7 @@ import { colorOf, displayValue, settingsFor } from "./fieldConfig";
 /** Grafana's markers defaults where the layer names none (`green`, 5 px, 0.4). */
 const DEFAULT_MARKER = { color: "green", size: 5, opacity: 0.4 };
 /** The tallest map on a phone, in px: a panel's desktop height is mostly empty ground there. */
-const PHONE_HEIGHT = 440;
+const PHONE_HEIGHT = 520;
 /** The fields a tooltip shows besides the name, Grafana's way: the row's values, a few. */
 const TOOLTIP_FIELDS = 6;
 
@@ -161,7 +161,11 @@ export function markersOf(frames: Frame[], options: Record<string, unknown> | un
 export function MapFrame({ height, children }: { height: number; children: ReactNode }): JSX.Element {
   const phone = useIsPhone();
   return (
-    <div className="h-full rounded-sm border border-dashed border-border bg-surface-subtle" style={phone ? undefined : { height }}>
+    // The state's badge and title a size up: on a desktop they stand in a whole map's room.
+    <div
+      className="h-full rounded-sm border border-dashed border-border bg-surface-subtle sm:[&_[data-empty-state]>p:first-of-type]:text-title sm:[&_[data-empty-state]>span]:size-14 sm:[&_[data-empty-state]>span>svg]:size-7"
+      style={phone ? undefined : { height }}
+    >
       {children}
     </div>
   );
@@ -205,13 +209,13 @@ export function GeomapPanel({ title, frames, fieldConfig, options, height, local
   return (
     <div className="flex h-full min-h-0 flex-col gap-1" style={{ height: phone ? Math.min(height, PHONE_HEIGHT) : height }}>
       {/* What the map shows and what it could not, above it: an overlay would sit under the map's controls on a phone. */}
-      <p className="text-caption text-fg" data-geomap-caption="">
+      <p className="text-body text-fg" data-geomap-caption="">
         {t("dashboardView.geomap.count", { n: markers.features.features.length })}
         {plain ? ` · ${t("dashboardView.geomap.plain")}` : null}
       </p>
       {markers.notes.length > 0 ? (
-        <p className="flex min-w-0 items-start gap-1 text-caption text-fg" data-geomap-note="">
-          <Icon name="info" className="mt-0.5 size-3.5 shrink-0" />
+        <p className="flex min-w-0 items-start gap-1 text-body text-fg" data-geomap-note="">
+          <Icon name="info" className="mt-0.5 size-4 shrink-0" />
           <span className="min-w-0">{markers.notes.map((note) => t(`dashboardView.geomap.${note.key}`, note.values)).join(" ")}</span>
         </p>
       ) : null}
