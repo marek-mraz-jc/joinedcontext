@@ -785,3 +785,15 @@ def test_realm_secrets_become_file_references_under_the_secrets_dir(tmp_path):
     (tmp_path / "A_SECRET").write_text("s3\n")
     assert rh.secret_file(out["clients"][0]["secret"], tmp_path / "x").read_text() == "s3\n"
     assert rh.secret_file("$(env:A_SECRET)", tmp_path) == tmp_path / "realm-A_SECRET"
+
+
+def test_every_jc_of_one_config_is_found_whatever_the_pid_file_says(tmp_path):
+    mine, other = tmp_path / "a" / "jc.toml", tmp_path / "b" / "jc.toml"
+    sleep = [sys.executable, "-c", "import time; time.sleep(60)"]
+    p1 = subprocess.Popen(sleep + ["--config", str(mine)])
+    p2 = subprocess.Popen(sleep + ["--config", str(other)])
+    try:
+        out = subprocess.run([str(HERE / "jcs-of.sh"), str(mine)], capture_output=True, text=True, timeout=30).stdout
+        assert out.split() == [str(p1.pid)]
+    finally:
+        p1.kill(); p2.kill()

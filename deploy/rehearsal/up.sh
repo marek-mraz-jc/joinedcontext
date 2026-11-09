@@ -168,6 +168,10 @@ export JC_GITEA_OWNER=$JC_SHAKO_OWNER JC_GITEA_REPO=$JC_SHAKO_REPO
 if [ -s "$home/jc.pid" ]; then
   "$here/stop-jc.sh" "$(cat "$home/jc.pid")" || exit 1
 fi
+for pid in $("$here/jcs-of.sh" "$home/jc.toml"); do
+  echo "up.sh: jc $pid of $home/jc.toml runs outside the pid file; stopping it" >&2
+  "$here/stop-jc.sh" "$pid" || exit 1
+done
 # The Grafana files' datasources as daiya provisioning on jc's own address (REHEARSAL_DASHBOARDS,
 # default $home/dashboards: a rehearsal.py dashboards dir); daiya lets only file-provisioned
 # datasources reach it.
