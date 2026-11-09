@@ -110,11 +110,33 @@ impl AuthPageQuery {
     }
 }
 
-fn render_with_security_headers(tpl: &LoginPageTemplate, extra_cookie: Option<String>) -> Response {
+/// The `form-action` sources of a login page whose form ends the flow at `ends_at`: `'self'`, and
+/// the origin of that redirect URI when it is another http(s) origin. Browsers apply
+/// `form-action` to the redirect after the POST too, so without it the last step towards a
+/// client on its own host (an Organization's Portal) is blocked. `ends_at` is the flow's
+/// redirect URI, already validated against the client's registered ones.
+fn form_action_sources(ends_at: Option<&str>) -> String {
+    let origin = ends_at
+        .and_then(|uri| url::Url::parse(uri).ok())
+        .filter(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+        .map(|url| url.origin().ascii_serialization());
+    match origin {
+        Some(origin) => format!("'self' {origin}"),
+        None => "'self'".to_owned(),
+    }
+}
+
+fn render_with_security_headers(
+    tpl: &LoginPageTemplate,
+    extra_cookie: Option<String>,
+    ends_at: Option<&str>,
+) -> Response {
     let html = tpl.render().unwrap_or_default();
     let csp = format!(
-        "default-src 'self'; script-src 'nonce-{}'; style-src 'self' 'nonce-{}'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'",
-        tpl.csp_nonce, tpl.csp_nonce
+        "default-src 'self'; script-src 'nonce-{}'; style-src 'self' 'nonce-{}'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action {}",
+        tpl.csp_nonce,
+        tpl.csp_nonce,
+        form_action_sources(ends_at)
     );
     let mut resp = (
         StatusCode::OK,
@@ -675,7 +697,11 @@ async fn render_state_page(
         extras: page_extras(&bundle, realm, enrol_secret.as_deref()),
     };
 
-    Ok(render_with_security_headers(&tpl, None))
+    Ok(render_with_security_headers(
+        &tpl,
+        None,
+        Some(&auth_session.redirect_uri),
+    ))
 }
 
 /// The `otpauth://` URI of a new authenticator as an inline SVG QR code (Keycloak shows one on
@@ -914,7 +940,7 @@ pub(crate) fn render_expired_session_page(realm: &RealmConfig, status: StatusCod
         qr_hint: String::new(),
         extras: PageExtras::default(),
     };
-    let mut resp = render_with_security_headers(&tpl, None);
+    let mut resp = render_with_security_headers(&tpl, None, None);
     *resp.status_mut() = status;
     resp
 }
@@ -2104,7 +2130,7 @@ async fn reset_credentials_get(
         qr_hint: String::new(),
         extras: PageExtras::default(),
     };
-    Ok(render_with_security_headers(&tpl, None))
+    Ok(render_with_security_headers(&tpl, None, None))
 }
 
 /// W3, K10: reset-password queues a signed single-use reset mail in the outbox when the user
@@ -2193,7 +2219,7 @@ async fn reset_credentials_post(
         qr_hint: String::new(),
         extras: PageExtras::default(),
     };
-    Ok(render_with_security_headers(&tpl, None))
+    Ok(render_with_security_headers(&tpl, None, None))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2394,7 +2420,11 @@ async fn action_token_get(
             qr_hint: String::new(),
             extras: PageExtras::default(),
         };
-        return Ok(render_with_security_headers(&tpl, Some(set_cookie)));
+        return Ok(render_with_security_headers(
+            &tpl,
+            Some(set_cookie),
+            Some(&auth_session.redirect_uri),
+        ));
     }
 
     finish_action_token_response(&realm, &bundle, validated_redirect.as_deref())
@@ -2593,5 +2623,5 @@ fn finish_action_token_response(
         qr_hint: String::new(),
         extras: PageExtras::default(),
     };
-    Ok(render_with_security_headers(&tpl, None))
+    Ok(render_with_security_headers(&tpl, None, None))
 }
