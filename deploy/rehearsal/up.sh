@@ -157,8 +157,8 @@ export JC_SHAKO_OWNER=${REHEARSAL_CONFIG_OWNER:-joinedcontext} JC_SHAKO_REPO=${R
 export JC_GITEA_OWNER=$JC_SHAKO_OWNER JC_GITEA_REPO=$JC_SHAKO_REPO
 
 # A jc of an earlier up.sh of this environment stops first (its memory stores go with it).
-if [ -s "$home/jc.pid" ] && kill "$(cat "$home/jc.pid")" 2>/dev/null; then
-  for _ in $(seq 20); do kill -0 "$(cat "$home/jc.pid")" 2>/dev/null || break; sleep 0.5; done
+if [ -s "$home/jc.pid" ]; then
+  "$here/stop-jc.sh" "$(cat "$home/jc.pid")" || exit 1
 fi
 # The Grafana files' datasources as daiya provisioning on jc's own address (REHEARSAL_DASHBOARDS,
 # default $home/dashboards: a rehearsal.py dashboards dir); daiya lets only file-provisioned

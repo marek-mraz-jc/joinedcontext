@@ -759,3 +759,12 @@ DEV_BUNDLE = Path("/workspace/evidence/jc-rehearsal/export/dev")
 def test_the_dev_bundle_holds_two_portal_made_dashboards_of_helsinki():
     made = rh.portal_made(DEV_BUNDLE)
     assert len(made) == 2 and {p for _, p in made} == {"helsinki"}
+
+
+def test_a_jc_that_ignores_sigterm_is_killed_before_the_next_starts():
+    """The 2026-11-09 hang: a deadlocked jc never finishes its graceful shutdown and keeps its port."""
+    stuck = subprocess.Popen(["bash", "-c", "trap '' TERM; while :; do sleep 0.2; done"])
+    time.sleep(0.3)
+    r = subprocess.run([str(HERE / "stop-jc.sh"), str(stuck.pid)], capture_output=True, text=True, timeout=60)
+    stuck.wait(timeout=5)
+    assert r.returncode == 0 and "SIGKILL" in r.stderr and stuck.returncode == -9
