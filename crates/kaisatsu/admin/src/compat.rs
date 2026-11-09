@@ -2037,7 +2037,7 @@ async fn compat_list_clients(
 ) -> Result<Json<Vec<ClientRepresentation>>> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
-    check_decision(state.authorizer.check(
+    let decision = state.authorizer.check(
         &ctx,
         Action::Read,
         &ObjectTarget::Application {
@@ -2046,7 +2046,14 @@ async fn compat_list_clients(
             client_id: "*".into(),
             managed_by: Some("joinedcontext".into()),
         },
-    ))?;
+    );
+    // The list names no one client to hide: a signed-in admin of this realm without the right to
+    // list clients is told so, 403, as Keycloak answers (ClientPermissions.requireList), never
+    // the 404 of a route that does not exist (D3).
+    check_decision(Decision {
+        visible: true,
+        ..decision
+    })?;
     let allowed = ctx.allowed_orgs();
     let clients = state
         .oidc
