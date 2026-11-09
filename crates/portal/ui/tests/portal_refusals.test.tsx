@@ -154,6 +154,39 @@ describe("a list the person may not read", () => {
   });
 });
 
+// UI judge 2026-11-09 (outsider): Copies showed the raw 404 sentence with a Retry that cannot
+// help, and Explore two empty pickers with no word at all.
+describe("a project page an outsider opens", () => {
+  const outsider = (path: string) =>
+    renderRoute({
+      path,
+      projects: () => jsonResponse(list([])),
+      permissionsFor: () => notFound("zilina"),
+      answer: (asked) => (asked.startsWith("/api/v1/projects/zilina/") ? notFound("zilina") : undefined),
+    });
+
+  it("Copies says the project is not open, with no retry and no raw sentence", async () => {
+    await outsider("/projects/zilina/workspaces");
+    expect(await screen.findByText(en.form.projectHidden)).toBeInTheDocument();
+    expect(screen.queryByText(/not found/)).toBeNull();
+    expect(screen.queryByRole("button", { name: en.app.error.retry })).toBeNull();
+  });
+
+  it("Conversations says the project is not open, without the usage read's own refusal", async () => {
+    // UI judge 2026-11-09: "no role grants approve on AssistantDeployment" was the outsider's answer.
+    await outsider("/projects/zilina/knowledge/conversations");
+    expect(await screen.findByText(en.form.projectHidden)).toBeInTheDocument();
+    expect(screen.queryByText(/no role grants/)).toBeNull();
+    expect(screen.queryByText(en.conversations.usage.title)).toBeNull();
+  });
+
+  it("Explore says the project is not open instead of two empty pickers", async () => {
+    await outsider("/projects/zilina/explore");
+    expect(await screen.findByText(en.form.projectHidden)).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: en.explore.space })).toBeNull();
+  });
+});
+
 describe("the catalogue form of the CKAN page", () => {
   async function ckan(permissionsFor: (project: string) => Response | Promise<Response> | undefined) {
     return renderRoute({ path: "/projects/helsinki/ckan", permissionsFor });

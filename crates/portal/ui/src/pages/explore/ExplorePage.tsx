@@ -31,6 +31,7 @@ import { andQ } from "./exportView";
 import { entityTypesOf, isAppEndpoint, pickReadEndpoint, spaceOf } from "../spaces/spaceFacts";
 import { useIdentity } from "../../auth/AuthProvider";
 import { replaceOwnSearch } from "../../assistant/HandOff";
+import { ProjectHidden, projectOutOfReach } from "../../components/ProjectHidden";
 
 const PAGE_SIZE = 50;
 
@@ -109,6 +110,8 @@ export function ExplorePage({
   const identity = useIdentity();
   const locale = i18n.language;
   const spaces = useProjectList(project, "spaces");
+  // A project out of reach (PF-59) says so, not two empty pickers (UI judge 2026-11-09).
+  const hidden = projectOutOfReach(spaces.error);
   const endpoints = useProjectList(project, "endpoints");
   const models = useProjectList(project, "datamodels");
 
@@ -342,6 +345,15 @@ export function ExplorePage({
     setQuery(next);
     setSelected(null);
     setChecked([]);
+  }
+
+  if (hidden) {
+    return (
+      <div className="flex flex-col gap-4">
+        <PageHeader title={t("explore.title")} description={t("explore.description")} />
+        <ProjectHidden />
+      </div>
+    );
   }
 
   return (

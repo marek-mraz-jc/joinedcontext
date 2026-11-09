@@ -2777,6 +2777,10 @@
     "emptyHint": "Fügen Sie mit der Schaltfläche eine Datenquelle und eine Pipeline hinzu, oder lassen Sie den Assistenten eine aus dem bauen, was Sie schon haben.",
     "expiryRemoves": "Entitäten, die {window} lang nicht aktualisiert wurden, werden entfernt",
     "expiryRefused": "Nichts wird entfernt: Der Runner hat die Bereinigung abgelehnt: {reason}",
+    "errorReason": "Grund: {reason}",
+    "errorOpen": "Pipeline öffnen",
+    "errorShared": "Grund: siehe über der Liste",
+    "sharedFailure": "Pipelines aus einem gemeinsamen Grund gestoppt ({count}): {reason}. Eine Korrektur der genannten Einstellung startet sie alle wieder.",
     "writesType": "Schreibt",
     "notWriting": "Schreibt nichts",
     "rejected": {
@@ -2911,6 +2915,7 @@
         "fileHint": "Die Prozessoren, die diese Pipeline ausführt, so wie das Repository sie neben ihrem Manifest hält. Zugangsdaten erscheinen als Verweise, die der Runner füllt, nie als Werte.",
         "fileEdit": "Mapping-Datei bearbeiten; Vorschlagen sendet sie mit dem Manifest",
         "fileEditDisabled": "Die Mapping-Datei lässt sich bearbeiten, sobald sie geladen ist.",
+        "fileEditHint": "Angehakt ändern Sie die Datei oben selbst; sonst schreibt sie die Zuordnung des Formulars.",
         "type": "Typ, den das Mapping schreibt",
         "typeHint": "Das Modell hat mehrere Klassen: Wählen Sie die, zu der jeder Datensatz wird, zum Beispiel eine Luftgütemessung. Die Liste darunter zeigt, was sie nimmt."
       },
@@ -3206,6 +3211,7 @@
     "lastRun": {
       "unavailable": "Läufe konnten nicht gelesen werden",
       "never": "Noch nicht gelaufen",
+      "noneWritten": "Noch nichts geschrieben: der Status sagt, warum",
       "runFailedBadge": "Lauf fehlgeschlagen",
       "written": "{count, plural, one {# geschrieben} other {# geschrieben}}",
       "rejected": "{n} abgelehnt",
@@ -5451,8 +5457,11 @@
       "emptyHint": "Drücken Sie „Datensatz veröffentlichen“, wählen Sie einen Endpunkt, prüfen Sie seine Beschreibung und schlagen Sie ihn vor. Der Datensatz erscheint hier und in CKAN nach der Freigabe.",
       "lastChange": "Letzte Änderung {time}: {summary}",
       "lastFailed": "Letzter Lauf fehlgeschlagen {time}: {summary}. Beheben Sie die Ursache und veröffentlichen Sie erneut.",
+      "lastFailedAsk": "Letzter Lauf fehlgeschlagen {time}: {summary}. Eine Projektverantwortliche Person veröffentlicht erneut, sobald die Ursache behoben ist.",
+      "notPublishedTo": "nicht veröffentlicht in {instance}",
       "needsCatalogue": "Fügen Sie zuerst oben einen Katalog hinzu: ein Datensatz braucht ein CKAN-Portal.",
-      "mapAndTable": "Karte und Tabelle auf der Seite des Datensatzes"
+      "mapAndTable": "Karte und Tabelle auf der Seite des Datensatzes",
+      "formats": "Wege, sie zu lesen ({count}): API, Dateien und Feeds"
     },
     "statusFailed": "Der Katalogstatus dieses Projekts konnte nicht gelesen werden, daher kann die Liste unten unvollständig sein: {reason}. Laden Sie die Seite neu, um es erneut zu versuchen.",
     "access": {

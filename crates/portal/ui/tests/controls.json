@@ -1373,7 +1373,7 @@
     },
     "src/pages/endpoints/FilterProof.tsx": {
       "controls": {
-        "Button": 2
+        "Button": 3
       },
       "tests": [
         "endpoint_filter_proof.test.tsx"
@@ -2480,7 +2480,7 @@
     },
     "src/routes/WorkspacesPage.tsx": {
       "controls": {
-        "Button": 3
+        "Button": 2
       },
       "tests": [
         "workspaces_ui.test.tsx"

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { App } from "../src/App";
-import { executionClass } from "../src/routes/PipelinesPage";
+import { executionClass, failureCause, sharedFailureOf } from "../src/routes/PipelinesPage";
 
 const IDENTITY = {
   subject: "b7c1e0f4",
@@ -138,6 +138,17 @@ describe("pipelines view", () => {
     vi.restoreAllMocks();
   });
 
+  it("keeps a row's failure to its cause, and the whole sentence when the cause is too short to read", () => {
+    expect(failureCause("the last run, ended 2026-11-09T11:20:02Z, failed: the runner refused the run: environment variable 'X' was not defined"))
+      .toBe("environment variable 'X' was not defined");
+    expect(failureCause("the last run, ended 2026-11-09T11:20:02Z, failed: the runner refused the run: environment variable 'X' was not defined; next run 2026-11-15T02:41:00Z"))
+      .toBe("environment variable 'X' was not defined");
+    expect(failureCause("the runner refused the run: variable 'A' was not defined; variable 'B' was not defined; no further run until it changes"))
+      .toBe("variable 'A' was not defined; variable 'B' was not defined");
+    expect(failureCause("runner answered 502: busy")).toBe("runner answered 502: busy");
+    expect(failureCause("SourceUnreachable")).toBe("SourceUnreachable");
+  });
+
   it("classifies by the 30-second rule when the manifest says auto", () => {
     expect(executionClass({ class: "resident", period: "1h" })).toBe("resident");
     expect(executionClass({ class: "scheduled" })).toBe("scheduled");
@@ -179,6 +190,56 @@ describe("pipelines view", () => {
     const sentence = en.pipelines.expiryRemoves.replace("{window}", "14 days");
     expect(within(await rowOf("parking-daily")).getByText(sentence)).toBeInTheDocument();
     expect(within(await rowOf("aq-mqtt-ingest")).queryByText(/are removed/)).toBeNull();
+  });
+
+  it("says in the row why a pipeline is in Error, and where to fix it", async () => {
+    // The row said Error and nothing else (jc-ui-states, UI judge 2026-11-09): the reason was
+    // only in the reconciler's condition.
+    const failed = structuredClone(PIPELINES);
+    failed.items[0].status = {
+      phase: "Error",
+      conditions: [
+        { type: "SourceReachable", status: "True", reason: "Reached" },
+        { type: "StreamDeployed", status: "False", reason: "RunnerRefused", message: "the last run, ended 2026-11-09T11:20:02Z, failed: the runner refused the run: environment variable 'JC_MQTT_NAMESPACE' was not defined" },
+      ],
+    } as never;
+    renderPipelines(METRICS, 200, failed);
+    const row = await rowOf("aq-mqtt-ingest");
+    expect(within(row).getByTestId("pipeline-error-reason")).toHaveTextContent(
+      "Why: environment variable 'JC_MQTT_NAMESPACE' was not defined",
+    );
+    expect(within(row).getByRole("link", { name: en.pipelines.errorOpen })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/pipelines/aq-mqtt-ingest"),
+    );
+    expect(within(await rowOf("parking-daily")).queryByTestId("pipeline-error-reason")).toBeNull();
+    // Its Last run cell no longer says "Has not run yet" beside "the last run … failed".
+    expect(within(row).queryByText(en.pipelines.lastRun.never)).toBeNull();
+    expect(await within(row).findByText(en.pipelines.lastRun.noneWritten)).toBeInTheDocument();
+  });
+
+  it("says a cause every failing pipeline shares once above the list, the rows point to it", async () => {
+    // Thirty rows repeated one missing setting, a 6000 px phone page (UI judge 2026-11-09).
+    const status = (cause: string) =>
+      ({
+        phase: "Error",
+        conditions: [{ type: "StreamDeployed", status: "False", reason: "RunnerRefused", message: `the runner refused the run: ${cause}` }],
+      }) as never;
+    const failed = structuredClone(PIPELINES);
+    // Each says its own next run: the cause is what the rows share.
+    failed.items[0].status = status("environment variable 'JC_CLIENT_SECRET_BB' was not defined; next run 2026-11-15T02:41:00Z");
+    failed.items[1].status = status("environment variable 'JC_CLIENT_SECRET_BB' was not defined; next run 2026-11-16T04:43:00Z");
+    renderPipelines(METRICS, 200, failed);
+    const banner = await screen.findByTestId("pipelines-shared-failure");
+    expect(banner).toHaveTextContent("(2): environment variable 'JC_CLIENT_SECRET_BB' was not defined");
+    for (const name of ["aq-mqtt-ingest", "parking-daily"]) {
+      expect(within(await rowOf(name)).getByTestId("pipeline-error-reason")).toHaveTextContent(en.pipelines.errorShared);
+    }
+
+    expect(sharedFailureOf([failed.items[0], { ...failed.items[1], status: status("source unreachable at all") }] as never)).toBeNull();
+    expect(sharedFailureOf([failed.items[0], failed.items[1], { ...failed.items[1], status: status("source unreachable at all") }] as never))
+      .toBe("environment variable 'JC_CLIENT_SECRET_BB' was not defined");
+    expect(sharedFailureOf([failed.items[0]] as never)).toBeNull();
   });
 
   it("says in the row that the runner refused the sweep, with its reason", async () => {

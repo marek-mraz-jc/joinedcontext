@@ -61,12 +61,46 @@ export function notWriting(pipeline: Manifest): string | null {
 
 export { executionClass };
 
+/**
+ * The cause in a reconciler sentence, "the last run, ended <time>, failed: the runner refused the
+ * run: <cause>; next run <time>": the row said the whole chain ten times over, with its ISO times
+ * (UI judge 2026-11-09). The pipeline's page keeps the whole sentence, the next run included.
+ */
+export function failureCause(message: string): string {
+  const said = message.replace(/; (next run|next try|no further run)[^;]*$/, "");
+  const cause = said.split(": ").at(-1)?.trim() ?? "";
+  return cause.length >= 12 ? cause : said;
+}
+
+/** Why a pipeline in Error stopped, from the first False condition the reconciler wrote; "" when it runs. */
+export function failureOf(pipeline: Manifest): string {
+  if (!["error", "failed"].includes((pipeline.status?.phase ?? "").toLowerCase())) return "";
+  const failure = (pipeline.status?.conditions ?? []).find(
+    (condition) => condition.status === "False" && condition.type !== "ExpirySweep" && (condition.message ?? condition.reason),
+  );
+  return failure ? failureCause(failure.message ?? failure.reason ?? "") : "";
+}
+
+/**
+ * The cause two or more failing pipelines share, the most common one: the page says it once above
+ * the list instead of thirty times in the rows (UI judge 2026-11-09). null when no cause repeats.
+ */
+export function sharedFailureOf(pipelines: Manifest[]): string | null {
+  const counts = new Map<string, number>();
+  for (const cause of pipelines.map(failureOf)) {
+    if (cause !== "") counts.set(cause, (counts.get(cause) ?? 0) + 1);
+  }
+  const [cause, count] = [...counts].reduce((most, entry) => (entry[1] > most[1] ? entry : most), ["", 0]);
+  return count >= 2 ? cause : null;
+}
+
 /** When one row's pipeline last ran, with a resident runner's totals beside it (T-4817). */
 function RowLastRun({
   project,
   name,
   latest,
   counted,
+  refused,
   now,
 }: {
   project: string;
@@ -75,6 +109,8 @@ function RowLastRun({
   latest: ReturnType<typeof useLatestRuns>;
   /** A running resident stream: its runner has counters to read. */
   counted: boolean;
+  /** The status says why the pipeline is in Error. */
+  refused: boolean;
   now: number;
 }): JSX.Element {
   const counters = useStreamCounters(project, name, counted);
@@ -84,6 +120,7 @@ function RowLastRun({
       name={name}
       run={latest.data ? (latest.data.get(name) ?? null) : undefined}
       failed={latest.isError}
+      refused={refused}
       // "4 min ago" moves on with each refetch rather than staying where the page opened.
       now={Math.max(now, latest.dataUpdatedAt)}
       counters={counted ? counters.data : undefined}
@@ -309,6 +346,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
     const stalled = notWriting(pipeline);
     const counted = running && klass === "resident";
     const source = dataSourceOf(spec);
+    const failureText = failureOf(pipeline);
     const phase = (
       <>
         {/* The row said "Live" beside a stream that said "Paused" (T-2759): a paused
@@ -323,6 +361,18 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
         />
         {/* Live says the stream is deployed; whether anything lands is this condition
             (T-2967): hsl-hfp-vehicles read Live for half an hour of writing nothing. */}
+        {/* An Error badge alone left the person guessing (UI judge 2026-11-09): the condition the
+            reconciler wrote says why, and the pipeline's page is where it is fixed. */}
+        {failureText ? (
+          <div className="mt-1 max-w-64 text-caption">
+            <p className="text-danger [overflow-wrap:anywhere]" data-testid="pipeline-error-reason">
+              {failureText === sharedFailure ? t("pipelines.errorShared") : t("pipelines.errorReason", { reason: failureText })}
+            </p>
+            <RecordLink project={project} plural="pipelines" name={pipeline.metadata.name}>
+              {t("pipelines.errorOpen")}
+            </RecordLink>
+          </div>
+        ) : null}
         {stalled !== null ? (
           <div className="mt-1">
             <Badge tone="warning" title={stalled || undefined}>
@@ -333,10 +383,11 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
         ) : null}
       </>
     );
-    return { spec, klass, running, counted, phase, source };
+    return { spec, klass, running, counted, phase, source, refused: failureText !== "" };
   };
 
   const pipelines = asManifests(list.data?.items ?? []);
+  const sharedFailure = sharedFailureOf(pipelines);
   const shown = pipelines.filter((pipeline) =>
     pipelineMatches(pipeline, needle, statusFilter, classFilter, locale),
   );
@@ -427,6 +478,11 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
       ) : null}
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
+      {sharedFailure !== null ? (
+        <Alert role="status" tone="danger" data-testid="pipelines-shared-failure">
+          {t("pipelines.sharedFailure", { count: pipelines.filter((pipeline) => failureOf(pipeline) === sharedFailure).length, reason: sharedFailure })}
+        </Alert>
+      ) : null}
       {error ? (
         <Alert role="alert" tone="danger">
           {error}
@@ -563,7 +619,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
             label: t("pipelines.field.lastRun"),
             text: () => "",
             cell: (pipeline) => (
-              <RowLastRun project={project} name={pipeline.metadata.name} latest={latestRuns} counted={rowParts(pipeline).counted} now={now} />
+              <RowLastRun project={project} name={pipeline.metadata.name} latest={latestRuns} counted={rowParts(pipeline).counted} refused={rowParts(pipeline).refused} now={now} />
             ),
           },
           { id: "period", label: t("grid.field.period"), field: "period", hidden: true, text: (pipeline) => String((pipeline.spec as { period?: string }).period ?? "") },

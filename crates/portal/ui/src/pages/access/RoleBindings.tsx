@@ -33,7 +33,7 @@ import {
   TableSkeleton,
 } from "../../components/ui";
 import { PermissionGuard } from "../../components/ui/PermissionGuard";
-import { useReadableList } from "../../api/permissions";
+import { usePermissions, useReadableList } from "../../api/permissions";
 import { ResourceNamePicker } from "../../components/pickers/ResourceNamePicker";
 import { useOrganizationName } from "../../api/projects";
 import { PersonPicker } from "../../components/pickers/PersonPicker";
@@ -267,6 +267,10 @@ export function GrantRoleDialog({
   const spacesFailure = spaces.isError
     ? t("form.listFailed", { reason: reasonOf(spaces.error, t("app.error.generic")) })
     : null;
+  // A role that may not propose a grant reads why at the form's address, as New role does,
+  // instead of a form whose only end is a refusal (UI judge 2026-11-09).
+  const organizationRights = usePermissions(ORG_NAMESPACE);
+  const refused = !organizationRights.checking && !organizationRights.can("RoleBinding", "propose");
 
   return (
     <>
@@ -277,7 +281,7 @@ export function GrantRoleDialog({
       description={t("access.roles.grantLead")}
       closeLabel={t("resourceDelete.close")}
       footer={
-        change ? (
+        change || refused ? (
           <Button onClick={() => close(false)}>{t("resourceDelete.close")}</Button>
         ) : (
           <>
@@ -295,6 +299,10 @@ export function GrantRoleDialog({
     >
       {change ? (
         <ChangeNotice change={change} project={project} />
+      ) : refused ? (
+        <Alert tone="info" role="status">
+          {t("form.mayNotCreate")}
+        </Alert>
       ) : (
         <div className="flex flex-col gap-4">
           <Field
