@@ -29,6 +29,8 @@ pub mod embed;
 pub mod extract;
 /// A `guide` source: the platform's User Guide, shipped with this crate.
 pub mod guide;
+/// What a host runs beside the chat: settings from one lookup, the probe, the minute's work.
+pub mod host;
 /// When a source is read again: its cron, matched against the minute.
 pub mod schedule;
 /// The chat's settings, checked, and the state built from them; no environment read.

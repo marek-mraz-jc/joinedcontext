@@ -2712,6 +2712,24 @@ async fn introspect_endpoint(
         return Ok(Json(json!({ "active": false })));
     }
 
+    // Keycloak answers `username` on every live access token; callers that admit a service
+    // account by name (agent-proxy, the assistant's Portal check) read it there.
+    if !claims.contains_key("username") {
+        let name = match claims.get("preferred_username").and_then(Value::as_str) {
+            Some(name) => Some(name.to_owned()),
+            None => match claims.get("sub").and_then(Value::as_str) {
+                Some(sub) => state
+                    .store
+                    .get_user_by_id(&realm.id, None, sub)
+                    .await?
+                    .map(|user| user.username),
+                None => None,
+            },
+        };
+        if let Some(name) = name.filter(|name| !name.is_empty()) {
+            claims.insert("username".into(), Value::String(name));
+        }
+    }
     claims.insert("active".into(), Value::Bool(true));
     if let Some(azp) = claims.get("azp").cloned() {
         claims.insert("client_id".into(), azp);

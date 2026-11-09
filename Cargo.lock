@@ -6213,7 +6213,9 @@ name = "jc"
 version = "0.1.0"
 dependencies = [
  "age",
+ "agent-proxy",
  "antares-broker",
+ "assistant",
  "axum",
  "base64 0.22.1",
  "chrono",
@@ -6252,6 +6254,7 @@ dependencies = [
  "linkml-model",
  "metrics",
  "metrics-exporter-prometheus 0.18.3",
+ "ort",
  "reqwest 0.12.28",
  "rustls",
  "serde",
