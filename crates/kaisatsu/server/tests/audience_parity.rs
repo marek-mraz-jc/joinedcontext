@@ -33,6 +33,8 @@ use std::sync::Arc;
 
 mod common;
 use common::post_form;
+#[path = "../../store-pg/tests/common/mod.rs"]
+mod pgdb;
 
 const HOST: &str = "idm.example.test";
 /// The audience Keycloak adds to a service account's token and kaisatsu does not (module doc).
@@ -232,13 +234,18 @@ fn secret_values(text: &str) -> (String, BTreeMap<String, String>) {
     (doc, out)
 }
 
-/// Checks the token of every workload client of `realm`; returns the clients checked.
+/// Checks the token of every workload client of `realm` on the memory store; returns the clients
+/// checked.
 async fn check_every_workload(realm: Value) -> usize {
+    let kek = Kek::generate_for_tests();
+    check_every_workload_on(realm, Arc::new(MemoryStore::new(kek.clone())), kek).await
+}
+
+/// [`check_every_workload`] on `store`.
+async fn check_every_workload_on(realm: Value, store: Arc<dyn Store>, kek: Kek) -> usize {
     let name = realm["realm"].as_str().unwrap().to_owned();
     let (text, secrets) = secret_values(&realm.to_string());
     let realm: Value = serde_json::from_str(&text).unwrap();
-    let kek = Kek::generate_for_tests();
-    let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek.clone()));
     let opts = ApplyOptions {
         mode: ApplyMode::NoDelete,
         env_vars: secrets.clone(),
@@ -265,6 +272,30 @@ async fn check_every_workload(realm: Value) -> usize {
     let token_path = format!("/realms/{name}/protocol/openid-connect/token");
     let issuer = format!("https://{HOST}/realms/{name}");
     let now = chrono::Utc::now().timestamp();
+    // Every client of the file is known to the realm (`bins/jc/smoke/run names` asks this way):
+    // an authorization request naming it gets any refusal but `invalid_client`.
+    let mut unknown = Vec::new();
+    for client in realm["clients"].as_array().unwrap() {
+        let id = client["clientId"].as_str().unwrap();
+        let q: String = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs([("client_id", id), ("response_type", "code"), ("scope", "openid")])
+            .finish();
+        let resp = tower::ServiceExt::oneshot(
+            app.clone(),
+            axum::http::Request::get(format!("/realms/{name}/protocol/openid-connect/auth?{q}"))
+                .header("accept", "application/json")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let bytes = http_body_util::BodyExt::collect(resp.into_body()).await.unwrap().to_bytes();
+        let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        if body["error"] == "invalid_client" {
+            unknown.push(format!("{id}: {body}"));
+        }
+    }
+    assert!(unknown.is_empty(), "{} clients unknown:\n{}", unknown.len(), unknown.join("\n"));
     let mut checked = 0;
     let mut wrong = Vec::new();
     for client in realm["clients"].as_array().unwrap() {
@@ -358,6 +389,14 @@ async fn every_workload_of_a_realm_export_gets_keycloak_audiences() {
     #[allow(clippy::disallowed_methods)] // A test input path, read once.
     let path = std::env::var("KAISATSU_REALM_EXPORT").expect("KAISATSU_REALM_EXPORT");
     let realm: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    let checked = check_every_workload(realm).await;
+    let checked = check_every_workload(realm.clone()).await;
     eprintln!("{checked} workload clients carry Keycloak's audiences");
+    // The same on PostgreSQL, the store a rehearsal and dev run kaisatsu on.
+    if let Some(db) = pgdb::test_db("every_workload_of_a_realm_export").await {
+        let kek = Kek::generate_for_tests();
+        let store: Arc<dyn Store> = Arc::new(db.store(kek.clone()).await);
+        let checked = check_every_workload_on(realm, store, kek).await;
+        eprintln!("{checked} workload clients carry Keycloak's audiences on PostgreSQL");
+        db.drop_db().await;
+    }
 }
