@@ -4,6 +4,10 @@
 //!   cargo test --release -p jc-embedder --test load -- --ignored --nocapture
 //! and JC_ASSISTANT_TEST_MODEL_DIR and ORT_DYLIB_PATH set.
 
+#[allow(
+    dead_code,
+    reason = "the load test starts the binary, not an in-process service"
+)]
 mod common;
 
 use jc_door::testing::Issuer;
