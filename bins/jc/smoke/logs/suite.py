@@ -17,7 +17,13 @@ Checks, one row each (results.json, REPORT.md):
 - secrets.* / personal.*: no secret value of --state / --secrets-dir (raw, URL- or base64-encoded),
   no JWT, bearer value or password field, and no e-mail or public IP address in the log or in any
   file of the other suites' results.
-- volume.<module>: lines and bytes per minute, against --volume-budget lines per minute.
+- volume.<module>: lines and bytes per minute while nobody calls jc (a --quiet-window the suite waits
+  out at its end, its own probes left out), against --volume-budget lines per minute: the polls and
+  loops that run whatever the traffic. The whole log's rate, which grows with the other suites'
+  load, is in `actual` for reference.
+- volume.request: lines one request id writes across all modules (p95 over the whole log), against
+  --lines-per-request: prod's stack writes 3 for an Endpoint read (APISIX's access line, the
+  gateway's forward line, the broker's surface operation).
 
 The person the feed is read with is made in realm `jc` (group /platform-admins) with a random
 password kept in memory, and deleted at the end."""
@@ -476,7 +482,12 @@ def main(argv=None) -> int:
     p.add_argument("--admin-token-file")
     p.add_argument("--person-token-file", help="accepted for the runner's common flags; unused")
     p.add_argument("--results-dir", action="append", default=[], help="another suite's --out, to scan")
-    p.add_argument("--volume-budget", type=float, default=600, help="lines per minute per module")
+    p.add_argument("--volume-budget", type=float, default=600,
+                   help="lines per minute per module while nobody calls jc")
+    p.add_argument("--quiet-window", type=float, default=120,
+                   help="seconds the suite waits at its end, with no calls, to measure --volume-budget")
+    p.add_argument("--lines-per-request", type=int, default=3,
+                   help="p95 lines one request id writes across modules (prod's stack: 3)")
     p.add_argument("--settle", type=float, default=3, help="seconds to wait for the log to catch up")
     a = p.parse_args(argv)
     loopback_only(a.base_url)
@@ -577,14 +588,28 @@ def main(argv=None) -> int:
         res.check("log.all.structured", "jc", f"parse every line of {log}", "every line is a structured record",
                   f"{len(records) - len(loose)}/{len(records)} parse" +
                   (f"; first loose at line(s) {', '.join(str(r.n) for r in loose[:5])}" if loose else ""), not loose)
-        vol = ls.volume(records)
-        for m, v in sorted(vol.items()):
+        whole = ls.volume(records)
+        quiet_from = log.stat().st_size
+        time.sleep(a.quiet_window)
+        quiet = [r for r in ls.read_records(log, quiet_from)[0]
+                 if not (r.request_id or "").startswith("smokelogs-")]
+        vol = ls.volume(quiet, minutes=a.quiet_window / 60)
+        for m in sorted(set(whole) | set(vol)):
+            v = vol.get(m) or {"linesPerMinute": 0, "bytesPerMinute": 0, "topMessage": "none", "topCount": 0}
             ok = v["linesPerMinute"] <= a.volume_budget
-            res.check(f"volume.{m}", m, f"lines of {m} over {v['minutes']} min",
+            w = whole.get(m, {}).get("linesPerMinute", 0)
+            res.check(f"volume.{m}", m, f"lines of {m} in {a.quiet_window:g} s without calls",
                       f"<= {a.volume_budget:g} lines/min",
                       f"{v['linesPerMinute']} lines/min, {v['bytesPerMinute']} B/min; top: "
-                      f"{v['topMessage'][:90]} ({v['topCount']}x)", ok,
+                      f"{v['topMessage'][:90]} ({v['topCount']}x); whole log under load {w} lines/min", ok,
                       "" if ok else "over the budget")
+        per = ls.request_lines(records, a.lines_per_request)
+        ok = per["p95"] <= a.lines_per_request
+        res.check("volume.request", "jc", f"lines per request id across modules ({per['requests']} requests)",
+                  f"p95 <= {a.lines_per_request}",
+                  f"p95 {per['p95']}, mean {per['mean']}, max {per['max']}; {per['over']} over "
+                  f"{a.lines_per_request}" + (f", most often: {per['shape'][:200]}" if per["shape"] else ""), ok,
+                  "" if ok else "a request writes more lines than prod's stack")
     else:
         res.skip("log.all.structured", "jc", "parse the log", "", "no --log-file")
 
@@ -618,7 +643,8 @@ def main(argv=None) -> int:
         person.delete()
     out = Path(a.out)
     meta = {"log": str(log) if log else "none", "results dirs": ", ".join(a.results_dir) or "none",
-            "volume budget": f"{a.volume_budget:g} lines/min/module"}
+            "volume budget": f"{a.volume_budget:g} lines/min/module over {a.quiet_window:g} s without calls; "
+                             f"p95 {a.lines_per_request} lines per request"}
     res.write(out, meta)
     # The suite's own output holds no secret either.
     if found:

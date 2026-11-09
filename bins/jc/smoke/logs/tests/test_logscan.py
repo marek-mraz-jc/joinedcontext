@@ -104,6 +104,28 @@ def test_volume_counts_lines_per_minute_and_the_top_message():
     assert v["antares"]["lines"] == 1
 
 
+def test_volume_over_a_window_counts_its_minutes_not_the_lines_span():
+    lines = [f"2026-11-08T21:00:{s:02d}Z  INFO antares_ops: surface operation" for s in range(0, 60, 10)]
+    v = ls.volume([ls.parse_line(i, x) for i, x in enumerate(lines)], minutes=2)
+    assert v["antares"]["minutes"] == 2 and v["antares"]["linesPerMinute"] == 3
+
+
+def test_lines_per_request_across_modules_and_the_shape_over_the_bound():
+    def req(rid, *parts):
+        return [f'2026-11-08T21:00:00Z  INFO request{{module="{m}" request_id={rid}}}: {t}: x' for m, t in parts]
+    door = ("gateway", "jc::access")
+    lines = (req("smokelogs-r1", door, ("gateway", "context_gateway::handlers::ngsi_ld"), ("antares", "antares_ops"))
+             + req("smokelogs-r2", door, ("antares", "jc::access"), ("gateway", "context_gateway::handlers::ngsi_ld"),
+                   ("antares", "antares_ops"))
+             + req("smokelogs-r3", ("kaisatsu", "jc::access"))
+             + ["2026-11-08T21:00:00Z  INFO antares_ws::socket: websocket opened"])
+    v = ls.request_lines([ls.parse_line(i, x) for i, x in enumerate(lines)], bound=3)
+    assert v["requests"] == 3 and v["max"] == 4 and v["over"] == 1
+    assert v["p95"] == 4 and v["mean"] == round(8 / 3, 2)
+    assert v["shape"] == "antares antares_ops, antares jc::access, gateway context_gateway::handlers::ngsi_ld, " \
+                         "gateway jc::access"
+
+
 def records(*lines):
     return [ls.parse_line(i, x) for i, x in enumerate(lines, 1)]
 
