@@ -878,6 +878,7 @@ class Suite:
         args = ["--disable-dev-shm-usage", "--disable-gpu"]
         if self.hosts:
             loop = urllib.parse.urlparse(self.base).hostname
+            loop = "127.0.0.1" if loop == "localhost" else loop  # *.localhost is ::1 here
             names = sorted({h.split(":")[0] for o in self.hosts.values() for h in o.values()})
             args.append("--host-resolver-rules=" + ",".join(f"MAP {n} {loop}" for n in names))
         with sync_playwright() as pw:
