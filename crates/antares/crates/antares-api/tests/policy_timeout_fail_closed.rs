@@ -4,9 +4,7 @@
 //! changes. The write is not applied and the read carries no data.
 #![allow(clippy::unwrap_used)] // an unwrap here is the assertion
 
-use antares_api::policy::{
-    DecisionFuture, NotifyDecision, Operation, PolicyEngine, Subject,
-};
+use antares_api::policy::{DecisionFuture, NotifyDecision, Operation, PolicyEngine, Subject};
 use antares_api::AppState;
 use antares_store::Kind;
 use axum::body::Body;
@@ -91,13 +89,25 @@ async fn a_timed_out_read_or_update_answers_503_and_shows_or_changes_nothing() {
         let (status, retry, body) = send(&st, "GET", &uri, "").await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
         assert_eq!(retry, "1", "{uri}");
-        assert!(!body.contains(ID) && !body.contains("7341"), "{uri}: {body}");
+        assert!(
+            !body.contains(ID) && !body.contains("7341"),
+            "{uri}: {body}"
+        );
     }
     let patch = json!({"pin": {"type": "Property", "value": 2}}).to_string();
-    let (status, _, _) = send(&st, "PATCH", &format!("/ngsi-ld/v1/entities/{ID}/attrs"), &patch).await;
+    let (status, _, _) = send(
+        &st,
+        "PATCH",
+        &format!("/ngsi-ld/v1/entities/{ID}/attrs"),
+        &patch,
+    )
+    .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let doc = stored(&st).await.unwrap();
-    assert!(doc.to_string().contains("7341"), "the update was applied: {doc}");
+    assert!(
+        doc.to_string().contains("7341"),
+        "the update was applied: {doc}"
+    );
 }
 
 /// The batch path decides every Entity in one call (`decide_each`): a
@@ -111,5 +121,8 @@ async fn a_timed_out_batch_upsert_writes_nothing() {
         !matches!(status, StatusCode::CREATED | StatusCode::NO_CONTENT),
         "{status}: {body}"
     );
-    assert!(stored(&st).await.is_none(), "the upsert was applied: {body}");
+    assert!(
+        stored(&st).await.is_none(),
+        "the upsert was applied: {body}"
+    );
 }

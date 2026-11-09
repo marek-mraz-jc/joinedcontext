@@ -377,7 +377,8 @@ mod tests {
         let t = compile(&doc).map(Arc::new)?;
         let through = |view: &str| -> Result<Subject, String> {
             let mut s = subject("t6618-view", "city")?;
-            s.headers.push((antares_api::policy::VIEW_PAIR.into(), view.into()));
+            s.headers
+                .push((antares_api::policy::VIEW_PAIR.into(), view.into()));
             Ok(s)
         };
         let types = [CAR.to_owned()];

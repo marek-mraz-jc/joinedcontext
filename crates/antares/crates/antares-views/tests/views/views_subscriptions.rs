@@ -275,9 +275,18 @@ async fn a_bare_create_reaches_a_view_subscription_that_watches_nothing() -> Res
         json!(["name"]),
     );
     subscribe(&f, FLEET, &watching).await?;
-    subscribe(&f, FLEET, &to_cars("urn:ngsi-ld:Subscription:cars", &cars_uri)).await?;
+    subscribe(
+        &f,
+        FLEET,
+        &to_cars("urn:ngsi-ld:Subscription:cars", &cars_uri),
+    )
+    .await?;
 
-    create(&f, &json!({"id": "urn:ngsi-ld:Person:bare", "type": "Person"})).await?;
+    create(
+        &f,
+        &json!({"id": "urn:ngsi-ld:Person:bare", "type": "Person"}),
+    )
+    .await?;
     let n = next(&mut all).await?;
     assert_eq!(
         only(&n)?,
