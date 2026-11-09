@@ -76,7 +76,7 @@ class Assistant:
     proxy: the router, then the answer with the rows read. `leaky` reads any routed Endpoint and
     serves every id."""
 
-    def __init__(self, model_port: int, leaky=False):
+    def __init__(self, model_port: int, leaky=False, deaf=False):
         public = {"hel-public": {"hel/open"}}
         fake = self
 
@@ -124,6 +124,9 @@ class Assistant:
                     return self.send(401)
                 if self.headers.get("origin") not in (None,) and not leaky:
                     return self.send(403)
+                if deaf:  # the model unreachable: an error and done, nothing read
+                    raw = b'event: error\ndata: {"status": 503}\n\nevent: done\ndata: {}\n\n'
+                    return self.send(200, raw, "text/event-stream")
                 route = fake.model({"messages": [{"role": "system", "content": modelstub.ROUTER}]})
                 item = (json.loads(route).get("data") or [{}])[0]
                 events = []
@@ -158,11 +161,11 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def run_suite(tmp_path, leaky=False, log=None, off=False):
+def run_suite(tmp_path, leaky=False, log=None, off=False, deaf=False):
     root = write_export(tmp_path / "export")
     files = root / "gitea" / "files"
     port = free_port()
-    jc = Assistant(port, leaky)
+    jc = Assistant(port, leaky, deaf)
     if off:
         jc.close()
     a = argparse.Namespace(base_url=jc.base, model_stub_port=port, log_file=log, prod_widget=False, timeout=10)
@@ -194,6 +197,13 @@ def test_a_jc_that_reads_a_closed_endpoint_and_serves_every_id_fails(tmp_path):
                 "page.hel-knowledge.widget"):
         assert r[rid]["result"] == FAIL, rid
     assert r["chat.hel-public.granted"]["result"] == PASS
+
+
+def test_a_jc_that_never_reaches_the_model_proves_no_refusal(tmp_path):
+    r, _ = run_suite(tmp_path, deaf=True)
+    assert r["chat.hel-public.closed-refused"]["result"] == FAIL
+    assert "model asked: False" in r["chat.hel-public.closed-refused"]["actual"]
+    assert r["chat.hel-public.granted"]["result"] == FAIL and "503" in r["chat.hel-public.granted"]["actual"]
 
 
 def test_a_module_off_for_the_model_files_is_a_named_skip_and_otherwise_a_failure(tmp_path):

@@ -294,11 +294,14 @@ class Suite:
             code, evs, raw = self.ask(stub, pid, name, st, q)
             read = [x for n, x in evs if n == "data"]
             leaked = bool(sample) and any(sample in json.dumps(c, ensure_ascii=False) for c in stub.answer_calls())
-            ok = code == 200 and not read and not leaked and any(n == "done" for n, _ in evs)
+            # Control: the router named the closed Endpoint and an answer was asked for; a chat
+            # that never reached the model refuses nothing.
+            asked = any(stub.kind(c) == "router" for c in stub.calls) and bool(stub.answer_calls())
+            ok = code == 200 and asked and not read and not leaked and any(n == "done" for n, _ in evs)
             self.r.check(f"chat.{d['publicId']}.closed-refused", t, f"{call}: {q} (routed to {name}, {e.audience})",
-                         "200 and done, no data table, the sample row never reaches the model",
-                         f"{code}; {len(read)} table(s); sample in a model call: {leaked}" + ("" if evs else f"; {raw}"), ok,
-                         f"Endpoint {e.slug}")
+                         "200 and done, the route and an answer asked of the model, no data table, the sample row never reaches it",
+                         f"{code}; model asked: {asked}; {len(read)} table(s); sample in a model call: {leaked}"
+                         + ("" if evs else f"; {raw}") + told(evs), ok, f"Endpoint {e.slug}")
         tok, why = self.visitor(pid)
         if not tok:
             self.r.check(f"chat.{d['publicId']}.foreign-origin", t, call, "403", why, False)
