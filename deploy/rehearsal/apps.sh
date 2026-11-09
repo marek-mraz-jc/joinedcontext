@@ -14,6 +14,10 @@
 # 4. rehearsal-app-roles: a person of the imported realm in the groups of every viewer RoleBinding,
 #    and (3) in the roles Apps' groups, for the suite's refused/served pairs (rehearsal-tester is in
 #    none).
+# 5. jc-functions, the platform image's runtime of App functions (deployment components/functions; a
+#    platform component CUTOVER.md keeps beside jc), on loopback: it takes the Portal's portal-api
+#    token of the imported realm and sends each function's reads to jc's gateway. JC_FUNCTIONS_URL.
+#    REHEARSAL_FUNCTIONS_IMAGE / REHEARSAL_FUNCTIONS_PORT (default the public port + 1).
 # REHEARSAL_APPS=off leaves all of it out.
 # shellcheck disable=SC2154  # here, home, port, export_dir: up.sh's
 
@@ -50,6 +54,25 @@ if [ "${REHEARSAL_APPS:-on}" != off ]; then
   echo "apps.sh: $(find "$JC_PORTAL_APPS_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l) shipped bundles from ${REHEARSAL_JC_IMAGE:-the apps stage} (${apps_id:7:12})"
 
   realm_file=$(find "$home/state/realms" -maxdepth 1 -name '*.json' 2>/dev/null | head -1)
+  if [ -n "$realm_file" ]; then
+    # the pin of deployment components/functions/images.yaml
+    functions_image=${REHEARSAL_FUNCTIONS_IMAGE:-ghcr.io/marek-mraz-jc/joinedcontext-platform@sha256:471d88ddd1b54f934d9ceb9b3fd7fae1650e0e4cb42b438961bc91d5a093018d}
+    functions_port=${REHEARSAL_FUNCTIONS_PORT:-$((port + 1))}
+    functions_realm=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["realm"])' "$realm_file")
+    docker rm -f "rh-functions-$port" >/dev/null 2>&1 || true
+    # It reads the realm's keys from jc, which starts after it: it retries in the background.
+    docker run -d --name "rh-functions-$port" --network host --restart on-failure:5 --read-only \
+      --cap-drop ALL --security-opt no-new-privileges --memory 1g --pids-limit 256 \
+      --entrypoint /usr/local/bin/jc-functions \
+      -e JC_FUNCTIONS_BIND="127.0.0.1:$functions_port" \
+      -e JC_OIDC_ISSUER="http://localhost:$port/id/realms/$functions_realm" \
+      -e JC_OIDC_JWKS_URL="http://localhost:$port/id/realms/$functions_realm/protocol/openid-connect/certs" \
+      -e JC_FUNCTIONS_CALLER=portal-api -e JC_FUNCTIONS_ASSISTANT_CALLER=jc-assistant \
+      -e JC_FUNCTIONS_AUDIENCE=jc-functions -e JC_GATEWAY_URL="http://localhost:$port" \
+      "$functions_image" >/dev/null || { echo "apps.sh: jc-functions did not start" >&2; exit 1; }
+    export JC_FUNCTIONS_URL=http://127.0.0.1:$functions_port
+    echo "apps.sh: jc-functions on $JC_FUNCTIONS_URL (${functions_image##*@})"
+  fi
   if [ -n "$realm_file" ] && [ -d "$export_dir/gitea/files" ]; then
     secret realm/REHEARSAL_APP_ROLES_PASSWORD > /dev/null
     ln -sfn realm/REHEARSAL_APP_ROLES_PASSWORD "$home/secrets/realm-REHEARSAL_APP_ROLES_PASSWORD"
