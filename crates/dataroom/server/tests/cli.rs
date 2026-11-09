@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! The `dataroom` CLI: every subcommand through `run_cli` on the in-memory store and on
 //! Postgres (migration owner for `migrate`, a login role without superuser or BYPASSRLS for the
 //! rest), plus the binary's exit codes.

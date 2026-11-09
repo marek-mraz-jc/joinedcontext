@@ -85,6 +85,15 @@ pub fn app(state: AppState) -> Router {
         // for a public form's page whose Endpoint names the sites (EP-101).
         .layer(from_fn_with_state(state.clone(), public_form_framing));
 
+    // Off, the path answers 404 rather than the UI's app shell, so no probe reads it as served.
+    let scrape = if state.config.public_metrics {
+        telemetry::router()
+    } else {
+        Router::new().route(
+            "/metrics",
+            axum::routing::get(|| std::future::ready(axum::http::StatusCode::NOT_FOUND)),
+        )
+    };
     Router::new()
         .merge(apps::static_host::router())
         // The App templates' demos (AP-141): their own CSP, which forbids every connection.
@@ -96,7 +105,7 @@ pub fn app(state: AppState) -> Router {
         // OPS-16: what `components/monitoring` scrapes. Outside the Portal's own security
         // headers and outside `/api/v1`, so no session or CSRF guard stands in front of a
         // scrape; the edge refuses the path, which is what keeps it inside the cluster.
-        .merge(telemetry::router())
+        .merge(scrape)
         // Portal MCP server and RFC 9728 protected resource metadata (AG-60, AG-32).
         // Stateless Streamable HTTP with audience-bound Bearer authentication; exempt from
         // the session refresh and CSRF layers.

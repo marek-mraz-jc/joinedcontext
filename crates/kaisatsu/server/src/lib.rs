@@ -260,7 +260,8 @@ pub async fn poll_import_dir_once(
         dry_run: false,
         allow_literal_secrets: false,
         ..Default::default()
-    };
+    }
+    .with_process_env();
     for realm_files in group_files_by_realm(files) {
         let plan = kaisatsu_import::create_plan(store, &realm_files, &opts).await?;
         kaisatsu_import::apply_plan(store, &plan, &opts).await?;

@@ -9,7 +9,7 @@ use crate::modules::BuildCtx;
 use crate::setup;
 use axum::Router;
 use jc_router::Mount;
-use kaisatsu_core::{LocalAuthorizer, Store};
+use kaisatsu_core::{ClientRepresentation, ClientScopeRepresentation, LocalAuthorizer, Store};
 use kaisatsu_crypto::Kek;
 use kaisatsu_import::{ApplyOptions, apply_realm_files};
 use kaisatsu_oidc::OutboundGuard;
@@ -17,6 +17,9 @@ use kaisatsu_server::{KaisatsuState, load_realm_files_from_path, router};
 use kaisatsu_store_memory::MemoryStore;
 use kaisatsu_store_pg::{PgStore, PgStoreConfig};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 /// Opens the configured `Store` for kaisatsu inside `jc` (K16):
 /// - When `database_url_file` is set, reads the URL from the file, refuses any URL containing an
@@ -106,26 +109,137 @@ async fn apply_portal_realm(store: &Arc<dyn Store>, ctx: BuildCtx<'_>) -> Result
     Ok(())
 }
 
+/// The prefix of the per-Endpoint client scopes the Portal makes (`endpoint:{slug}`, its hub
+/// scope wave).
+const ENDPOINT_SCOPE_PREFIX: &str = "endpoint:";
+/// The realm's own scope that names every Endpoint: the hub's one default scope, linked nowhere
+/// else (ADR-N-025 4b).
+const EVERY_ENDPOINT_SCOPE: &str = "endpoint:*";
+/// The clients an Endpoint's scope is linked to, and whether `endpoint:*` stays where the realm
+/// file put it: the MCP hub, the command line's client and the Portal's own client, whose
+/// standard token exchange grants only a scope it holds as optional (T-6063).
+const ENDPOINT_SCOPE_CLIENTS: [(&str, bool); 3] = [
+    ("mcp-hub", true),
+    ("jcctl", false),
+    (setup::PORTAL_CLIENT, false),
+];
+/// How often the linker reads the realm: a new Endpoint's scope is linked this long after the
+/// Portal creates it (the deployment's CronJob runs every 5 minutes).
+const LINK_EVERY: Duration = Duration::from_secs(5);
+
+/// Whether `scope` is one the Portal made for an Endpoint: named `endpoint:{slug}`, marked
+/// `managed-by: joinedcontext` and without a protocol mapper (the mark kaisatsu lets portal-api
+/// write; a mapper would put something into a token claim).
+fn portal_endpoint_scope(scope: &ClientScopeRepresentation) -> bool {
+    scope.name.starts_with(ENDPOINT_SCOPE_PREFIX)
+        && scope.name != EVERY_ENDPOINT_SCOPE
+        && scope.protocol_mappers.is_empty()
+        && scope.attributes.get("managed-by").map(String::as_str) == Some("joinedcontext")
+}
+
+/// `client` with every Portal Endpoint scope in `ours` linked as optional and every other
+/// `endpoint:` link (unmarked, gone, or linked as a default) removed; `keep_star` leaves the
+/// realm's `endpoint:*` where it is. `None` when nothing changes. The rules of the deployment's
+/// `sync-admin-permissions.sh`, which jc has no realm admin Job to run.
+fn link_endpoint_scopes(
+    client: &ClientRepresentation,
+    ours: &[&str],
+    keep_star: bool,
+) -> Option<ClientRepresentation> {
+    let stray = |name: &String| {
+        name.starts_with(ENDPOINT_SCOPE_PREFIX) && !(keep_star && name == EVERY_ENDPOINT_SCOPE)
+    };
+    let mut next = client.clone();
+    next.default_client_scopes.retain(|n| !stray(n));
+    next.optional_client_scopes
+        .retain(|n| !stray(n) || ours.contains(&n.as_str()));
+    for name in ours {
+        if !next.optional_client_scopes.iter().any(|n| n == name) {
+            next.optional_client_scopes.push((*name).to_owned());
+        }
+    }
+    (next.default_client_scopes != client.default_client_scopes
+        || next.optional_client_scopes != client.optional_client_scopes)
+        .then_some(next)
+}
+
+/// One pass of the linker over the Portal's realm.
+async fn link_pass(store: &Arc<dyn Store>) -> Result<usize, kaisatsu_core::KaisatsuError> {
+    let Some(realm) = store.get_realm(setup::PORTAL_REALM).await? else {
+        return Ok(0);
+    };
+    let scopes = store.list_client_scopes(&realm.id).await?;
+    let ours: Vec<&str> = scopes
+        .iter()
+        .filter(|s| portal_endpoint_scope(s))
+        .map(|s| s.name.as_str())
+        .collect();
+    let mut written = 0;
+    for (client_id, keep_star) in ENDPOINT_SCOPE_CLIENTS {
+        let Some(client) = store.get_client_by_client_id(&realm.id, client_id).await? else {
+            continue;
+        };
+        if let Some(next) = link_endpoint_scopes(&client, &ours, keep_star) {
+            store.upsert_client(next).await?;
+            written += 1;
+        }
+    }
+    Ok(written)
+}
+
+/// Links each Endpoint's scope to the clients that need it, at start and every [`LINK_EVERY`]
+/// until `shutdown`: the realm-admin step the deployment runs as the
+/// keycloak-admin-permissions-sync CronJob. Only these clients get the scopes; no realm-wide
+/// optional scope is set (T-6301).
+fn follow_endpoint_scopes(
+    store: Arc<dyn Store>,
+    shutdown: &CancellationToken,
+    tasks: &TaskTracker,
+) {
+    let shutdown = shutdown.clone();
+    tasks.spawn(async move {
+        loop {
+            match link_pass(&store).await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(clients = n, "kaisatsu: Endpoint scopes linked"),
+                Err(e) => tracing::warn!(error = %e, "kaisatsu: Endpoint scopes not linked"),
+            }
+            tokio::select! {
+                () = shutdown.cancelled() => return,
+                () = tokio::time::sleep(LINK_EVERY) => {}
+            }
+        }
+    });
+}
+
 pub async fn build(
     cfg: &KaisatsuSection,
     ctx: BuildCtx<'_>,
     mount: Mount,
+    shutdown: &CancellationToken,
+    tasks: &TaskTracker,
 ) -> Result<Router, StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
-    let kek_file = cfg
-        .kek_file
-        .as_deref()
-        .or_else(|| ctx.setup.path(setup::Secret::KaisatsuKek))
-        .ok_or_else(|| err(&"no kek_file"))?;
-    let kek = Kek::from_file(kek_file).map_err(|e| err(&e))?;
+    let kek = ctx
+        .setup
+        .value(setup::Secret::KaisatsuKek)
+        .ok_or_else(|| err(&"no key-encryption key"))?;
+    let kek = Kek::from_raw_bytes(kek.as_bytes()).map_err(|e| err(&e))?;
     let store = open_kaisatsu_store(cfg, kek.clone()).await?;
     if let Some(dir) = &cfg.import_dir {
         let files = load_realm_files_from_path(dir).map_err(|e| err(&e))?;
-        apply_realm_files(&store, &files, &ApplyOptions::default())
+        // A realm file reads no environment here: its secrets are `$(file:...)` under the
+        // configured directory.
+        let options = ApplyOptions {
+            secrets_dir: cfg.import_secrets_dir.clone(),
+            ..ApplyOptions::default()
+        };
+        apply_realm_files(&store, &files, &options)
             .await
             .map_err(|e| err(&e))?;
     }
     apply_portal_realm(&store, ctx).await?;
+    follow_endpoint_scopes(store.clone(), shutdown, tasks);
     let state = KaisatsuState::new(
         store,
         kek,
@@ -139,6 +253,83 @@ pub async fn build(
 mod tests {
     use super::*;
     use crate::config::{Cli, Config};
+
+    fn scope(name: &str, mark: Option<&str>, mapper: bool) -> ClientScopeRepresentation {
+        let mut s = ClientScopeRepresentation {
+            name: name.to_owned(),
+            ..ClientScopeRepresentation::default()
+        };
+        if let Some(mark) = mark {
+            s.attributes.insert("managed-by".into(), mark.into());
+        }
+        if mapper {
+            s.protocol_mappers.push(Default::default());
+        }
+        s
+    }
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|n| (*n).to_owned()).collect()
+    }
+
+    #[test]
+    fn only_marked_mapperless_endpoint_scopes_are_the_portals() {
+        assert!(portal_endpoint_scope(&scope(
+            "endpoint:abc",
+            Some("joinedcontext"),
+            false
+        )));
+        assert!(!portal_endpoint_scope(&scope("endpoint:abc", None, false)));
+        assert!(!portal_endpoint_scope(&scope(
+            "endpoint:abc",
+            Some("someone"),
+            false
+        )));
+        assert!(!portal_endpoint_scope(&scope(
+            "endpoint:abc",
+            Some("joinedcontext"),
+            true
+        )));
+        assert!(!portal_endpoint_scope(&scope(
+            "endpoint:*",
+            Some("joinedcontext"),
+            false
+        )));
+        assert!(!portal_endpoint_scope(&scope(
+            "connector:abc",
+            Some("joinedcontext"),
+            false
+        )));
+    }
+
+    #[test]
+    fn endpoint_scopes_are_linked_optional_and_strays_unlinked() {
+        let client = ClientRepresentation {
+            default_client_scopes: names(&["basic", "endpoint:*", "endpoint:default-linked"]),
+            optional_client_scopes: names(&["gateway-hub", "endpoint:gone", "endpoint:a"]),
+            ..ClientRepresentation::default()
+        };
+        let ours = ["endpoint:a", "endpoint:b"];
+        // The hub keeps the realm's `endpoint:*` default; a default-linked or unknown
+        // `endpoint:` scope goes, the Portal's are optional.
+        let hub = link_endpoint_scopes(&client, &ours, true).expect("a change");
+        assert_eq!(hub.default_client_scopes, names(&["basic", "endpoint:*"]));
+        assert_eq!(
+            hub.optional_client_scopes,
+            names(&["gateway-hub", "endpoint:a", "endpoint:b"])
+        );
+        // Anywhere else `endpoint:*` goes too: no token names every Endpoint.
+        let portal = link_endpoint_scopes(&client, &ours, false).expect("a change");
+        assert_eq!(portal.default_client_scopes, names(&["basic"]));
+        assert!(
+            !portal
+                .optional_client_scopes
+                .contains(&"endpoint:*".to_owned())
+        );
+        // A second pass writes nothing.
+        assert!(link_endpoint_scopes(&portal, &ours, false).is_none());
+        assert!(link_endpoint_scopes(&hub, &ours, true).is_none());
+    }
 
     #[tokio::test]
     async fn k16_config_parses_database_url_file_refuses_unknown_fields_and_refuses_inline_password()
@@ -184,6 +375,7 @@ mod tests {
         let mem_section = KaisatsuSection {
             kek_file: Some(kek_path),
             import_dir: None,
+            import_secrets_dir: None,
             database_url_file: None,
             db_password_file: None,
             db_max_connections: None,
@@ -197,6 +389,7 @@ mod tests {
     /// URL is refused by the boot RLS check; the request role on a migrated database opens a
     /// `PgStore` whose writes persist across connections.
     #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // The test database URL.
     async fn k16_postgres_store_runs_the_boot_rls_check_and_persists() {
         use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
         use std::str::FromStr;
@@ -223,6 +416,7 @@ mod tests {
             KaisatsuSection {
                 kek_file: Some(kek_path.clone()),
                 import_dir: None,
+                import_secrets_dir: None,
                 database_url_file: Some(url_file),
                 db_password_file: Some(pw_file),
                 db_max_connections: Some(2),

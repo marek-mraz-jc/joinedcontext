@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! Host routing end to end: the catalogue a request's Host names picks the tenant, and every
 //! surface (CKAN Action API, OData, DCAT feeds, Atom, UI, MCP) answers from that tenant only,
 //! with internal records hidden from callers who may not read them. Run on the memory store and

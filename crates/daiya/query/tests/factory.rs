@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! A stored datasource record drives a real query: the factory builds each built-in driver
 //! from a [`DatasourceRecord`] and the query reaches a local mock server (or the test
 //! Postgres) through the outbound guard, with credentials from `secretRefs` only.

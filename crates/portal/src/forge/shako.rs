@@ -780,6 +780,38 @@ impl ShakoClient {
             .map_err(|e| GitError::Transport(e.to_string()))
     }
 
+    /// One read of the forge's OData service, `{base}/odata/{path}` with `query`, as this
+    /// client's machine user, the body refused past `limit` bytes. The repository pages read
+    /// shako only through this (`ops/repositories.rs`); `path` is built from checked parts.
+    pub async fn odata_get(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        limit: u64,
+    ) -> Result<serde_json::Value, GitError> {
+        let mut url = Url::parse(&format!(
+            "{}/odata/{path}",
+            self.base.as_str().trim_end_matches('/')
+        ))
+        .map_err(|e| GitError::Config(e.to_string()))?;
+        if !query.is_empty() {
+            // OData reads `%20`, not the form's `+`: each value is escaped, a literal `+` as
+            // `%2B`, so turning `+` back into `%20` touches only spaces. Names are constants.
+            let pairs: Vec<String> = query
+                .iter()
+                .map(|(name, value)| {
+                    let value: String =
+                        url::form_urlencoded::byte_serialize(value.as_bytes()).collect();
+                    format!("{name}={}", value.replace('+', "%20"))
+                })
+                .collect();
+            url.set_query(Some(&pairs.join("&")));
+        }
+        let res = Self::check_status(self.send(self.http.get(url)).await?).await?;
+        let body = read_capped(res, limit, "the forge's answer").await?;
+        serde_json::from_slice(&body).map_err(|e| GitError::Transport(e.to_string()))
+    }
+
     async fn check_status(res: reqwest::Response) -> Result<reqwest::Response, GitError> {
         let status = res.status();
         if status.is_success() {

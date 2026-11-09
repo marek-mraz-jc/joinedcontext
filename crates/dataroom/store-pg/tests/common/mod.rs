@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! Shared fixtures for the store tests: a migrated Postgres database reached through a request
 //! role without SUPERUSER or BYPASSRLS (the role production runs as, C1), and record builders.
 

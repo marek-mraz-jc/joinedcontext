@@ -69,6 +69,7 @@ async fn open_store(
 pub async fn build_state(
     cfg: &ShakoSection,
     setup: &crate::setup::Setup,
+    secrets: &crate::config::Secrets,
 ) -> Result<ShakoState, StartError> {
     let root = repo_root(cfg.repo_root.as_deref(), &setup.dir)?;
     let org_id = OrgId::from_u128(1);
@@ -86,20 +87,15 @@ pub async fn build_state(
         repo: None,
     }]));
 
-    let key = match &cfg.signing_key_file {
-        Some(path) => ShakoSigningKey::from_file(path).map_err(err)?,
+    let key = match &secrets.shako_signing_key {
+        Some(given) => ShakoSigningKey::from_text(given.secret.expose().as_bytes()).map_err(err)?,
         None => ShakoSigningKey::generate().map_err(err)?,
     };
 
     let mut static_tokens = Vec::new();
-    let token_file = cfg
-        .token_file
-        .as_deref()
-        .or_else(|| setup.path(crate::setup::Secret::ShakoToken));
-    if let Some(tf) = token_file {
-        let token = crate::runtime::read_secret_file(tf).map_err(err)?;
+    if let Some(token) = setup.value(crate::setup::Secret::ShakoToken) {
         static_tokens.push(StaticTokenBinding::new(
-            &token,
+            token,
             Subject::authenticated("admin", "admin", vec![org_id], vec![]),
         ));
     }

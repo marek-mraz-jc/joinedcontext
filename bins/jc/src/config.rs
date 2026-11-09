@@ -75,6 +75,10 @@ pub struct Cli {
     /// kaisatsu: realm files (JSON) applied at start.
     #[arg(long, env = "JCBIN_KAISATSU_IMPORT_DIR")]
     pub kaisatsu_import_dir: Option<PathBuf>,
+    /// kaisatsu: the only directory a realm file's `$(file:...)` secret may name (a realm file
+    /// reads no environment inside `jc`).
+    #[arg(long, env = "JCBIN_KAISATSU_IMPORT_SECRETS_DIR")]
+    pub kaisatsu_import_secrets_dir: Option<PathBuf>,
     /// kaisatsu: file holding the PostgreSQL connection URL without password (secrets mount).
     #[arg(long, env = "JCBIN_KAISATSU_DATABASE_URL_FILE")]
     pub kaisatsu_database_url_file: Option<PathBuf>,
@@ -113,6 +117,31 @@ pub struct Cli {
     /// shako: optional file holding a static service bearer token.
     #[arg(long, env = "JCBIN_SHAKO_TOKEN_FILE")]
     pub shako_token_file: Option<PathBuf>,
+    /// dataroom: file holding the CKAN API token the Portal publishes with (default: made per
+    /// boot, in memory).
+    #[arg(long, env = "JCBIN_DATAROOM_PORTAL_TOKEN_FILE")]
+    pub dataroom_portal_token_file: Option<PathBuf>,
+    /// daiya: file holding the password of the Portal's server administrator (default: made per
+    /// boot, in memory).
+    #[arg(long, env = "JCBIN_DAIYA_PORTAL_PASSWORD_FILE")]
+    pub daiya_portal_password_file: Option<PathBuf>,
+    /// Portal: file holding the age identity that decrypts each project's SOPS secrets
+    /// (`projects/{project}/secrets/*.sops.yaml`), so a `secretRef` resolves inside `jc`.
+    #[arg(long, env = "JCBIN_PORTAL_AGE_KEY_FILE")]
+    pub portal_age_key_file: Option<PathBuf>,
+    /// `production` warns about every secret given as an environment value (it shows in
+    /// `docker inspect` and the pod spec); `development` (default) does not.
+    #[arg(long, env = "JCBIN_PROFILE", value_enum)]
+    pub profile: Option<Profile>,
+}
+
+/// How strict the start report is about where secrets come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Profile {
+    #[default]
+    Development,
+    Production,
 }
 
 /// Log output format.
@@ -138,6 +167,7 @@ pub struct MountOverride {
 pub struct KaisatsuSection {
     pub kek_file: Option<PathBuf>,
     pub import_dir: Option<PathBuf>,
+    pub import_secrets_dir: Option<PathBuf>,
     pub database_url_file: Option<PathBuf>,
     pub db_password_file: Option<PathBuf>,
     pub db_max_connections: Option<u32>,
@@ -179,6 +209,7 @@ pub struct ShakoSection {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DaiyaSection {
+    pub portal_password_file: Option<PathBuf>,
     pub database: Option<DatabaseSection>,
     /// Grafana provisioning root (`datasources/`, `dashboards/`) loaded at every start, with
     /// `DAIYA_VAR_*` for its `$NAME` values. Its datasources alone may reach `jc`'s own
@@ -192,6 +223,8 @@ pub struct DaiyaSection {
 pub struct DataroomSection {
     pub org_id: String,
     pub catalogue_id: String,
+    #[serde(default)]
+    pub portal_token_file: Option<PathBuf>,
     pub database: Option<DatabaseSection>,
 }
 
@@ -200,10 +233,60 @@ impl Default for DataroomSection {
         Self {
             org_id: "00000000-0000-7000-8000-000000000001".into(),
             catalogue_id: "00000000-0000-7000-8000-000000000010".into(),
+            portal_token_file: None,
             database: None,
         }
     }
 }
+
+/// `[portal]` section: what `jc` hands the Portal beside its own `JC_*` environment.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PortalSection {
+    pub age_key_file: Option<PathBuf>,
+}
+
+/// `[door]`: this `jc` serves its modules to callers in other containers (role split). A request
+/// carrying a token kaisatsu signed for one of these clients, with audience the module's name
+/// (`shako`, `ekiben`, `daiya`, `dataroom`, `antares`), is let in as the module's service
+/// caller; every other request reaches the module unchanged. No client named admits nobody.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DoorSection {
+    /// The issuer the tokens name (`iss`).
+    pub issuer: String,
+    /// Where the issuer's signing keys are (`.../protocol/openid-connect/certs`).
+    pub jwks_url: String,
+    /// The client ids (`azp`) admitted.
+    #[serde(default)]
+    pub clients: Vec<String>,
+}
+
+/// `[remote]`: modules this `jc`'s Portal calls in other containers (role split). The Portal
+/// calls each on a loopback forwarder with a per-boot credential; the forwarder swaps it for a
+/// client-credentials token of `client_id` with the module's name as scope and audience.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteSection {
+    /// kaisatsu's token endpoint.
+    pub token_url: String,
+    pub client_id: String,
+    /// File holding the client secret (or `JCBIN_REMOTE_CLIENT_SECRET[_FILE]`).
+    pub client_secret_file: Option<PathBuf>,
+    /// Module name to the public base of its mount in the other container.
+    #[serde(default)]
+    pub modules: BTreeMap<String, String>,
+}
+
+/// The modules a role split may place behind a [`DoorSection`] or a [`RemoteSection`]: those
+/// the Portal calls with a service credential.
+pub const SPLIT_MODULES: [Module; 5] = [
+    Module::Shako,
+    Module::Ekiben,
+    Module::Daiya,
+    Module::Dataroom,
+    Module::Antares,
+];
 
 /// The TOML file. Unknown keys are refused so a typo never silently keeps a default.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -219,6 +302,7 @@ pub struct FileConfig {
     #[serde(default)]
     pub trusted_proxies: Vec<IpNet>,
     pub log_format: Option<LogFormat>,
+    pub profile: Option<Profile>,
     pub state_dir: Option<PathBuf>,
     pub portal_siblings: Option<bool>,
     #[serde(default)]
@@ -235,6 +319,10 @@ pub struct FileConfig {
     pub shako: ShakoSection,
     #[serde(default)]
     pub daiya: DaiyaSection,
+    #[serde(default)]
+    pub portal: PortalSection,
+    pub door: Option<DoorSection>,
+    pub remote: Option<RemoteSection>,
 }
 
 /// Errors while assembling the configuration.
@@ -255,8 +343,16 @@ pub enum ConfigError {
     Scheme(String),
     #[error("base host must be a plain host name, not '{0}'")]
     BaseHost(String),
-    #[error("the admin listener needs a token file (JCBIN_ADMIN_TOKEN_FILE or admin_token_file)")]
+    #[error(
+        "the admin listener needs a token (JCBIN_ADMIN_TOKEN_FILE, admin_token_file or JCBIN_ADMIN_TOKEN)"
+    )]
     AdminToken,
+    #[error("{0}")]
+    Secret(#[from] jc_secret::ReadError),
+    #[error("{0} is a file only: set {0}_FILE (or the config file's key) to its path")]
+    FileOnly(&'static str),
+    #[error("[remote]: {0}")]
+    Remote(String),
     #[error("[{module}.database]: {message}")]
     Database { module: Module, message: String },
 }
@@ -273,6 +369,7 @@ pub struct Config {
     pub admin_token_file: Option<PathBuf>,
     pub trusted_proxies: Vec<IpNet>,
     pub log_format: LogFormat,
+    pub profile: Profile,
     pub state_dir: PathBuf,
     pub portal_siblings: bool,
     pub mounts: BTreeMap<Module, MountOverride>,
@@ -282,6 +379,11 @@ pub struct Config {
     pub antares: AntaresSection,
     pub shako: ShakoSection,
     pub daiya: DaiyaSection,
+    pub portal: PortalSection,
+    pub door: Option<DoorSection>,
+    pub remote: Option<RemoteSection>,
+    /// `[remote.modules]`, parsed: each module and the base it is called at.
+    pub remote_modules: BTreeMap<Module, String>,
 }
 
 impl Config {
@@ -353,6 +455,9 @@ impl Config {
         let kaisatsu = KaisatsuSection {
             kek_file: cli.kaisatsu_kek_file.or(file.kaisatsu.kek_file),
             import_dir: cli.kaisatsu_import_dir.or(file.kaisatsu.import_dir),
+            import_secrets_dir: cli
+                .kaisatsu_import_secrets_dir
+                .or(file.kaisatsu.import_secrets_dir),
             database_url_file: cli
                 .kaisatsu_database_url_file
                 .or(file.kaisatsu.database_url_file),
@@ -387,8 +492,17 @@ impl Config {
             token_file: cli.shako_token_file.or(file.shako.token_file),
             database: file.shako.database,
         };
-        let daiya = file.daiya;
-        let dataroom = file.dataroom.unwrap_or_default();
+        let daiya = DaiyaSection {
+            portal_password_file: cli
+                .daiya_portal_password_file
+                .or(file.daiya.portal_password_file),
+            database: file.daiya.database,
+            provisioning_dir: file.daiya.provisioning_dir,
+        };
+        let mut dataroom = file.dataroom.unwrap_or_default();
+        dataroom.portal_token_file = cli
+            .dataroom_portal_token_file
+            .or(dataroom.portal_token_file);
         for (module, db) in [
             (Module::Kaisatsu, &kaisatsu.database),
             (Module::Ekiben, &ekiben.database),
@@ -409,9 +523,13 @@ impl Config {
         }
         let admin_listen = cli.admin_listen.or(file.admin_listen);
         let admin_token_file = cli.admin_token_file.or(file.admin_token_file);
-        if admin_listen.is_some() && admin_token_file.is_none() {
-            return Err(ConfigError::AdminToken);
-        }
+        let portal = PortalSection {
+            age_key_file: cli.portal_age_key_file.or(file.portal.age_key_file),
+        };
+        let remote_modules = match &file.remote {
+            Some(remote) => remote_modules(remote, &roles)?,
+            None => BTreeMap::new(),
+        };
         Ok(Self {
             roles,
             listen: cli.listen.or(file.listen).unwrap_or_else(|| {
@@ -426,6 +544,7 @@ impl Config {
             admin_token_file,
             trusted_proxies,
             log_format: cli.log_format.or(file.log_format).unwrap_or_default(),
+            profile: cli.profile.or(file.profile).unwrap_or_default(),
             state_dir: cli
                 .state_dir
                 .or(file.state_dir)
@@ -438,7 +557,265 @@ impl Config {
             antares,
             shako,
             daiya,
+            portal,
+            door: file.door,
+            remote: file.remote,
+            remote_modules,
         })
+    }
+}
+
+/// `[remote.modules]` checked: a split module, not also run here, at an http(s) base.
+fn remote_modules(
+    remote: &RemoteSection,
+    roles: &[Module],
+) -> Result<BTreeMap<Module, String>, ConfigError> {
+    let bad = |m: String| Err(ConfigError::Remote(m));
+    if !roles.contains(&Module::Portal) {
+        return bad("only a jc running the Portal calls remote modules".into());
+    }
+    let web = |url: &str| url.starts_with("https://") || url.starts_with("http://");
+    if !web(&remote.token_url) {
+        return bad("token_url must be an http(s) URL".into());
+    }
+    let mut out = BTreeMap::new();
+    for (name, url) in &remote.modules {
+        let module: Module = name
+            .parse()
+            .map_err(|_| ConfigError::Remote(format!("'{name}' is no module")))?;
+        if !SPLIT_MODULES.contains(&module) {
+            return bad(format!("{module} cannot run in another container"));
+        }
+        if roles.contains(&module) {
+            return bad(format!("{module} runs in this jc and in another container"));
+        }
+        if !web(url) {
+            return bad(format!("{module}: '{url}' is not an http(s) URL"));
+        }
+        out.insert(module, url.trim_end_matches('/').to_owned());
+    }
+    Ok(out)
+}
+
+/// The process environment `jc` reads: its own `JCBIN_*` keys, the `EKIBEN_VAR_*` values it
+/// hands ekiben's streams and the `DAIYA_VAR_*` values daiya's provisioning files name. This and [`portal_env`] are the only readers of the environment in
+/// `jc` and the modules it hosts (clippy `disallowed-methods` holds the module crates to it).
+#[must_use]
+#[allow(clippy::disallowed_methods)] // The one reader.
+pub fn process_env() -> BTreeMap<String, String> {
+    std::env::vars()
+        .filter(|(k, _)| {
+            k.starts_with("JCBIN_")
+                || k.starts_with(EKIBEN_VAR_PREFIX)
+                || k.starts_with("DAIYA_VAR_")
+        })
+        .collect()
+}
+
+/// One key of the Portal's or the gateway's own configuration (`JC_*`), as the standalone
+/// Portal or gateway reads it.
+#[must_use]
+#[allow(clippy::disallowed_methods)] // The one reader, for the Portal's and gateway's keys.
+pub fn portal_env(key: &str) -> Option<String> {
+    std::env::var(key).ok()
+}
+
+/// One `ANTARES_*` key, for the broker settings `jc` itself decides on (the broker reads the rest
+/// of its environment as standalone).
+#[must_use]
+#[allow(clippy::disallowed_methods)] // The one reader, for Antares' keys.
+pub fn antares_env(key: &str) -> Option<String> {
+    debug_assert!(key.starts_with("ANTARES_"));
+    std::env::var(key).ok()
+}
+
+/// The prefix of the variables `jc` hands ekiben's streams as `${NAME}` (ekiben's own
+/// convention for a shared process, `EnvAccess::AllowListed`).
+pub const EKIBEN_VAR_PREFIX: &str = "EKIBEN_VAR_";
+
+pub use crate::setup::Given;
+
+/// Every secret the operator gave `jc`, each from `NAME` or `NAME_FILE` (or the config file's
+/// key naming the file), never both. Read once at start; a module gets its own entries only.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Secrets {
+    /// The admin listener's bearer token.
+    pub admin_token: Option<Given>,
+    /// shako's ES256 signing key.
+    pub shako_signing_key: Option<Given>,
+    /// The secrets first-start setup otherwise generates.
+    pub module: BTreeMap<crate::setup::Secret, Given>,
+    /// `EKIBEN_VAR_<NAME>` values, by `NAME` and by the whole variable name.
+    pub ekiben_vars: BTreeMap<String, jc_secret::Secret>,
+    /// The age identity the Portal decrypts project secrets with (a file: the Portal reads it
+    /// per resolution).
+    pub portal_age_key_file: Option<PathBuf>,
+    /// `[remote]`'s client secret.
+    pub remote_client_secret: Option<Given>,
+}
+
+impl Secrets {
+    /// Reads every secret `cfg` names, with `NAME` values from the process environment.
+    pub fn load(cfg: &Config) -> Result<Self, ConfigError> {
+        Self::load_from(cfg, &process_env())
+    }
+
+    /// As [`Secrets::load`], with `env` standing for the process environment.
+    pub fn load_from(cfg: &Config, env: &BTreeMap<String, String>) -> Result<Self, ConfigError> {
+        use crate::setup::Secret as S;
+        let given = |name: &str, file: Option<&Path>| -> Result<Option<Given>, ConfigError> {
+            Ok(
+                jc_secret::read(name, env.get(name).cloned(), file)?.map(|(secret, source)| {
+                    Given {
+                        secret,
+                        source,
+                        path: file.map(Path::to_path_buf),
+                    }
+                }),
+            )
+        };
+        let mut out = Self {
+            admin_token: given("JCBIN_ADMIN_TOKEN", cfg.admin_token_file.as_deref())?,
+            shako_signing_key: given(
+                "JCBIN_SHAKO_SIGNING_KEY",
+                cfg.shako.signing_key_file.as_deref(),
+            )?,
+            ..Self::default()
+        };
+        if cfg.admin_listen.is_some() && out.admin_token.is_none() {
+            return Err(ConfigError::AdminToken);
+        }
+        for (secret, name, file) in [
+            (
+                S::KaisatsuKek,
+                "JCBIN_KAISATSU_KEK",
+                cfg.kaisatsu.kek_file.as_deref(),
+            ),
+            (
+                S::EkibenToken,
+                "JCBIN_EKIBEN_TOKEN",
+                cfg.ekiben.token_file.as_deref(),
+            ),
+            (
+                S::AntaresAdminToken,
+                "JCBIN_ANTARES_ADMIN_TOKEN",
+                cfg.antares.admin_token_file.as_deref(),
+            ),
+            (
+                S::ShakoToken,
+                "JCBIN_SHAKO_TOKEN",
+                cfg.shako.token_file.as_deref(),
+            ),
+            (
+                S::CatalogueToken,
+                "JCBIN_DATAROOM_PORTAL_TOKEN",
+                cfg.dataroom.portal_token_file.as_deref(),
+            ),
+            (
+                S::DashboardsPassword,
+                "JCBIN_DAIYA_PORTAL_PASSWORD",
+                cfg.daiya.portal_password_file.as_deref(),
+            ),
+        ] {
+            if let Some(g) = given(name, file)? {
+                out.module.insert(secret, g);
+            }
+        }
+        for (name, value) in env {
+            if let Some(bare) = name.strip_prefix(EKIBEN_VAR_PREFIX)
+                && !bare.is_empty()
+            {
+                let value = jc_secret::Secret::new(value.clone());
+                out.ekiben_vars.insert(bare.to_owned(), value.clone());
+                out.ekiben_vars.insert(name.clone(), value);
+            }
+        }
+        if env.contains_key("JCBIN_PORTAL_AGE_KEY") {
+            return Err(ConfigError::FileOnly("JCBIN_PORTAL_AGE_KEY"));
+        }
+        out.portal_age_key_file = cfg.portal.age_key_file.clone();
+        if let Some(remote) = &cfg.remote {
+            let file = remote.client_secret_file.clone().or_else(|| {
+                env.get("JCBIN_REMOTE_CLIENT_SECRET_FILE")
+                    .map(PathBuf::from)
+            });
+            out.remote_client_secret = given("JCBIN_REMOTE_CLIENT_SECRET", file.as_deref())?;
+            if out.remote_client_secret.is_none() {
+                return Err(ConfigError::Remote(
+                    "no client secret: set client_secret_file or JCBIN_REMOTE_CLIENT_SECRET_FILE"
+                        .into(),
+                ));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Name and source of each secret given here (setup reports the rest).
+    #[must_use]
+    pub fn report(&self) -> Vec<(&'static str, jc_secret::Source)> {
+        let mut out = Vec::new();
+        if let Some(g) = &self.admin_token {
+            out.push(("admin-token", g.source));
+        }
+        if let Some(g) = &self.shako_signing_key {
+            out.push(("shako-signing-key", g.source));
+        }
+        if self.portal_age_key_file.is_some() {
+            out.push(("portal-age-key", jc_secret::Source::File));
+        }
+        if let Some(g) = &self.remote_client_secret {
+            out.push(("remote-client-secret", g.source));
+        }
+        out
+    }
+}
+
+impl Config {
+    /// The start report's lines for the database passwords: one per `[<module>.database]`
+    /// password file (and migration password file), always a file, read at connect.
+    #[must_use]
+    pub fn database_report(&self) -> Vec<(&'static str, jc_secret::Source)> {
+        let sections = [
+            (
+                "kaisatsu-db-password",
+                "kaisatsu-db-migrate-password",
+                &self.kaisatsu.database,
+            ),
+            (
+                "ekiben-db-password",
+                "ekiben-db-migrate-password",
+                &self.ekiben.database,
+            ),
+            (
+                "antares-db-password",
+                "antares-db-migrate-password",
+                &self.antares.database,
+            ),
+            (
+                "shako-db-password",
+                "shako-db-migrate-password",
+                &self.shako.database,
+            ),
+            (
+                "daiya-db-password",
+                "daiya-db-migrate-password",
+                &self.daiya.database,
+            ),
+            (
+                "dataroom-db-password",
+                "dataroom-db-migrate-password",
+                &self.dataroom.database,
+            ),
+        ];
+        let mut out = Vec::new();
+        for (app, migrate, db) in sections {
+            let Some(db) = db else { continue };
+            out.push((app, jc_secret::Source::File));
+            if db.migrate_password_file.is_some() {
+                out.push((migrate, jc_secret::Source::File));
+            }
+        }
+        out
     }
 }
 
@@ -706,26 +1083,163 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
     }
 
     #[test]
-    fn an_admin_listener_without_a_token_file_is_refused() {
-        let err = Config::merge(
+    fn an_admin_listener_without_a_token_is_refused() {
+        let env = BTreeMap::new();
+        let load = |cfg: &Config| Secrets::load_from(cfg, &env);
+        let cfg = Config::merge(
             cli(&["--role", "daiya", "--admin-listen", "127.0.0.1:0"]),
             FileConfig::default(),
         )
-        .unwrap_err();
-        assert!(matches!(err, ConfigError::AdminToken), "{err}");
+        .unwrap();
+        assert!(matches!(load(&cfg), Err(ConfigError::AdminToken)));
         let file =
             Config::parse_file(Path::new("jc.toml"), "admin_listen = \"127.0.0.1:0\"\n").unwrap();
-        let err = Config::merge(cli(&["--role", "daiya"]), file.clone()).unwrap_err();
-        assert!(matches!(err, ConfigError::AdminToken), "{err}");
+        let cfg = Config::merge(cli(&["--role", "daiya"]), file.clone()).unwrap();
+        assert!(matches!(load(&cfg), Err(ConfigError::AdminToken)));
         let ok = Config::merge(
             cli(&["--role", "daiya", "--admin-token-file", "/run/a"]),
             file,
         )
         .unwrap();
         assert_eq!(ok.admin_token_file.as_deref(), Some(Path::new("/run/a")));
+        // Given as a value instead of a file.
+        let env = BTreeMap::from([("JCBIN_ADMIN_TOKEN".to_owned(), "tok".to_owned())]);
+        let secrets = Secrets::load_from(&cfg, &env).unwrap();
+        assert_eq!(
+            secrets.admin_token.map(|g| g.source),
+            Some(jc_secret::Source::Env)
+        );
         // Without an admin listener no token is needed.
         let ok = Config::merge(cli(&["--role", "daiya"]), FileConfig::default()).unwrap();
         assert_eq!(ok.admin_token_file, None);
+        assert_eq!(load(&ok).unwrap().admin_token, None);
+    }
+
+    /// Every secret `jc` takes from the operator, by its `NAME`, and the flag naming its file.
+    const GIVEN: [(&str, &str); 8] = [
+        ("JCBIN_ADMIN_TOKEN", "--admin-token-file"),
+        ("JCBIN_SHAKO_SIGNING_KEY", "--shako-signing-key-file"),
+        ("JCBIN_KAISATSU_KEK", "--kaisatsu-kek-file"),
+        ("JCBIN_EKIBEN_TOKEN", "--ekiben-token-file"),
+        ("JCBIN_ANTARES_ADMIN_TOKEN", "--antares-admin-token-file"),
+        ("JCBIN_SHAKO_TOKEN", "--shako-token-file"),
+        (
+            "JCBIN_DATAROOM_PORTAL_TOKEN",
+            "--dataroom-portal-token-file",
+        ),
+        (
+            "JCBIN_DAIYA_PORTAL_PASSWORD",
+            "--daiya-portal-password-file",
+        ),
+    ];
+
+    #[test]
+    fn every_secret_comes_from_name_or_name_file_and_both_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("value");
+        std::fs::write(&file, "from-the-file\n").unwrap();
+        let path = file.to_str().unwrap();
+        for (name, flag) in GIVEN {
+            // The flag's environment variable is NAME_FILE.
+            let arg = Cli::command()
+                .get_arguments()
+                .find(|a| a.get_long() == flag.strip_prefix("--"))
+                .and_then(|a| a.get_env().map(|e| e.to_string_lossy().into_owned()))
+                .unwrap();
+            assert_eq!(arg, format!("{name}_FILE"));
+            let with_file =
+                Config::merge(cli(&["--role", "all", flag, path]), FileConfig::default()).unwrap();
+            let value = BTreeMap::from([(name.to_owned(), "from-the-env".to_owned())]);
+            let e = Secrets::load_from(&with_file, &value)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(name) && e.contains("both"), "{name}: {e}");
+            assert!(!e.contains("from-the-"), "{name}: {e}");
+            let given = |s: &Secrets| -> Option<Given> {
+                match name {
+                    "JCBIN_ADMIN_TOKEN" => s.admin_token.clone(),
+                    "JCBIN_SHAKO_SIGNING_KEY" => s.shako_signing_key.clone(),
+                    _ => s.module.values().next().cloned(),
+                }
+            };
+            let from_file = Secrets::load_from(&with_file, &BTreeMap::new()).unwrap();
+            let g = given(&from_file).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(
+                (g.secret.expose(), g.source),
+                ("from-the-file", jc_secret::Source::File)
+            );
+            let env_only = Config::merge(cli(&["--role", "all"]), FileConfig::default()).unwrap();
+            let from_env = Secrets::load_from(&env_only, &value).unwrap();
+            let g = given(&from_env).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(
+                (g.secret.expose(), g.source),
+                ("from-the-env", jc_secret::Source::Env)
+            );
+            // Debug of the whole set never shows a value.
+            assert!(!format!("{from_env:?}{from_file:?}").contains("from-the-"));
+        }
+        // The age identity is a file only.
+        let env = BTreeMap::from([(
+            "JCBIN_PORTAL_AGE_KEY".to_owned(),
+            "AGE-SECRET-KEY-1".to_owned(),
+        )]);
+        let cfg = Config::merge(cli(&["--role", "portal"]), FileConfig::default()).unwrap();
+        let e = Secrets::load_from(&cfg, &env).unwrap_err().to_string();
+        assert!(
+            e.contains("JCBIN_PORTAL_AGE_KEY_FILE") && !e.contains("AGE-SECRET"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn ekiben_vars_are_read_by_jc_and_handed_over_by_name() {
+        let cfg = Config::merge(cli(&["--role", "ekiben"]), FileConfig::default()).unwrap();
+        let env = BTreeMap::from([(
+            "EKIBEN_VAR_JC_GATEWAY_URL".to_owned(),
+            "http://gw".to_owned(),
+        )]);
+        let secrets = Secrets::load_from(&cfg, &env).unwrap();
+        assert_eq!(secrets.ekiben_vars["JC_GATEWAY_URL"].expose(), "http://gw");
+        assert_eq!(
+            secrets.ekiben_vars["EKIBEN_VAR_JC_GATEWAY_URL"].expose(),
+            "http://gw"
+        );
+    }
+
+    #[test]
+    fn a_remote_module_is_checked_and_its_client_secret_is_required() {
+        let parse = |toml: &str| Config::parse_file(Path::new("jc.toml"), toml).unwrap();
+        let remote = "[remote]\ntoken_url = \"http://id/token\"\nclient_id = \"portal-remote\"\n[remote.modules]\n";
+        let merge = |role: &str, modules: &str| {
+            Config::merge(cli(&["--role", role]), parse(&format!("{remote}{modules}")))
+        };
+        let cfg = merge("portal", "shako = \"https://git.city.test/\"").unwrap();
+        assert_eq!(cfg.remote_modules[&Module::Shako], "https://git.city.test");
+        for (role, modules, said) in [
+            (
+                "dataroom",
+                "shako = \"https://g\"",
+                "only a jc running the Portal",
+            ),
+            ("portal,shako", "shako = \"https://g\"", "runs in this jc"),
+            (
+                "portal",
+                "kaisatsu = \"https://g\"",
+                "cannot run in another",
+            ),
+            ("portal", "shako = \"file:///etc\"", "not an http(s) URL"),
+        ] {
+            let err = merge(role, modules).unwrap_err().to_string();
+            assert!(err.contains(said), "{role} {modules}: {err}");
+        }
+        let err = Secrets::load_from(&cfg, &BTreeMap::new()).unwrap_err();
+        assert!(err.to_string().contains("no client secret"), "{err}");
+        let env = BTreeMap::from([("JCBIN_REMOTE_CLIENT_SECRET".to_owned(), "s3cret".to_owned())]);
+        let secrets = Secrets::load_from(&cfg, &env).unwrap();
+        assert_eq!(
+            secrets.remote_client_secret.unwrap().source,
+            jc_secret::Source::Env
+        );
     }
 
     #[test]
@@ -805,6 +1319,11 @@ password_file = "/run/secrets/kaisatsu"
         // No section: every module stays on its memory store.
         let bare = Config::merge(Cli::default(), FileConfig::default()).unwrap();
         assert!(bare.shako.database.is_none() && bare.daiya.database.is_none());
+        // The start report names each password file, shako's migration one too, as a file.
+        let report = cfg.database_report();
+        assert_eq!(report.len(), 7, "{report:?}");
+        assert!(report.contains(&("shako-db-migrate-password", jc_secret::Source::File)));
+        assert!(bare.database_report().is_empty());
 
         let refused = |text: &str| {
             Config::merge(

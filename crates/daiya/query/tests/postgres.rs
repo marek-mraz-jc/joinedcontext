@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! The Postgres driver: Grafana's SQL macros (`macros.go`), the read-only SELECT checker, and
 //! (with `DAIYA_TEST_DATABASE_URL`) real results read back with their Postgres types, the row
 //! limit and the health ping.

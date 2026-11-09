@@ -68,13 +68,13 @@ impl DatabaseSection {
 
     /// The request role's URL with its password, for a module that takes a URL string
     /// (Antares). Hold it as a secret: never log or print it.
-    pub fn app_url_with_password(&self) -> Result<String, String> {
+    pub fn app_url_with_password(&self) -> Result<jc_secret::Secret, String> {
         check_url("url", &self.url)?;
         let password = read_password(&self.password_file)?;
         let mut url = url::Url::parse(&self.url).map_err(|_| "url does not parse".to_owned())?;
-        url.set_password(Some(&password))
+        url.set_password(Some(password.expose()))
             .map_err(|()| "url takes no password".to_owned())?;
-        Ok(url.into())
+        Ok(jc_secret::Secret::new(url.into()))
     }
 
     /// The role `url` names (the role a migration grants to).
@@ -103,19 +103,23 @@ fn check_url(key: &str, raw: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn read_password(path: &Path) -> Result<String, String> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| format!("cannot read password file {}: {e}", path.display()))?;
-    let password = raw.trim();
-    if password.is_empty() {
-        return Err(format!("password file {} is empty", path.display()));
-    }
-    Ok(password.to_owned())
+/// The password in `path`, through `jc`'s one secret reader: trimmed, an empty file refused, the
+/// value never in an error.
+fn read_password(path: &Path) -> Result<jc_secret::Secret, String> {
+    jc_secret::read_file("password_file", path).map_err(|e| match e {
+        jc_secret::ReadError::File { reason, .. } => {
+            format!("cannot read password file {}: {reason}", path.display())
+        }
+        jc_secret::ReadError::EmptyFile { .. } => {
+            format!("password file {} is empty", path.display())
+        }
+        other => other.to_string(),
+    })
 }
 
 fn options(url: &str, password_file: &Path) -> Result<PgConnectOptions, String> {
     let opts = PgConnectOptions::from_str(url).map_err(|_| "url does not parse".to_owned())?;
-    Ok(opts.password(&read_password(password_file)?))
+    Ok(opts.password(read_password(password_file)?.expose()))
 }
 
 /// A pool of at most `max` connections; a refused or unreachable server is an error (no retry
@@ -177,7 +181,7 @@ mod tests {
         let mut s = section("postgres://antares@db:5432/jc");
         s.password_file = pw.clone();
         assert_eq!(
-            s.app_url_with_password().unwrap(),
+            s.app_url_with_password().unwrap().expose(),
             "postgres://antares:s3cret@db:5432/jc"
         );
         assert_eq!(s.app_role().unwrap(), "antares");

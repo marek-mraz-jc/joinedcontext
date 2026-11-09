@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)] // These tests start the jc binary.
 //! End to end: Endpoints inside `jc --role all`, as on dev. The test writes a project to shako's
 //! organization repository (one space, a public and a closed Endpoint, their Policies), waits for
 //! the Portal's reconciler to write the views and rule documents into Antares and for the gateway
@@ -26,6 +27,8 @@ const CLOSED: &str = "e2eclosedendpointaaaaaaaaa";
 const ELSEWHERE: &str = "e2eotherendpointaaaaaaaaaa";
 const PERSON: &str = "e2e.person";
 const PERSON_PASSWORD: &str = "e2e-person-password-not-secret";
+/// A person in none of the project's groups: no Policy of the space names them.
+const STRANGER: &str = "e2e.stranger";
 const READER_SECRET: &str = "e2e-reader-client-secret-not-secret";
 /// The organization repository, not jc's default `jc/config`: the gateway must check out the
 /// repository the Portal is told to use (`JC_SHAKO_OWNER`, `JC_SHAKO_REPO`).
@@ -57,11 +60,15 @@ impl Drop for Jc {
 }
 
 impl Jc {
+    /// A secret the test gave jc as a file, else jc's state file.
     fn secret(&self, name: &str) -> String {
-        std::fs::read_to_string(self.state.join(name))
-            .unwrap()
-            .trim()
-            .to_owned()
+        let given = self._dir.path().join("given").join(name);
+        let path = if given.exists() {
+            given
+        } else {
+            self.state.join(name)
+        };
+        std::fs::read_to_string(path).unwrap().trim().to_owned()
     }
 
     fn log_has(&self, needle: &str) -> bool {
@@ -93,8 +100,16 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// The test's people and clients, imported into realm `jc` before the Portal's own files.
-fn realm_file(dir: &Path) {
+/// The test's people and clients, imported into realm `jc` before the Portal's own files. Their
+/// secrets are `$(file:...)` under `secrets` (`--kaisatsu-import-secrets-dir`).
+fn realm_file(dir: &Path, secrets: &Path) {
+    std::fs::create_dir_all(secrets).unwrap();
+    let client_secret = secrets.join("e2e-client-secret");
+    let person_password = secrets.join("e2e-person-password");
+    std::fs::write(&client_secret, READER_SECRET).unwrap();
+    std::fs::write(&person_password, PERSON_PASSWORD).unwrap();
+    let client_secret = format!("$(file:{})", client_secret.display());
+    let person_password = format!("$(file:{})", person_password.display());
     let audience = |name: &str, slug: &str| {
         json!({
             "name": name,
@@ -127,7 +142,7 @@ fn realm_file(dir: &Path) {
             "protocol": "openid-connect",
             "publicClient": false,
             "clientAuthenticatorType": "client-secret",
-            "secret": "$(env:E2E_CLIENT_SECRET)",
+            "secret": client_secret,
             "standardFlowEnabled": false,
             "directAccessGrantsEnabled": true,
             "serviceAccountsEnabled": false,
@@ -145,8 +160,27 @@ fn realm_file(dir: &Path) {
             { "name": format!("{PROJECT}-readers") },
             { "name": format!("{PROJECT}-writers") }
         ],
-        "clients": [client("e2e-reader", CLOSED), client("e2e-elsewhere", ELSEWHERE)],
+        // `e2e-mcp` stands in for an MCP client: its person tokens name the Portal's client, which
+        // `/api/v1/mcp` takes and exchanges for one Endpoint (`endpoint:{slug}`).
+        "clients": [
+            client("e2e-reader", CLOSED),
+            client("e2e-elsewhere", ELSEWHERE),
+            client("e2e-mcp", "portal-api"),
+        ],
         "users": [{
+            "username": STRANGER,
+            "enabled": true,
+            "email": "e2e.stranger@jc.invalid",
+            "emailVerified": true,
+            "firstName": "No",
+            "lastName": "Grant",
+            "groups": [],
+            "credentials": [{
+                "type": "password",
+                "value": person_password.clone(),
+                "temporary": false
+            }]
+        }, {
             "username": PERSON,
             "enabled": true,
             "email": "e2e.person@jc.invalid",
@@ -156,7 +190,7 @@ fn realm_file(dir: &Path) {
             "groups": [format!("/{PROJECT}-readers"), format!("/{PROJECT}-writers")],
             "credentials": [{
                 "type": "password",
-                "value": "$(env:E2E_PERSON_PASSWORD)",
+                "value": person_password,
                 "temporary": false
             }]
         }]
@@ -169,12 +203,24 @@ async fn start() -> Jc {
     let dir = tempfile::tempdir().unwrap();
     let state = dir.path().join("state");
     let realms = dir.path().join("realms");
-    realm_file(&realms);
+    let realm_secrets = dir.path().join("realm-secrets");
+    realm_file(&realms, &realm_secrets);
     let port = free_port();
     let base_host = format!("localhost:{port}");
     let config = dir.path().join("jc.toml");
     std::fs::write(&config, "[mounts.portal]\npath_prefix = \"\"\n").unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+    // The service tokens between modules live in jc's memory only; the test acts as the Portal
+    // with a shako token it gives jc as a file.
+    let given = dir.path().join("given");
+    std::fs::create_dir(&given).unwrap();
+    let shako = given.join("shako-token");
+    std::fs::write(
+        &shako,
+        format!("test-shako-token-{:032x}", std::process::id()),
+    )
+    .unwrap();
+    cmd.arg("--shako-token-file").arg(&shako);
     for (key, _) in std::env::vars() {
         if key.starts_with("JCBIN_") || key.starts_with("JC_") || key.starts_with("ANTARES_") {
             cmd.env_remove(key);
@@ -189,8 +235,8 @@ async fn start() -> Jc {
         .arg(&state)
         .arg("--kaisatsu-import-dir")
         .arg(&realms)
-        .env("E2E_CLIENT_SECRET", READER_SECRET)
-        .env("E2E_PERSON_PASSWORD", PERSON_PASSWORD)
+        .arg("--kaisatsu-import-secrets-dir")
+        .arg(&realm_secrets)
         .env("JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR", "false")
         .env("JC_PORTAL_SYNC_INTERVAL", "3")
         .env("JC_SHAKO_OWNER", FORGE_OWNER)
@@ -347,13 +393,17 @@ where
 
 /// A person's token from `client` by the password grant.
 async fn token(jc: &Jc, client: &str) -> String {
+    token_of(jc, client, PERSON).await
+}
+
+async fn token_of(jc: &Jc, client: &str, username: &str) -> String {
     let resp = Client::new()
         .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
         .form(&[
             ("grant_type", "password"),
             ("client_id", client),
             ("client_secret", READER_SECRET),
-            ("username", PERSON),
+            ("username", username),
             ("password", PERSON_PASSWORD),
         ])
         .send()
@@ -402,6 +452,29 @@ fn entity(kind: &str, local: &str) -> Value {
 async fn endpoints_answer_inside_jc_as_on_dev() {
     let jc = start().await;
     let started = Instant::now();
+    // jc creates the organization repository in the Portal's background start, after it
+    // listens: write once shako holds it.
+    eventually(
+        "shako holds the organization repository",
+        &jc,
+        120,
+        || async {
+            let resp = Client::new()
+                .get(jc.url(&format!("/git/api/v1/repos/{FORGE_OWNER}/{FORGE_REPO}")))
+                .header(
+                    "authorization",
+                    format!("token {}", jc.secret("shako-token")),
+                )
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            match resp.status() {
+                s if s.is_success() => Ok(()),
+                s => Err(s.to_string()),
+            }
+        },
+    )
+    .await;
     for (path, content) in manifests() {
         put_file(&jc, &path, &content).await;
     }
@@ -516,6 +589,63 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+    // `jc_data_query` through the Portal's MCP: the Portal exchanges the person's token for
+    // `endpoint:{slug}` (the scope jc's kaisatsu links to portal-api, as the deployment's
+    // admin-permissions Job does on dev) and reads as them through the gateway.
+    let data_query = |id: u32| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {
+                "name": "jc_data_query",
+                "arguments": { "project": PROJECT, "endpoint": "closed", "type": "Thing" }
+            }
+        })
+    };
+    let member = token(&jc, "e2e-mcp").await;
+    let body = eventually(
+        "a member's jc_data_query reads the closed Endpoint",
+        &jc,
+        60,
+        || async {
+            let (status, body) = call(
+                &jc,
+                post.clone(),
+                "/api/v1/mcp",
+                Some(&member),
+                Some(&data_query(3)),
+            )
+            .await;
+            (status == StatusCode::OK && body.contains("urn:ngsi-ld:Thing:one"))
+                .then_some(body.clone())
+                .ok_or(format!("{status} {body}"))
+        },
+    )
+    .await;
+    assert!(!body.contains("not open to data reads"), "{body}");
+    // A person with no grant on the Endpoint gets a token exchanged the same way, and the
+    // gateway's Policy still refuses them: the scope names the Endpoint, never a right to it.
+    let stranger = token_of(&jc, "e2e-mcp", STRANGER).await;
+    let (status, body) = call(
+        &jc,
+        post.clone(),
+        "/api/v1/mcp",
+        Some(&stranger),
+        Some(&data_query(4)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        !body.contains("urn:ngsi-ld:Thing:one"),
+        "a person without a grant read the closed Endpoint: {body}"
+    );
+    assert!(
+        jc.log_has("the gateway refused a shared Endpoint read"),
+        "the stranger's read never reached the gateway's refusal:\n{}",
+        jc.tail()
+    );
 
     // A caller who claims the gateway's mesh identity or a subject on the public broker mount
     // is nobody but itself: the claim reaches no rule, and the admin token is still asked for.

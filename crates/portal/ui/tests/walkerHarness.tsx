@@ -81,6 +81,8 @@ export const ADDRESSES: Record<string, string[]> = {
   "/ai-connectors": ["/ai-connectors"],
   "/settings": ["/settings"],
   "/projects/$project/knowledge": [`${P}/knowledge`],
+  "/projects/$project/repositories": [`${P}/repositories`],
+  "/projects/$project/repositories/$name": [`${P}/repositories/air`],
   "/projects/$project/knowledge/conversations": [`${P}/knowledge/conversations`],
   "/projects/$project/knowledge/$source": [`${P}/knowledge/web`],
   "/projects/$project/import": [`${P}/import`],
@@ -146,6 +148,9 @@ function answer(path: string): Response | undefined {
       costByStage: [], days: [],
     });
   }
+  // A repository is read through the registry (`POST …/ops/jc_repository_get`), so its name is
+  // in the body, not the path: answered as the made-up name the address carries.
+  if (path.endsWith("/ops/jc_repository_get")) return problem(404, "air was not found");
   const last = decodeURIComponent(path.split("/").pop() ?? "");
   return MADE_UP.has(last) && path !== "/api/v1/projects/helsinki" ? problem(404, `${last} was not found`) : undefined;
 }

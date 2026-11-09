@@ -43,6 +43,8 @@ pub(crate) fn config(
     })
     .map_err(err)?;
     config.host_vars = siblings;
+    // jc serves the scrape on its admin listener, behind the admin token (`app::admin_router`).
+    config.public_metrics = false;
     Ok(config)
 }
 
@@ -55,7 +57,7 @@ pub async fn build(
     mount: Mount,
     shutdown: &CancellationToken,
 ) -> Result<(Router, Option<std::net::SocketAddr>), StartError> {
-    let env = |key: &str| std::env::var(key).ok();
+    let env = crate::config::portal_env;
     let siblings = if wire_siblings {
         crate::siblings::portal_vars(ctx.siblings, ctx.setup, env)
     } else {

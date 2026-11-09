@@ -107,6 +107,11 @@ pub struct Config {
     /// (`JC_PORTAL_PIPELINE_RUNNER_URL`). `None` leaves the metrics route answering 503
     /// instead of guessing a service name.
     pub pipeline_runner_url: Option<String>,
+    /// The runner's bearer token, sent on every call to the runner and nowhere else
+    /// (`JC_PORTAL_PIPELINE_RUNNER_TOKEN`, or the file `JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE`
+    /// names, read at start; `jc` hands it its ekiben token). `None` sends none, as a Bento
+    /// runner on the cluster network expects. `Debug` never prints it.
+    pub pipeline_runner_token: Option<String>,
     /// Whether every stream presents its own pipeline's identity through the runner's token
     /// sidecar (`JC_PORTAL_PIPELINE_IDENTITY=pipeline`) rather than its project's `pipelines`
     /// account (`project`, the default), PL-19. Set once the federated mechanism is seen working.
@@ -280,6 +285,10 @@ pub struct Config {
     /// (`JC_SHAKO_*`) the environment leaves unset, read by `AppState::from_config` after
     /// `from_vars`. Empty for the standalone Portal; an environment value always wins.
     pub host_vars: std::collections::BTreeMap<String, String>,
+    /// Whether the Portal's own router serves the `/metrics` scrape (OPS-16; the edge refuses the
+    /// path in the cluster). A hosting process with its own guarded scrape (`jc`'s admin
+    /// listener) turns it off; no environment key turns it on again.
+    pub public_metrics: bool,
     /// The client the reconciler manages the realm's groups with: a `ServiceAccount` client
     /// holding `manage-users` and `query-groups` of `realm-management` and nothing else
     /// (`JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID` and one of `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SECRET`, a
@@ -412,6 +421,10 @@ impl std::fmt::Debug for Config {
             .field("gateway_client_id", &self.gateway_client_id)
             .field("agent_proxy_client_id", &self.agent_proxy_client_id)
             .field("pipeline_runner_client_id", &self.pipeline_runner_client_id)
+            .field(
+                "pipeline_runner_token",
+                &self.pipeline_runner_token.as_ref().map(|_| "<redacted>"),
+            )
             .field("invitation_client_id", &self.invitation_client_id)
             .field("broker_url", &self.broker_url)
             .field("broker_url_template", &self.broker_url_template)
@@ -1824,6 +1837,21 @@ impl Config {
             })
             .transpose()?;
 
+        let pipeline_runner_token = match (
+            lookup("JC_PORTAL_PIPELINE_RUNNER_TOKEN").filter(|v| !v.trim().is_empty()),
+            lookup("JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE").filter(|v| !v.trim().is_empty()),
+        ) {
+            (Some(token), _) => Some(token.trim().to_owned()),
+            (None, Some(path)) => {
+                let token = std::fs::read_to_string(&path).map_err(|e| ConfigError::Invalid {
+                    var: "JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE",
+                    reason: format!("{path}: {e}"),
+                })?;
+                Some(token.trim().to_owned()).filter(|t| !t.is_empty())
+            }
+            (None, None) => None,
+        };
+
         let pipeline_test_capture_url = http_url(&lookup, "JC_PORTAL_PIPELINE_TEST_CAPTURE_URL")?
             .map(|url| url.trim_end_matches('/').to_owned());
 
@@ -1912,6 +1940,7 @@ impl Config {
             shako_webhook_secret,
             shako_webhook_secret_previous,
             pipeline_runner_url,
+            pipeline_runner_token,
             pipeline_identity,
             pipelines_concurrency,
             pipeline_namespace,
@@ -1966,12 +1995,14 @@ impl Config {
             apps_db,
             pipeline_secrets,
             host_vars: std::collections::BTreeMap::new(),
+            public_metrics: true,
         })
     }
 
     pub fn for_tests() -> Self {
         Self {
             host_vars: std::collections::BTreeMap::new(),
+            public_metrics: true,
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             internal_bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             public_base_url: Url::parse("http://localhost:8080")
@@ -1991,6 +2022,7 @@ impl Config {
             shako_webhook_secret: None,
             shako_webhook_secret_previous: None,
             pipeline_runner_url: None,
+            pipeline_runner_token: None,
             pipeline_identity: false,
             pipelines_concurrency: (1, 1),
             pipeline_namespace: None,
