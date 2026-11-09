@@ -20,6 +20,7 @@ import urllib.parse
 from pathlib import Path
 
 import pytest
+import yaml
 
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
@@ -194,6 +195,28 @@ def test_a_cluster_import_fences_catalogues_to_the_instances_own_host_and_nothin
         with pytest.raises(SystemExit):
             rh.catalogue_url(bad)
 
+
+
+def test_an_imported_endpoint_without_a_ckan_publish_leaves_jcs_catalogue_as_prods():
+    head = b"apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: e\nspec:\n  slug: s\n"
+    cat = b"  catalog:\n    # the city's own words\n    license: CC_BY_4_0\n    themes: [SOCI]\n"
+    # No spec.publish.ckan: prod lists nothing, so jc gets harvest: false in the block.
+    out = rh.hide_unpublished(head + cat + b"  audience: public\n")
+    assert yaml.safe_load(out)["spec"]["catalog"] == {"harvest": False, "license": "CC_BY_4_0", "themes": ["SOCI"]}
+    assert yaml.safe_load(out)["spec"]["audience"] == "public" and b"# the city's own words" in out
+    flip = rh.hide_unpublished(head + b"  catalog:\n    harvest: true\n    license: x\n")
+    assert yaml.safe_load(flip)["spec"]["catalog"] == {"harvest": False, "license": "x"}
+    flow = rh.hide_unpublished(head + b"  catalog: { license: x, harvest: true }\n")
+    assert yaml.safe_load(flow)["spec"]["catalog"] == {"harvest": False, "license": "x"}
+    # A publish block without ckan publishes nothing on prod either.
+    other = rh.hide_unpublished(head + b"  publish:\n    feeds: {}\n" + cat)
+    assert yaml.safe_load(other)["spec"]["catalog"]["harvest"] is False
+    # With spec.publish.ckan prod lists it: unchanged, as is an Endpoint without a catalog block.
+    published = head + b"  publish:\n    ckan:\n      instanceRef: { kind: CkanInstance, name: zilina }\n" + cat
+    assert rh.hide_unpublished(published) == published
+    assert rh.hide_unpublished(head) == head
+    pipeline = b"kind: Pipeline\nspec:\n  catalog:\n    license: x\n"
+    assert rh.hide_unpublished(pipeline) == pipeline
 
 def test_entity_batches_keep_their_tenant_and_stay_under_the_caps():
     lines = ([{"tenant": "a", "entity": {"id": f"urn:ngsi-ld:X:{i}"}} for i in range(1203)]

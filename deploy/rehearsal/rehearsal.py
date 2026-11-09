@@ -843,6 +843,32 @@ def name_datasets(data: bytes) -> bytes:
     return data[:m.end()] + indent + b"name: " + new.encode() + b"\n" + rest
 
 
+
+_SPEC_KEY = re.compile(rb"^  (\w+):(.*)\n((?:(?:    .*|[ \t]*(?:#.*)?)\n)*)", re.M)
+
+
+def hide_unpublished(data: bytes) -> bytes:
+    """Prod's catalogue holds only Endpoints with spec.publish.ckan; jc lists every Endpoint with a
+    catalog block (ADR-N-068). An imported Endpoint without spec.publish.ckan gets
+    catalog.harvest: false, so jc lists what prod lists and no more (supervisor 2026-11-09).
+    Every other file is returned as it is."""
+    if not re.search(rb"^kind:\s*Endpoint\s*$", data, re.M) or not re.search(rb"^spec:\s*$", data, re.M):
+        return data
+    keys = {m.group(1): m for m in _SPEC_KEY.finditer(data, re.search(rb"^spec:\s*$", data, re.M).end())}
+    pub, cat = keys.get(b"publish"), keys.get(b"catalog")
+    if (pub and re.search(rb"^    ckan:", pub.group(3), re.M)) or not cat:
+        return data
+    head, block = cat.group(2), cat.group(3)
+    if head.strip().startswith(b"{"):
+        inner = re.sub(rb",?\s*harvest:\s*\w+\s*,?", b",", head.strip()[1:-1]).strip(b" ,")
+        new = b" { harvest: false" + (b", " + inner if inner else b"") + b" }\n"
+        return data[:cat.start(2)] + new + data[cat.end(2) + 1:]
+    if re.search(rb"^    harvest:", block, re.M):
+        block = re.sub(rb"^(    harvest:)[^\n#]*", rb"\1 false", block, count=1, flags=re.M)
+    else:
+        block = b"    harvest: false\n" + block
+    return data[:cat.start(3)] + block + data[cat.end(3):]
+
 # The hub's `search_documents` sources, as the deployment gives the gateway (MF-57).
 GATEWAY_VALUES = "components/context-gateway/values/gateway/base-values.yaml.gotmpl"
 _HUB_SOURCES = re.compile(r'^\s*JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:\s*"([^"]*)"\s*$', re.M)
@@ -888,7 +914,10 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
                 data = p.read_bytes()
                 rel = p.relative_to(root).as_posix()
                 fenced = fence_writes(data, catalogue)
-                files[rel] = named = name_datasets(fenced)
+                named = name_datasets(fenced)
+                files[rel] = hidden = hide_unpublished(named)
+                if hidden != named:
+                    report.setdefault("harvestOff", []).append(f"{owner}/{name}/{rel}")
                 if fenced != data:
                     report.setdefault("fenced", []).append(f"{owner}/{name}/{rel}")
                 if named != fenced:
