@@ -10,7 +10,7 @@ use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Which token or response the mapper pipeline is building.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,6 +200,31 @@ pub fn resolve_effective_realm_roles(
     visited.into_iter().collect()
 }
 
+/// The client roles of a person holding `direct` client roles and the effective realm roles
+/// `realm_roles`: `direct` plus each realm role's client composites, sorted, without empty lists.
+/// ponytail: a client role's own composites are not followed (no client role definitions here).
+#[must_use]
+pub fn effective_client_roles(
+    direct: &HashMap<String, Vec<String>>,
+    realm_roles: &[String],
+    all_roles: &[RoleRepresentation],
+) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let composites = all_roles
+        .iter()
+        .filter(|r| !r.client_role && realm_roles.contains(&r.name))
+        .flat_map(|r| r.composites.client.iter());
+    for (client, roles) in direct.iter().chain(composites) {
+        out.entry(client.clone())
+            .or_default()
+            .extend(roles.iter().cloned());
+    }
+    out.into_iter()
+        .filter(|(_, roles)| !roles.is_empty())
+        .map(|(client, roles)| (client, roles.into_iter().collect()))
+        .collect()
+}
+
 /// Evaluates built-in scope claims and every protocol mapper on the active scopes and client
 /// in RI order (W1).
 pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<String, Value>> {
@@ -303,6 +328,18 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
         ctx.all_realm_roles,
     );
 
+    // The token's `resource_access`: the client roles held directly or through a realm role's
+    // composites (the realm's default role holds `account` roles), shown to a client with full
+    // scope only. Audience resolve reads the same set, as Keycloak reads the token's.
+    let resource_access = if scope_names.contains("roles") && ctx.client.full_scope_allowed {
+        effective_client_roles(
+            &ctx.user.client_roles,
+            &effective_realm_roles,
+            ctx.all_realm_roles,
+        )
+    } else {
+        BTreeMap::new()
+    };
     if scope_names.contains("roles")
         && ctx.client.full_scope_allowed
         && kind == TokenKind::AccessToken
@@ -314,16 +351,12 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                 json!(effective_realm_roles),
             );
         }
-        if !ctx.user.client_roles.is_empty() {
-            let mut ra = Map::new();
-            for (c, r) in &ctx.user.client_roles {
-                if !r.is_empty() {
-                    ra.insert(c.clone(), json!({ "roles": r }));
-                }
-            }
-            if !ra.is_empty() {
-                claims.insert("resource_access".into(), Value::Object(ra));
-            }
+        if !resource_access.is_empty() {
+            let ra: Map<String, Value> = resource_access
+                .iter()
+                .map(|(c, r)| (c.clone(), json!({ "roles": r })))
+                .collect();
+            claims.insert("resource_access".into(), Value::Object(ra));
         }
     }
 
@@ -351,11 +384,11 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
         }
         match mapper.protocol_mapper.as_str() {
             "oidc-audience-mapper" => {
-                if let Some(aud) = mapper
-                    .config
-                    .get("included.custom.audience")
-                    .or_else(|| mapper.config.get("included.client.audience"))
-                    .filter(|s| !s.is_empty())
+                // Keycloak's AudienceProtocolMapper reads the client audience first.
+                if let Some(aud) = ["included.client.audience", "included.custom.audience"]
+                    .iter()
+                    .filter_map(|key| mapper.config.get(*key))
+                    .find(|s| !s.is_empty())
                     && !audiences.contains(aud)
                 {
                     audiences.push(aud.clone());
@@ -591,9 +624,10 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     claims.insert("allowed-origins".into(), json!(ctx.client.web_origins));
                 }
             }
+            // Keycloak's AudienceResolveProtocolMapper: every other client the token holds roles of.
             "oidc-audience-resolve-mapper" => {
-                for c in ctx.user.client_roles.keys() {
-                    if !audiences.contains(c) {
+                for c in resource_access.keys() {
+                    if c != &ctx.client.client_id && !audiences.contains(c) {
                         audiences.push(c.clone());
                     }
                 }

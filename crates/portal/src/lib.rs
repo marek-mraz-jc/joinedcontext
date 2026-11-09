@@ -55,6 +55,7 @@ pub mod csp;
 pub mod mqtt_allowance;
 pub mod mqtt_capture;
 pub mod mqtt_roles;
+pub mod organization_host;
 pub mod paired_tabs;
 pub mod people;
 pub mod permissions;

@@ -332,6 +332,7 @@ function YourAccess({
         </div>
         {permissions.data?.bootstrap ? <Alert tone="info">{t("projectSettings.access.bootstrap")}</Alert> : null}
         <Table
+          stack
           caption={t("projectSettings.access.caption", { project })}
           status={permissions.isLoading ? t("app.loading") : undefined}
         >
@@ -352,14 +353,14 @@ function YourAccess({
                     <TableCell primary>
                       <span title={grant.role}>{granteeName("role", grant.role, t)}</span>
                     </TableCell>
-                    <TableCell>
+                    <TableCell data-label={t("projectSettings.access.allows")}>
                       <RuleInWords rule={grant.rule as Rule} />
                       {/* PF-58: approve without delete approves other people's changes only. */}
                       {approvesOthersOnly(grant.rule as Rule, rules) ? (
                         <p className="mt-1 text-caption text-fg-muted">{t("projectSettings.access.approveOthers")}</p>
                       ) : null}
                     </TableCell>
-                    <TableCell>
+                    <TableCell data-label={t("projectSettings.access.from")}>
                       {t("projectSettings.access.binding", { binding: grant.binding, scope: grant.scope })}
                     </TableCell>
                   </TableRow>

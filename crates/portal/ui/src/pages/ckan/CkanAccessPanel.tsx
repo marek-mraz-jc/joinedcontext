@@ -217,11 +217,11 @@ export function CkanAccessPanel({
                     {label}
                   </Link>
                 ) : (
-                  <span>{label}</span>
+                  <span title={holder.subject.user}>{label}</span>
                 )}
-                <span className="text-caption text-fg-muted">{right}</span>
-                <span className="font-mono text-caption text-fg-subtle">
-                  {t("ckan.access.binding", { name: holder.binding })}
+                {/* The binding's name is a key, not words: on hover for whoever edits it. */}
+                <span className="text-caption text-fg-muted" title={t("ckan.access.binding", { name: holder.binding })}>
+                  {right}
                 </span>
                 {!holder.removable ? null : last ? (
                   <DeleteResourceAction

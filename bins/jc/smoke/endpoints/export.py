@@ -15,7 +15,10 @@ from pathlib import Path
 import yaml  # PyYAML ships with /opt/jc-py (and every python the sandbox runs)
 
 READ_OPS = {"retrieveOps", "queryEntity", "retrieveEntity", "queryBatch"}
-TEMPORAL_OPS = {"retrieveOps", "queryTemporal", "retrieveTemporal"}
+RETRIEVE_OPS = {"retrieveOps", "retrieveEntity"}
+# CIM 009 Table 4.20-2: retrieveOps is retrieveEntity and queryEntity, no history (Antares
+# operations.rs RETRIEVE; prod's describe_access lists no temporal action for it).
+TEMPORAL_OPS = {"queryTemporal", "retrieveTemporal"}
 DEFAULT_CONTEXT = "https://uri.etsi.org/ngsi-ld/default-context/"
 LOCATION = "https://uri.etsi.org/ngsi-ld/location"
 CLOSED = {"organization", "project-list"}
@@ -57,6 +60,10 @@ class Grant:
     def public(self) -> bool:
         return self.assignee.get("kind") == "role" and self.assignee.get("id") == "public"
 
+    def creates(self) -> bool:
+        """Grants Create Entity (POST /entities): CIM 009 Table 4.20-2 puts it in redirectionOps."""
+        return bool(self.operations & {"createEntity", "redirectionOps"})
+
     def writes(self) -> bool:
         return bool(self.operations - READ_OPS - TEMPORAL_OPS
                     - {o for o in self.operations if o.startswith("retrieve")}
@@ -74,6 +81,7 @@ class Endpoint:
     representations: list
     grants: list                       # bound Policies [Grant]
     ical: list = field(default_factory=list)      # names of representations.ical outputs
+    ical_types: dict = field(default_factory=dict)  # ical output name -> the types its sources read
     datasets: list = field(default_factory=list)  # CKAN dataset names (public catalogue)
     slices: list = field(default_factory=list)    # spec.catalog.datasets names
     file: str = ""
@@ -178,11 +186,12 @@ def load_endpoints(files: Path) -> list[Endpoint]:
             slices = [x["name"] for x in catalog.get("datasets") or [] if isinstance(x, dict) and x.get("name")]
             ckan = (s.get("publish") or {}).get("ckan")
             datasets = (slices or [ckan.get("name") or meta["name"]]) if isinstance(ckan, dict) else []
+            ical = {o["name"]: [x.get("type") for x in o.get("sources") or [] if isinstance(x, dict)]
+                    for o in (s.get("representations") or {}).get("ical") or [] if isinstance(o, dict) and o.get("name")}
             out.append(Endpoint(
                 project=project, name=meta["name"], space=space, tenant=tenant, slug=str(s.get("slug")),
                 audience=str(s.get("audience")), representations=list(s.get("enabledRepresentations") or []),
-                grants=bound, ical=[o["name"] for o in (s.get("representations") or {}).get("ical") or []
-                                    if isinstance(o, dict) and o.get("name")],
+                grants=bound, ical=list(ical), ical_types=ical,
                 datasets=datasets, slices=slices, file=str(f.relative_to(files)),
                 caller_role=bool(s.get("callerRole"))))
     return out
@@ -211,7 +220,9 @@ def build_index(export: Path, patterns: dict) -> dict:
     tenants[tenant][short type] = {"iri", "count", "sample", "location", "expires",
                                    "patterns": {pattern: count}}
     temporal[tenant][short type] = {"id", "attr", "newest", "oldest", "rows"} of the id with the
-    newest instance."""
+    newest instance, plus "pseries": {pattern: {"id", "newest"}} of the newest id each idPattern
+    a grant names matches (the endpoints suite), and "psample": {pattern: {"id", "attr", "newest"}}
+    of the same (the mcp suite)."""
     compiled = {k: [(p, re.compile(p)) for p in v] for k, v in patterns.items()}
     tenants: dict = {}
     with (export / "antares" / "entities.jsonl").open("rb") as fh:
@@ -257,6 +268,14 @@ def build_index(export: Path, patterns: dict) -> dict:
             slot["oldest"] = min(slot["oldest"], at)
             if at > slot["newest"]:
                 slot.update(id=row["id"], attr=row["attr"], newest=at)
+            for p, rx in compiled.get((row["tenant"], st), ()):
+                if rx.search(row["id"]):
+                    ps = slot.setdefault("pseries", {}).setdefault(p, {"id": row["id"], "newest": at})
+                    if at > ps["newest"]:
+                        ps.update(id=row["id"], newest=at)
+                    best = slot.setdefault("psample", {}).get(p)
+                    if best is None or at > best["newest"]:
+                        slot["psample"][p] = {"id": row["id"], "attr": row["attr"], "newest": at}
     for per in temporal.values():
         for slot in per.values():
             slot.pop("ids", None)
@@ -266,7 +285,7 @@ def build_index(export: Path, patterns: dict) -> dict:
 def load_index(export: Path, endpoints, cache_dir: Path, log=print) -> dict:
     manifest = json.loads((export / "manifest.json").read_text())
     patterns = patterns_needed(endpoints)
-    key = hashlib.sha256(json.dumps([manifest.get("exportedAt"), str(export.resolve()),
+    key = hashlib.sha256(json.dumps(["index-v3", manifest.get("exportedAt"), str(export.resolve()),
                                      sorted((list(k), v) for k, v in patterns.items())]).encode()).hexdigest()[:16]
     cache = cache_dir / f"index-{key}.json"
     if cache.exists():

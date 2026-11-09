@@ -1,4 +1,5 @@
-"""The test person the closed-Endpoint checks read with, for a rehearsal's realm `jc`.
+"""The test person the closed-Endpoint checks read with, in the rehearsal's realm (`--state`'s
+realm-name.txt, else `jc`).
 
     python3 -I person.py realm --export <export> --out-dir <kaisatsu import dir> --secrets-dir <private dir>
     export SMOKE_PERSON_PASSWORD="$(cat <private dir>/smoke-person-password)" \
@@ -6,7 +7,7 @@
     (then restart jc in that environment, so kaisatsu applies the file)
     python3 -I person.py token --base-url http://localhost:42101 --secrets-dir <private dir> --out <dir>/person-token
 
-`realm` writes `90-smoke-endpoints.json` (realm `jc`): every group a Policy bound to a closed Endpoint
+`realm` writes `90-smoke-endpoints.json` (that realm): every group a Policy bound to a closed Endpoint
 grants and `{project}-readers` of each closed Endpoint's project (the person joins each), the person, and a confidential client with one audience mapper per
 closed Endpoint slug plus a groups mapper. A kaisatsu import file, because the Portal's admin client
 holds no manage-clients. Password and client secret are fresh random values in two 0600 files of
@@ -29,7 +30,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
 import export as ex  # noqa: E402
-from common import Http, as_json, loopback_only  # noqa: E402
+from common import Http, as_json, loopback_only, realm_of  # noqa: E402
 
 REALM = "jc"
 USER, CLIENT = "smoke-endpoints-person", "smoke-endpoints"
@@ -44,7 +45,7 @@ def write_private(path: Path, text: str) -> None:
         f.write(text)
 
 
-def realm_file(eps) -> dict:
+def realm_file(eps, realm: str = REALM) -> dict:
     closed = [e for e in eps if e.closed]
     slugs = sorted({e.slug for e in closed})
     # The Policies' groups, and `{project}-readers` of each closed Endpoint's project: the gateway
@@ -61,7 +62,7 @@ def realm_file(eps) -> dict:
                     "config": {"claim.name": "groups", "full.path": "true", "access.token.claim": "true",
                                "id.token.claim": "false"}})
     return {
-        "realm": REALM, "enabled": True,
+        "realm": realm, "enabled": True,
         "groups": [{"name": g} for g in groups],
         "clients": [{"clientId": CLIENT, "enabled": True, "protocol": "openid-connect", "publicClient": False,
                      "clientAuthenticatorType": "client-secret", "secret": f"$(env:{SECRET_ENV})", "standardFlowEnabled": False,
@@ -81,7 +82,7 @@ def cmd_realm(a) -> int:
     for f, value in ((pw, secrets.token_urlsafe(18) + "-7aZ"), (sec, secrets.token_urlsafe(32))):
         if not f.exists():  # kept across reruns: kaisatsu holds the person it made first
             write_private(f, value)
-    realm = realm_file(eps)
+    realm = realm_file(eps, realm_of(a.state))
     write_private(Path(a.out_dir) / "90-smoke-endpoints.json", json.dumps(realm, indent=1))
     aud = len(realm["clients"][0]["protocolMappers"]) - 1
     print(json.dumps({"realm file": str(Path(a.out_dir) / "90-smoke-endpoints.json"), "audience": aud,
@@ -96,7 +97,7 @@ def cmd_token(a) -> int:
     s = {"username": USER, "client_id": CLIENT, "password": (d / PASSWORD_FILE).read_text().strip(),
          "client_secret": (d / SECRET_FILE).read_text().strip()}
     st, _, raw = Http(a.base_url).call(
-        "POST", f"/id/realms/{REALM}/protocol/openid-connect/token",
+        "POST", f"/id/realms/{realm_of(a.state)}/protocol/openid-connect/token",
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         body=urllib.parse.urlencode({"grant_type": "password", "client_id": s["client_id"],
                                      "client_secret": s["client_secret"], "username": s["username"],
@@ -117,10 +118,12 @@ def main(argv=None) -> int:
     r.add_argument("--export", required=True)
     r.add_argument("--out-dir", required=True)
     r.add_argument("--secrets-dir", required=True)
+    r.add_argument("--state", help="the rehearsal's state dir: realm-name.txt names the realm (else jc)")
     t = sub.add_parser("token")
     t.add_argument("--base-url", required=True)
     t.add_argument("--secrets-dir", required=True)
     t.add_argument("--out", required=True)
+    t.add_argument("--state", help="the rehearsal's state dir: realm-name.txt names the realm (else jc)")
     a = p.parse_args(argv)
     return cmd_realm(a) if a.cmd == "realm" else cmd_token(a)
 

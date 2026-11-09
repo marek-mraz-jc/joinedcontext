@@ -1,6 +1,8 @@
 import "@testing-library/jest-dom/vitest";
 import { configure } from "@testing-library/react";
-import { beforeEach } from "vitest";
+import { File as NodeFile } from "node:buffer";
+import { beforeEach, vi } from "vitest";
+import { EXACT_PROJECTS } from "./exactProjects";
 import { settlePrefill } from "../src/assistant/state";
 
 // A hand-off the assistant leaves lives until the person leaves the page it was left on
@@ -41,4 +43,82 @@ if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.sho
   HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
     this.removeAttribute("open");
   };
+}
+
+// Node 24's fetch (undici 7) builds the File of a multipart part with the global File, which
+// jsdom replaced, and then refuses its own result: a FormData upload went out with an empty file
+// and the stub's formData() threw (16 red import tests on ci, Node 22 duck-typed it). undici gets
+// Node's File while it builds a part (vitest hands it a Blob per jsdom file) or parses a body.
+if (typeof window !== "undefined") {
+  const nodeFile = NodeFile as unknown as typeof File;
+  const lendNodeFile = (): (() => void) => {
+    const jsdomFile = globalThis.File;
+    globalThis.File = nodeFile;
+    return () => {
+      globalThis.File = jsdomFile;
+    };
+  };
+  const form = await new Response("", { headers: { "Content-Type": "application/x-www-form-urlencoded" } }).formData();
+  const NodeFormData = form.constructor as typeof FormData;
+  for (const name of ["append", "set"] as const) {
+    const own = NodeFormData.prototype[name] as (...args: unknown[]) => void;
+    NodeFormData.prototype[name] = function (this: FormData, ...args: unknown[]) {
+      const giveBack = lendNodeFile();
+      try {
+        own.apply(this, args);
+      } finally {
+        giveBack();
+      }
+    };
+  }
+  // vitest's Request extends Node's, which owns formData.
+  const nodeRequest = Object.hasOwn(Request.prototype, "formData") ? Request.prototype : Object.getPrototypeOf(Request.prototype);
+  for (const body of [nodeRequest, Response.prototype] as Body[]) {
+    const own = body.formData;
+    body.formData = async function (this: Body) {
+      const giveBack = lendNodeFile();
+      try {
+        return await own.call(this);
+      } finally {
+        giveBack();
+      }
+    };
+  }
+}
+
+// A project page lives in a project the person reads, and the Shell draws the not-found refusal
+// for a project /projects does not list (frameFor, jc-multiorg-portal). A file's own fetch stub
+// that answers that list without the project of the page under test (the window's address) gets
+// it added: a person who opens a project page on prod reads that project. The file's mock still
+// sees every call; a stub naming the project, answering no items, or marking its list
+// exact (EXACT_PROJECTS, an outsider's on purpose) is kept as it is.
+
+const stubGlobal = vi.stubGlobal.bind(vi);
+vi.stubGlobal = (name: string | symbol | number, value: unknown) =>
+  stubGlobal(name, name === "fetch" && typeof value === "function" ? listingThePage(value as typeof fetch) : value);
+
+function listingThePage(stubbed: typeof fetch): typeof fetch {
+  // A proxy, not a new function: a file reads its stub back through globalThis.fetch (`.mock.calls`,
+  // `mockImplementation`, `.checks`), and every property is the file's own.
+  return new Proxy(stubbed, {
+    apply: (target, self, args: Parameters<typeof fetch>) => listing(Reflect.apply(target, self, args), ...args),
+  });
+}
+
+async function listing(answer: Response | Promise<Response>, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const response = await answer;
+  const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+  const project = /^\/projects\/([^/]+)/.exec(window.location.pathname)?.[1];
+  const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+  if (!project || project === "new" || method !== "GET" || url.pathname !== "/api/v1/projects" || !response?.ok || response.headers.has(EXACT_PROJECTS)) {
+    return response;
+  }
+  const body = await response.clone().json().catch(() => null);
+  if (!Array.isArray(body?.items) || body.items.some((item: { name?: string }) => item?.name === decodeURIComponent(project))) {
+    return response;
+  }
+  return new Response(JSON.stringify({ ...body, items: [...body.items, { name: decodeURIComponent(project) }] }), {
+    status: response.status,
+    headers: response.headers,
+  });
 }

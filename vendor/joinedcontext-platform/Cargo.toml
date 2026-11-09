@@ -32,3 +32,11 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 1
 debug = false
+
+# The ngsild jc links (the root Cargo.toml's patch): ci.yml platform-test runs these crates' tests
+# over the root lockfile's versions, which this workspace's Cargo.lock repeats.
+[patch."https://github.com/marek-mraz-jc/ngsild"]
+ngsild-ql = { path = "../../crates/antares/crates/antares-ql" }
+ngsild-jsonld = { path = "../../crates/antares/crates/antares-jsonld" }
+ngsild-matcher = { path = "../../crates/antares/crates/antares-matcher" }
+ngsild-model = { path = "../../crates/antares/crates/antares-model" }

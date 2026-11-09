@@ -6230,6 +6230,7 @@ dependencies = [
  "daiya-store-pg",
  "dataroom-api",
  "dataroom-core",
+ "dataroom-harvest",
  "dataroom-server",
  "dataroom-store-memory",
  "dataroom-store-pg",
@@ -6969,12 +6970,14 @@ dependencies = [
  "kaisatsu-store-pg",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "pbkdf2 0.13.0",
+ "rcgen",
  "serde",
  "serde_json",
  "serde_norway",
  "sha2 0.11.1",
  "sqlx",
  "tokio",
+ "tokio-rustls",
  "totp-rs",
  "tower",
  "tower-http 0.6.11",
@@ -10200,9 +10203,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "3.8.0"
+version = "3.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8be15815186873ea063bf005011d16c356804973489e40c39116ae3a2878d1f"
+checksum = "d24a7e92f4bcaa36b97fa93c4fa7ca8f3e669eced949345b3462dba333c7f909"
 dependencies = [
  "async-trait",
  "base64 0.23.1",

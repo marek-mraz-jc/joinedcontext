@@ -4,8 +4,8 @@ name: ci
 # Four Cargo workspaces live here: the root (bins/jc and the modules it links) and the nested
 # crates/antares, crates/ekiben and crates/portal, each with its own lockfile; each is its own job.
 # Jobs are gated by the paths changed since the base (`changes`): a docs-only change runs only
-# gitleaks. A dispatch runs every job (the repository is private and its minutes are metered, so
-# there is no schedule; to put one back: `schedule: [{ cron: "7 2 * * *" }]`).
+# `changes` (gitleaks runs in it). A dispatch runs every job (the repository is private and its
+# minutes are metered, so there is no schedule; to put one back: `schedule: [{ cron: "7 2 * * *" }]`).
 #
 # A push to main ships (ship-proof/** behaves like main, for measuring the pipeline without
 # touching main): `image` (image.yml, mode build) compiles the release binary and pushes the image
@@ -20,10 +20,11 @@ on:
     branches: [main, "jc-*", "agent/**", "ship-proof/**"]
   workflow_dispatch:
 permissions: { contents: read }
-# A superseded branch run is cancelled; a main (or ship-proof) run never is: each is a release.
+# A superseded branch run is cancelled; a main, jc-portal-1 (the merge branch) or ship-proof run never
+# is: each merged head gets its own verdict and writes the cache.
 concurrency:
-  group: "ci-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ship-proof/')) && github.sha || github.ref }}"
-  cancel-in-progress: ${{ !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ship-proof/')) }}
+  group: "ci-${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/jc-portal-1' || startsWith(github.ref, 'refs/heads/ship-proof/')) && github.sha || github.ref }}"
+  cancel-in-progress: ${{ !(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/jc-portal-1' || startsWith(github.ref, 'refs/heads/ship-proof/')) }}
 env:
   CARGO_TERM_COLOR: always
   # Debuginfo off: the Portal's test binaries and jc's link everything; with line tables the
@@ -34,7 +35,7 @@ env:
 jobs:
   changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 10
     # Reads this commit's other ci runs (changes.sh REUSE).
     permissions: { contents: read, actions: read }
     outputs:
@@ -44,6 +45,7 @@ jobs:
       portal: ${{ steps.paths.outputs.portal }}
       ui: ${{ steps.paths.outputs.ui }}
       supply: ${{ steps.paths.outputs.supply }}
+      platform: ${{ steps.paths.outputs.platform }}
       workflows: ${{ steps.paths.outputs.workflows }}
       image: ${{ steps.paths.outputs.image }}
       dockerfiles: ${{ steps.paths.outputs.dockerfiles }}
@@ -62,6 +64,29 @@ jobs:
           REUSE: ${{ steps.release.outputs.release == 'true' && '1' || '0' }}
           GH_TOKEN: ${{ github.token }}
         run: sh .github/scripts/changes.sh
+      # The checks that need no build ride in this job (one runner slot, not four): gitleaks over
+      # every commit this push or pull request brings (not the repository's history: the imported
+      # trees carry upstream test vectors their own repositories allow-list); actionlint when a
+      # workflow changed; the App bundles both images ship in /srv/apps, from the same sources,
+      # when a Dockerfile or an App changed.
+      - env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          BRANCH: ${{ github.ref_name }}
+        run: sh .github/scripts/gitleaks.sh
+      - if: steps.paths.outputs.workflows == 'true'
+        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest
+      - if: steps.paths.outputs.workflows == 'true'
+        run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo
+          rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 -color
+      - if: steps.paths.outputs.dockerfiles == 'true'
+        working-directory: crates/portal
+        run: |
+          python3 scripts/ci/check-dockerfile-members.py --selftest
+          python3 scripts/ci/check-dockerfile-members.py
+          python3 scripts/ci/check-dockerfile-members.py --apps Dockerfile ../../bins/jc/Dockerfile
   # The root workspace: every module crate and bins/jc, which links Antares, ekiben and the Portal
   # by path, so a change in any of them reaches it.
   root-clippy:
@@ -77,12 +102,20 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
   # Postgres for the store tests of each module (each its own database; kaisatsu and the Portal's
   # apps tests create their own roles). nextest runs the binaries side by side; the tests sharing
-  # one module's database stay one at a time (.config/nextest.toml). Doc tests run after.
+  # one module's database stay one at a time (.config/nextest.toml). The tests are split in
+  # three jobs (two took 333 s of tests each, run 42616261654), each with its own Postgres: every job compiles the same warm build (no archive to
+  # upload and download) and runs its `--partition slice:k/N` (round robin over all tests; count:
+  # deals each binary's first test to job 1); the first also runs the doc tests. The partition job
+  # names are listed in changes.sh (covered).
   root-test:
+    name: root-test-${{ matrix.part }}
     needs: changes
     if: needs.changes.outputs.root == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: { part: [1, 2, 3] }
     services:
       postgres:
         image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
@@ -130,8 +163,54 @@ jobs:
         with: { key: root-test }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: cargo-nextest }
-      - run: cargo nextest run --workspace --locked --profile ci --no-fail-fast
-      - run: cargo test --workspace --locked --no-fail-fast --doc
+      # Build once, then run the slice from the built binaries (no cargo call, so no build lock):
+      # job 1 compiles and runs the doc tests beside it instead of after it (1-2 min when a crate
+      # every lib links changed, run 42617984832).
+      - run: |
+          cargo nextest list --workspace --locked --profile ci --list-type binaries-only --message-format json > "$RUNNER_TEMP/binaries.json"
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
+          doc=
+          if [ "${{ matrix.part }}" = 1 ]; then
+            cargo test --workspace --locked --no-fail-fast --doc > "$RUNNER_TEMP/doc.log" 2>&1 & doc=$!
+          fi
+          tests=0
+          cargo nextest run --profile ci --no-fail-fast --partition "slice:${{ matrix.part }}/${{ strategy.job-total }}" \
+            --binaries-metadata "$RUNNER_TEMP/binaries.json" --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" || tests=$?
+          docs=0
+          if [ -n "$doc" ]; then
+            wait "$doc" || docs=$?
+            echo "::group::doc tests (exit $docs)"; cat "$RUNNER_TEMP/doc.log"; echo "::endgroup::"
+            [ "$docs" = 0 ] || echo "::error::doc tests failed (exit $docs)"
+          fi
+          [ "$tests" = 0 ] && [ "$docs" = 0 ]
+      - if: always()
+        run: du -sh target/debug/deps
+      - if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: "junit-root-${{ matrix.part }}", path: target/nextest/ci/junit.xml, if-no-files-found: ignore, retention-days: 7 }
+  # The platform crates vendored under vendor/joinedcontext-platform (context-gateway, jc-core,
+  # jcctl and the rest the Portal links): path dependencies of the root build, not members, so
+  # root-test runs none of their tests. Their own workspace, whose Cargo.lock repeats the root
+  # lockfile's versions (lock-subset.py) and whose ngsild is jc's: of the platform's fast lane,
+  # every member's lib and bins, context-gateway's `it` binary and jcctl's Portal API drift test;
+  # `cargo test`, as there (in-process locks). jc-core's `it` compares the platform repository's
+  # committed schemas and examples, which are not vendored. Beside root-test, so the run does not
+  # get longer. The assistant is a root member (root-test).
+  platform-test:
+    needs: changes
+    if: needs.changes.outputs.platform == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults: { run: { working-directory: vendor/joinedcontext-platform } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: python3 ../../.github/scripts/lock-subset.py ../../Cargo.lock Cargo.lock
+      - uses: ./.github/actions/rust
+        with: { workspace: vendor/joinedcontext-platform, key: platform-test }
+      - run: cargo test --workspace --locked --no-fail-fast --lib --bins
+      - run: cargo test --locked --no-fail-fast -p context-gateway --test it
+        env: { DCAT_RECORDS_DIR: "${{ runner.temp }}/dcat-records" }
+      - run: "cargo test --locked --no-fail-fast -p jcctl --test it portal_api_drift_tests::"
   antares-clippy:
     needs: changes
     if: needs.changes.outputs.antares == 'true'
@@ -144,12 +223,24 @@ jobs:
         with: { workspace: crates/antares, key: antares-clippy, components: "clippy, rustfmt" }
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-  # nextest with Antares' own groups (crates/antares/.config/nextest.toml db-exclusive).
+  # nextest with Antares' own groups (crates/antares/.config/nextest.toml), in three jobs, each
+  # with its own PostGIS: the first runs pg_explain and the doc tests, the other two a slice each
+  # of every other test. pg_explain seeds 200 000 Entities and ANALYZEs them in one transaction
+  # held for about a minute, once per database: beside every slice it deadlocked a concurrent
+  # index build and timed out a week partition's DDL in two of three jobs (run 42610186767).
   antares-test:
+    name: antares-test-${{ matrix.part }}
     needs: changes
     if: needs.changes.outputs.antares == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { part: 1, tests: "-E 'binary(pg_explain)'" }
+          - { part: 2, tests: "-E 'not binary(pg_explain)' --partition slice:1/2" }
+          - { part: 3, tests: "-E 'not binary(pg_explain)' --partition slice:2/2" }
     defaults: { run: { working-directory: crates/antares } }
     services:
       postgis:
@@ -171,12 +262,17 @@ jobs:
         with: { workspace: crates/antares, key: antares-test }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: cargo-nextest }
-      - run: cargo nextest run --workspace --locked --profile ci
+      - run: cargo nextest run --workspace --locked --profile ci ${{ matrix.tests }}
       # The view and policy matrix compiles only with `full,jc-policy` (no member turns them on):
       # jc's own feature set (bins/jc/Cargo.toml antares-broker), so each view sees only its own
       # data through the shared Router and an unvouched subject is refused (T-6677, F-01).
-      - run: cargo nextest run --locked --profile ci -p antares-broker --features full,jc-policy,linkml,ical,feed --test views_matrix
-      - run: cargo test --workspace --locked --no-fail-fast --doc
+      - if: matrix.part == 1
+        run: cargo nextest run --locked --profile ci -p antares-broker --features full,jc-policy,linkml,ical,feed --test views_matrix
+      - if: matrix.part == 1
+        run: cargo test --workspace --locked --no-fail-fast --doc
+      - if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: "junit-antares-${{ matrix.part }}", path: crates/antares/target/nextest/ci/junit.xml, if-no-files-found: ignore, retention-days: 7 }
   ekiben:
     needs: changes
     if: needs.changes.outputs.ekiben == 'true'
@@ -205,12 +301,19 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
   # cargo test, not nextest: the Portal's database tests serialize on in-process locks
-  # (KNOWLEDGE: the DATABASE mutex), which separate processes would not hold.
+  # (KNOWLEDGE: the DATABASE mutex), which separate processes would not hold. The test binaries
+  # are split in two jobs, each with its own Postgres (.github/scripts/test-part.py: round robin
+  # over every tests/*.rs, the libs and bins in the first, the doc tests in the second); binaries
+  # of one job still run one after another, as before.
   portal-test:
+    name: portal-test-${{ matrix.part }}
     needs: changes
     if: needs.changes.outputs.portal == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: { part: [1, 2] }
     defaults: { run: { working-directory: crates/portal } }
     services:
       postgres:
@@ -241,7 +344,16 @@ jobs:
       # no error line.
       - run: |
           (while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/ {print "mem used " $3 "/" $2 " MB"}') $(df -h / | awk 'NR == 2 {print "disk free " $4}')"; done) &
-          cargo test --workspace --locked --no-fail-fast
+          # -j 4: the runner's four cores for the link phase (~160 test binaries); a flag, not
+          # CARGO_BUILD_JOBS, which is part of the rust-cache key
+          targets=$(python3 ../../.github/scripts/test-part.py ${{ matrix.part }} ${{ strategy.job-total }})
+          # shellcheck disable=SC2086
+          cargo test --workspace --locked --no-fail-fast -j 4 $targets
+      # in the second job: the first runs the lib tests and compiles the lib's test build
+      - if: matrix.part == 2
+        run: cargo test --workspace --locked --no-fail-fast --doc
+      - if: always()
+        run: du -sh target/debug/deps
   # The bundles the jc image embeds: a UI that does not build ships the placeholder page.
   ui:
     needs: changes
@@ -259,64 +371,61 @@ jobs:
       - run: cd ui && pnpm install --frozen-lockfile
       - run: cd ui && pnpm lint
       - run: cd ui && pnpm build && test -s dist/index.html
-  # Advisories, licenses, bans and sources of every lockfile. No ignore is added at the root; the
+      # The SDK's own suite (the standalone Portal's sdk job, about 70 s): it reads only sdk/.
+      - run: cd sdk && pnpm vitest run
+  # The whole UI vitest in four shards (vitest --shard splits the files: every file once, in one
+  # of them), as the standalone Portal ran it. The ui job above ran none of it, so a branch went
+  # green with 46 red files (jc-multiorg-portal 42601018361, merged as 12aa4b3e). Shard job names
+  # are listed in changes.sh (covered).
+  ui-test:
+    name: ui-test-${{ matrix.shard }}
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix: { shard: [1, 2, 3, 4] }
+    defaults: { run: { working-directory: crates/portal } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { package_json_file: crates/portal/ui/package.json }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 24 }
+      # The UI links the SDK's sources and build.
+      - run: cd sdk && pnpm install --frozen-lockfile && pnpm build
+      - run: cd ui && pnpm install --frozen-lockfile
+      - run: cd ui && pnpm vitest run --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+  # Advisories, licenses, bans and sources of every lockfile, one job for the four workspaces (one
+  # runner slot of the account's 20, not four): each workspace runs deny and audit whatever the one
+  # before it answered, and the job fails if any of them did. No ignore is added at the root; the
   # nested workspaces read their own deny.toml and .cargo/audit.toml.
   supply-chain:
     needs: changes
     if: needs.changes.outputs.supply == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        dir: [".", crates/antares, crates/ekiben, crates/portal]
-    defaults: { run: { working-directory: "${{ matrix.dir }}" } }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: "cargo-audit,cargo-deny" }
-      - run: cargo deny --locked check advisories bans licenses sources
-      - run: cargo audit
-        if: always()
-  # Every commit this push or pull request brings, not the repository's history: the imported
-  # trees carry upstream test vectors their own repositories allow-list.
-  gitleaks:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with: { fetch-depth: 0 }
-      - env:
-          EVENT: ${{ github.event_name }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
-          BRANCH: ${{ github.ref_name }}
-        run: sh .github/scripts/gitleaks.sh
-  actionlint:
-    needs: changes
-    if: needs.changes.outputs.workflows == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest
-      - run: >-
-          docker run --rm -v "$PWD:/repo" -w /repo
-          rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 -color
-  # The Portal image and the jc image ship the same App bundles in /srv/apps, from the same sources.
-  dockerfiles:
-    needs: changes
-    if: needs.changes.outputs.dockerfiles == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    defaults: { run: { working-directory: crates/portal } }
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: python3 scripts/ci/check-dockerfile-members.py --selftest
-      - run: python3 scripts/ci/check-dockerfile-members.py
-      - run: python3 scripts/ci/check-dockerfile-members.py --apps Dockerfile ../../bins/jc/Dockerfile
+      - run: |
+          red=
+          for dir in . crates/antares crates/ekiben crates/portal; do
+            echo "::group::cargo deny $dir"
+            (cd "$dir" && cargo deny --locked check advisories bans licenses sources) || red="$red deny:$dir"
+            echo "::endgroup::"
+            echo "::group::cargo audit $dir"
+            (cd "$dir" && cargo audit) || red="$red audit:$dir"
+            echo "::endgroup::"
+          done
+          if [ -n "$red" ]; then echo "::error::red:$red"; exit 1; fi
   # A branch that changes the Dockerfile or its ignore file: the full `docker build` (every stage,
   # no push), which the shipped image skips by handing in its compiled binary.
+  # The layer cache (scope jc) is written by jc-portal-1 only, the default branch whose caches
+  # every branch reads: without a writer every branch built cold (39 min, runs 42617814130 and
+  # 42611953211); no branch writes it, so none evicts it.
   dockerfile:
     needs: changes
     if: needs.changes.outputs.image == 'true' && needs.changes.outputs.release != 'true'
@@ -332,6 +441,7 @@ jobs:
           file: bins/jc/Dockerfile
           push: false
           cache-from: type=gha,scope=jc
+          cache-to: ${{ github.ref == 'refs/heads/jc-portal-1' && 'type=gha,scope=jc,mode=max' || '' }}
   # main and ship-proof/** only, from here on.
   image:
     needs: changes
@@ -350,7 +460,7 @@ jobs:
   # it deployable (deployment verify-pinned-images.py). A skipped gate is one this push's paths
   # do not reach, or one another run of this commit passed (changes.sh REUSE).
   promote:
-    needs: [changes, gitleaks, root-clippy, root-test, antares-clippy, antares-test, ekiben, portal-clippy, portal-test, ui, supply-chain, actionlint, image, scan]
+    needs: [changes, root-clippy, root-test, platform-test, antares-clippy, antares-test, ekiben, portal-clippy, portal-test, ui, ui-test, supply-chain, image, scan]
     if: >-
       always() && needs.image.result == 'success' && needs.scan.result == 'success' &&
       !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')

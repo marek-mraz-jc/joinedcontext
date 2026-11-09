@@ -55,8 +55,11 @@ def scope(name: str) -> str:
 
 
 def compare(res, kind: str, prod: list[str], jc: set[str] | None, renames: list[Rename], answers,
-            call: str, why_missing: str = "", note: str = "") -> list[str]:
+            call: str, why_missing: str = "", note: str = "", kept: dict[str, str] | None = None) -> list[str]:
     """One row per prod name of `kind`; answers the extra jc names (report lines).
+
+    `kept` names, per prod name, the component that stays beside jc and serves it (GOAL-jc-dev
+    "Scope of jc on dev"): such a name missing on jc is a skip "kept component: ...", listed is a pass.
 
     `jc` is None when jc's listing could not be read: every row then fails with that reason.
     `answers(old)` -> (ok, detail): whether the old address of a renamed name answers on jc."""
@@ -74,6 +77,9 @@ def compare(res, kind: str, prod: list[str], jc: set[str] | None, renames: list[
             res.check(kind, name, call, "listed on jc", "listed", True, reason)
             continue
         r = by_old.get(name)
+        if r is None and name in (kept or {}):
+            res.skip(kind, name, call, "listed on jc", f"kept component: {kept[name]}")
+            continue
         if r is None:
             near = [x for x in extra if scope(x) == scope(name)][:5]
             why = "not listed on jc, and RENAMES.md lists no rename of it"

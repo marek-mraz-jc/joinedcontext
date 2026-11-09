@@ -212,6 +212,10 @@ fn realm_file(dir: &Path, secrets: &Path, realm: &str, file: &str) {
             client("e2e-reader", CLOSED),
             client("e2e-elsewhere", ELSEWHERE),
             client("e2e-mcp", "portal-api"),
+            // The command line's client as on prod (audience `jcctl-endpoint`), confidential with
+            // the password grant here so the test signs in without a device flow; jc's linker
+            // gives it every Endpoint's scope as optional.
+            client("jcctl", "jcctl-endpoint"),
         ],
         "users": [{
             "username": STRANGER,
@@ -543,6 +547,34 @@ async fn token_of(jc: &Jc, client: &str, username: &str) -> String {
     token_in(jc, "jc", client, username).await
 }
 
+/// A person's token from `client` of realm `jc` asking `scope`, or the refusal.
+async fn scoped_token(
+    jc: &Jc,
+    client: &str,
+    username: &str,
+    scope: &str,
+) -> Result<String, String> {
+    let resp = Client::new()
+        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .form(&[
+            ("grant_type", "password"),
+            ("client_id", client),
+            ("client_secret", READER_SECRET),
+            ("username", username),
+            ("password", PERSON_PASSWORD),
+            ("scope", scope),
+        ])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or(Value::Null);
+    match body["access_token"].as_str() {
+        Some(token) if status == StatusCode::OK => Ok(token.to_owned()),
+        _ => Err(format!("{status} {body}")),
+    }
+}
+
 /// A person's token from `client` of `realm` by the password grant.
 async fn token_in(jc: &Jc, realm: &str, client: &str, username: &str) -> String {
     let resp = Client::new()
@@ -707,6 +739,76 @@ async fn the_gateway_reads_the_forge_with_no_program_on_the_path() {
     assert!(!jc.log_has("git does not run"), "{}", jc.tail());
 }
 
+/// ADR-N-052: the gateway's anonymous OAuth server, as prod runs it, signs with a key jc
+/// generates and keeps (0600) and never logs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_anonymous_oauth_server_runs_on_a_key_jc_keeps() {
+    let jc = start().await;
+    // The gateway answers 503 until its first load; then the document, not a 404.
+    let body = eventually("the OAuth server's document", &jc, 60, || async {
+        let (status, body) = call(
+            &jc,
+            reqwest::Method::GET,
+            "/.well-known/oauth-authorization-server",
+            None,
+            None,
+        )
+        .await;
+        match status {
+            StatusCode::OK => Ok(body),
+            StatusCode::SERVICE_UNAVAILABLE => Err(body),
+            other => panic!("{other} {body}\n{}", jc.tail()),
+        }
+    })
+    .await;
+    let document: Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        document["registration_endpoint"]
+            .as_str()
+            .is_some_and(|u| u.ends_with("/oauth/register")),
+        "{document}"
+    );
+    let register = json!({
+        "redirect_uris": ["http://127.0.0.1:8976/callback"],
+        "client_name": "jc e2e",
+    });
+    let (status, body) = call(
+        &jc,
+        reqwest::Method::POST,
+        "/oauth/register",
+        None,
+        Some(&register),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let client: Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        client["client_id"].as_str().is_some_and(|c| !c.is_empty()),
+        "{client}"
+    );
+    let (status, body) = call(
+        &jc,
+        reqwest::Method::GET,
+        "/oauth/authorize?client_id=not-issued-by-this-server&redirect_uri=http%3A%2F%2Flocalhost%2Fcallback&response_type=code",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let key = jc.secret("gateway-oauth-key");
+    assert!(key.len() >= 32);
+    assert!(!jc.log_has(&key), "the OAuth key appears in the log");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(jc.state.join("gateway-oauth-key"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn endpoints_answer_inside_jc_as_on_dev() {
     let jc = start().await;
@@ -748,6 +850,54 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     let other = entity("Other", "one");
     let (status, body) = call(&jc, post.clone(), &writes, Some(&person), Some(&other)).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    // A write no Policy grants the caller is refused before the view, which would answer 405
+    // with the writes it serves somebody else: 403 and no `Allow` (prod's zilina-doprava and
+    // praha-mesto answered 405 to an anonymous create). An anonymous caller of the public
+    // Endpoint is its `public` role, refused as the decision point refuses anyone (GW1) and as
+    // the gateway's `model_judged` and quality-rule refusals answer it: 403, not 401.
+    // The writer's token names the closed Endpoint, where the writers' Policy applies.
+    for (who, root, token, want) in [
+        ("anonymous", &public, None, StatusCode::FORBIDDEN),
+        (
+            "a writer",
+            &closed,
+            Some(person.as_str()),
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let one = format!("{root}/entities/urn:ngsi-ld:Thing:one");
+        for (method, path, body) in [
+            (post.clone(), format!("{root}/entities"), Some(&thing)),
+            (reqwest::Method::DELETE, one.clone(), None),
+            (reqwest::Method::PATCH, format!("{one}/attrs"), Some(&thing)),
+            (
+                post.clone(),
+                format!("{root}/entityOperations/delete"),
+                None,
+            ),
+        ] {
+            if token.is_some() && method == post && path.ends_with("/entities") {
+                continue; // the writers' Policy grants this create
+            }
+            let mut req = Client::new()
+                .request(method.clone(), jc.url(&path))
+                .header("jc-reason", "smoke");
+            if let Some(token) = token {
+                req = req.bearer_auth(token);
+            }
+            if let Some(body) = body {
+                req = req
+                    .header("content-type", "application/json")
+                    .body(body.to_string());
+            }
+            let resp = req.send().await.unwrap();
+            let (status, allow) = (resp.status(), resp.headers().get("allow").cloned());
+            let text = resp.text().await.unwrap_or_default();
+            assert_eq!(status, want, "{who} {method} {path}: {text}");
+            assert!(allow.is_none(), "{who} {method} {path}: Allow {allow:?}");
+        }
+    }
 
     // Anonymous: the public Endpoint answers types and an entity query, the closed one 401.
     let (status, body) = call(&jc, get.clone(), &format!("{public}/types"), None, None).await;
@@ -813,6 +963,75 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+    // The scope path, as on prod: a person's `jcctl` token (audience `jcctl-endpoint`) names one
+    // Endpoint by its scope `endpoint:{slug}`, which jc's linker links to `jcctl` as the
+    // deployment's admin-permissions Job does, and reads it with the person's own grants.
+    let scope = format!("endpoint:{CLOSED}");
+    let cli = eventually(
+        "jcctl holds the closed Endpoint's scope",
+        &jc,
+        30,
+        || async { scoped_token(&jc, "jcctl", PERSON, &scope).await },
+    )
+    .await;
+    let read = format!("{closed}/entities?type=Thing");
+    let (status, body) = call(&jc, get.clone(), &read, Some(&cli), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    // The same token on another Endpoint, even a public one, names a scope that is not that
+    // Endpoint's: refused.
+    let (status, body) = call(
+        &jc,
+        get.clone(),
+        &format!("{public}/types"),
+        Some(&cli),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    // A person without a grant gets the scope, never the data: the scope names the Endpoint.
+    let stranger_cli = scoped_token(&jc, "jcctl", STRANGER, &scope).await.unwrap();
+    let (status, body) = call(&jc, get.clone(), &read, Some(&stranger_cli), None).await;
+    assert!(
+        matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
+        "a person without a grant read the closed Endpoint: {status} {body}"
+    );
+    assert!(!body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    // jc links every Endpoint's scope to `portal-api` too (prod does not, T-6063): the Portal's
+    // own service account asking that scope and the hub audience is its own
+    // `service-account-portal-api` user, whom no Policy grants, so it reads nothing and the link
+    // opens no Endpoint beyond the person exchange below.
+    let portal = Client::new()
+        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .form(&[
+            ("grant_type", "client_credentials"),
+            ("client_id", "portal-api"),
+            ("client_secret", jc.secret("portal-client-secret").as_str()),
+            ("scope", format!("{scope} gateway-hub").as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let status = portal.status();
+    let body: Value = portal.json().await.unwrap_or(Value::Null);
+    assert_eq!(status, StatusCode::OK, "portal-api's own token: {body}");
+    let own = body["access_token"].as_str().unwrap();
+    let claims = claims_of(own);
+    assert!(
+        claims["scope"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(&scope),
+        "{claims}"
+    );
+    assert!(claims["aud"].to_string().contains("mcp-hub"), "{claims}");
+    let (status, body) = call(&jc, get.clone(), &read, Some(own), None).await;
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN,
+        "portal-api's own token read the closed Endpoint: {status} {body}"
+    );
+    assert!(!body.contains("urn:ngsi-ld:Thing:one"), "{body}");
 
     // `jc_data_query` through the Portal's MCP: the Portal exchanges the person's token for
     // `endpoint:{slug}` (the scope jc's kaisatsu links to portal-api, as the deployment's
@@ -1642,14 +1861,18 @@ fn export(realms: &Path, secrets: &Path, state: &Path, realm: &str, base: &str, 
 
 /// The `iss` of a token, read without a check (the services under test do the checking).
 fn issuer_of(token: &str) -> String {
+    claims_of(token)["iss"].as_str().unwrap().to_owned()
+}
+
+/// The claims of a JWT, unverified.
+fn claims_of(token: &str) -> Value {
     let payload = token.split('.').nth(1).unwrap();
-    let claims: Value = serde_json::from_slice(
+    serde_json::from_slice(
         &base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(payload)
             .unwrap(),
     )
-    .unwrap();
-    claims["iss"].as_str().unwrap().to_owned()
+    .unwrap()
 }
 
 /// A service-account token of `client` in `realm` (client credentials, the secret jc keeps).

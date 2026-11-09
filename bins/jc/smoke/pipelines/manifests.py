@@ -11,6 +11,26 @@ import yaml
 RESIDENT = {"mqtt", "nats", "websocket", "kafka", "amqp"}
 
 
+# Each cron field's range, as prod's Portal reads it (joinedcontext-portal src/reconciler/run_queue.rs
+# Cron::parse: minute 0-59, hour 0-23, day 1-31, month 1-12, weekday 0-7).
+CRON_FIELDS = (("minute", 0, 59), ("hour", 0, 23), ("day", 1, 31), ("month", 1, 12), ("weekday", 0, 7))
+
+
+def cron_out_of_range(schedule: str) -> str | None:
+    """The first field of a five-field `schedule` with a number outside its range, which prod's
+    Portal refuses as jc's does (so the refusal is prod's behaviour, not a jc defect); None when
+    every number is in range or the text is no five fields."""
+    fields = str(schedule or "").split()
+    if len(fields) != 5:
+        return None
+    for text, (name, low, high) in zip(fields, CRON_FIELDS):
+        for part in text.split(","):
+            for n in part.split("/")[0].split("-"):
+                if n.isdigit() and not low <= int(n) <= high:
+                    return name
+    return None
+
+
 @dataclass
 class Pipeline:
     project: str

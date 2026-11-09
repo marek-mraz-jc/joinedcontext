@@ -112,7 +112,8 @@ people_args=()
 [ -f "$demo_users" ] && people_args+=(--demo-users "$demo_users")
 if [ -d "$export_dir/keycloak" ]; then
   python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/state/realms" \
-    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}" --secrets-dir "$home/secrets/realm"
+    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}" --secrets-dir "$home/secrets/realm" \
+    --public-base "http://localhost:$port"
   # Each secret the realm config names gets a fresh value of the rehearsal (never the old one), in
   # a file of its own under secrets/realm: kaisatsu inside jc reads $(file:...) there and no
   # environment. secrets/realm-NAME stays a link to it for the smoke and shots.
@@ -125,6 +126,24 @@ if [ -d "$export_dir/keycloak" ]; then
     secret "realm/$name" > /dev/null
     ln -sfn "realm/$name" "$home/secrets/realm-$name"
   done < "$home/state/realm-vars.txt"
+  # The pipeline runner's JC_CLIENT_SECRET_<PROJECT>: jc's [ekiben] client_secrets_dir reads
+  # <project>-pipelines files (a copy, it refuses a link), each the realm client's secret.
+  while read -r client name; do
+    [ -n "$client" ] || continue
+    install -m 600 "$home/secrets/realm/$name" "$home/secrets/realm/$client"
+  done < "$home/state/realm-pipeline-clients.txt"
+  # An imported realm keeps its clients' secrets (bins/jc STATUS.md, jc-realm-name): jc reads its
+  # state files portal-client-secret, portal-admin-client-secret and gateway-client-secret and
+  # never rewrites them, so each start puts the realm's value there first.
+  while read -r file name; do
+    [ -n "$file" ] || continue
+    install -m 600 "$home/secrets/realm/$name" "$home/state/$file"
+  done < "$home/state/realm-state-secrets.txt"
+fi
+# The deployment's realm is the export's (dev for dev, smartcity for prod); jc's own `jc` without one.
+realm_config=""
+if [ -s "$home/state/realm-name.txt" ]; then
+  realm_config=$(printf '\n[identity]\nrealm = "%s"\n' "$(cat "$home/state/realm-name.txt")")
 fi
 
 url() { printf 'postgres://%s:%s@127.0.0.1:%s/%s' "$1" "$(cat "$(secret "$1-pw")")" "$pg_port" "$2"; }
@@ -157,9 +176,41 @@ CKAN_API_TOKEN=$(cat "$(secret catalogue-token)"); export CKAN_API_TOKEN
 export JCBIN_DATAROOM_PORTAL_TOKEN_FILE=$home/secrets/catalogue-token
 # The Portal's shako token likewise: rehearsal.py import and the smoke suites read it from here.
 JCBIN_SHAKO_TOKEN_FILE=$(secret shako-token); export JCBIN_SHAKO_TOKEN_FILE
+# ekiben's admin token too: the pipelines smoke reads streams with it.
+JCBIN_EKIBEN_TOKEN_FILE=$(secret ekiben-token); export JCBIN_EKIBEN_TOKEN_FILE
+JCBIN_DAIYA_PORTAL_PASSWORD_FILE=$(secret dashboards-password); export JCBIN_DAIYA_PORTAL_PASSWORD_FILE
+# The projects' SOPS secrets (secretRef, e.g. praha's golemio.enc.yaml) are encrypted to the
+# deployment's age recipient: REHEARSAL_AGE_KEY_FILE names that identity file (0600 or 0400; dev's
+# for both rehearsals, as release's files name dev's recipient). jc reads it in place: no copy, the
+# values stay encrypted on disk and only the Portal decrypts them per sync. Without it jc's own
+# generated identity decrypts nothing of the export and those pipelines answer SecretUnresolved.
+if [ -n "${REHEARSAL_AGE_KEY_FILE:-}" ]; then
+  case $(stat -c %a "$REHEARSAL_AGE_KEY_FILE") in
+    600|400) export JCBIN_PORTAL_AGE_KEY_FILE=$REHEARSAL_AGE_KEY_FILE ;;
+    *) echo "up.sh: $REHEARSAL_AGE_KEY_FILE is readable by others: refused" >&2; exit 1 ;;
+  esac
+fi
 # The Portal's internal listener (/metrics, run callbacks) on loopback, one port per environment.
 export JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 100))
 export RUST_LOG=${RUST_LOG:-info,sqlx=warn}
+# The client id a stream gives a broker outside the platform ends in JC_MQTT_NAMESPACE: prod and
+# dev read mqtt.hsl.fi too, and a rehearsal sharing their id would drop their session in a loop.
+export EKIBEN_VAR_JC_MQTT_NAMESPACE=${EKIBEN_VAR_JC_MQTT_NAMESPACE:-rehearsal-$env_name-$port-$(hostname -s | tr -c 'a-z0-9\n' -)}
+# The runner's shared resources (its `-r` file: project caches, source rate limits, events_tail),
+# from the deployment at the environment's ref, which the export does not hold:
+#   git -C <deployment> show origin/release:components/pipeline-runner/streams/resources.yaml \
+#     > $REHEARSAL_HOME/prod/ekiben-resources.yaml      (dev: origin/main)
+# and streams/gtfs-realtime.proto beside it as $REHEARSAL_HOME/prod/gtfs-realtime.proto.
+if [ -s "$home/ekiben-resources.yaml" ]; then
+  export JCBIN_EKIBEN_RESOURCES_FILE=$home/ekiben-resources.yaml
+else
+  echo "up.sh: no $home/ekiben-resources.yaml: streams naming the runner's shared resources are refused" >&2
+fi
+# The runner's other mount: /proto/gtfs-realtime.proto (streams/gtfs-realtime.proto at the same
+# ref), which a stream's `import_paths: [/proto]` reads; ekiben confines `/proto` to its file root.
+if [ -s "$home/gtfs-realtime.proto" ]; then
+  mkdir -p "$home/files/proto" && cp "$home/gtfs-realtime.proto" "$home/files/proto/"
+fi
 # The deployment's configuration repository (defaults/environment/global.yaml configRepo).
 # jc since 3a64bee5 reads JC_SHAKO_*, earlier builds JC_GITEA_*: both, so either binary starts on it.
 export JC_SHAKO_OWNER=${REHEARSAL_CONFIG_OWNER:-joinedcontext} JC_SHAKO_REPO=${REHEARSAL_CONFIG_REPO:-configuration}
@@ -182,14 +233,28 @@ if compgen -G "$REHEARSAL_DASHBOARDS/*.datasource.*.json" >/dev/null; then
     --out "$home/daiya-provisioning"
   db_config+=$(printf '\n[daiya]\nprovisioning_dir = "%s"\n' "$home/daiya-provisioning")
 fi
-printf '[mounts.portal]\npath_prefix = ""\n%s\n' "$db_config" > "$home/jc.toml"
-# The service tokens jc would hold in memory only (shako, ekiben, daiya's Portal password) come
-# from files here instead, so the import and the smoke suites can call those modules too.
+# The hub's search_documents searches the sources the deployment names (base-values of the
+# context-gateway; REHEARSAL_DEPLOYMENT is a deployment clone); jc fills the assistant's address.
+if [ -z "${JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:-}" ]; then
+  JC_GATEWAY_HUB_KNOWLEDGE_SOURCES=$(python3 -I "$here/rehearsal.py" hub-sources \
+    --deployment "${REHEARSAL_DEPLOYMENT:-/workspace/joinedcontext-deployment}")
+  export JC_GATEWAY_HUB_KNOWLEDGE_SOURCES
+fi
+# The datasets this kit renames answer their old names too (RENAMES.md, rehearsal.py CKAN_NAMES).
+alias_config=$(python3 -I "$here/rehearsal.py" aliases)
+printf '[mounts.portal]\npath_prefix = ""\n%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_config" > "$home/jc.toml"
+# REHEARSAL_JC_TOML_EXTRA: a file appended to jc.toml as is, e.g. the [[organizations]] of a
+# host-mode multiorg run (each Organization on its own *.localhost hosts).
+if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then
+  cat "$REHEARSAL_JC_TOML_EXTRA" >> "$home/jc.toml"
+fi
+# shellcheck source=deploy/rehearsal/apps.sh
+. "$here/apps.sh"  # the Apps: image bundles, apps cache, prod builds, roles person (jc-apps-export)
 nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
-  --kaisatsu-import-dir "$home/state/realms" --kaisatsu-import-secrets-dir "$home/secrets/realm" \
-  --ekiben-token-file "$(secret ekiben-token)" \
-  --daiya-portal-password-file "$(secret dashboards-password)" \
+  --kaisatsu-import-dir "$home/state/realms" \
+  --kaisatsu-import-secrets-dir "$home/secrets/realm" \
+  --ekiben-client-secrets-dir "$home/secrets/realm" \
   --kaisatsu-database-url-file "$home/secrets/kaisatsu-db-url" \
   --kaisatsu-db-password-file "$(secret kaisatsu-app-pw)" \
   --shako-repo-root "$home/repos" --ekiben-file-root "$home/files" \

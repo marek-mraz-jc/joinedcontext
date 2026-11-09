@@ -45,6 +45,17 @@ pub struct Config {
     /// `http://localhost:8080`). Every redirect URI, every link the Portal writes into a merge
     /// request and the host a generated application is served on are derived from it.
     pub public_base_url: Url,
+    /// The Organizations served on Portal hosts of their own (`JC_PORTAL_ORGANIZATION_HOSTS`,
+    /// `name=url` pairs separated by commas, e.g.
+    /// `hel=https://portal.hel.example,ba=https://portal.ba.example`; jc fills it from its
+    /// `[[organizations]]`). A request on one of those hosts is pinned to its Organization
+    /// (`organization_host`); empty, every host is the one Portal it was before.
+    pub organization_hosts: Vec<crate::organization_host::OrganizationHost>,
+    /// Each Organization's own catalogue (`JC_PORTAL_ORGANIZATION_CATALOGUES`, a JSON array of
+    /// `{organization, url, api?, reach?, dataHost?, tokenFile}`; jc fills it from its
+    /// `[[organizations]]`): every Endpoint of that Organization's projects publishes there,
+    /// into the CKAN organisation of the Organization's name.
+    pub organization_catalogues: Vec<crate::organization_host::OrganizationCatalogue>,
     /// The realm humans sign in against: `JC_OIDC_ISSUER`, `JC_OIDC_CLIENT_ID` and one proof of
     /// the client, `JC_OIDC_CLIENT_SECRET` (a secret) or `JC_OIDC_CLIENT_ASSERTION_FILE` (the
     /// pod's projected ServiceAccount token, PF-47), all together or none, plus the optional
@@ -1690,14 +1701,22 @@ impl Config {
     }
 
     pub fn api_base_url(&self) -> Url {
-        let mut url = self.public_base_url.clone();
+        let base = self.public_base();
+        let mut url = base.clone();
         if let Some(domain) = url.host_str().and_then(|h| h.strip_prefix("portal.")) {
             let api = format!("api.{domain}");
             if url.set_host(Some(&api)).is_err() {
-                return self.public_base_url.clone();
+                return base;
             }
         }
         url
+    }
+
+    /// The Portal's public base for the running request: its Organization host's
+    /// (`organization_host`), else [`Config::public_base_url`]. What every link and redirect a
+    /// request answers is built on.
+    pub fn public_base(&self) -> Url {
+        crate::organization_host::public_base(self)
     }
     /// The internal listener's default. Port 9090, which the edge does not route (AG-52).
     pub const DEFAULT_INTERNAL_BIND: &'static str = "0.0.0.0:9090";
@@ -1739,6 +1758,22 @@ impl Config {
                     var: "JC_PORTAL_PUBLIC_URL",
                     reason: e.to_string(),
                 })?;
+
+        let organization_hosts = crate::organization_host::parse(
+            &lookup("JC_PORTAL_ORGANIZATION_HOSTS").unwrap_or_default(),
+        )
+        .map_err(|reason| ConfigError::Invalid {
+            var: "JC_PORTAL_ORGANIZATION_HOSTS",
+            reason,
+        })?;
+
+        let organization_catalogues = crate::organization_host::parse_catalogues(
+            &lookup("JC_PORTAL_ORGANIZATION_CATALOGUES").unwrap_or_default(),
+        )
+        .map_err(|reason| ConfigError::Invalid {
+            var: "JC_PORTAL_ORGANIZATION_CATALOGUES",
+            reason,
+        })?;
 
         let oidc = oidc_config(&lookup)?;
 
@@ -1930,6 +1965,8 @@ impl Config {
             bind,
             internal_bind,
             public_base_url,
+            organization_hosts,
+            organization_catalogues,
             oidc,
             trust_edge_token,
             connector_clients,
@@ -2008,6 +2045,8 @@ impl Config {
             internal_bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             public_base_url: Url::parse("http://localhost:8080")
                 .unwrap_or_else(|_| unreachable!("valid test url")),
+            organization_hosts: Vec::new(),
+            organization_catalogues: Vec::new(),
             oidc: None,
             trust_edge_token: false,
             connector_clients: connector_clients(None),
@@ -2076,9 +2115,14 @@ impl Config {
 
     /// Redirect URI registered for this portal in the Keycloak client (CC-40).
     pub fn redirect_uri(&self) -> String {
+        Self::redirect_uri_at(&self.public_base_url)
+    }
+
+    /// The redirect URI of the Portal at `base`: one per Organization host (`organization_host`).
+    pub fn redirect_uri_at(base: &Url) -> String {
         format!(
             "{}/api/v1/auth/callback",
-            self.public_base_url.as_str().trim_end_matches('/')
+            base.as_str().trim_end_matches('/')
         )
     }
 }

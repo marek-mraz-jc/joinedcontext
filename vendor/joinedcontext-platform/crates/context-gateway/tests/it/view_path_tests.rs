@@ -103,10 +103,14 @@ async fn broker(
     (url, hops)
 }
 
+/// `updateSubscription` and `deleteSubscription` for the PATCH and DELETE the tests send: without
+/// them the gateway refuses the ungranted change 403, and the Portal compiles the view's
+/// operations from the same Policies, so prod's broker would refuse it too.
 fn grant() -> PolicySpec {
     serde_norway::from_str(&format!(
         "contextSpaceRef: {SPACE}\nassigner: did:web:{DOMAIN}\nassignee: {{ kind: role, id: public }}\n\
-         operations: [queryEntity, retrieveEntity, createEntity, createSubscription]\n\
+         operations: [queryEntity, retrieveEntity, createEntity, createSubscription, \
+         updateSubscription, deleteSubscription]\n\
          information:\n  - entities: [{{ type: AirQualityObserved }}]\n"
     ))
     .expect("the policy spec parses")

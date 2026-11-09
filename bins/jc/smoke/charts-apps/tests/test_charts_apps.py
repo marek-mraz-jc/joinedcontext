@@ -84,3 +84,32 @@ def test_temporal_index_keys_short_names(tmp_path):
         {"tenant": "t", "id": "x", "type": iri + "AirQualityObserved", "attr": iri + "pm25",
          "instance": {"observedAt": "2026-11-08T01:00:00Z"}}) + "\n")
     assert inv.temporal_index(tmp_path, {"AirQualityObserved"}) == {("t", "AirQualityObserved", "pm25"): ["2026-11-08T01:00:00Z"]}
+
+
+def test_the_session_helpers_call_the_realm_they_are_given(monkeypatch):
+    import pytest
+    import session
+    seen = []
+    monkeypatch.setattr(session.Session, "json", lambda self, m, path, *a, **k: seen.append(path) or (401, None))
+    s = session.Session("http://127.0.0.1:9")
+    with pytest.raises(RuntimeError, match="401"):
+        session.admin_token(s, "x", "smartcity")
+    with pytest.raises(RuntimeError, match="401"):
+        session.make_person(s, "t", realm="smartcity")
+    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token", "/id/admin/realms/smartcity/users"]
+
+
+def test_the_app_host_is_rewritten_as_the_portals_edge_file_does():
+    import shots
+
+    base = "http://localhost:42141"
+    host = shots.app_host(base, "alerts-desk")
+    assert host == "http://alerts-desk.apps.localhost:42141"
+    rw = shots.edge_rewrite
+    assert rw(base, "alerts-desk", host + "/") == base + "/apps/alerts-desk/"
+    assert rw(base, "alerts-desk", host + "/assets/i.css") == base + "/apps/alerts-desk/assets/i.css"
+    assert rw(base, "alerts-desk", host + "/apps/alerts-desk/assets/i.css") == base + "/apps/alerts-desk/assets/i.css"
+    assert rw(base, "alerts-desk", host + "/api/endpoint/s1/ngsi-ld/v1/entities?type=A") == \
+        base + "/api/endpoint/s1/ngsi-ld/v1/entities?type=A"
+    assert rw(base, "alerts-desk", host + "/apps/alerts-desk/api/endpoint/s1/x") == base + "/api/endpoint/s1/x"
+    assert rw(base, "alerts-desk", "https://tiles.example/x.png") is None, "another host is left alone"

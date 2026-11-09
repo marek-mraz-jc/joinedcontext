@@ -450,7 +450,11 @@ pub async fn build_router(
         }
         if plan.module == Module::Portal {
             let late = LateRouter::default();
-            builder = mount_all(builder, &plan, &late.router());
+            #[cfg(feature = "portal")]
+            let router = modules::portal::with_request_host(late.router());
+            #[cfg(not(feature = "portal"))]
+            let router = late.router();
+            builder = mount_all(builder, &plan, &router);
             portal = Some((late, plan.mount));
             continue;
         }
@@ -474,7 +478,8 @@ pub async fn build_router(
         if plan.module == Module::Gateway {
             let late = LateRouter::default();
             #[cfg(feature = "gateway")]
-            let router = modules::gateway::by_organization(late.router(), &cfg.organizations);
+            let router =
+                modules::gateway::by_organization(late.router(), &cfg.organizations, &cfg.scheme);
             #[cfg(not(feature = "gateway"))]
             let router = late.router();
             builder = mount_all(builder, &plan, &router);
@@ -765,6 +770,13 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     let listener = bind(cfg.listen).await?;
     let addr = listener.local_addr().map_err(StartError::Serve)?;
     let mut siblings = Siblings::new(&plans, addr);
+    if cfg.roles.contains(&Module::Portal) {
+        siblings.organization_portals = cfg
+            .organizations
+            .iter()
+            .map(|org| format!("{}://{}", cfg.scheme, org.hosts.portal))
+            .collect();
+    }
     let tasks = TaskTracker::new();
     #[cfg(feature = "model-tools")]
     if cfg.roles.contains(&Module::ModelTools) {
@@ -812,11 +824,12 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     #[cfg(feature = "portal")]
     if let Some((_, mount)) = &built.portal {
         let env = crate::config::portal_env;
-        let vars = if cfg.portal_siblings {
+        let mut vars = if cfg.portal_siblings {
             crate::siblings::portal_vars(&siblings, &setup, env)
         } else {
             std::collections::BTreeMap::new()
         };
+        vars.extend(modules::portal::organization_vars(cfg, siblings.listener));
         modules::portal::config(mount, env, vars)?;
     }
     let mut servers = vec![serve(listener, built.router, shutdown.clone())];
@@ -950,9 +963,14 @@ async fn portal_attempt(
     let ctx = shared.ctx();
     #[cfg(feature = "portal")]
     {
-        let build: Step<'_, (Router, Option<std::net::SocketAddr>)> = Box::pin(
-            modules::portal::build(ctx, cfg.portal_siblings, mount, &shutdown),
-        );
+        let build: Step<'_, (Router, Option<std::net::SocketAddr>)> =
+            Box::pin(modules::portal::build(
+                ctx,
+                cfg.portal_siblings,
+                modules::portal::organization_vars(&cfg, shared.siblings.listener),
+                mount,
+                &shutdown,
+            ));
         build.await
     }
     #[cfg(not(feature = "portal"))]

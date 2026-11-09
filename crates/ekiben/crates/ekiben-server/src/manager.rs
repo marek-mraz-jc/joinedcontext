@@ -30,6 +30,29 @@ pub trait StreamPersistence: Send + Sync {
         org: &'a OrgId,
         id: &'a str,
     ) -> futures::future::BoxFuture<'a, Result<(), String>>;
+    /// A resource posted to `/resources/{kind}/{id}` and built, with its body as posted (before
+    /// `${VAR}` interpolation). A stream started by [`StreamManager::restore`] may name it before
+    /// any client posts it again, so a host keeps it as it keeps streams.
+    fn resource_saved<'a>(
+        &'a self,
+        _org: &'a OrgId,
+        _kind: &'a str,
+        _id: &'a str,
+        _posted: &'a str,
+    ) -> futures::future::BoxFuture<'a, Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// Why a posted resource was not taken; the API answers each with a 400.
+#[derive(Debug)]
+pub enum ResourceError {
+    /// The body is not a component config; the text is the answer.
+    Parse(String),
+    /// The kind is none of `cache`, `input`, `output`, `processor`, `rate_limit`.
+    Kind,
+    /// The component did not build.
+    Build(CoreError),
 }
 
 /// Status of a managed stream in streams mode (`internal/stream/manager/type.go:StreamStatus`).
@@ -241,6 +264,98 @@ impl StreamManager {
         };
         crate::runner::register_inline_resources(&conf, &self.registry, &sctx)?;
         Ok(count)
+    }
+
+    /// Builds the resource `id` of `kind` from `filled` (its body, `${VAR}` already filled) and
+    /// puts it in `org`'s namespace, where it replaces one of the same label
+    /// (`POST /resources/{kind}/{id}`).
+    pub fn put_resource(
+        &self,
+        org: &OrgId,
+        kind: &str,
+        id: &str,
+        filled: &str,
+    ) -> Result<(), ResourceError> {
+        let raw: JsonValue = serde_norway::from_str(filled)
+            .map_err(|e| ResourceError::Parse(format!("Error: {e}")))?;
+        let mut conf = ekiben_core::ComponentConfig::from_json_value(&raw, "noop", None)
+            .map_err(|e| ResourceError::Parse(e.to_string()))?;
+        conf.label = id.to_string();
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let org_ctx = self.resources.get_or_create_org(org);
+        let org_vars = org_ctx.secrets_snapshot();
+        let sctx = ekiben_core::StreamContext {
+            stream_id: format!("resource_{id}"),
+            org: org_ctx,
+            resources: self.resources.clone(),
+            registry: self.registry.clone(),
+            blobl_env: ekiben_core::config::build_blobl_env_for_stream(&org_vars, self.env_access),
+            metrics: StreamMetrics::new(id, &org.0),
+            label: id.to_string(),
+            path: format!("resources.{kind}.{id}"),
+            file_root: self.file_root.clone(),
+            env_vars: Arc::new(HashMap::new()),
+            shutdown_rx: rx,
+        };
+        let (registry, resources, id) = (&self.registry, &self.resources, id.to_string());
+        match kind {
+            "cache" => registry
+                .build_cache(&conf, &sctx)
+                .map(|c| resources.insert_cache(org, id, c)),
+            "rate_limit" => registry
+                .build_rate_limit(&conf, &sctx)
+                .map(|rl| resources.insert_rate_limit(org, id, rl)),
+            "processor" => {
+                let pctx =
+                    sctx.to_proc_context(conf.component_type.clone(), id.clone(), "resource");
+                registry
+                    .build_processor(&conf, &pctx, &id)
+                    .map(|p| resources.insert_processor(org, id, p))
+            }
+            "input" => registry
+                .build_input(&conf, &sctx)
+                .map(|inp| resources.insert_input(org, id, inp)),
+            "output" => registry
+                .build_output(&conf, &sctx)
+                .map(|out| resources.insert_output(org, id, out)),
+            _ => return Err(ResourceError::Kind),
+        }
+        .map_err(ResourceError::Build)
+    }
+
+    /// Keeps a resource [`Self::put_resource`] took, as posted, when a persistence is set.
+    pub async fn save_resource(
+        &self,
+        org: &OrgId,
+        kind: &str,
+        id: &str,
+        posted: &str,
+    ) -> Result<(), String> {
+        match &self.persistence {
+            Some(p) => p.resource_saved(org, kind, id, posted).await,
+            None => Ok(()),
+        }
+    }
+
+    /// Puts back a resource kept before a restart: `posted` is interpolated as the API does and
+    /// built in `org`, and is not saved again. Call it before [`Self::restore`] of the streams
+    /// that name it.
+    pub fn restore_resource(
+        &self,
+        org: &OrgId,
+        kind: &str,
+        id: &str,
+        posted: &str,
+    ) -> Result<(), String> {
+        let filled = self
+            .interpolate(org, posted)
+            .map_err(|e| format!("missing variables {:?}", e.missing))?;
+        self.put_resource(org, kind, id, &filled)
+            .map_err(|e| match e {
+                ResourceError::Parse(why) => why,
+                ResourceError::Kind => format!("unknown resource kind `{kind}`"),
+                ResourceError::Build(e) => e.to_string(),
+            })
     }
 
     /// Creates and starts a new stream under `id` in the organization `conf.org`.

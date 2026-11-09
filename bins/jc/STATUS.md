@@ -376,10 +376,15 @@ project `e2e` (layout 1: project, space `things`, a `public` and a `project-list
 - Portal UI reads of a closed Endpoint: the UI calls `GET /api/endpoint/{slug}/ngsi-ld/v1/...` with its session
   cookie only; the gateway reads `Authorization` alone (`auth/subject.rs` `admit_on`), so in jc that call is
   anonymous: 401 on a closed Endpoint. On dev APISIX's openid-connect plugin turns the session into a bearer.
-- No Portal-made token names an Endpoint: the Portal logs `hub scopes wait for the realm scope=endpoint:{slug}
-  ... when the realm's admin-permissions CronJob links it to the hub`; no jc step links them, and kaisatsu has no
-  per-Endpoint audience mapper. A person's Portal token on a closed Endpoint is 401; the e2e uses an imported client
-  with an audience mapper.
+- Stale since T-6063, corrected by jc-kaisatsu-audience (2026-11-09): jc's linker (`modules/kaisatsu.rs`
+  `link_pass`, every 5 s) links each Portal `endpoint:{slug}` scope to `mcp-hub`, `jcctl` and `portal-api` as
+  optional, as the deployment's admin-permissions Job does. A person's `jcctl` token with that scope reads the
+  closed Endpoint with the person's grants and is 401 on any other Endpoint; the Portal's `jc_data_query`
+  exchanges the person's token for it (`tests/gateway_endpoints.rs`). Per-Endpoint audiences come from client
+  mappers, as on prod (1,987 there, all on clients). Prod's release links no Endpoint scope to `portal-api`;
+  jc's link opens nothing more: `portal-api`'s own service-account token with the scope and `gateway-hub` is
+  its own `service-account-portal-api` user, whom no Policy grants (403, no data), and an exchanged token reads
+  only what the person's grants open.
 - The gateway's own token comes from the public issuer URL: a jc whose public origin the process cannot reach
   (no hairpin through the TLS proxy) gets no token, and the Portal's internal listener refuses its polls (401).
 - `JC_INTERNAL_BIND` unset (jc-portal-1 `c0a410a7`: the Portal binds a free loopback port and `portal::build`

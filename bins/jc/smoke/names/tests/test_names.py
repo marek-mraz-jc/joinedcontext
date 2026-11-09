@@ -53,6 +53,23 @@ def test_a_missing_prod_name_fails_and_names_what_jc_has_instead():
     assert extra == ["p/bicycles", "q/x"] and len(res.rows) == 2
 
 
+def test_a_kept_components_tool_missing_on_jc_is_a_named_skip_and_only_that_tool():
+    res = Results("names", "http://localhost")
+    kept = {"/api/mcp#search_documents": "assistant"}
+    cmp.compare(res, "tool", ["/api/mcp#search_documents", "/api/mcp#query_entities"], {"/api/mcp#list_types"},
+                [], lambda o: (False, ""), "POST /api/mcp tools/list", kept=kept)
+    r = rows_by_target(res)
+    assert r["/api/mcp#search_documents"]["result"] == SKIP
+    assert r["/api/mcp#search_documents"]["reason"] == "kept component: assistant"
+    # A tool jc must serve itself still fails; a kept tool jc does list passes.
+    assert r["/api/mcp#query_entities"]["result"] == FAIL
+    res = Results("names", "http://localhost")
+    cmp.compare(res, "tool", ["/api/mcp#search_documents"], {"/api/mcp#search_documents"}, [],
+                lambda o: (False, ""), "x", kept=kept)
+    assert res.rows[0]["result"] == PASS
+    assert set(suite.KEPT_TOOLS) == {"search_documents"}
+
+
 def test_an_extra_jc_name_alone_is_a_report_line_not_a_failure():
     res = Results("names", "http://localhost")
     extra = cmp.compare(res, "dataset", ["a"], {"a", "new-one"}, [], lambda o: (False, ""), "GET x")

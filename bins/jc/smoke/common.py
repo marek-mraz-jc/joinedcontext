@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import ipaddress
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -14,6 +15,21 @@ import urllib.request
 from pathlib import Path
 
 PASS, FAIL, SKIP = "pass", "fail", "skip"
+
+# jc's `[identity] realm` rule (setup::Realm::parse): a realm name goes into URL paths.
+REALM_NAME = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]*")
+
+
+def realm_of(state) -> str:
+    """The realm the rehearsal's jc runs on: `<state>/realm-name.txt` (deploy/rehearsal writes the
+    export's realm there: dev, smartcity), else jc's default `jc`. A name jc would refuse is refused."""
+    p = Path(state) / "realm-name.txt" if state else None
+    name = p.read_text().strip() if p and p.is_file() else ""
+    if not name:
+        return "jc"
+    if not REALM_NAME.fullmatch(name) or name.lower() == "master":
+        raise SystemExit(f"{p}: {name!r} is no realm name jc accepts")
+    return name
 
 
 def loopback_only(base: str) -> None:

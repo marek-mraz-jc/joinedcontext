@@ -640,14 +640,29 @@ async fn count_ids(
             Bind::Int(n) => qy.bind(n),
         };
     }
+    let set = one_pass(res);
     let mut ids = qy.fetch(&mut **tx);
     let mut n: i64 = 0;
     while let Some(id) = ids.try_next().await? {
-        if res.iter().any(|re| re.is_match(&id)) {
+        let hit = match &set {
+            Some(set) => set.is_match(&id),
+            None => res.iter().any(|re| re.is_match(&id)),
+        };
+        if hit {
             n = n.saturating_add(1);
         }
     }
     Ok(n)
+}
+
+/// `res` as one set that reads an id once for all of them: a whole space's
+/// 431 dataset Policies tried one by one took 9 s for 128 678 ids. `None`
+/// for a single pattern, or a set past the regex crate's size limit, which
+/// leaves the patterns to be tried in turn.
+fn one_pass(res: &[std::sync::Arc<regex::Regex>]) -> Option<regex::RegexSet> {
+    (res.len() > 1)
+        .then(|| regex::RegexSet::new(res.iter().map(|re| re.as_str())).ok())
+        .flatten()
 }
 
 /// `id_prefixes` as SQL: the bounding byte range of every prefix, which the
@@ -2346,6 +2361,35 @@ mod tests {
 
     fn wheres() -> Vec<String> {
         vec!["tenant_id = $1".to_owned()]
+    }
+
+    /// A count under many dataset patterns reads each id once, and selects
+    /// exactly the ids one of the patterns selects.
+    #[test]
+    fn many_patterns_count_in_one_pass() {
+        let res: Vec<_> = (0..431)
+            .map(|n| {
+                antares_ql::regex::compile(&format!(
+                    "^(?:^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:bratislava:set-{n}[.][a-z0-9.-]+$)$"
+                ))
+                .expect("compiles")
+            })
+            .collect();
+        let set = one_pass(&res).expect("one set for 431 patterns");
+        for id in [
+            "urn:ngsi-ld:KeyPerformanceIndicator:data.bratislava.sk:bratislava:set-7.2024",
+            "urn:ngsi-ld:KeyPerformanceIndicator:data.bratislava.sk:bratislava:set-430.x",
+            "urn:ngsi-ld:KeyPerformanceIndicator:data.bratislava.sk:bratislava:set-431.x",
+            "urn:ngsi-ld:KeyPerformanceIndicator:data.bratislava.sk:kosice:set-7.2024",
+            "urn:ngsi-ld:KeyPerformanceIndicator:data.bratislava.sk:bratislava:set-7",
+        ] {
+            assert_eq!(
+                set.is_match(id),
+                res.iter().any(|re| re.is_match(id)),
+                "{id}"
+            );
+        }
+        assert!(one_pass(&res[..1]).is_none(), "one pattern is tried alone");
     }
 
     /// T-6351: a `q` of three leaves names the expiry-stripped document 27

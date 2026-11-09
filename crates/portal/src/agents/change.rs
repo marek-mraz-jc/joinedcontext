@@ -444,7 +444,8 @@ pub fn object_route(project: &str, kind: &str, plural: &str, name: &str) -> Stri
 /// A Portal route as the whole address a person outside the Portal opens: a connector's client
 /// has no host to resolve a path against.
 pub fn address(config: &crate::config::Config, route: &str) -> String {
-    let base = config.public_base_url.as_str().trim_end_matches('/');
+    let base = config.public_base();
+    let base = base.as_str().trim_end_matches('/');
     format!("{base}{route}")
 }
 

@@ -8,14 +8,12 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use ekiben_core::config::build_blobl_env_for_stream;
-use ekiben_core::{ComponentConfig, CoreError, OrgId, StreamConfig, StreamContext, StreamMetrics};
+use ekiben_core::{CoreError, OrgId, StreamConfig};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 use subtle::ConstantTimeEq;
-use tokio::sync::watch;
 
-use crate::manager::StreamManager;
+use crate::manager::{ResourceError, StreamManager};
 use crate::oidc::OidcAuth;
 use crate::tokens::OrgTokenFile;
 
@@ -728,76 +726,29 @@ async fn handle_post_resource(
         }
     };
 
-    let raw_val: JsonValue = match serde_norway::from_str(&interpolated) {
-        Ok(v) => v,
-        Err(e) => return (StatusCode::BAD_REQUEST, format!("Error: {e}")).into_response(),
-    };
-    let comp_conf = match ComponentConfig::from_json_value(&raw_val, "noop", None) {
-        Ok(mut c) => {
-            c.label = id.clone();
-            c
-        }
-        Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
-    };
-
-    let (_tx, rx) = watch::channel(false);
-    let org_ctx = state.manager.resources.get_or_create_org(&org_id);
-    let org_vars = org_ctx.secrets_snapshot();
-    let sctx = StreamContext {
-        stream_id: format!("resource_{id}"),
-        org: org_ctx,
-        resources: state.manager.resources.clone(),
-        registry: state.manager.registry.clone(),
-        blobl_env: build_blobl_env_for_stream(&org_vars, state.manager.env_access),
-        metrics: StreamMetrics::new(&id, &org_id.0),
-        label: id.clone(),
-        path: format!("resources.{res_type}.{id}"),
-        file_root: state.manager.file_root.clone(),
-        env_vars: Arc::new(HashMap::new()),
-        shutdown_rx: rx,
-    };
-
-    let res: Result<(), CoreError> = match res_type.as_str() {
-        "cache" => state
+    match state
+        .manager
+        .put_resource(&org_id, &res_type, &id, &interpolated)
+    {
+        Ok(()) => match state
             .manager
-            .registry
-            .build_cache(&comp_conf, &sctx)
-            .map(|c| state.manager.resources.insert_cache(&org_id, id, c)),
-        "rate_limit" => state
-            .manager
-            .registry
-            .build_rate_limit(&comp_conf, &sctx)
-            .map(|rl| state.manager.resources.insert_rate_limit(&org_id, id, rl)),
-        "processor" => {
-            let pctx = sctx.to_proc_context(comp_conf.component_type.clone(), id.clone(), "resource");
-            state
-                .manager
-                .registry
-                .build_processor(&comp_conf, &pctx, &id)
-                .map(|p| state.manager.resources.insert_processor(&org_id, id, p))
-        }
-        "input" => state
-            .manager
-            .registry
-            .build_input(&comp_conf, &sctx)
-            .map(|inp| state.manager.resources.insert_input(&org_id, id, inp)),
-        "output" => state
-            .manager
-            .registry
-            .build_output(&comp_conf, &sctx)
-            .map(|out| state.manager.resources.insert_output(&org_id, id, out)),
-        _ => {
-            return (
-                StatusCode::BAD_REQUEST,
-                "Var `type` must be set to one of `cache`, `input`, `output`, `processor` or `rate_limit`",
+            .save_resource(&org_id, &res_type, &id, &body_str)
+            .await
+        {
+            Ok(()) => StatusCode::OK.into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("the resource was not saved: {e}"),
             )
-                .into_response()
-        }
-    };
-
-    match res {
-        Ok(()) => StatusCode::OK.into_response(),
-        Err(e) => {
+                .into_response(),
+        },
+        Err(ResourceError::Parse(why)) => (StatusCode::BAD_REQUEST, why).into_response(),
+        Err(ResourceError::Kind) => (
+            StatusCode::BAD_REQUEST,
+            "Var `type` must be set to one of `cache`, `input`, `output`, `processor` or `rate_limit`",
+        )
+            .into_response(),
+        Err(ResourceError::Build(e)) => {
             if !chilled {
                 let lints = vec![e.to_string()];
                 (

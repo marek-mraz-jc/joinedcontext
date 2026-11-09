@@ -101,6 +101,11 @@ pub struct Cli {
     /// `JC_CLIENT_SECRET_<PROJECT>`, read once at start.
     #[arg(long, env = "JCBIN_EKIBEN_CLIENT_SECRETS_DIR")]
     pub ekiben_client_secrets_dir: Option<PathBuf>,
+    /// ekiben: a resources file (Bento's `streams -r`): its caches, rate limits and processors
+    /// are shared by every stream, as the deployment's `components/pipeline-runner/streams/
+    /// resources.yaml` (`helsinki__gtfs`, `zilina_opendata`, `events_tail`, ...).
+    #[arg(long, env = "JCBIN_EKIBEN_RESOURCES_FILE")]
+    pub ekiben_resources_file: Option<PathBuf>,
     /// ekiben: the pipeline client the pipeline-test harness runs as (`JC_CLIENT_ID` and
     /// `JC_CLIENT_SECRET`), one of the client secrets directory's files.
     #[arg(long, env = "JCBIN_EKIBEN_HARNESS_CLIENT")]
@@ -239,6 +244,8 @@ pub struct EkibenSection {
     pub client_secrets_dir: Option<PathBuf>,
     /// The pipeline client the pipeline-test harness runs as (`JC_CLIENT_ID`).
     pub harness_client: Option<String>,
+    /// The shared resources every stream may name (Bento's `streams -r`).
+    pub resources_file: Option<PathBuf>,
     /// Postgres for the stream definitions (else they live only in memory).
     pub database: Option<DatabaseSection>,
 }
@@ -290,6 +297,72 @@ pub struct DataroomSection {
     pub database: Option<DatabaseSection>,
     /// `[dataroom.addresses]`: where the catalogue's live parts answer.
     pub addresses: DataroomAddresses,
+    /// `[dataroom.aliases]`: `old = "new"` per renamed dataset (evidence/jc-dev/RENAMES.md); a
+    /// read of the old name answers the new dataset.
+    pub aliases: BTreeMap<String, String>,
+    /// `[[dataroom.harvest]]`: the harvest sources held from the start, each run on its
+    /// `schedule` by dataroom's harvest scheduler (prod's CKAN harvest CronJobs).
+    pub harvest: Vec<HarvestSeed>,
+}
+
+/// One `[[dataroom.harvest]]` source, written over the stored one on every start: prod's
+/// `harvest.sources` entry (deployment `components/ckan/values/catalogue/*.yaml.gotmpl`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarvestSeed {
+    pub name: String,
+    /// `nkod-sparql` (the SPARQL endpoint), `arcgis-hub` (the Hub's base), `ckan-action`, `dcat-ap`.
+    pub kind: String,
+    pub url: String,
+    /// The CKAN organisation the datasets land in; created with the next three when missing.
+    pub publisher: String,
+    pub publisher_title: String,
+    /// The publisher's IRI: the one NKOD lists the datasets under, and the publisher's `uri`.
+    pub publisher_uri: String,
+    #[serde(default)]
+    pub publisher_description: Option<String>,
+    /// An `[[organizations]]` name: the source belongs to that Organization's catalogue; none,
+    /// the `[dataroom]` default catalogue.
+    #[serde(default)]
+    pub organization: Option<String>,
+    #[serde(default)]
+    pub spatial_uri: Option<String>,
+    #[serde(default)]
+    pub name_prefix: String,
+    /// Every host a run may fetch from, the `url`'s own included (dataroom's outbound guard).
+    pub allowed_hosts: Vec<String>,
+    #[serde(default)]
+    pub rewrite_hosts: BTreeMap<String, String>,
+    /// Items left out (title, IRI or item id) with the reason the run log gives.
+    #[serde(default)]
+    pub skip: BTreeMap<String, String>,
+    #[serde(default)]
+    pub titles: BTreeMap<String, String>,
+    #[serde(default)]
+    pub spelling: BTreeMap<String, String>,
+    #[serde(default)]
+    pub require_column: BTreeMap<String, String>,
+    /// Five-field cron, UTC (prod: `23 3 * * *`).
+    #[serde(default = "default_harvest_schedule")]
+    pub schedule: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// prod's `od-datasets.json` (deployment `charts/ckan/files/`): the converted datasets by
+    /// name. Set: only those are listed, with their Endpoint's distributions on `gateway`.
+    #[serde(default)]
+    pub converted_file: Option<PathBuf>,
+    /// The catalogue base the file's `dataset` URLs name, replaced by this catalogue's own
+    /// (prod's `harvest.datasetsBase`).
+    #[serde(default)]
+    pub datasets_base: Option<String>,
+    /// The public base the Endpoints answer under (prod's `harvest.gateway`); its host must be
+    /// in `allowed_hosts`.
+    #[serde(default)]
+    pub gateway: Option<String>,
+}
+
+fn default_harvest_schedule() -> String {
+    "23 3 * * *".into()
 }
 
 /// `[dataroom.addresses]`: the bases (`http(s)://host[:port][/path]`) the dataset pages frame,
@@ -332,6 +405,8 @@ impl Default for DataroomSection {
             portal_token_file: None,
             database: None,
             addresses: DataroomAddresses::default(),
+            aliases: BTreeMap::new(),
+            harvest: Vec::new(),
         }
     }
 }
@@ -744,6 +819,7 @@ impl Config {
                 .or(file.ekiben.client_secrets_dir)
                 .or_else(|| kaisatsu.import_secrets_dir.clone()),
             harness_client: cli.ekiben_harness_client.or(file.ekiben.harness_client),
+            resources_file: cli.ekiben_resources_file.or(file.ekiben.resources_file),
             database: file.ekiben.database,
         };
         let antares = AntaresSection {
@@ -1268,6 +1344,10 @@ pub(crate) fn valid_host(host: &str) -> bool {
         && !name.starts_with('.')
         && !name.ends_with('.')
         && port.is_none_or(|p| p.parse::<u16>().is_ok())
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -1922,6 +2002,22 @@ path_prefix = "/api/endpoint"
         .unwrap();
         let err = Config::merge(cli(&["--role", "dataroom"]), bad).unwrap_err();
         assert!(matches!(err, ConfigError::Address("viz", _)), "{err}");
+    }
+
+    #[test]
+    fn dataroom_aliases_are_read_as_old_to_new_names() {
+        let file = Config::parse_file(
+            Path::new("jc.toml"),
+            "[dataroom.aliases]\ncatalog = \"zilina-catalog\"\n",
+        )
+        .unwrap();
+        let cfg = Config::merge(cli(&["--role", "dataroom"]), file).unwrap();
+        assert_eq!(
+            cfg.dataroom.aliases,
+            BTreeMap::from([("catalog".to_owned(), "zilina-catalog".to_owned())])
+        );
+        let cfg = Config::merge(cli(&["--role", "dataroom"]), FileConfig::default()).unwrap();
+        assert!(cfg.dataroom.aliases.is_empty());
     }
 
     #[test]

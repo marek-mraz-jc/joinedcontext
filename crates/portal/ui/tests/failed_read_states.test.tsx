@@ -7,6 +7,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import en from "../src/locales/en.json";
+import { queryKeys } from "../src/api/client";
 import { renderRoute } from "./pageHarness";
 
 const failure = () => new Response(null, { status: 500, statusText: "Internal Server Error" });
@@ -68,5 +69,17 @@ describe("an address that leads nowhere (T-4165, photo audit T-4157)", () => {
     await renderRoute({ path: "/no-such-page" });
     expect(await screen.findByRole("heading", { level: 1, name: en.app.notFound.title })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: en.nav.projects })).toBeInTheDocument();
+  });
+
+  it("says the page does not exist, not that a project is closed, when the project last worked in is gone", async () => {
+    // jc-multiorg-portal's frameFor turned a stored project the list no longer names into the
+    // project refusal, for an address that needs no project at all.
+    window.localStorage.setItem("jc.lastProject", "gone");
+    const { client } = await renderRoute({ path: "/no-such-page" });
+    // Only once the list is in does the frame know "gone" is not among it.
+    await waitFor(() => expect(client.getQueryState(queryKeys.projects())?.status).toBe("success"));
+    expect(await screen.findByRole("heading", { level: 1, name: en.app.notFound.title })).toBeInTheDocument();
+    expect(screen.getByText(en.app.notFound.description.replace("{path}", "/no-such-page"))).toBeInTheDocument();
+    expect(screen.queryByText(en.form.projectHidden)).toBeNull();
   });
 });

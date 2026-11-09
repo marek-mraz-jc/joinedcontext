@@ -1593,6 +1593,7 @@ pub fn router(broker: Broker) -> Result<Served, Box<dyn std::error::Error>> {
     let roles = broker.roles;
     let metrics_port = broker.metrics_port;
     let subject_from = broker.subject_from;
+    let admin_auth = state.admin_auth.clone();
     // Handles the drain needs, taken before `state` is consumed by the
     // router — the flag the health endpoint reads, and the store whose pools
     // close last.
@@ -1627,10 +1628,13 @@ pub fn router(broker: Broker) -> Result<Served, Box<dyn std::error::Error>> {
             );
             routed.layer(tower::util::MapRequestLayer::new(
                 move |mut req: axum::extract::Request| {
-                    antares_api::policy::drop_subject_unless_from(
+                    let path = req.uri().path().to_owned();
+                    antares_api::policy::drop_subject_unless_from_or_admin(
+                        &path,
                         req.headers_mut(),
                         &antares_api::policy::SUBJECT_HEADERS,
                         &from,
+                        admin_auth.as_deref(),
                     );
                     req
                 },

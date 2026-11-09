@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import i18n from "../i18n";
 import { api, unwrap } from "./client";
 import { ORG_NAMESPACE } from "./manifest";
 import { usePermissions } from "./permissions";
@@ -56,8 +57,21 @@ export function usePersonNames(ids: readonly string[]): Map<string, string> {
   );
 }
 
-/** How a page writes a person a manifest names: their name beside the id when it is known. */
+/**
+ * How a page writes a person a manifest names: their name when it is known, "Unknown person"
+ * for an id nobody resolved (a reader without the right, or a realm with no such user), never the
+ * bare id in a page's text (UI-01). Anything that is not an id (an e-mail) is already words.
+ * `PersonName` keeps the id on hover for whoever needs it.
+ */
 export function personLabel(id: string, names: Map<string, string>): string {
   const name = names.get(id);
-  return name ? `${name} (${id})` : id;
+  if (name) return name;
+  return isPersonId(id) ? i18n.t("personName.unknown") : id;
+}
+
+/** Every person id inside a sentence (a server's message) written as `personLabel` writes it. */
+export function withPersonNames(text: string, names: Map<string, string>): string {
+  return text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) =>
+    personLabel(id, names),
+  );
 }
