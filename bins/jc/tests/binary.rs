@@ -206,9 +206,11 @@ fn serves_from_a_config_file_and_stops_on_sigterm() {
 /// the siblings serve, the Portal's mount answers 503 while jc retries, and jc stays up.
 #[test]
 fn a_portal_whose_realm_does_not_answer_keeps_jc_serving() {
-    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    // Bound and never listening for the whole test: a connect is refused, and no other bind
+    // takes the port (a dropped listener's port is anyone's).
+    let closed = tokio::net::TcpSocket::new_v4().unwrap();
+    closed.bind("127.0.0.1:0".parse().unwrap()).unwrap();
     let issuer = format!("http://{}/realms/jc", closed.local_addr().unwrap());
-    drop(closed);
     let mut child = jc()
         .args([
             "--role",

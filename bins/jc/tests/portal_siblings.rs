@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::{Body, Browser, sign_in, sign_in_at};
+use common::{Body, Browser, free_port, lost_the_port, sign_in, sign_in_at};
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
@@ -91,14 +91,6 @@ impl Jc {
     }
 }
 
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
 /// kaisatsu's PostgreSQL section, when a superuser URL is given: roles and a database migrated
 /// by the migration role, the request role's URL and password in files.
 async fn kaisatsu_pg(dir: &Path) -> Option<(PathBuf, PathBuf)> {
@@ -173,6 +165,16 @@ async fn start() -> Jc {
 }
 
 async fn start_placed(placement: Placement, realm: &'static str) -> Jc {
+    for _ in 0..5 {
+        if let Some(jc) = start_placed_once(placement, realm).await {
+            return jc;
+        }
+    }
+    panic!("jc lost its listen port to another bind 5 times");
+}
+
+/// One jc; `None` when it stopped because another bind took its port first.
+async fn start_placed_once(placement: Placement, realm: &'static str) -> Option<Jc> {
     assert!(
         Command::new("docker")
             .args(["run", "--rm", "alpine", "true"])
@@ -273,7 +275,8 @@ async fn start_placed(placement: Placement, realm: &'static str) -> Jc {
         log,
     };
     match rx.recv_timeout(Duration::from_secs(180)) {
-        Ok(Ok(())) => jc,
+        Ok(Ok(())) => Some(jc),
+        Ok(Err(())) if lost_the_port(&jc.log.lock().unwrap().join("\n")) => None,
         other => {
             let tail = jc.log.lock().unwrap().join("\n");
             panic!("jc did not start ({other:?}):\n{tail}");

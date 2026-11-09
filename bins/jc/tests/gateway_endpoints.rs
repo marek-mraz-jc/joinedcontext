@@ -12,7 +12,7 @@
 mod common;
 
 use base64::Engine as _;
-use common::{Browser, sign_in};
+use common::{Browser, free_port, lost_the_port, sign_in};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
@@ -46,10 +46,15 @@ struct Jc {
     /// The directory `root` is, when this `jc` owns it (a restart test keeps its own).
     _dir: Option<tempfile::TempDir>,
     log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// The file the whole log goes to: one per test and run, so a red run keeps its evidence.
+    log_file: PathBuf,
 }
 
 impl Drop for Jc {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.save_log();
+        }
         let _ = Command::new("kill")
             .args(["-TERM", &self.child.id().to_string()])
             .status();
@@ -80,29 +85,42 @@ impl Jc {
         self.log.lock().unwrap().iter().any(|l| l.contains(needle))
     }
 
+    /// Waits until jc's log holds `needle`: the reader thread copies jc's stderr a moment after
+    /// jc wrote it, so a line jc logged before it answered can still be on its way.
+    async fn wait_log(&self, what: &str, needle: &str) {
+        eventually(what, self, 30, || async {
+            self.log_has(needle)
+                .then_some(())
+                .ok_or(format!("no line holding {needle:?} yet"))
+        })
+        .await;
+    }
+
+    /// Puts the test's own step into the log's timeline, so a red run shows what jc had logged
+    /// by then.
+    fn mark(&self, step: &str) {
+        let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+        self.log.lock().unwrap().push(format!("{at} TEST {step}"));
+    }
+
+    fn save_log(&self) {
+        let _ = std::fs::write(&self.log_file, self.log.lock().unwrap().join("\n"));
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.base)
     }
 
     /// The last lines of the child's log; the whole log goes to a file named in the answer.
     fn tail(&self) -> String {
+        self.save_log();
         let log = self.log.lock().unwrap();
-        let file = Path::new(env!("CARGO_TARGET_TMPDIR")).join("gateway_endpoints.log");
-        let _ = std::fs::write(&file, log.join("\n"));
         format!(
             "{}\n(whole log: {})",
             log[log.len().saturating_sub(60)..].join("\n"),
-            file.display()
+            self.log_file.display()
         )
     }
-}
-
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
 }
 
 /// The test's people and clients, imported into `realm` (file `file` of the import dir) before
@@ -237,6 +255,17 @@ async fn start() -> Jc {
 /// the listener's own address: a stream asks kaisatsu's public token endpoint, and ekiben refuses
 /// a loopback name such as `localhost`.
 async fn start_with(pipelines: bool) -> Jc {
+    for _ in 0..5 {
+        if let Some(jc) = start_with_once(pipelines).await {
+            return jc;
+        }
+    }
+    panic!("jc lost its listen port to another bind 5 times");
+}
+
+/// One [`start_with`] in a directory and on a port of its own; `None` when another bind took
+/// the port before jc did.
+async fn start_with_once(pipelines: bool) -> Option<Jc> {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     realm_file(
@@ -265,17 +294,18 @@ async fn start_with(pipelines: bool) -> Jc {
             &["--ekiben-token-file", ekiben.to_str().unwrap()],
             &[("JC_BRANDING_FILE", branding.to_str().unwrap())],
         )
-        .await
+        .await?
     } else {
-        start_at(root, port, &[], &[]).await
+        start_at(root, port, &[], &[]).await?
     };
     jc._dir = Some(dir);
-    jc
+    Some(jc)
 }
 
 /// Starts `jc` over `root` (state, `realms` import dir and `realm-secrets` under it) on `port`,
-/// with `args` and `envs` beside the test's own.
-async fn start_at(root: &Path, port: u16, args: &[&str], envs: &[(&str, &str)]) -> Jc {
+/// with `args` and `envs` beside the test's own; `None` when another bind took `port` before jc
+/// did ([`free_port`] cannot hold it for jc).
+async fn start_at(root: &Path, port: u16, args: &[&str], envs: &[(&str, &str)]) -> Option<Jc> {
     start_on(root, &format!("localhost:{port}"), port, args, envs).await
 }
 
@@ -286,7 +316,7 @@ async fn start_on(
     port: u16,
     args: &[&str],
     envs: &[(&str, &str)],
-) -> Jc {
+) -> Option<Jc> {
     let state = root.join("state");
     let realms = root.join("realms");
     let realm_secrets = root.join("realm-secrets");
@@ -350,9 +380,23 @@ async fn start_on(
         state,
         _dir: None,
         log,
+        // The test's thread carries its name: one file per test, pid and start.
+        log_file: Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+            "gateway_endpoints-{}-{}-{}.log",
+            std::thread::current()
+                .name()
+                .unwrap_or("jc")
+                .replace("::", "-"),
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        )),
     };
     match rx.recv_timeout(Duration::from_secs(180)) {
-        Ok(Ok(())) => jc,
+        Ok(Ok(())) => Some(jc),
+        Ok(Err(())) if lost_the_port(&jc.log.lock().unwrap().join("\n")) => None,
         other => panic!("jc did not start ({other:?}):\n{}", jc.tail()),
     }
 }
@@ -468,6 +512,7 @@ async fn put_file(jc: &Jc, path: &str, content: &str) {
             continue;
         }
         assert!(status.is_success(), "PUT contents/{path}: {status} {body}");
+        jc.mark(&format!("PUT {path} answered {status}"));
         return;
     }
 }
@@ -602,6 +647,21 @@ async fn open_project(jc: &Jc) {
         Err(format!("{status} {body}; the broker's views: {views}"))
     })
     .await;
+    // The hub and its MCP tools decide from the gateway's own table (its checkout of the
+    // repository, reloaded after every forge pass, every 10 s), not from the views above: wait
+    // until that table grants the public Endpoint to an anonymous caller.
+    eventually(
+        "the gateway's own table lists the public Endpoint to an anonymous caller",
+        jc,
+        60,
+        || async {
+            let (status, body) = call(jc, get.clone(), "/api/endpoints", None, None).await;
+            (status == StatusCode::OK && body.contains(PUBLIC))
+                .then_some(())
+                .ok_or(format!("{status} {body}"))
+        },
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -732,6 +792,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     // A person with no grant on the Endpoint gets a token exchanged the same way, and the
     // gateway's Policy still refuses them: the scope names the Endpoint, never a right to it.
     let stranger = token_of(&jc, "e2e-mcp", STRANGER).await;
+    jc.mark("the stranger's jc_data_query sent");
     let (status, body) = call(
         &jc,
         post.clone(),
@@ -740,16 +801,20 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
         Some(&data_query(4)),
     )
     .await;
+    jc.mark(&format!(
+        "the stranger's jc_data_query answered {status}: {body}"
+    ));
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(
         !body.contains("urn:ngsi-ld:Thing:one"),
         "a person without a grant read the closed Endpoint: {body}"
     );
-    assert!(
-        jc.log_has("the gateway refused a shared Endpoint read"),
-        "the stranger's read never reached the gateway's refusal:\n{}",
-        jc.tail()
-    );
+    // The Portal logs the refusal before it answers; the line may still be in the pipe.
+    jc.wait_log(
+        "the stranger's read reaches the gateway's refusal",
+        "the gateway refused a shared Endpoint read",
+    )
+    .await;
 
     // A caller who claims the gateway's mesh identity or a subject on the public broker mount
     // is nobody but itself: the claim reaches no rule, and the admin token is still asked for.
@@ -773,6 +838,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     // MCP through the hub: the tools list and one query of the public Endpoint, anonymously.
     let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
     let (status, body) = call(&jc, post.clone(), "/api/mcp", None, Some(&list)).await;
+    jc.mark(&format!("the hub's tools/list answered {status}"));
     assert_eq!(status, StatusCode::OK, "{body}");
     let listed: Value = serde_json::from_str(&body).unwrap();
     let names: Vec<&str> = listed["result"]["tools"]
@@ -796,13 +862,9 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
 
     // The gateway's revocation poll (every 10 s) is admitted by the Portal's internal listener:
-    // its token names the issuer the Portal checks and the client the route belongs to.
+    // its token names the issuer the Portal checks and the client the route belongs to. Checked
+    // below, once the log has passed a poll that landed.
     tokio::time::sleep(Duration::from_secs(25).saturating_sub(started.elapsed())).await;
-    assert!(
-        !jc.log_has("the Portal answered 401"),
-        "the Portal refused the gateway:\n{}",
-        jc.tail()
-    );
 
     // A person the Portal disables is refused by the gateway within one revocation poll (10 s)
     // with the token they still hold: the gateway reads the Portal's internal listener at the
@@ -866,6 +928,18 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     println!("refused {:?} after the revocation", revoked.elapsed());
+    // The refusal follows a poll the Portal answered; once its line is in the test's copy of the
+    // log, every poll before it is too, and none of them was refused.
+    jc.wait_log(
+        "the gateway's refusal of the revoked token",
+        "token issued before its subject was revoked",
+    )
+    .await;
+    assert!(
+        !jc.log_has("the Portal answered 401"),
+        "the Portal refused the gateway:\n{}",
+        jc.tail()
+    );
 }
 
 const MODELLED: &str = "modelled";
@@ -974,15 +1048,21 @@ async fn a_modelled_endpoint_answers_ogc_and_odata_inside_jc() {
         .filter_map(|c| c["id"].as_str())
         .collect();
     assert!(ids.contains(&"Thing"), "{collections}");
-    let (status, metadata) = call(
-        &jc,
-        get.clone(),
-        &format!("{base}/odata/v4/$metadata"),
-        None,
-        None,
-    )
+    // OData reads the same schema through its own surface: it answers once that has it too.
+    let metadata = eventually("the OData $metadata answers", &jc, 60, || async {
+        let (status, body) = call(
+            &jc,
+            get.clone(),
+            &format!("{base}/odata/v4/$metadata"),
+            None,
+            None,
+        )
+        .await;
+        (status == StatusCode::OK)
+            .then(|| body.clone())
+            .ok_or(format!("{status} {body}"))
+    })
     .await;
-    assert_eq!(status, StatusCode::OK, "{metadata}");
     assert!(metadata.contains("EntitySet"), "{metadata}");
     assert!(metadata.contains("Thing"), "{metadata}");
 }
@@ -1068,6 +1148,24 @@ fn pipeline() -> Value {
             "output": { "type": "Thing", "mode": "upsert" }
         }
     })
+}
+
+/// A client-credentials token of `client` in realm `jc`.
+async fn client_token(jc: &Jc, client: &str, secret: &str) -> String {
+    let resp = Client::new()
+        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .form(&[
+            ("grant_type", "client_credentials"),
+            ("client_id", client),
+            ("client_secret", secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or(Value::Null);
+    assert_eq!(status, StatusCode::OK, "{client}'s token: {body}");
+    body["access_token"].as_str().unwrap().to_owned()
 }
 
 /// A kaisatsu admin token of the Portal's own people client.
@@ -1201,6 +1299,30 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
             .ok_or(format!("{status} {body}"))
     })
     .await;
+    // The stream's writes pass the gateway's own table (its checkout, reloaded after each forge
+    // pass, every 10 s), not only the views above: a run that starts before that table holds the
+    // `pipelines` ServiceAccount is refused at the door and ends. Wait until the account's token
+    // passes the door with the read its Policy grants (queryBatch), which writes nothing.
+    let pipelines = client_token(&jc, &format!("{PROJECT}-pipelines"), PIPELINES_SECRET).await;
+    eventually(
+        "the gateway's own table admits the pipelines account at the closed Endpoint",
+        &jc,
+        60,
+        || async {
+            let (status, body) = call(
+                &jc,
+                reqwest::Method::POST,
+                &format!("{closed}/entityOperations/query"),
+                Some(&pipelines),
+                Some(&json!({ "type": "Query", "entities": [{ "type": "Thing" }] })),
+            )
+            .await;
+            (status == StatusCode::OK)
+                .then_some(())
+                .ok_or(format!("{status} {body}"))
+        },
+    )
+    .await;
 
     // The administrator proposes the Pipeline, a second administrator approves it.
     let mut proposer = Browser::new();
@@ -1271,9 +1393,13 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
     let started = Instant::now();
     let deadline = started + Duration::from_secs(180);
     let mut rendered = None;
+    let mut landed = None;
     let entity = loop {
-        // The stream first: it is held before it writes, so a Thing that lands between two
-        // polls never leaves the stream unseen.
+        // Both until both are seen: a run loads, writes and ends between two reads of one round
+        // (117 ms on a loaded host), and the Portal loads the run again at its next tick.
+        if let (Some(_), Some(body)) = (&rendered, &landed) {
+            break String::clone(body);
+        }
         if rendered.is_none() {
             let held = Client::new()
                 .get(jc.url(&format!("/streams/streams/{PROJECT}.feed")))
@@ -1293,8 +1419,14 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
             None,
         )
         .await;
-        if status == StatusCode::OK && body.contains("Thing:") {
-            break body;
+        if landed.is_none() && status == StatusCode::OK && body.contains("Thing:") {
+            landed = Some(body.clone());
+        }
+        if Instant::now() > deadline && landed.is_some() {
+            panic!(
+                "the Thing landed, and the runner never showed the stream within 180 s:\n{}",
+                jc.tail()
+            );
         }
         if Instant::now() > deadline {
             let pipeline = proposer
@@ -1305,24 +1437,12 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
                 .await;
             println!("the Endpoint: {}", endpoint.text);
             // What the stream's own write answers, for the reader of a failure.
-            let tok: Value = Client::new()
-                .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
-                .form(&[
-                    ("grant_type", "client_credentials"),
-                    ("client_id", &format!("{PROJECT}-pipelines")),
-                    ("client_secret", PIPELINES_SECRET),
-                ])
-                .send()
-                .await
-                .unwrap()
-                .json()
-                .await
-                .unwrap();
+            let tok = client_token(&jc, &format!("{PROJECT}-pipelines"), PIPELINES_SECRET).await;
             let (wstatus, wbody) = call(
                 &jc,
                 reqwest::Method::POST,
                 &format!("{closed}/entityOperations/upsert?options=update"),
-                tok["access_token"].as_str(),
+                Some(&tok),
                 Some(&json!([{"id": "urn:ngsi-ld:Thing:probe", "type": "Thing", "name": {"type": "Property", "value": "p"}}])),
             )
             .await;
@@ -1603,30 +1723,15 @@ async fn kids(jc: &Jc, realm: &str) -> Vec<String> {
 /// it).
 const TWINS: [&str; 2] = ["jc", "devx"];
 
-/// A deployment whose realm is `dev` (`--identity-realm dev`) over an imported Keycloak `dev`
-/// export, with kaisatsu also holding twin realms ([`TWINS`]):
-/// jc writes nothing into `dev`, the Portal signs in there, the gateway admits `dev`'s tokens,
-/// the linker links the Endpoint scopes in `dev`; a valid `jc` token admits nowhere. A restart
-/// without the `jc` files leaves `dev` as imported and makes no `jc` realm.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    let port = free_port();
-    let base = format!("http://localhost:{port}");
+/// The Keycloak exports of realm `dev` and the twins under `root`, issued at `base`, with the
+/// test's people and clients beside each.
+fn dev_exports(root: &Path, base: &str) {
     let (realms, secrets, state) = (
         root.join("realms"),
         root.join("realm-secrets"),
         root.join("state"),
     );
-    export(
-        &realms,
-        &secrets,
-        &state,
-        "dev",
-        &base,
-        "00-dev-export.json",
-    );
+    export(&realms, &secrets, &state, "dev", base, "00-dev-export.json");
     realm_file(&realms, &secrets, "dev", "10-dev-e2e.json");
     for twin in TWINS {
         export(
@@ -1634,14 +1739,38 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
             &secrets,
             &state,
             twin,
-            &base,
+            base,
             &format!("20-{twin}-export.json"),
         );
         realm_file(&realms, &secrets, twin, &format!("30-{twin}-e2e.json"));
     }
+}
+
+/// A deployment whose realm is `dev` (`--identity-realm dev`) over an imported Keycloak `dev`
+/// export, with kaisatsu also holding twin realms ([`TWINS`]):
+/// jc writes nothing into `dev`, the Portal signs in there, the gateway admits `dev`'s tokens,
+/// the linker links the Endpoint scopes in `dev`; a valid `jc` token admits nowhere. A restart
+/// without the `jc` files leaves `dev` as imported and makes no `jc` realm.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
     let args = ["--identity-realm", "dev"];
     let envs = [("JC_TRUST_EDGE_TOKEN", "true")];
-    let jc = start_at(root, port, &args, &envs).await;
+    // The exports name the port, so a start that lost its port to another bind begins again in
+    // a fresh directory on another port.
+    let mut started = None;
+    for _ in 0..5 {
+        let dir = tempfile::tempdir().unwrap();
+        let port = free_port();
+        dev_exports(dir.path(), &format!("http://localhost:{port}"));
+        if let Some(jc) = start_at(dir.path(), port, &args, &envs).await {
+            started = Some((dir, port, jc));
+            break;
+        }
+    }
+    let (dir, port, jc) = started.expect("jc lost its listen port to another bind 5 times");
+    let root = dir.path();
+    let base = format!("http://localhost:{port}");
+    let (realms, state) = (root.join("realms"), root.join("state"));
     assert_dev_left_as_imported(&jc).await;
 
     open_project(&jc).await;
@@ -1779,7 +1908,9 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
         std::fs::remove_file(realms.join(format!("20-{twin}-export.json"))).unwrap();
         std::fs::remove_file(realms.join(format!("30-{twin}-e2e.json"))).unwrap();
     }
-    let jc = start_at(root, port, &args, &envs).await;
+    let jc = start_at(root, port, &args, &envs)
+        .await
+        .unwrap_or_else(|| panic!("another bind took port {port} between jc's two starts"));
     assert_dev_left_as_imported(&jc).await;
     let (status, body) = call(
         &jc,
