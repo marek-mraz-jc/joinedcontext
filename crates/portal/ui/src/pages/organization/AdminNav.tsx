@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { ORG_NAMESPACE } from "../../api/manifest";
 import { useAdministers } from "../../api/permissions";
 import { navLinkClass } from "../../components/layout/BrandMark";
 import { Icon } from "../../components/ui";
@@ -40,6 +41,9 @@ export function isOrganizationTab(value: string): value is OrganizationTab {
   return (ORGANIZATION_TABS as readonly string[]).includes(value);
 }
 
+const BACK_LINK =
+  "focus-ring flex items-center gap-2 rounded-md px-2.5 py-1.5 text-body text-fg-muted hover:bg-surface-subtle hover:text-fg";
+
 /**
  * The sidebar of Administration (T-4831): a way back to the project the person came from, then
  * one list per group. It replaces the project navigation, so the switcher no longer suggests the
@@ -59,6 +63,7 @@ export function AdminNav({
 }): JSX.Element {
   const { t } = useTranslation();
   const { known, administers, own } = useAdministers();
+  const noProject = project === ORG_NAMESPACE;
   const groups = administers
     ? ORGANIZATION_GROUPS
     : own
@@ -69,18 +74,24 @@ export function AdminNav({
       : [];
   return (
     <>
-      <Link
-        to="/projects/$project/home"
-        params={{ project }}
-        onClick={onNavigate}
-        className="focus-ring flex items-center gap-2 rounded-md px-2.5 py-1.5 text-body text-fg-muted hover:bg-surface-subtle hover:text-fg"
-      >
-        <Icon name="chevronLeft" className="size-4" />
-        <span>{t("organization.nav.back")}</span>
-      </Link>
+      {/* A person who reads no project has the organization's namespace here, and the catalogue
+          is their way back (PF-61). */}
+      {noProject ? (
+        <Link to="/catalogue" onClick={onNavigate} className={BACK_LINK}>
+          <Icon name="chevronLeft" className="size-4" />
+          <span>{t("organization.nav.toCatalogue")}</span>
+        </Link>
+      ) : (
+        <Link to="/projects/$project/home" params={{ project }} onClick={onNavigate} className={BACK_LINK}>
+          <Icon name="chevronLeft" className="size-4" />
+          <span>{t("organization.nav.back")}</span>
+        </Link>
+      )}
       {/* Somebody with no section still reads why the column is empty (T-6423). */}
       {known && groups.length === 0 ? (
-        <p className="px-2.5 pt-2 text-caption text-fg-muted">{t("organization.nav.notAdmin")}</p>
+        <p className="px-2.5 pt-2 text-caption text-fg-muted">
+          {t(noProject ? "organization.nav.notAdminCatalogue" : "organization.nav.notAdmin")}
+        </p>
       ) : null}
       {groups.map((group) => (
             <div key={group.id} className="flex flex-col gap-1">

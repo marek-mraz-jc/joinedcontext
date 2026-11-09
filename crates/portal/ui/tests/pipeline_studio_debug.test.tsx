@@ -371,7 +371,8 @@ describe("from a sample to a proposal", () => {
     );
     const dialog = await screen.findByRole("dialog");
     const propose = () => within(dialog).getByRole("button", { name: en.pipelines.propose });
-    expectDenied(propose(), en.pipelines.test.gate);
+    // Once the permissions have answered: until then the reason is that they are being checked.
+    await waitFor(() => expectDenied(propose(), en.pipelines.test.gate));
     // Visible beside the button as a live region, and on the button as its description.
     expect(within(dialog).getAllByText(en.pipelines.test.gate).length).toBeGreaterThan(0);
 

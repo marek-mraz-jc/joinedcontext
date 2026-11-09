@@ -16,10 +16,12 @@ use tokio_util::task::TaskTracker;
 
 #[cfg(feature = "antares")]
 pub mod antares;
+#[cfg(feature = "assistant")]
+pub mod assistant;
 #[cfg(feature = "daiya")]
 mod daiya;
 #[cfg(feature = "dataroom")]
-mod dataroom;
+pub mod dataroom;
 #[cfg(feature = "ekiben")]
 mod ekiben;
 #[cfg(feature = "ekiben")]
@@ -83,7 +85,11 @@ pub async fn build(
         #[cfg(feature = "kaisatsu")]
         Module::Kaisatsu => kaisatsu::build(&cfg.kaisatsu, ctx, mount, shutdown, tasks).await,
         #[cfg(feature = "dataroom")]
-        Module::Dataroom => dataroom::build(&cfg.dataroom, ctx.setup, mount).await,
+        Module::Dataroom => {
+            let widget =
+                dataroom::assistant_widget(ctx.siblings, &cfg.assistant.catalogue_deployment);
+            dataroom::build(&cfg.dataroom, ctx.setup, mount, widget).await
+        }
         #[cfg(feature = "daiya")]
         Module::Daiya => daiya::build(&cfg.daiya, ctx.setup, ctx.siblings.listener, mount)
             .await
@@ -93,7 +99,8 @@ pub async fn build(
             ekiben::build(
                 &cfg.ekiben,
                 ctx.setup,
-                &ctx.secrets.ekiben_vars,
+                ctx.secrets,
+                ctx.siblings,
                 cfg.roles.contains(&Module::Portal),
             )
             .await

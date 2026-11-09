@@ -8,7 +8,7 @@ import i18n from "../../i18n";
 import { isChange, ORG_NAMESPACE } from "../../api/manifest";
 import { AccountAccess } from "../access/AccountAccess";
 import type { Manifest, ResourceProposal } from "../../api/manifest";
-import { allows, usePermissions } from "../../api/permissions";
+import { usePermissions } from "../../api/permissions";
 import { proposeChecked } from "../../api/proposal";
 import type { components } from "../../api/schema";
 import { Alert, Badge, Button, Card, EmptyState, safeHref, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow, TableSkeleton, tabPanelProps, Tabs } from "../../components/ui";
@@ -435,7 +435,7 @@ function PauseControl({ item }: { item: AgentItem }): JSX.Element | null {
   const queryClient = useQueryClient();
   const [sent, setSent] = useState<string | null>(null);
   const pausable = item.kind === "AssistantDeployment";
-  const mayPropose = allows(permissions.data, "AssistantDeployment", "propose");
+  const mayPropose = permissions.can("AssistantDeployment", "propose");
   const flip = useMutation({
     mutationFn: async () => {
       const stored = (await unwrap(

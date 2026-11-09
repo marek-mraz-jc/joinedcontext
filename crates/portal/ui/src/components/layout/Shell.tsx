@@ -14,7 +14,7 @@ import { PairedTabBar } from "../../connectors/PairedTabBar";
 import { CommandPalette } from "../../navigation/CommandPalette";
 import { PageTools } from "../../navigation/PageTools";
 import { useAuth } from "../../auth/AuthProvider";
-import { localized } from "../../api/manifest";
+import { localized, ORG_NAMESPACE } from "../../api/manifest";
 import { lastAddress, rememberAddress, rememberProject, useOrganizations, useProjects, useProjectTitles } from "../../api/projects";
 import { useAdministers } from "../../api/permissions";
 import { useBranding, useHiddenSections } from "../../branding";
@@ -557,8 +557,12 @@ export function Shell({
   const hiddenSections = useHiddenSections();
   const matchRoute = useSafeMatchRoute();
   // The organization's tabs, every endpoint and `/` open on this project next (T-2753).
+  // The organization's namespace frames Administration for a person who reads no project: no
+  // project to open next (PF-61).
   useEffect(() => {
-    rememberProject(project);
+    if (project !== ORG_NAMESPACE) {
+      rememberProject(project);
+    }
   }, [project]);
   // The page in hand, so switching away and back reopens it (T-5603).
   const href = useRouterState({ select: (state) => state.location.href });

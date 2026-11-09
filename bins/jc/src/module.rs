@@ -16,11 +16,12 @@ pub enum Module {
     Portal,
     Shako,
     ModelTools,
+    Assistant,
 }
 
 impl Module {
     /// Every module in mount order.
-    pub const ALL: [Module; 9] = [
+    pub const ALL: [Module; 10] = [
         Module::Kaisatsu,
         Module::Dataroom,
         Module::Daiya,
@@ -30,6 +31,7 @@ impl Module {
         Module::Portal,
         Module::Shako,
         Module::ModelTools,
+        Module::Assistant,
     ];
 
     /// The module's name as `--role` and the config file spell it.
@@ -45,6 +47,7 @@ impl Module {
             Module::Portal => "portal",
             Module::Shako => "shako",
             Module::ModelTools => "model-tools",
+            Module::Assistant => "assistant",
         }
     }
 
@@ -63,6 +66,7 @@ impl Module {
             Module::Portal => "portal",
             Module::Shako => "git",
             Module::ModelTools => "model-tools",
+            Module::Assistant => "assistant",
         }
     }
 
@@ -84,6 +88,9 @@ impl Module {
                 "/.well-known/oauth-protected-resource/api/mcp",
                 "/.well-known/oauth-protected-resource/api/endpoint",
             ],
+            // The two paths dev's edge routes to jc-assistant (components/assistant): the widget
+            // pages name `/d/...` from the root.
+            Module::Assistant => &["/d", "/api/v1/d"],
             _ => &[],
         }
     }
@@ -107,6 +114,7 @@ impl Module {
             Module::Portal => cfg!(feature = "portal"),
             Module::Shako => cfg!(feature = "shako"),
             Module::ModelTools => cfg!(feature = "model-tools"),
+            Module::Assistant => cfg!(feature = "assistant"),
         }
     }
 }
@@ -121,7 +129,7 @@ impl fmt::Display for Module {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RoleError {
     #[error(
-        "unknown module '{0}' (known: kaisatsu, dataroom, daiya, ekiben, antares, gateway, portal, shako, model-tools)"
+        "unknown module '{0}' (known: kaisatsu, dataroom, daiya, ekiben, antares, gateway, portal, shako, model-tools, assistant)"
     )]
     Unknown(String),
     #[error("module '{0}' is not compiled into this jc binary (Cargo feature '{0}')")]

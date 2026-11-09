@@ -9,8 +9,14 @@
 //! - with the Portal in the same process, the pipeline credentials its reconciler resolves from
 //!   each project's own SOPS files reach that same map ([`HostRunner`]), in place of the
 //!   Kubernetes Secret the Portal writes for a runner in a cluster;
+//! - the runner variables dev's Deployment sets come from `jc`'s own mounts and files
+//!   ([`runner_defaults`]): `JC_GATEWAY_URL`, `JC_GATEWAY_HOST`, `JC_TOKEN_URL`, `JC_ORG_DOMAIN`,
+//!   `JC_CLIENT_ID`, and each `JC_CLIENT_SECRET_<PROJECT>` of `[ekiben] client_secrets_dir`
+//!   (project mode: the Portal's default, as on the local and production profiles);
 //! - private and loopback HTTP targets stay refused (ekiben's default quotas), so a stream cannot
-//!   call the other modules' listeners from inside the process.
+//!   call the other modules' listeners from inside the process; the one exception is `jc`'s own
+//!   listener under the gateway's `/api/endpoint` and kaisatsu's token endpoint
+//!   ([`HostTarget`]), the two doors a stream reaches on dev.
 //!
 //! With `[ekiben.database]` every continuous stream posted through the API is kept in Postgres
 //! (`ekiben_pg`) and started again at the next start; without it streams live in memory.
@@ -18,8 +24,9 @@
 use crate::app::StartError;
 use crate::config::EkibenSection;
 use crate::module::Module;
+use crate::siblings::Siblings;
 use axum::Router;
-use ekiben_core::{EnvAccess, OrgContext, OrgId, ResourceManager};
+use ekiben_core::{EnvAccess, HostTarget, OrgContext, OrgId, ResourceManager};
 use ekiben_server::{
     ServerAuthConfig, ServerState, StreamManager, build_full_registry, build_router,
 };
@@ -54,7 +61,8 @@ fn file_root(configured: Option<&Path>) -> Result<PathBuf, StartError> {
 pub async fn build(
     cfg: &EkibenSection,
     setup: &crate::setup::Setup,
-    vars: &BTreeMap<String, jc_secret::Secret>,
+    secrets: &crate::config::Secrets,
+    siblings: &Siblings,
     portal_beside: bool,
 ) -> Result<Router, StartError> {
     let token = setup
@@ -63,10 +71,28 @@ pub async fn build(
         .to_owned();
     let root = file_root(cfg.file_root.as_deref())?;
     tracing::info!(file_root = %root.display(), "ekiben file components confined");
-    let resources = ResourceManager::new();
+    let defaults = runner_defaults(
+        siblings,
+        cfg.harness_client.as_deref(),
+        crate::config::portal_env("JC_PORTAL_ORG_DOMAIN"),
+    );
+    let mut resources = ResourceManager::new();
+    if let Some(target) = host_target(siblings, &defaults) {
+        tracing::info!(addr = %target.addr, prefixes = ?target.path_prefixes, "ekiben streams reach jc's gateway and token endpoint");
+        resources = resources.with_host_target(target);
+    }
+    let names: Vec<&String> = defaults
+        .keys()
+        .chain(secrets.pipeline_client_secrets.keys())
+        .collect();
+    tracing::info!(variables = ?names, "ekiben runner variables from jc");
     let runner = HostRunner {
         org: resources.get_or_create_org(&OrgId::default()),
-        given: variables(vars),
+        given: variables(
+            &defaults,
+            &secrets.pipeline_client_secrets,
+            &secrets.ekiben_vars,
+        ),
     };
     runner.org.replace_secrets(runner.given.clone());
     if portal_beside {
@@ -144,11 +170,82 @@ fn hand_to_portal(runner: HostRunner) {
 #[cfg(not(feature = "portal"))]
 fn hand_to_portal(_: HostRunner) {}
 
-/// The default organization's variable map: what `jc` read from `EKIBEN_VAR_*`.
-fn variables(vars: &BTreeMap<String, jc_secret::Secret>) -> HashMap<String, String> {
-    vars.iter()
-        .map(|(k, v)| (k.clone(), v.expose().to_owned()))
-        .collect()
+/// The default organization's variable map: `jc`'s defaults, then the pipeline client secrets,
+/// then what `jc` read from `EKIBEN_VAR_*`, each later one winning.
+fn variables(
+    defaults: &BTreeMap<String, String>,
+    client_secrets: &BTreeMap<String, jc_secret::Secret>,
+    given: &BTreeMap<String, jc_secret::Secret>,
+) -> HashMap<String, String> {
+    let mut out: HashMap<String, String> = defaults.clone().into_iter().collect();
+    for (k, v) in client_secrets.iter().chain(given) {
+        out.insert(k.clone(), v.expose().to_owned());
+    }
+    out
+}
+
+/// What dev's runner Deployment sets (joinedcontext-deployment
+/// `components/pipeline-runner/values/runner/development-values.yaml.gotmpl`), from `jc`'s mounts:
+/// the gateway as the Portal reaches it, kaisatsu's public token endpoint of the Portal's realm
+/// (kaisatsu names the issuer by the host a request reached it on, and the gateway verifies the
+/// public one, as dev's runner asks the public `idm` host), the Organization's domain and the
+/// harness client. None is a secret. `JC_MQTT_NAMESPACE` stays unset: `jc` runs no MQTT broker.
+fn runner_defaults(
+    siblings: &Siblings,
+    harness_client: Option<&str>,
+    org_domain: Option<String>,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    if let Some(gateway) = siblings.get(Module::Gateway) {
+        out.insert("JC_GATEWAY_URL".to_owned(), gateway.internal.clone());
+        let host = gateway
+            .internal
+            .split_once("://")
+            .map_or(gateway.internal.as_str(), |(_, rest)| rest);
+        out.insert("JC_GATEWAY_HOST".to_owned(), host.to_owned());
+    }
+    if let Some(id) = siblings.get(Module::Kaisatsu) {
+        out.insert(
+            "JC_TOKEN_URL".to_owned(),
+            format!(
+                "{}/realms/{}/protocol/openid-connect/token",
+                id.public,
+                crate::setup::PORTAL_REALM
+            ),
+        );
+    }
+    let org_domain = org_domain
+        .filter(|d| !d.trim().is_empty())
+        .unwrap_or_else(|| crate::provision::domain(siblings.portal_base().as_deref()));
+    out.insert("JC_ORG_DOMAIN".to_owned(), org_domain);
+    if let Some(client) = harness_client {
+        out.insert("JC_CLIENT_ID".to_owned(), client.to_owned());
+    }
+    out
+}
+
+/// The part of `jc`'s listener a stream may call: the gateway's Endpoint door and kaisatsu's
+/// token endpoint, where their URLs name that listener's own address (the gateway's internal URL
+/// in slug mode; the token endpoint only when the public base is that address, as in a loopback
+/// rehearsal with `--base-host 127.0.0.1:<port>`). Any other URL is a public name and passes
+/// ekiben's ordinary checks; a loopback name (`localhost`) stays refused.
+fn host_target(siblings: &Siblings, defaults: &BTreeMap<String, String>) -> Option<HostTarget> {
+    let origin = format!("http://{}", siblings.listener);
+    let prefixes: Vec<String> = [
+        defaults
+            .get("JC_GATEWAY_URL")
+            .map(|u| format!("{u}/api/endpoint")),
+        defaults.get("JC_TOKEN_URL").cloned(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|u| u.strip_prefix(&origin).map(str::to_owned))
+    .filter(|path| path.starts_with('/'))
+    .collect();
+    (!prefixes.is_empty()).then_some(HostTarget {
+        addr: siblings.listener,
+        path_prefixes: prefixes,
+    })
 }
 
 #[cfg(test)]
@@ -170,6 +267,165 @@ mod tests {
         assert_eq!(merged["GOLEMIO_KEY"], "k");
         // A later sync without the credential drops it again.
         assert_eq!(runner.merged(BTreeMap::new()).len(), 1);
+    }
+
+    /// jc's slug-mode siblings: every module on one listener.
+    fn slug_siblings() -> Siblings {
+        siblings_at("city.example", "https")
+    }
+
+    fn siblings_at(base_host: &str, scheme: &str) -> Siblings {
+        let cfg = crate::config::Config::merge(
+            crate::config::Cli {
+                role: Some("all".into()),
+                base_host: Some(base_host.into()),
+                scheme: Some(scheme.into()),
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .unwrap();
+        let plans = crate::app::plan_mounts(&cfg).unwrap();
+        Siblings::new(&plans, "0.0.0.0:8443".parse().unwrap())
+    }
+
+    #[test]
+    fn the_runner_variables_are_jcs_own_mounts() {
+        let siblings = slug_siblings();
+        let vars = runner_defaults(&siblings, Some("helsinki-pipelines"), None);
+        assert_eq!(vars["JC_GATEWAY_URL"], "http://127.0.0.1:8443");
+        assert_eq!(vars["JC_GATEWAY_HOST"], "127.0.0.1:8443");
+        assert_eq!(
+            vars["JC_TOKEN_URL"],
+            "https://city.example/id/realms/jc/protocol/openid-connect/token"
+        );
+        // The domain first-start provisioning gives the Organization.
+        assert_eq!(vars["JC_ORG_DOMAIN"], "city.example");
+        assert_eq!(vars["JC_CLIENT_ID"], "helsinki-pipelines");
+        assert!(
+            !vars.contains_key("JC_MQTT_NAMESPACE"),
+            "jc runs no MQTT broker"
+        );
+        assert!(!vars.keys().any(|k| k.starts_with("JC_CLIENT_SECRET")));
+        let named = runner_defaults(&siblings, None, Some("hel.fi".into()));
+        assert_eq!(named["JC_ORG_DOMAIN"], "hel.fi");
+        assert!(!named.contains_key("JC_CLIENT_ID"));
+        // Without the gateway and kaisatsu nothing points at them.
+        let alone = runner_defaults(
+            &Siblings::new(&[], "127.0.0.1:1".parse().unwrap()),
+            None,
+            None,
+        );
+        assert_eq!(alone.keys().collect::<Vec<_>>(), ["JC_ORG_DOMAIN"]);
+    }
+
+    #[test]
+    fn streams_reach_only_the_gateway_door_and_the_token_endpoint_of_jcs_listener() {
+        // The public token endpoint is a name: only the gateway door is on the listener.
+        let siblings = slug_siblings();
+        let target = host_target(&siblings, &runner_defaults(&siblings, None, None)).unwrap();
+        assert_eq!(target.path_prefixes, ["/api/endpoint"]);
+        // A loopback rehearsal whose public base is the listener's own address.
+        let siblings = siblings_at("127.0.0.1:8443", "http");
+        let target = host_target(&siblings, &runner_defaults(&siblings, None, None)).unwrap();
+        let admits = |u: &str| target.admits(&url::Url::parse(u).unwrap());
+        assert!(admits(
+            "http://127.0.0.1:8443/api/endpoint/abc/ngsi-ld/v1/entityOperations/upsert"
+        ));
+        assert!(admits(
+            "http://127.0.0.1:8443/id/realms/jc/protocol/openid-connect/token"
+        ));
+        for refused in [
+            "http://127.0.0.1:8443/broker/ngsi-ld/v1/entities",
+            "http://127.0.0.1:8443/id/admin/realms/jc/users",
+            "http://127.0.0.1:8443/streams/streams",
+            "http://127.0.0.1:8443/api/v1/projects",
+            "http://127.0.0.1:8443/api/mcp",
+            "http://127.0.0.1:9090/api/endpoint/abc",
+        ] {
+            assert!(!admits(refused), "{refused}");
+        }
+        // Nothing of jc's listener when neither module is there.
+        let alone = Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        assert!(host_target(&alone, &runner_defaults(&alone, None, None)).is_none());
+    }
+
+    #[test]
+    fn an_explicit_ekiben_var_wins_over_jcs_defaults_and_client_secrets() {
+        let defaults = BTreeMap::from([
+            ("JC_GATEWAY_URL".to_owned(), "http://127.0.0.1:1".to_owned()),
+            ("JC_ORG_DOMAIN".to_owned(), "city.example".to_owned()),
+        ]);
+        let secret = |v: &str| jc_secret::Secret::new(v.to_owned());
+        let clients = BTreeMap::from([
+            ("JC_CLIENT_SECRET_ZILINA".to_owned(), secret("from-file")),
+            ("JC_CLIENT_SECRET_PRAHA".to_owned(), secret("praha-file")),
+        ]);
+        let given = BTreeMap::from([
+            ("JC_GATEWAY_URL".to_owned(), secret("http://gw")),
+            ("JC_CLIENT_SECRET_ZILINA".to_owned(), secret("operator")),
+        ]);
+        let vars = variables(&defaults, &clients, &given);
+        assert_eq!(vars["JC_GATEWAY_URL"], "http://gw");
+        assert_eq!(vars["JC_CLIENT_SECRET_ZILINA"], "operator");
+        assert_eq!(vars["JC_CLIENT_SECRET_PRAHA"], "praha-file");
+        assert_eq!(vars["JC_ORG_DOMAIN"], "city.example");
+    }
+
+    /// jc names a project's client secret as the Portal's render does, and no stream the Portal
+    /// renders for one project names another project's variable (PF-46). The runner's one
+    /// environment holds every project's secret in project mode, as on dev's local and
+    /// production profiles: isolation rests on the render alone.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn a_stream_of_one_project_names_only_its_own_client_secret() {
+        use jc_core::kinds::data_source::DataSourceSpec;
+        use jc_core::kinds::pipeline::PipelineSpec;
+        let pipeline: PipelineSpec = serde_json::from_value(serde_json::json!({
+            "class": "auto",
+            "period": "60s",
+            "source": { "dataSourceRef": { "kind": "DataSource", "name": "feed" } },
+            "compute": { "kind": "bloblang", "bloblang": "root = this" },
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:city.example:zilina-mesto:all"
+        }))
+        .unwrap();
+        let source: DataSourceSpec = serde_json::from_value(serde_json::json!({
+            "type": "http",
+            "http": { "url": "https://data.example.org/feed.json" }
+        }))
+        .unwrap();
+        let rendered = joinedcontext_portal::reconciler::streams::render_stream(
+            &pipeline,
+            "drepo",
+            "zilina-mesto",
+            &source,
+            "feed",
+            "abcdefghijklmnopqrstuvwxyz",
+            None,
+        )
+        .unwrap()
+        .to_string();
+        let mut named: Vec<&str> = rendered
+            .match_indices("JC_CLIENT_SECRET")
+            .map(|(at, _)| {
+                let rest = &rendered[at..];
+                &rest[..rest
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(rest.len())]
+            })
+            .collect();
+        named.dedup();
+        assert_eq!(
+            named,
+            [crate::config::client_secret_var("zilina-mesto")],
+            "{rendered}"
+        );
+        assert_eq!(
+            crate::config::client_secret_var("zilina-mesto"),
+            "JC_CLIENT_SECRET_ZILINA_MESTO"
+        );
+        assert!(!rendered.contains(&crate::config::client_secret_var("helsinki")));
+        assert!(rendered.contains("${JC_TOKEN_URL}") && rendered.contains("${JC_GATEWAY_URL}"));
     }
 
     #[test]
@@ -204,7 +460,10 @@ mod tests {
             file_root: Some(dir.path().join("files")),
             ..Default::default()
         };
-        let app = build(&cfg, &setup, &BTreeMap::new(), false).await.unwrap();
+        let siblings = Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        let app = build(&cfg, &setup, &Default::default(), &siblings, false)
+            .await
+            .unwrap();
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let runner = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await });
