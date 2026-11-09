@@ -1371,7 +1371,9 @@ mod tests {
         // Without its token file the run says so, and never falls back to another's.
         std::fs::remove_file(dir.join("ba.token")).expect("rm");
         let routed = sync.routed(&repo, target("bratislava"));
-        let err = sync.client(&routed, &dir, source).err().expect("refused");
+        let Err(err) = sync.client(&routed, &dir, source) else {
+            panic!("bratislava published without its token file");
+        };
         assert!(err.contains("ba's catalogue"), "{err}");
         assert!(!err.contains("hel-token"), "{err}");
         // A Portal without Organization catalogues keeps the instance's.
