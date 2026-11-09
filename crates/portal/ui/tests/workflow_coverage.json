@@ -20,6 +20,37 @@
         "routes": [
           "DELETE /api/v1/projects/{project}/grafana/{id}"
         ]
+      },
+      "build": {
+        "live": {
+          "spec": "grafana-builder.spec.ts",
+          "test": "a person builds a dashboard from choices, previews it, and it opens once approved, then edits and removes it"
+        },
+        "personOnly": "the builder is a person's page on the Grafana tab; an agent proposes a Dashboard with jc_resource_propose",
+        "routes": [
+          "POST /api/v1/projects/{project}/grafana/builder",
+          "POST /api/v1/projects/{project}/grafana/builder/preview"
+        ]
+      },
+      "edit-built": {
+        "live": {
+          "spec": "grafana-builder.spec.ts",
+          "test": "a person builds a dashboard from choices, previews it, and it opens once approved, then edits and removes it"
+        },
+        "personOnly": "the builder is a person's page on the Grafana tab; an agent proposes a Dashboard with jc_resource_propose",
+        "routes": [
+          "PUT /api/v1/projects/{project}/grafana/builder/{uid}"
+        ]
+      },
+      "remove-built": {
+        "live": {
+          "spec": "grafana-builder.spec.ts",
+          "test": "a person builds a dashboard from choices, previews it, and it opens once approved, then edits and removes it"
+        },
+        "personOnly": "the builder is a person's page on the Grafana tab; an agent proposes a Dashboard with jc_resource_propose",
+        "routes": [
+          "DELETE /api/v1/projects/{project}/grafana/builder/{uid}"
+        ]
       }
     },
     "mqttbroker": {

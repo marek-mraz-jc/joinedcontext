@@ -877,6 +877,13 @@ impl AppState {
 
     /// The writers into the spaces: subscriptions, the CKAN catalogue, registrations, views and drift.
     fn wire_space_writers(&mut self, mut syncer: Syncer) -> Syncer {
+        // The repository's builder dashboards reach the dashboards service through the run that
+        // read them, as its administrator (crate::grafana_builder).
+        if let Some(grafana) = self.config.grafana.clone() {
+            syncer = syncer.with_dashboards(Arc::new(crate::grafana_builder::DashboardSync::new(
+                grafana,
+            )));
+        }
         // A declared Subscription reaches its space through the space surface, as this
         // Portal's own service account (T-0931, CC-72). Without the address, the realm
         // client or the organization's domain there is no write to make: the manifests are

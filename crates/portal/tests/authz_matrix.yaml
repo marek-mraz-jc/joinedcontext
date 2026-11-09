@@ -536,6 +536,37 @@ routes:
     rule: "project-read, then read on the Endpoint of a query variable's datasource"
     note: "the fixture has no dashboards service: `allow` answers 409"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/grafana/builder
+    rule: "project-read; mayEdit and the waiting Changes only with propose on Dashboard"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/grafana/builder
+    rule: "propose on Dashboard, then read on every Endpoint a choice names"
+    note: "a body the fixture lacks answers 400 for those the rule allows"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: GET /projects/{project}/grafana/builder/values
+    rule: "propose on Dashboard, then read on the Endpoint"
+    query: "endpoint=existing&type=Station&attribute=name"
+    note: "the fixture has no dashboards service: `allow` answers 409"
+    expect: [401, 403, 403, allow, 403, allow, 404, 403]
+  - route: POST /projects/{project}/grafana/builder/preview
+    rule: "propose on Dashboard, then read on every Endpoint a choice names"
+    note: "a body the fixture lacks answers 400 for those the rule allows"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: GET /projects/{project}/grafana/builder/{uid}
+    rule: "propose on Dashboard"
+    values: {"uid": "jcd-0123456789abcdef"}
+    note: "the fixture's file is no builder file: `allow` answers 422"
+    expect: [401, 403, 403, allow, 403, allow, 404, 403]
+  - route: PUT /projects/{project}/grafana/builder/{uid}
+    rule: "propose on Dashboard, then read on every Endpoint a choice names"
+    values: {"uid": "jcd-0123456789abcdef"}
+    note: "a body the fixture lacks answers 400 for those the rule allows"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: DELETE /projects/{project}/grafana/builder/{uid}
+    rule: "propose on Dashboard"
+    values: {"uid": "jcd-0123456789abcdef"}
+    note: "the fixture's forge takes the removal: `allow` answers 202"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
   - route: GET /projects/{project}/activity
     rule: "project-read"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]

@@ -135,7 +135,7 @@ fn member(state: &AppState, identity: &Identity, project: &str) -> Result<Effect
     Ok(effective)
 }
 
-fn client(state: &AppState) -> Result<Client<'_>, ApiError> {
+pub(crate) fn client(state: &AppState) -> Result<Client<'_>, ApiError> {
     state
         .config
         .grafana
@@ -166,7 +166,7 @@ async fn organization(client: &Client<'_>, project: &str) -> Result<Option<i64>,
     Ok(None)
 }
 
-async fn organization_held(client: &Client<'_>, project: &str) -> Result<i64, ApiError> {
+pub(crate) async fn organization_held(client: &Client<'_>, project: &str) -> Result<i64, ApiError> {
     organization(client, project).await?.ok_or_else(|| {
         ApiError::Conflict(format!(
             "the dashboards service has no organization for {project} yet; ask your operator to \
@@ -184,7 +184,7 @@ fn text(value: &Value) -> String {
 }
 
 /// A panel as the page draws it: its queries and datasource stay here.
-fn panel_view(panel: &Value) -> Value {
+pub(crate) fn panel_view(panel: &Value) -> Value {
     let mut kept = serde_json::Map::new();
     for key in [
         "id",
@@ -452,7 +452,7 @@ pub async fn get_dashboard(
 }
 
 /// Grafana's time words: `now`, `now-6h`, `now-1d/d`, epoch milliseconds or RFC 3339.
-fn is_time(text: &str) -> bool {
+pub(crate) fn is_time(text: &str) -> bool {
     if text.is_empty() || text.len() > 40 {
         return false;
     }
@@ -591,7 +591,7 @@ fn members_only(
 /// The person's token exchanged for the one members-only Endpoint the panel reads, as a KPI
 /// history read does (`kpi_check.rs`); `Ok(None)` for a panel reading only public or no
 /// Endpoints. `Err` is the panel's error line, which carries no token.
-async fn person_for(
+pub(crate) async fn person_for(
     state: &AppState,
     headers: &HeaderMap,
     slugs: &[String],
@@ -623,7 +623,7 @@ async fn person_for(
 
 /// The `from`, `to`, `maxDataPoints` and `var-<name>` pairs asked, each checked against the
 /// saved dashboard; what daiya gets.
-fn checked_query(
+pub(crate) fn checked_query(
     dashboard: &Value,
     asked: &[(String, String)],
 ) -> Result<Vec<(String, String)>, ApiError> {

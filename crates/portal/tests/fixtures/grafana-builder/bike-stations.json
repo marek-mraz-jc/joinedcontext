@@ -1,0 +1,262 @@
+{
+  "editable": true,
+  "panels": [
+    {
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "bikes-open-ds"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 5.0
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "attributes": [
+            "availableBikeNumber"
+          ],
+          "customQuery": "status~=\"^${status:regex}$\"",
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "bikes-open-ds"
+          },
+          "entityName": "name",
+          "entityType": "BikeHireDockingStation",
+          "format": "timeseries",
+          "limit": 100,
+          "namePattern": "entity_name",
+          "queryType": "entity",
+          "refId": "A"
+        }
+      ],
+      "title": "Panel 1",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "bikes-open-ds"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "aggrMethod": "avg",
+          "aggrPeriodDuration": "PT1H",
+          "attributes": [
+            "availableBikeNumber"
+          ],
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "bikes-open-ds"
+          },
+          "entityName": "name",
+          "entityType": "BikeHireDockingStation",
+          "limit": 100,
+          "namePattern": "entity_name",
+          "queryType": "temporal",
+          "refId": "A"
+        }
+      ],
+      "title": "Panel 2",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "bikes-open-ds"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "attributes": [
+            "name",
+            "availableBikeNumber"
+          ],
+          "customQuery": "availableBikeNumber>2",
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "bikes-open-ds"
+          },
+          "entityType": "BikeHireDockingStation",
+          "format": "table",
+          "limit": 100,
+          "queryType": "entity",
+          "refId": "A"
+        }
+      ],
+      "title": "Panel 3",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "bikes-open-ds"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 4,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "max"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "aggrMethod": "max",
+          "aggrPeriodDuration": "auto",
+          "attributes": [
+            "availableBikeNumber"
+          ],
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "bikes-open-ds"
+          },
+          "entityName": "name",
+          "entityType": "BikeHireDockingStation",
+          "limit": 100,
+          "namePattern": "entity_name",
+          "queryType": "temporal",
+          "refId": "A"
+        }
+      ],
+      "title": "Panel 4",
+      "type": "gauge"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 42,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "description": "Values of status (BikeHireDockingStation, endpoint bikes-open)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Status",
+        "multi": true,
+        "name": "status",
+        "options": [
+          {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": false,
+            "text": "closed",
+            "value": "closed"
+          },
+          {
+            "selected": false,
+            "text": "open",
+            "value": "open"
+          }
+        ],
+        "query": "closed,open",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Bike stations",
+  "uid": "jcd-b1ce57a7105f0001"
+}

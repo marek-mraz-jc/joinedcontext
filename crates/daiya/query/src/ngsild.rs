@@ -193,6 +193,55 @@ pub fn grafana_unit(code: Option<&str>) -> Option<String> {
     Some(mapped.to_owned())
 }
 
+/// The target with the dashboard's variables put into its `customQuery`, as Grafana's
+/// `templateSrv.replace` does for the plugin: `${name:regex}`, `${name}` and `$name` each become
+/// the text `variables` holds for `name` (already formatted by the caller, a multi-value pick as an
+/// escaped `(a|b)`). A name the dashboard does not hold is left as written.
+#[must_use]
+pub fn with_variables(model: &Value, variables: &BTreeMap<String, String>) -> Value {
+    let Some(text) = model.get("customQuery").and_then(Value::as_str) else {
+        return model.clone();
+    };
+    if variables.is_empty() || !text.contains('$') {
+        return model.clone();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('$') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let (name, used) = if let Some(braced) = after.strip_prefix('{') {
+            match braced.find('}') {
+                Some(end) => {
+                    let inner = &braced[..end];
+                    let name = inner.split_once(':').map_or(inner, |(name, _)| name);
+                    (name, end + 2)
+                }
+                None => ("", 0),
+            }
+        } else {
+            let end = after
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(after.len());
+            (&after[..end], end)
+        };
+        match variables.get(name).filter(|_| used > 0) {
+            Some(value) => {
+                out.push_str(value);
+                rest = &after[used..];
+            }
+            None => {
+                out.push('$');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    let mut model = model.clone();
+    model["customQuery"] = Value::String(out);
+    model
+}
+
 /// Builds the `/entities` or `/temporal/entities` path and query parameters (`NGP src/request.ts:buildRequest`).
 #[must_use]
 pub fn build_ngsild_request(
@@ -793,8 +842,9 @@ impl Datasource for NgsiLdDatasource {
                 if q.hide {
                     continue;
                 }
+                let model = with_variables(&q.model, &ctx.variables);
                 let (path, params) = build_ngsild_request(
-                    &q.model,
+                    &model,
                     ctx.from_ms,
                     ctx.to_ms,
                     ctx.interval_ms,

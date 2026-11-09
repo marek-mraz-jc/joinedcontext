@@ -599,6 +599,43 @@ impl<'a> Client<'a> {
         Ok(json!({ "error": panel_reason(&body) }))
     }
 
+    /// Queries no saved dashboard holds, run as one panel would run them (daiya's and Grafana's
+    /// `POST /api/ds/query`): the builder's preview and a variable's values. `queries` are the
+    /// Portal's own, compiled from a person's choices; `variables` is each name's text as
+    /// `${name:regex}` stands for it. Answers frames by `refId`, or the reason there are none.
+    pub async fn query(
+        &self,
+        org: i64,
+        queries: &[Value],
+        range: (&str, &str),
+        variables: &std::collections::BTreeMap<String, String>,
+        person: Option<&str>,
+    ) -> Result<Value, ApiError> {
+        let what = "running a preview's queries";
+        let mut request = self
+            .request(reqwest::Method::POST, "/ds/query", Some(org))
+            .json(&json!({
+                "from": range.0,
+                "to": range.1,
+                "maxDataPoints": 1000,
+                "queries": queries,
+                "variables": variables,
+            }));
+        if let Some(token) = person {
+            request = request.header(PERSON_TOKEN_HEADER, token);
+        }
+        let answer = request.send().await.map_err(|err| unreachable(what, err))?;
+        let status = answer.status();
+        let body = jc_core::outbound::read_capped(answer, MAX_PANEL_ANSWER)
+            .await
+            .map_err(|err| unreachable(what, err))?;
+        let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        if status.is_success() {
+            return Ok(body);
+        }
+        Ok(json!({ "error": panel_reason(&body) }))
+    }
+
     /// The values a query variable offers, asked of its datasource with the saved query.
     pub async fn variable_values(
         &self,

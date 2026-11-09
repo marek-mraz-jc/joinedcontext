@@ -123,7 +123,7 @@ fn stored(err: sqlx::Error) -> ApiError {
     ApiError::Unavailable("the saved visualizations could not be read or written".into())
 }
 
-fn refused(field: &str, detail: String) -> ApiError {
+pub(crate) fn refused(field: &str, detail: String) -> ApiError {
     ApiError::Unprocessable {
         detail: detail.clone(),
         errors: vec![format!("{field}: {detail}")],
@@ -131,7 +131,11 @@ fn refused(field: &str, detail: String) -> ApiError {
 }
 
 /// The caller's rights in the project; 404 for a project they have no part in.
-fn member(state: &AppState, identity: &Identity, project: &str) -> Result<Effective, ApiError> {
+pub(crate) fn member(
+    state: &AppState,
+    identity: &Identity,
+    project: &str,
+) -> Result<Effective, ApiError> {
     let effective = crate::permissions::for_request(state, identity, project);
     if !crate::resource::is_dns1123(project) || !effective.may_read_project() {
         return Err(ApiError::NotFound(format!("project '{project}' not found")));
@@ -139,17 +143,17 @@ fn member(state: &AppState, identity: &Identity, project: &str) -> Result<Effect
     Ok(effective)
 }
 
-fn may_read_endpoint(effective: &Effective, endpoint: &ResourceEnvelope) -> bool {
+pub(crate) fn may_read_endpoint(effective: &Effective, endpoint: &ResourceEnvelope) -> bool {
     serde_json::to_value(endpoint)
         .is_ok_and(|value| effective.may_read_manifest("Endpoint", &value))
 }
 
-fn is_public(endpoint: &ResourceEnvelope) -> bool {
+pub(crate) fn is_public(endpoint: &ResourceEnvelope) -> bool {
     endpoint.spec["audience"] == "public"
 }
 
 /// The name a person knows the Endpoint by.
-fn title_of_endpoint(endpoint: &ResourceEnvelope) -> String {
+pub(crate) fn title_of_endpoint(endpoint: &ResourceEnvelope) -> String {
     endpoint
         .metadata
         .title
@@ -158,12 +162,12 @@ fn title_of_endpoint(endpoint: &ResourceEnvelope) -> String {
         .unwrap_or_else(|| endpoint.metadata.name.clone())
 }
 
-fn slug_of(endpoint: &ResourceEnvelope) -> &str {
+pub(crate) fn slug_of(endpoint: &ResourceEnvelope) -> &str {
     endpoint.spec["slug"].as_str().unwrap_or_default()
 }
 
 /// An Endpoint of the project the caller may read.
-fn readable_endpoint(
+pub(crate) fn readable_endpoint(
     state: &AppState,
     effective: &Effective,
     project: &str,
@@ -188,7 +192,7 @@ fn no_organization(project: &str) -> String {
 }
 
 /// The organization of `project`, or why there is none to write to.
-async fn organization(state: &AppState, project: &str) -> Result<i64, ApiError> {
+pub(crate) async fn organization(state: &AppState, project: &str) -> Result<i64, ApiError> {
     let config = state
         .config
         .grafana
@@ -385,6 +389,41 @@ fn title_of(raw: &str) -> Result<&str, ApiError> {
     Ok(title)
 }
 
+/// The kind and value type the model of `space` gives `attribute` of `entity_type`, or the
+/// refusal naming the field: `{at}endpoint`, `{at}type` or `{at}attribute`.
+pub(crate) fn model_attribute(
+    state: &AppState,
+    project: &str,
+    space: &str,
+    entity_type: &str,
+    attribute: &str,
+    at: &str,
+) -> Result<(String, Option<String>), ApiError> {
+    let model = state.model_schemas.get(project, space).ok_or_else(|| {
+        refused(
+            &format!("{at}endpoint"),
+            format!("the space {space} pins no data model, so it has nothing to draw"),
+        )
+    })?;
+    let class = model.attributes(entity_type).ok_or_else(|| {
+        refused(
+            &format!("{at}type"),
+            format!("{entity_type} is not a type of this Endpoint; choose one from the list"),
+        )
+    })?;
+    class
+        .attributes
+        .iter()
+        .find(|found| found.name == attribute)
+        .map(|found| (found.kind.clone(), found.value_type.clone()))
+        .ok_or_else(|| {
+            refused(
+                &format!("{at}attribute"),
+                format!("{entity_type} has no attribute {attribute}; choose one from the list"),
+            )
+        })
+}
+
 /// The type and attribute of `new` as the Endpoint's model has them, for the chosen kind.
 fn check_choice(
     state: &AppState,
@@ -392,38 +431,9 @@ fn check_choice(
     space: &str,
     new: &NewVisualization,
 ) -> Result<(), ApiError> {
-    let model = state.model_schemas.get(project, space).ok_or_else(|| {
-        refused(
-            "endpoint",
-            format!("the space {space} pins no data model, so it has nothing to draw"),
-        )
-    })?;
-    let class = model.attributes(&new.entity_type).ok_or_else(|| {
-        refused(
-            "type",
-            format!(
-                "{} is not a type of this Endpoint; choose one from the list",
-                new.entity_type
-            ),
-        )
-    })?;
-    let attribute = class
-        .attributes
-        .iter()
-        .find(|attribute| attribute.name == new.attribute)
-        .ok_or_else(|| {
-            refused(
-                "attribute",
-                format!(
-                    "{} has no attribute {}; choose one from the list",
-                    new.entity_type, new.attribute
-                ),
-            )
-        })?;
-    if !new
-        .kind
-        .draws(&attribute.kind, attribute.value_type.as_deref())
-    {
+    let (kind, value_type) =
+        model_attribute(state, project, space, &new.entity_type, &new.attribute, "")?;
+    if !new.kind.draws(&kind, value_type.as_deref()) {
         return Err(refused(
             "kind",
             format!(
