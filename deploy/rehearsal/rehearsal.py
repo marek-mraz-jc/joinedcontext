@@ -869,6 +869,143 @@ def hide_unpublished(data: bytes) -> bytes:
         block = b"    harvest: false\n" + block
     return data[:cat.start(3)] + block + data[cat.end(3):]
 
+
+# Retention of the imported spaces (owner 2026-11-09 20:3xZ, GOAL-prod-decommission.md "Retention on
+# jc-prod and jc-dev"): the high-rate types keep a bounded history recorded on change. Per type:
+# (history, heartbeat); every one records onChange. A KPI keeps its whole history ("one value per
+# period, written once"); bbsk-otvorene-data's KPI writes 41k rows a day and keeps 30 days.
+RETENTION = {
+    "BikeHireDockingStation": ("P1D", "PT15M"), "TrafficFlowObserved": ("P1D", "PT15M"),
+    "WeatherObserved": ("P7D", "PT1H"), "OffStreetParking": ("P7D", "PT1H"),
+    "EVChargingStation": ("P7D", "PT1H"), "AirQualityObserved": ("P7D", "PT1H"),
+    "KeyPerformanceIndicator": ("forever", "P1D"),
+}
+RETENTION_SPACE = {("bbsk-otvorene-data", "KeyPerformanceIndicator"): ("P30D", "P1D")}
+KPI_REASON = "one value per period, written once"
+KPI_KEPT = 365 * 86400
+_DUR = re.compile(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?")
+
+
+def duration_seconds(v: str | None) -> float:
+    """An ISO duration of a retention rule in seconds; `forever` and an unset history are infinite,
+    `off` is 0."""
+    if v is None or v == "forever":
+        return float("inf")
+    if v == "off":
+        return 0
+    m = _DUR.fullmatch(v)
+    if not m or not any(m.groups()):
+        raise ValueError(f"not a retention duration: {v!r}")
+    d, h, mi, se = (int(x or 0) for x in m.groups())
+    return ((d * 24 + h) * 60 + mi) * 60 + se
+
+
+def space_types(export: Path) -> dict[str, set[str]]:
+    """The RETENTION types each tenant (= space) of the export holds."""
+    held: dict[str, set[str]] = {}
+    needles = [t.encode() for t in RETENTION]
+    with open(export / "antares" / "entities.jsonl", "rb") as f:
+        for line in f:
+            if not any(n in line for n in needles):
+                continue
+            d = json.loads(line)
+            t = d["entity"].get("type")
+            for x in (t if isinstance(t, list) else [t]):
+                if x in RETENTION:
+                    held.setdefault(d["tenant"], set()).add(x)
+    return held
+
+
+def _retention_target(space: str, entity_type: str, rule: dict) -> dict:
+    """The rule's history/record/heartbeat/reason after the bound: the shorter history and the longer
+    heartbeat of the rule's own and the owner's, `record: never` kept."""
+    history, heartbeat = RETENTION_SPACE.get((space, entity_type), RETENTION[entity_type])
+    have = rule.get("history")
+    if history == "forever":
+        # A KPI's history stays whole: a shorter rule of the export would delete the periods the
+        # import keeps (2023, 2025); one of a year or more already covers them and stays.
+        if have is not None and duration_seconds(have) >= KPI_KEPT:
+            history = have
+    elif have is not None and duration_seconds(have) <= duration_seconds(history):
+        history = have
+    if rule.get("heartbeat") and duration_seconds(rule["heartbeat"]) > duration_seconds(heartbeat):
+        heartbeat = rule["heartbeat"]
+    out = {"history": history, "record": rule.get("record") if rule.get("record") == "never" else "onChange",
+           "heartbeat": heartbeat}
+    if history == "forever":
+        out["reason"] = rule.get("reason") or KPI_REASON
+    return out
+
+
+def bound_retention(data: bytes, space: str, types: set[str]) -> bytes:
+    """A ContextSpace's spec.retention with RETENTION applied to each of `types` (the ones the space
+    holds): an existing rule is edited in place (comments and attribute recordings kept), a missing one
+    is added; a rule with history `off` records nothing and stays. Every other file comes back as is."""
+    if not types or not re.search(rb"^kind:\s*ContextSpace\s*$", data, re.M):
+        return data
+    import yaml  # the CI venv's PyYAML, as render/synth/realm lines
+    text = data.decode()
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, l in enumerate(lines) if re.match(r"^  retention:\s*(\[\s*\])?\s*$", l)), None)
+    if start is None:
+        spec = next(i for i, l in enumerate(lines) if re.match(r"^spec:\s*$", l))
+        lines[spec + 1:spec + 1] = ["  retention:\n"]
+        start = spec + 1
+    lines[start] = "  retention:\n"
+    # The list: its items at one indent ("  - " or "    - "), each item's keys two deeper.
+    end, item_indent = start + 1, None
+    for i in range(start + 1, len(lines)):
+        l = lines[i]
+        if not l.strip() or l.lstrip().startswith("#"):
+            continue
+        ind = len(l) - len(l.lstrip())
+        if item_indent is None and l.lstrip().startswith("- "):
+            item_indent = ind
+        if item_indent is None or ind < item_indent or (ind == item_indent and not l.lstrip().startswith("- ")):
+            break
+        end = i + 1
+    item_indent = 4 if item_indent is None else item_indent
+    pad, key = " " * item_indent, " " * (item_indent + 2)
+    items = [i for i in range(start + 1, end) if lines[i].startswith(pad + "- ")]
+    bounds = list(zip(items, items[1:] + [end]))
+    added = []
+    for entity_type in sorted(types):
+        found = next(((a, b) for a, b in bounds
+                      if re.match(rf"^{pad}- entityType:\s*['\"]?{entity_type}['\"]?\s*$", lines[a])), None)
+        if found is None:
+            want = _retention_target(space, entity_type, {})
+            added.append(f"{pad}- entityType: {entity_type}\n"
+                         + "".join(f"{key}{k}: {_yaml_scalar(v)}\n" for k, v in want.items()))
+            continue
+        a, b = found
+        rule = (yaml.safe_load("".join(lines[a:b]).replace(pad + "- ", pad + "  ", 1)) or {})
+        if rule.get("history") == "off":
+            continue
+        want = _retention_target(space, entity_type, rule)
+        put = a + 1  # a key the rule lacks goes after the ones before it, in RETENTION's order
+        for k, v in want.items():
+            at = next((i for i in range(a + 1, b) if lines[i].startswith(f"{key}{k}:")), None)
+            new = f"{key}{k}: {_yaml_scalar(v)}\n"
+            if at is not None:
+                lines[at] = new
+                put = max(put, at + 1)
+            else:
+                lines[put:put] = [new]
+                bounds = [(x + (x >= put), y + (y >= put)) for x, y in bounds]
+                put, b, end = put + 1, b + 1, end + 1
+        if "reason" not in want:
+            at = next((i for i in range(a + 1, b) if lines[i].startswith(f"{key}reason:")), None)
+            if at is not None:
+                del lines[at]
+                bounds = [(x - (x > at), y - (y > at)) for x, y in bounds]
+                end -= 1
+    lines[end:end] = added
+    return "".join(lines).encode()
+
+
+def _yaml_scalar(v: str) -> str:
+    return f"'{v}'" if v in ("off", "on", "yes", "no") or ":" in v or "," in v else v
+
 # The hub's `search_documents` sources, as the deployment gives the gateway (MF-57).
 GATEWAY_VALUES = "components/context-gateway/values/gateway/base-values.yaml.gotmpl"
 _HUB_SOURCES = re.compile(r'^\s*JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:\s*"([^"]*)"\s*$', re.M)
@@ -903,6 +1040,7 @@ def cmd_aliases(a):
 
 def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: bytes = REHEARSAL_CATALOGUE):
     auth = {"Authorization": f"token {token}"}
+    held = space_types(export) if (export / "antares" / "entities.jsonl").is_file() else {}
     listing = json.loads((export / "gitea" / "repos.json").read_text())
     rows = []
     for r in listing:
@@ -915,9 +1053,14 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
                 rel = p.relative_to(root).as_posix()
                 fenced = fence_writes(data, catalogue)
                 named = name_datasets(fenced)
-                files[rel] = hidden = hide_unpublished(named)
+                hidden = hide_unpublished(named)
                 if hidden != named:
                     report.setdefault("harvestOff", []).append(f"{owner}/{name}/{rel}")
+                space = re.fullmatch(r"spaces/([^/]+)/space\.yaml", rel)
+                files[rel] = bounded = bound_retention(hidden, space.group(1), held.get(space.group(1), set())) \
+                    if space else hidden
+                if bounded != hidden:
+                    report.setdefault("retentionBounded", []).append(f"{owner}/{name}/{rel}")
                 if fenced != data:
                     report.setdefault("fenced", []).append(f"{owner}/{name}/{rel}")
                 if named != fenced:

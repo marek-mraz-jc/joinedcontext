@@ -430,6 +430,66 @@ def test_the_import_keeps_a_kpis_whole_history_and_cuts_every_other_type():
     assert [r["kind"] for r in refused] == ["cut-off"]
 
 
+
+SPACE = """apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: city
+spec:
+  dataModelRef: city
+  retention:
+    - entityType: Tree
+      history: 'off'
+    - entityType: BikeHireDockingStation
+      history: P30D
+      # a level the pipeline repeats
+      record: onChange
+      heartbeat: PT1H
+      attributes:
+        dateModified: { record: never }
+    - entityType: KeyPerformanceIndicator
+      history: P30D
+  # the space's place
+  quality: []
+"""
+
+
+def test_the_import_bounds_each_high_rate_types_history_in_the_space_manifest():
+    out = rh.bound_retention(SPACE.encode(), "city", {"BikeHireDockingStation", "KeyPerformanceIndicator",
+                                                       "AirQualityObserved", "TrafficFlowObserved"})
+    doc = yaml.safe_load(out)
+    rules = {r["entityType"]: r for r in doc["spec"]["retention"]}
+    assert rules["Tree"] == {"entityType": "Tree", "history": "off"}
+    # bikes: one day; the rule's longer heartbeat (fewer rows) and its attribute recording stay
+    assert rules["BikeHireDockingStation"] == {"entityType": "BikeHireDockingStation", "history": "P1D",
+                                               "record": "onChange", "heartbeat": "PT1H",
+                                               "attributes": {"dateModified": {"record": "never"}}}
+    # a KPI keeps its whole history: the export's 30 days would delete the periods the import keeps
+    assert rules["KeyPerformanceIndicator"] == {"entityType": "KeyPerformanceIndicator", "history": "forever",
+                                                "record": "onChange", "heartbeat": "P1D",
+                                                "reason": "one value per period, written once"}
+    assert rules["AirQualityObserved"] == {"entityType": "AirQualityObserved", "history": "P7D",
+                                           "record": "onChange", "heartbeat": "PT1H"}
+    assert rules["TrafficFlowObserved"]["heartbeat"] == "PT15M"
+    assert doc["spec"]["quality"] == [] and b"# a level the pipeline repeats" in out and b"# the space's place" in out
+    assert out.index(b"TrafficFlowObserved") < out.index(b"# the space's place")
+    # bbsk-otvorene-data's KPI: 30 days; a space without these types, another kind: unchanged
+    bbsk = yaml.safe_load(rh.bound_retention(SPACE.encode(), "bbsk-otvorene-data", {"KeyPerformanceIndicator"}))
+    assert [r for r in bbsk["spec"]["retention"] if r["entityType"] == "KeyPerformanceIndicator"][0]["history"] == "P30D"
+    assert rh.bound_retention(SPACE.encode(), "city", set()) == SPACE.encode()
+    endpoint = SPACE.replace("kind: ContextSpace", "kind: Endpoint").encode()
+    assert rh.bound_retention(endpoint, "city", {"BikeHireDockingStation"}) == endpoint
+    # a space with no retention block gets one
+    bare = rh.bound_retention(b"kind: ContextSpace\nmetadata:\n  name: c\nspec:\n  dataModelRef: c\n", "c",
+                              {"WeatherObserved"})
+    assert yaml.safe_load(bare)["spec"] == {"retention": [{"entityType": "WeatherObserved", "history": "P7D",
+                                                           "record": "onChange", "heartbeat": "PT1H"}],
+                                            "dataModelRef": "c"}
+    # a list at the key's own indent ("  - ") is edited in place too
+    flat = SPACE.replace("    - ", "  - ").replace("\n      ", "\n    ").replace("\n        ", "\n      ")
+    assert yaml.safe_load(rh.bound_retention(flat.encode(), "city", {"BikeHireDockingStation"})) \
+        ["spec"]["retention"][1]["history"] == "P1D"
+
 PG_IMAGE = "postgis/postgis:17-3.5"
 
 
