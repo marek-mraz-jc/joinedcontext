@@ -749,7 +749,10 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
                 };
                 let built = gateway_attempt(cfg, shared, late.mount, late.hop, internal);
                 match built.await {
-                    Ok(router) => late.slot.set(router),
+                    Ok(router) => {
+                        late.slot.set(router);
+                        tracing::info!("gateway: built");
+                    }
                     Err(e) => tracing::error!(error = %e, "gateway: not built"),
                 }
             }
