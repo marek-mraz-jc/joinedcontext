@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 pub mod apps_db;
+pub mod build_lane;
 
 use std::sync::Arc;
 

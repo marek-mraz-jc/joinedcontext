@@ -95,6 +95,10 @@ pub async fn build(
         .map(|l| server::serve_internal_listener(&state, l, async move { token.cancelled().await }))
         .transpose()
         .map_err(|e| err(format!("internal listener: {e}")))?;
+    let token = shutdown.clone();
+    server::spawn_build_listener(&state, async move { token.cancelled().await })
+        .await
+        .map_err(|e| err(format!("build listener: {e}")))?;
     Ok((server::app(state), internal))
 }
 

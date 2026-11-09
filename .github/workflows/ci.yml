@@ -394,8 +394,8 @@ jobs:
       - run: cd ui && pnpm vitest run --shard=${{ matrix.shard }}/${{ strategy.job-total }}
   # Advisories, licenses, bans and sources of every lockfile, one job for the four workspaces (one
   # runner slot of the account's 20, not four): each workspace runs deny and audit whatever the one
-  # before it answered, and the job fails if any of them did. No ignore is added at the root; the
-  # nested workspaces read their own deny.toml and .cargo/audit.toml.
+  # before it answered, and the job fails if any of them did. Each workspace reads its own deny.toml
+  # and .cargo/audit.toml; the root ignores only what crates/portal ignores (deny.toml's header).
   supply-chain:
     needs: changes
     if: needs.changes.outputs.supply == 'true'

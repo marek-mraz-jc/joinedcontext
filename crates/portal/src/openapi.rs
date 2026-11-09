@@ -132,6 +132,7 @@ use crate::tools::model_tools::{
         crate::api::app_build::rebuild,
         crate::api::app_build::builds,
         crate::api::app_build::restore,
+        crate::api::app_build::build_log,
         crate::api::app_dashboard::dashboard,
         crate::api::app_dashboard::propose,
         crate::api::app_shapes::rename_shapes,

@@ -7661,6 +7661,88 @@
         }
       }
     },
+    "/api/v1/projects/{project}/apps/{name}/builds/{id}/log": {
+      "get": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "The Log Of One Build Of An Application",
+        "description": "The log the build pod sent for one build of the application, as text, with its state and reason last; what a build's page shows (AP-103).",
+        "operationId": "build_log",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "App name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Build id, the run's number",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The build's log",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such App the caller may read, or no such build of it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Builds are not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/apps/{name}/dashboard": {
       "get": {
         "tags": [
@@ -58708,7 +58790,7 @@
       },
       "WorkflowRun": {
         "type": "object",
-        "description": "A workflow run of an application's repository, as the App page links it (AP-86, AP-103).",
+        "description": "A build of an application, as the App page links it (AP-86, AP-103): the shape the forge's\nworkflow runs had, now filled from the Portal's own build record.",
         "required": [
           "status",
           "commit",
@@ -58751,11 +58833,11 @@
           },
           "status": {
             "type": "string",
-            "description": "`queued`, `in_progress`, `waiting` or `completed`, as the forge says it."
+            "description": "`queued`, `in_progress` or `completed`."
           },
           "url": {
             "type": "string",
-            "description": "The run's page, behind the forge's sign-in (PF-81)."
+            "description": "The build's log."
           }
         }
       },

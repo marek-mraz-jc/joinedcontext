@@ -344,6 +344,24 @@ pub(crate) async fn create_or_reuse_branch(
     }
 }
 
+/// Whether this is the Portal's own build lane writing the build it holds, of exactly this App,
+/// commit and digest: it needs no role, and the build pod's token never reaches this door (AP-73).
+fn portal_lane(project: &str, kind: &str, body: &Value) -> bool {
+    let at = |pointer: &str| {
+        body.pointer(pointer)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    };
+    kind == "App"
+        && crate::apps::built::held_for(
+            project,
+            at("/metadata/name"),
+            at("/status/build/commit"),
+            at("/status/build/digest"),
+        )
+        .is_some()
+}
+
 /// The one status a proposal may carry: the build lane's `status.build` on an App (AP-73).
 ///
 /// Everything else about `status` is refused as it always was, and so is a `status.build` from a
@@ -373,8 +391,13 @@ fn build_lane_write(
     if !build_only {
         return Err(computed());
     }
-    if !crate::permissions::for_request(state, identity, project)
-        .may_write_status_field("App", "status.build")
+    let name = body
+        .pointer("/metadata/name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !portal_lane(project, kind, body)
+        && !crate::permissions::for_request(state, identity, project)
+            .may_write_status_field("App", "status.build")
     {
         return Err(ApiError::Denied(
             "status.build is written by the build lane when it publishes the artifact: the one \
@@ -385,10 +408,6 @@ fn build_lane_write(
     }
     // The lane writes the build of an App on `main` and nothing else of it (AP-73): a stolen
     // lane token can neither create an App nor change what one reads, shows or who opens it.
-    let name = body
-        .pointer("/metadata/name")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
     let Some(current) = state.mirror.get(project, "App", name) else {
         return Err(ApiError::Denied(format!(
             "status.build is written back to an App on main; project {project} holds no App \
@@ -900,15 +919,17 @@ async fn propose_engine(
     //     answer that teaches the kind's schema (T-2576, PF-50, PF-51). What the content may
     //     be is step 4c's.
     //     An App's default group is proposed by whoever may propose the App (AP-119).
-    if !crate::groups::for_proposal(
-        state,
-        identity,
-        project,
-        kind_info.kind,
-        operation == Operation::Update,
-        &body_val,
-    )
-    .may(kind_info.kind, jc_core::kinds::Verb::Propose)
+    //     The Portal's build lane holds no role: `build_lane_write` judges its write below.
+    if !portal_lane(project, kind_info.kind, &body_val)
+        && !crate::groups::for_proposal(
+            state,
+            identity,
+            project,
+            kind_info.kind,
+            operation == Operation::Update,
+            &body_val,
+        )
+        .may(kind_info.kind, jc_core::kinds::Verb::Propose)
     {
         return Err(ApiError::Denied(format!(
             "no role grants propose on {} in project {project} (PF-50)",

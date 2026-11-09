@@ -78,6 +78,18 @@ def test_credential_shapes_and_personal_data():
     assert ls.credential_shapes("Authorization: Bearer abcdefghijklmnop1234") == ["bearer"]
     assert ls.credential_shapes('password="hunter2hunter2"') == ["password-field"]
     assert ls.credential_shapes("password=<redacted> secret=$(env:X_SECRET)") == []
+
+
+def test_a_challenges_auth_params_are_no_bearer_value_and_a_value_of_that_shape_still_is():
+    # WWW-Authenticate (RFC 6750, RFC 9728) names parameters after the scheme, not a credential.
+    assert ls.credential_shapes('401 Bearer resource_metadata="http://localhost:42102/api/endpoint/x"') == []
+    assert ls.credential_shapes('401 Bearer resource_metadata=\\"http://localhost/x\\"') == []
+    assert ls.credential_shapes('Bearer error_description="the access token expired"') == []
+    # A value in the same place still fails, padded or quoted, whatever it starts with.
+    assert ls.credential_shapes('"Authorization": "Bearer abcdefghijklmnop1234="') == ["bearer"]
+    assert ls.credential_shapes('Bearer AbCdEfGhIjKlMnOp12==, x') == ["bearer"]
+    assert ls.credential_shapes('Bearer resource_metadataAbCdEfGh12') == ["bearer"]
+    assert ls.credential_shapes('Bearer errorAbCdEfGhIjKlMnOp="') == ["bearer"]
     found = ls.personal_data("user anna.k@example.org from 8.8.4.4 via 127.0.0.1 and 10.1.2.3, crate foo@1.2.3")
     assert found == ["email a***@example.org", "ip 8.8.x.x"]
     assert ls.personal_data("noreply@joinedcontext.com subject=01a1bd0f-c305") == []
@@ -91,6 +103,28 @@ def test_volume_counts_lines_per_minute_and_the_top_message():
     assert v["portal"]["lines"] == 10 and v["portal"]["topCount"] == 10
     assert v["portal"]["linesPerMinute"] == round(10 / 9.5, 1)
     assert v["antares"]["lines"] == 1
+
+
+def test_volume_over_a_window_counts_its_minutes_not_the_lines_span():
+    lines = [f"2026-11-08T21:00:{s:02d}Z  INFO antares_ops: surface operation" for s in range(0, 60, 10)]
+    v = ls.volume([ls.parse_line(i, x) for i, x in enumerate(lines)], minutes=2)
+    assert v["antares"]["minutes"] == 2 and v["antares"]["linesPerMinute"] == 3
+
+
+def test_lines_per_request_across_modules_and_the_shape_over_the_bound():
+    def req(rid, *parts):
+        return [f'2026-11-08T21:00:00Z  INFO request{{module="{m}" request_id={rid}}}: {t}: x' for m, t in parts]
+    door = ("gateway", "jc::access")
+    lines = (req("smokelogs-r1", door, ("gateway", "context_gateway::handlers::ngsi_ld"), ("antares", "antares_ops"))
+             + req("smokelogs-r2", door, ("antares", "jc::access"), ("gateway", "context_gateway::handlers::ngsi_ld"),
+                   ("antares", "antares_ops"))
+             + req("smokelogs-r3", ("kaisatsu", "jc::access"))
+             + ["2026-11-08T21:00:00Z  INFO antares_ws::socket: websocket opened"])
+    v = ls.request_lines([ls.parse_line(i, x) for i, x in enumerate(lines)], bound=3)
+    assert v["requests"] == 3 and v["max"] == 4 and v["over"] == 1
+    assert v["p95"] == 4 and v["mean"] == round(8 / 3, 2)
+    assert v["shape"] == "antares antares_ops, antares jc::access, gateway context_gateway::handlers::ngsi_ld, " \
+                         "gateway jc::access"
 
 
 def records(*lines):
@@ -154,6 +188,25 @@ def test_the_suite_windows_count_only_passed_writes(tmp_path):
     os.utime(d / "results.json", (1_000_000, 1_000_000))
     (w,) = suite.suite_windows([d])
     assert w["writes"] == 2 and w["start"] == 1_000_000 - 100 - 60 and w["end"] == 1_000_000 + 60
+
+
+def test_a_refused_write_or_a_sign_in_exchange_is_no_write(tmp_path):
+    # The 2026-11-09T155017Z gate counted refusal probes and token exchanges as writes and then
+    # missed their activity events (activity.endpoints, .kaisatsu, .subscriptions).
+    d = tmp_path / "endpoints"
+    d.mkdir()
+    (d / "results.json").write_text(json.dumps({"suite": "endpoints", "seconds": 10, "checks": [
+        {"call": "POST /api/endpoint/abc/ngsi-ld/v1/entities type SmokeOutsidePolicy",
+         "expected": "401 or 403 or 405", "result": "pass"},
+        {"call": "POST /c/abc without a token", "expected": "401 naming the metadata", "result": "pass"},
+        {"call": "POST /api/mcp initialize with that token", "expected": "200", "result": "pass"},
+        {"call": "POST /oauth/token (code + verifier)", "expected": "200, an access token", "result": "pass"},
+        {"call": "POST /api/v1/auth/logout", "expected": "200", "result": "pass"},
+        {"call": "POST /internal/mqtt/auth on the public base", "expected": "no CONNECT decision", "result": "pass"},
+        {"call": "POST /api/endpoint/abc/ngsi-ld/v1/entities", "expected": "201", "result": "pass"},
+        {"call": "PUT /api/v1/projects/city/endpoints/x", "expected": "200 or 201", "result": "pass"}]}))
+    (w,) = suite.suite_windows([d])
+    assert w["writes"] == 2 and w["example"] == "POST /api/endpoint/abc/ngsi-ld/v1/entities"
 
 
 def test_metric_names_drop_labels_and_comments():

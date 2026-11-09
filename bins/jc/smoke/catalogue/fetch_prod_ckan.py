@@ -4,10 +4,16 @@
    python3 bins/jc/smoke/catalogue/fetch_prod_ckan.py --out bins/jc/smoke/catalogue/fixtures/prod-ckan-<date>.json
 
 Anonymous GETs on prod's CKAN only, at most one a second (parity.py throttle_prod): organization_list,
-package_list, package_search (every page) and package_search per organisation, package_show of each
-listed name the search does not return, and the DCAT feed /catalog.jsonld (every page). Kept per dataset: name, organisation, resource count, and the
-distribution count of its DCAT node (found by the package id, which is not kept). Ids, timestamps
-and texts are not kept: jc mints its own, so they never compare."""
+package_list, package_search (every page) and package_search per organisation (every page, the query
+the suite sends), package_show of each listed name the search does not return and of each name the
+search returns twice, and the DCAT feed /catalog.jsonld (every page). Kept per dataset: name,
+organisation, resource count, and the distribution count of its DCAT node (found by the package id,
+which is not kept). Ids, timestamps and texts are not kept: jc mints its own, so they never compare.
+
+A name counts once. prod's search index can hold a document package_show no longer answers beside
+the live one under the same name (2026-11-09: bratislava-pocet-nevybavenych-ziadosti-do-ms-podla,
+an orphan of 2026-10-26 with 7 resources beside the live dataset's 15): the live one is the one
+package_show answers, and `searchDuplicates` names each such name with its row count."""
 
 from __future__ import annotations
 
@@ -17,6 +23,7 @@ import json
 import sys
 import time
 import urllib.parse
+from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -124,6 +131,17 @@ def distributions_by_package(nodes: list) -> dict:
     return out
 
 
+def search_all(p: Paced, **q) -> list:
+    """Every row of a package_search, 1000 a page: the suite's own query."""
+    out, start = [], 0
+    while True:
+        r = action(p, "package_search", rows=1000, start=start, **q)
+        out += r["results"]
+        start += 1000
+        if start >= r["count"] or not r["results"]:
+            return out
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base", default="https://opendata.smartcity.joinedcontext.com")
@@ -135,16 +153,15 @@ def main(argv=None) -> int:
     p = Paced(a.base, a.gap)
     orgs = action(p, "organization_list")
     names = action(p, "package_list")
-    packages, start = [], 0
-    while True:
-        r = action(p, "package_search", rows=1000, start=start)
-        packages += r["results"]
-        start += 1000
-        if start >= r["count"]:
-            break
-    per_org = {o: action(p, "package_search", fq=f'organization:"{o}"', rows=0)["count"] for o in orgs}
+    packages = search_all(p)
+    names_by_id = {pk["id"]: pk["name"] for pk in packages}
+    per_org = {o: len({pk["name"] for pk in search_all(p, fq=f'organization:"{o}"')}) for o in orgs}
     nodes, feed = dcat_pages(p)
     dist = distributions_by_package(nodes)
+    seen = Counter(pk["name"] for pk in packages)
+    duplicates = {n: c for n, c in sorted(seen.items()) if c > 1}
+    live = {n: action(p, "package_show", id=n)["id"] for n in duplicates}
+    packages = [pk for pk in packages if pk["name"] not in live or pk["id"] == live[pk["name"]]]
     datasets = {}
     for pk in packages:
         datasets[pk["name"]] = {
@@ -165,9 +182,12 @@ def main(argv=None) -> int:
                           "resources": len(pk.get("resources") or []),
                           "dcatDistributions": dist.get(pk.get("id"), dist.get(name)), "inSearch": False}
     feed["datasetNodes"] = sum(1 for d in datasets.values() if d["dcatDistributions"] is not None)
+    # The feed's own datasets by name, an orphan's node counted under the name it shares; a source
+    # dataset a node points to (typed dcat:Dataset too, prod 2026-11-09: 1 094) is none of them.
+    feed["distinctDatasets"] = len({n for i, n in names_by_id.items() if i in dist})
     doc = {"fetchedAt": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), "base": a.base,
            "organizations": sorted(orgs), "packageList": sorted(names), "searchCount": len(packages),
-           "listedNotFound": unshown,
+           "listedNotFound": unshown, "searchDuplicates": duplicates,
            "perOrganization": per_org, "dcat": feed, "datasets": dict(sorted(datasets.items()))}
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.out).write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")

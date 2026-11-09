@@ -185,7 +185,7 @@ RUN for name in sharing-private sharing-project sharing-organization sharing-rol
 # The build stage's base: the Rust toolchain on the runtime's Debian (same glibc). make for
 # tikv-jemalloc-sys, cmake for aws-lc-sys' fallback build, g++ for the assistant's tokenizer
 # (esaxx, oniguruma), curl for the pinned downloads below.
-FROM rust:1.97-slim-trixie@sha256:8e8cf8f7fd54a2d23d5a743b3a03f56e26b6c774276c33fa0595111704ebb15c AS rust
+FROM rust:1.99.0-slim-trixie@sha256:2752b332db73fdbb7dc576f06c82ed1f312005784ef913d7e04a28f5f55dc581 AS rust
 RUN apt-get update && apt-get install -y --no-install-recommends make cmake jq g++ curl ca-certificates && rm -rf /var/lib/apt/lists/*
 # The assistant module (G7): the PDFium its crate links, the embedding model and ONNX Runtime,
 # each pinned by checksum in its script, as the platform image fetches them.
@@ -277,9 +277,11 @@ COPY --from=build /jc /usr/local/bin/jc
 # kaisatsu_migrate role, before jc connects as kaisatsu_app (an init container in components/jc).
 COPY --from=build /kaisatsu /usr/local/bin/kaisatsu
 COPY --from=apps /srv/apps /srv/apps
-# The assistant's embedding model and ONNX Runtime; without them the module stays off.
-COPY --from=build /opt/e5-small /opt/e5-small
-COPY --from=build /opt/onnxruntime/libonnxruntime.so /usr/local/lib/libonnxruntime.so
+# The assistant's embedding model and ONNX Runtime; without them the module stays off. From
+# `rust`, which downloads them: ship hands in `build` as a named context holding only the
+# binaries and state/ (image.yml), so a COPY from `build` finds nothing there.
+COPY --from=rust /opt/e5-small /opt/e5-small
+COPY --from=rust /opt/onnxruntime/libonnxruntime.so /usr/local/lib/libonnxruntime.so
 ENV JC_ASSISTANT_MODEL_DIR=/opt/e5-small ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so
 # The state dir (generated secrets, JCBIN_STATE_DIR) owned by nonroot and 0700; in a pod a volume
 # goes over it and the root filesystem stays read-only (/tmp is an emptyDir there too).

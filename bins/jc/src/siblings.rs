@@ -208,7 +208,7 @@ const PIPELINE_BATCH_RUNS: &str = "3";
 /// | `JC_OIDC_ISSUER`, `JC_OIDC_CLIENT_*`, `JC_KEYCLOAK_ADMIN_URL`, `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_*`, `JC_PORTAL_COOKIE_KEY` | kaisatsu |
 /// | `JC_SHAKO_URL`, `_PUBLIC_URL`, `_OWNER`, `_REPO`, `_TOKEN`, `_APPS_OWNER`, `_APPS_TOKEN`, `_WEBHOOK_SECRET` | shako |
 /// | `JC_PORTAL_PIPELINE_RUNNER_URL`, `JC_PORTAL_PIPELINE_RUNNER_TOKEN`, `JC_PORTAL_PIPELINES_BATCH_CONCURRENCY` (3) | ekiben |
-/// | `JC_PORTAL_CKAN_URL`, `JC_PORTAL_CKAN_API_URL` (https, EP-67; http only with `JC_PORTAL_CKAN_ALLOW_HTTP=true`) | dataroom |
+/// | `JC_PORTAL_CKAN_URL`, `JC_PORTAL_CKAN_API_URL` (public https, EP-67; http only with `JC_PORTAL_CKAN_ALLOW_HTTP=true`; the API on jc's listener: loopback, or a host mount's host with `JC_PORTAL_CKAN_API_REACH`, C1) | dataroom |
 /// | `JC_PORTAL_GRAFANA_URL`, `_PUBLIC_URL`, `_USER`, `_PASSWORD` | daiya |
 /// | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | antares |
 /// | `JC_PORTAL_GATEWAY_URL`, `JC_PORTAL_GATEWAY_CLIENT_ID` | gateway |
@@ -310,22 +310,26 @@ pub fn portal_vars(
         // installation fills the route only with the operator's explicit
         // `JC_PORTAL_CKAN_ALLOW_HTTP=true` (a local rehearsal), else leaves it unset rather than
         // failing the Portal's start.
+        // The calls go to jc's own listener, never through the public edge and its pace (C1):
+        // a path mount at its loopback address, a host mount at its host name over http with
+        // that host reached on the listener (`JC_PORTAL_CKAN_API_REACH`).
         let rehearsal = env("JC_PORTAL_CKAN_ALLOW_HTTP").as_deref() == Some("true");
-        let api = if catalogue.public.starts_with("https://") {
-            Some(catalogue.public.clone())
-        } else if rehearsal {
-            Some(catalogue.internal.clone())
-        } else {
-            None
-        };
-        if let Some(api) = api {
-            group(
-                "JC_PORTAL_CKAN_URL",
-                vec![
-                    ("JC_PORTAL_CKAN_URL", Some(catalogue.public.clone())),
-                    ("JC_PORTAL_CKAN_API_URL", Some(api)),
-                ],
-            );
+        if catalogue.public.starts_with("https://") || rehearsal {
+            let (api, reach) = match catalogue.public.strip_prefix("https://") {
+                Some(rest) if catalogue.internal == catalogue.public => (
+                    format!("http://{rest}"),
+                    Some(siblings.listener.to_string()),
+                ),
+                _ => (catalogue.internal.clone(), None),
+            };
+            let mut values = vec![
+                ("JC_PORTAL_CKAN_URL", Some(catalogue.public.clone())),
+                ("JC_PORTAL_CKAN_API_URL", Some(api)),
+            ];
+            if reach.is_some() {
+                values.push(("JC_PORTAL_CKAN_API_REACH", reach));
+            }
+            group("JC_PORTAL_CKAN_URL", values);
         }
     }
     if let Some(dash) = siblings.get(Module::Daiya) {
@@ -718,8 +722,12 @@ mod tests {
             "https",
         );
         assert_eq!(v["JC_PORTAL_CKAN_URL"], "https://city.example/opendata");
-        // The Portal refuses a plain http API outside a cluster Service (EP-67).
-        assert_eq!(v["JC_PORTAL_CKAN_API_URL"], "https://city.example/opendata");
+        // C1: the calls stay on jc's loopback listener, never the public edge and its pace.
+        assert_eq!(
+            v["JC_PORTAL_CKAN_API_URL"],
+            "http://127.0.0.1:8443/opendata"
+        );
+        assert!(!v.contains_key("JC_PORTAL_CKAN_API_REACH"));
         let (siblings, setup, _d) = fixture("http");
         assert!(!portal_vars(&siblings, &setup, none).contains_key("JC_PORTAL_CKAN_URL"));
         for typo in ["TRUE", "1", "yes", ""] {
@@ -728,6 +736,27 @@ mod tests {
             });
             assert!(!v.contains_key("JC_PORTAL_CKAN_URL"), "{typo}");
         }
+    }
+
+    /// C1: a host-mounted catalogue (dev's `opendata.{domain}`) is called at its host name over
+    /// plain http on jc's own listener, so the wave never passes the public edge.
+    #[test]
+    fn a_host_mounted_catalogue_is_called_on_the_own_listener() {
+        let mut mounts = BTreeMap::new();
+        mounts.insert(
+            Module::Dataroom,
+            vec![MountOverride {
+                host: Some("opendata.city.example".into()),
+                path_prefix: Some(String::new()),
+            }],
+        );
+        let siblings = Siblings::new(&plans(mounts, "https"), LISTEN.parse().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
+        let v = portal_vars(&siblings, &setup, none);
+        assert_eq!(v["JC_PORTAL_CKAN_URL"], "https://opendata.city.example");
+        assert_eq!(v["JC_PORTAL_CKAN_API_URL"], "http://opendata.city.example");
+        assert_eq!(v["JC_PORTAL_CKAN_API_REACH"], "127.0.0.1:8443");
     }
 
     /// A one-machine rehearsal over http fills the catalogue only on the operator's explicit
