@@ -224,12 +224,19 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
   # cargo test, not nextest: the Portal's database tests serialize on in-process locks
-  # (KNOWLEDGE: the DATABASE mutex), which separate processes would not hold.
+  # (KNOWLEDGE: the DATABASE mutex), which separate processes would not hold. The test binaries
+  # are split in two jobs, each with its own Postgres (.github/scripts/test-part.py: round robin
+  # over every tests/*.rs, the libs and bins in the first, which also runs the doc tests); binaries
+  # of one job still run one after another, as before.
   portal-test:
+    name: portal-test-${{ matrix.part }}
     needs: changes
     if: needs.changes.outputs.portal == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: { part: [1, 2] }
     defaults: { run: { working-directory: crates/portal } }
     services:
       postgres:
@@ -260,7 +267,13 @@ jobs:
       # no error line.
       - run: |
           (while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/ {print "mem used " $3 "/" $2 " MB"}') $(df -h / | awk 'NR == 2 {print "disk free " $4}')"; done) &
-          cargo test --workspace --locked --no-fail-fast
+          # -j 4: the runner's four cores for the link phase (~160 test binaries); a flag, not
+          # CARGO_BUILD_JOBS, which is part of the rust-cache key
+          targets=$(python3 ../../.github/scripts/test-part.py ${{ matrix.part }} ${{ strategy.job-total }})
+          # shellcheck disable=SC2086
+          cargo test --workspace --locked --no-fail-fast -j 4 $targets
+      - if: matrix.part == 1
+        run: cargo test --workspace --locked --no-fail-fast --doc
       - if: always()
         run: du -sh target/debug/deps
   # The bundles the jc image embeds: a UI that does not build ships the placeholder page.
@@ -322,7 +335,7 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: sh .github/scripts/gitleaks.sh
       - if: needs.changes.outputs.workflows == 'true'
-        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest
+        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest
       - if: needs.changes.outputs.workflows == 'true'
         run: >-
           docker run --rm -v "$PWD:/repo" -w /repo
