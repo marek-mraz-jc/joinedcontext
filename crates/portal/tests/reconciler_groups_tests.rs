@@ -229,6 +229,34 @@ async fn a_console_edit_is_overwritten_and_reported_and_an_unknown_address_is_on
         "{wrote:?}"
     );
     assert!(!wrote.iter().any(|w| w.contains(NEWCOMER)), "{wrote:?}");
+
+    // The next run still warns, without asking the realm for the missing id again.
+    let sync = sync(&keycloak);
+    async fn asked(keycloak: &MockServer) -> usize {
+        keycloak
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.method.as_str() == "GET" && r.url.path().ends_with(NEWCOMER))
+            .count()
+    }
+    let before = asked(&keycloak).await;
+    let first = sync.converge(&mirror).await;
+    let second = sync.converge(&mirror).await;
+    assert!(
+        first[0].warnings.iter().any(|w| w.contains(NEWCOMER)),
+        "{first:?}"
+    );
+    assert!(
+        second[0].warnings.iter().any(|w| w.contains(NEWCOMER)),
+        "{second:?}"
+    );
+    assert_eq!(
+        asked(&keycloak).await,
+        before + 1,
+        "two runs ask the realm for the missing id once"
+    );
 }
 
 #[tokio::test]
