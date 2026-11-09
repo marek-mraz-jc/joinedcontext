@@ -1290,7 +1290,7 @@ async fn a_portal_without_the_namespaces_keeps_the_pipeline_and_app_job_clients(
     deleted.sort();
     assert_eq!(
         deleted,
-        ["uuid-aj", "uuid-air", "uuid-pl"].map(|u| format!("DELETE {REALM}/clients/{u}"))
+        ["uuid-air", "uuid-aj", "uuid-pl"].map(|u| format!("DELETE {REALM}/clients/{u}"))
     );
 }
 
