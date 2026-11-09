@@ -597,10 +597,10 @@ async fn client_credentials_refusals_and_introspection_and_revocation() {
     let (st, _, body) =
         post_form(&app, INTROSPECT, &[("token", &access), gw[0], gw[1]], None).await;
     assert_eq!(st, StatusCode::OK);
-    assert_eq!(
-        serde_json::from_str::<Value>(&body).unwrap()["active"],
-        true
-    );
+    let live = serde_json::from_str::<Value>(&body).unwrap();
+    assert_eq!(live["active"], true);
+    // Keycloak names the service account; agent-proxy admits the assistant by it.
+    assert_eq!(live["username"], "service-account-apisix-gateway", "{body}");
     for t in ["garbage", ""] {
         let (st, _, body) = post_form(&app, INTROSPECT, &[("token", t), gw[0], gw[1]], None).await;
         assert!(
