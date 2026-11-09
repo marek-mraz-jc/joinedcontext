@@ -213,6 +213,19 @@ def test_the_shipped_realm_allows_cimd_and_portal_api_exchange_and_prod_neither(
     assert not suite.cimd_allowed({"clientPolicies": off})
 
 
+def test_the_served_realm_is_the_one_the_rehearsal_imports(tmp_path):
+    export, state = export_dir(tmp_path)
+    assert not suite.exchanges(suite.served_realm(export, REALM, str(state)), "portal-api")
+    # The kit applied deployment main's portal-api lines (T-6063): that file decides.
+    main = realm_doc()
+    next(c for c in main["clients"] if c["clientId"] == "portal-api")["attributes"] = {
+        "standard.token.exchange.enabled": "true"}
+    (state / "realms").mkdir()
+    (state / "realms" / f"{REALM}.json").write_text(json.dumps(main))
+    assert suite.exchanges(suite.served_realm(export, REALM, str(state)), "portal-api")
+    assert suite.exchanges(suite.served_realm(tmp_path / "none", "jc"), "portal-api")  # jc's shipped realm
+
+
 def test_a_stub_answering_200_to_everything_fails(tmp_path, monkeypatch):
     rows = run_suite(tmp_path, lambda h: (200, "application/json", b"{}"), monkeypatch)
     fails = {i for i, r in rows.items() if r["result"] == "fail"}

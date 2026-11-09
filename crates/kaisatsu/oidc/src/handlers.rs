@@ -1389,6 +1389,7 @@ async fn mint_tokens_for_principal(
     act: Option<ActClaim>,
     include_refresh: bool,
     existing_family: Option<RefreshTokenFamily>,
+    only_audience: Option<&str>,
 ) -> Result<Value> {
     let issuer = mount.realm_issuer(&realm.realm);
     let keys = state.store.list_signing_keys(&realm.id).await?;
@@ -1448,7 +1449,13 @@ async fn mint_tokens_for_principal(
         active_org: resolved_active_org.as_deref(),
     };
 
-    let access_claims = evaluate_mappers(&mapper_ctx, TokenKind::AccessToken)?;
+    let mut access_claims = evaluate_mappers(&mapper_ctx, TokenKind::AccessToken)?;
+    // A token exchange naming `audience` gets that audience alone, as Keycloak 26's standard
+    // exchange issues it: the requester's own audience mappers do not ride along.
+    // ponytail: a SAME_SESSION refresh of such a token mints the requester's full audience again.
+    if let Some(only) = only_audience {
+        access_claims["aud"] = Value::String(only.to_owned());
+    }
     let access_key = select_signing_key(state, &keys, realm, client, false).await?;
     let access_token = sign_jwt(&access_key, &state.kek, Some("JWT"), &access_claims)?;
 
@@ -1989,6 +1996,7 @@ async fn handle_authorization_code_grant(
         None,
         true,
         None,
+        None,
     )
     .await
 }
@@ -2087,6 +2095,7 @@ async fn handle_device_code_grant(
         dpop_jkt,
         None,
         true,
+        None,
         None,
     )
     .await
@@ -2221,6 +2230,7 @@ async fn handle_refresh_token_grant(
         None,
         true,
         Some(family),
+        None,
     )
     .await
     {
@@ -2412,6 +2422,7 @@ async fn handle_client_credentials_grant(
         None,
         false,
         None,
+        None,
     )
     .await
 }
@@ -2594,6 +2605,9 @@ async fn handle_token_exchange_grant(
         act,
         wants_refresh,
         None,
+        form.get("audience")
+            .filter(|s| !s.is_empty())
+            .map(String::as_str),
     )
     .await?;
     out["issued_token_type"] =
@@ -2720,6 +2734,7 @@ async fn handle_jwt_bearer_grant(
         dpop_jkt,
         None,
         false,
+        None,
         None,
     )
     .await
@@ -2896,6 +2911,7 @@ async fn handle_password_grant(
         dpop_jkt,
         None,
         true,
+        None,
         None,
     )
     .await

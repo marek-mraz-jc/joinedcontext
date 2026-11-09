@@ -1250,6 +1250,45 @@ async fn bearer_and_connector_tokens_verify_and_exchange_for_one_endpoint() {
             .any(|s| s == format!("endpoint:{SLUG}")),
         "{claims}"
     );
+    // The hub alone, as Keycloak 26.8.1 issues it (evidence/jc-kaisatsu-parity/kc-aud): portal-api's
+    // own audience mapper (context-gateway-simulate) does not ride along.
+    assert_eq!(claims["aud"], json!("mcp-hub"), "{claims}");
+
+    // A client the realm grants no exchange (portal-reconciler) is refused, with Keycloak's text,
+    // whatever it asks.
+    let ungranted = post_form(
+        app,
+        TOKEN,
+        &[
+            (
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:token-exchange",
+            ),
+            ("subject_token", subject),
+            (
+                "subject_token_type",
+                "urn:ietf:params:oauth:token-type:access_token",
+            ),
+            ("audience", "mcp-hub"),
+            ("scope", "gateway-hub"),
+            ("client_id", "portal-reconciler"),
+            ("client_secret", RECONCILER_SECRET),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(
+        ungranted.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        ungranted.text
+    );
+    assert_eq!(
+        ungranted.json()["error_description"],
+        json!("Standard token exchange is not enabled for the requested client"),
+        "{}",
+        ungranted.text
+    );
 
     // auth/oidc.rs:125: an Endpoint whose scope is not linked yet answers `invalid_scope`.
     let refused = exchange(app, subject, "otherslugotherslugother234").await;

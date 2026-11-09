@@ -69,9 +69,10 @@ EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
 # jc's shipped realm: what kaisatsu serves when the export holds no file of the rehearsal's realm.
 SHIPPED_REALM = HERE.parents[3] / "crates" / "kaisatsu" / "import" / "realms" / "jc-portal.json"
 # Why prod refuses portal-api's exchange: the realm export and the deployment's guard of it.
-EXCHANGE_RULE = ("the realm export enables standard.token.exchange only for context-gateway and the agent proxy; "
-                 "joinedcontext-deployment test_only_the_agent_proxy_and_the_gateway_may_exchange_a_persons_token "
-                 "(ADR-N-038 section 3.2)")
+EXCHANGE_RULE = ("this realm enables standard.token.exchange for context-gateway and the agent proxy, not portal-api "
+                 "(release v0.1.23's realm, prod's export); deployment main grants portal-api too (T-6063, 76502fd8e, "
+                 "test_only_the_agent_proxy_the_gateway_and_the_portal_may_exchange_a_persons_token), and the suite "
+                 "takes portal-api's path wherever the served realm grants it (ADR-N-038 section 3.2)")
 
 # Keycloak's own clients: the admin console, the account console and the internals they need.
 # kaisatsu has its own admin, so what only they enable is no prod feature jc must carry.
@@ -118,11 +119,13 @@ def realm_of(state) -> str:
 
 # ------------------------------------------------------------------------- what prod's realm uses
 
-def served_realm(export: Path, realm: str) -> dict:
-    """The realm file kaisatsu serves: the export's file of that realm, else jc's shipped realm."""
-    f = export / "keycloak" / f"realm-{realm}.json"
-    if f.is_file():
-        return json.loads(f.read_text())
+def served_realm(export: Path, realm: str, state: str | None = None) -> dict:
+    """The realm file kaisatsu serves: the one the rehearsal imports (<state>/realms/<realm>.json,
+    with the kit's changes such as deployment main's client lines), else the export's file of that
+    realm, else jc's shipped realm."""
+    for f in ([Path(state) / "realms" / f"{realm}.json"] if state else []) + [export / "keycloak" / f"realm-{realm}.json"]:
+        if f.is_file():
+            return json.loads(f.read_text())
     return json.loads(SHIPPED_REALM.read_text()) if SHIPPED_REALM.is_file() else {}
 
 
@@ -788,7 +791,7 @@ def run(a, res: Results) -> dict:
     rf = realm_file(export, realm)
     realm_doc = json.loads(rf.read_text()) if rf else {}
     used = used_features(realm_doc, export / "gitea" / "files")
-    served = served_realm(export, realm)
+    served = served_realm(export, realm, a.state)
     http = Http(a.base_url)
     base = a.base_url.rstrip("/")
 
