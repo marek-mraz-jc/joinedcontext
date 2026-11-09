@@ -7,13 +7,13 @@
 import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
-import { Button, buttonClass, Card, Icon, InlineError, Skeleton } from "../ui";
+import { Button, buttonClass, Card, Icon, InlineError, safeHref, Skeleton } from "../ui";
 import type { IconName } from "../ui";
 import type { Frame } from "./frames";
 import { hasData, outsideRange } from "./frames";
 import type { FieldConfigSource } from "./fieldConfig";
 import { BarChartPanel, HeatmapPanel, HistogramPanel, PieChartPanel, StateTimelinePanel } from "./ChartPanels";
-import { GeomapPanel } from "./GeomapPanel";
+import { GeomapPanel, MapFrame } from "./GeomapPanel";
 import { TablePanel } from "./TablePanel";
 import { TimeSeriesPanel } from "./TimeSeriesPanel";
 import { BarGaugePanel, GaugePanel, StatPanel } from "./ValuePanels";
@@ -105,7 +105,7 @@ function Body({ panel, data, from, to, locale, height, project, tablesHref }: Re
           {...common}
           project={project}
           empty={(text, description) => (
-            <MapFrame>
+            <MapFrame height={height}>
               <PanelState icon="globe" title={text} description={description}>
                 {tablesHref ? <TablesLink href={tablesHref} /> : null}
               </PanelState>
@@ -118,16 +118,13 @@ function Body({ panel, data, from, to, locale, height, project, tablesHref }: Re
   }
 }
 
-/** Where a map would be, outlined, around a map panel's state: the panel reads as an empty map. */
-function MapFrame({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="h-full rounded-sm border border-dashed border-border bg-surface-subtle">{children}</div>;
-}
-
 /** The dashboard's table page, opened beside this one. */
-function TablesLink({ href }: { href: string }): JSX.Element {
+function TablesLink({ href }: { href: string }): JSX.Element | null {
   const { t } = useTranslation();
+  const safe = safeHref(href);
+  if (!safe) return null;
   return (
-    <a className={buttonClass("secondary", "sm")} href={href} target="_blank" rel="noopener noreferrer">
+    <a className={clsx(buttonClass("secondary", "sm"), "touch-target")} href={safe} target="_blank" rel="noopener noreferrer">
       <Icon name="external" className="size-4" />
       {t("dashboardView.asTables")}
     </a>
@@ -209,7 +206,7 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
   } else if (!hasData(data.frames) && panel.type === "geomap") {
     // A map reads each entity's latest values: a longer range would bring nothing more.
     body = (
-      <MapFrame>
+      <MapFrame height={height}>
         <PanelState icon="globe" title={noValue ?? t("dashboardView.emptyTitle")} description={t("dashboardView.geomap.empty")} />
       </MapFrame>
     );

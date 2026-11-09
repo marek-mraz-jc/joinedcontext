@@ -419,7 +419,7 @@ export function MapLibreView({
         root.className = "flex flex-col gap-2 divide-y divide-border overflow-y-auto pb-4 [mask-image:linear-gradient(to_bottom,black_80%,transparent)] [&>*+*]:pt-2";
         // A share of the map's own height, so the tapped spot and its neighbours stay in view.
         const mapHeight = container.current?.clientHeight ?? 400;
-        root.style.maxHeight = `${Math.round(mapHeight * (mapHeight < 480 ? 0.35 : 0.45))}px`;
+        root.style.maxHeight = `${Math.round(mapHeight * (mapHeight < 480 ? 0.42 : 0.45))}px`;
         for (const feature of features.slice(0, STACKED)) {
           root.append(popupNode(feature, layer.popupProperties, layer.open, layer.titleProperty));
         }

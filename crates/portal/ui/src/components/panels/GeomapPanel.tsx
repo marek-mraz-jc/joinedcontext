@@ -6,7 +6,7 @@
  * basemap, a fixed view, a location mode it does not read) is said in one line above it.
  */
 import { useCallback, useMemo, useState } from "react";
-import type { JSX } from "react";
+import type { JSX, ReactNode } from "react";
 import { ScaleControl } from "maplibre-gl";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { useTranslation } from "react-i18next";
@@ -153,6 +153,20 @@ export function markersOf(frames: Frame[], options: Record<string, unknown> | un
   return { features: { type: "FeatureCollection", features }, rows, marker, popupProperties: [...shown], popup: layer.tooltip !== false, titleProperty, notes };
 }
 
+/**
+ * Where a map would be, outlined, around a map panel's state: the panel reads as an empty map and
+ * keeps the map's height, so a refresh that empties it does not move the grid. A phone's panel
+ * takes its content's height, as every other panel's state does there.
+ */
+export function MapFrame({ height, children }: { height: number; children: ReactNode }): JSX.Element {
+  const phone = useIsPhone();
+  return (
+    <div className="h-full rounded-sm border border-dashed border-border bg-surface-subtle" style={phone ? undefined : { height }}>
+      {children}
+    </div>
+  );
+}
+
 export interface GeomapPanelProps {
   title: string;
   frames: Frame[];
@@ -191,7 +205,7 @@ export function GeomapPanel({ title, frames, fieldConfig, options, height, local
   return (
     <div className="flex h-full min-h-0 flex-col gap-1" style={{ height: phone ? Math.min(height, PHONE_HEIGHT) : height }}>
       {/* What the map shows and what it could not, above it: an overlay would sit under the map's controls on a phone. */}
-      <p className="text-caption text-fg-muted" data-geomap-caption="">
+      <p className="text-caption text-fg" data-geomap-caption="">
         {t("dashboardView.geomap.count", { n: markers.features.features.length })}
         {plain ? ` · ${t("dashboardView.geomap.plain")}` : null}
       </p>

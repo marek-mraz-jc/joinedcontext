@@ -114,7 +114,7 @@
     "src/components/panels/GeomapPanel.tsx": {
       "lines": 1,
       "group": "ui-parts",
-      "reason": "a computed size: the map's height is the panel's gridPos height in px, capped on a phone, as VegaChart's chart host"
+      "reason": "computed sizes: the map's height, and the empty map frame's, is the panel's gridPos height in px (capped on a phone), as VegaChart's chart host"
     }
   },
   "panel_is_a_card": {
