@@ -51,9 +51,12 @@ MAX_BATCH_ENTITIES = 500
 # jc's client that administers people in realm jc (bins/jc/src/setup.rs PORTAL_ADMIN_CLIENT).
 PORTAL_ADMIN_CLIENT = "portal-reconciler"
 # jc's state files of the clients an imported realm keeps (bins/jc STATUS.md, jc-realm-name): the
-# cutover writes the export's secret of each into them before jc's first start.
+# cutover writes the export's secret of each into them before every start. jc applies its own
+# realm files (these clients with the state file's secret) beside the imported realm into the same
+# realm, so the realm's secret is the one source: a state file of its own would clash (F5).
 STATE_CLIENT_SECRETS = {"portal-api": "portal-client-secret", PORTAL_ADMIN_CLIENT: "portal-admin-client-secret",
-                        "context-gateway": "gateway-client-secret"}
+                        "context-gateway": "gateway-client-secret", "jc-assistant": "assistant-client-secret",
+                        "agent-proxy": "proxy-client-secret"}
 # The Portal's default bootstrap admins (JC_PORTAL_BOOTSTRAP_ADMINS): the rehearsal's test persons
 # join it; an imported realm without it gets it, as it gets rehearsal-tester.
 ADMIN_GROUP = "platform-admins"

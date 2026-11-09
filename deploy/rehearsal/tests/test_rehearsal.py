@@ -293,6 +293,57 @@ def test_antares_deletes_history_older_than_24_hours_and_never_the_current_state
     assert st == 200 and current["reading"]["value"] == 42, current
 
 
+# ------------------------------------------------------------------------------------------------
+# live: one source for the secrets of the clients jc signs in as, across a restart (F5)
+
+RS_PORT, RS_PG_PORT = 42118, 55448
+JC_CLIENTS = {"portal-api": "KC_PORTAL_API_SECRET", "portal-reconciler": "KC_PORTAL_RECONCILER_SECRET",
+              "context-gateway": "KC_CONTEXT_GATEWAY_SECRET", "jc-assistant": "KC_JC_ASSISTANT_SECRET"}
+
+
+def grant(base, realm, client, secret):
+    st, _ = rh.Http(base).json("POST", f"/id/realms/{realm}/protocol/openid-connect/token", form={
+        "grant_type": "client_credentials", "client_id": client, "client_secret": secret})
+    return st
+
+
+def test_a_restart_signs_jc_in_with_the_realms_secret_of_each_of_its_clients(tmp_path):
+    if not LIVE:
+        pytest.skip("REHEARSAL_LIVE=1 starts a jc and a PostgreSQL container")
+    home = tmp_path / "home"
+    keycloak = home / "rs" / "export" / "keycloak"
+    keycloak.mkdir(parents=True)
+    (keycloak / "realm-rsrealm.json").write_text(json.dumps({"realm": "rsrealm", "enabled": True, "clients": [
+        {"clientId": c, "enabled": True, "publicClient": False, "serviceAccountsEnabled": True,
+         "clientAuthenticatorType": "federated-jwt", "secret": f"$(env:{v})"} for c, v in JC_CLIENTS.items()]}))
+    run_env = dict(os.environ, REHEARSAL_HOME=str(home))
+    up = [str(HERE / "up.sh"), "rs", str(RS_PORT), str(RS_PG_PORT)]
+    base, rs = f"http://localhost:{RS_PORT}", home / "rs"
+    files = dict(rh.STATE_CLIENT_SECRETS)
+    try:
+        subprocess.run(up, env=run_env, check=True, timeout=900)
+        old = {}
+        for client, var in JC_CLIENTS.items():
+            old[client] = (rs / "secrets" / "realm" / var).read_text().strip()
+            assert (rs / "state" / files[client]).read_text().strip() == old[client], client
+            assert grant(base, "rsrealm", client, old[client]) == 200, client
+        # The realm's value changes (a rotated export): the next start signs every client in with it.
+        (rs / "secrets" / "realm" / JC_CLIENTS["jc-assistant"]).write_text("rotated-" + old["jc-assistant"][:8])
+        subprocess.run(up, env=run_env, check=True, timeout=900)
+        new = (rs / "secrets" / "realm" / JC_CLIENTS["jc-assistant"]).read_text().strip()
+        assert (rs / "state" / files["jc-assistant"]).read_text().strip() == new
+        assert grant(base, "rsrealm", "jc-assistant", new) == 200
+        assert grant(base, "rsrealm", "jc-assistant", old["jc-assistant"]) == 401
+        for client in ("portal-api", "portal-reconciler", "context-gateway"):
+            assert grant(base, "rsrealm", client, old[client]) == 200, client
+    finally:
+        for name in ("jc.pid", "retain.pid"):
+            pid = rs / name
+            if pid.exists():
+                subprocess.run(["kill", pid.read_text().strip()], check=False)
+        subprocess.run(["docker", "rm", "-f", "rh-pg-rs"], check=False, capture_output=True)
+
+
 
 def test_a_bundle_still_being_written_is_not_imported(tmp_path):
     (tmp_path / "antares").mkdir()
@@ -837,12 +888,18 @@ def test_an_imported_realm_hands_its_client_secrets_to_jcs_state_files():
         {"clientId": "portal-api", "secret": "$(env:KC_PORTAL_API_SECRET)"},
         {"clientId": "portal-reconciler", "secret": "$(env:KC_PORTAL_RECONCILER_SECRET)"},
         {"clientId": "context-gateway", "secret": "$(env:KC_CONTEXT_GATEWAY_SECRET)"},
+        {"clientId": "jc-assistant", "secret": "$(env:KC_JC_ASSISTANT_SECRET)"},
+        {"clientId": "agent-proxy", "secret": "$(env:KC_AGENT_PROXY_SECRET)"},
         {"clientId": "edge", "secret": "$(env:KC_EDGE_SECRET)"},
     ]}
+    # Every client jc signs in as takes the realm's secret: jc's own state value would clash with
+    # it in the one realm (jc-smoke-live F5: the assistant got no service token).
     assert rh.state_client_secrets(realm) == [
+        ("assistant-client-secret", "KC_JC_ASSISTANT_SECRET"),
         ("gateway-client-secret", "KC_CONTEXT_GATEWAY_SECRET"),
         ("portal-admin-client-secret", "KC_PORTAL_RECONCILER_SECRET"),
-        ("portal-client-secret", "KC_PORTAL_API_SECRET")]
+        ("portal-client-secret", "KC_PORTAL_API_SECRET"),
+        ("proxy-client-secret", "KC_AGENT_PROXY_SECRET")]
 
 
 def test_the_rehearsal_signs_in_at_the_realm_of_the_export(tmp_path):
