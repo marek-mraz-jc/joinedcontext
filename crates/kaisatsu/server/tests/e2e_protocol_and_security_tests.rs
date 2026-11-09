@@ -365,7 +365,8 @@ async fn a_realm_without_the_cimd_policy_refuses_an_https_client_id() {
     );
     let mount = Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap();
     let app = router(state, mount);
-    let challenge = sha256_base64url("pkce-verifier-string-with-at-least-43-characters-long-777777");
+    let challenge =
+        sha256_base64url("pkce-verifier-string-with-at-least-43-characters-long-777777");
     let auth_uri = format!(
         "/realms/dev/protocol/openid-connect/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid&state=c1&code_challenge={challenge}&code_challenge_method=S256",
         url::form_urlencoded::byte_serialize(cimd_url.as_bytes()).collect::<String>(),
@@ -374,7 +375,12 @@ async fn a_realm_without_the_cimd_policy_refuses_an_https_client_id() {
     );
     let authorize = || async {
         app.clone()
-            .oneshot(Request::builder().uri(&auth_uri).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri(&auth_uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap()
     };

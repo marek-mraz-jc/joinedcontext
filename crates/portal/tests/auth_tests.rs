@@ -1640,8 +1640,15 @@ async fn the_callback_after_a_logout_goes_home() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let home = response.headers().get(header::LOCATION).unwrap();
-    assert_eq!(home.to_str().unwrap().trim_end_matches('/'), "https://portal.test");
-    assert!(set_cookie_values(&response).is_empty(), "{:?}", set_cookie_values(&response));
+    assert_eq!(
+        home.to_str().unwrap().trim_end_matches('/'),
+        "https://portal.test"
+    );
+    assert!(
+        set_cookie_values(&response).is_empty(),
+        "{:?}",
+        set_cookie_values(&response)
+    );
 
     // A login in flight: its callback without a code is still a refusal.
     let login = app
@@ -1779,7 +1786,9 @@ async fn logout_clears_the_cookies_without_a_session_and_hints_at_no_token() {
     let url = target["endSessionUrl"].as_str().unwrap_or_default();
     // The client's registered callback, which the realm's exact check accepts.
     assert!(
-        url.contains("post_logout_redirect_uri=https%3A%2F%2Fportal.test%2Fapi%2Fv1%2Fauth%2Fcallback"),
+        url.contains(
+            "post_logout_redirect_uri=https%3A%2F%2Fportal.test%2Fapi%2Fv1%2Fauth%2Fcallback"
+        ),
         "{url}"
     );
     assert!(url.contains("client_id=joinedcontext-portal"), "{url}");

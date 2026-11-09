@@ -749,8 +749,10 @@ pub async fn callback(
     // The provider's way back after a logout (`post_logout_redirect_uri` in [`logout`]): no
     // login in flight and nothing presented, so the person goes home.
     if jar.get(FLOW_COOKIE).is_none() && query.code.is_none() && query.state.is_none() {
-        return Ok(Redirect::to(crate::organization_host::public_base(&state.config).as_str())
-            .into_response());
+        return Ok(
+            Redirect::to(crate::organization_host::public_base(&state.config).as_str())
+                .into_response(),
+        );
     }
     let flow_cookie = jar
         .get(FLOW_COOKIE)

@@ -835,7 +835,12 @@ pub async fn compute_realm_state_checksum(
 pub fn cimd_policy(realm: &Value) -> (Vec<String>, Vec<String>) {
     let strings = |v: Option<&Value>| -> Vec<String> {
         v.and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
             .unwrap_or_default()
     };
     let profiles = realm
@@ -858,15 +863,17 @@ pub fn cimd_policy(realm: &Value) -> (Vec<String>, Vec<String>) {
             .get("conditions")
             .and_then(Value::as_array)
             .and_then(|c| {
-                c.iter().find(|c| {
-                    c.get("condition").and_then(Value::as_str) == Some("client-id-uri")
-                })
+                c.iter()
+                    .find(|c| c.get("condition").and_then(Value::as_str) == Some("client-id-uri"))
             })
             .and_then(|c| c.get("configuration"))
         else {
             continue;
         };
-        if !strings(cond.get("client-id-uri-scheme")).iter().all(|s| s == "https") {
+        if !strings(cond.get("client-id-uri-scheme"))
+            .iter()
+            .all(|s| s == "https")
+        {
             continue;
         }
         for name in strings(policy.get("profiles")) {

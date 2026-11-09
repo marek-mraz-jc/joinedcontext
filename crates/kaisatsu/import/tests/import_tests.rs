@@ -109,12 +109,20 @@ async fn ri_and_all_keycloak_clients_apply_cleanly_and_second_apply_is_idempoten
 #[tokio::test]
 async fn cimd_domains_come_from_the_realm_client_policy_and_default_to_none() {
     let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
-    apply_realm_files(&store, &[("ri_dev.json".into(), ri_fixture())], &default_opts())
-        .await
-        .expect("dev applies");
+    apply_realm_files(
+        &store,
+        &[("ri_dev.json".into(), ri_fixture())],
+        &default_opts(),
+    )
+    .await
+    .expect("dev applies");
     let dev = store.get_realm("dev").await.unwrap().unwrap();
     assert_eq!(dev.cimd_allowed_client_domains, ["claude.ai", "vscode.dev"]);
-    assert!(dev.cimd_allowed_redirect_domains.iter().any(|d| d == "claude.ai"));
+    assert!(
+        dev.cimd_allowed_redirect_domains
+            .iter()
+            .any(|d| d == "claude.ai")
+    );
 
     let mut prod = ri_fixture();
     let map = prod.as_object_mut().unwrap();
@@ -125,7 +133,11 @@ async fn cimd_domains_come_from_the_realm_client_policy_and_default_to_none() {
         .await
         .expect("a realm without the policy applies");
     let prod = store.get_realm("dev").await.unwrap().unwrap();
-    assert!(prod.cimd_allowed_client_domains.is_empty(), "{:?}", prod.cimd_allowed_client_domains);
+    assert!(
+        prod.cimd_allowed_client_domains.is_empty(),
+        "{:?}",
+        prod.cimd_allowed_client_domains
+    );
     assert!(prod.cimd_allowed_redirect_domains.is_empty());
 }
 

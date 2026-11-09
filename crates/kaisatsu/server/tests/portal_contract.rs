@@ -900,7 +900,12 @@ fn hub_authorize(redirect: &str, pkce: &[(&str, &str)]) -> String {
 async fn the_shipped_mcp_hub_is_public_and_requires_pkce_s256() {
     let realm = realm().await;
     let app = &realm.app;
-    let jc = realm.store.get_realm("jc").await.unwrap().expect("realm jc");
+    let jc = realm
+        .store
+        .get_realm("jc")
+        .await
+        .unwrap()
+        .expect("realm jc");
     let hub = realm
         .store
         .get_client_by_client_id(&jc.id, "mcp-hub")
@@ -912,16 +917,31 @@ async fn the_shipped_mcp_hub_is_public_and_requires_pkce_s256() {
 
     let claude = "https://claude.ai/api/mcp/auth_callback";
     let (challenge, _) = pkce();
-    let s256 = [("code_challenge", challenge.as_str()), ("code_challenge_method", "S256")];
+    let s256 = [
+        ("code_challenge", challenge.as_str()),
+        ("code_challenge_method", "S256"),
+    ];
     let answer = get_page(app, &hub_authorize(claude, &s256), None).await;
     assert_eq!(answer.status, StatusCode::SEE_OTHER, "{}", answer.text);
-    assert!(answer.location().contains("/login-actions/authenticate"), "{}", answer.location());
+    assert!(
+        answer.location().contains("/login-actions/authenticate"),
+        "{}",
+        answer.location()
+    );
 
     // Refused with invalid_request and no code: no PKCE, and PKCE `plain`.
-    let plain = [("code_challenge", challenge.as_str()), ("code_challenge_method", "plain")];
+    let plain = [
+        ("code_challenge", challenge.as_str()),
+        ("code_challenge_method", "plain"),
+    ];
     for (name, pair) in [("no PKCE", &[][..]), ("plain", &plain[..])] {
         let answer = get_page(app, &hub_authorize(claude, pair), None).await;
-        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{name}: {}", answer.text);
+        assert_eq!(
+            answer.status,
+            StatusCode::BAD_REQUEST,
+            "{name}: {}",
+            answer.text
+        );
         assert_eq!(answer.json()["error"], "invalid_request", "{name}");
         assert!(answer.headers.get(header::LOCATION).is_none(), "{name}");
     }
