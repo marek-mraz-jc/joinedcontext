@@ -1292,4 +1292,85 @@ mod tests {
         assert!(project_token(&target("../helsinki"), &tree, source).is_err());
         std::fs::remove_dir_all(&tree).ok();
     }
+
+    fn manifest(kind: &str, name: &str, spec: serde_json::Value) -> RawManifest {
+        RawManifest {
+            api_version: "joinedcontext.com/v1alpha1".to_owned(),
+            kind: kind.to_owned(),
+            metadata: RawMetadata {
+                name: name.to_owned(),
+                namespace: None,
+                rest: serde_json::Map::new(),
+            },
+            spec,
+            status: None,
+        }
+    }
+
+    /// jc-multiorg-portal: an Endpoint of each Organization's project publishes into that
+    /// Organization's own catalogue, under its name, with its own token, whatever catalogue its
+    /// `CkanInstance` names; the other Organization's catalogue is never the target.
+    #[test]
+    fn each_organizations_endpoint_publishes_into_its_own_catalogue_alone() {
+        let repo = Repository::from_manifests(
+            vec![
+                manifest("Organization", "hel", json!({ "installation": true })),
+                manifest("Organization", "ba", json!({})),
+                manifest("Project", "helsinki", json!({ "organizationRef": "hel" })),
+                manifest(
+                    "Project",
+                    "bratislava",
+                    json!({ "organizationRef": { "kind": "Organization", "name": "ba" } }),
+                ),
+                manifest("Project", "unowned", json!({})),
+            ],
+            None,
+        )
+        .expect("a repository");
+        let dir = std::env::temp_dir().join(format!("jc-multiorg-ckan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let catalogue = |org: &str| {
+            let token_file = dir.join(format!("{org}.token"));
+            std::fs::write(&token_file, format!("{org}-token\n")).expect("token");
+            crate::organization_host::OrganizationCatalogue {
+                organization: org.to_owned(),
+                url: format!("http://opendata.{org}.localhost:42301").parse().unwrap(),
+                api: Some(format!("http://opendata.{org}.localhost").parse().unwrap()),
+                reach: Some("127.0.0.1:42301".parse().unwrap()),
+                data_host: Some(format!("http://api.{org}.localhost:42301")),
+                token_file,
+            }
+        };
+        let sync = CkanSync::new("portal.example")
+            .for_organizations(vec![catalogue("hel"), catalogue("ba")]);
+        let source = publisher::TokenSource {
+            env: None,
+            age_key_file: None,
+        };
+        for (project, org) in [("helsinki", "hel"), ("bratislava", "ba"), ("unowned", "hel")] {
+            // The instance names hel-fi on data.example.fi: the Organization's catalogue wins.
+            let routed = sync.routed(&repo, target(project));
+            let own = format!("http://opendata.{org}.localhost:42301");
+            assert_eq!(routed.instance.url, own, "{project}");
+            assert_eq!(routed.instance.organization_default.as_deref(), Some(org));
+            assert_eq!(routed.publication.organization.as_deref(), Some(org));
+            let (_, api_url, settings) = sync
+                .client(&routed, &dir, source)
+                .unwrap_or_else(|e| panic!("{project}: {e}"));
+            assert_eq!(api_url, format!("http://opendata.{org}.localhost"));
+            assert_eq!(settings.host, format!("http://api.{org}.localhost:42301"));
+            let other = if org == "hel" { "ba" } else { "hel" };
+            assert!(!routed.instance.url.contains(other), "{project}");
+        }
+        // Without its token file the run says so, and never falls back to another's.
+        std::fs::remove_file(dir.join("ba.token")).expect("rm");
+        let routed = sync.routed(&repo, target("bratislava"));
+        let err = sync.client(&routed, &dir, source).err().expect("refused");
+        assert!(err.contains("ba's catalogue"), "{err}");
+        assert!(!err.contains("hel-token"), "{err}");
+        // A Portal without Organization catalogues keeps the instance's.
+        let plain = CkanSync::new("portal.example").routed(&repo, target("bratislava"));
+        assert_eq!(plain.instance.url, "https://data.example.fi");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

@@ -196,8 +196,8 @@ async fn each_host_lists_and_opens_only_its_own_organizations_projects() {
         );
         for uri in [
             "/api/v1/projects/helsinki",
-            "/api/v1/projects/helsinki/spaces",
-            "/api/v1/projects/helsinki/spaces/helsinki-air",
+            "/api/v1/projects/helsinki/contextspaces",
+            "/api/v1/projects/helsinki/contextspaces/helsinki-air",
         ] {
             let (st, body) = call(&state, BA, &on_ba, "GET", uri).await;
             assert!(
@@ -210,7 +210,7 @@ async fn each_host_lists_and_opens_only_its_own_organizations_projects() {
             BA,
             &on_ba,
             "GET",
-            "/api/v1/projects/bratislava/spaces",
+            "/api/v1/projects/bratislava/contextspaces",
         )
         .await;
         assert_eq!(
@@ -247,13 +247,13 @@ async fn a_person_of_another_organization_signed_in_on_its_host_gets_403() {
         let (st, body) = call(&state, BA, &on_ba, "GET", uri).await;
         assert_eq!(st, StatusCode::FORBIDDEN, "{uri}: {body}");
     }
-    // Signing out stays open to them.
-    let (st, _) = call(&state, BA, &on_ba, "POST", "/api/v1/auth/logout").await;
-    assert_ne!(st, StatusCode::FORBIDDEN);
     // On their own host they read their own.
     let on_hel = signed_in(&state.config, person("hel-only", &[]), Some("hel")).await;
     let (st, list) = call(&state, HEL, &on_hel, "GET", "/api/v1/projects").await;
     assert_eq!((st, names(&list)), (StatusCode::OK, vec!["helsinki"]));
+    // Signing out stays open to them (last: it ends every session of theirs).
+    let (st, _) = call(&state, BA, &on_ba, "POST", "/api/v1/auth/logout").await;
+    assert_ne!(st, StatusCode::FORBIDDEN);
 }
 
 /// One cookie key seals every host's cookies: the session of hel's host, presented on ba's (or on
