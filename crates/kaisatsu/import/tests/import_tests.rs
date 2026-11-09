@@ -426,3 +426,58 @@ async fn a_realm_file_cannot_read_the_process_environment_unless_the_cli_asks() 
     .await
     .expect("the standalone CLI reads it");
 }
+
+/// A secret file rotated behind an unchanged realm document reaches the stored client on the next
+/// apply (a restart re-applies the same files); an apply with nothing rotated stays unchanged.
+#[tokio::test]
+async fn a_rotated_secret_file_behind_an_unchanged_document_is_applied() {
+    let dir = std::env::temp_dir().join(format!("kaisatsu-rotate-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("SVC_SECRET");
+    std::fs::write(&file, "first-secret-value").unwrap();
+    let opts = ApplyOptions {
+        secrets_dir: Some(dir.clone()),
+        ..Default::default()
+    };
+    let doc = json!({
+        "realm": "rotate",
+        "clientScopes": [
+            {"name": "connector", "protocol": "openid-connect"},
+            {"name": "offline_access", "protocol": "openid-connect"}
+        ],
+        "clients": [{
+            "clientId": "svc",
+            "publicClient": false,
+            "serviceAccountsEnabled": true,
+            "secret": format!("$(file:{})", file.display())
+        }]
+    });
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let files = [("realm.json".to_owned(), doc)];
+    let secret = || async {
+        store
+            .get_client_by_client_id("rotate", "svc")
+            .await
+            .unwrap()
+            .unwrap()
+            .secret
+    };
+    apply_realm_files(&store, &files, &opts)
+        .await
+        .expect("apply");
+    assert_eq!(secret().await.as_deref(), Some("first-secret-value"));
+    let again = apply_realm_files(&store, &files, &opts)
+        .await
+        .expect("re-apply");
+    assert!(!again.has_changes(), "nothing rotated: unchanged");
+
+    std::fs::write(&file, "rotated-secret-value").unwrap();
+    let rotated = apply_realm_files(&store, &files, &opts)
+        .await
+        .expect("apply rotated");
+    assert_ne!(rotated.checksum, again.checksum);
+    assert_eq!(secret().await.as_deref(), Some("rotated-secret-value"));
+    // The checksum holds no secret value.
+    assert!(!rotated.checksum.contains("rotated"));
+    std::fs::remove_dir_all(&dir).ok();
+}
