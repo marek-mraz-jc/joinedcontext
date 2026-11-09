@@ -850,9 +850,12 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     // Endpoint by its scope `endpoint:{slug}`, which jc's linker links to `jcctl` as the
     // deployment's admin-permissions Job does, and reads it with the person's own grants.
     let scope = format!("endpoint:{CLOSED}");
-    let cli = eventually("jcctl holds the closed Endpoint's scope", &jc, 30, || async {
-        scoped_token(&jc, "jcctl", PERSON, &scope).await
-    })
+    let cli = eventually(
+        "jcctl holds the closed Endpoint's scope",
+        &jc,
+        30,
+        || async { scoped_token(&jc, "jcctl", PERSON, &scope).await },
+    )
     .await;
     let read = format!("{closed}/entities?type=Thing");
     let (status, body) = call(&jc, get.clone(), &read, Some(&cli), None).await;
@@ -860,7 +863,14 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
     // The same token on another Endpoint, even a public one, names a scope that is not that
     // Endpoint's: refused.
-    let (status, body) = call(&jc, get.clone(), &format!("{public}/types"), Some(&cli), None).await;
+    let (status, body) = call(
+        &jc,
+        get.clone(),
+        &format!("{public}/types"),
+        Some(&cli),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
     // A person without a grant gets the scope, never the data: the scope names the Endpoint.
     let stranger_cli = scoped_token(&jc, "jcctl", STRANGER, &scope).await.unwrap();
@@ -889,7 +899,13 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     assert_eq!(status, StatusCode::OK, "portal-api's own token: {body}");
     let own = body["access_token"].as_str().unwrap();
     let claims = claims_of(own);
-    assert!(claims["scope"].as_str().unwrap_or_default().contains(&scope), "{claims}");
+    assert!(
+        claims["scope"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(&scope),
+        "{claims}"
+    );
     assert!(claims["aud"].to_string().contains("mcp-hub"), "{claims}");
     let (status, body) = call(&jc, get.clone(), &read, Some(own), None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");

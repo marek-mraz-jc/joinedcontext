@@ -484,7 +484,11 @@ mod tests {
             "https://jwks.example.com/openid/v1/jwks",
             "https://kubernetes.default.svc.cluster.local.example.com/openid/v1/jwks",
         ] {
-            let why = guard.cluster_jwks(url, false).await.unwrap_err().to_string();
+            let why = guard
+                .cluster_jwks(url, false)
+                .await
+                .unwrap_err()
+                .to_string();
             assert!(why.contains("not an in-cluster host"), "{url}: {why}");
         }
     }
