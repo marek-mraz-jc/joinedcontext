@@ -48,7 +48,7 @@ if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.sho
 // for a project /projects does not list (frameFor, jc-multiorg-portal). A file's own fetch stub
 // that answers that list without the project of the page under test (the window's address) gets
 // it added: a person who opens a project page on prod reads that project. The file's mock still
-// sees every call; a stub naming the project, answering anything but a List, or marking its list
+// sees every call; a stub naming the project, answering no items, or marking its list
 // exact (EXACT_PROJECTS, an outsider's on purpose) is kept as it is.
 
 const stubGlobal = vi.stubGlobal.bind(vi);
@@ -56,21 +56,27 @@ vi.stubGlobal = (name: string | symbol | number, value: unknown) =>
   stubGlobal(name, name === "fetch" && typeof value === "function" ? listingThePage(value as typeof fetch) : value);
 
 function listingThePage(stubbed: typeof fetch): typeof fetch {
-  return async (input, init) => {
-    const response = await stubbed(input, init);
-    const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
-    const project = /^\/projects\/([^/]+)/.exec(window.location.pathname)?.[1];
-    const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-    if (!project || project === "new" || method !== "GET" || url.pathname !== "/api/v1/projects" || !response?.ok || response.headers.has(EXACT_PROJECTS)) {
-      return response;
-    }
-    const body = await response.clone().json().catch(() => null);
-    if (body?.kind !== "List" || !Array.isArray(body.items) || body.items.some((item: { name?: string }) => item?.name === project)) {
-      return response;
-    }
-    return new Response(JSON.stringify({ ...body, items: [...body.items, { name: decodeURIComponent(project) }] }), {
-      status: response.status,
-      headers: response.headers,
-    });
-  };
+  // A proxy, not a new function: a file reads its stub back through globalThis.fetch (`.mock.calls`,
+  // `mockImplementation`, `.checks`), and every property is the file's own.
+  return new Proxy(stubbed, {
+    apply: (target, self, args: Parameters<typeof fetch>) => listing(Reflect.apply(target, self, args), ...args),
+  });
+}
+
+async function listing(answer: Response | Promise<Response>, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const response = await answer;
+  const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+  const project = /^\/projects\/([^/]+)/.exec(window.location.pathname)?.[1];
+  const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+  if (!project || project === "new" || method !== "GET" || url.pathname !== "/api/v1/projects" || !response?.ok || response.headers.has(EXACT_PROJECTS)) {
+    return response;
+  }
+  const body = await response.clone().json().catch(() => null);
+  if (!Array.isArray(body?.items) || body.items.some((item: { name?: string }) => item?.name === decodeURIComponent(project))) {
+    return response;
+  }
+  return new Response(JSON.stringify({ ...body, items: [...body.items, { name: decodeURIComponent(project) }] }), {
+    status: response.status,
+    headers: response.headers,
+  });
 }
