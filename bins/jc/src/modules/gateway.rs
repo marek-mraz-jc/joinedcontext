@@ -78,6 +78,7 @@ pub fn work_dir(setup: &Setup) -> PathBuf {
 /// |---|---|
 /// | `JC_GATEWAY_BROKER_URL` | Antares' hop |
 /// | `JC_GATEWAY_ORG_DOMAIN`, `JC_GATEWAY_PUBLIC_URL`, `JC_GATEWAY_PREVIEWS_DIR` | the mounts, the state dir |
+/// | `JC_GATEWAY_OAUTH_KEY` | the generated `gateway-oauth-key` |
 /// | `JC_OIDC_ISSUER`, `_JWKS_URL`, `_CLIENT_ID`, `_CLIENT_SECRET`, `JC_GATEWAY_REVOCATIONS_URL`, `_CONNECTORS_URL`, `_USAGE_URL` | kaisatsu and the Portal |
 /// | `JC_GATEWAY_REPO_DIR`, `_PROJECTS_DIR`, `_ASSEMBLY_DIR` | shako, checked out by [`follow_forge`] |
 #[must_use]
@@ -125,6 +126,11 @@ pub fn vars(
     if !wire {
         return out;
     }
+    // The anonymous OAuth server prod runs (ADR-N-052): its issuer is the public URL above.
+    group(vec![(
+        "JC_GATEWAY_OAUTH_KEY",
+        secret(Secret::GatewayOauthKey),
+    )]);
     if let (Some(id), Some(_), Some(internal)) = (
         siblings.get(Module::Kaisatsu),
         siblings.get(Module::Portal),
@@ -954,6 +960,10 @@ mod tests {
         let v = vars(&siblings, &setup, true, &mount, Some(&hop), None, bind);
         assert_eq!(v["JC_GATEWAY_BROKER_URL"], "http://127.0.0.1:4242");
         assert_eq!(v["JC_GATEWAY_PUBLIC_URL"], "https://city.example");
+        assert_eq!(
+            v["JC_GATEWAY_OAUTH_KEY"],
+            setup.value(Secret::GatewayOauthKey).unwrap()
+        );
         assert_eq!(v["JC_OIDC_ISSUER"], "https://city.example/id/realms/jc");
         assert_eq!(
             v["JC_OIDC_JWKS_URL"],
