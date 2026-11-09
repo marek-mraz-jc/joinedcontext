@@ -30,7 +30,16 @@ store-failure-output = true
 # Defined on the default profile; ci inherits.
 [test-groups]
 db-exclusive = { max-threads = 1 }
+# pg_explain's tests one at a time: its seed holds attr_instances under ANALYZE for seconds while
+# a sibling test creates a week partition of that table (55P03 lock timeout) or the migrations'
+# concurrent index build waits on the seed (40P01 deadlock); seen when CI split the run in
+# partitions (run 42610186767), the plans assert one database's statistics besides.
+pg-explain = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'binary(nats_e2e) or binary(pg_rls_pentest) or binary(pg_outbox) or binary(pg_temporal) or binary(pg_doc) or binary(pg_entity) or binary(pg) or binary(ws)'
 test-group = 'db-exclusive'
+
+[[profile.default.overrides]]
+filter = 'binary(pg_explain)'
+test-group = 'pg-explain'

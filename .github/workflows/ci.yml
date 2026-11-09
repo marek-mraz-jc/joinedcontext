@@ -4,8 +4,8 @@ name: ci
 # Four Cargo workspaces live here: the root (bins/jc and the modules it links) and the nested
 # crates/antares, crates/ekiben and crates/portal, each with its own lockfile; each is its own job.
 # Jobs are gated by the paths changed since the base (`changes`): a docs-only change runs only
-# `lint` (gitleaks). A dispatch runs every job (the repository is private and its minutes are metered, so
-# there is no schedule; to put one back: `schedule: [{ cron: "7 2 * * *" }]`).
+# `changes` (gitleaks runs in it). A dispatch runs every job (the repository is private and its
+# minutes are metered, so there is no schedule; to put one back: `schedule: [{ cron: "7 2 * * *" }]`).
 #
 # A push to main ships (ship-proof/** behaves like main, for measuring the pipeline without
 # touching main): `image` (image.yml, mode build) compiles the release binary and pushes the image
@@ -35,7 +35,7 @@ env:
 jobs:
   changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 10
     # Reads this commit's other ci runs (changes.sh REUSE).
     permissions: { contents: read, actions: read }
     outputs:
@@ -63,6 +63,29 @@ jobs:
           REUSE: ${{ steps.release.outputs.release == 'true' && '1' || '0' }}
           GH_TOKEN: ${{ github.token }}
         run: sh .github/scripts/changes.sh
+      # The checks that need no build ride in this job (one runner slot, not four): gitleaks over
+      # every commit this push or pull request brings (not the repository's history: the imported
+      # trees carry upstream test vectors their own repositories allow-list); actionlint when a
+      # workflow changed; the App bundles both images ship in /srv/apps, from the same sources,
+      # when a Dockerfile or an App changed.
+      - env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          BRANCH: ${{ github.ref_name }}
+        run: sh .github/scripts/gitleaks.sh
+      - if: steps.paths.outputs.workflows == 'true'
+        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest
+      - if: steps.paths.outputs.workflows == 'true'
+        run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo
+          rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 -color
+      - if: steps.paths.outputs.dockerfiles == 'true'
+        working-directory: crates/portal
+        run: |
+          python3 scripts/ci/check-dockerfile-members.py --selftest
+          python3 scripts/ci/check-dockerfile-members.py
+          python3 scripts/ci/check-dockerfile-members.py --apps Dockerfile ../../bins/jc/Dockerfile
   # The root workspace: every module crate and bins/jc, which links Antares, ekiben and the Portal
   # by path, so a change in any of them reaches it.
   root-clippy:
@@ -79,9 +102,10 @@ jobs:
   # Postgres for the store tests of each module (each its own database; kaisatsu and the Portal's
   # apps tests create their own roles). nextest runs the binaries side by side; the tests sharing
   # one module's database stay one at a time (.config/nextest.toml). The tests are split in
-  # three jobs, each with its own Postgres: every job compiles the same warm build (no
-  # archive to upload and download) and runs its `--partition count:k/N`; the first also runs the
-  # doc tests. The partition job names are listed in changes.sh (covered).
+  # two jobs, each with its own Postgres: every job compiles the same warm build (no archive to
+  # upload and download) and runs its `--partition slice:k/N` (round robin over all tests; count:
+  # deals each binary's first test to job 1); the first also runs the doc tests. The partition job
+  # names are listed in changes.sh (covered).
   root-test:
     name: root-test-${{ matrix.part }}
     needs: changes
@@ -90,7 +114,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix: { part: [1, 2, 3] }
+      matrix: { part: [1, 2] }
     services:
       postgres:
         image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
@@ -138,7 +162,7 @@ jobs:
         with: { key: root-test }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: cargo-nextest }
-      - run: cargo nextest run --workspace --locked --profile ci --no-fail-fast --partition "count:${{ matrix.part }}/${{ strategy.job-total }}"
+      - run: cargo nextest run --workspace --locked --profile ci --no-fail-fast --partition "slice:${{ matrix.part }}/${{ strategy.job-total }}"
       - if: matrix.part == 1
         run: cargo test --workspace --locked --no-fail-fast --doc
       - if: always()
@@ -158,8 +182,8 @@ jobs:
         with: { workspace: crates/antares, key: antares-clippy, components: "clippy, rustfmt" }
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-  # nextest with Antares' own groups (crates/antares/.config/nextest.toml db-exclusive), split in
-  # three jobs as root-test is, each with its own PostGIS; the first also runs the doc tests.
+  # nextest with Antares' own groups (crates/antares/.config/nextest.toml), split in three jobs as
+  # root-test is, each with its own PostGIS; the first also runs the doc tests.
   antares-test:
     name: antares-test-${{ matrix.part }}
     needs: changes
@@ -190,7 +214,7 @@ jobs:
         with: { workspace: crates/antares, key: antares-test }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: cargo-nextest }
-      - run: cargo nextest run --workspace --locked --profile ci --partition "count:${{ matrix.part }}/${{ strategy.job-total }}"
+      - run: cargo nextest run --workspace --locked --profile ci --partition "slice:${{ matrix.part }}/${{ strategy.job-total }}"
       - if: matrix.part == 1
         run: cargo test --workspace --locked --no-fail-fast --doc
       - if: always()
@@ -317,35 +341,6 @@ jobs:
             echo "::endgroup::"
           done
           if [ -n "$red" ]; then echo "::error::red:$red"; exit 1; fi
-  # The checks that need no build, one job: gitleaks over every commit this push or pull request
-  # brings (not the repository's history: the imported trees carry upstream test vectors their own
-  # repositories allow-list); actionlint when a workflow changed; the App bundles both images ship
-  # in /srv/apps, from the same sources, when a Dockerfile or an App changed.
-  lint:
-    needs: changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with: { fetch-depth: 0 }
-      - env:
-          EVENT: ${{ github.event_name }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
-          BRANCH: ${{ github.ref_name }}
-        run: sh .github/scripts/gitleaks.sh
-      - if: needs.changes.outputs.workflows == 'true'
-        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest
-      - if: needs.changes.outputs.workflows == 'true'
-        run: >-
-          docker run --rm -v "$PWD:/repo" -w /repo
-          rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 -color
-      - if: needs.changes.outputs.dockerfiles == 'true'
-        working-directory: crates/portal
-        run: |
-          python3 scripts/ci/check-dockerfile-members.py --selftest
-          python3 scripts/ci/check-dockerfile-members.py
-          python3 scripts/ci/check-dockerfile-members.py --apps Dockerfile ../../bins/jc/Dockerfile
   # A branch that changes the Dockerfile or its ignore file: the full `docker build` (every stage,
   # no push), which the shipped image skips by handing in its compiled binary.
   dockerfile:
@@ -381,7 +376,7 @@ jobs:
   # it deployable (deployment verify-pinned-images.py). A skipped gate is one this push's paths
   # do not reach, or one another run of this commit passed (changes.sh REUSE).
   promote:
-    needs: [changes, lint, root-clippy, root-test, antares-clippy, antares-test, ekiben, portal-clippy, portal-test, ui, supply-chain, image, scan]
+    needs: [changes, root-clippy, root-test, antares-clippy, antares-test, ekiben, portal-clippy, portal-test, ui, supply-chain, image, scan]
     if: >-
       always() && needs.image.result == 'success' && needs.scan.result == 'success' &&
       !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
