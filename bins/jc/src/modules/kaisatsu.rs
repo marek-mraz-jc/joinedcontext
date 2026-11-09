@@ -75,37 +75,126 @@ pub async fn open_kaisatsu_store(
     }
 }
 
-/// Applies the realm files of `dir` (one realm, merged in file-name order), their `$(file:...)`
-/// secrets read under `secrets_dir`. A directory without realm files is nothing to apply, not an
-/// error: a first start mounts an empty import dir.
+/// Applies the realm files of `dir`, their `$(file:...)` secrets read under `secrets_dir`: the
+/// files of one `realm` merged in file-name order, each realm on its own (a cutover's export can
+/// hold the deployment's realm beside another). A directory without realm files is nothing to
+/// apply, not an error: a first start mounts an empty import dir. Answers whether the files define
+/// the Portal's sign-in client in `realm`: the deployment then brings that realm itself.
 async fn apply_import_dir(
     store: &Arc<dyn Store>,
     dir: &std::path::Path,
     secrets_dir: Option<std::path::PathBuf>,
-) -> Result<(), StartError> {
+    realm: &setup::Realm,
+) -> Result<bool, StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
     let files = load_realm_files_from_path(dir).map_err(|e| err(&e))?;
-    if files.is_empty() {
-        return Ok(());
+    let mut by_realm: std::collections::BTreeMap<String, Vec<(String, serde_json::Value)>> =
+        std::collections::BTreeMap::new();
+    let mut unnamed = Vec::new();
+    for (name, file) in files {
+        match file["realm"].as_str() {
+            Some(of) => by_realm
+                .entry(of.to_owned())
+                .or_default()
+                .push((name, file)),
+            None => unnamed.push((name, file)),
+        }
+    }
+    // A file naming no realm belongs to the one the others name, as when they were all merged.
+    if !unnamed.is_empty() {
+        if by_realm.len() > 1 {
+            return Err(err(&format!(
+                "{} names no realm while the import dir holds several",
+                unnamed[0].0
+            )));
+        }
+        let key = by_realm.keys().next().cloned().unwrap_or_default();
+        by_realm.entry(key).or_default().extend(unnamed);
     }
     let options = ApplyOptions {
         secrets_dir,
         ..ApplyOptions::default()
     };
-    apply_realm_files(store, &files, &options)
-        .await
-        .map(|_| ())
-        .map_err(|e| err(&e))
+    let mut brings_portal = false;
+    for (name, files) in &by_realm {
+        if name == realm.as_str() {
+            let merged = kaisatsu_import::merge_realm_files(files).map_err(|e| err(&e))?;
+            brings_portal = merged["clients"].as_array().is_some_and(|clients| {
+                clients
+                    .iter()
+                    .any(|c| c["clientId"].as_str() == Some(setup::PORTAL_CLIENT))
+            });
+        }
+        apply_realm_files(store, files, &options)
+            .await
+            .map_err(|e| err(&e))?;
+    }
+    Ok(brings_portal)
+}
+
+/// Who writes the configured realm: `jc` (its first-start files, on every start) or the
+/// deployment (an imported realm `jc` never writes to).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RealmOwner {
+    Jc,
+    Import,
+}
+
+/// The state file that keeps [`RealmOwner`] of `realm` once decided, so a restart decides the
+/// same way whether or not the import dir is still mounted.
+fn owner_file(state_dir: &std::path::Path, realm: &setup::Realm) -> std::path::PathBuf {
+    state_dir.join(format!("realm-owner-{realm}"))
+}
+
+/// Decides, once per state directory, who writes `realm`, and keeps the answer in
+/// [`owner_file`]. Without a kept answer the deployment owns the realm when its import dir
+/// defines the Portal's client there, or when the store held the realm before this start and it
+/// is not `jc`'s default realm (an older `jc` made only that one, and kept no file).
+fn realm_owner(
+    state_dir: &std::path::Path,
+    realm: &setup::Realm,
+    existed_before: bool,
+    import_brings_portal: bool,
+) -> Result<RealmOwner, StartError> {
+    let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
+    let file = owner_file(state_dir, realm);
+    match std::fs::read_to_string(&file) {
+        Ok(text) => {
+            return match text.trim() {
+                "jc" => Ok(RealmOwner::Jc),
+                "import" => Ok(RealmOwner::Import),
+                _ => Err(err(&format!("{} names no realm owner", file.display()))),
+            };
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(err(&format!("cannot read {}: {e}", file.display()))),
+    }
+    let owner =
+        if import_brings_portal || (existed_before && realm.as_str() != setup::DEFAULT_REALM) {
+            RealmOwner::Import
+        } else {
+            RealmOwner::Jc
+        };
+    let text = match owner {
+        RealmOwner::Jc => "jc\n",
+        RealmOwner::Import => "import\n",
+    };
+    std::fs::write(&file, text)
+        .map_err(|e| err(&format!("cannot write {}: {e}", file.display())))?;
+    Ok(owner)
 }
 
 /// The account console's client in the Portal's realm (Keycloak's `account-console`): public,
 /// authorization code + PKCE S256, redirects only under kaisatsu's own `/account/` path, CORS
 /// for that origin alone (`+`), and audience `account`, the only audience the account REST
 /// takes. No service account, no direct grants, no realm role in its tokens.
-fn account_console_realm_file(kaisatsu_public: &str) -> (String, serde_json::Value) {
-    let account = format!("{kaisatsu_public}/realms/{}/account", setup::PORTAL_REALM);
+fn account_console_realm_file(
+    kaisatsu_public: &str,
+    realm: &setup::Realm,
+) -> (String, serde_json::Value) {
+    let account = format!("{kaisatsu_public}/realms/{realm}/account");
     let client = serde_json::json!({
-        "realm": setup::PORTAL_REALM,
+        "realm": realm.as_str(),
         "clients": [{
             "clientId": kaisatsu_server::ACCOUNT_CONSOLE_CLIENT,
             "name": "Account Console",
@@ -143,9 +232,15 @@ fn account_console_realm_file(kaisatsu_public: &str) -> (String, serde_json::Val
 }
 
 /// Applies the realm the Portal signs in through (first-start setup), when the Portal runs beside
-/// kaisatsu. Apply mode `no-delete`: a restart updates what changed and removes nothing an
-/// operator added. Secrets reach the importer as `$(env:...)` values from memory.
-async fn apply_portal_realm(store: &Arc<dyn Store>, ctx: BuildCtx<'_>) -> Result<(), StartError> {
+/// kaisatsu and `jc` owns that realm ([`realm_owner`]); an imported realm is left as it came.
+/// Apply mode `no-delete`: a restart updates what changed and removes nothing an operator added.
+/// Secrets reach the importer as `$(env:...)` values from memory.
+async fn apply_portal_realm(
+    store: &Arc<dyn Store>,
+    ctx: BuildCtx<'_>,
+    existed_before: bool,
+    import_brings_portal: bool,
+) -> Result<(), StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
     let (Some(base), Some(_)) = (
         ctx.siblings.portal_base(),
@@ -153,13 +248,23 @@ async fn apply_portal_realm(store: &Arc<dyn Store>, ctx: BuildCtx<'_>) -> Result
     ) else {
         return Ok(());
     };
-    let mut files = setup::portal_realm_files(&base).map_err(|e| err(&e))?;
+    let realm = &ctx.setup.realm;
+    if realm_owner(&ctx.setup.dir, realm, existed_before, import_brings_portal)?
+        == RealmOwner::Import
+    {
+        tracing::info!(
+            %realm,
+            "kaisatsu: the deployment brings the Portal's realm; jc writes nothing into it"
+        );
+        return Ok(());
+    }
+    let mut files = setup::portal_realm_files(&base, realm).map_err(|e| err(&e))?;
     if ctx
         .setup
         .value(setup::Secret::GatewayClientSecret)
         .is_some()
     {
-        files.push(setup::gateway_realm_file());
+        files.push(setup::gateway_realm_file(realm));
     }
     if ctx
         .setup
@@ -167,10 +272,10 @@ async fn apply_portal_realm(store: &Arc<dyn Store>, ctx: BuildCtx<'_>) -> Result
         .is_some()
     {
         setup::add_assistant_audience(&mut files);
-        files.push(setup::assistant_realm_file());
+        files.push(setup::assistant_realm_file(realm));
     }
     if let Some(kaisatsu) = ctx.siblings.get(Module::Kaisatsu) {
-        files.push(account_console_realm_file(&kaisatsu.public));
+        files.push(account_console_realm_file(&kaisatsu.public, realm));
     }
     let options = ApplyOptions {
         env_vars: setup::realm_env(ctx.setup),
@@ -242,8 +347,11 @@ fn link_endpoint_scopes(
 }
 
 /// One pass of the linker over the Portal's realm.
-async fn link_pass(store: &Arc<dyn Store>) -> Result<usize, kaisatsu_core::KaisatsuError> {
-    let Some(realm) = store.get_realm(setup::PORTAL_REALM).await? else {
+async fn link_pass(
+    store: &Arc<dyn Store>,
+    realm: &setup::Realm,
+) -> Result<usize, kaisatsu_core::KaisatsuError> {
+    let Some(realm) = store.get_realm(realm.as_str()).await? else {
         return Ok(0);
     };
     let scopes = store.list_client_scopes(&realm.id).await?;
@@ -271,13 +379,14 @@ async fn link_pass(store: &Arc<dyn Store>) -> Result<usize, kaisatsu_core::Kaisa
 /// optional scope is set (T-6301).
 fn follow_endpoint_scopes(
     store: Arc<dyn Store>,
+    realm: setup::Realm,
     shutdown: &CancellationToken,
     tasks: &TaskTracker,
 ) {
     let shutdown = shutdown.clone();
     tasks.spawn(async move {
         loop {
-            match link_pass(&store).await {
+            match link_pass(&store, &realm).await {
                 Ok(0) => {}
                 Ok(n) => tracing::info!(clients = n, "kaisatsu: Endpoint scopes linked"),
                 Err(e) => tracing::warn!(error = %e, "kaisatsu: Endpoint scopes not linked"),
@@ -304,13 +413,21 @@ pub async fn build(
         .ok_or_else(|| err(&"no key-encryption key"))?;
     let kek = Kek::from_raw_bytes(kek.as_bytes()).map_err(|e| err(&e))?;
     let store = open_kaisatsu_store(cfg, kek.clone()).await?;
+    let realm = &ctx.setup.realm;
+    let existed_before = store
+        .get_realm(realm.as_str())
+        .await
+        .map_err(|e| err(&e))?
+        .is_some();
+    let mut import_brings_portal = false;
     if let Some(dir) = &cfg.import_dir {
         // A realm file reads no environment here: its secrets are `$(file:...)` under the
         // configured directory.
-        apply_import_dir(&store, dir, cfg.import_secrets_dir.clone()).await?;
+        import_brings_portal =
+            apply_import_dir(&store, dir, cfg.import_secrets_dir.clone(), realm).await?;
     }
-    apply_portal_realm(&store, ctx).await?;
-    follow_endpoint_scopes(store.clone(), shutdown, tasks);
+    apply_portal_realm(&store, ctx, existed_before, import_brings_portal).await?;
+    follow_endpoint_scopes(store.clone(), realm.clone(), shutdown, tasks);
     let state = KaisatsuState::new(
         store,
         kek,
@@ -413,15 +530,20 @@ mod tests {
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new(
             Kek::from_raw_bytes("07".repeat(32).as_bytes()).unwrap(),
         ));
-        let mut files = setup::portal_realm_files("https://portal.city.example/").unwrap();
+        let mut files =
+            setup::portal_realm_files("https://portal.city.example/", &setup.realm).unwrap();
         setup::add_assistant_audience(&mut files);
-        files.push(setup::assistant_realm_file());
+        files.push(setup::assistant_realm_file(&setup.realm));
         let options = ApplyOptions {
             env_vars: setup::realm_env(&setup),
             ..ApplyOptions::default()
         };
         apply_realm_files(&store, &files, &options).await.unwrap();
-        let realm = store.get_realm(setup::PORTAL_REALM).await.unwrap().unwrap();
+        let realm = store
+            .get_realm(setup.realm.as_str())
+            .await
+            .unwrap()
+            .unwrap();
         let client = |id: &'static str| {
             let store = store.clone();
             let realm = realm.id.clone();
@@ -457,15 +579,88 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let kek = Kek::from_raw_bytes(&[7u8; 32]).unwrap();
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek));
-        apply_import_dir(&store, dir.path(), None).await.unwrap();
+        let dev = setup::Realm::parse("dev").unwrap();
+        assert!(
+            !apply_import_dir(&store, dir.path(), None, &dev)
+                .await
+                .unwrap()
+        );
         assert!(store.list_realms().await.unwrap().is_empty());
         std::fs::write(
             dir.path().join("realm.json"),
             r#"{"realm": "rehearsal", "enabled": true}"#,
         )
         .unwrap();
-        apply_import_dir(&store, dir.path(), None).await.unwrap();
+        assert!(
+            !apply_import_dir(&store, dir.path(), None, &dev)
+                .await
+                .unwrap()
+        );
         assert!(store.get_realm("rehearsal").await.unwrap().is_some());
+    }
+
+    /// Each realm of the import dir is applied on its own, and only the configured realm's
+    /// `portal-api` says the deployment brings that realm.
+    #[tokio::test]
+    async fn every_realm_of_the_import_dir_is_applied_on_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let store: Arc<dyn Store> =
+            Arc::new(MemoryStore::new(Kek::from_raw_bytes(&[7u8; 32]).unwrap()));
+        let client = |realm: &str, id: &str| {
+            serde_json::json!({
+                "realm": realm,
+                "enabled": true,
+                "clients": [{ "clientId": id, "enabled": true, "protocol": "openid-connect" }]
+            })
+        };
+        for (file, value) in [
+            ("00-dev.json", client("dev", "portal-api")),
+            ("10-dev-more.json", client("dev", "extra")),
+            ("20-jc.json", client("jc", "portal-api")),
+        ] {
+            std::fs::write(dir.path().join(file), value.to_string()).unwrap();
+        }
+        let dev = setup::Realm::parse("dev").unwrap();
+        let other = setup::Realm::parse("smartcity").unwrap();
+        assert!(
+            apply_import_dir(&store, dir.path(), None, &dev)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !apply_import_dir(&store, dir.path(), None, &other)
+                .await
+                .unwrap()
+        );
+        for (realm, id) in [
+            ("dev", "portal-api"),
+            ("dev", "extra"),
+            ("jc", "portal-api"),
+        ] {
+            assert!(
+                store
+                    .get_client_by_client_id(realm, id)
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "{realm}/{id}"
+            );
+        }
+        assert!(
+            store
+                .get_client_by_client_id("jc", "extra")
+                .await
+                .unwrap()
+                .is_none(),
+            "one realm's files never merge into another's"
+        );
+        // A file naming no realm is ambiguous among several.
+        std::fs::write(dir.path().join("30-none.json"), r#"{"enabled": true}"#).unwrap();
+        assert!(
+            apply_import_dir(&store, dir.path(), None, &dev)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -638,9 +833,99 @@ mod tests {
     }
 
     #[test]
+    fn the_realm_owner_is_decided_once_and_kept() {
+        let jc = setup::Realm::default();
+        let dev = setup::Realm::parse("dev").unwrap();
+        let owner = |realm: &setup::Realm, before: bool, import: bool| {
+            let dir = tempfile::tempdir().unwrap();
+            realm_owner(dir.path(), realm, before, import).unwrap()
+        };
+        // A fresh store: jc makes the realm, whatever its name.
+        assert_eq!(owner(&jc, false, false), RealmOwner::Jc);
+        assert_eq!(owner(&dev, false, false), RealmOwner::Jc);
+        // The import dir brings the Portal's client: the deployment's realm.
+        assert_eq!(owner(&dev, false, true), RealmOwner::Import);
+        assert_eq!(owner(&jc, true, true), RealmOwner::Import);
+        // Held before this start, no kept answer: an older jc made only `jc`.
+        assert_eq!(owner(&jc, true, false), RealmOwner::Jc);
+        assert_eq!(owner(&dev, true, false), RealmOwner::Import);
+
+        // Once decided, the kept answer wins: a restart without the import dir still leaves an
+        // imported realm alone, and a realm jc made stays jc's.
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            realm_owner(dir.path(), &jc, false, true).unwrap(),
+            RealmOwner::Import
+        );
+        assert_eq!(
+            realm_owner(dir.path(), &jc, true, false).unwrap(),
+            RealmOwner::Import
+        );
+        assert_eq!(
+            realm_owner(dir.path(), &dev, false, false).unwrap(),
+            RealmOwner::Jc
+        );
+        assert_eq!(
+            realm_owner(dir.path(), &dev, true, true).unwrap(),
+            RealmOwner::Jc
+        );
+        std::fs::write(owner_file(dir.path(), &dev), "someone").unwrap();
+        assert!(realm_owner(dir.path(), &dev, true, true).is_err());
+    }
+
+    #[tokio::test]
+    async fn the_linker_works_in_the_configured_realm_only() {
+        let store: Arc<dyn Store> =
+            Arc::new(MemoryStore::new(Kek::from_raw_bytes(&[7; 32]).unwrap()));
+        for name in ["jc", "dev"] {
+            store
+                .upsert_realm(kaisatsu_core::RealmConfig {
+                    id: name.into(),
+                    realm: name.into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            let mut s = scope("endpoint:aaaa", Some("joinedcontext"), false);
+            s.id = format!("{name}-endpoint-scope");
+            s.realm_id = name.into();
+            store.upsert_client_scope(s).await.unwrap();
+            store
+                .upsert_client(ClientRepresentation {
+                    id: format!("{name}-portal-api"),
+                    realm_id: name.into(),
+                    client_id: setup::PORTAL_CLIENT.into(),
+                    ..ClientRepresentation::default()
+                })
+                .await
+                .unwrap();
+        }
+        let dev = setup::Realm::parse("dev").unwrap();
+        assert_eq!(link_pass(&store, &dev).await.unwrap(), 1);
+        let linked = |realm: &'static str| {
+            let store = store.clone();
+            async move {
+                store
+                    .get_client_by_client_id(realm, setup::PORTAL_CLIENT)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .optional_client_scopes
+            }
+        };
+        let scope = "endpoint:aaaa".to_owned();
+        assert!(linked("dev").await.contains(&scope));
+        assert!(
+            !linked("jc").await.contains(&scope),
+            "the other realm is left alone"
+        );
+    }
+
+    #[test]
     fn the_account_console_client_is_public_pkce_and_bound_to_kaisatsus_own_path() {
         let mount = Mount::new("kaisatsu", "https", "jc.example", "/id").unwrap();
-        let (name, file) = account_console_realm_file(&mount.public_base());
+        let (name, file) =
+            account_console_realm_file(&mount.public_base(), &setup::Realm::default());
         assert!(name.ends_with(".json"));
         let client = &file["clients"][0];
         assert_eq!(client["clientId"], "account-console");

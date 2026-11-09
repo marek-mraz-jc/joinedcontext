@@ -233,7 +233,7 @@ pub fn portal_vars(
         let mut values = vec![
             (
                 "JC_OIDC_ISSUER",
-                Some(format!("{}/realms/{}", id.public, setup::PORTAL_REALM)),
+                Some(format!("{}/realms/{}", id.public, setup.realm)),
             ),
             ("JC_OIDC_CLIENT_ID", Some(setup::PORTAL_CLIENT.to_owned())),
             ("JC_OIDC_CLIENT_SECRET", secret(Secret::PortalClientSecret)),
@@ -492,6 +492,15 @@ mod tests {
         ] {
             assert!(!is_base_url(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn the_portal_signs_in_at_the_configured_realm() {
+        let (siblings, mut setup, _d) = fixture("https");
+        let issuer = |setup: &Setup| portal_vars(&siblings, setup, none)["JC_OIDC_ISSUER"].clone();
+        assert_eq!(issuer(&setup), "https://city.example/id/realms/jc");
+        setup.realm = setup::Realm::parse("dev").unwrap();
+        assert_eq!(issuer(&setup), "https://city.example/id/realms/dev");
     }
 
     /// Asserts the keys of one row come from the sibling and an explicit URL keeps the whole row

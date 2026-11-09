@@ -41,8 +41,10 @@ const FORGE_REPO: &str = "configuration";
 struct Jc {
     child: Child,
     base: String,
+    root: PathBuf,
     state: PathBuf,
-    _dir: tempfile::TempDir,
+    /// The directory `root` is, when this `jc` owns it (a restart test keeps its own).
+    _dir: Option<tempfile::TempDir>,
     log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
@@ -65,7 +67,7 @@ impl Drop for Jc {
 impl Jc {
     /// A secret the test gave jc as a file, else jc's state file.
     fn secret(&self, name: &str) -> String {
-        let given = self._dir.path().join("given").join(name);
+        let given = self.root.join("given").join(name);
         let path = if given.exists() {
             given
         } else {
@@ -103,9 +105,10 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// The test's people and clients, imported into realm `jc` before the Portal's own files. Their
-/// secrets are `$(file:...)` under `secrets` (`--kaisatsu-import-secrets-dir`).
-fn realm_file(dir: &Path, secrets: &Path) {
+/// The test's people and clients, imported into `realm` (file `file` of the import dir) before
+/// the Portal's own files. Their secrets are `$(file:...)` under `secrets`
+/// (`--kaisatsu-import-secrets-dir`).
+fn realm_file(dir: &Path, secrets: &Path, realm: &str, file: &str) {
     std::fs::create_dir_all(secrets).unwrap();
     let client_secret = secrets.join("e2e-client-secret");
     let person_password = secrets.join("e2e-person-password");
@@ -163,7 +166,7 @@ fn realm_file(dir: &Path, secrets: &Path) {
         })
     };
     let realm = json!({
-        "realm": "jc",
+        "realm": realm,
         "enabled": true,
         "groups": [
             { "name": format!("{PROJECT}-readers") },
@@ -221,7 +224,7 @@ fn realm_file(dir: &Path, secrets: &Path) {
         }]
     });
     std::fs::create_dir_all(dir).unwrap();
-    std::fs::write(dir.join("00-e2e.json"), realm.to_string()).unwrap();
+    std::fs::write(dir.join(file), realm.to_string()).unwrap();
 }
 
 async fn start() -> Jc {
@@ -235,23 +238,65 @@ async fn start() -> Jc {
 /// a loopback name such as `localhost`.
 async fn start_with(pipelines: bool) -> Jc {
     let dir = tempfile::tempdir().unwrap();
-    let state = dir.path().join("state");
-    let realms = dir.path().join("realms");
-    let realm_secrets = dir.path().join("realm-secrets");
-    realm_file(&realms, &realm_secrets);
+    let root = dir.path();
+    realm_file(
+        &root.join("realms"),
+        &root.join("realm-secrets"),
+        "jc",
+        "00-e2e.json",
+    );
     let port = free_port();
-    let base_host = if pipelines {
-        format!("127.0.0.1:{port}")
+    let mut jc = if pipelines {
+        // The runner's token as a file, so the test reads the runner's API as the Portal does.
+        let given = root.join("given");
+        std::fs::create_dir_all(&given).unwrap();
+        let ekiben = given.join("ekiben-token");
+        std::fs::write(
+            &ekiben,
+            format!("test-ekiben-token-{:032x}", std::process::id()),
+        )
+        .unwrap();
+        let branding = root.join("branding.yaml");
+        std::fs::write(&branding, "instanceName: \"e2e\"\nvalidation: lax\n").unwrap();
+        start_on(
+            root,
+            &format!("127.0.0.1:{port}"),
+            port,
+            &["--ekiben-token-file", ekiben.to_str().unwrap()],
+            &[("JC_BRANDING_FILE", branding.to_str().unwrap())],
+        )
+        .await
     } else {
-        format!("localhost:{port}")
+        start_at(root, port, &[], &[]).await
     };
-    let config = dir.path().join("jc.toml");
+    jc._dir = Some(dir);
+    jc
+}
+
+/// Starts `jc` over `root` (state, `realms` import dir and `realm-secrets` under it) on `port`,
+/// with `args` and `envs` beside the test's own.
+async fn start_at(root: &Path, port: u16, args: &[&str], envs: &[(&str, &str)]) -> Jc {
+    start_on(root, &format!("localhost:{port}"), port, args, envs).await
+}
+
+/// As [`start_at`], with the public host named `base_host`.
+async fn start_on(
+    root: &Path,
+    base_host: &str,
+    port: u16,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Jc {
+    let state = root.join("state");
+    let realms = root.join("realms");
+    let realm_secrets = root.join("realm-secrets");
+    let config = root.join("jc.toml");
     std::fs::write(&config, "[mounts.portal]\npath_prefix = \"\"\n").unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
     // The service tokens between modules live in jc's memory only; the test acts as the Portal
     // with a shako token it gives jc as a file.
-    let given = dir.path().join("given");
-    std::fs::create_dir(&given).unwrap();
+    let given = root.join("given");
+    std::fs::create_dir_all(&given).unwrap();
     let shako = given.join("shako-token");
     std::fs::write(
         &shako,
@@ -259,19 +304,6 @@ async fn start_with(pipelines: bool) -> Jc {
     )
     .unwrap();
     cmd.arg("--shako-token-file").arg(&shako);
-    if pipelines {
-        // The runner's token as a file, so the test reads the runner's API as the Portal does.
-        let ekiben = given.join("ekiben-token");
-        std::fs::write(
-            &ekiben,
-            format!("test-ekiben-token-{:032x}", std::process::id()),
-        )
-        .unwrap();
-        cmd.arg("--ekiben-token-file").arg(&ekiben);
-        let branding = dir.path().join("branding.yaml");
-        std::fs::write(&branding, "instanceName: \"e2e\"\nvalidation: lax\n").unwrap();
-        cmd.env("JC_BRANDING_FILE", &branding);
-    }
     for (key, _) in std::env::vars() {
         if key.starts_with("JCBIN_") || key.starts_with("JC_") || key.starts_with("ANTARES_") {
             cmd.env_remove(key);
@@ -281,7 +313,7 @@ async fn start_with(pipelines: bool) -> Jc {
         .arg("--config")
         .arg(&config)
         .args(["--listen", &format!("127.0.0.1:{port}")])
-        .args(["--base-host", &base_host])
+        .args(["--base-host", base_host])
         .arg("--state-dir")
         .arg(&state)
         .arg("--kaisatsu-import-dir")
@@ -293,6 +325,8 @@ async fn start_with(pipelines: bool) -> Jc {
         .env("JC_SHAKO_OWNER", FORGE_OWNER)
         .env("JC_SHAKO_REPO", FORGE_REPO)
         .env("RUST_LOG", "info,sqlx=warn")
+        .args(args)
+        .envs(envs.iter().copied())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn().expect("spawn jc");
@@ -312,8 +346,9 @@ async fn start_with(pipelines: bool) -> Jc {
     let jc = Jc {
         child,
         base: format!("http://{base_host}"),
+        root: root.to_path_buf(),
         state,
-        _dir: dir,
+        _dir: None,
         log,
     };
     match rx.recv_timeout(Duration::from_secs(180)) {
@@ -460,8 +495,13 @@ async fn token(jc: &Jc, client: &str) -> String {
 }
 
 async fn token_of(jc: &Jc, client: &str, username: &str) -> String {
+    token_in(jc, "jc", client, username).await
+}
+
+/// A person's token from `client` of `realm` by the password grant.
+async fn token_in(jc: &Jc, realm: &str, client: &str, username: &str) -> String {
     let resp = Client::new()
-        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .post(jc.url(&format!("/id/realms/{realm}/protocol/openid-connect/token")))
         .form(&[
             ("grant_type", "password"),
             ("client_id", client),
@@ -511,15 +551,14 @@ fn entity(kind: &str, local: &str) -> Value {
     })
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn endpoints_answer_inside_jc_as_on_dev() {
-    let jc = start().await;
-    let started = Instant::now();
+/// Writes the project to the organization repository and waits until the public Endpoint
+/// answers: the gateway loaded it from its checkout and the Portal wrote its views.
+async fn open_project(jc: &Jc) {
     // jc creates the organization repository in the Portal's background start, after it
     // listens: write once shako holds it.
     eventually(
         "shako holds the organization repository",
-        &jc,
+        jc,
         120,
         || async {
             let resp = Client::new()
@@ -539,39 +578,41 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     )
     .await;
     for (path, content) in manifests() {
-        put_file(&jc, &path, &content).await;
+        put_file(jc, &path, &content).await;
     }
+    let get = reqwest::Method::GET;
+    let public = format!("/api/endpoint/{PUBLIC}/ngsi-ld/v1");
+
+    // The gateway loads the Endpoints from its checkout, the Portal writes the views into
+    // Antares: the public Endpoint's types answer once both have run.
+    eventually("the public Endpoint answers its types", jc, 120, || async {
+        let (status, body) = call(jc, get.clone(), &format!("{public}/types"), None, None).await;
+        if status == StatusCode::OK {
+            return Ok(());
+        }
+        let views = Client::new()
+            .get(jc.url("/broker/q/views"))
+            .bearer_auth(jc.secret("antares-admin-token"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap_or_default();
+        Err(format!("{status} {body}; the broker's views: {views}"))
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn endpoints_answer_inside_jc_as_on_dev() {
+    let jc = start().await;
+    let started = Instant::now();
+    open_project(&jc).await;
     let get = reqwest::Method::GET;
     let post = reqwest::Method::POST;
     let public = format!("/api/endpoint/{PUBLIC}/ngsi-ld/v1");
     let closed = format!("/api/endpoint/{CLOSED}/ngsi-ld/v1");
-
-    // The gateway loads the Endpoints from its checkout, the Portal writes the views into
-    // Antares: the public Endpoint's types answer once both have run.
-    eventually(
-        "the public Endpoint answers its types",
-        &jc,
-        120,
-        || async {
-            let (status, body) =
-                call(&jc, get.clone(), &format!("{public}/types"), None, None).await;
-            if status == StatusCode::OK {
-                return Ok(());
-            }
-            let views = Client::new()
-                .get(jc.url("/broker/q/views"))
-                .bearer_auth(jc.secret("antares-admin-token"))
-                .send()
-                .await
-                .unwrap()
-                .text()
-                .await
-                .unwrap_or_default();
-            Err(format!("{status} {body}; the broker's views: {views}"))
-        },
-    )
-    .await;
-
     // A write through the closed Endpoint by a writer of the project lands in Antares.
     let person = token(&jc, "e2e-reader").await;
     let writes = format!("{closed}/entities");
@@ -1343,4 +1384,411 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
         "{}",
         jc.tail()
     );
+}
+
+/// A redirect only the deployment's export holds: jc's own realm file never writes it, so it
+/// stays only while jc leaves the imported `portal-api` alone.
+const IMPORTED_CALLBACK: &str = "https://portal.dev.invalid/api/v1/auth/callback";
+
+/// Writes `value` as a 0600 file, as jc's state directory keeps a secret.
+fn write_secret(path: &Path, value: &str) {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .unwrap();
+    file.write_all(value.as_bytes()).unwrap();
+}
+
+/// `realm` as a Keycloak export of the deployment brings it into the import dir (file `file`):
+/// the shipped Portal realm under that name for the Portal at `base`, the gateway's client, a
+/// redirect of its own ([`IMPORTED_CALLBACK`]), and its client secrets as `$(file:...)` under
+/// `secrets`. The same secrets go into jc's `state` directory, where jc reads its clients'
+/// secrets: the cutover's way of keeping the realm's own.
+fn export(realms: &Path, secrets: &Path, state: &Path, realm: &str, base: &str, file: &str) {
+    for dir in [realms, secrets, state] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let placeholder = |name: &str| format!("$(file:{})", secrets.join(name).display());
+    for name in [
+        "portal-client-secret",
+        "portal-admin-client-secret",
+        "gateway-client-secret",
+    ] {
+        if !secrets.join(name).exists() {
+            let value = format!(
+                "{name}-{:032x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
+            write_secret(&secrets.join(name), &value);
+            write_secret(&state.join(name), &value);
+        }
+    }
+    let text = include_str!("../../../crates/kaisatsu/import/realms/jc-portal.json")
+        .replace("https://portal.jc.localhost", base)
+        .replace(
+            "$(CLIENT_SECRET_PORTAL_API)",
+            &placeholder("portal-client-secret"),
+        )
+        .replace(
+            "$(CLIENT_SECRET_PORTAL_RECONCILER)",
+            &placeholder("portal-admin-client-secret"),
+        );
+    let mut value: Value = serde_json::from_str(&text).unwrap();
+    value["id"] = json!(realm);
+    value["realm"] = json!(realm);
+    let clients = value["clients"].as_array_mut().unwrap();
+    let portal = clients
+        .iter_mut()
+        .find(|c| c["clientId"] == "portal-api")
+        .unwrap();
+    portal["redirectUris"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(IMPORTED_CALLBACK));
+    let (_, gateway) = jc::setup::gateway_realm_file(&jc::setup::Realm::parse(realm).unwrap());
+    let mut gateway = gateway["clients"][0].clone();
+    gateway["secret"] = json!(placeholder("gateway-client-secret"));
+    clients.push(gateway);
+    std::fs::write(realms.join(file), value.to_string()).unwrap();
+}
+
+/// The `iss` of a token, read without a check (the services under test do the checking).
+fn issuer_of(token: &str) -> String {
+    let payload = token.split('.').nth(1).unwrap();
+    let claims: Value = serde_json::from_slice(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload)
+            .unwrap(),
+    )
+    .unwrap();
+    claims["iss"].as_str().unwrap().to_owned()
+}
+
+/// A service-account token of `client` in `realm` (client credentials, the secret jc keeps).
+async fn service_token(jc: &Jc, realm: &str, client: &str, secret: &str) -> String {
+    let resp = Client::new()
+        .post(jc.url(&format!("/id/realms/{realm}/protocol/openid-connect/token")))
+        .form(&[
+            ("grant_type", "client_credentials"),
+            ("client_id", client),
+            ("client_secret", &jc.secret(secret)),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or(Value::Null);
+    assert_eq!(status, StatusCode::OK, "{client} in {realm}: {body}");
+    body["access_token"].as_str().unwrap().to_owned()
+}
+
+/// A kaisatsu admin read in `realm` as that realm's `portal-api` (view-clients, query-users).
+async fn admin_read(jc: &Jc, realm: &str, path: &str) -> Value {
+    let token = service_token(jc, realm, "portal-api", "portal-client-secret").await;
+    let (status, body) = call(
+        jc,
+        reqwest::Method::GET,
+        &format!("/id/admin/realms/{realm}{path}"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{realm}{path}: {body}");
+    serde_json::from_str(&body).unwrap()
+}
+
+/// `portal-api` of `realm` as kaisatsu's admin API shows it.
+async fn portal_client(jc: &Jc, realm: &str) -> Value {
+    let found = admin_read(jc, realm, "/clients?clientId=portal-api").await;
+    found[0].clone()
+}
+
+/// What jc wrote into the imported `dev`: nothing of its own first-start files.
+async fn assert_dev_left_as_imported(jc: &Jc) {
+    assert_eq!(
+        std::fs::read_to_string(jc.state.join("realm-owner-dev")).unwrap(),
+        "import\n"
+    );
+    let portal = portal_client(jc, "dev").await;
+    assert!(
+        portal["redirectUris"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(IMPORTED_CALLBACK)),
+        "jc overwrote the imported portal-api: {portal}"
+    );
+    let admins = admin_read(jc, "dev", "/users?username=admin&exact=true").await;
+    assert_eq!(
+        admins,
+        json!([]),
+        "jc made a first admin in the imported realm"
+    );
+    assert!(jc.log_has("the deployment brings the Portal's realm"));
+}
+
+/// The Portal's answer to `/api/v1/auth/me` for `token` sent as a bearer or as the edge's
+/// `X-Access-Token`.
+async fn portal_me(jc: &Jc, token: &str, edge: bool) -> StatusCode {
+    let req = Client::new().get(jc.url("/api/v1/auth/me"));
+    let req = if edge {
+        req.header("x-access-token", token)
+    } else {
+        req.bearer_auth(token)
+    };
+    req.send().await.unwrap().status()
+}
+
+/// The realm's token exchange (RFC 8693) at `dev` as `portal-api`, for one Endpoint as the
+/// Portal's data reads ask it.
+async fn exchange_at_dev(jc: &Jc, subject: &str) -> (StatusCode, Value) {
+    let scope = format!("gateway-hub endpoint:{CLOSED}");
+    let resp = Client::new()
+        .post(jc.url("/id/realms/dev/protocol/openid-connect/token"))
+        .form(&[
+            (
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:token-exchange",
+            ),
+            ("client_id", "portal-api"),
+            ("client_secret", &jc.secret("portal-client-secret")),
+            ("subject_token", subject),
+            (
+                "subject_token_type",
+                "urn:ietf:params:oauth:token-type:access_token",
+            ),
+            (
+                "requested_token_type",
+                "urn:ietf:params:oauth:token-type:access_token",
+            ),
+            ("audience", "mcp-hub"),
+            ("scope", &scope),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, resp.json().await.unwrap_or(Value::Null))
+}
+
+/// The key ids a realm publishes.
+async fn kids(jc: &Jc, realm: &str) -> Vec<String> {
+    let (status, body) = call(
+        jc,
+        reqwest::Method::GET,
+        &format!("/id/realms/{realm}/protocol/openid-connect/certs"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let set: Value = serde_json::from_str(&body).unwrap();
+    set["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| k["kid"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// The realms kaisatsu holds beside the deployment's `dev`, each with `dev`'s clients, people and
+/// secrets: jc's default, and one whose issuer begins with dev's (an issuer prefix match admits
+/// it).
+const TWINS: [&str; 2] = ["jc", "devx"];
+
+/// A deployment whose realm is `dev` (`--identity-realm dev`) over an imported Keycloak `dev`
+/// export, with kaisatsu also holding twin realms ([`TWINS`]):
+/// jc writes nothing into `dev`, the Portal signs in there, the gateway admits `dev`'s tokens,
+/// the linker links the Endpoint scopes in `dev`; a valid `jc` token admits nowhere. A restart
+/// without the `jc` files leaves `dev` as imported and makes no `jc` realm.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let port = free_port();
+    let base = format!("http://localhost:{port}");
+    let (realms, secrets, state) = (
+        root.join("realms"),
+        root.join("realm-secrets"),
+        root.join("state"),
+    );
+    export(
+        &realms,
+        &secrets,
+        &state,
+        "dev",
+        &base,
+        "00-dev-export.json",
+    );
+    realm_file(&realms, &secrets, "dev", "10-dev-e2e.json");
+    for twin in TWINS {
+        export(
+            &realms,
+            &secrets,
+            &state,
+            twin,
+            &base,
+            &format!("20-{twin}-export.json"),
+        );
+        realm_file(&realms, &secrets, twin, &format!("30-{twin}-e2e.json"));
+    }
+    let args = ["--identity-realm", "dev"];
+    let envs = [("JC_TRUST_EDGE_TOKEN", "true")];
+    let jc = start_at(root, port, &args, &envs).await;
+    assert_dev_left_as_imported(&jc).await;
+
+    open_project(&jc).await;
+    let get = reqwest::Method::GET;
+    let post = reqwest::Method::POST;
+    let public = format!("/api/endpoint/{PUBLIC}/ngsi-ld/v1");
+    let closed = format!("/api/endpoint/{CLOSED}/ngsi-ld/v1");
+
+    // The gateway admits dev's tokens: a writer's create and a reader's read land.
+    let reader = token_in(&jc, "dev", "e2e-reader", PERSON).await;
+    assert_eq!(issuer_of(&reader), format!("{base}/id/realms/dev"));
+    let thing = entity("Thing", "one");
+    eventually("a dev writer's create lands", &jc, 60, || async {
+        let (status, body) = call(
+            &jc,
+            post.clone(),
+            &format!("{closed}/entities"),
+            Some(&reader),
+            Some(&thing),
+        )
+        .await;
+        (status == StatusCode::CREATED)
+            .then_some(())
+            .ok_or(format!("{status} {body}"))
+    })
+    .await;
+    let read = format!("{closed}/entities?type=Thing");
+    let (status, body) = call(&jc, get.clone(), &read, Some(&reader), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+
+    // Each twin: the same client, person, password and secret, a valid token of its realm.
+    // The gateway checks the issuer exactly (`devx`'s begins with dev's): 401 on the closed
+    // Endpoint, and on the public one too (a presented token is never read as anonymous).
+    for realm in TWINS {
+        let twin = token_in(&jc, realm, "e2e-reader", PERSON).await;
+        assert_eq!(issuer_of(&twin), format!("{base}/id/realms/{realm}"));
+        for path in [read.clone(), format!("{public}/entities?type=Thing")] {
+            let (status, body) = call(&jc, get.clone(), &path, Some(&twin), None).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{realm} {path}: {body}");
+        }
+        let (status, body) = call(
+            &jc,
+            post.clone(),
+            &format!("{closed}/entities"),
+            Some(&twin),
+            Some(&entity("Thing", "two")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{realm}: {body}");
+    }
+
+    // The Portal: dev's token for portal-api is the person, as a bearer and as the edge's
+    // X-Access-Token; the twin's is 401 either way.
+    let member = token_in(&jc, "dev", "e2e-mcp", PERSON).await;
+    let mut twin_members = Vec::new();
+    for realm in TWINS {
+        twin_members.push(token_in(&jc, realm, "e2e-mcp", PERSON).await);
+    }
+    for edge in [false, true] {
+        for (realm, twin) in TWINS.iter().zip(&twin_members) {
+            assert_eq!(
+                portal_me(&jc, twin, edge).await,
+                StatusCode::UNAUTHORIZED,
+                "a realm-{realm} token at the Portal, edge {edge}"
+            );
+        }
+        assert_eq!(
+            portal_me(&jc, &member, edge).await,
+            StatusCode::OK,
+            "edge {edge}"
+        );
+    }
+
+    // The linker links the Endpoint's scope to portal-api in dev, and never in jc.
+    let scope = format!("endpoint:{CLOSED}");
+    eventually(
+        "dev's portal-api holds the Endpoint scope",
+        &jc,
+        60,
+        || async {
+            let portal = portal_client(&jc, "dev").await;
+            portal["optionalClientScopes"]
+                .as_array()
+                .is_some_and(|s| s.contains(&json!(scope)))
+                .then_some(())
+                .ok_or(portal.to_string())
+        },
+    )
+    .await;
+    for realm in TWINS {
+        let twin_portal = portal_client(&jc, realm).await;
+        assert!(
+            !twin_portal.to_string().contains("endpoint:e2e"),
+            "the linker wrote into realm {realm}: {twin_portal}"
+        );
+    }
+
+    // Token exchange at dev: dev's subject token is exchanged, the twin's refused.
+    let (status, body) = exchange_at_dev(&jc, &member).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let dev_kids = kids(&jc, "dev").await;
+    assert!(!dev_kids.is_empty());
+    for (realm, twin) in TWINS.iter().zip(&twin_members) {
+        let (status, body) = exchange_at_dev(&jc, twin).await;
+        assert!(status.is_client_error(), "{realm}: {status} {body}");
+        // kaisatsu answers as Keycloak 26 does for a subject token it cannot verify (signature,
+        // exact issuer, audience): invalid_request "Invalid token".
+        let refused = (body["error"].as_str(), body["error_description"].as_str());
+        assert!(
+            matches!(refused.0, Some("invalid_grant" | "invalid_token"))
+                || refused == (Some("invalid_request"), Some("Invalid token")),
+            "{realm}: {status} {body}"
+        );
+        // Keys stay per realm.
+        let twin_kids = kids(&jc, realm).await;
+        assert!(!twin_kids.is_empty());
+        assert!(
+            dev_kids.iter().all(|k| !twin_kids.contains(k)),
+            "{realm}: {dev_kids:?} {twin_kids:?}"
+        );
+    }
+
+    // A person signs in to the Portal at /realms/dev.
+    let mut browser = Browser::new();
+    common::sign_in_at(&|p| jc.url(p), &mut browser, "dev", PERSON, PERSON_PASSWORD).await;
+    let me = browser.get(&jc.url("/api/v1/auth/me")).await;
+    assert_eq!(me.status, StatusCode::OK, "{}", me.text);
+    assert!(me.text.contains(PERSON), "{}", me.text);
+
+    // Restart on the same state, the twin's files gone: dev is still as imported, and no realm
+    // jc exists (no dormant realm, no first admin anywhere).
+    drop(jc);
+    for twin in TWINS {
+        std::fs::remove_file(realms.join(format!("20-{twin}-export.json"))).unwrap();
+        std::fs::remove_file(realms.join(format!("30-{twin}-e2e.json"))).unwrap();
+    }
+    let jc = start_at(root, port, &args, &envs).await;
+    assert_dev_left_as_imported(&jc).await;
+    let (status, body) = call(
+        &jc,
+        get.clone(),
+        "/id/realms/jc/.well-known/openid-configuration",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a realm jc exists: {body}");
+    assert!(!state.join("realm-owner-jc").exists());
 }

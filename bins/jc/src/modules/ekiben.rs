@@ -73,6 +73,7 @@ pub async fn build(
     tracing::info!(file_root = %root.display(), "ekiben file components confined");
     let defaults = runner_defaults(
         siblings,
+        &setup.realm,
         cfg.harness_client.as_deref(),
         crate::config::portal_env("JC_PORTAL_ORG_DOMAIN"),
     );
@@ -192,6 +193,7 @@ fn variables(
 /// harness client. None is a secret. `JC_MQTT_NAMESPACE` stays unset: `jc` runs no MQTT broker.
 fn runner_defaults(
     siblings: &Siblings,
+    realm: &crate::setup::Realm,
     harness_client: Option<&str>,
     org_domain: Option<String>,
 ) -> BTreeMap<String, String> {
@@ -207,11 +209,7 @@ fn runner_defaults(
     if let Some(id) = siblings.get(Module::Kaisatsu) {
         out.insert(
             "JC_TOKEN_URL".to_owned(),
-            format!(
-                "{}/realms/{}/protocol/openid-connect/token",
-                id.public,
-                crate::setup::PORTAL_REALM
-            ),
+            format!("{}/realms/{realm}/protocol/openid-connect/token", id.public),
         );
     }
     let org_domain = org_domain
@@ -292,7 +290,12 @@ mod tests {
     #[test]
     fn the_runner_variables_are_jcs_own_mounts() {
         let siblings = slug_siblings();
-        let vars = runner_defaults(&siblings, Some("helsinki-pipelines"), None);
+        let vars = runner_defaults(
+            &siblings,
+            &crate::setup::Realm::default(),
+            Some("helsinki-pipelines"),
+            None,
+        );
         assert_eq!(vars["JC_GATEWAY_URL"], "http://127.0.0.1:8443");
         assert_eq!(vars["JC_GATEWAY_HOST"], "127.0.0.1:8443");
         assert_eq!(
@@ -307,12 +310,18 @@ mod tests {
             "jc runs no MQTT broker"
         );
         assert!(!vars.keys().any(|k| k.starts_with("JC_CLIENT_SECRET")));
-        let named = runner_defaults(&siblings, None, Some("hel.fi".into()));
+        let named = runner_defaults(
+            &siblings,
+            &crate::setup::Realm::default(),
+            None,
+            Some("hel.fi".into()),
+        );
         assert_eq!(named["JC_ORG_DOMAIN"], "hel.fi");
         assert!(!named.contains_key("JC_CLIENT_ID"));
         // Without the gateway and kaisatsu nothing points at them.
         let alone = runner_defaults(
             &Siblings::new(&[], "127.0.0.1:1".parse().unwrap()),
+            &crate::setup::Realm::default(),
             None,
             None,
         );
@@ -323,11 +332,19 @@ mod tests {
     fn streams_reach_only_the_gateway_door_and_the_token_endpoint_of_jcs_listener() {
         // The public token endpoint is a name: only the gateway door is on the listener.
         let siblings = slug_siblings();
-        let target = host_target(&siblings, &runner_defaults(&siblings, None, None)).unwrap();
+        let target = host_target(
+            &siblings,
+            &runner_defaults(&siblings, &crate::setup::Realm::default(), None, None),
+        )
+        .unwrap();
         assert_eq!(target.path_prefixes, ["/api/endpoint"]);
         // A loopback rehearsal whose public base is the listener's own address.
         let siblings = siblings_at("127.0.0.1:8443", "http");
-        let target = host_target(&siblings, &runner_defaults(&siblings, None, None)).unwrap();
+        let target = host_target(
+            &siblings,
+            &runner_defaults(&siblings, &crate::setup::Realm::default(), None, None),
+        )
+        .unwrap();
         let admits = |u: &str| target.admits(&url::Url::parse(u).unwrap());
         assert!(admits(
             "http://127.0.0.1:8443/api/endpoint/abc/ngsi-ld/v1/entityOperations/upsert"
@@ -347,7 +364,13 @@ mod tests {
         }
         // Nothing of jc's listener when neither module is there.
         let alone = Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
-        assert!(host_target(&alone, &runner_defaults(&alone, None, None)).is_none());
+        assert!(
+            host_target(
+                &alone,
+                &runner_defaults(&alone, &crate::setup::Realm::default(), None, None)
+            )
+            .is_none()
+        );
     }
 
     #[test]

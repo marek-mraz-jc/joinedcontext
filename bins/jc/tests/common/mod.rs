@@ -213,11 +213,22 @@ pub async fn sign_in(
     username: &str,
     password: &str,
 ) {
+    sign_in_at(url, browser, REALM, username, password).await;
+}
+
+/// [`sign_in`] through the Portal of a `jc` whose realm is `realm` (`[identity] realm`).
+pub async fn sign_in_at(
+    url: &dyn Fn(&str) -> String,
+    browser: &mut Browser,
+    realm: &str,
+    username: &str,
+    password: &str,
+) {
     let (login_url, page) = browser.follow(url("/api/v1/auth/login"), |_| false).await;
     assert_eq!(page.status, StatusCode::OK, "{login_url}: {}", page.text);
     assert!(
         login_url.starts_with(&url(&format!(
-            "/id/realms/{REALM}/login-actions/authenticate"
+            "/id/realms/{realm}/login-actions/authenticate"
         ))),
         "the Portal sends the browser to kaisatsu: {login_url}"
     );
