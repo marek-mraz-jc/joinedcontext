@@ -114,6 +114,9 @@ interface HistoryCellProps {
   onPlan: (plan: Plan | undefined) => void;
 }
 
+/** The History column's one-line hint, which every select of the column is described by (UI-16). */
+const HISTORY_EXPLAIN = "workbench-history-explain";
+
 /** One attribute's history plan: what is kept, the time of a row, and the server's verdict on it. */
 function HistoryCell({ name, plan, timeSlots, findings, onPlan }: HistoryCellProps): JSX.Element {
   const { t } = useTranslation();
@@ -125,6 +128,7 @@ function HistoryCell({ name, plan, timeSlots, findings, onPlan }: HistoryCellPro
       <Select
         id={id}
         aria-label={t("pipelines.history.keepOf", { name })}
+        aria-describedby={HISTORY_EXPLAIN}
         value={plan?.keep ?? ""}
         onChange={(event) => onPlan(event.target.value ? { ...(plan ?? {}), keep: event.target.value as Keep } : undefined)}
       >
@@ -139,6 +143,7 @@ function HistoryCell({ name, plan, timeSlots, findings, onPlan }: HistoryCellPro
         <Select
           id={`${id}-time`}
           aria-label={t("pipelines.history.timeOf", { name })}
+          aria-describedby={HISTORY_EXPLAIN}
           value={plan.observedAt ?? ""}
           onChange={(event) => onPlan({ ...plan, observedAt: event.target.value || undefined })}
         >
@@ -155,6 +160,7 @@ function HistoryCell({ name, plan, timeSlots, findings, onPlan }: HistoryCellPro
         <Select
           id={`${id}-heartbeat`}
           aria-label={t("pipelines.history.heartbeatOf", { name })}
+          aria-describedby={HISTORY_EXPLAIN}
           value={plan.heartbeat ?? "PT1H"}
           onChange={(event) => onPlan({ ...plan, heartbeat: event.target.value })}
         >
@@ -202,8 +208,8 @@ export function TargetCard({ space, type, target, history, onHistory, timeSlots 
       {type && target.attributes.length > 0 ? (
         <>
           <p className="text-caption text-fg-muted">{t("pipelines.workbench.target.explain", { type })}</p>
-          {onHistory ? <p className="text-caption text-fg-muted">{t("pipelines.history.explain")}</p> : null}
-          <Table caption={t("pipelines.workbench.target.caption", { type })} {...(onHistory ? {} : { maxHeight: "max-h-80" })}>
+          {onHistory ? <p id={HISTORY_EXPLAIN} className="text-caption text-fg-muted">{t("pipelines.history.explain")}</p> : null}
+          <Table stack caption={t("pipelines.workbench.target.caption", { type })} {...(onHistory ? {} : { maxHeight: "max-h-80" })}>
             <TableHead>
               <TableHeaderCell>{t("pipelines.workbench.target.field")}</TableHeaderCell>
               <TableHeaderCell>{t("pipelines.workbench.target.kind")}</TableHeaderCell>
@@ -222,10 +228,10 @@ export function TargetCard({ space, type, target, history, onHistory, timeSlots 
                       <TableCell>
                         <span className="font-mono">{attribute.name}</span>
                       </TableCell>
-                      <TableCell>{attribute.kind}</TableCell>
-                      <TableCell>{valueOf(attribute)}</TableCell>
-                      <TableCell>{attribute.required ? t("pipelines.workbench.target.isRequired") : t("pipelines.workbench.target.optional")}</TableCell>
-                      <TableCell>
+                      <TableCell data-label={t("pipelines.workbench.target.kind")}>{attribute.kind}</TableCell>
+                      <TableCell data-label={t("pipelines.workbench.target.value")}>{valueOf(attribute)}</TableCell>
+                      <TableCell data-label={t("pipelines.workbench.target.required")}>{attribute.required ? t("pipelines.workbench.target.isRequired") : t("pipelines.workbench.target.optional")}</TableCell>
+                      <TableCell data-label={t("pipelines.workbench.target.writable")}>
                         {verdict === undefined ? (
                           <span className="text-fg-subtle">{target.loading ? t("pipelines.workbench.target.judging") : "—"}</span>
                         ) : verdict.writable ? (
@@ -244,7 +250,7 @@ export function TargetCard({ space, type, target, history, onHistory, timeSlots 
                         )}
                       </TableCell>
                       {onHistory && type ? (
-                        <TableCell>
+                        <TableCell data-label={t("pipelines.history.column")}>
                           {verdict?.writable === false ? (
                             <span className="text-fg-subtle">—</span>
                           ) : (
@@ -265,15 +271,15 @@ export function TargetCard({ space, type, target, history, onHistory, timeSlots 
                 <TableCell>
                   <span className="font-mono">expiresAt</span>
                 </TableCell>
-                <TableCell>{t("pipelines.workbench.target.lifetimeKind")}</TableCell>
-                <TableCell>{t("pipelines.workbench.target.instant")}</TableCell>
-                <TableCell>{t("pipelines.workbench.target.optional")}</TableCell>
-                <TableCell>
+                <TableCell data-label={t("pipelines.workbench.target.kind")}>{t("pipelines.workbench.target.lifetimeKind")}</TableCell>
+                <TableCell data-label={t("pipelines.workbench.target.value")}>{t("pipelines.workbench.target.instant")}</TableCell>
+                <TableCell data-label={t("pipelines.workbench.target.required")}>{t("pipelines.workbench.target.optional")}</TableCell>
+                <TableCell data-label={t("pipelines.workbench.target.writable")}>
                   <a className={RECORD_LINK_STYLE} href="#workbench-lifetime">
                     {t("pipelines.workbench.target.inLifetime")}
                   </a>
                 </TableCell>
-                {onHistory ? <TableCell>—</TableCell> : null}
+                {onHistory ? <TableCell data-label={t("pipelines.history.column")}>—</TableCell> : null}
               </TableRow>
             </TableBody>
           </Table>

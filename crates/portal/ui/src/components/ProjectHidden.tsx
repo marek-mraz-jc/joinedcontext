@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { ApiError } from "../api/client";
 import { Alert } from "./ui";
 
 /**
@@ -19,5 +20,18 @@ export function ProjectHidden(): JSX.Element {
         </Link>
       </span>
     </Alert>
+  );
+}
+
+/**
+ * Whether a read failed because the project is out of reach (PF-59): its 404 in the API's words,
+ * a list hidden in it, or the project itself "not found". A page shows `ProjectHidden` for it,
+ * never the raw sentence with a retry that answers the same (UI judge 2026-11-09).
+ */
+export function projectOutOfReach(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 404 &&
+    (error.hidden || /^project '[a-z0-9-]+' not found$/.test(error.problem?.detail ?? ""))
   );
 }

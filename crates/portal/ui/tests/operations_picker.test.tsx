@@ -56,6 +56,21 @@ describe("the operations a Policy grants", () => {
     await i18n.changeLanguage("en");
   });
 
+  // UI judge 2026-11-09: a policy granting queryEntity and retrieveEntity by name showed every
+  // group unticked beside a summary of "2 operations", as if it granted nothing.
+  it("ticks a group whose every operation the policy grants by name, and unticks it whole", async () => {
+    const { onChange } = show(["queryEntity", "retrieveEntity"]);
+    expect(groupBox("retrieveOps")).toBeChecked();
+    expect(groupBox("updateOps")).not.toBeChecked();
+    await userEvent.click(groupBox("retrieveOps"));
+    expect(onChange).toHaveBeenLastCalledWith([]);
+  });
+
+  it("leaves a group unticked while the policy grants only part of it", () => {
+    show(["queryEntity"]);
+    expect(groupBox("retrieveOps")).not.toBeChecked();
+  });
+
   it("offers the five group names and shows what each one stands for", () => {
     show([]);
     for (const [name, group] of Object.entries(OPERATION_GROUPS)) {
