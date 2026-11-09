@@ -70,7 +70,7 @@ def test_every_suite_runs_with_only_the_flags_it_declares_and_logs_goes_last(tmp
     assert by["logs"]["pass"] == 2  # handed --log-file and both earlier result dirs, not --export
     assert by["e2e"]["skip"] == 1
     assert doc["verdict"] == "RED" and code == 1
-    assert "| good | 3 | 2 | 0 | 1 |" in (out / "REPORT.md").read_text()
+    assert "| good | 3 | 2 | 0 | 0 | 1 |" in (out / "REPORT.md").read_text()
     ids = {r["id"] for r in doc["checks"]}
     assert {"good/one", "good/two", "good/three", "dies/run"} <= ids
 
@@ -120,3 +120,23 @@ test slow_one ... ignored
         ("e2e/one_binary::every_module_answers", "fail"),
         ("e2e/one_binary::slow_one", "skip"),
     ]
+
+
+def test_a_known_gap_stays_listed_but_only_a_new_failure_turns_the_verdict_red(tmp_path, monkeypatch):
+    bad = GOOD.replace('a.export == "E"', "False")
+    monkeypatch.setattr(all_suite, "SMOKE", smoke(tmp_path, {"good": bad}))
+    known = tmp_path / "known.txt"
+    known.write_text("# comment line\n^good/two$  # filed: T-1, owner x\n^good/gone$  # fixed since\n")
+    out = tmp_path / "out"
+    code = all_suite.main(["--base-url", "http://localhost:1", "--out", str(out), "--export", "E",
+                           "--known", str(known)])
+    doc = json.loads((out / "results.json").read_text())
+    assert code == 0 and doc["verdict"] == "GREEN" and doc["newFailures"] == 0
+    two = next(r for r in doc["checks"] if r["id"] == "good/two")
+    assert two["result"] == "fail" and two["known"] == "filed: T-1, owner x"
+    assert doc["knownFixed"] == ["^good/gone$"]
+    report = (out / "REPORT.md").read_text()
+    assert "| good | 3 | 1 | 1 | 1 | 1 |" in report and "good/two" in report
+    known.write_text("")
+    assert all_suite.main(["--base-url", "http://localhost:1", "--out", str(out), "--export", "E",
+                           "--known", str(known)]) == 1

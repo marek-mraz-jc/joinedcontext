@@ -2,14 +2,18 @@
 
    bins/jc/smoke/run all --base-url <url> --out <dir> [--export e] [--state s] [--log-file f]
        [--admin-url u] [--admin-token-file f] [--person-token-file f] [--e2e]
-       [--only a,b] [--skip a,b] [--with <suite>=<args>]... [--suite-timeout s]
+       [--only a,b] [--skip a,b] [--with <suite>=<args>]... [--suite-timeout s] [--known <file>]
 
 Each suite runs as its own process (`run <suite>`) into <out>/<suite>/ with the common flags it
 declares; logs runs last and scans the others' result dirs. A suite that dies without results.json
 is one failing row; one refused for a missing required flag is one skip row naming it. --e2e runs
 `cargo test --locked -p jc --tests` and turns every test into a row. Writes <out>/results.json
 (one row per check, ids prefixed with the suite) and <out>/REPORT.md (suite, checks, pass, fail,
-skip, then the failures). Answers 0 only when no check failed."""
+skip, then the failures). Answers 0 only when no check failed outside the --known list.
+
+--known names gaps already filed (one `<regex over suite/id>  # reason, owner` per line): a failing
+check whose id matches stays a failure in the tables, marked known, and does not turn the verdict
+red; any other failure does. A known line that matches no failure is listed as fixed, to drop."""
 
 from __future__ import annotations
 
@@ -141,6 +145,29 @@ def run_e2e(out: Path, timeout: float) -> dict:
     return {"suite": "e2e", "rows": rows, "seconds": round(time.time() - started), "exit": code, "call": call}
 
 
+def load_known(path: str | None) -> list[tuple[re.Pattern, str]]:
+    out = []
+    for line in (Path(path).read_text().splitlines() if path else []):
+        pattern, _, reason = line.partition("#")
+        if pattern.strip():
+            out.append((re.compile(pattern.strip()), reason.strip()))
+    return out
+
+
+def mark_known(rows: list[dict], known) -> list[str]:
+    """Marks each failing row a known line names; answers the known lines no failure matched."""
+    used = set()
+    for r in rows:
+        if r["result"] != FAIL:
+            continue
+        for i, (pattern, reason) in enumerate(known):
+            if pattern.search(r["id"]):
+                r["known"] = reason or "known"
+                used.add(i)
+                break
+    return [known[i][0].pattern for i in range(len(known)) if i not in used]
+
+
 def totals(rows) -> dict:
     t = {PASS: 0, FAIL: 0, SKIP: 0}
     for r in rows:
@@ -148,35 +175,44 @@ def totals(rows) -> dict:
     return t
 
 
-def write(out: Path, base: str, runs: list[dict], seconds: int) -> bool:
+def write(out: Path, base: str, runs: list[dict], seconds: int, fixed: list[str] | None = None) -> bool:
     rows = [r for x in runs for r in x["rows"]]
     t = totals(rows)
-    green = t[FAIL] == 0 and any(r["result"] == PASS for r in rows)
+    new_fails = [r for r in rows if r["result"] == FAIL and not r.get("known")]
+    green = not new_fails and any(r["result"] == PASS for r in rows)
     verdict = "GREEN" if green else "RED"
     summary = [{"suite": x["suite"], "checks": len(x["rows"]), **totals(x["rows"]),
+                "known": sum(1 for r in x["rows"] if r.get("known")),
                 "seconds": x["seconds"], "exit": x["exit"]} for x in runs]
     doc = {"suite": "all", "base": base, "verdict": verdict, "seconds": seconds, "totals": t,
-           "suites": summary, "checks": rows}
+           "newFailures": len(new_fails), "knownFixed": fixed or [], "suites": summary, "checks": rows}
     (out / "results.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False))
     lines = [f"# Smoke suite `all`: {verdict}", "",
-             f"Base {base}; {len(rows)} checks, {t[PASS]} pass, {t[FAIL]} fail, {t[SKIP]} skip ({seconds} s).", "",
-             "| suite | checks | pass | fail | skip | seconds | report |", "|---|---|---|---|---|---|---|"]
+             f"Base {base}; {len(rows)} checks, {t[PASS]} pass, {t[FAIL]} fail "
+             f"({len(new_fails)} not on the known list), {t[SKIP]} skip ({seconds} s).", "",
+             "| suite | checks | pass | fail | of them known | skip | seconds | report |",
+             "|---|---|---|---|---|---|---|---|"]
     for s in summary:
         rep = f"{s['suite']}/REPORT.md" if (out / s["suite"] / "REPORT.md").exists() else f"{s['suite']}/run.log"
-        lines.append(f"| {s['suite']} | {s['checks']} | {s[PASS]} | {s[FAIL]} | {s[SKIP]} | {s['seconds']} | {rep} |")
-    lines.append(f"| **all** | {len(rows)} | {t[PASS]} | {t[FAIL]} | {t[SKIP]} | {seconds} | |")
+        lines.append(f"| {s['suite']} | {s['checks']} | {s[PASS]} | {s[FAIL]} | {s['known']} | {s[SKIP]} "
+                     f"| {s['seconds']} | {rep} |")
+    known_n = t[FAIL] - len(new_fails)
+    lines.append(f"| **all** | {len(rows)} | {t[PASS]} | {t[FAIL]} | {known_n} | {t[SKIP]} | {seconds} | |")
     if not any(r["result"] == PASS for r in rows):
         lines += ["", "No check passed: a run that only skips is RED."]
-    fails = [r for r in rows if r["result"] == FAIL]
-    lines += ["", f"## Failures ({len(fails)})", ""]
+    if fixed:
+        lines += ["", "Known lines no failure matched (fixed? drop them from the list): "
+                  + ", ".join(f"`{p}`" for p in fixed)]
+    fails = new_fails + [r for r in rows if r["result"] == FAIL and r.get("known")]
+    lines += ["", f"## Failures ({len(fails)}, {len(new_fails)} new)", ""]
     if fails:
-        lines += ["| id | call | expected | actual | reason |", "|---|---|---|---|---|"]
+        lines += ["| id | call | expected | actual | reason | known |", "|---|---|---|---|---|---|"]
 
         def cell(s):
             return str(s).replace("|", "\\|").replace("\n", " ")[:200]
 
-        lines += ["| " + " | ".join(cell(r[k]) for k in ("id", "call", "expected", "actual", "reason")) + " |"
-                  for r in fails[:200]]
+        lines += ["| " + " | ".join(cell(r.get(k, "")) for k in ("id", "call", "expected", "actual", "reason", "known"))
+                  + " |" for r in fails[:200]]
         if len(fails) > 200:
             lines.append(f"\n{len(fails) - 200} more in results.json.")
     else:
@@ -198,6 +234,7 @@ def main(argv=None) -> int:
     p.add_argument("--with", dest="extra_args", action="append", default=[], metavar="SUITE=ARGS",
                    help="more flags for one suite, e.g. --with 'endpoints=--max-endpoints 5'")
     p.add_argument("--suite-timeout", type=float, default=3600)
+    p.add_argument("--known", help="known gaps: <regex over suite/id>  # reason, one per line")
     a = p.parse_args(argv)
     loopback_only(a.base_url)
     a.extra = {}
@@ -228,7 +265,9 @@ def main(argv=None) -> int:
         runs.append({"suite": "e2e", "seconds": 0, "exit": None, "call": "",
                      "rows": [row("e2e", "cargo", "cargo test --locked -p jc --tests", "ok", "not run", SKIP,
                                   "pass --e2e to run jc's e2e tests")]})
-    green = write(out, a.base_url, runs, round(time.time() - started))
+    known = load_known(a.known)
+    fixed = mark_known([r for x in runs for r in x["rows"]], known)
+    green = write(out, a.base_url, runs, round(time.time() - started), fixed)
     print((out / "REPORT.md").read_text().split("\n## Failures")[0])
     return 0 if green else 1
 
