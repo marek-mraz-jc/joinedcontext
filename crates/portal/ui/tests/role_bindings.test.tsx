@@ -169,6 +169,18 @@ describe("people and roles", () => {
     }
   });
 
+  // UI judge 2026-11-09: a viewer who followed the address got the whole form, a role list that
+  // said "no roles yet" and a Propose that only refused, unlike New role, which says why at once.
+  it("tells a role that may not grant why at the form's address, instead of an empty form", async () => {
+    window.history.pushState({}, "", `/projects/${PROJECT}/settings/members/new`);
+    renderAccess({ grants: READER });
+
+    expect(await screen.findByText(en.form.mayNotCreate)).toBeInTheDocument();
+    expect(screen.queryByText(en.access.roles.chooseRole)).not.toBeInTheDocument();
+    expect(screen.queryByText(en.access.roles.rolesEmpty)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: en.access.roles.propose })).not.toBeInTheDocument();
+  });
+
   it("asks a role that does not read the bindings for none of them and says who can grant it", async () => {
     // demo.viewer on the walk (T-3852): the 404 of the unasked-for list was a red failure box.
     const fetchMock = renderAccess({ grants: [] });
