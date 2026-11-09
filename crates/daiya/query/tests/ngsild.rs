@@ -678,7 +678,8 @@ async fn the_helsinki_geomap_target_answers_the_frame_the_portal_map_reads() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../portal/ui/tests/fixtures/geomap_frame.json"
     );
-    if std::env::var_os("DAIYA_WRITE_FIXTURES").is_some() {
+    // Read when the test compiles; cargo rebuilds the test when the variable changes.
+    if option_env!("DAIYA_WRITE_FIXTURES").is_some() {
         std::fs::write(path, &text).unwrap();
     }
     assert_eq!(
