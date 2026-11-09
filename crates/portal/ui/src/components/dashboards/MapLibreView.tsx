@@ -413,20 +413,22 @@ export function MapLibreView({
         // Every feature under the click, a few: stacked markers each get their rows, not only the top one.
         const root = document.createElement("div");
         const count = document.createElement("p");
-        count.className = "mb-1 pr-6 text-caption text-fg-muted";
+        count.className = "mb-1 pr-6 text-body text-fg-muted";
         count.textContent = t("dashboards.stackedHere", { n: features.length });
-        root.className = "flex max-h-48 flex-col gap-2 divide-y divide-border overflow-y-auto [&>*+*]:pt-2";
+        // The list scrolls under a fade, so a cut reading reads as more below, not as a broken line.
+        root.className = "flex max-h-48 flex-col gap-2 divide-y divide-border overflow-y-auto pb-4 [mask-image:linear-gradient(to_bottom,black_80%,transparent)] [&>*+*]:pt-2";
         for (const feature of features.slice(0, STACKED)) {
           root.append(popupNode(feature, layer.popupProperties, layer.open, layer.titleProperty));
         }
+        const more = document.createElement("p");
         if (features.length > STACKED) {
-          const more = document.createElement("p");
+          more.className = "mt-1 text-body text-fg-muted";
           more.textContent = t("dashboards.moreHere", { n: features.length - STACKED });
-          root.append(more);
         }
         // Above the map's own controls (the scale, the attribution), which MapLibre stacks over a popup.
         const stacked = document.createElement("div");
         stacked.append(count, root);
+        if (more.textContent) stacked.append(more);
         new Popup({ className: "z-10", maxWidth: "18rem" })
           .setLngLat(event.lngLat)
           .setDOMContent(features.length === 1 ? popupNode(features[0], layer.popupProperties, layer.open, layer.titleProperty) : stacked)

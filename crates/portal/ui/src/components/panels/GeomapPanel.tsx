@@ -28,6 +28,9 @@ const TOOLTIP_FIELDS = 6;
 
 type Point = [number, number];
 
+/** An ISO 8601 instant written as text: a date, a time and a zone. */
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/;
+
 interface LayerOptions {
   type?: string;
   name?: string;
@@ -136,7 +139,11 @@ export function markersOf(frames: Frame[], options: Record<string, unknown> | un
       for (const field of tooltip) {
         const label = displayNameOf(field, frame);
         shown.add(label);
-        properties[label] = displayValue(settingsFor(fieldConfig, field, frame.refId), field.values[row], locale).text;
+        const value = field.values[row];
+        const settings = settingsFor(fieldConfig, field, frame.refId);
+        // A date the source keeps as text (`dateObserved`) reads like the time fields beside it.
+        const instant = typeof value === "string" && ISO_INSTANT.test(value) ? Date.parse(value) : NaN;
+        properties[label] = Number.isNaN(instant) || settings.unit ? displayValue(settings, value, locale).text : displayValue({ ...settings, unit: "dateTimeAsIso" }, instant, locale).text;
       }
       features.push({ type: "Feature", geometry: { type: "Point", coordinates: at }, properties });
     }
@@ -191,7 +198,7 @@ export function GeomapPanel({ title, frames, fieldConfig, options, height, local
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-sm">
         <MapLibreView layers={layers} label={t("dashboardView.geomap.label", { title, n: markers.features.features.length })} project={project} fill onReady={onReady} onPlainGround={onPlainGround} />
-        <p className="pointer-events-none absolute left-2 top-2 max-w-[calc(100%-4rem)] rounded-sm bg-surface px-1.5 py-0.5 text-caption text-fg shadow-1" data-geomap-caption="">
+        <p className="pointer-events-none absolute left-2 right-12 top-2 w-fit rounded-sm bg-surface px-1.5 py-0.5 text-caption text-fg shadow-1" data-geomap-caption="">
           {t("dashboardView.geomap.count", { n: markers.features.features.length })}
           {plain ? ` · ${t("dashboardView.geomap.plain")}` : null}
         </p>

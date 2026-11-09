@@ -105,15 +105,22 @@ function Body({ panel, data, from, to, locale, height, project, tablesHref }: Re
           {...common}
           project={project}
           empty={(text, description) => (
-            <PanelState icon="globe" title={text} description={description}>
-              {tablesHref ? <TablesLink href={tablesHref} /> : null}
-            </PanelState>
+            <MapFrame>
+              <PanelState icon="globe" title={text} description={description}>
+                {tablesHref ? <TablesLink href={tablesHref} /> : null}
+              </PanelState>
+            </MapFrame>
           )}
         />
       );
     default:
       return <TablePanel title={title} frames={data.frames} fieldConfig={panel.fieldConfig} options={panel.options} locale={locale} />;
   }
+}
+
+/** Where a map would be, outlined, around a map panel's state: the panel reads as an empty map. */
+function MapFrame({ children }: { children: ReactNode }): JSX.Element {
+  return <div className="h-full rounded-sm border border-dashed border-border bg-surface-subtle">{children}</div>;
 }
 
 /** The dashboard's table page, opened beside this one. */
@@ -201,7 +208,11 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
     body = <PanelState icon="lock" title={t("dashboardView.deniedTitle")} description={`${sentence(data.accessDenied)} ${t("dashboardView.askOwner")}`} />;
   } else if (!hasData(data.frames) && panel.type === "geomap") {
     // A map reads each entity's latest values: a longer range would bring nothing more.
-    body = <PanelState icon="globe" title={noValue ?? t("dashboardView.emptyTitle")} description={t("dashboardView.geomap.empty")} />;
+    body = (
+      <MapFrame>
+        <PanelState icon="globe" title={noValue ?? t("dashboardView.emptyTitle")} description={t("dashboardView.geomap.empty")} />
+      </MapFrame>
+    );
   } else if (!hasData(data.frames)) {
     body = (
       <PanelState icon="dashboards" title={noValue ?? t("dashboardView.emptyTitle")} description={asked ? t(asked.vars ? "dashboardView.emptyInFor" : "dashboardView.emptyIn", asked) : t("dashboardView.empty")}>

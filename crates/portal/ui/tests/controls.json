@@ -1448,7 +1448,8 @@
         "Button": 3
       },
       "tests": [
-        "dashboard_panels.test.tsx"
+        "dashboard_panels.test.tsx",
+        "geomap_panel.test.tsx"
       ]
     },
     "src/components/panels/TimePicker.tsx": {

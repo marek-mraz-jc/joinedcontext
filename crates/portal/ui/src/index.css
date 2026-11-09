@@ -410,3 +410,9 @@
     min-height: 44px;
   }
 }
+@media (max-width: 639px) {
+  .maplibregl-popup-close-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

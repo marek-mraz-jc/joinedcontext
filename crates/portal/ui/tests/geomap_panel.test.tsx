@@ -138,6 +138,10 @@ describe("the helsinki air quality geomap", () => {
     expect(terms).not.toContain("name");
     expect(terms).toContain("pm10");
     expect(terms).not.toContain("location");
+    // The text date of the source reads as the time field beside it, one format for both.
+    const values = Object.fromEntries([...calls.popups[0].querySelectorAll("dt")].map((term) => [term.textContent, term.nextElementSibling!.textContent]));
+    expect(values.dateObserved).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(values.dateObserved).toBe(values.observedAt);
     expect(calls.popups[0].textContent).toMatch(/µg\/m³|μg\/m³/);
   });
 
