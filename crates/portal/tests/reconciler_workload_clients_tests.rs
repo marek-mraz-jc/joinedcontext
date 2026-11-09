@@ -1250,7 +1250,7 @@ async fn an_app_that_loses_its_jobs_loses_its_principals_client() {
 /// clients. A hand-written account's client still goes when its account goes.
 #[tokio::test]
 async fn a_portal_without_the_namespaces_keeps_the_pipeline_and_app_job_clients() {
-    let keycloak = realm(json!([
+    let held = json!([
         managed_client(
             "uuid-pl",
             "zilina",
@@ -1266,8 +1266,8 @@ async fn a_portal_without_the_namespaces_keeps_the_pipeline_and_app_job_clients(
             "appjob-zilina-kpi"
         ),
         managed_client("uuid-air", "helsinki", "air-adapter", "env-dept", "adapter"),
-    ]))
-    .await;
+    ]);
+    let keycloak = realm(held.clone()).await;
     let outcomes = sync(&keycloak)
         .converge(&mirror_with(vec![]), &Bentos::new())
         .await;
@@ -1276,6 +1276,21 @@ async fn a_portal_without_the_namespaces_keeps_the_pipeline_and_app_job_clients(
     assert_eq!(
         wrote(&keycloak).await,
         vec![format!("DELETE {REALM}/clients/uuid-air")]
+    );
+
+    // With both namespaces set, a pipeline's and an App job's client no account names still go.
+    let keycloak = realm(held).await;
+    let outcomes = sync(&keycloak)
+        .with_pipelines(PIPELINES.to_owned())
+        .with_app_jobs(IDENTITIES.to_owned())
+        .converge(&mirror_with(vec![]), &Bentos::new())
+        .await;
+    assert_eq!(outcomes.len(), 3, "{outcomes:?}");
+    let mut deleted = wrote(&keycloak).await;
+    deleted.sort();
+    assert_eq!(
+        deleted,
+        ["uuid-aj", "uuid-air", "uuid-pl"].map(|u| format!("DELETE {REALM}/clients/{u}"))
     );
 }
 

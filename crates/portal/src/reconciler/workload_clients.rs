@@ -684,6 +684,8 @@ pub struct WorkloadClientSync {
     app_jobs: Option<String>,
     /// What ends a removed client's tokens at once; `None` leaves them valid until they expire.
     revoke: Option<Revoke>,
+    /// Whether a run already warned that it keeps `pl-`/`appjob-` clients it cannot judge.
+    warned_kept: std::sync::atomic::AtomicBool,
 }
 
 impl WorkloadClientSync {
@@ -696,6 +698,7 @@ impl WorkloadClientSync {
             pipelines: None,
             app_jobs: None,
             revoke: None,
+            warned_kept: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -784,6 +787,7 @@ impl WorkloadClientSync {
         }
 
         // A managed workload client no bound account names is this wave's to remove (PF-47).
+        let mut kept = Vec::new();
         for client in listed.as_array().into_iter().flatten() {
             let Some(account) = client
                 .get("attributes")
@@ -792,7 +796,11 @@ impl WorkloadClientSync {
             else {
                 continue;
             };
-            if !managed(client) || wanted.contains(account) || !self.derives(account) {
+            if !managed(client) || wanted.contains(account) {
+                continue;
+            }
+            if !self.derives(account) {
+                kept.push(account);
                 continue;
             }
             let mut outcome = ClientOutcome::of(account);
@@ -820,6 +828,19 @@ impl WorkloadClientSync {
                 None => outcome.error = Some("the realm listed a client without an id".to_owned()),
             }
             outcomes.push(outcome);
+        }
+        if !kept.is_empty()
+            && !self
+                .warned_kept
+                .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            tracing::warn!(
+                clients = kept.len(),
+                first = kept[0],
+                "managed pipeline or App job clients exist and JC_PORTAL_PIPELINE_NAMESPACE or \
+                 JC_PORTAL_APP_IDENTITY_NAMESPACE is unset: they are kept, and one whose \
+                 Pipeline or App is gone stays until the namespace is set"
+            );
         }
         outcomes
     }
