@@ -359,6 +359,7 @@ async fn k14_scim_put_patch_groups_etags_errors_and_deactivation_session_revocat
             user_id: uid.clone(),
             username: "bjensen@hel.fi".into(),
             ip_address: "127.0.0.1".into(),
+            user_agent: String::new(),
             start: now.timestamp_millis(),
             last_access: now.timestamp_millis(),
             auth_time: now.timestamp(),

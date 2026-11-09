@@ -10,6 +10,7 @@
 //!   i18n bundles for `en`, `sk`, `cs`, `de`, and `hu` (no literal user-facing strings in templates).
 //! - Outbound e-mail sender via `lettre` over TLS with signed single-use 15-min action links.
 
+pub mod account;
 pub mod email;
 pub mod handlers;
 pub mod i18n;

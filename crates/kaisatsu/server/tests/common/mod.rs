@@ -103,7 +103,11 @@ pub async fn post_form(
     let mut builder = Request::builder()
         .method(Method::POST)
         .uri(uri)
-        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(
+            header::USER_AGENT,
+            "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+        );
     if let Some(ck) = cookies {
         builder = builder.header(header::COOKIE, ck);
     }
