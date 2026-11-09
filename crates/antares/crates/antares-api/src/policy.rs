@@ -2240,7 +2240,7 @@ mod tests {
     fn an_admin_q_request_names_its_subject_and_nothing_else_does() {
         let names = vec!["x-jc-subject".to_owned(), "x-jc-roles".to_owned()];
         let from = vec!["context-gateway.jc".to_owned()];
-        let secret = "0123456789abcdef0123456789abcdef";
+        let secret = &"0123456789abcdef".repeat(2);
         let admin = crate::admin_auth::AdminAuth::new(secret, false).unwrap();
         let request = |bearer: Option<&str>| {
             let mut h = HeaderMap::new();
