@@ -411,6 +411,11 @@ async fn type_info(
     wait: std::time::Duration,
 ) -> ApiResult<Option<((usize, BTreeMap<String, BTreeSet<String>>), bool)>> {
     let until = until(wait);
+    // the count reads `iri` as a type selection (4.17): a name its grammar
+    // would split or trim is left to the fold, which compares it exactly
+    if iri.trim() != iri || iri.contains([',', '|', ';', '(', ')']) {
+        return Ok(None);
+    }
     let Some(pairs) = st.store.entity_attr_pairs(tenant).await? else {
         return Ok(None);
     };
