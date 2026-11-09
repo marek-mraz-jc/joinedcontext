@@ -302,6 +302,14 @@ async fn ok(what: &str, req: reqwest::RequestBuilder) -> Value {
 }
 
 const ENTITY: &str = "urn:ngsi-ld:AirQualityObserved:jc-restart-1";
+/// A stream that waits on the rate limit `restart__pipeline_egress` and logs each tick's verdict.
+const PACED: &str = concat!(
+    "input:\n  generate:\n    interval: 1s\n    mapping: 'root = \"tick\"'\n",
+    "pipeline:\n  processors:\n",
+    "    - rate_limit:\n        resource: restart__pipeline_egress\n",
+    "    - log:\n        level: INFO\n        message: 'paced: ${! error().or(\"ok\") }'\n",
+    "output:\n  drop: {}\n",
+);
 const USER: &str = "restart.person@jc.invalid";
 
 async fn kaisatsu_token(jc: &Jc) -> String {
@@ -385,6 +393,25 @@ async fn write_everything(jc: &Jc) {
             .body("input:\n  generate:\n    interval: 1h\n    mapping: 'root = \"kept\"'\noutput:\n  drop: {}\n"),
     )
     .await;
+    // A posted rate limit and a stream pacing on it, as the Portal declares a project's
+    // `<project>__pipeline_egress` and an expiry sweep waits on it: after a restart the stream
+    // starts before any client posts the rate limit again.
+    ok(
+        "ekiben rate limit",
+        http.post(jc.url("/streams/resources/rate_limit/restart__pipeline_egress"))
+            .bearer_auth(jc.secret("ekiben-token"))
+            .header("content-type", "application/yaml")
+            .body("local:\n  count: 100\n  interval: 1s\n"),
+    )
+    .await;
+    ok(
+        "ekiben paced stream",
+        http.post(jc.url("/streams/streams/restart-paced"))
+            .bearer_auth(jc.secret("ekiben-token"))
+            .header("content-type", "application/yaml")
+            .body(PACED),
+    )
+    .await;
 
     let token = kaisatsu_token(jc).await;
     let created = http
@@ -460,6 +487,30 @@ async fn read_everything(jc: &Jc) {
     })
     .await;
     assert_eq!(stream["active"], true, "{stream}");
+    // The paced stream ran on the kept rate limit from its first tick.
+    eventually("a paced tick after the restart", 30, || async {
+        jc.log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|l| l.contains("paced: "))
+            .then_some(())
+    })
+    .await;
+    let log = jc.log.lock().unwrap().join("\n");
+    assert!(
+        !log.contains("was not found in organization"),
+        "a restored stream ran before its rate limit was back: {}",
+        log.lines()
+            .filter(|l| l.contains("was not found"))
+            .take(3)
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    assert!(
+        log.contains("paced: ok"),
+        "no paced tick passed its rate limit"
+    );
 
     let token = kaisatsu_token(jc).await;
     let users = ok(

@@ -95,7 +95,7 @@ pub(crate) async fn document(
         AccessFormat::AuthZen => Ok(endpoint_document(document, endpoint, subject)),
         AccessFormat::GrantAst => Ok(document),
         AccessFormat::Odrl | AccessFormat::Turtle => {
-            odrl::published(document, endpoint, gateway.base_url(), sha256_hex).ok_or_else(|| {
+            odrl::published(document, endpoint, &gateway.base_url(), sha256_hex).ok_or_else(|| {
                 tracing::error!(slug = %endpoint.slug, "the broker's ODRL document is not a Set");
                 Box::new(not_a_document())
             })

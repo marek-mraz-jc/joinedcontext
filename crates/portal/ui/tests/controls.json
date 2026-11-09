@@ -524,7 +524,8 @@
       },
       "tests": [
         "addressItem.test.ts",
-        "otherPageCrumb.test.tsx"
+        "otherPageCrumb.test.tsx",
+        "shell_frame.test.ts"
       ]
     },
     "src/components/layout/PublicFrame.tsx": {

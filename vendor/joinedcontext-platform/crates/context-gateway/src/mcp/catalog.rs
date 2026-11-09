@@ -302,6 +302,8 @@ async fn of(gateway: &Gateway, reach: &[(Arc<Endpoint>, Subject)]) -> Arc<Catalo
     }
 
     let base = gateway.base_url();
+
+    let base: &str = &base;
     let mut records = Vec::with_capacity(listed.len());
     let mut places = BTreeMap::new();
     let mut facts = HashMap::new();

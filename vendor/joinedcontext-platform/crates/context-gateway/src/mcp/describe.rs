@@ -325,7 +325,7 @@ async fn access_document(
 /// Adds `liveUpdates` to an access document when the Endpoint serves a WebSocket (T-5045).
 fn with_live_updates(document: &mut Value, gateway: &Gateway, endpoint: &Endpoint) {
     let live =
-        crate::handlers::ws::live_updates(endpoint, gateway.base_url(), gateway.ws_token_lifetime);
+        crate::handlers::ws::live_updates(endpoint, &gateway.base_url(), gateway.ws_token_lifetime);
     if let (Some(members), Some(live)) = (document.as_object_mut(), live) {
         members.insert("liveUpdates".to_owned(), live);
     }
