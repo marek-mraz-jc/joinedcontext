@@ -11866,6 +11866,11 @@
     "timePicker": {
       "search": "Schnellbereiche suchen",
       "noQuick": "Kein Schnellbereich passt.",
+      "calendarFrom": "Beginn im Kalender wählen",
+      "calendarTo": "Ende im Kalender wählen",
+      "copy": "Zeitbereich kopieren",
+      "paste": "Zeitbereich einfügen",
+      "pasteInvalid": "Die Zwischenablage enthält keinen Zeitbereich: Kopieren Sie einen aus der Zeitauswahl eines Dashboards.",
       "browserTime": "Browserzeit",
       "between": "{from} bis {to}",
       "rangeShifted": "{range} + Zeitverschiebung -{shift}",

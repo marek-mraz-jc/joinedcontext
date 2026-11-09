@@ -9,7 +9,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../src/i18n";
 import { panelQuery, toggled } from "../src/pages/grafana/DashboardPage";
-import { overrideWords, RefreshPicker, rangeWords, TimePicker, TimeRangeControls, zoneWords } from "../src/components/panels/TimePicker";
+import { overrideWords, pastedRange, RefreshPicker, rangeWords, TimePicker, TimeRangeControls, zoneWords } from "../src/components/panels/TimePicker";
 import { absoluteWords, panelRange, QUICK_RANGES, REFRESHES, refreshMs, resolveTime, roundInterval, shiftedRange, zoomedOutRange } from "../src/components/panels/timeRange";
 import timePicker from "./fixtures/grafana-reference/time-picker.json";
 import refreshPicker from "./fixtures/grafana-reference/refresh-picker.json";
@@ -130,6 +130,25 @@ describe("Grafana's time picker footer", () => {
     expect(zoneWords(Date.UTC(2026, 10, 8), "Europe/Bratislava")).toBe("Europe/Bratislava, CET UTC+01:00");
     expect(zoneWords(Date.UTC(2026, 6, 8), "Europe/Bratislava")).toBe("Europe/Bratislava, CEST UTC+02:00");
     expect(zoneWords(Date.UTC(2026, 6, 8), "UTC")).toBe("UTC, UTC UTC+00:00");
+  });
+});
+
+describe("Grafana's copy and paste of a range", () => {
+  const NOW = Date.UTC(2026, 10, 8, 6);
+  it("takes the JSON Grafana's copy writes, and refuses anything else", () => {
+    expect(pastedRange(JSON.stringify({ from: "now-6h", to: "now" }), NOW)).toEqual({ from: "now-6h", to: "now" });
+    expect(pastedRange(JSON.stringify({ from: "1794117600000", to: "1794139200000" }), NOW)).toEqual({ from: "1794117600000", to: "1794139200000" });
+    for (const text of ["", "now-6h", "{}", JSON.stringify({ from: "now-6h", to: 5 }), JSON.stringify({ from: "yesterday-ish", to: "now" }), "null"]) {
+      expect(pastedRange(text, NOW)).toBeNull();
+    }
+  });
+
+  it("offers a calendar beside each end and Apply as the primary action", () => {
+    render(<TimePicker from="now-6h" to="now" now={NOW} onChange={() => undefined} />);
+    expect(screen.getByRole("button", { name: "Pick the start on a calendar", hidden: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pick the end on a calendar", hidden: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy time range", hidden: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Paste time range", hidden: true })).toBeInTheDocument();
   });
 });
 

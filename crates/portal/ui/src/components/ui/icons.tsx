@@ -32,6 +32,9 @@ const PATHS = {
   plus: "M12 5v14M5 12h14",
   external: "M14 4h6v6M20 4l-9 9M18 13v6H5V6h6",
   copy: "M9 9h10v11H9zM5 15V4h10",
+  // A clipboard: paste what was copied.
+  paste: "M8 5H6v16h12V5h-2M9 3h6v4H9z",
+  calendar: "M4 6h16v14H4zM4 10h16M8 3v5M16 3v5",
   // A page starred to come back to (UI-90).
   star: "M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3l-5.5 2.9 1-6.2L3 9.6l6.2-.9z",
   // A page's own address, to send to someone (UI-91).

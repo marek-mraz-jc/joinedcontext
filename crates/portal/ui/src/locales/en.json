@@ -11866,6 +11866,11 @@
     "timePicker": {
       "search": "Search quick ranges",
       "noQuick": "No quick range matches.",
+      "calendarFrom": "Pick the start on a calendar",
+      "calendarTo": "Pick the end on a calendar",
+      "copy": "Copy time range",
+      "paste": "Paste time range",
+      "pasteInvalid": "The clipboard holds no time range: copy one from a dashboard's time picker.",
       "browserTime": "Browser time",
       "between": "{from} to {to}",
       "rangeShifted": "{range} + timeshift -{shift}",

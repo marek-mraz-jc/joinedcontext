@@ -11866,6 +11866,11 @@
     "timePicker": {
       "search": "Hľadať rýchle rozsahy",
       "noQuick": "Žiadny rýchly rozsah sa nezhoduje.",
+      "calendarFrom": "Vybrať začiatok v kalendári",
+      "calendarTo": "Vybrať koniec v kalendári",
+      "copy": "Kopírovať časový rozsah",
+      "paste": "Vložiť časový rozsah",
+      "pasteInvalid": "Schránka neobsahuje časový rozsah: skopírujte ho z výberu času dashboardu.",
       "browserTime": "Čas prehliadača",
       "between": "{from} až {to}",
       "rangeShifted": "{range} + posun -{shift}",

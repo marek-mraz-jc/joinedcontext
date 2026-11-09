@@ -3,12 +3,12 @@
  * an absolute range (From and To, in Grafana's words or as `2026-11-08 06:00:00`) beside the list
  * of Grafana's quick ranges. The refresh picker beside it offers Grafana's intervals.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
 import { ToolbarPopover } from "../entities/GridToolbar";
-import { Button, Field, Icon, Input } from "../ui";
+import { Button, Field, fieldIds, Icon, Input } from "../ui";
 import { absoluteWords, quickRange, QUICK_RANGES, REFRESHES, resolveTime, shiftedRange, spanParts, zoomedOutRange } from "./timeRange";
 
 type T = (key: string, options?: Record<string, unknown>) => string;
@@ -45,6 +45,60 @@ function typed(text: string, now: number): string | null {
   return at === null ? null : String(at);
 }
 
+/**
+ * A range Grafana's copy button wrote (`{"from": ..., "to": ...}`), when both ends read as times;
+ * anything else on the clipboard is refused.
+ */
+export function pastedRange(text: string, now: number): { from: string; to: string } | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const { from, to } = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
+  if (typeof from !== "string" || typeof to !== "string") return null;
+  const [start, end] = [typed(from, now), typed(to, now)];
+  return start === null || end === null ? null : { from: start, to: end };
+}
+
+/** A calendar button beside a time box: the browser's own date and time picker, its pick written as Grafana's words. */
+function CalendarPick({ label, value, onPick }: { label: string; value: string; onPick: (words: string) => void }): JSX.Element {
+  const picker = useRef<HTMLInputElement>(null);
+  const local = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(value) ? value.replace(" ", "T") : "";
+  return (
+    <span className="relative flex">
+      <Button
+        variant="secondary"
+        aria-label={label}
+        title={label}
+        onClick={() => {
+          try {
+            picker.current?.showPicker();
+          } catch {
+            picker.current?.focus();
+          }
+        }}
+      >
+        <Icon name="calendar" className="size-4" />
+      </Button>
+      <Input
+        ref={picker}
+        type="datetime-local"
+        step={1}
+        tabIndex={-1}
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
+        value={local}
+        onChange={(event) => {
+          const picked = event.target.value;
+          if (picked) onPick(picked.replace("T", " ") + (picked.length === 16 ? ":00" : ""));
+        }}
+      />
+    </span>
+  );
+}
+
 export interface TimePickerProps {
   from: string;
   to: string;
@@ -59,6 +113,7 @@ export function TimePicker({ from, to, now, onChange }: TimePickerProps): JSX.El
   const [end, setEnd] = useState(() => shown(to, true));
   const [wrong, setWrong] = useState<{ from?: boolean; to?: boolean }>({});
   const [search, setSearch] = useState("");
+  const [pasted, setPasted] = useState("");
   const quick = QUICK_RANGES.filter((range) => t(`dashboardView.quick.${range.key}`).toLowerCase().includes(search.trim().toLowerCase()));
   return (
     // At the toolbar's right end, as Grafana's: the panel opens leftwards and stays on the screen.
@@ -79,19 +134,51 @@ export function TimePicker({ from, to, now, onChange }: TimePickerProps): JSX.El
         >
           <p className="text-body font-semibold text-fg">{t("dashboardView.timePicker.absolute")}</p>
           <Field id="dashboard-time-from" label={t("dashboardView.timePicker.from")} help={t("dashboardView.timePicker.hint")} errors={wrong.from ? [t("dashboardView.timePicker.invalid")] : undefined}>
-            <Input id="dashboard-time-from" value={start} onChange={(event) => setStart(event.target.value)} />
+            <div className="flex gap-1">
+              <Input id="dashboard-time-from" aria-describedby={fieldIds("dashboard-time-from").help} value={start} onChange={(event) => setStart(event.target.value)} />
+              <CalendarPick label={t("dashboardView.timePicker.calendarFrom")} value={start} onPick={setStart} />
+            </div>
           </Field>
           <Field id="dashboard-time-to" label={t("dashboardView.timePicker.to")} help={t("dashboardView.timePicker.hintTo")} errors={wrong.to ? [t("dashboardView.timePicker.invalid")] : undefined}>
-            <Input id="dashboard-time-to" value={end} onChange={(event) => setEnd(event.target.value)} />
+            <div className="flex gap-1">
+              <Input id="dashboard-time-to" aria-describedby={fieldIds("dashboard-time-to").help} value={end} onChange={(event) => setEnd(event.target.value)} />
+              <CalendarPick label={t("dashboardView.timePicker.calendarTo")} value={end} onPick={setEnd} />
+            </div>
           </Field>
-          <Button type="submit" size="sm">
-            {t("dashboardView.timePicker.apply")}
-          </Button>
+          <div className="flex gap-1">
+            <Button variant="secondary" size="sm" aria-label={t("dashboardView.timePicker.copy")} title={t("dashboardView.timePicker.copy")} onClick={() => void navigator.clipboard?.writeText(JSON.stringify({ from: start, to: end }))}>
+              <Icon name="copy" className="size-4" />
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-label={t("dashboardView.timePicker.paste")}
+              title={t("dashboardView.timePicker.paste")}
+              onClick={async () => {
+                const range = pastedRange((await navigator.clipboard?.readText().catch(() => "")) ?? "", now);
+                setPasted(range ? "" : t("dashboardView.timePicker.pasteInvalid"));
+                if (!range) return;
+                setStart(shown(range.from, false));
+                setEnd(shown(range.to, true));
+              }}
+            >
+              <Icon name="paste" className="size-4" />
+            </Button>
+            <Button type="submit" variant="primary" size="sm" className="flex-1">
+              {t("dashboardView.timePicker.apply")}
+            </Button>
+          </div>
+          {pasted ? (
+            <p role="status" className="text-caption text-danger">
+              {pasted}
+            </p>
+          ) : null}
         </form>
         <nav aria-label={t("dashboardView.timePicker.quick")} className="order-first flex min-w-48 flex-col gap-2 sm:order-none sm:border-l sm:border-border sm:pl-4">
           <Input type="search" aria-label={t("dashboardView.timePicker.search")} placeholder={t("dashboardView.timePicker.search")} value={search} onChange={(event) => setSearch(event.target.value)} />
           {quick.length === 0 ? <p className="text-caption text-fg-muted">{t("dashboardView.timePicker.noQuick")}</p> : null}
-          <ul className="flex max-h-60 flex-col overflow-y-auto sm:max-h-80">
+          {/* A height that cuts a row in half, so the list reads as one that scrolls, as Grafana's. */}
+          <ul className="flex max-h-60 flex-col overflow-y-auto sm:max-h-55">
             {quick.map((range) => {
               const current = range.from === from && range.to === to;
               return (
