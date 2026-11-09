@@ -69,13 +69,9 @@ zip = { version = "9.2", default-features = false, features = ["deflate"] }
 lopdf = { version = "=0.45.0", default-features = false }
 # Without resolve-http: a connector's schema never makes this service fetch a `$ref`.
 jsonschema = { version = "0.54", default-features = false }
-# Passage and question embeddings (ADR-N-040 §3.1, T-3053): `multilingual-e5-small` int8, its
-# files read from a directory whose SHA-256s `embed.rs` pins (`scripts/ci/e5-small.sh` fetches
-# them); nothing is downloaded at run time. ONNX Runtime is loaded at start from ORT_DYLIB_PATH
-# (`scripts/ci/onnxruntime.sh`, pinned and checked): the static library `ort` would download
-# needs glibc 2.38. `ort` has no stable release; 2.0.0-rc.13 binds ONNX Runtime 1.28.
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "api-24", "load-dynamic"] }
-tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"] }
+# Passage and question embeddings (ADR-N-040 §3.1, T-3053): the model code (multilingual-e5-small
+# int8 over ONNX Runtime, files pinned by SHA-256) and the embedder service's client, one crate.
+jc-embedder = { path = "../../../../crates/embedder" }
 
 [dev-dependencies]
 wiremock = "0.6"

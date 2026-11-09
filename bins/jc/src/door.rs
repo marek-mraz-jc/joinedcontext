@@ -19,59 +19,21 @@ use crate::setup::{DASHBOARDS_USER, Secret, Setup};
 use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
-use jsonwebtoken::jwk::JwkSet;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
-use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
-/// The least time between two JWKS fetches, so unknown `kid`s cannot make the door hammer
-/// kaisatsu.
-pub const REFETCH_AFTER: Duration = Duration::from_secs(30);
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_JWKS_BYTES: usize = 256 * 1024;
-const MAX_TOKEN_BYTES: usize = 64 * 1024;
 /// ponytail: the forwarder holds a body whole; a Portal call carries manifests, not packs. Raise
 /// it or stream when a call outgrows it.
 const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
-/// The algorithms kaisatsu signs with (`kaisatsu-crypto` keys.rs); no HMAC, no `none`.
-const ALGORITHMS: [Algorithm; 3] = [Algorithm::ES256, Algorithm::RS256, Algorithm::EdDSA];
 
-fn http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| format!("cannot build an HTTP client: {e}"))
-}
-
-/// Reads at most `cap` bytes of an answer.
-async fn capped(mut resp: reqwest::Response, cap: usize) -> Result<Vec<u8>, String> {
-    let mut body = Vec::new();
-    while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
-        if body.len() + chunk.len() > cap {
-            return Err(format!("larger than {cap} bytes"));
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
-/// The value of `Authorization: Bearer <value>`.
-fn bearer(headers: &HeaderMap) -> Option<&str> {
-    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let (scheme, rest) = value.split_once(' ')?;
-    scheme
-        .eq_ignore_ascii_case("bearer")
-        .then(|| rest.trim())
-        .filter(|t| !t.is_empty() && t.len() <= MAX_TOKEN_BYTES)
-}
+pub use jc_door::REFETCH_AFTER;
+use jc_door::{bearer, capped, http_client};
 
 /// The `Authorization` value a module takes its service credential in: HTTP Basic for daiya
 /// (as Grafana's admin user), a bearer token for the others.
@@ -119,151 +81,21 @@ pub fn is_credential(module: Module, got: &HeaderValue, value: &str) -> bool {
     jc_secret::constant_time_eq(bare.as_bytes(), value.as_bytes())
 }
 
-struct Keys {
-    set: JwkSet,
-    fetched: Option<Instant>,
-}
-
-#[derive(Deserialize)]
-struct Claims {
-    azp: Option<String>,
-    client_id: Option<String>,
-}
-
-/// The verifier of a module container's door.
-pub struct Door {
-    issuer: String,
-    jwks_url: String,
-    clients: Vec<String>,
-    http: reqwest::Client,
-    keys: RwLock<Keys>,
-}
-
-impl std::fmt::Debug for Door {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Door")
-            .field("issuer", &self.issuer)
-            .field("jwks_url", &self.jwks_url)
-            .field("clients", &self.clients)
-            .finish()
-    }
-}
+/// The verifier of a module container's door ([`jc_door::Verifier`] over `[door]`).
+#[derive(Debug)]
+pub struct Door(jc_door::Verifier);
 
 impl Door {
     /// `jwks_url` is fetched by `jc` itself, so it may name a listener on loopback or the
     /// cluster network.
     pub fn new(cfg: &crate::config::DoorSection) -> Result<Self, String> {
-        Ok(Self {
-            issuer: cfg.issuer.clone(),
-            jwks_url: cfg.jwks_url.clone(),
-            clients: cfg
-                .clients
-                .iter()
-                .map(|c| c.trim().to_owned())
-                .filter(|c| !c.is_empty())
-                .collect(),
-            http: http_client()?,
-            keys: RwLock::new(Keys {
-                set: JwkSet { keys: Vec::new() },
-                fetched: None,
-            }),
-        })
-    }
-
-    fn keys(&self) -> std::sync::RwLockReadGuard<'_, Keys> {
-        self.keys
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// Fetches the JWKS when `token` names a key the cache lacks and the last fetch is older
-    /// than [`REFETCH_AFTER`]. A failed fetch keeps the old keys.
-    async fn prepare(&self, token: &str) {
-        let Some(kid) = decode_header(token).ok().and_then(|h| h.kid) else {
-            return;
-        };
-        let due = {
-            let keys = self.keys();
-            keys.set.find(&kid).is_none()
-                && keys.fetched.is_none_or(|at| at.elapsed() >= REFETCH_AFTER)
-        };
-        if !due {
-            return;
-        }
-        // Stamp first, so concurrent requests naming unknown keys wait out the period too.
-        self.keys
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .fetched = Some(Instant::now());
-        let fetched = async {
-            let resp = self
-                .http
-                .get(&self.jwks_url)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-            if !resp.status().is_success() {
-                return Err(format!("answered {}", resp.status()));
-            }
-            let body = capped(resp, MAX_JWKS_BYTES).await?;
-            serde_json::from_slice::<JwkSet>(&body).map_err(|e| format!("not a JWKS: {e}"))
-        };
-        match fetched.await {
-            Ok(set) => {
-                self.keys
-                    .write()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .set = set;
-            }
-            Err(e) => tracing::warn!(jwks = %self.jwks_url, error = %e, "JWKS fetch failed"),
-        }
+        jc_door::Verifier::new(&cfg.issuer, &cfg.jwks_url, &cfg.clients).map(Self)
     }
 
     /// Whether `token` is a valid token of an admitted client for `audience`.
     #[must_use]
     pub fn verify(&self, token: &str, audience: &str) -> bool {
-        if self.clients.is_empty() {
-            return false;
-        }
-        let Ok(header) = decode_header(token) else {
-            return false;
-        };
-        if !ALGORITHMS.contains(&header.alg) {
-            return false;
-        }
-        let Some(kid) = header.kid else {
-            return false;
-        };
-        let key = {
-            let keys = self.keys();
-            let Some(jwk) = keys.set.find(&kid) else {
-                return false;
-            };
-            // A key published for one algorithm verifies only that one.
-            if jwk
-                .common
-                .key_algorithm
-                .is_some_and(|a| Algorithm::try_from(a).ok() != Some(header.alg))
-            {
-                return false;
-            }
-            match DecodingKey::from_jwk(jwk) {
-                Ok(k) => k,
-                Err(_) => return false,
-            }
-        };
-        let mut validation = Validation::new(header.alg);
-        validation.set_issuer(&[&self.issuer]);
-        validation.set_audience(&[audience]);
-        validation.set_required_spec_claims(&["exp", "iss", "aud"]);
-        validation.leeway = 30;
-        let Ok(data) = decode::<Claims>(token, &key, &validation) else {
-            return false;
-        };
-        data.claims
-            .azp
-            .or(data.claims.client_id)
-            .is_some_and(|c| self.clients.contains(&c))
+        self.0.verify(token, audience)
     }
 
     /// `router` behind the door: a verified token of `module`'s audience becomes the module's
@@ -279,7 +111,7 @@ impl Door {
                 let credential = credential.clone();
                 async move {
                     if let Some(token) = bearer(req.headers()).map(str::to_owned) {
-                        door.prepare(&token).await;
+                        door.0.prepare(&token).await;
                         if door.verify(&token, module.name()) {
                             req.headers_mut().insert(header::AUTHORIZATION, credential);
                         }
@@ -289,12 +121,6 @@ impl Door {
             },
         ))
     }
-}
-
-#[derive(Deserialize)]
-struct TokenAnswer {
-    access_token: String,
-    expires_in: Option<u64>,
 }
 
 /// The Portal container's client of kaisatsu's token endpoint, one cached token per module.
@@ -332,26 +158,14 @@ impl Remote {
         {
             return Ok(token.clone());
         }
-        let resp = self
-            .http
-            .post(&self.token_url)
-            .form(&[
-                ("grant_type", "client_credentials"),
-                ("client_id", self.client_id.as_str()),
-                ("client_secret", self.secret.expose()),
-                ("scope", module.name()),
-            ])
-            .send()
-            .await
-            .map_err(|e| format!("the token endpoint is unreachable: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("the token endpoint answered {}", resp.status()));
-        }
-        let body = capped(resp, MAX_TOKEN_BYTES).await?;
-        let answer: TokenAnswer =
-            serde_json::from_slice(&body).map_err(|_| "the token endpoint answered no token")?;
-        let token = jc_secret::Secret::new(answer.access_token);
-        let life = Duration::from_secs(answer.expires_in.unwrap_or(60).saturating_sub(30));
+        let (token, life) = jc_door::fetch_token(
+            &self.http,
+            &self.token_url,
+            &self.client_id,
+            &self.secret,
+            module.name(),
+        )
+        .await?;
         self.cache
             .lock()
             .unwrap_or_else(|e| e.into_inner())

@@ -62,13 +62,22 @@ export class ApiError extends Error {
   readonly problem?: ProblemDetails;
   /** The edge's `X-Request-Id` of the answer, the reference a failure page shows (T-2747). */
   readonly requestId?: string;
+  /** A list the caller may not read (PF-50): a refusal in their words, nothing to report. */
+  readonly hidden: boolean;
 
-  constructor(status: number, message: string, problem?: WireProblem | ProblemDetails, requestId?: string) {
+  constructor(
+    status: number,
+    message: string,
+    problem?: WireProblem | ProblemDetails,
+    requestId?: string,
+    hidden = false,
+  ) {
     // Every refusal a page shows is one of these, read as `message` or as `problem.detail`.
     super(forPeople(message));
     this.name = "ApiError";
     this.status = status;
     this.requestId = requestId;
+    this.hidden = hidden;
     // A problem is the server's answer, read as it came: a field it left out stays out.
     if (problem) {
       const { errors, ...rest } = problem;
@@ -235,6 +244,7 @@ export async function unwrap<T>(result: {
     message,
     problem,
     result.response.headers.get("x-request-id") ?? undefined,
+    hidden !== null,
   );
 }
 

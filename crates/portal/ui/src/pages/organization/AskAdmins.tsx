@@ -69,7 +69,8 @@ export function AskAdmins({
             {t("askAdmins.ownSections")}
           </Link>
         ) : null}
-        {back ? (
+        {/* The organization's namespace is no project to go back to (PF-61). */}
+        {back && back !== ORG_NAMESPACE ? (
           <Link to="/projects/$project/home" params={{ project: back }} className="w-fit font-medium underline hover:no-underline">
             {t("askAdmins.back")}
           </Link>

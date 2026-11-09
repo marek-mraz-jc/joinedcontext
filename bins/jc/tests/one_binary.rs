@@ -106,6 +106,8 @@ fn probe(module: Module) -> (&'static str, &'static str) {
         Module::Gateway => ("/api/endpoints", "endpoints"),
         // Model Tools has no public mount; the loops below check it answers nothing there.
         Module::ModelTools => ("/healthz", "\"status\":\"ok\""),
+        // Off in these tests (no embedding model, no model key): the loops check its 404.
+        Module::Assistant => ("/d/data/widget", "jc-assistant"),
     }
 }
 
@@ -147,7 +149,11 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
         .expect("start");
     running.portal_ready().await;
     let addr = running.addr;
-    for &module in cfg.roles.iter().filter(|m| **m != Module::ModelTools) {
+    for &module in cfg
+        .roles
+        .iter()
+        .filter(|m| !matches!(m, Module::ModelTools | Module::Assistant))
+    {
         let (path, needle) = probe(module);
         let url = if module.root_paths().is_empty() {
             format!("/{}{path}", module.slug())
@@ -180,6 +186,18 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
     )
     .await;
     assert!(body.contains("http://city.test/id/realms/jc"), "{body}");
+
+    // The assistant is off without its model and key: its paths answer 404, with no launcher.
+    assert!(cfg.roles.contains(&Module::Assistant));
+    for path in ["/d/data/widget", "/api/v1/d/data/config"] {
+        let (status, _) = get(addr, "city.test", path).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
+    let (_, home) = get(addr, "city.test", "/opendata/").await;
+    assert!(
+        !home.contains("id=\"jc-assistant\""),
+        "no launcher while it is off"
+    );
 
     // Model Tools listens on loopback only: its routes are nowhere on the public listener.
     assert!(cfg.roles.contains(&Module::ModelTools));
@@ -273,7 +291,11 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
         .expect("start");
     running.portal_ready().await;
     let addr = running.addr;
-    for &module in cfg.roles.iter().filter(|m| **m != Module::ModelTools) {
+    for &module in cfg
+        .roles
+        .iter()
+        .filter(|m| !matches!(m, Module::ModelTools | Module::Assistant))
+    {
         let (path, needle) = probe(module);
         let host = format!("{}.city.test", module.host_label());
         let (status, body) = get(addr, &host, path).await;

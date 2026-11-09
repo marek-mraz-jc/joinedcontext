@@ -211,7 +211,7 @@ function Resource({ item, project }: { item: Check; project?: string }): JSX.Ele
   const { t } = useTranslation();
   return (
     <span className="flex flex-col">
-      <a href={safeHref(item.evidenceUrl)} className="focus-ring font-medium text-primary-soft-fg underline hover:no-underline">
+      <a data-row-link="" href={safeHref(item.evidenceUrl)} className="focus-ring font-medium text-primary-soft-fg underline hover:no-underline">
         {item.name}
       </a>
       <span className="text-caption text-fg-muted">

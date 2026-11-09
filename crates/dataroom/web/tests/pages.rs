@@ -1251,6 +1251,64 @@ fn installation_branding_and_mount_prefix_reach_the_chrome() {
         .any(|o| o.selected && o.code == "cs" && o.url == "/data/cs/x?q=1"));
 }
 
+#[test]
+fn a_host_widget_replaces_the_domain_widget_and_an_empty_one_shows_no_launcher() {
+    let mut inst = BrandingBlock::default();
+    inst.apply_override_json(&json!({ "domain": DOMAIN }));
+    let c = catalogue(json!(null));
+    let page = |inst: &BrandingBlock| {
+        render_home_page_mounted(&c, Some(inst), &[], &[], "", "sk", false, "/data/", NONCE)
+    };
+    inst.assistant_widget = Some("https://city.example/d/data/widget".into());
+    let on = page(&inst);
+    assert!(on.contains(
+        "src=\"https://city.example/d/data/widget?embed=1&amp;dock=1&amp;lang=sk&amp;scheme=light\""
+    ));
+    assert!(on.contains("/data/jc-assistant.js"), "the launcher script");
+    // The theme shows this icon in place of the words on a narrow screen (a blank tile without it).
+    assert!(
+        on.contains("<svg class=\"jc-assistant-icon\""),
+        "the launcher icon"
+    );
+    assert!(
+        !on.contains(&format!("assistant.{DOMAIN}")),
+        "no domain widget"
+    );
+    // Off: no launcher, though the domain would have named one.
+    inst.assistant_widget = Some(String::new());
+    let off = page(&inst);
+    assert!(!off.contains("id=\"jc-assistant\""));
+    assert!(!off.contains("jc-assistant.js"));
+    // The override JSON never sets it.
+    let mut set = BrandingBlock::default();
+    set.apply_override_json(&json!({ "assistantWidget": "https://evil.example/" }));
+    assert_eq!(set.assistant_widget, None);
+    let read: BrandingBlock = serde_json::from_value(serde_json::to_value(&inst).unwrap()).unwrap();
+    assert_eq!(read.assistant_widget, None, "serde skips it both ways");
+}
+
+#[test]
+fn the_csp_frames_the_host_widget_origin_and_nothing_odd() {
+    let h = csp_header_with_frame("n", None, false, Some("https://assistant.city.example"));
+    assert!(
+        h.contains("frame-src 'self' https://assistant.city.example;"),
+        "{h}"
+    );
+    for odd in [
+        "https://a.example; script-src *",
+        "javascript:x",
+        "https://",
+        "https://a b",
+    ] {
+        let h = csp_header_with_frame("n", None, false, Some(odd));
+        assert!(h.contains("frame-src 'self';"), "{odd:?}: {h}");
+    }
+    assert_eq!(
+        csp_header_with_frame("n", Some(DOMAIN), true, None),
+        csp_header_for_domain("n", Some(DOMAIN), true)
+    );
+}
+
 // ---- C17 profile editor form ----
 
 #[test]
