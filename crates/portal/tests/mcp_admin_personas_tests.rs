@@ -935,3 +935,35 @@ async fn a_project_administrator_decides_an_access_request_and_no_other_organiza
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "decided once: {body}");
 }
+
+/// Found by the smoke suite `mcp` on a rehearsal: an organization administrator's proposal of
+/// another Organization was answered `input_required`, so the person was asked to confirm a
+/// proposal the Portal then refuses. The MCP door refuses it before asking.
+#[tokio::test]
+async fn an_mcp_proposal_outside_the_callers_organization_is_refused_before_asking() {
+    let state = world();
+    let caller = mcp(through_client(organization_admin()));
+    let ask = |manifest: Value| {
+        let (caller, state) = (caller.clone(), state.clone());
+        async move {
+            mcp_rpc(
+                &caller,
+                &state,
+                json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+                    "name": "jc_resource_propose",
+                    "arguments": { "project": ORG_NAMESPACE, "manifest": manifest } } }),
+            )
+            .await
+        }
+    };
+    let refused = ask(organization("hel", "hel.fi")).await;
+    assert_eq!(refused["result"]["isError"], json!(true), "{refused}");
+    assert_ne!(
+        refused["result"]["status"],
+        json!("input_required"),
+        "{refused}"
+    );
+    // Its own Organization's settings are still asked for, as before.
+    let own = ask(organization("esp", "espoo.fi")).await;
+    assert_ne!(own["result"]["isError"], json!(true), "{own}");
+}
