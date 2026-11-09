@@ -786,6 +786,203 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
 }
 
 // ------------------------------------------------------------------------------------------
+// Optional scopes outside the `scope` claim (include.in.token.scope=false): their mappers run
+// in every grant, as Keycloak 26.8 applies them
+// ------------------------------------------------------------------------------------------
+
+const REDIRECT: &str = "https://portal.jc.localhost/api/v1/auth/callback";
+
+/// The authorization request of auth/oidc.rs:596 for `portal-api` with `scope`, unsent.
+fn portal_authorize(scope: &str, challenge: &str) -> String {
+    let mut authorize = url::Url::parse(&format!("{ISSUER}/protocol/openid-connect/auth")).unwrap();
+    authorize
+        .query_pairs_mut()
+        .append_pair("response_type", "code")
+        .append_pair("client_id", "portal-api")
+        .append_pair("state", "s1")
+        .append_pair("code_challenge", challenge)
+        .append_pair("code_challenge_method", "S256")
+        .append_pair("redirect_uri", REDIRECT)
+        .append_pair("scope", scope);
+    authorize.to_string()
+}
+
+/// Ana signs in to `portal-api` asking `scope`: the code and its PKCE verifier.
+async fn portal_code(app: &Router, scope: &str) -> (String, String) {
+    let (challenge, verifier) = pkce();
+    let (back, _) = sign_in(app, &portal_authorize(scope, &challenge)).await;
+    (
+        param(&back, "code").unwrap_or_else(|| panic!("no code: {back}")),
+        verifier,
+    )
+}
+
+async fn redeem(app: &Router, code: &str, verifier: &str) -> Answer {
+    post_form(
+        app,
+        TOKEN,
+        &[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", REDIRECT),
+            ("code_verifier", verifier),
+            ("client_id", "portal-api"),
+            ("client_secret", PORTAL_API_SECRET),
+        ],
+        None,
+    )
+    .await
+}
+
+async fn refreshed(app: &Router, refresh: &str, scope: Option<&str>) -> Answer {
+    let mut pairs = vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh),
+        ("client_id", "portal-api"),
+        ("client_secret", PORTAL_API_SECRET),
+    ];
+    if let Some(s) = scope {
+        pairs.push(("scope", s));
+    }
+    post_form(app, TOKEN, &pairs, None).await
+}
+
+fn auds(claims: &Value) -> Vec<String> {
+    match &claims["aud"] {
+        Value::String(s) => vec![s.clone()],
+        Value::Array(a) => a
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn access_claims(answer: &Answer) -> Value {
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    payload(
+        answer.json()["access_token"]
+            .as_str()
+            .expect("access_token"),
+    )
+}
+
+/// What /authorize answers to a refused scope: the error, from a redirect or the body.
+async fn authorize_error(app: &Router, scope: &str) -> String {
+    let (challenge, _) = pkce();
+    let answer = get_page(app, &portal_authorize(scope, &challenge), None).await;
+    match answer.headers.get(header::LOCATION) {
+        Some(_) => param(&answer.location(), "error").unwrap_or_else(|| answer.location()),
+        None => answer.json()["error"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn an_optional_scope_outside_the_scope_claim_keeps_its_mappers_in_the_code_flow() {
+    let realm = realm().await;
+    let app = &realm.app;
+
+    // client_credentials with `gateway-hub`: its audience mapper adds mcp-hub.
+    let answer = post_form(
+        app,
+        TOKEN,
+        &[
+            ("grant_type", "client_credentials"),
+            ("client_id", "portal-api"),
+            ("client_secret", PORTAL_API_SECRET),
+            ("scope", "openid gateway-hub"),
+        ],
+        None,
+    )
+    .await;
+    let service = access_claims(&answer);
+    assert!(auds(&service).contains(&"mcp-hub".to_owned()), "{service}");
+
+    // The code flow with the same scope: the same audience, and the `scope` claim of a code
+    // flow without it (gateway-hub has include.in.token.scope=false).
+    let (code, verifier) = portal_code(app, "openid gateway-hub").await;
+    let answer = redeem(app, &code, &verifier).await;
+    let person = access_claims(&answer);
+    assert!(auds(&person).contains(&"mcp-hub".to_owned()), "{person}");
+    let refresh = answer.json()["refresh_token"].as_str().unwrap().to_owned();
+    let (code, verifier) = portal_code(app, "openid").await;
+    let plain = access_claims(&redeem(app, &code, &verifier).await);
+    assert!(
+        !auds(&plain).contains(&"mcp-hub".to_owned()),
+        "only when asked: {plain}"
+    );
+    assert_eq!(
+        person["scope"], plain["scope"],
+        "the scope claim is unchanged"
+    );
+    assert!(
+        !person["scope"].as_str().unwrap().contains("gateway-hub"),
+        "{person}"
+    );
+
+    // A refresh keeps the mapper and gains nothing it asks for.
+    let again = refreshed(
+        app,
+        &refresh,
+        Some("openid gateway-hub mcp:portal endpoint:*"),
+    )
+    .await;
+    let renewed = access_claims(&again);
+    assert!(auds(&renewed).contains(&"mcp-hub".to_owned()), "{renewed}");
+    assert_eq!(renewed["scope"], person["scope"], "{renewed}");
+    assert_eq!(auds(&renewed), auds(&person), "{renewed}");
+    let refresh = again.json()["refresh_token"].as_str().unwrap().to_owned();
+
+    // An optional scope not linked to portal-api is refused at /authorize, `endpoint:*` and an
+    // Endpoint's scope the realm holds but has not linked included.
+    let api = portal_api(app).await;
+    let made = admin(
+        app,
+        &api,
+        Method::POST,
+        "/client-scopes",
+        Some(hub_scope(SLUG)),
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    for scope in [
+        "openid mcp:portal".to_owned(),
+        "openid gateway-hub endpoint:*".to_owned(),
+        format!("openid gateway-hub endpoint:{SLUG}"),
+    ] {
+        assert_eq!(
+            authorize_error(app, &scope).await,
+            "invalid_scope",
+            "{scope}"
+        );
+    }
+    for claims in [&person, &renewed] {
+        let text = claims.to_string();
+        assert!(
+            !text.contains("endpoint:") && !text.contains(SLUG),
+            "{claims}"
+        );
+    }
+
+    // A scope the client lost between /authorize and the code exchange is dropped, as
+    // Keycloak's TokenManager.getRequestedClientScopes drops it: the token comes, without the
+    // mapper. A refresh after the loss drops it too.
+    let (code, verifier) = portal_code(app, "openid gateway-hub").await;
+    let operator = realm_admin(&realm).await;
+    let portal = find_client(app, &operator, "portal-api").await.unwrap();
+    let dropped = drop_optional_scopes(app, &operator, &id_of(&portal)).await;
+    assert_eq!(dropped, ["gateway-hub"]);
+    let late = access_claims(&redeem(app, &code, &verifier).await);
+    assert!(!auds(&late).contains(&"mcp-hub".to_owned()), "{late}");
+    assert_eq!(late["scope"], person["scope"], "{late}");
+    let after = access_claims(&refreshed(app, &refresh, None).await);
+    assert!(!auds(&after).contains(&"mcp-hub".to_owned()), "{after}");
+}
+
+// ------------------------------------------------------------------------------------------
 // Bearer callers, connectors and the Endpoint token exchange (auth/bearer.rs, mcp/connector.rs,
 // auth/oidc.rs:364)
 // ------------------------------------------------------------------------------------------
@@ -2682,4 +2879,21 @@ async fn a_profile_write_after_a_password_reset_keeps_the_new_password() {
             done.location()
         );
     }
+}
+
+/// The Portal asks the gateway's `access/simulate` (api/access_simulate.rs) with its own
+/// client-credentials token, and the gateway takes that route only for audience
+/// `context-gateway-simulate` from `portal-api` (context-gateway auth/subject.rs
+/// SIMULATE_AUDIENCE, PORTAL_CLIENT). Without the mapper every simulate answered 401 and the
+/// readable catalogue lost every organization Endpoint.
+#[tokio::test]
+async fn the_portals_service_token_reaches_access_simulate() {
+    let realm = realm().await;
+    let claims = payload(&portal_api(&realm.app).await);
+    assert_eq!(claims["azp"], json!("portal-api"), "{claims}");
+    let aud = match &claims["aud"] {
+        Value::Array(list) => list.clone(),
+        one => vec![one.clone()],
+    };
+    assert!(aud.contains(&json!("context-gateway-simulate")), "{claims}");
 }

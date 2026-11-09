@@ -25,6 +25,8 @@ subtle = "2.6"
 thiserror = "2.0"
 tracing = "0.1"
 url = "2.5"
+# TOTP enrolment QR code (inline SVG); pure Rust, no dependencies.
+qrcodegen = "1.8"
 uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
 
 [dev-dependencies]

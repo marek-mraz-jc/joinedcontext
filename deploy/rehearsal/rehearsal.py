@@ -163,7 +163,10 @@ def loopback_only(base: str) -> None:
 
 
 def read_secret(state: Path, name: str) -> str:
-    return (state / name).read_text().strip()
+    """A secret jc keeps in its state dir, else one up.sh gave jc as a JCBIN_*_FILE (jc holds the
+    in-process service tokens in memory only, so the kit makes those files)."""
+    p = state / name
+    return (p if p.exists() else state.parent / "secrets" / name).read_text().strip()
 
 
 # --------------------------------------------------------------------------------------------

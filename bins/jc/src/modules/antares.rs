@@ -49,25 +49,46 @@ pub const SCHEMA_MAX_BYTES: &str = "1048576";
 /// The subject headers the gateway sends and the engine reads, as dev names them.
 pub const SUBJECT_HEADERS: &str = "x-jc-subject,x-jc-groups,x-jc-roles,x-jc-client,x-jc-restricted,x-jc-did,x-jc-read-only,x-jc-member";
 
+/// dev's write settings (deployment `context-broker` base values), so a pipeline writes into jc
+/// as fast as into dev (jc-smoke-pipelines: 3,708 entities 14.0 s with the broker's own defaults,
+/// 2.1-2.9 s with these):
+/// - `ANTARES_TEMPORAL_RECORD=ruled`: history only for a type its space, type rule or Entity gives
+///   a history duration (the broker alone records every write).
+/// - `ANTARES_PG_BATCH_ASYNC_COMMIT=true`: batch upserts commit without waiting for the WAL flush.
+///   A Postgres crash can lose the last few hundred milliseconds of batch writes; the next run of
+///   the pipeline writes them again, and single writes stay durable. dev accepts that.
+/// - `ANTARES_PG_POOL=40`: the broker's pool (20 alone); `[antares.database] max_connections`
+///   or the environment's value wins, so an installation sizes it to its Postgres.
+/// - `ANTARES_HISTORY_BACKFILL=on`: a write older than the current value goes to history only
+///   instead of replacing it (the Portal's "add an old value"). The ETSI suites assume off and
+///   run on their own broker.
+pub const WRITE_DEFAULTS: [(&str, &str); 4] = [
+    ("ANTARES_TEMPORAL_RECORD", "ruled"),
+    ("ANTARES_PG_BATCH_ASYNC_COMMIT", "true"),
+    ("ANTARES_PG_POOL", "40"),
+    ("ANTARES_HISTORY_BACKFILL", "on"),
+];
+
 /// The broker settings `jc` supplies for keys the environment leaves unset.
 #[must_use]
 pub fn defaults() -> BTreeMap<String, String> {
-    [
-        ("ANTARES_API_SURFACES", SURFACES),
-        ("ANTARES_POLICY", "joinedcontext"),
-        ("ANTARES_POLICY_SUBJECT_HEADERS", SUBJECT_HEADERS),
-        ("ANTARES_PROVENANCE_FROM", crate::modules::GATEWAY_IDENTITY),
-        (
-            "ANTARES_POLICY_SUBJECT_FROM",
-            crate::modules::GATEWAY_IDENTITY,
-        ),
-        // The Portal PUTs each Tenant's schema to /q/schemas/{tenant}; unset, the broker takes
-        // none and serves no OGC or OData collection (dev's value).
-        ("ANTARES_SCHEMA_MAX_BYTES", SCHEMA_MAX_BYTES),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_owned(), v.to_owned()))
-    .collect()
+    WRITE_DEFAULTS
+        .into_iter()
+        .chain([
+            ("ANTARES_API_SURFACES", SURFACES),
+            ("ANTARES_POLICY", "joinedcontext"),
+            ("ANTARES_POLICY_SUBJECT_HEADERS", SUBJECT_HEADERS),
+            ("ANTARES_PROVENANCE_FROM", crate::modules::GATEWAY_IDENTITY),
+            (
+                "ANTARES_POLICY_SUBJECT_FROM",
+                crate::modules::GATEWAY_IDENTITY,
+            ),
+            // The Portal PUTs each Tenant's schema to /q/schemas/{tenant}; unset, the broker takes
+            // none and serves no OGC or OData collection (dev's value).
+            ("ANTARES_SCHEMA_MAX_BYTES", SCHEMA_MAX_BYTES),
+        ])
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect()
 }
 
 /// Removes every header a mesh would set (`l5d-*`) and the hop header: on the public mount no
@@ -217,6 +238,24 @@ async fn serve_hop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// dev's four write settings come as defaults beside the identity keys; the broker reads each
+    /// through its host defaults, so the environment or `[antares.database]` still wins
+    /// (antares-broker `host_defaults_fill_only_what_the_environment_leaves_unset`).
+    #[test]
+    fn the_broker_defaults_carry_dev_write_settings() {
+        let d = defaults();
+        for (key, value) in [
+            ("ANTARES_TEMPORAL_RECORD", "ruled"),
+            ("ANTARES_PG_BATCH_ASYNC_COMMIT", "true"),
+            ("ANTARES_PG_POOL", "40"),
+            ("ANTARES_HISTORY_BACKFILL", "on"),
+            ("ANTARES_POLICY", "joinedcontext"),
+        ] {
+            assert_eq!(d.get(key).map(String::as_str), Some(value), "{key}");
+        }
+        assert_eq!(d.len(), 10);
+    }
 
     #[test]
     fn the_public_mount_drops_every_mesh_header_and_the_hop_header() {

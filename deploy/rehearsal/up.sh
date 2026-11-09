@@ -150,12 +150,12 @@ export JC_PORTAL_CKAN_ALLOW_HTTP=true
 # at the rehearsal's own dataroom.
 export JC_PORTAL_CKAN_URL=https://catalogue.rehearsal.invalid JC_PORTAL_CKAN_API_URL=http://127.0.0.1:$port/opendata
 # The CkanInstances name apiTokenRef.envVar CKAN_API_TOKEN: here it is jc's own dataroom publisher
-# token (Read and Propose on the rehearsal's default catalogue), made before jc's first start,
-# which keeps an existing file.
-if [ ! -s "$home/state/catalogue-token" ]; then
-  (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$home/state/catalogue-token")
-fi
-CKAN_API_TOKEN=$(cat "$home/state/catalogue-token"); export CKAN_API_TOKEN
+# token (Read and Propose on the rehearsal's default catalogue), given to jc as a file: jc holds its
+# own per boot in memory only.
+CKAN_API_TOKEN=$(cat "$(secret catalogue-token)"); export CKAN_API_TOKEN
+export JCBIN_DATAROOM_PORTAL_TOKEN_FILE=$home/secrets/catalogue-token
+# The Portal's shako token likewise: rehearsal.py import and the smoke suites read it from here.
+JCBIN_SHAKO_TOKEN_FILE=$(secret shako-token); export JCBIN_SHAKO_TOKEN_FILE
 # The Portal's internal listener (/metrics, run callbacks) on loopback, one port per environment.
 export JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 100))
 export RUST_LOG=${RUST_LOG:-info,sqlx=warn}

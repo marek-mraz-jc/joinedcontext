@@ -654,16 +654,32 @@ async fn more_than_the_share_is_held_until_a_steward_releases_or_keeps_it() {
     assert_eq!(other.status, StatusCode::CONFLICT);
 }
 
+/// An id of `len` bytes the gateway can name (deletable: URI characters only).
+fn long_id(len: usize) -> String {
+    let head = "urn:ngsi-ld:Dataset:hel.fi:open:";
+    format!("{head}{}", "x".repeat(len - head.len()))
+}
+
 /// PL-98 (T-5360): what the source marked as deleted goes in one delete stream when the run ends,
-/// with the source-event reason; a marked id the pipeline never wrote is never in it.
+/// with the source-event reason; a marked id the pipeline never wrote is never in it. Ids up to
+/// Antares' 2048 B cap (the 274 B ids on dev and prod among them) are kept, marked, swept and
+/// leave the ledger once deleted; a 2049 B id is never kept, so never deleted.
 #[tokio::test]
 async fn an_events_run_deletes_what_its_source_marked_once_the_run_ends() {
     let (state, runner) = world(10).await;
-    let written: Vec<String> = (0..5).map(id).collect();
+    let (real, longest, over) = (long_id(274), long_id(2048), long_id(2049));
+    let mut written: Vec<String> = (0..5).map(id).collect();
+    written.extend([real.clone(), longest.clone(), over.clone()]);
     run(&state, "changes", "r1", &written, 0, true).await;
+    let (rows, _) = state
+        .source_ledger
+        .book("helsinki", "changes")
+        .await
+        .expect("book");
+    assert_eq!(rows.len(), 7, "the 2049 B id is not kept");
     let marks: Marks = serde_json::from_value(json!({
         "run": "r2",
-        "ids": [id(1), id(3), id(99)],
+        "ids": [id(1), id(3), id(99), real, longest, over],
         "failed": [],
     }))
     .expect("marks");
@@ -694,7 +710,7 @@ async fn an_events_run_deletes_what_its_source_marked_once_the_run_ends() {
             .expect("base64"),
     )
     .expect("chunks");
-    assert_eq!(chunks[0]["ids"], json!([id(1), id(3)]));
+    assert_eq!(chunks[0]["ids"], json!([id(1), id(3), real, longest]));
     assert_eq!(chunks[0]["run"], "r2");
     let http =
         &streams[0]["pipeline"]["processors"][1]["try"][2]["branch"]["processors"][0]["http"];
@@ -702,4 +718,25 @@ async fn an_events_run_deletes_what_its_source_marked_once_the_run_ends() {
         http["headers"]["JC-Reason"],
         "source-event%3A%20pipeline%20changes%20run%20r2"
     );
+
+    // The stream reports them deleted: they leave the ledger, the 2049 B id was never in it.
+    let report = Report {
+        run: "r2".to_owned(),
+        deleted: vec![id(1), id(3), real.clone(), longest.clone()],
+        gone: Vec::new(),
+        failed: Vec::new(),
+        edited: Vec::new(),
+    };
+    reported(&state, "helsinki", "changes", report)
+        .await
+        .expect("report");
+    let (rows, _) = state
+        .source_ledger
+        .book("helsinki", "changes")
+        .await
+        .expect("book");
+    let left: Vec<&str> = rows.keys().map(String::as_str).collect();
+    assert_eq!(left.len(), 3, "{left:?}");
+    assert!(!left.contains(&real.as_str()) && !left.contains(&longest.as_str()));
+    assert!(!left.contains(&over.as_str()));
 }

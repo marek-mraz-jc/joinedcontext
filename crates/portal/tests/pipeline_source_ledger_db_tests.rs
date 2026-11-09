@@ -183,3 +183,55 @@ async fn marks_are_taken_per_run_and_only_for_ledger_ids() {
         "{written:?}"
     );
 }
+
+/// The ledger and the removals take Antares' longest entity id (2048 B, `MAX_ENTITY_ID_BYTES`)
+/// under the longest names: both primary keys are btrees, whose row limit (~2,704 B) an
+/// incompressible 2048 B id beside 253-byte project and pipeline names (2,554 B) still fits.
+#[tokio::test]
+async fn the_longest_entity_id_fits_the_ledger_and_the_removals() {
+    let Some(url) = database_url() else {
+        eprintln!("JC_PORTAL_TEST_DATABASE_URL is not set: the long ids' database half is not run");
+        return;
+    };
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("the test database answers and migrates");
+    let ledger = Ledger::new(Some(pool));
+    let project = format!("{}-{}", fresh_project(), "p".repeat(253));
+    let project = &project[..253];
+    let pipeline = "q".repeat(253);
+    // Incompressible: a btree keeps a compressed copy of a repetitive id, which proves nothing.
+    let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+    let tail: String = (0..2048 - 4)
+        .map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            char::from(b"abcdefghijklmnopqrstuvwxyz0123456789"[(seed % 36) as usize])
+        })
+        .collect();
+    let longest = format!("urn:{tail}");
+    assert_eq!(longest.len(), 2048);
+    let ids = [longest.clone()];
+    ledger
+        .seen(project, &pipeline, "r1", &ids, true)
+        .await
+        .expect("the ledger keeps a 2048 B id");
+    let (rows, _) = ledger.book(project, &pipeline).await.expect("book");
+    assert!(rows.contains_key(&longest));
+    let held = ledger
+        .mark(project, &pipeline, "r2", &ids)
+        .await
+        .expect("mark");
+    assert_eq!(held, ids);
+    ledger
+        .removed(
+            project,
+            &"s".repeat(253),
+            &pipeline,
+            ("r2", Cause::Event),
+            &ids,
+        )
+        .await
+        .expect("the removals keep a 2048 B id");
+}

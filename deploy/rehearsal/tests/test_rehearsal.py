@@ -797,3 +797,11 @@ def test_every_jc_of_one_config_is_found_whatever_the_pid_file_says(tmp_path):
         assert out.split() == [str(p1.pid)]
     finally:
         p1.kill(); p2.kill()
+
+
+def test_a_service_token_jc_holds_in_memory_is_read_from_the_kit_secrets(tmp_path):
+    (tmp_path / "state").mkdir(); (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets" / "shako-token").write_text("given\n")
+    (tmp_path / "state" / "antares-admin-token").write_text("on-disk\n")
+    assert rh.read_secret(tmp_path / "state", "shako-token") == "given"
+    assert rh.read_secret(tmp_path / "state", "antares-admin-token") == "on-disk"

@@ -42,9 +42,28 @@ tokio::task_local! {
 /// `ANTARES_HISTORY_BACKFILL=on` (T-4665, ADR-N-054 2.1): a Core API write of
 /// an instance older than the one the Entity holds goes to history only.
 /// Off (the default) keeps NGSI-LD's replace, which the ETSI suites assume.
+/// An environment value wins over the host's default ([`default_backfill`]).
 fn backfill_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("ANTARES_HISTORY_BACKFILL").as_deref() == Ok("on"))
+    *ON.get_or_init(|| {
+        backfill_from(
+            std::env::var("ANTARES_HISTORY_BACKFILL").ok().as_deref(),
+            HOSTED_BACKFILL.get().map(String::as_str),
+        )
+    })
+}
+
+/// The environment's value when set, else the host's: on only for `on`.
+fn backfill_from(env: Option<&str>, hosted: Option<&str>) -> bool {
+    env.or(hosted) == Some("on")
+}
+
+static HOSTED_BACKFILL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The value a hosting process (`jc`) gives `ANTARES_HISTORY_BACKFILL` when the environment
+/// sets none. Set once, before the first write; a later call changes nothing.
+pub fn default_backfill(value: &str) {
+    let _ = HOSTED_BACKFILL.set(value.to_owned());
 }
 
 /// Whether `incoming`, about to replace `current` of `attr` on the Entity
@@ -940,6 +959,14 @@ pub(crate) async fn mirror_delete_attr(
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[test]
+    fn backfill_takes_the_environment_over_the_host_default() {
+        assert!(super::backfill_from(None, Some("on")));
+        assert!(!super::backfill_from(Some("off"), Some("on")));
+        assert!(super::backfill_from(Some("on"), None));
+        assert!(!super::backfill_from(None, None));
+    }
+
     use super::*;
 
     fn ev(id: &str) -> TemporalEvent {
