@@ -150,23 +150,46 @@ describe("the helsinki air quality geomap", () => {
     draw(frames);
     const under = calls.sources[0].source.data.features.slice(0, 7).map((feature) => ({ properties: feature.properties }));
     calls.clicks.get("markers")!({ features: under, lngLat: [0, 0] });
-    expect(calls.popups[0].querySelectorAll("dl")).toHaveLength(5);
+    expect(calls.popups[0].querySelector("[data-stacked]")!.children).toHaveLength(5);
     expect(calls.popups[0].textContent).toContain("2 not listed: zoom in to tell them apart");
     expect(calls.popups[0].firstElementChild!.textContent).toBe("7 at this spot, 5 listed");
+  });
+
+  it("says once what stacked readings of one vehicle share, each reading keeps its time and values", () => {
+    draw(frames);
+    const all = calls.sources[0].source.data.features;
+    const one = all.filter((feature) => feature.properties.name.startsWith("Wille (harjakone)")).slice(0, 3);
+    calls.clicks.get("markers")!({ features: one.map((feature) => ({ properties: feature.properties })), lngLat: [0, 0] });
+    const popup = calls.popups[0];
+    const [count, common, list] = [...popup.children];
+    expect(count.textContent).toBe("3 at this spot, 3 listed");
+    expect(common.querySelector("p")!.textContent).toBe("Wille (harjakone)");
+    expect([...common.querySelectorAll("dt")].map((term) => term.textContent)).toContain("source");
+    for (const reading of list.children) {
+      expect(reading.querySelector("p")!.textContent).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+      const terms = [...reading.querySelectorAll("dt")].map((term) => term.textContent);
+      expect(terms).toContain("pm10");
+      expect(terms).not.toContain("source");
+    }
   });
 
   it("lists only the stacked readings that fit whole and counts the rest", () => {
     // A 400 px map gives the list 168 px; each reading is 80 px tall, so two fit.
     const height = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    // Anchored at its bottom, as MapLibre places a popup above its spot: the list's bottom stays
+    // at 600 and its top moves down as readings go.
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      const index = this.tagName === "DIV" && this.parentElement?.className.includes("divide-y") ? [...this.parentElement.children].indexOf(this) : -1;
-      return { top: 0, bottom: (index + 1) * 80 } as DOMRect;
+      const list = this.dataset.stacked !== undefined ? this : this.parentElement?.dataset.stacked !== undefined ? this.parentElement : null;
+      if (!list) return { top: 0, bottom: 0 } as DOMRect;
+      const n = list.children.length;
+      if (list === this) return { top: 600 - n * 80, bottom: 600 } as DOMRect;
+      return { top: 0, bottom: 600 - (n - 1 - [...list.children].indexOf(this)) * 80 } as DOMRect;
     });
     try {
       draw(frames);
       const under = calls.sources[0].source.data.features.slice(0, 7).map((feature) => ({ properties: feature.properties }));
       calls.clicks.get("markers")!({ features: under, lngLat: [0, 0] });
-      expect(calls.popups[0].querySelectorAll("dl")).toHaveLength(2);
+      expect(calls.popups[0].querySelector("[data-stacked]")!.children).toHaveLength(2);
       expect(calls.popups[0].firstElementChild!.textContent).toBe("7 at this spot, 2 listed");
       expect(calls.popups[0].textContent).toContain("5 not listed: zoom in to tell them apart");
     } finally {

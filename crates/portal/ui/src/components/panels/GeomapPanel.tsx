@@ -48,6 +48,8 @@ export interface Markers {
   popup: boolean;
   /** The tooltip's heading: the row's name, when the frame has one. */
   titleProperty?: string;
+  /** The heading's time after the name: readings of one vehicle differ by it. */
+  timeProperty?: string;
   /** Keys of `dashboardView.geomap.*` with their values, one note each. */
   notes: { key: string; values?: Record<string, string | number> }[];
 }
@@ -114,6 +116,7 @@ export function markersOf(frames: Frame[], options: Record<string, unknown> | un
   const features: Markers["features"]["features"] = [];
   const shown = new Set<string>();
   let titleProperty: string | undefined;
+  let timeProperty: string | undefined;
   let rows = 0;
   let unread = false;
   for (const frame of frames) {
@@ -150,14 +153,18 @@ export function markersOf(frames: Frame[], options: Record<string, unknown> | un
         const text = Number.isNaN(instant) || settings.unit ? displayValue(settings, value, locale).text : displayValue({ ...settings, unit: "dateTimeAsIso" }, instant, locale).text;
         if (when && field !== name && text === when) continue;
         shown.add(label);
-        properties[label] = field === name && when ? `${text} · ${when}` : text;
+        properties[label] = text;
+      }
+      if (when && time) {
+        timeProperty ??= displayNameOf(time, frame);
+        properties[displayNameOf(time, frame)] = when;
       }
       features.push({ type: "Feature", geometry: { type: "Point", coordinates: at }, properties });
     }
   }
   if (unread) notes.push({ key: "mode", values: { mode: layer.location?.mode ?? "auto" } });
   else if (features.length > 0 && features.length < rows) notes.push({ key: "missing", values: { n: rows - features.length, rows } });
-  return { features: { type: "FeatureCollection", features }, rows, marker, popupProperties: [...shown], popup: layer.tooltip !== false, titleProperty, notes };
+  return { features: { type: "FeatureCollection", features }, rows, marker, popupProperties: [...shown], popup: layer.tooltip !== false, titleProperty, timeProperty, notes };
 }
 
 /**
@@ -206,7 +213,7 @@ export function GeomapPanel({ title, frames, fieldConfig, options, height, local
   }, []);
   const markers = useMemo(() => markersOf(frames, options, fieldConfig, locale), [frames, options, fieldConfig, locale]);
   const layers = useMemo<MapLayer[]>(
-    () => [{ name: "markers", url: "", data: markers.features, style: "circle", marker: markers.marker, popupProperties: markers.popupProperties, popup: markers.popup, titleProperty: markers.titleProperty }],
+    () => [{ name: "markers", url: "", data: markers.features, style: "circle", marker: markers.marker, popupProperties: markers.popupProperties, popup: markers.popup, titleProperty: markers.titleProperty, timeProperty: markers.timeProperty }],
     [markers],
   );
   if (markers.features.features.length === 0) {

@@ -41,6 +41,8 @@ export interface MapLayer {
   popup?: boolean;
   /** The property a popup shows as its heading, out of its list (a geomap row's `name`). */
   titleProperty?: string;
+  /** The property the heading carries after the title (a geomap row's time): readings of one name differ by it. */
+  timeProperty?: string;
   /** The popup's own button, opening the feature's entity by its `id` property (T-3256). */
   open?: { label: string; onOpen: (id: string) => void };
 }
@@ -167,15 +169,19 @@ export function popupNode(
   properties?: string[],
   open?: MapLayer["open"],
   titleProperty?: string,
+  timeProperty?: string,
+  /** Values a stacked popup shows once above its readings, left out of each. */
+  shared: ReadonlySet<string> = new Set(),
 ): HTMLElement {
   const props = feature.properties ?? {};
-  const keys = (properties?.length ? properties : Object.keys(props).filter((key) => key !== "id").slice(0, 6)).filter((key) => key !== titleProperty);
+  const keys = (properties?.length ? properties : Object.keys(props).filter((key) => key !== "id").slice(0, 6)).filter((key) => key !== titleProperty && key !== timeProperty && !shared.has(key));
   const root = document.createElement("div");
-  const title = titleProperty === undefined ? undefined : props[titleProperty];
-  if (title !== undefined && title !== null && title !== "") {
+  const said = (key?: string) => (key === undefined || shared.has(key) || props[key] === undefined || props[key] === null || props[key] === "" ? undefined : String(props[key]));
+  const title = [said(titleProperty), said(timeProperty)].filter(Boolean).join(" · ");
+  if (title) {
     const heading = document.createElement("p");
     heading.className = "mb-1 pr-6 text-body font-semibold text-fg";
-    heading.textContent = String(title);
+    heading.textContent = title;
     root.append(heading);
   }
   const list = document.createElement("dl");
@@ -411,17 +417,31 @@ export function MapLibreView({
           return;
         }
         // Every feature under the click, a few: stacked markers each get their rows, not only the top one.
+        // What every one of them holds alike (one vehicle's name, one source) is said once above them.
+        const same = [layer.titleProperty, ...(layer.popupProperties ?? [])].filter(
+          (key): key is string => key !== undefined && key !== layer.timeProperty && features.every((feature) => feature.properties?.[key] != null && feature.properties[key] === features[0].properties?.[key]),
+        );
+        const shared = new Set(features.length > 1 ? same : []);
         const root = document.createElement("div");
         const count = document.createElement("p");
         count.className = "mb-1 pr-6 text-body font-semibold text-fg";
         root.className = "flex flex-col gap-2 divide-y divide-border overflow-hidden [&>*+*]:pt-2";
+        root.dataset.stacked = "";
         for (const feature of features.slice(0, STACKED)) {
-          root.append(popupNode(feature, layer.popupProperties, layer.open, layer.titleProperty));
+          root.append(popupNode(feature, layer.popupProperties, layer.open, layer.titleProperty, layer.timeProperty, shared));
         }
         const more = document.createElement("p");
         more.className = "mt-2 border-t border-border pt-2 text-body text-fg-muted";
         const stacked = document.createElement("div");
-        stacked.append(count, root, more);
+        stacked.append(count);
+        if (shared.size > 0) {
+          // The shared title alone lists no row: a list of only the title keeps popupNode off its every-key fallback.
+          const rows = [...shared].filter((key) => key !== layer.titleProperty);
+          const common = popupNode(features[0], rows.length > 0 ? rows : [...shared], undefined, shared.has(layer.titleProperty ?? "") ? layer.titleProperty : undefined);
+          common.className = "mb-2 border-b border-border pb-2";
+          stacked.append(common);
+        }
+        stacked.append(root, more);
         const counted = () => {
           const shown = root.children.length;
           count.textContent = t("dashboards.stackedHere", { n: features.length, shown });
@@ -433,14 +453,14 @@ export function MapLibreView({
         // z-10 puts it above the map's own controls (the scale, the attribution).
         const popup = new Popup({ className: "z-10", maxWidth: (container.current?.clientWidth ?? 0) < 500 ? "18rem" : "20rem" })
           .setLngLat(event.lngLat)
-          .setDOMContent(features.length === 1 ? popupNode(features[0], layer.popupProperties, layer.open, layer.titleProperty) : stacked)
+          .setDOMContent(features.length === 1 ? popupNode(features[0], layer.popupProperties, layer.open, layer.titleProperty, layer.timeProperty) : stacked)
           .addTo(instance);
         // Only whole readings, within a share of the map's height so the tapped spot stays in view;
         // the rest are counted, never cut in half.
         const mapHeight = container.current?.clientHeight ?? 400;
         const room = mapHeight * (mapHeight < 480 ? 0.42 : 0.45);
-        const top = root.getBoundingClientRect().top;
-        while (root.children.length > 1 && root.lastElementChild!.getBoundingClientRect().bottom - top > room) {
+        // Measured afresh each round: a popup anchored at its bottom moves its top as readings go.
+        while (root.children.length > 1 && root.lastElementChild!.getBoundingClientRect().bottom - root.getBoundingClientRect().top > room) {
           root.lastElementChild!.remove();
         }
         counted();
