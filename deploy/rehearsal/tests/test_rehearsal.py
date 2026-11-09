@@ -1295,5 +1295,7 @@ def test_up_sh_gives_dataroom_prods_publish_gate_hidden_list():
     assert m, "up.sh appends no [dataroom.hidden] to jc.toml"
     aliases = subprocess.run([sys.executable, "-I", str(HERE / "rehearsal.py"), "aliases"],
                              capture_output=True, text=True, check=True).stdout
-    doc = tomllib.loads(aliases + "\n" + (HERE / m.group(1)).read_text())
-    assert len(doc["dataroom"]["hidden"]) == 62 and doc["dataroom"]["aliases"]
+    hidden = (HERE / m.group(1)).read_text()
+    doc = tomllib.loads(aliases + "\n" + hidden)
+    rows = sum(1 for line in hidden.splitlines() if line.startswith('"'))
+    assert rows > 50 and len(doc["dataroom"]["hidden"]) == rows and doc["dataroom"]["aliases"]
