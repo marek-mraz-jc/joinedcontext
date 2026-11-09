@@ -552,12 +552,31 @@ mod tests {
         };
         let site = Site::new("http://localhost:42102", &shared);
         let res = serve(&site, &Method::GET, "/render.html");
-        let csp = header(&res, "content-security-policy");
-        assert!(!csp.contains("frame-ancestors"), "{csp}");
-        assert!(
-            csp.contains("connect-src 'none'") && csp.contains("sandbox"),
-            "{csp}"
+        // The whole header, pinned: only `frame-ancestors *` left it; it still runs nothing but
+        // its own scripts, connects nowhere and stays sandboxed without `allow-same-origin`.
+        assert_eq!(
+            header(&res, "content-security-policy"),
+            "default-src 'none'; script-src http://localhost:42102; style-src http://localhost:42102 'unsafe-inline'; img-src http://localhost:42102 data:; connect-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"
         );
+        assert!(res.headers().get("x-frame-options").is_none());
+        // Every other page answers the framing rule it answered before.
+        let ancestors = |path: &str| {
+            let res = serve(&site, &Method::GET, path);
+            let csp = header(&res, "content-security-policy").to_owned();
+            csp.split(';')
+                .map(str::trim)
+                .find_map(|d| d.strip_prefix("frame-ancestors "))
+                .map(str::to_owned)
+        };
+        for (path, rule) in [
+            ("/", "*"),
+            ("/map.html", "*"),
+            ("/embed.html", "*"),
+            ("/explore.html", "http://localhost:42102"),
+            ("/explore.js", "'none'"),
+        ] {
+            assert_eq!(ancestors(path).as_deref(), Some(rule), "{path}");
+        }
         let own = Site::new("https://viz.city.test", &live());
         let res = serve(&own, &Method::GET, "/render.html");
         let csp = header(&res, "content-security-policy");
