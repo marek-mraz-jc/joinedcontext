@@ -1057,6 +1057,19 @@ fn form_urldecode(raw: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
+/// What a client assertion's `aud` may name for the realm at `realm_issuer`: the issuer or one of
+/// its endpoints that take client authentication.
+fn assertion_audiences(realm_issuer: &str) -> [String; 5] {
+    let endpoints = format!("{realm_issuer}/protocol/openid-connect");
+    [
+        realm_issuer.to_owned(),
+        format!("{endpoints}/token"),
+        format!("{endpoints}/token/introspect"),
+        format!("{endpoints}/revoke"),
+        format!("{endpoints}/ext/par/request"),
+    ]
+}
+
 /// True when the JWT `aud` claim (a string or an array) names one of `allowed`.
 fn audience_matches(claims: &Value, allowed: &[String]) -> bool {
     match claims.get("aud") {
@@ -1135,16 +1148,47 @@ async fn verify_client_assertion(
                 format!("{}/openid/v1/jwks", expected_iss.trim_end_matches('/'))
             });
 
-        let jwks: Value = state.guard.get_json(&jwks_url, None, None).await?;
+        // The projected token must be minted for this realm: `aud` is the realm issuer, on the
+        // realm's own address or the one the call came in on (a pod calls the internal host
+        // with a token minted for `https://idm.{domain}/realms/{slug}`), so a token the cluster
+        // minted for another audience (the API server, another realm) fails.
+        let allowed_aud = [
+            realm_issuer.clone(),
+            state.default_mount.realm_issuer(&realm.realm),
+        ];
+        let kid = jsonwebtoken::decode_header(assertion)
+            .ok()
+            .and_then(|h| h.kid);
+        let mut jwks = state
+            .guard
+            .cluster_jwks(&jwks_url, false)
+            .await
+            .map_err(|_| KaisatsuError::invalid_client("cluster JWKS unavailable"))?;
+        let names_kid = |jwks: &Value| {
+            kid.as_deref().is_none_or(|kid| {
+                jwks.get("keys")
+                    .and_then(Value::as_array)
+                    .is_some_and(|keys| {
+                        keys.iter()
+                            .any(|k| k.get("kid").and_then(Value::as_str) == Some(kid))
+                    })
+            })
+        };
+        if !names_kid(&jwks) {
+            // A rotated signing key: read the set again (rate-limited in the guard).
+            jwks = state
+                .guard
+                .cluster_jwks(&jwks_url, true)
+                .await
+                .map_err(|_| KaisatsuError::invalid_client("cluster JWKS unavailable"))?;
+        }
         let keys = jwks
             .get("keys")
             .and_then(Value::as_array)
             .ok_or_else(|| KaisatsuError::invalid_client("cluster JWKS has no keys"))?;
-        // The projected token must be minted for this realm: `aud` is the realm issuer, so a
-        // token the cluster minted for another audience (the API server, another realm) fails.
         let verified = keys.iter().any(|jwk| {
-            verify_jwt_with_jwk::<Value>(assertion, jwk, Some(expected_iss), Some(&realm_issuer))
-                .is_ok()
+            verify_jwt_with_jwk::<Value>(assertion, jwk, Some(expected_iss), None)
+                .is_ok_and(|(_, claims)| audience_matches(&claims, &allowed_aud))
         });
         if !verified {
             return Err(KaisatsuError::invalid_client(
@@ -1177,16 +1221,8 @@ async fn verify_client_assertion(
         .get("keys")
         .and_then(Value::as_array)
         .ok_or_else(|| KaisatsuError::invalid_client("client jwks has no keys"))?;
-    // RFC 7523 §3: `iss` and `sub` are the client, `aud` names this server (the realm issuer or
-    // one of its endpoints that take client authentication).
-    let endpoints = format!("{realm_issuer}/protocol/openid-connect");
-    let allowed_aud = [
-        realm_issuer.clone(),
-        format!("{endpoints}/token"),
-        format!("{endpoints}/token/introspect"),
-        format!("{endpoints}/revoke"),
-        format!("{endpoints}/ext/par/request"),
-    ];
+    // RFC 7523 §3: `iss` and `sub` are the client, `aud` names this server.
+    let allowed_aud = assertion_audiences(&realm_issuer);
     let verified = keys.iter().any(|jwk| {
         verify_jwt_with_jwk::<Value>(assertion, jwk, Some(sub), None)
             .is_ok_and(|(_, claims)| audience_matches(&claims, &allowed_aud))

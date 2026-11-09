@@ -212,6 +212,10 @@ fn realm_file(dir: &Path, secrets: &Path, realm: &str, file: &str) {
             client("e2e-reader", CLOSED),
             client("e2e-elsewhere", ELSEWHERE),
             client("e2e-mcp", "portal-api"),
+            // The command line's client as on prod (audience `jcctl-endpoint`), confidential with
+            // the password grant here so the test signs in without a device flow; jc's linker
+            // gives it every Endpoint's scope as optional.
+            client("jcctl", "jcctl-endpoint"),
         ],
         "users": [{
             "username": STRANGER,
@@ -541,6 +545,34 @@ async fn token(jc: &Jc, client: &str) -> String {
 
 async fn token_of(jc: &Jc, client: &str, username: &str) -> String {
     token_in(jc, "jc", client, username).await
+}
+
+/// A person's token from `client` of realm `jc` asking `scope`, or the refusal.
+async fn scoped_token(
+    jc: &Jc,
+    client: &str,
+    username: &str,
+    scope: &str,
+) -> Result<String, String> {
+    let resp = Client::new()
+        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .form(&[
+            ("grant_type", "password"),
+            ("client_id", client),
+            ("client_secret", READER_SECRET),
+            ("username", username),
+            ("password", PERSON_PASSWORD),
+            ("scope", scope),
+        ])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or(Value::Null);
+    match body["access_token"].as_str() {
+        Some(token) if status == StatusCode::OK => Ok(token.to_owned()),
+        _ => Err(format!("{status} {body}")),
+    }
 }
 
 /// A person's token from `client` of `realm` by the password grant.
@@ -931,6 +963,75 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+    // The scope path, as on prod: a person's `jcctl` token (audience `jcctl-endpoint`) names one
+    // Endpoint by its scope `endpoint:{slug}`, which jc's linker links to `jcctl` as the
+    // deployment's admin-permissions Job does, and reads it with the person's own grants.
+    let scope = format!("endpoint:{CLOSED}");
+    let cli = eventually(
+        "jcctl holds the closed Endpoint's scope",
+        &jc,
+        30,
+        || async { scoped_token(&jc, "jcctl", PERSON, &scope).await },
+    )
+    .await;
+    let read = format!("{closed}/entities?type=Thing");
+    let (status, body) = call(&jc, get.clone(), &read, Some(&cli), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    // The same token on another Endpoint, even a public one, names a scope that is not that
+    // Endpoint's: refused.
+    let (status, body) = call(
+        &jc,
+        get.clone(),
+        &format!("{public}/types"),
+        Some(&cli),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    // A person without a grant gets the scope, never the data: the scope names the Endpoint.
+    let stranger_cli = scoped_token(&jc, "jcctl", STRANGER, &scope).await.unwrap();
+    let (status, body) = call(&jc, get.clone(), &read, Some(&stranger_cli), None).await;
+    assert!(
+        matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
+        "a person without a grant read the closed Endpoint: {status} {body}"
+    );
+    assert!(!body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    // jc links every Endpoint's scope to `portal-api` too (prod does not, T-6063): the Portal's
+    // own service account asking that scope and the hub audience is its own
+    // `service-account-portal-api` user, whom no Policy grants, so it reads nothing and the link
+    // opens no Endpoint beyond the person exchange below.
+    let portal = Client::new()
+        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .form(&[
+            ("grant_type", "client_credentials"),
+            ("client_id", "portal-api"),
+            ("client_secret", jc.secret("portal-client-secret").as_str()),
+            ("scope", format!("{scope} gateway-hub").as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let status = portal.status();
+    let body: Value = portal.json().await.unwrap_or(Value::Null);
+    assert_eq!(status, StatusCode::OK, "portal-api's own token: {body}");
+    let own = body["access_token"].as_str().unwrap();
+    let claims = claims_of(own);
+    assert!(
+        claims["scope"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(&scope),
+        "{claims}"
+    );
+    assert!(claims["aud"].to_string().contains("mcp-hub"), "{claims}");
+    let (status, body) = call(&jc, get.clone(), &read, Some(own), None).await;
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN,
+        "portal-api's own token read the closed Endpoint: {status} {body}"
+    );
+    assert!(!body.contains("urn:ngsi-ld:Thing:one"), "{body}");
 
     // `jc_data_query` through the Portal's MCP: the Portal exchanges the person's token for
     // `endpoint:{slug}` (the scope jc's kaisatsu links to portal-api, as the deployment's
@@ -1760,14 +1861,18 @@ fn export(realms: &Path, secrets: &Path, state: &Path, realm: &str, base: &str, 
 
 /// The `iss` of a token, read without a check (the services under test do the checking).
 fn issuer_of(token: &str) -> String {
+    claims_of(token)["iss"].as_str().unwrap().to_owned()
+}
+
+/// The claims of a JWT, unverified.
+fn claims_of(token: &str) -> Value {
     let payload = token.split('.').nth(1).unwrap();
-    let claims: Value = serde_json::from_slice(
+    serde_json::from_slice(
         &base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(payload)
             .unwrap(),
     )
-    .unwrap();
-    claims["iss"].as_str().unwrap().to_owned()
+    .unwrap()
 }
 
 /// A service-account token of `client` in `realm` (client credentials, the secret jc keeps).
