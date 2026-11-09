@@ -140,6 +140,12 @@ class Targets:
         return None, "no closed Endpoint with exported rows in the project", None, None
 
 
+def told(evs) -> str:
+    """What the error and tool events said, for a failing row (the cause, not only the names)."""
+    said = [f"{n}: {json.dumps(x, ensure_ascii=False)[:160]}" for n, x in evs if n in ("error", "tool")]
+    return "; " + "; ".join(said) if said else ""
+
+
 class Suite:
     def __init__(self, a, deployments, targets: Targets):
         self.a, self.deployments, self.targets = a, deployments, targets
@@ -279,7 +285,7 @@ class Suite:
             self.r.check(f"chat.{d['publicId']}.granted", t, f"{call}: {q} (routed to {name})",
                          f"200, a data table of {st}, the stub's answer",
                          f"{code}; events {names}; {len(tables)} table(s); answer {'ok' if answer == modelstub.ANSWER else answer!r}"
-                         + ("" if evs else f"; {raw}"), ok, f"Endpoint {e.slug}")
+                         + ("" if evs else f"; {raw}") + told(evs), ok, f"Endpoint {e.slug}")
         name, e, st, sample = self.targets.closed(d)
         if not name:
             self.r.skip(f"chat.{d['publicId']}.closed-refused", t, call, "nothing of a closed Endpoint read", e)

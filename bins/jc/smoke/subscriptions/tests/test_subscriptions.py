@@ -35,6 +35,15 @@ suite = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(suite)
 
 DC = "https://uri.etsi.org/ngsi-ld/default-context/"
+SECRET = "fixture-client-secret"
+CONTEXT = "https://example.org/air/context.jsonld"
+
+
+def sa_token(client: str) -> str:
+    """The pipelines token as the realm mints it: bound to the project's write Endpoint (`nows`,
+    the same space as the public `open` one), never to `open` itself."""
+    claims = {"azp": client, "aud": ["portal-internal", client.replace("-pipelines", "-nows")]}
+    return "h." + base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=") + ".s"
 
 
 # ------------------------------------------------------------------------------------ fixture export
@@ -51,6 +60,10 @@ def write_export(root: Path) -> Path:
             f"kind: Policy\nmetadata: {{name: public-read, namespace: {project}}}\n"
             f"spec:\n  contextSpaceRef: {space}\n  assignee: {{kind: role, id: public}}\n"
             "  operations: [retrieveOps]\n  information:\n    - entities: [{type: AirQualityObserved}]\n")
+        (d / "policies" / "write.yaml").write_text(
+            f"kind: Policy\nmetadata: {{name: pipelines-write, namespace: {project}}}\n"
+            f"spec:\n  contextSpaceRef: {space}\n  assignee: {{kind: serviceAccount, id: pipelines}}\n"
+            "  operations: [upsertBatch, createBatch]\n  information:\n    - entities: [{type: AirQualityObserved}]\n")
         for name, audience, reps in (("open", "public", "[ngsi-ld, websocket]"),
                                      ("members", "organization", "[ngsi-ld, websocket]"),
                                      ("nows", "public", "[ngsi-ld]")):
@@ -58,6 +71,10 @@ def write_export(root: Path) -> Path:
                 f"kind: Endpoint\nmetadata: {{name: {name}, namespace: {project}}}\n"
                 f"spec:\n  contextSpaceRef: {space}\n  slug: {project}-{name}\n  audience: {audience}\n"
                 f"  enabledRepresentations: {reps}\n")
+    realm = {"realm": "smartcity", "clients": [
+        {"clientId": f"{p}-pipelines", "secret": f"$(env:KC_{p.upper()}_PIPELINES_SECRET)"} for p in ("hel", "bb")]}
+    (root / "keycloak").mkdir(parents=True)
+    (root / "keycloak" / "realm-smartcity.json").write_text(json.dumps(realm))
     b = files / "hel" / "mqttbrokers"
     b.mkdir(parents=True)
     (b / "vehicles.yaml").write_text(
@@ -123,12 +140,34 @@ class Jc:
         body = h.rfile.read(int(hdrs.get("content-length", "0") or 0))
         if path.startswith("/api/endpoint/") and path.endswith("/ws"):
             return self.ws(h, path.split("/")[3], hdrs)
-        if path.startswith("/broker/ngsi-ld/v1/entityOperations/upsert"):
+        if path == "/id/realms/smartcity/protocol/openid-connect/token":
+            form = dict(x.split("=", 1) for x in body.decode().split("&"))
+            ok = form.get("client_secret") == SECRET
+            return self.answer(h, 200 if ok else 401, json.dumps({"access_token": sa_token(form["client_id"])}
+                                                                 if ok else {}).encode())
+        parts = path.split("?")[0].split("/")
+        if method == "GET" and parts[4:7] == ["ngsi-ld", "v1", "entities"] and len(parts) == 8:
+            sample = {"id": "x", "type": "AirQualityObserved", "@context": CONTEXT,
+                      "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [0, 0]}},
+                      "pm10": {"type": "Property", "value": 7.1}}
+            return self.answer(h, 200, json.dumps(sample).encode())
+        if method == "POST" and parts[4:7] == ["ngsi-ld", "v1", "entityOperations"]:
+            e = self.eps.get(parts[3])
+            claims = suite.jwt_claims(hdrs.get("authorization", "")[7:])
+            bound = e is not None and e.slug in claims.get("aud", [])
+            if not self.lax and not bound:  # jc_core: token is not bound to this resource
+                return self.answer(h, 401, b'{"title": "Unauthorized"}')
+            if parts[7] == "delete":
+                return self.answer(h, 204 if hdrs.get("jc-reason") else 400)
             for ent in json.loads(body):
-                self.notify(hdrs.get("ngsild-tenant"), ent)
-            return self.answer(h, 204)
-        if method == "DELETE" and path.startswith("/broker/"):
-            return self.answer(h, 204)
+                # The body's @context expands the short type, as the broker stores it; a write
+                # without one, or of no attribute the view shows, notifies nobody (matching.rs).
+                if not self.lax and (ent.get("@context") != CONTEXT or "pm10" not in ent):
+                    continue
+                self.notify(e.tenant if e else None, {**ent, "type": DC + ent["type"]})
+            return self.answer(h, 201, b"[]")
+        if self.lax and path == "/internal/mqtt/auth":  # the internal listener's door on the public base
+            return self.answer(h, 200, b'{"result": "allow", "superuser": false}')
         return self.answer(h, 200 if self.lax else 404, b"{}")
 
     def ws(self, h, slug, hdrs):
@@ -140,7 +179,7 @@ class Jc:
             if e.closed:
                 return self.answer(h, 401, b'{"title": "Unauthorized"}')
             if not upgrade:
-                return self.answer(h, 200, b'{"guide": "open a WebSocket"}')
+                return self.answer(h, 426, b'{"guide": "open a WebSocket"}')
             with self.lock:
                 if self.held >= suite.PER_CALLER:
                     return self.answer(h, 429, b'{"title": "Too Many Requests"}')
@@ -211,10 +250,11 @@ def index_of(eps):
 
 
 def args(base, tmp, **kw):
-    state = tmp / "state"
-    state.mkdir(exist_ok=True)
-    (state / "antares-admin-token").write_text("admin")
-    a = argparse.Namespace(base_url=base, state=str(state), per_class=1, wait=3.0, silence=0.5, settle=0.1,
+    realm = tmp / "realm"
+    realm.mkdir(exist_ok=True)
+    for p in ("HEL", "BB"):
+        (realm / f"KC_{p}_PIPELINES_SECRET").write_text(SECRET + "\n")
+    a = argparse.Namespace(base_url=base, realm_secrets_dir=str(realm), per_class=1, wait=3.0, silence=0.5, settle=0.1,
                            timeout=5.0, mqtt_broker=[], mqtt_token_dir=None)
     for k, v in kw.items():
         setattr(a, k, v)
@@ -237,8 +277,8 @@ def world(tmp_path):
 def test_the_plan_takes_one_public_websocket_endpoint_per_class_on_a_whole_granted_type(world):
     _, _, _, eps = world
     chosen, skipped = suite.plan(eps, index_of(eps), 1)
-    assert sorted(e.slug for _, e, _, _ in chosen) == ["bb-open", "hel-open"]
-    assert {st for _, _, st, _ in chosen} == {"AirQualityObserved"} and not skipped
+    assert sorted(e.slug for _, e, _, _, _ in chosen) == ["bb-open", "hel-open"]
+    assert {(st, w) for _, _, st, _, w in chosen} == {("AirQualityObserved", "pipelines")} and not skipped
     # A type held only by an id pattern, or a grant narrowed by q, is no probe target.
     for e in eps:
         for g in e.grants:
@@ -250,7 +290,8 @@ def test_a_jc_that_delivers_by_tenant_and_grant_passes_every_check(world):
     tmp, root, by_slug, eps = world
     jc = Jc(by_slug)
     try:
-        s = suite.Suite(args(jc.base, tmp), eps, index_of(eps), suite.load_brokers(root / "gitea" / "files"))
+        s = suite.Suite(args(jc.base, tmp), eps, index_of(eps), suite.load_brokers(root / "gitea" / "files"),
+                        suite.load_clients(root))
         s.run()
     finally:
         jc.close()
@@ -263,9 +304,9 @@ def test_a_jc_that_delivers_by_tenant_and_grant_passes_every_check(world):
         assert r[f"hub.{slug}.filter"]["result"] == PASS
         assert r[f"hub.{slug}.unsubscribe"]["result"] == PASS
         assert r[f"outside.{slug}.other-endpoint"]["result"] == PASS
-        assert r[f"outside.{slug}.ungranted-type"]["result"] == PASS
     assert r["refused.hel-members.anonymous"]["result"] == PASS
     assert r["refused.per-caller-cap"]["result"] == PASS
+    assert "cleanup.probes" not in r, r.get("cleanup.probes")
     assert r["transport.hel-nows"]["result"] == PASS and r["control.unknown-slug"]["result"] == PASS
     assert r["mqtt.auth-not-public"]["result"] == PASS
     # The broker stays a kept component: named skips, never silent.
@@ -274,47 +315,63 @@ def test_a_jc_that_delivers_by_tenant_and_grant_passes_every_check(world):
 
 
 def test_a_jc_that_answers_everything_fails_the_control_rows(world):
-    tmp, _, by_slug, eps = world
+    tmp, root, by_slug, eps = world
     jc = Jc(by_slug, lax=True)
     try:
-        s = suite.Suite(args(jc.base, tmp), eps, index_of(eps), [])
+        s = suite.Suite(args(jc.base, tmp), eps, index_of(eps), [], suite.load_clients(root))
         s.run()
     finally:
         jc.close()
     r = rows(s)
     for rid in ("control.unknown-slug", "transport.hel-nows", "transport.hel-members", "refused.hel-members.anonymous",
                 "refused.per-caller-cap", "hub.hel-open.filter", "outside.hel-open.other-endpoint",
-                "outside.hel-open.ungranted-type", "mqtt.auth-not-public"):
+                "mqtt.auth-not-public"):
         assert r[rid]["result"] == FAIL, rid
     # A delivery that reaches everyone still reaches A: the positive row alone proves nothing.
     assert r["deliver.hel-open"]["result"] == PASS
 
 
 def test_a_jc_that_delivers_nothing_fails_delivery_and_proves_no_silence(world):
-    tmp, _, by_slug, eps = world
+    tmp, root, by_slug, eps = world
     jc = Jc(by_slug)
     jc.notify = lambda tenant, ent: None
+    s = suite.Suite(args(jc.base, tmp), eps, index_of(eps), [], suite.load_clients(root))
     try:
-        s = suite.Suite(args(jc.base, tmp), eps, index_of(eps), [])
         s.run()
+        # A writer whose Policy grants no delete leaves its probes: a named row.
+        s.probes = [(by_slug["hel-open"], "urn:ngsi-ld:AirQualityObserved:left", "bad")]
+        s.cleanup()
     finally:
         jc.close()
     r = rows(s)
+    assert r["cleanup.probes"]["result"] == SKIP and "left" in r["cleanup.probes"]["reason"]
     assert r["deliver.hel-open"]["result"] == FAIL
     assert r["hub.hel-open.filter"]["result"] == FAIL and "unproven" in r["hub.hel-open.filter"]["reason"]
     assert r["outside.hel-open.other-endpoint"]["result"] == FAIL
 
 
-def test_without_the_admin_token_delivery_is_a_named_skip(world):
-    tmp, _, by_slug, eps = world
+def test_without_the_realm_secrets_delivery_is_a_named_skip(world):
+    tmp, _, _, eps = world
+    s = suite.Suite(args("http://127.0.0.1:9", tmp, realm_secrets_dir=None), eps, {}, [])
+    s.delivery()
+    assert [x["result"] for x in s.r.rows] == [SKIP] and "--realm-secrets-dir" in s.r.rows[0]["reason"]
+
+
+def test_a_writer_without_a_token_is_a_named_skip_and_the_secret_never_lands_in_a_row(world):
+    tmp, root, by_slug, eps = world
     jc = Jc(by_slug)
     try:
-        a = args(jc.base, tmp, state=None)
-        s = suite.Suite(a, eps, {}, [])
+        a = args(jc.base, tmp)
+        (Path(a.realm_secrets_dir) / "KC_BB_PIPELINES_SECRET").write_text("wrong\n")
+        s = suite.Suite(a, eps, index_of(eps), [], suite.load_clients(root))
         s.delivery()
     finally:
         jc.close()
-    assert [x["result"] for x in s.r.rows] == [SKIP] and "antares-admin-token" in s.r.rows[0]["reason"]
+    r = rows(s)
+    assert r["deliver.hel-open"]["result"] == PASS
+    assert r["deliver.bb-open"]["result"] == SKIP and "401" in r["deliver.bb-open"]["reason"]
+    assert not any(SECRET in json.dumps(x) or sa_token("hel-pipelines") in json.dumps(x) for x in s.r.rows)
+    assert "through hel/nows" in r["deliver.hel-open"]["call"]
 
 
 # ------------------------------------------------------------------------------------ MQTT
@@ -388,7 +445,7 @@ def test_a_given_broker_runs_every_check_with_tokens_from_files(tmp_path):
     for rid in ("mqtt.hel/vehicles.connect", "mqtt.hel/vehicles.refused-token",
                 "mqtt.hel/vehicles.trackers.publish.0", "mqtt.hel/vehicles.trackers.refused-topic"):
         assert r[rid]["result"] == PASS, (rid, r[rid])
-    # Nothing answers on :9, so the public /internal/mqtt/auth is no 404 here: it fails.
+    # Nothing answers on :9, so the public /internal/mqtt/auth row has no answer: it fails.
     assert r["mqtt.auth-not-public"]["result"] == FAIL
     assert not any("good" in json.dumps(x) for x in s.r.rows), "a token in a result row"
 

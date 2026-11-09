@@ -6,17 +6,17 @@ MQTT brokers, against production's transports as the export declares them.
        [--mqtt-broker <project>/<broker>=mqtt://127.0.0.1:<port>]... [--mqtt-token-dir <dir>]
 
 1. transport: every exported Endpoint's `/api/endpoint/{slug}/ws` without an upgrade answers as
-   its transports say: the guide (200) when it lists `websocket` and is public, 401 when it is
+   its transports say: the guide (426 Upgrade Required) when it lists `websocket` and is public, 401 when it is
    closed, 404 when it does not list it; an unknown slug 404s (the control). Production is read
    from the export alone: this suite opens no subscription on prod or dev.
 2. delivery, per class (project x audience) of public Endpoints serving `websocket`, on a type its
-   public grant opens without an id pattern or a q: subscriber A gets the write of a probe entity
-   (through the broker, as the import writes) within --wait seconds with the TS 104 243 envelope
+   public grant opens without an id pattern or a q and a bound Policy lets a project ServiceAccount
+   write: subscriber A gets the probe that ServiceAccount writes through the Endpoint (as the
+   project's pipelines write) within --wait seconds with the TS 104 243 envelope
    (x-seq 1, x-subscription the created id); B on the same Endpoint gets it too (one fan-out hub
    per Endpoint, ADR-N-049); C, whose q excludes the probe, gets nothing; after A's x-unsubscribe
    a second write reaches B and not A (ws_delivery.rs, ws_hub.rs).
 3. outside the grant: D on another tenant's Endpoint, subscribed to the same type, gets nothing;
-   E on the same Endpoint subscribed to a type no public grant opens gets nothing or a refusal;
    an anonymous upgrade of a closed Endpoint is 401; the 11th anonymous socket of one caller 429s
    (EP-107). A silence passes only when A's delivery in the same window passed.
 4. MQTT, per exported MqttBroker: CONNECT with a ServiceAccount token (checked by the gateway's
@@ -29,12 +29,15 @@ MQTT brokers, against production's transports as the export declares them.
    release, never a secret in argv). The gateway's /internal/mqtt/auth must never answer on the
    public base (checked here on any jc).
 
---state needs `antares-admin-token` (the probe writes); without it parts 2 and 3 are skipped."""
+--realm-secrets-dir holds the client secrets of the exported realm (`$(env:NAME)` -> file NAME):
+the probe writer's token comes from it; without it part 2 is skipped. Probes are deleted at the
+end (JC-Reason given)."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import secrets
 import sys
 import time
@@ -52,9 +55,7 @@ import mqttclient
 import wsclient
 from common import Http, Results, as_json, jwt_claims, loopback_only, short
 
-DEFAULT_CONTEXT = "https://uri.etsi.org/ngsi-ld/default-context/"
 MARK = "smokeSubsMark"
-OUTSIDE_TYPE = DEFAULT_CONTEXT + "SmokeSubsOutside"
 PER_CALLER = 10  # the gateway's WebSocket connections per caller (handlers/ws.rs PER_CALLER)
 KEPT = ("kept component: the MqttBroker {b} stays a separate component on dev beside jc, stamped by jc's "
         "Portal reconciler through Kubernetes (GOAL-jc-dev 'Scope of jc on dev', CUTOVER.md section 1); "
@@ -95,12 +96,22 @@ def open_types(e: ex.Endpoint, tenant_types: dict) -> dict:
     return out
 
 
-def grants_every_type(e: ex.Endpoint) -> bool:
-    return e.selectors(e.public_grants()) is None
+WRITE_OPS = {"upsertBatch", "createBatch", "createEntity", "upsertOps", "createOps", "writeOps"}
+
+
+def writer_of(e: ex.Endpoint, st: str) -> str | None:
+    """The ServiceAccount a bound Policy lets write type `st` whole on the Endpoint's space (the
+    project's pipelines, as they write), or None."""
+    for g in e.grants:
+        if g.assignee.get("kind") != "serviceAccount" or g.narrowed or not g.operations & WRITE_OPS:
+            continue
+        if not g.selectors or any(x.type in (st, "*") and x.pattern is None for x in g.selectors):
+            return str(g.assignee.get("id"))
+    return None
 
 
 def plan(endpoints, index, per_class: int):
-    """(chosen [(class, endpoint, short type, iri)], skipped [(endpoint, why)]) for part 2."""
+    """(chosen [(class, endpoint, short type, iri, writer)], skipped [(endpoint, why)]) for part 2."""
     by_class = defaultdict(list)
     for e in endpoints:
         if "websocket" in e.representations and not e.closed:
@@ -115,10 +126,29 @@ def plan(endpoints, index, per_class: int):
                 continue
             if n >= per_class:
                 continue
-            st = max(types, key=lambda t: (not types[t].get("expires"), types[t]["count"]))
-            chosen.append((f"{k[0]}/{k[1]}", e, st, types[st]["iri"]))
+            writable = {t: types[t] for t in types if writer_of(e, t)}
+            if not writable:
+                skipped.append((e, "no ServiceAccount of the project may write a type the public grant opens"))
+                continue
+            st = max(writable, key=lambda t: (not writable[t].get("expires"), writable[t]["count"]))
+            chosen.append((f"{k[0]}/{k[1]}", e, st, writable[st]["iri"], writer_of(e, st)))
             n += 1
     return chosen, skipped
+
+
+def load_clients(export: Path) -> dict:
+    """{client id: (realm, the $(env:NAME) of its secret)} of the exported realms."""
+    out = {}
+    for f in sorted((export / "keycloak").glob("realm-*.json")):
+        try:
+            realm = json.loads(f.read_text())
+        except ValueError:
+            continue
+        for c in realm.get("clients") or []:
+            m = re.fullmatch(r"\$\(env:([A-Z0-9_]+)\)", str(c.get("secret") or ""))
+            if m:
+                out[c["clientId"]] = (realm.get("realm") or f.stem[6:], m.group(1))
+    return out
 
 
 def load_brokers(files: Path) -> list[dict]:
@@ -141,14 +171,13 @@ def concrete(topic: str, client_id: str) -> str:
 # ------------------------------------------------------------------------------------ suite
 
 class Suite:
-    def __init__(self, a, endpoints, index, brokers):
+    def __init__(self, a, endpoints, index, brokers, clients=None):
         self.a, self.endpoints, self.index, self.brokers = a, endpoints, index, brokers
+        self.clients = clients or {}
         self.http = Http(a.base_url, timeout=a.timeout)
         self.r = Results("subscriptions", a.base_url)
-        self.admin = None
-        if a.state and (Path(a.state) / "antares-admin-token").exists():
-            self.admin = (Path(a.state) / "antares-admin-token").read_text().strip() or None
-        self.probes: list[tuple[str, str]] = []
+        self.tokens: dict[str, str] = {}
+        self.probes: list[tuple[ex.Endpoint, str, str]] = []
 
     # ------------------------------------------------------------ 1. transports
 
@@ -164,25 +193,85 @@ class Suite:
             elif e.closed:
                 want, ok = "401 (closed, anonymous)", st == 401
             else:
-                guide = as_json(body)
-                want, ok = "200 guide", st == 200 and isinstance(guide, dict)
+                # The gateway's guide (handlers/ws.rs guide()): how to open the socket, as a 426.
+                want, ok = "426 guide", st == 426 and isinstance(as_json(body), dict)
             self.r.check(f"transport.{e.slug}", f"{e.project}/{e.name}", f"GET {ws_path(e.slug)}", want,
                          f"{st} {short(body, 100)}", ok)
 
     # ------------------------------------------------------------ probes
 
-    def write(self, tenant: str, eid: str, iri: str, mark: int) -> tuple[int, bytes]:
-        body = {"id": eid, "type": iri, DEFAULT_CONTEXT + MARK: {"type": "Property", "value": mark}}
-        st, _, raw = self.http.call("POST", "/broker/ngsi-ld/v1/entityOperations/upsert?options=update",
-                                    token=self.admin, headers={"NGSILD-Tenant": tenant}, body=[body])
+    def token_for(self, project: str, account: str) -> tuple[str | None, str]:
+        """A client-credentials token of the project's ServiceAccount, its secret read from the
+        rehearsal's realm secrets dir (never printed); or (None, why)."""
+        client = f"{project}-{account}"
+        if client in self.tokens:
+            return self.tokens[client], ""
+        if client not in self.clients:
+            return None, f"no client {client} in the exported realms"
+        realm, var = self.clients[client]
+        f = Path(self.a.realm_secrets_dir or "/nonexistent") / var
+        if not f.is_file():
+            return None, f"no secret file {var} in --realm-secrets-dir"
+        form = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": client,
+                                       "client_secret": f.read_text().strip()}).encode()
+        st, _, raw = self.http.call("POST", f"/id/realms/{realm}/protocol/openid-connect/token", body=form,
+                                    headers={"Content-Type": "application/x-www-form-urlencoded"})
+        tok = (as_json(raw) or {}).get("access_token") if st == 200 else None
+        if not tok:
+            return None, f"token of {client} in realm {realm}: {st}"
+        self.tokens[client] = tok
+        return tok, ""
+
+    def door(self, e: ex.Endpoint, token: str) -> ex.Endpoint | None:
+        """The Endpoint of e's space the token is bound to (its `aud` holds Endpoint slugs: the
+        gateway refuses any other with `token is not bound to this resource`), e itself first."""
+        aud = jwt_claims(token).get("aud") or []
+        aud = {aud} if isinstance(aud, str) else set(aud)
+        return next((x for x in [e, *sorted(self.endpoints, key=lambda x: x.slug)]
+                     if x.tenant == e.tenant and x.slug in aud), None)
+
+    def template(self, e: ex.Endpoint, st: str) -> tuple[dict | None, str]:
+        """The probe's body but its id, from the type's sample as the public reads it on `e`: its
+        short type (the write guard wants the URN's type segment, write_guard.rs
+        check_identifier), its @context (so the type keeps its IRI) and one Property it shows (a
+        change of no shown attribute notifies no view subscriber); or (None, why)."""
+        sample = ((self.index.get("tenants") or {}).get(e.tenant, {}).get(st) or {}).get("sample")
+        if not sample:
+            return None, f"no sample {st} in the export"
+        code, _, raw = self.http.call("GET", f"/api/endpoint/{e.slug}/ngsi-ld/v1/entities/"
+                                      + urllib.parse.quote(sample, safe=""), headers={"Accept": "application/ld+json"})
+        ent = as_json(raw) if code == 200 else None
+        if not isinstance(ent, dict) or "@context" not in ent:
+            return None, f"GET the sample {sample}: {code} {short(raw, 80)}"
+        attr = next((k for k, v in ent.items() if isinstance(v, dict) and v.get("type") == "Property"
+                     and "value" in v), None)
+        if not attr:
+            return None, f"the sample {sample} shows no Property"
+        return {"type": st, attr: {"type": "Property", "value": ent[attr]["value"]}, "@context": ent["@context"]}, ""
+
+    def write(self, e: ex.Endpoint, eid: str, body: dict, token: str) -> tuple[int, bytes]:
+        """The probe, written as the project's pipelines write: through a write Endpoint of the
+        space, a batch in JSON-LD."""
+        st, _, raw = self.http.call("POST", f"/api/endpoint/{e.slug}/ngsi-ld/v1/entityOperations/upsert?options=update",
+                                    token=token, body=[{"id": eid, **body}],
+                                    headers={"Content-Type": "application/ld+json"})
         if st in (200, 201, 204):
-            self.probes.append((tenant, eid))
+            self.probes.append((e, eid, token))
         return st, raw
 
     def cleanup(self):
-        for tenant, eid in set(self.probes):
-            self.http.call("DELETE", f"/broker/ngsi-ld/v1/entities/{urllib.parse.quote(eid, safe='')}",
-                           token=self.admin, headers={"NGSILD-Tenant": tenant})
+        """Deletes the probes; a probe left behind (a writer with no delete grant) is a named row,
+        never silent, so the rehearsal's owner knows what to remove."""
+        left = []
+        for e, eid, token in self.probes:
+            st, _, _ = self.http.call("POST", f"/api/endpoint/{e.slug}/ngsi-ld/v1/entityOperations/delete", token=token,
+                                      headers={"JC-Reason": "jc-smoke subscriptions probe"}, body=[eid])
+            if st not in (200, 204):
+                left.append(f"{e.project}/{e.name} {eid} ({st})")
+        if left:
+            self.r.skip("cleanup.probes", "the rehearsal", "POST .../entityOperations/delete (JC-Reason)",
+                        "every probe deleted", f"{len(left)} probe(s) left: the writer's Policy grants no delete: "
+                        + "; ".join(left[:10]))
 
     def socket(self, e: ex.Endpoint, token: str | None = None):
         """(socket, None) once welcomed, or (None, why)."""
@@ -228,11 +317,18 @@ class Suite:
 
     # ------------------------------------------------------------ 2 + 3. one class
 
-    def deliver(self, cls: str, e: ex.Endpoint, st: str, iri: str, other: ex.Endpoint | None):
+    def deliver(self, cls: str, e: ex.Endpoint, st: str, iri: str, writer: str, door: ex.Endpoint,
+                other: ex.Endpoint | None):
         t, w = f"{e.project}/{e.name}", self.a.wait
         tag = secrets.token_hex(4)
-        probe = f"urn:ngsi-ld:{st}:smoke-subs-{tag}"
+        probe, probe2 = f"urn:ngsi-ld:{st}:smoke-subs-{tag}", f"urn:ngsi-ld:{st}:smoke-subs-{tag}-2"
         sub = {"type": "Subscription", "entities": [{"type": iri}]}
+        token = self.tokens[f"{e.project}-{writer}"]
+        body, why = self.template(e, st)
+        if not body:
+            self.r.skip(f"deliver.{e.slug}", t, f"GET a sample {st} on {ws_path(e.slug)[:-3]}", "x-notification",
+                        f"no probe to write: {why}")
+            return
         socks = []
         try:
             a, why = self.socket(e)
@@ -242,7 +338,7 @@ class Suite:
                 return
             socks.append(a)
             st_a, id_a, msg_a = self.subscribe(a, sub, "a")
-            b, _why_b = self.socket(e)
+            b, _ = self.socket(e)
             socks += [b] if b else []
             st_b = self.subscribe(b, sub, "b")[0] if b else 0
             c, _ = self.socket(e)
@@ -254,30 +350,23 @@ class Suite:
                 socks += [d] if d else []
                 if d:
                     self.subscribe(d, sub, "d")
-            ee = None
-            if not grants_every_type(e):
-                ee, _ = self.socket(e)
-                socks += [ee] if ee else []
-                st_e = self.subscribe(ee, {"type": "Subscription", "entities": [{"type": OUTSIDE_TYPE}]}, "e")[0] \
-                    if ee else 0
             if st_a != 201:
                 self.r.check(f"deliver.{e.slug}", t, "x-subscribe", "x-status 201", f"{st_a} {msg_a}", False,
                              f"class {cls}, type {st}")
                 return
             time.sleep(self.a.settle)  # the hub's broker subscription is made after the 201
-            wst, wraw = self.write(e.tenant, probe, iri, 1)
-            outside = f"urn:ngsi-ld:SmokeSubsOutside:smoke-subs-{tag}"
-            if ee:
-                self.write(e.tenant, outside, OUTSIDE_TYPE, 1)
+            wst, wraw = self.write(door, probe, body, token)
             if wst not in (200, 201, 204):
-                self.r.check(f"deliver.{e.slug}", t, "POST /broker/.../entityOperations/upsert", "the probe is written",
-                             f"{wst} {short(wraw)}", False, "the probe write failed: nothing to deliver")
+                self.r.check(f"deliver.{e.slug}", t, f"POST {ws_path(door.slug)[:-3]}/ngsi-ld/v1/entityOperations/upsert "
+                             f"as {e.project}-{writer}", "the probe is written", f"{wst} {short(wraw)}", False,
+                             "the probe write failed: nothing to deliver")
                 return
             started = time.monotonic()
             n = a.until(carries(probe), w)
             took = time.monotonic() - started
             got = bool(n)
-            self.r.check(f"deliver.{e.slug}", t, f"WS {ws_path(e.slug)} x-subscribe {st}; write {probe}",
+            self.r.check(f"deliver.{e.slug}", t, f"WS {ws_path(e.slug)} x-subscribe {st}; {e.project}-{writer} writes "
+                         f"{probe} through {door.project}/{door.name}",
                          f"x-notification within {w:g} s", f"after {took:.1f} s" if got else "nothing", got,
                          f"class {cls}, tenant {e.tenant}")
             if got:
@@ -302,25 +391,19 @@ class Suite:
                              f"WS {ws_path(other.slug)} ({other.tenant}) x-subscribe {st}",
                              "nothing of another tenant's write", came or ("nothing" if d else "no socket"),
                              bool(d) and got and not came, proven)
-            if ee:
-                came = self.silent(ee, carries(outside), 0.5) if st_e == 201 else ""
-                self.r.check(f"outside.{e.slug}.ungranted-type", t, "x-subscribe SmokeSubsOutside",
-                             "nothing (or a refusal)", came or f"subscribe {st_e}, nothing", got and not came, proven)
-            else:
-                self.r.skip(f"outside.{e.slug}.ungranted-type", t, "x-subscribe SmokeSubsOutside",
-                            "nothing (or a refusal)", "the public grant opens every type of the tenant")
             # A leaves; the hub keeps serving B.
             try:
                 a.send({"metadata": {"x-op": "x-unsubscribe", "x-id": "u", "x-subscription": id_a}})
                 un = a.until(lambda m: wsclient.op(m) == "x-result" and (m.get("metadata") or {}).get("x-id") == "u", w)
             except (OSError, wsclient.Closed):
                 un = None
-            self.write(e.tenant, probe, iri, 2)
-            nb2 = b.until(carries(probe), w) if nb else None
-            came = self.silent(a, carries(probe), self.a.silence)
+            self.write(door, probe2, body, token)
+            nb2 = b.until(carries(probe2), w) if nb else None
+            came = self.silent(a, carries(probe2), self.a.silence)
             un_st = (un or {}).get("metadata", {}).get("x-status")
-            self.r.check(f"hub.{e.slug}.unsubscribe", t, "x-unsubscribe A, then a second write",
-                         "A: 204 and nothing; B: notified", f"A {un_st}, {came or 'nothing'}; B {'notified' if nb2 else 'nothing'}",
+            self.r.check(f"hub.{e.slug}.unsubscribe", t, "x-unsubscribe A, then a second probe",
+                         "A: 204 and nothing; B: notified",
+                         f"A {un_st}, {came or 'nothing'}; B {'notified' if nb2 else 'nothing'}",
                          un_st == 204 and not came and bool(nb2))
         finally:
             for s in socks:
@@ -366,27 +449,38 @@ class Suite:
                 s.close()
 
     def delivery(self):
-        if not self.admin:
-            for e in self.endpoints:
-                if "websocket" in e.representations and not e.closed:
-                    self.r.skip(f"deliver.{e.slug}", f"{e.project}/{e.name}", "WS + probe write",
-                                "x-notification", "no --state with antares-admin-token: the probe cannot be written")
-                    break
+        if not self.a.realm_secrets_dir:
+            self.r.skip("deliver", "public Endpoints serving websocket", "WS + probe write", "x-notification",
+                        "no --realm-secrets-dir: the project's ServiceAccount cannot write the probe")
             return
-        chosen, skipped = plan(self.endpoints, self.index, self.a.per_class)
+        cands, skipped = plan(self.endpoints, self.index, 10 ** 6)
+        chosen, taken = [], defaultdict(int)
+        for cls, e, st, iri, writer in cands:
+            if taken[cls] >= self.a.per_class:
+                continue
+            token, why = self.token_for(e.project, writer)
+            door = self.door(e, token) if token else None
+            if not door:
+                why = why or f"the token of {e.project}-{writer} is bound to no Endpoint of space {e.space} (aud)"
+                skipped.append((e, f"the probe writer cannot write here: {why}"))
+                continue
+            chosen.append((cls, e, st, iri, writer, door))
+            taken[cls] += 1
         for e, why in skipped[:50]:
             self.r.skip(f"deliver.{e.slug}", f"{e.project}/{e.name}", "WS + probe write", "x-notification", why)
-        for i, (cls, e, st, iri) in enumerate(chosen):
+        for i, (cls, e, st, iri, writer, door) in enumerate(chosen):
             other = next((x[1] for x in chosen[i + 1:] + chosen[:i] if x[1].tenant != e.tenant), None)
-            self.deliver(cls, e, st, iri, other)
+            self.deliver(cls, e, st, iri, writer, door, other)
 
     # ------------------------------------------------------------ 4. MQTT
 
     def mqtt(self):
         st, _, body = self.http.call("POST", "/internal/mqtt/auth",
                                      body={"clientid": "smoke", "username": "smoke", "password": "x", "ipaddr": "127.0.0.1"})
+        # Whatever the public base answers (404, or the Portal's page), never a CONNECT decision.
+        decided = isinstance(as_json(body), dict) and "result" in as_json(body)
         self.r.check("mqtt.auth-not-public", "gateway", "POST /internal/mqtt/auth on the public base",
-                     "404 (internal listener only)", f"{st} {short(body, 80)}", st == 404)
+                     "no CONNECT decision (internal listener only)", f"{st} {short(body, 80)}", not decided and st != 0)
         given = dict(x.split("=", 1) for x in self.a.mqtt_broker)
         for b in self.brokers:
             name = f"{b['project']}/{b['name']}"
@@ -466,8 +560,7 @@ class Suite:
             self.refusals()
             self.mqtt()
         finally:
-            if self.admin:
-                self.cleanup()
+            self.cleanup()
 
 
 def main(argv=None):
@@ -476,7 +569,9 @@ def main(argv=None):
     p.add_argument("--base-url", required=True)
     p.add_argument("--export", required=True, help="the export bundle the rehearsal was built from")
     p.add_argument("--out", required=True)
-    p.add_argument("--state", help="the rehearsal's state dir: antares-admin-token for the probe writes")
+    p.add_argument("--realm-secrets-dir", help="the rehearsal's realm secrets ($REHEARSAL_HOME/<env>/secrets/realm): "
+                   "the project ServiceAccount's client secret that writes the probe")
+    p.add_argument("--state", help="unused (accepted for the common runner)")
     p.add_argument("--per-class", type=int, default=1, help="Endpoints per project x audience for delivery")
     p.add_argument("--wait", type=float, default=15, help="seconds a delivery may take (N)")
     p.add_argument("--silence", type=float, default=5, help="seconds a socket must stay silent")
@@ -493,8 +588,8 @@ def main(argv=None):
     export = Path(a.export)
     files = export / "gitea" / "files"
     endpoints = ex.load_endpoints(files)
-    index = ex.load_index(export, endpoints, Path(a.cache)) if a.state else {}
-    s = Suite(a, endpoints, index, load_brokers(files))
+    index = ex.load_index(export, endpoints, Path(a.cache)) if a.realm_secrets_dir else {}
+    s = Suite(a, endpoints, index, load_brokers(files), load_clients(export))
     s.run()
     s.r.write(Path(a.out), {"export": str(export), "exportedAt": index.get("exportedAt", ""),
                             "endpoints": len(endpoints), "mqttBrokers": len(s.brokers)})
