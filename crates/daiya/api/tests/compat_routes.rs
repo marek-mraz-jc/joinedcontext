@@ -564,6 +564,9 @@ async fn dashboards_save_read_version_search_and_delete() {
         .ok("GET", "/api/search?type=dash-db&query=EDGE", None)
         .await;
     assert_eq!(uids(&dash), ["edge"]);
+    // Each hit names its folder, as Grafana's search does.
+    assert_eq!(dash[0]["folderUid"], "ops");
+    assert_eq!(dash[0]["folderTitle"], "Ops");
     let folders = w
         .ok("GET", "/api/search?type=dash-folder&query=fin", None)
         .await;

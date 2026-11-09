@@ -22,9 +22,9 @@ jc_bin=${JC_BIN:-${CARGO_TARGET_DIR:-$here/../../target}/debug/jc}
 export_dir=${REHEARSAL_EXPORT:-$home/export}
 bind=${REHEARSAL_BIND:-127.0.0.1}
 
-mkdir -p "$home"/secrets "$home"/state/realms "$home"/import "$home"/repos "$home"/files
+mkdir -p "$home"/secrets/realm "$home"/state/realms "$home"/import "$home"/repos "$home"/files
 chmod 700 "$home/state" "$home/state/realms"
-chmod 700 "$home" "$home"/secrets "$home"/state
+chmod 700 "$home" "$home"/secrets "$home"/secrets/realm "$home"/state
 
 secret() { # secret <name>: a random secret file, made once
   local f="$home/secrets/$1"
@@ -112,20 +112,13 @@ people_args=()
 [ -f "$demo_users" ] && people_args+=(--demo-users "$demo_users")
 if [ -d "$export_dir/keycloak" ]; then
   python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/state/realms" \
-    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}"
-  # Each secret the realm config names gets a fresh value of the rehearsal (never the old one).
+    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" --secrets-dir "$home/secrets/realm" "${people_args[@]}"
+  # Each secret the realm config names gets a fresh value of the rehearsal (never the old one), as
+  # a 0600 file in secrets/realm, the only dir jc's realm import may read ($(file:...); it reads no
+  # environment).
   while read -r name; do
-    [ -n "$name" ] && secret "realm-$name" > /dev/null
+    [ -n "$name" ] && secret "realm/$name" >/dev/null
   done < "$home/state/realm-vars.txt"
-  # jc's kaisatsu reads no environment for a realm file: each secret it names is a
-  # $(file:...) under the rehearsal's secrets dir (--kaisatsu-import-secrets-dir below).
-  python3 -I - "$home/state/realms" "$home/secrets" <<'PY'
-import pathlib, re, sys
-realms, secrets = pathlib.Path(sys.argv[1]), sys.argv[2]
-for f in realms.glob("*.json"):
-    text = re.sub(r"\$\((?:env:)?([A-Z][A-Z0-9_]*)\)", lambda m: f"$(file:{secrets}/realm-{m[1]})", f.read_text())
-    f.write_text(text)
-PY
 fi
 
 url() { printf 'postgres://%s:%s@127.0.0.1:%s/%s' "$1" "$(cat "$(secret "$1-pw")")" "$pg_port" "$2"; }
@@ -152,13 +145,12 @@ export JC_PORTAL_CKAN_ALLOW_HTTP=true
 # at the rehearsal's own dataroom.
 export JC_PORTAL_CKAN_URL=https://catalogue.rehearsal.invalid JC_PORTAL_CKAN_API_URL=http://127.0.0.1:$port/opendata
 # The CkanInstances name apiTokenRef.envVar CKAN_API_TOKEN: here it is jc's own dataroom publisher
-# token (Read and Propose on the rehearsal's default catalogue), made before jc's first start,
-# which keeps an existing file.
-# jc holds this one in memory unless given as a file (--dataroom-portal-token-file below).
-if [ ! -s "$home/secrets/catalogue-token" ]; then
-  (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$home/secrets/catalogue-token")
-fi
-CKAN_API_TOKEN=$(cat "$home/secrets/catalogue-token"); export CKAN_API_TOKEN
+# token (Read and Propose on the rehearsal's default catalogue), given to jc as a file: jc holds its
+# own per boot in memory only.
+CKAN_API_TOKEN=$(cat "$(secret catalogue-token)"); export CKAN_API_TOKEN
+# The Portal's shako token likewise: rehearsal.py import and the smoke suites read it from here.
+export JCBIN_DATAROOM_PORTAL_TOKEN_FILE=$home/secrets/catalogue-token
+JCBIN_SHAKO_TOKEN_FILE=$(secret shako-token); export JCBIN_SHAKO_TOKEN_FILE
 # The Portal's internal listener (/metrics, run callbacks) on loopback, one port per environment.
 export JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 100))
 export RUST_LOG=${RUST_LOG:-info,sqlx=warn}
@@ -185,7 +177,7 @@ printf '[mounts.portal]\npath_prefix = ""\n%s\n' "$db_config" > "$home/jc.toml"
 # from files here instead, so the import and the smoke suites can call those modules too.
 nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
-  --kaisatsu-import-dir "$home/state/realms" --kaisatsu-import-secrets-dir "$home/secrets" \
+  --kaisatsu-import-dir "$home/state/realms" --kaisatsu-import-secrets-dir "$home/secrets/realm" \
   --shako-token-file "$(secret shako-token)" --ekiben-token-file "$(secret ekiben-token)" \
   --daiya-portal-password-file "$(secret dashboards-password)" \
   --dataroom-portal-token-file "$home/secrets/catalogue-token" \

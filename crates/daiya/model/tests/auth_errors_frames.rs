@@ -546,9 +546,18 @@ fn field_columns_build_and_read_values_like_grafana_frames() {
         vec![Some(1.5), None, Some(f64::INFINITY)],
     );
     assert_eq!(n.field_type, FieldType::Number);
-    assert_eq!(n.values, vec![json!(1.5), Value::Null, Value::Null]);
+    // An infinity stays an infinity, apart from a null, as in Grafana's frames.
+    assert_eq!(n.values, vec![json!(1.5), Value::Null, json!("+Inf")]);
     assert_eq!(n.f64_at(0), Some(1.5));
     assert_eq!(n.f64_at(1), None);
+    assert_eq!(n.f64_at(2), Some(f64::INFINITY));
+    let odd = FieldColumn::numbers(
+        "v",
+        BTreeMap::new(),
+        vec![Some(f64::NAN), Some(f64::NEG_INFINITY), Some(-0.0)],
+    );
+    assert_eq!(odd.values, vec![json!("NaN"), json!("-Inf"), json!(0.0)]);
+    assert!(odd.f64_at(0).is_some_and(f64::is_nan));
     assert_eq!(n.f64_at(10), None);
     assert_eq!(n.effective_name(), "Value");
 

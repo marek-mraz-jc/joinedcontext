@@ -874,6 +874,27 @@ async fn action(
     action_with(http, base, action, params).await
 }
 
+/// One CKAN action on the catalogue at `base`, as a `CkanInstance` names it. The deployment's
+/// own catalogue (the operator's `JC_PORTAL_CKAN_URL`) is called at its API address
+/// (`JC_PORTAL_CKAN_API_URL`), as the publisher calls it (T-5314); that address is the operator's
+/// setting, never a manifest's, so the guard for manifest URLs does not apply to it. Any other
+/// `base` goes through [`action`] and its guard.
+async fn call(
+    state: &AppState,
+    base: &str,
+    name: &str,
+    params: &[(&str, &str)],
+) -> Result<Value, Failure> {
+    match &state.config.ckan_api_route {
+        Some((public, api))
+            if public.as_str().trim_end_matches('/') == base.trim_end_matches('/') =>
+        {
+            action_with(&HTTP, api.as_str().trim_end_matches('/'), name, params).await
+        }
+        _ => action(&state.catalogue_http, base, name, params).await,
+    }
+}
+
 /// One CKAN action through `http`, its answer read up to [`MAX_CKAN_ANSWER`].
 async fn action_with(
     http: &reqwest::Client,
@@ -911,14 +932,14 @@ async fn action_with(
     }
 }
 
-async fn search(http: &reqwest::Client, base: &str, q: &str) -> Result<Arc<Vec<Value>>, String> {
+async fn search(state: &AppState, base: &str, q: &str) -> Result<Arc<Vec<Value>>, String> {
     let key = (base.to_owned(), q.to_owned());
     if let Some(datasets) = SEARCHES.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
         return Ok(datasets);
     }
     let rows = ROWS.to_string();
-    let result = action(
-        http,
+    let result = call(
+        state,
         base,
         "package_search",
         &[("q", q), ("rows", &rows), ("include_private", "false")],
@@ -1096,7 +1117,7 @@ pub async fn get_catalogue(
     let mut datasets = Vec::new();
     let mut unavailable = Vec::new();
     for url in &urls {
-        match search(&state.catalogue_http, url, &filters.q).await {
+        match search(&state, url, &filters.q).await {
             Ok(found) => datasets.extend(found.iter().cloned()),
             Err(reason) => {
                 tracing::warn!(catalogue = %url, %reason, "catalogue search failed");
@@ -1126,7 +1147,7 @@ pub(crate) async fn datasets_matching(
     let mut hits = Vec::new();
     let mut unavailable = Vec::new();
     for base in catalogues(state) {
-        match search(&state.catalogue_http, &base, q).await {
+        match search(state, &base, q).await {
             Ok(found) => hits.extend(
                 found
                     .iter()
@@ -1187,7 +1208,7 @@ async fn dataset(state: &AppState, name: &str) -> Result<(String, Value), ApiErr
     let urls = catalogues(state);
     let mut answered = false;
     for url in &urls {
-        match action(&state.catalogue_http, url, "package_show", &[("id", name)]).await {
+        match call(state, url, "package_show", &[("id", name)]).await {
             Ok(found) => {
                 answered = true;
                 if found.get("private").and_then(Value::as_bool) != Some(true)
@@ -2000,6 +2021,31 @@ mod tests {
         .await;
         assert!(matches!(
             action(&CKAN_HTTP, &inside, "package_search", &[]).await,
+            Err(Failure::Unreachable(reason)) if reason.contains("internal address")
+        ));
+    }
+
+    /// The deployment's own catalogue is read at the operator's API address, as the publisher
+    /// writes it; a manifest naming that internal address itself is still not read.
+    #[tokio::test]
+    async fn the_deployments_own_catalogue_is_read_at_its_api_address() {
+        let inside = answering(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 27\r\n\r\n{\"success\":true,\"result\":1}",
+            0,
+        )
+        .await;
+        let mut config = crate::config::Config::for_tests();
+        config.ckan_api_route = Some((
+            "https://catalogue.example.invalid".parse().expect("url"),
+            inside.parse().expect("url"),
+        ));
+        let state = crate::state::AppState::new(config, None);
+        assert!(matches!(
+            call(&state, "https://catalogue.example.invalid/", "package_search", &[]).await,
+            Ok(v) if v == json!(1)
+        ));
+        assert!(matches!(
+            call(&state, &inside, "package_search", &[]).await,
             Err(Failure::Unreachable(reason)) if reason.contains("internal address")
         ));
     }

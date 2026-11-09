@@ -11,7 +11,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
 use jc_router::Mount;
-use pulldown_cmark::{Event, Options, Parser, Tag, html};
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd, html};
 use serde::Deserialize;
 use shako_api::{ShakoState, authenticate_request, resolve_and_authorize_repo};
 use shako_core::{Action, ShakoError};
@@ -23,6 +23,7 @@ use shako_git::{
 /// Renders Markdown to safe HTML using `pulldown-cmark`, converting all raw HTML events
 /// (`Event::Html` and `Event::InlineHtml`) into `Event::Text` so `<script>`, `<svg onload=...>`,
 /// and `<iframe>` are HTML-escaped, and neutralizing unsafe URL schemes (`javascript:`, `data:`) (Threat T14).
+/// A `# heading` renders as `<h2>`: the Markdown sits under the page's own `<h1>` (one h1 per page).
 #[must_use]
 pub fn render_safe_markdown(markdown: &str) -> String {
     let mut opts = Options::empty();
@@ -31,6 +32,20 @@ pub fn render_safe_markdown(markdown: &str) -> String {
 
     let parser = Parser::new_ext(markdown, opts).map(|event| match event {
         Event::Html(raw) | Event::InlineHtml(raw) => Event::Text(raw),
+        Event::Start(Tag::Heading {
+            level: HeadingLevel::H1,
+            id,
+            classes,
+            attrs,
+        }) => Event::Start(Tag::Heading {
+            level: HeadingLevel::H2,
+            id,
+            classes,
+            attrs,
+        }),
+        Event::End(TagEnd::Heading(HeadingLevel::H1)) => {
+            Event::End(TagEnd::Heading(HeadingLevel::H2))
+        }
         Event::Start(Tag::Link {
             link_type,
             dest_url,
@@ -833,5 +848,13 @@ mod tests {
         assert!(!rendered.contains("javascript:"), "{rendered}");
         assert!(rendered.contains("&lt;script&gt;"));
         assert!(rendered.contains("href=\"https://city.example\""));
+    }
+
+    #[test]
+    fn a_markdown_h1_renders_below_the_page_h1() {
+        let rendered = render_safe_markdown("# configuration\n\n## Layout\n");
+        assert!(!rendered.contains("<h1"), "{rendered}");
+        assert!(rendered.contains("<h2>configuration</h2>"), "{rendered}");
+        assert!(rendered.contains("<h2>Layout</h2>"), "{rendered}");
     }
 }

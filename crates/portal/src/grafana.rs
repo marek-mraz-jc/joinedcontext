@@ -25,6 +25,11 @@ const PLUGIN: &str = "ngsild-grafana-datasource";
 /// How often the rows are compared with what Grafana holds.
 const SWEEP: Duration = Duration::from_secs(300);
 
+/// The header that carries the person's token, exchanged for one Endpoint, beside the server
+/// administrator's credential on a panel read: daiya reads the Endpoint with it, and accepts it
+/// only with that credential.
+pub const PERSON_TOKEN_HEADER: &str = "x-daiya-person-token";
+
 /// A datasource uid Grafana accepts at most.
 const MAX_UID: usize = 40;
 
@@ -230,6 +235,29 @@ fn datasource_uid(name: &str, slug: &str) -> String {
 /// Grafana's admin API, as one administrator.
 pub struct Client<'a> {
     config: &'a GrafanaConfig,
+}
+
+/// Why a panel could not be read, in daiya's words: Grafana's `message`, or daiya's OData error
+/// envelope (`error.message`). A message naming an address or carrying a token never reaches the
+/// page; the generic reason does.
+fn panel_reason(body: &Value) -> String {
+    const FALLBACK: &str = "the panel's datasource did not answer; try again in a minute, or ask \
+                            the dashboard's owner to check its datasource";
+    let message = body["message"]
+        .as_str()
+        .or_else(|| body["error"]["message"].as_str())
+        .map(str::trim)
+        .filter(|m| !m.is_empty());
+    let leaks = |m: &str| {
+        let lower = m.to_ascii_lowercase();
+        ["://", "bearer", "eyj", "token=", "password", "secret"]
+            .iter()
+            .any(|word| lower.contains(word))
+    };
+    match message {
+        Some(m) if !leaks(m) => m.chars().take(300).collect(),
+        _ => FALLBACK.to_owned(),
+    }
 }
 
 fn unreachable(what: &str, err: impl std::fmt::Display) -> ApiError {
@@ -542,20 +570,22 @@ impl<'a> Client<'a> {
         uid: &str,
         panel: u32,
         asked: &[(String, String)],
+        person: Option<&str>,
     ) -> Result<Value, ApiError> {
         let what = "running a panel's queries";
         let mut query = vec![("panel".to_owned(), panel.to_string())];
         query.extend(asked.iter().cloned());
-        let answer = self
+        let mut request = self
             .request(
                 reqwest::Method::GET,
                 &format!("/dashboards/{uid}/render"),
                 Some(org),
             )
-            .query(&query)
-            .send()
-            .await
-            .map_err(|err| unreachable(what, err))?;
+            .query(&query);
+        if let Some(token) = person {
+            request = request.header(PERSON_TOKEN_HEADER, token);
+        }
+        let answer = request.send().await.map_err(|err| unreachable(what, err))?;
         let status = answer.status();
         let body = jc_core::outbound::read_capped(answer, MAX_PANEL_ANSWER)
             .await
@@ -566,11 +596,44 @@ impl<'a> Client<'a> {
         }
         // A query the datasource refused or could not answer is the panel's error state, said in
         // daiya's words; the credentials never are in them.
-        let message = body["message"]
-            .as_str()
-            .unwrap_or("the panel's datasource did not answer")
-            .to_owned();
-        Ok(json!({ "error": message }))
+        Ok(json!({ "error": panel_reason(&body) }))
+    }
+
+    /// Queries no saved dashboard holds, run as one panel would run them (daiya's and Grafana's
+    /// `POST /api/ds/query`): the builder's preview and a variable's values. `queries` are the
+    /// Portal's own, compiled from a person's choices; `variables` is each name's text as
+    /// `${name:regex}` stands for it. Answers frames by `refId`, or the reason there are none.
+    pub async fn query(
+        &self,
+        org: i64,
+        queries: &[Value],
+        range: (&str, &str),
+        variables: &std::collections::BTreeMap<String, String>,
+        person: Option<&str>,
+    ) -> Result<Value, ApiError> {
+        let what = "running a preview's queries";
+        let mut request = self
+            .request(reqwest::Method::POST, "/ds/query", Some(org))
+            .json(&json!({
+                "from": range.0,
+                "to": range.1,
+                "maxDataPoints": 1000,
+                "queries": queries,
+                "variables": variables,
+            }));
+        if let Some(token) = person {
+            request = request.header(PERSON_TOKEN_HEADER, token);
+        }
+        let answer = request.send().await.map_err(|err| unreachable(what, err))?;
+        let status = answer.status();
+        let body = jc_core::outbound::read_capped(answer, MAX_PANEL_ANSWER)
+            .await
+            .map_err(|err| unreachable(what, err))?;
+        let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        if status.is_success() {
+            return Ok(body);
+        }
+        Ok(json!({ "error": panel_reason(&body) }))
     }
 
     /// The values a query variable offers, asked of its datasource with the saved query.
@@ -869,6 +932,30 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn a_panel_refusal_reads_daiyas_error_envelope_and_never_an_address_or_token() {
+        let daiya =
+            json!({ "error": { "code": "bad-request", "message": "the query names no type" } });
+        assert_eq!(panel_reason(&daiya), "the query names no type");
+        assert_eq!(
+            panel_reason(&json!({ "message": "datasource not found" })),
+            "datasource not found"
+        );
+        for leaking in [
+            json!({ "error": { "message": "GET https://broker.internal/ngsi-ld/v1 failed" } }),
+            json!({ "message": "upstream said Bearer eyJhbGciOi.x.y" }),
+            json!({ "error": { "message": "retry with token=abc" } }),
+            json!({ "error": "plain" }),
+            Value::Null,
+        ] {
+            let reason = panel_reason(&leaking);
+            assert!(
+                reason.starts_with("the panel's datasource did not answer"),
+                "{reason}"
+            );
+        }
+    }
+
     fn row(kind: Kind) -> Visualization {
         Visualization {
             id: "ab12".into(),
@@ -963,6 +1050,123 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(server)
             .await;
+    }
+
+    fn project_state() -> AppState {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "ContextSpace".into(),
+            metadata: crate::resource::ObjectMeta::new("air", "doprava"),
+            spec: json!({}),
+            status: None,
+        });
+        state
+    }
+
+    fn posted(requests: &[wiremock::Request]) -> Vec<String> {
+        requests
+            .iter()
+            .filter(|request| request.method.as_str() == "POST")
+            .map(|request| request.url.path().to_owned())
+            .collect()
+    }
+
+    /// daiya answers health with `commit: "daiya"`, the only service the Portal makes
+    /// organizations in.
+    async fn daiya_health(server: &wiremock::MockServer) {
+        answer_with(server, "GET", "/api/health", json!({ "commit": "daiya" })).await;
+    }
+
+    #[tokio::test]
+    async fn an_opened_project_gets_its_organization_and_folder() {
+        let server = wiremock::MockServer::start().await;
+        daiya_health(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/orgs/name/doprava"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        answer_with(
+            &server,
+            "POST",
+            "/api/orgs",
+            json!({ "orgId": 9, "message": "created" }),
+        )
+        .await;
+        answer_with(
+            &server,
+            "POST",
+            "/api/folders",
+            json!({ "uid": "project-doprava" }),
+        )
+        .await;
+        let config = config(&server);
+        provision_projects(&project_state(), &Client::new(&config)).await;
+        let requests = server.received_requests().await.expect("recorded");
+        assert_eq!(posted(&requests), ["/api/orgs", "/api/folders"]);
+        let orgs = requests
+            .iter()
+            .find(|request| request.url.path() == "/api/orgs")
+            .expect("the organization asked for");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&orgs.body).unwrap(),
+            json!({ "name": "doprava" })
+        );
+        let folder = requests
+            .iter()
+            .find(|request| request.url.path() == "/api/folders")
+            .expect("the folder asked for");
+        assert_eq!(folder.headers["X-Grafana-Org-Id"], "9");
+    }
+
+    #[tokio::test]
+    async fn an_organization_that_exists_is_found_by_name() {
+        let server = wiremock::MockServer::start().await;
+        answer_with(&server, "GET", "/api/orgs/name/doprava", json!({ "id": 4 })).await;
+        Mock::given(method("POST"))
+            .and(path("/api/folders"))
+            .respond_with(ResponseTemplate::new(412))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        let org = Client::new(&config).provision("doprava").await;
+        assert_eq!(org.expect("the organization"), 4);
+        let requests = server.received_requests().await.expect("recorded");
+        assert_eq!(posted(&requests), ["/api/folders"]);
+    }
+
+    #[tokio::test]
+    async fn a_grafana_that_is_not_daiya_gets_no_organization() {
+        let server = wiremock::MockServer::start().await;
+        answer_with(&server, "GET", "/api/health", json!({ "commit": "abc123" })).await;
+        let config = config(&server);
+        provision_projects(&project_state(), &Client::new(&config)).await;
+        let requests = server.received_requests().await.expect("recorded");
+        assert!(posted(&requests).is_empty(), "{:?}", posted(&requests));
+    }
+
+    #[tokio::test]
+    async fn a_daiya_that_is_away_leaves_the_project_for_the_next_pass() {
+        let server = wiremock::MockServer::start().await;
+        daiya_health(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/orgs/name/doprava"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        provision_projects(&project_state(), &Client::new(&config)).await;
+        let requests = server.received_requests().await.expect("recorded");
+        assert!(posted(&requests).is_empty(), "{:?}", posted(&requests));
+    }
+
+    #[test]
+    fn without_grafana_no_provisioning_loop_starts() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        assert!(state.config.grafana.is_none());
+        // Returns before it spawns: outside a runtime, a spawn would panic.
+        spawn_provisioning(state);
     }
 
     #[tokio::test]

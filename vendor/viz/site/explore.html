@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>Live data</title>
+<link rel="stylesheet" href="vendor/maplibre-gl-6.14.0.css">
+<link rel="stylesheet" href="explorer/explorer.css">
+<link rel="stylesheet" href="explore.css">
+<script src="vendor/pmtiles-4.5.0.js" defer></script>
+<script src="explorer/explorer.js" defer></script>
+<script src="embed.js" defer></script>
+<script src="explore.js" defer></script>
+</head>
+<body>
+<main>
+  <div class="page-head">
+    <h1 id="title" data-t="title"></h1>
+    <div class="actions">
+      <button type="button" id="data-api" class="page-button" data-t="dataApi"></button>
+      <button type="button" id="embed-open" class="page-button" data-t="embed" aria-haspopup="dialog" hidden></button>
+    </div>
+  </div>
+  <p id="attribution" class="attribution" hidden></p>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+  <div id="app">
+    <section id="grid" aria-labelledby="title"></section>
+    <section id="map-section" aria-labelledby="map-title" hidden>
+      <div class="map-head">
+        <h2 id="map-title" data-t="map"></h2>
+        <button type="button" id="map-panel-open" class="page-button" data-t="panelOpen" aria-expanded="false" aria-controls="map-panel"></button>
+      </div>
+      <div id="map-panel" class="map-panel" role="group" aria-labelledby="map-panel-title" hidden>
+        <h3 id="map-panel-title" data-t="panel"></h3>
+        <p class="field">
+          <label for="map-geo" data-t="geoLabel"></label>
+          <select id="map-geo" aria-describedby="map-geo-hint"></select>
+          <span id="map-geo-hint" class="hint" data-t="geoHint"></span>
+        </p>
+        <p class="field">
+          <label for="map-color" data-t="colorLabel"></label>
+          <select id="map-color" aria-describedby="map-color-hint"></select>
+          <span id="map-color-hint" class="hint" data-t="colorHint"></span>
+        </p>
+        <fieldset class="field wide">
+          <legend data-t="popLabel"></legend>
+          <div id="map-pop-list" class="checks"></div>
+          <span id="map-pop-hint" class="hint" data-t="popHint"></span>
+        </fieldset>
+        <p class="field wide">
+          <label class="check"><input id="map-cluster" type="checkbox" aria-describedby="map-cluster-hint"> <span data-t="clusterLabel"></span></label>
+          <span id="map-cluster-hint" class="hint" data-t="clusterHint"></span>
+        </p>
+      </div>
+      <div class="map-chips"><span id="map-chips"></span><button type="button" id="map-reset" class="page-button" data-t="reset" hidden></button></div>
+      <p id="map-fallback" class="hint map-fallback" role="status" hidden></p>
+      <div class="map-box">
+        <div id="map" role="region" aria-labelledby="map-title" aria-describedby="map-note map-count"></div>
+        <p id="map-count" class="map-count" role="status" aria-live="polite" hidden></p>
+      </div>
+      <ul id="map-legend" class="map-legend" hidden></ul>
+      <p id="map-note" class="hint" data-t="mapHint"></p>
+    </section>
+  </div>
+</main>
+<dialog id="detail" aria-labelledby="detail-title">
+  <div class="detail-head">
+    <div>
+      <p id="detail-type" class="card-type" hidden></p>
+      <h2 id="detail-title"></h2>
+    </div>
+    <button type="button" id="detail-close" class="page-button" data-t="close"></button>
+  </div>
+  <div id="detail-map" class="card-map" role="img" data-t-label="placeMap" hidden></div>
+  <button type="button" id="detail-onmap" class="page-button card-onmap" data-t="onMap" hidden></button>
+  <dl id="detail-list" class="card-list"></dl>
+  <p id="detail-source" class="card-source" hidden></p>
+  <details id="detail-dev" class="card-dev">
+    <summary data-t="dev"></summary>
+    <dl id="detail-dev-list" class="card-list"></dl>
+    <h3 data-t="links"></h3>
+    <ul id="detail-links"></ul>
+  </details>
+</dialog>
+<dialog id="embed" aria-labelledby="embed-title" aria-describedby="embed-lead">
+  <div class="detail-head">
+    <h2 id="embed-title" data-t="embed"></h2>
+    <button type="button" id="embed-close" class="page-button" data-t="close"></button>
+  </div>
+  <p id="embed-lead" class="hint" data-t="embedLead"></p>
+  <form id="embed-form" class="embed-form" novalidate>
+    <fieldset class="field wide">
+      <legend data-t="embedKind"></legend>
+      <label class="check"><input type="radio" name="kind" value="iframe" checked aria-describedby="embed-kind-hint"> <span data-t="iframe"></span></label>
+      <label class="check"><input type="radio" name="kind" value="component" aria-describedby="embed-kind-hint"> <span data-t="component"></span></label>
+      <span id="embed-kind-hint" class="hint" data-t="kindHint"></span>
+    </fieldset>
+    <p class="field">
+      <label for="embed-view" data-t="viewLabel"></label>
+      <select id="embed-view" aria-describedby="embed-view-hint"><option value="both" data-t="viewBoth"></option><option value="table" data-t="viewTable"></option></select>
+      <span id="embed-view-hint" class="hint" data-t="viewHint"></span>
+    </p>
+    <p class="field">
+      <label for="embed-lang" data-t="langLabel"></label>
+      <select id="embed-lang" aria-describedby="embed-lang-hint"><option value="en" lang="en">English</option><option value="sk" lang="sk">Slovenčina</option></select>
+      <span id="embed-lang-hint" class="hint" data-t="langHint"></span>
+    </p>
+    <p class="field">
+      <label for="embed-theme" data-t="themeLabel"></label>
+      <select id="embed-theme" aria-describedby="embed-theme-hint"><option value="" data-t="themeAuto"></option><option value="light" data-t="themeLight"></option><option value="dark" data-t="themeDark"></option></select>
+      <span id="embed-theme-hint" class="hint" data-t="themeHint"></span>
+    </p>
+    <p class="field">
+      <label for="embed-height" data-t="heightLabel"></label>
+      <input id="embed-height" type="number" min="240" max="2000" step="10" value="640" inputmode="numeric" aria-describedby="embed-height-hint">
+      <span id="embed-height-hint" class="hint" data-t="heightHint"></span>
+    </p>
+    <p class="field wide">
+      <label class="check"><input id="embed-keep" type="checkbox" checked aria-describedby="embed-keep-hint"> <span data-t="keep"></span></label>
+      <span id="embed-keep-hint" class="hint"></span>
+    </p>
+  </form>
+  <p id="embed-error" class="status error" role="alert" hidden></p>
+  <label for="embed-code" data-t="code"></label>
+  <textarea id="embed-code" rows="5" readonly spellcheck="false"></textarea>
+  <div class="actions">
+    <button type="button" id="embed-copy" class="page-button primary" data-t="copy"></button>
+    <a id="embed-preview" target="_blank" rel="noopener noreferrer" data-t="preview"></a>
+    <span id="embed-copied" role="status" aria-live="polite"></span>
+  </div>
+</dialog>
+</body>
+</html>

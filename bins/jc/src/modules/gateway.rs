@@ -133,7 +133,7 @@ pub fn vars(
         // endpoint, as the Portal's sign-in does, because kaisatsu names the issuer by the host a
         // request reached it on and the Portal's internal listener checks it. The keys are read
         // on the listener (`JC_OIDC_JWKS_URL`).
-        let realm = format!("/realms/{}", setup::PORTAL_REALM);
+        let realm = format!("/realms/{}", setup.realm);
         group(vec![
             ("JC_OIDC_ISSUER", Some(format!("{}{realm}", id.public))),
             (
@@ -291,9 +291,13 @@ async fn whole_path(mut req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
-/// The router for the root paths of `Module::root_paths`: `router` behind [`whole_path`].
+/// The router for the root paths of `Module::root_paths`: `router` behind [`whole_path`]. The
+/// rewrite runs ahead of `router`'s own routing: axum matches a router's routes before its
+/// layers run, so `router` sits in an outer router's fallback.
 pub fn at_root(router: Router) -> Router {
-    router.layer(axum::middleware::from_fn(whole_path))
+    Router::new()
+        .fallback_service(router)
+        .layer(axum::middleware::from_fn(whole_path))
 }
 
 pub async fn build(
@@ -384,6 +388,30 @@ mod tests {
     }
     use crate::config::{Cli, Config as JcConfig, FileConfig};
 
+    /// A router with routes of its own (the assistant's `/d/...`) answers at a root path: the
+    /// prefix `jc-router` strips is back before it routes.
+    #[tokio::test]
+    async fn a_router_with_its_own_routes_answers_at_its_root_path() {
+        use tower::ServiceExt;
+        let inner = Router::new().route("/d/{id}/widget", axum::routing::get(|| async { "w" }));
+        let spec = jc_router::MountSpec {
+            module: "assistant".into(),
+            host: None,
+            path_prefix: Some("/d".into()),
+        };
+        let app = jc_router::JcRouterBuilder::new("https", "city.example")
+            .mount(spec, at_root(inner))
+            .build()
+            .unwrap()
+            .into_axum_router();
+        let req = axum::http::Request::get("/d/data/widget")
+            .header("host", "city.example")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let answer = app.oneshot(req).await.unwrap();
+        assert_eq!(answer.status(), axum::http::StatusCode::OK);
+    }
+
     /// The siblings and secrets of `--role all` in slug mode, and the gateway's mount.
     fn fixture() -> (Siblings, Setup, Mount, tempfile::TempDir) {
         let cfg = JcConfig::merge(
@@ -429,6 +457,18 @@ mod tests {
         assert_eq!(
             v["JC_OIDC_CLIENT_SECRET"],
             setup.value(Secret::GatewayClientSecret).unwrap()
+        );
+        // A deployment naming its realm moves the issuer and the keys with it.
+        let mut dev = setup.clone();
+        dev.realm = setup::Realm::parse("dev").unwrap();
+        let named = vars(&siblings, &dev, true, &mount, Some(&hop), None, bind);
+        assert_eq!(
+            named["JC_OIDC_ISSUER"],
+            "https://city.example/id/realms/dev"
+        );
+        assert_eq!(
+            named["JC_OIDC_JWKS_URL"],
+            "http://127.0.0.1:8443/id/realms/dev/protocol/openid-connect/certs"
         );
         assert_eq!(
             v["JC_GATEWAY_REVOCATIONS_URL"],

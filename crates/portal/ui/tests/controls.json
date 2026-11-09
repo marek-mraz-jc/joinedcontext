@@ -185,7 +185,7 @@
     },
     "src/components/ResourceFormDialogBody.tsx": {
       "controls": {
-        "Button": 1,
+        "Button": 2,
         "Checkbox": 1
       },
       "tests": [
@@ -1407,6 +1407,16 @@
         "share_flow.test.tsx"
       ]
     },
+    "src/pages/grafana/DashboardBuilder.tsx": {
+      "controls": {
+        "Button": 16,
+        "Checkbox": 2,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "dashboard_builder.test.tsx"
+      ]
+    },
     "src/pages/grafana/GrafanaPage.tsx": {
       "controls": {
         "Button": 4
@@ -1416,13 +1426,23 @@
         "grafana_page.test.tsx"
       ]
     },
+    "src/pages/grafana/DashboardList.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "dashboard_list.test.tsx"
+      ]
+    },
     "src/pages/grafana/DashboardPage.tsx": {
       "controls": {
-        "Button": 2
+        "Button": 1,
+        "Checkbox": 1
       },
       "tests": [
         "dashboard_page.test.tsx",
-        "dashboard_panels.test.tsx"
+        "dashboard_panels.test.tsx",
+        "dashboard_time.test.tsx"
       ]
     },
     "src/components/panels/DashboardGrid.tsx": {
@@ -1435,10 +1455,18 @@
     },
     "src/components/panels/PanelView.tsx": {
       "controls": {
-        "Button": 2
+        "Button": 3
       },
       "tests": [
         "dashboard_panels.test.tsx"
+      ]
+    },
+    "src/components/panels/TimePicker.tsx": {
+      "controls": {
+        "Button": 10
+      },
+      "tests": [
+        "dashboard_time.test.tsx"
       ]
     },
     "src/components/panels/TimeSeriesPanel.tsx": {

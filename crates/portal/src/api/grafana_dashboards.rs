@@ -6,6 +6,7 @@
 //! answered with that reason and no query.
 
 use axum::extract::{Path, Query, State};
+use axum::http::HeaderMap;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
@@ -46,6 +47,9 @@ pub struct DashboardSummary {
     pub uid: String,
     pub title: String,
     pub tags: Vec<String>,
+    /// The folder the dashboard sits in; none for Grafana's General.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 /// One dashboard: what the page lays out. Panel queries stay on the server.
@@ -53,6 +57,8 @@ pub struct DashboardSummary {
 #[serde(rename_all = "camelCase")]
 pub struct DashboardView {
     pub uid: String,
+    /// The number of the dashboards service organization that holds it (Grafana's `orgId`).
+    pub org_id: i64,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -62,9 +68,15 @@ pub struct DashboardView {
     /// The saved refresh interval (`30s`, `5m`), if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh: Option<String>,
+    /// Whether the dashboard hides its time and refresh pickers (`timepicker.hidden`).
+    pub time_picker_hidden: bool,
+    /// The saved time zone (`browser`, `utc` or an IANA name), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
     pub variables: Vec<VariableView>,
     /// Each panel's `id`, `type`, `title`, `description`, `gridPos`, `fieldConfig`, `options`,
-    /// and for a row `collapsed` and its `panels`.
+    /// `maxDataPoints`, its own range (`timeFrom`, `timeShift`, `hideTimeOverride`), and for a
+    /// row `collapsed` and its `panels`.
     #[schema(value_type = Vec<Object>)]
     pub panels: Vec<Value>,
 }
@@ -123,7 +135,7 @@ fn member(state: &AppState, identity: &Identity, project: &str) -> Result<Effect
     Ok(effective)
 }
 
-fn client(state: &AppState) -> Result<Client<'_>, ApiError> {
+pub(crate) fn client(state: &AppState) -> Result<Client<'_>, ApiError> {
     state
         .config
         .grafana
@@ -154,7 +166,7 @@ async fn organization(client: &Client<'_>, project: &str) -> Result<Option<i64>,
     Ok(None)
 }
 
-async fn organization_held(client: &Client<'_>, project: &str) -> Result<i64, ApiError> {
+pub(crate) async fn organization_held(client: &Client<'_>, project: &str) -> Result<i64, ApiError> {
     organization(client, project).await?.ok_or_else(|| {
         ApiError::Conflict(format!(
             "the dashboards service has no organization for {project} yet; ask your operator to \
@@ -172,7 +184,7 @@ fn text(value: &Value) -> String {
 }
 
 /// A panel as the page draws it: its queries and datasource stay here.
-fn panel_view(panel: &Value) -> Value {
+pub(crate) fn panel_view(panel: &Value) -> Value {
     let mut kept = serde_json::Map::new();
     for key in [
         "id",
@@ -184,6 +196,9 @@ fn panel_view(panel: &Value) -> Value {
         "options",
         "collapsed",
         "maxDataPoints",
+        "timeFrom",
+        "timeShift",
+        "hideTimeOverride",
     ] {
         if let Some(value) = panel.get(key) {
             kept.insert(key.to_owned(), value.clone());
@@ -258,6 +273,21 @@ fn variable_view(variable: &Value) -> VariableView {
         _ => Vec::new(),
     };
     let name = text(&variable["name"]);
+    let include_all = variable["includeAll"] == true;
+    // Nothing saved: Grafana selects All where the variable offers it, else the first value
+    // (a query variable's first value comes from its own route; until then it sends nothing).
+    let mut current = current_of(variable);
+    if current.iter().all(String::is_empty) {
+        current = if include_all {
+            vec!["$__all".to_owned()]
+        } else {
+            options
+                .first()
+                .map(|o| o.value.clone())
+                .into_iter()
+                .collect()
+        };
+    }
     VariableView {
         label: variable["label"]
             .as_str()
@@ -266,9 +296,9 @@ fn variable_view(variable: &Value) -> VariableView {
         name,
         kind,
         multi: variable["multi"] == true,
-        include_all: variable["includeAll"] == true,
+        include_all,
         options,
-        current: current_of(variable),
+        current,
     }
 }
 
@@ -345,6 +375,10 @@ pub async fn list_dashboards(
                     .flatten()
                     .map(text)
                     .collect(),
+                folder: hit["folderTitle"]
+                    .as_str()
+                    .filter(|f| !f.is_empty())
+                    .map(str::to_owned),
             })
         })
         .collect();
@@ -384,6 +418,7 @@ pub async fn get_dashboard(
     let dashboard = dashboard_of(&client, org, &project, &uid).await?;
     Ok(Json(DashboardView {
         uid,
+        org_id: org,
         title: text(&dashboard["title"]),
         description: dashboard["description"]
             .as_str()
@@ -397,6 +432,11 @@ pub async fn get_dashboard(
         refresh: dashboard["refresh"]
             .as_str()
             .filter(|r| !r.is_empty())
+            .map(str::to_owned),
+        time_picker_hidden: dashboard["timepicker"]["hidden"] == true,
+        timezone: dashboard["timezone"]
+            .as_str()
+            .filter(|z| !z.is_empty())
             .map(str::to_owned),
         variables: variables_of(&dashboard)
             .into_iter()
@@ -412,7 +452,7 @@ pub async fn get_dashboard(
 }
 
 /// Grafana's time words: `now`, `now-6h`, `now-1d/d`, epoch milliseconds or RFC 3339.
-fn is_time(text: &str) -> bool {
+pub(crate) fn is_time(text: &str) -> bool {
     if text.is_empty() || text.len() > 40 {
         return false;
     }
@@ -448,18 +488,6 @@ fn refused(field: &str, detail: String) -> ApiError {
         detail: detail.clone(),
         errors: vec![format!("{field}: {detail}")],
     }
-}
-
-/// A literal inside a PromQL regex matcher: each regex sign escaped.
-fn regex_literal(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for c in value.chars() {
-        if "\\.+*?()|[]{}^$".contains(c) {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
 }
 
 /// The saved panel `id`, rows' children included.
@@ -533,9 +561,69 @@ fn denial(
     None
 }
 
+/// The slugs of the members-only Endpoints `panel` reads: those a person's own token must reach.
+/// A public Endpoint is read with no token.
+fn members_only(
+    state: &AppState,
+    project: &str,
+    panel: &Value,
+    held: &[HeldDatasource],
+) -> Vec<String> {
+    let endpoints = state
+        .mirror
+        .list(project, "Endpoint", &ListOptions::default())
+        .items;
+    let mut slugs: Vec<String> = panel_datasources(panel)
+        .iter()
+        .filter_map(|uid| held.iter().find(|source| source.uid == *uid))
+        .filter_map(|source| source.slug.clone())
+        .filter(|slug| {
+            !endpoints
+                .iter()
+                .any(|e| e.spec["slug"] == *slug && e.spec["audience"].as_str() == Some("public"))
+        })
+        .collect();
+    slugs.sort();
+    slugs.dedup();
+    slugs
+}
+
+/// The person's token exchanged for the one members-only Endpoint the panel reads, as a KPI
+/// history read does (`kpi_check.rs`); `Ok(None)` for a panel reading only public or no
+/// Endpoints. `Err` is the panel's error line, which carries no token.
+pub(crate) async fn person_for(
+    state: &AppState,
+    headers: &HeaderMap,
+    slugs: &[String],
+) -> Result<Option<String>, String> {
+    let slug = match slugs {
+        [] => return Ok(None),
+        [slug] => slug,
+        _ => {
+            return Err(format!(
+                "this panel reads {} members-only Endpoints at once; each panel reads one with your token",
+                slugs.len()
+            ))
+        }
+    };
+    let token = crate::agents::identity::persons_token(headers, state.config.trust_edge_token)
+        .ok_or(
+            "this panel is read with your own access token, which this session does not carry; \
+             sign in through the platform's address",
+        )?;
+    let oidc = state
+        .oidc
+        .as_ref()
+        .ok_or("this Portal has no Keycloak client to read the panel with")?;
+    oidc.exchange_for_endpoint(token, slug)
+        .await
+        .map(Some)
+        .map_err(|err| err.to_string())
+}
+
 /// The `from`, `to`, `maxDataPoints` and `var-<name>` pairs asked, each checked against the
 /// saved dashboard; what daiya gets.
-fn checked_query(
+pub(crate) fn checked_query(
     dashboard: &Value,
     asked: &[(String, String)],
 ) -> Result<Vec<(String, String)>, ApiError> {
@@ -610,26 +698,13 @@ fn checked_query(
                 ));
             }
         }
-        let value = if all {
-            match variable["allValue"].as_str().filter(|v| !v.is_empty()) {
-                Some(all) => all.to_owned(),
-                None if kind == "custom" => custom_options(variable)
-                    .iter()
-                    .map(|o| regex_literal(&o.value))
-                    .collect::<Vec<_>>()
-                    .join("|"),
-                None => ".*".to_owned(),
-            }
-        } else if picked.len() > 1 {
+        // daiya formats the values as Grafana's datasource does (`(a|b)` regex-escaped for
+        // Prometheus, the variable's allValue for All), from the saved variable.
+        out.extend(
             picked
                 .iter()
-                .map(|v| regex_literal(v))
-                .collect::<Vec<_>>()
-                .join("|")
-        } else {
-            picked[0].to_owned()
-        };
-        out.push((field, value));
+                .map(|value| (field.clone(), (*value).to_owned())),
+        );
     }
     Ok(out)
 }
@@ -656,6 +731,7 @@ pub async fn panel_data(
     user: CurrentUser,
     State(state): State<AppState>,
     Path((project, uid, panel)): Path<(String, String, u32)>,
+    headers: HeaderMap,
     Query(asked): Query<Vec<(String, String)>>,
 ) -> Result<Json<PanelData>, ApiError> {
     let effective = member(&state, &user.0.identity, &project)?;
@@ -677,7 +753,24 @@ pub async fn panel_data(
             ..PanelData::default()
         }));
     }
-    let answer = client.panel(org, &uid, panel, &query).await?;
+    let person = match person_for(
+        &state,
+        &headers,
+        &members_only(&state, &project, saved, &held),
+    )
+    .await
+    {
+        Ok(person) => person,
+        Err(error) => {
+            return Ok(Json(PanelData {
+                error: Some(error),
+                ..PanelData::default()
+            }))
+        }
+    };
+    let answer = client
+        .panel(org, &uid, panel, &query, person.as_deref())
+        .await?;
     if let Some(error) = answer["error"].as_str() {
         return Ok(Json(PanelData {
             error: Some(error.to_owned()),
@@ -865,15 +958,19 @@ mod tests {
     fn board() -> Value {
         json!({
             "uid": "live", "title": "Helsinki live", "time": { "from": "now-7d", "to": "now" },
-            "refresh": "5m",
+            "refresh": "5m", "timezone": "browser", "timepicker": { "hidden": true },
             "templating": { "list": [
                 { "name": "station", "type": "custom", "multi": true, "includeAll": true,
                   "query": "Kallio,Mannerheimintie", "current": { "value": ["Kallio"] } },
                 { "name": "run", "label": "Run", "type": "query", "datasource": { "uid": "prom" },
-                  "query": { "query": "label_values(k6_http_reqs_total, testid)" } }
+                  "query": { "query": "label_values(k6_http_reqs_total, testid)" } },
+                { "name": "testid", "type": "query", "multi": true, "includeAll": true, "current": {},
+                  "datasource": { "uid": "prom" }, "query": "label_values(testid)" },
+                { "name": "zone", "type": "custom", "query": "north,south", "current": {} }
             ]},
             "panels": [
                 { "id": 1, "type": "timeseries", "title": "Air", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                  "timeFrom": "1h", "timeShift": "1d", "hideTimeOverride": true,
                   "datasource": { "uid": "open-ds" },
                   "targets": [{ "refId": "A", "datasource": { "uid": "open-ds" }, "entityType": "AirQualityObserved" }] },
                 { "id": 2, "type": "row", "title": "Closed", "collapsed": true, "panels": [
@@ -920,7 +1017,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/api/search"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-                { "uid": "live", "title": "Helsinki live", "tags": ["project"] },
+                { "uid": "live", "title": "Helsinki live", "tags": ["project"], "folderUid": "city", "folderTitle": "City" },
                 { "uid": "air", "title": "Air", "tags": [] }
             ])))
             .mount(&server)
@@ -943,14 +1040,191 @@ mod tests {
         id: u32,
         pairs: &[(&str, &str)],
     ) -> Result<PanelData, ApiError> {
+        panel_with(user, state, id, pairs, HeaderMap::new()).await
+    }
+
+    async fn panel_with(
+        user: CurrentUser,
+        state: &AppState,
+        id: u32,
+        pairs: &[(&str, &str)],
+        headers: HeaderMap,
+    ) -> Result<PanelData, ApiError> {
         panel_data(
             user,
             State(state.clone()),
             Path((PROJECT.into(), "live".into(), id)),
+            headers,
             asked(pairs),
         )
         .await
         .map(|Json(data)| data)
+    }
+
+    /// The person's own token on a bearer call.
+    const RAW: &str = "raw-person-token-0451";
+    /// What the realm hands back for the Endpoint.
+    const EXCHANGED: &str = "exchanged-endpoint-token-9932";
+
+    fn bearer() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {RAW}").parse().unwrap(),
+        );
+        headers
+    }
+
+    /// A realm that exchanges any token for [`EXCHANGED`], on `state`.
+    async fn exchanging(state: &mut AppState) -> MockServer {
+        let realm = crate::auth::oidc::tests::mock_realm().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/bb/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": EXCHANGED, "token_type": "Bearer", "expires_in": 300
+            })))
+            .mount(&realm)
+            .await;
+        let client = crate::auth::oidc::OidcClient::discover(
+            &crate::auth::oidc::tests::config_for(&realm),
+            "https://portal.test/cb",
+        )
+        .await
+        .expect("discovery");
+        state.oidc = Some(std::sync::Arc::new(client));
+        realm
+    }
+
+    /// Everything the Portal logs while `run` runs, as text.
+    async fn logged<F: std::future::Future>(run: F) -> (F::Output, String) {
+        #[derive(Clone, Default)]
+        struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Sink {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let sink = Sink::default();
+        let writer = sink.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(move || writer.clone())
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        let out = run.await;
+        drop(guard);
+        let text = String::from_utf8_lossy(&sink.0.lock().unwrap()).into_owned();
+        (out, text)
+    }
+
+    async fn render_answering(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path("/api/dashboards/live/render"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "frameSets": [{ "refId": "A", "frames": [{ "name": "pm25", "fields": [
+                    { "name": "pm25", "type": "number", "values": [3.5] }
+                ]}]}]
+            })))
+            .mount(server)
+            .await;
+    }
+
+    fn person_headers(requests: &[wiremock::Request]) -> Vec<Option<String>> {
+        requests
+            .iter()
+            .filter(|request| request.url.path() == "/api/dashboards/live/render")
+            .map(|request| {
+                request
+                    .headers
+                    .get(crate::grafana::PERSON_TOKEN_HEADER)
+                    .map(|value| value.to_str().unwrap().to_owned())
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_members_only_panel_reaches_daiya_with_the_exchanged_token_only() {
+        let server = service("grafana").await;
+        render_answering(&server).await;
+        let mut state = world(Some(&server));
+        let realm = exchanging(&mut state).await;
+        let (data, logs) = logged(panel_with(admin(), &state, 3, &[], bearer())).await;
+        let data = data.expect("frames");
+        assert!(
+            data.error.is_none() && data.access_denied.is_none(),
+            "{data:?}"
+        );
+        let requests = server.received_requests().await.expect("recorded");
+        assert_eq!(person_headers(&requests), [Some(EXCHANGED.to_owned())]);
+        let render = requests
+            .iter()
+            .find(|request| request.url.path() == "/api/dashboards/live/render")
+            .unwrap();
+        // The Portal's own credential to daiya stays Basic; neither the raw token nor the
+        // Portal's Keycloak secret goes along.
+        let sent = format!("{:?}", render.headers);
+        assert!(
+            !sent.contains(RAW) && !sent.contains("s3cr3t-do-not-leak"),
+            "{sent}"
+        );
+        assert!(render.headers["authorization"]
+            .to_str()
+            .unwrap()
+            .starts_with("Basic "));
+        // The realm got the person's token, for this Endpoint's scope.
+        let exchange = realm
+            .received_requests()
+            .await
+            .expect("recorded")
+            .into_iter()
+            .find(|request| request.method.as_str() == "POST")
+            .expect("an exchange");
+        let form = String::from_utf8_lossy(&exchange.body).into_owned();
+        assert!(
+            form.contains(RAW) && form.contains("endpoint%3Aclosedslug"),
+            "{form}"
+        );
+        for token in [RAW, EXCHANGED] {
+            assert!(!logs.contains(token), "the log carries a token: {logs}");
+            assert!(!serde_json::to_string(&data).unwrap().contains(token));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_public_panel_sends_no_token() {
+        let server = service("grafana").await;
+        render_answering(&server).await;
+        let mut state = world(Some(&server));
+        let _realm = exchanging(&mut state).await;
+        let data = panel_with(admin(), &state, 1, &[], bearer())
+            .await
+            .expect("frames");
+        assert!(data.error.is_none(), "{data:?}");
+        let requests = server.received_requests().await.expect("recorded");
+        assert_eq!(person_headers(&requests), [None]);
+    }
+
+    #[tokio::test]
+    async fn a_cookie_session_reads_no_members_only_panel_and_says_where_to_sign_in() {
+        let server = service("grafana").await;
+        Mock::given(method("GET"))
+            .and(path("/api/dashboards/live/render"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "frameSets": [] })))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let mut state = world(Some(&server));
+        let _realm = exchanging(&mut state).await;
+        let data = panel(admin(), &state, 3, &[]).await.expect("an answer");
+        let error = data.error.expect("the panel's error line");
+        assert!(
+            error.contains("sign in through the platform's address"),
+            "{error}"
+        );
     }
 
     #[tokio::test]
@@ -1007,6 +1281,8 @@ mod tests {
             .expect("a list");
         let titles: Vec<&str> = list.items.iter().map(|d| d.title.as_str()).collect();
         assert_eq!(titles, ["Air", "Helsinki live"]);
+        let folders: Vec<Option<&str>> = list.items.iter().map(|d| d.folder.as_deref()).collect();
+        assert_eq!(folders, [None, Some("City")]);
         let Json(view) = get_dashboard(
             admin(),
             State(state.clone()),
@@ -1018,16 +1294,35 @@ mod tests {
             (view.from.as_str(), view.refresh.as_deref()),
             ("now-7d", Some("5m"))
         );
+        // The page links the dashboards service in the organization that holds it.
+        assert_eq!(view.org_id, 7);
         let text = serde_json::to_string(&view.panels).unwrap();
         assert!(
             !text.contains("targets") && !text.contains("open-ds"),
             "{text}"
+        );
+        assert_eq!(
+            (view.time_picker_hidden, view.timezone.as_deref()),
+            (true, Some("browser"))
+        );
+        assert_eq!(
+            (
+                &view.panels[0]["timeFrom"],
+                &view.panels[0]["timeShift"],
+                &view.panels[0]["hideTimeOverride"]
+            ),
+            (&json!("1h"), &json!("1d"), &json!(true))
         );
         assert_eq!(view.panels[1]["panels"][0]["title"], "Secret");
         let station = &view.variables[0];
         assert_eq!(station.options.len(), 2);
         assert_eq!(station.current, ["Kallio"]);
         assert_eq!(view.variables[1].label, "Run");
+        // Nothing saved and no All to fall back on: a query variable waits for its values.
+        assert!(view.variables[1].current.is_empty());
+        // Grafana's own pick when nothing is saved: All, else the first value.
+        assert_eq!(view.variables[2].current, ["$__all"]);
+        assert_eq!(view.variables[3].current, ["north"]);
         assert!(matches!(
             get_dashboard(admin(), State(state), Path((PROJECT.into(), "gone".into()))).await,
             Err(ApiError::NotFound(_))
@@ -1041,7 +1336,8 @@ mod tests {
             .and(path("/api/dashboards/live/render"))
             .and(query_param("panel", "1"))
             .and(query_param("from", "now-1h"))
-            .and(query_param("var-station", "Kallio|Mannerheimintie"))
+            .and(query_param("var-station", "Kallio"))
+            .and(query_param("var-station", "Mannerheimintie"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "frameSets": [{ "refId": "A", "frames": [{ "name": "pm25", "fields": [
                     { "name": "time", "type": "time", "values": [1, 2] },
@@ -1151,7 +1447,8 @@ mod tests {
             &asked(&[("var-station", "$__all"), ("var-run", "r.1")]).0,
         )
         .unwrap();
-        assert!(all.contains(&("var-station".into(), "Kallio|Mannerheimintie".into())));
+        // All and each value go to daiya as asked; daiya formats them from the saved variable.
+        assert!(all.contains(&("var-station".into(), "$__all".into())));
         assert!(all.contains(&("var-run".into(), "r.1".into())));
     }
 

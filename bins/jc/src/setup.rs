@@ -14,14 +14,66 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// The realm the Portal signs in through when kaisatsu runs beside it.
-pub const PORTAL_REALM: &str = "jc";
+/// The realm the Portal signs in through when kaisatsu runs beside it, unless `[identity] realm`
+/// names another.
+pub const DEFAULT_REALM: &str = "jc";
+
+/// The one realm a deployment's Portal, gateway and linker use (`[identity] realm`,
+/// `JCBIN_IDENTITY_REALM`): [`DEFAULT_REALM`] unless set, so a migrated deployment keeps its
+/// issuer `.../realms/<name>`. It goes into URL paths, so only `[A-Za-z0-9._-]` is taken; never
+/// empty, never a dot name, never `master` (Keycloak's administration realm).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Realm(String);
+
+impl Realm {
+    pub fn parse(name: &str) -> Result<Self, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("the realm name is empty".into());
+        }
+        if name.eq_ignore_ascii_case("master") {
+            return Err("the realm may not be `master`".into());
+        }
+        let safe = !name.starts_with('.')
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        if !safe {
+            return Err(format!("`{name}` is not a realm name ([A-Za-z0-9._-])"));
+        }
+        Ok(Self(name.to_owned()))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for Realm {
+    fn default() -> Self {
+        Self(DEFAULT_REALM.to_owned())
+    }
+}
+
+impl std::fmt::Display for Realm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 /// The Portal's sign-in client in kaisatsu's shipped realm file (confidential, code + PKCE).
 pub const PORTAL_CLIENT: &str = "portal-api";
 /// The Portal's people-administration client (service account only).
 pub const PORTAL_ADMIN_CLIENT: &str = "portal-reconciler";
 /// The Context Gateway's client (client_credentials), the Portal's `JC_PORTAL_GATEWAY_CLIENT_ID`.
 pub const GATEWAY_CLIENT: &str = "context-gateway";
+/// The knowledge assistant's client (client_credentials): its tokens buy model calls from its
+/// proxy, which checks it is this client's service account (agent-proxy's default name).
+pub const ASSISTANT_CLIENT: &str = "jc-assistant";
+/// The assistant's model proxy's client: it introspects the assistant's tokens.
+pub const PROXY_CLIENT: &str = "agent-proxy";
+/// The scope (and audience) the assistant's client asks the shared embedder service with.
+pub const EMBEDDER_SCOPE: &str = "embedder";
 /// The first person, a member of the Portal's bootstrap group.
 pub const FIRST_ADMIN: &str = "admin";
 /// The Portal's default bootstrap group (`JC_PORTAL_BOOTSTRAP_ADMINS`).
@@ -91,10 +143,14 @@ pub enum Secret {
     GatewayClientSecret,
     /// What the gateway's hop to Antares presents (`modules::antares::Hop`).
     GatewayHopToken,
+    /// The assistant's `jc-assistant` client in kaisatsu.
+    AssistantClientSecret,
+    /// Its proxy's `agent-proxy` client in kaisatsu.
+    ProxyClientSecret,
 }
 
 impl Secret {
-    pub const ALL: [Secret; 14] = [
+    pub const ALL: [Secret; 16] = [
         Secret::KaisatsuKek,
         Secret::PortalClientSecret,
         Secret::PortalAdminClientSecret,
@@ -109,6 +165,8 @@ impl Secret {
         Secret::PortalAgeKey,
         Secret::GatewayClientSecret,
         Secret::GatewayHopToken,
+        Secret::AssistantClientSecret,
+        Secret::ProxyClientSecret,
     ];
 
     /// The credential the Portal calls `module` with, for the modules a role split may place in
@@ -121,7 +179,12 @@ impl Secret {
             Module::Antares => Some(Secret::AntaresAdminToken),
             Module::Daiya => Some(Secret::DashboardsPassword),
             Module::Dataroom => Some(Secret::CatalogueToken),
-            Module::Kaisatsu | Module::Portal | Module::Gateway | Module::ModelTools => None,
+            Module::Kaisatsu
+            | Module::Portal
+            | Module::Gateway
+            | Module::ModelTools
+            | Module::Assistant
+            | Module::Viz => None,
         }
     }
 
@@ -143,6 +206,8 @@ impl Secret {
             Secret::PortalAgeKey => "portal-age-key",
             Secret::GatewayClientSecret => "gateway-client-secret",
             Secret::GatewayHopToken => "gateway-hop-token",
+            Secret::AssistantClientSecret => "assistant-client-secret",
+            Secret::ProxyClientSecret => "proxy-client-secret",
         }
     }
 
@@ -183,6 +248,10 @@ impl Secret {
             Secret::PortalAgeKey => &[Module::Portal],
             Secret::GatewayClientSecret => &[Module::Kaisatsu, Module::Gateway, Module::Portal],
             Secret::GatewayHopToken => &[Module::Antares, Module::Gateway],
+            // kaisatsu applies the realm only beside the Portal (`modules::kaisatsu`).
+            Secret::AssistantClientSecret | Secret::ProxyClientSecret => {
+                &[Module::Kaisatsu, Module::Assistant, Module::Portal]
+            }
         }
     }
 
@@ -232,6 +301,8 @@ pub struct Setup {
     /// The age identity that decrypts the projects' SOPS secrets, checked at start: the Portal
     /// reads it per sync to resolve each project's `secretRef`s.
     pub age_key_file: Option<PathBuf>,
+    /// The realm the Portal signs in through (`[identity] realm`).
+    pub realm: Realm,
 }
 
 fn err(e: impl std::fmt::Display) -> StartError {
@@ -363,6 +434,7 @@ impl Setup {
             dir: dir.to_path_buf(),
             held,
             age_key_file: None,
+            realm: Realm::default(),
         })
     }
 
@@ -401,6 +473,8 @@ pub fn realm_env(setup: &Setup) -> BTreeMap<String, String> {
         ),
         ("JC_SETUP_FIRST_ADMIN_PASSWORD", Secret::FirstAdminPassword),
         ("CLIENT_SECRET_CONTEXT_GATEWAY", Secret::GatewayClientSecret),
+        ("CLIENT_SECRET_JC_ASSISTANT", Secret::AssistantClientSecret),
+        ("CLIENT_SECRET_AGENT_PROXY", Secret::ProxyClientSecret),
     ]
     .into_iter()
     .filter_map(|(name, secret)| Some((name.to_owned(), setup.value(secret)?.to_owned())))
@@ -416,11 +490,18 @@ const SHIPPED_HOST: &str = "https://portal.jc.localhost";
 /// placeholder host turned into `portal_base` (the Portal's public base with a trailing slash),
 /// and the first administrator, a member of the bootstrap group. The shipped file holds the least
 /// privilege the Portal needs: `portal-reconciler` has `manage-users` and `query-groups`,
-/// `portal-api` `view-clients`, `query-users` and `query-groups`, no realm-admin.
-pub fn portal_realm_files(portal_base: &str) -> Result<Vec<(String, Value)>, serde_json::Error> {
+/// `portal-api` `view-clients`, `query-users` and `query-groups`, no realm-admin. Both files name
+/// `realm` (the shipped file's `id` and `realm` included).
+pub fn portal_realm_files(
+    portal_base: &str,
+    realm: &Realm,
+) -> Result<Vec<(String, Value)>, serde_json::Error> {
     let shipped = SHIPPED_REALM.replace(SHIPPED_HOST, portal_base.trim_end_matches('/'));
+    let mut shipped: Value = serde_json::from_str(&shipped)?;
+    shipped["id"] = json!(realm.as_str());
+    shipped["realm"] = json!(realm.as_str());
     let first_admin = json!({
-        "realm": PORTAL_REALM,
+        "realm": realm.as_str(),
         "users": [{
             "username": FIRST_ADMIN,
             "enabled": true,
@@ -437,10 +518,7 @@ pub fn portal_realm_files(portal_base: &str) -> Result<Vec<(String, Value)>, ser
         }]
     });
     Ok(vec![
-        (
-            "10-jc-portal.json".to_owned(),
-            serde_json::from_str(&shipped)?,
-        ),
+        ("10-jc-portal.json".to_owned(), shipped),
         ("20-jc-first-admin.json".to_owned(), first_admin),
     ])
 }
@@ -449,9 +527,9 @@ pub fn portal_realm_files(portal_base: &str) -> Result<Vec<(String, Value)>, ser
 /// internal listener (audience `portal-internal`, where it reads revocations, connectors and
 /// usage), no realm role and no person's scope.
 #[must_use]
-pub fn gateway_realm_file() -> (String, Value) {
+pub fn gateway_realm_file(realm: &Realm) -> (String, Value) {
     let client = json!({
-        "realm": PORTAL_REALM,
+        "realm": realm.as_str(),
         "clients": [{
             "clientId": GATEWAY_CLIENT,
             "name": "Context Gateway",
@@ -485,9 +563,118 @@ pub fn gateway_realm_file() -> (String, Value) {
     ("30-jc-gateway.json".to_owned(), client)
 }
 
+/// The assistant's two clients, client_credentials only, no realm role, no person's scope:
+/// `jc-assistant`, whose tokens name `agent-proxy` in their audience (the proxy admits a model
+/// call only from this client's service account with that audience, AG-109), and `agent-proxy`,
+/// which introspects them. As on dev (deployment components/assistant/keycloak-clients.yaml).
+#[must_use]
+pub fn assistant_realm_file(realm: &Realm) -> (String, Value) {
+    let client = |id: &str, name: &str, secret: &str, audience: Option<&str>| {
+        let mappers: Vec<Value> = audience.map(audience_mapper).into_iter().collect();
+        // The assistant asks the shared embedder with scope `embedder` (its audience).
+        let scopes: Vec<&str> = audience.map(|_| EMBEDDER_SCOPE).into_iter().collect();
+        json!({
+            "clientId": id,
+            "name": name,
+            "enabled": true,
+            "protocol": "openid-connect",
+            "publicClient": false,
+            "clientAuthenticatorType": "client-secret",
+            "secret": format!("$({secret})"),
+            "standardFlowEnabled": false,
+            "implicitFlowEnabled": false,
+            "directAccessGrantsEnabled": false,
+            "serviceAccountsEnabled": true,
+            "fullScopeAllowed": false,
+            "redirectUris": [],
+            "webOrigins": [],
+            "defaultClientScopes": ["basic"],
+            "optionalClientScopes": scopes,
+            "protocolMappers": mappers
+        })
+    };
+    let file = json!({
+        "realm": realm.as_str(),
+        "clientScopes": [{
+            "name": EMBEDDER_SCOPE,
+            "protocol": "openid-connect",
+            "attributes": { "include.in.token.scope": "true" },
+            "protocolMappers": [audience_mapper(EMBEDDER_SCOPE)]
+        }],
+        "clients": [
+            client(
+                ASSISTANT_CLIENT,
+                "Knowledge assistant",
+                "CLIENT_SECRET_JC_ASSISTANT",
+                Some(PROXY_CLIENT),
+            ),
+            client(PROXY_CLIENT, "Model proxy", "CLIENT_SECRET_AGENT_PROXY", None),
+        ]
+    });
+    ("40-jc-assistant.json".to_owned(), file)
+}
+
+/// An access-token audience mapper naming `aud`.
+fn audience_mapper(aud: &str) -> Value {
+    json!({
+        "name": format!("{aud}-audience"),
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-audience-mapper",
+        "consentRequired": false,
+        "config": {
+            "included.custom.audience": aud,
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+        }
+    })
+}
+
+/// Gives the Portal's client (in `files`) audience `jc-assistant`: the assistant admits the
+/// Portal's service account on its administration paths only with it, as the deployment's
+/// `jc-assistant-audience` mapper does. The realm merge concatenates arrays, so the mapper goes
+/// onto the shipped client itself rather than a second entry of it.
+pub fn add_assistant_audience(files: &mut [(String, Value)]) {
+    let portal = files
+        .iter_mut()
+        .filter_map(|(_, file)| file.get_mut("clients")?.as_array_mut())
+        .flatten()
+        .find(|client| client["clientId"] == PORTAL_CLIENT);
+    let Some(portal) = portal else { return };
+    let mapper = audience_mapper(ASSISTANT_CLIENT);
+    if let Some(mappers) = portal
+        .as_object_mut()
+        .map(|client| client.entry("protocolMappers").or_insert_with(|| json!([])))
+        .and_then(Value::as_array_mut)
+        && !mappers.iter().any(|m| m["name"] == mapper["name"])
+    {
+        mappers.push(mapper);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_portals_client_gains_the_assistant_audience_once() {
+        let mut files =
+            portal_realm_files("https://portal.example.test", &Realm::default()).unwrap();
+        add_assistant_audience(&mut files);
+        add_assistant_audience(&mut files);
+        let portal = files[0].1["clients"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["clientId"] == PORTAL_CLIENT)
+            .unwrap();
+        let named: Vec<&Value> = portal["protocolMappers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["config"]["included.custom.audience"] == ASSISTANT_CLIENT)
+            .collect();
+        assert_eq!(named.len(), 1, "{portal}");
+    }
 
     #[test]
     fn the_forge_repo_is_the_portals_keys_or_jcs_default() {
@@ -680,7 +867,7 @@ mod tests {
 
     #[test]
     fn the_realm_holds_no_literal_secret_and_least_privilege_roles() {
-        let files = portal_realm_files("https://city.example/").unwrap();
+        let files = portal_realm_files("https://city.example/", &Realm::default()).unwrap();
         let text = serde_json::to_string(&files).unwrap();
         assert!(!text.contains("realm-admin"), "no realm-admin");
         assert!(
@@ -714,6 +901,32 @@ mod tests {
                 text.contains(&format!("$({name})")) || text.contains(&format!("$(env:{name})")),
                 "{name}"
             );
+        }
+    }
+
+    #[test]
+    fn a_realm_name_is_a_safe_path_segment_and_never_master() {
+        assert_eq!(Realm::default().as_str(), "jc");
+        assert_eq!(Realm::parse(" dev ").unwrap().as_str(), "dev");
+        for good in ["dev", "smart-city", "bb_2", "a.b", "Hel"] {
+            assert!(Realm::parse(good).is_ok(), "{good}");
+        }
+        for bad in [
+            "", " ", "master", "Master", "../x", "a/b", ".hidden", "a b", "a?b", "dé", "a%2f",
+        ] {
+            assert!(Realm::parse(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn every_first_start_file_names_the_configured_realm() {
+        let dev = Realm::parse("dev").unwrap();
+        let files = portal_realm_files("https://city.example/", &dev).unwrap();
+        for (name, file) in files.iter().chain([&gateway_realm_file(&dev)]) {
+            assert_eq!(file["realm"], "dev", "{name}");
+            if let Some(id) = file.get("id") {
+                assert_eq!(id, "dev", "{name}");
+            }
         }
     }
 

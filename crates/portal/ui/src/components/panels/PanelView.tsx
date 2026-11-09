@@ -10,7 +10,7 @@ import { clsx } from "clsx";
 import { Button, Card, Icon, InlineError, Skeleton } from "../ui";
 import type { IconName } from "../ui";
 import type { Frame } from "./frames";
-import { hasData } from "./frames";
+import { hasData, outsideRange } from "./frames";
 import type { FieldConfigSource } from "./fieldConfig";
 import { BarChartPanel, HeatmapPanel, HistogramPanel, PieChartPanel, StateTimelinePanel } from "./ChartPanels";
 import { TablePanel } from "./TablePanel";
@@ -29,6 +29,12 @@ export interface PanelDefinition {
   collapsed?: boolean;
   panels?: PanelDefinition[];
   maxDataPoints?: number;
+  /** The panel's own range (`1h`), read only under a relative dashboard range, as Grafana does. */
+  timeFrom?: string;
+  /** How far back the panel's range moves (`1d`). */
+  timeShift?: string;
+  /** Hides the words of the panel's own range from its header. */
+  hideTimeOverride?: boolean;
 }
 
 /** A panel's data as the Portal's panel route answers it. */
@@ -58,8 +64,12 @@ export interface PanelViewProps {
   asked?: { range: string; vars?: string };
   /** Ask a longer range: an empty panel's next step. */
   onWiden?: () => void;
+  /** Move the dashboard to the span the data covers: Grafana's "Zoom to data". */
+  onZoom?: (from: number, to: number) => void;
   /** The page already says several panels failed: a failed panel shows its title line only. */
   quiet?: boolean;
+  /** The panel's own range in Grafana's words (`Last 1 hour + timeshift -1d`), beside its title. */
+  timeInfo?: string;
 }
 
 function Body({ panel, data, from, to, locale, height }: Required<Pick<PanelViewProps, "panel" | "from" | "to" | "locale" | "height">> & { data: PanelData }): ReactNode {
@@ -85,8 +95,22 @@ function Body({ panel, data, from, to, locale, height }: Required<Pick<PanelView
     case "state-timeline":
       return <StateTimelinePanel {...common} from={from} to={to} />;
     default:
-      return <TablePanel title={title} frames={data.frames} fieldConfig={panel.fieldConfig} locale={locale} />;
+      return <TablePanel title={title} frames={data.frames} fieldConfig={panel.fieldConfig} options={panel.options} locale={locale} />;
   }
+}
+
+/**
+ * A text panel's Markdown as the plain text the Portal shows: links and images by their words,
+ * no tags, heading or quote marks, emphasis or code ticks; list items keep a bullet.
+ */
+export function plainText(markdown: string): string {
+  return markdown
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/<[^>]*>/g, "")
+    .replace(/^ {0,3}(#{1,6}|>)\s*/gm, "")
+    .replace(/^ {0,3}[-*+]\s+/gm, "• ")
+    .replace(/[*_`~]/g, "")
+    .trim();
 }
 
 /** What the service said, folded: the operator's detail, not the person's next step. */
@@ -127,7 +151,7 @@ function sentence(text: string): string {
   return /[.!?…]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
-export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2", asked, onWiden, quiet }: PanelViewProps): JSX.Element {
+export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2", asked, onWiden, onZoom, quiet, timeInfo }: PanelViewProps): JSX.Element {
   const { t } = useTranslation();
   const Heading = headingLevel;
   const title = panel.title || t("dashboardView.untitled");
@@ -135,7 +159,7 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
   let body: ReactNode;
   if (panel.type === "text") {
     const content = typeof panel.options?.content === "string" ? panel.options.content : "";
-    body = <p className="whitespace-pre-line text-body text-fg">{content.replace(/[#*_`>]/g, "").trim()}</p>;
+    body = <p className="whitespace-pre-line text-body text-fg [overflow-wrap:anywhere]">{plainText(content)}</p>;
   } else if (failure || data?.error) {
     const reason = failure ?? data?.error ?? "";
     body = quiet ? (
@@ -171,6 +195,17 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
         ) : null}
       </PanelState>
     );
+  } else if (panel.type === "timeseries" && outsideRange(data.frames, from, to)) {
+    const span = outsideRange(data.frames, from, to)!;
+    body = (
+      <PanelState icon="clock" title={t("dashboardView.outsideTitle")} description={t("dashboardView.outside")}>
+        {onZoom ? (
+          <Button size="sm" variant="secondary" onClick={() => onZoom(span.from, span.to)}>
+            {t("dashboardView.zoomToData")}
+          </Button>
+        ) : null}
+      </PanelState>
+    );
   } else {
     body = <Body panel={panel} data={data} from={from} to={to} locale={locale} height={height} />;
   }
@@ -180,6 +215,12 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
         <Heading className="min-w-0 flex-1 truncate text-body font-semibold text-fg" title={title}>
           {title}
         </Heading>
+        {timeInfo ? (
+          <span className="inline-flex shrink-0 items-center gap-1 text-caption text-primary-soft-fg" data-time-info="">
+            <Icon name="clock" className="size-3.5" />
+            {timeInfo}
+          </span>
+        ) : null}
         {!(DRAWN as readonly string[]).includes(panel.type) ? (
           <span className="shrink-0 text-caption text-fg-muted">{t("dashboardView.asTable", { type: panel.type })}</span>
         ) : null}

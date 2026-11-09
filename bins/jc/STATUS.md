@@ -534,6 +534,29 @@ unlinked, and `endpoint:*` stays only as the hub's default. No realm-wide option
 `tests/gateway_endpoints.rs` reads the closed Endpoint through `/api/v1/mcp` as a member, and a
 person in no group gets the exchanged token and is still refused by the gateway's Policy.
 
+### The deployment's realm (`[identity] realm`, jc-realm-name)
+
+- `[identity] realm` in `jc.toml` or `JCBIN_IDENTITY_REALM` (`--identity-realm`) names the one realm of the
+  deployment; default `jc`. Refused at start: an empty name, a name outside `[A-Za-z0-9._-]` or starting with `.`,
+  and `master` in any case (`setup::Realm::parse`).
+- It moves the Portal's `JC_OIDC_ISSUER`, the gateway's issuer and JWKS, the realm files jc applies (the shipped
+  `jc-portal.json` gets that `id` and `realm`), the account console and the Endpoint scope linker.
+- Who writes the realm is decided once and kept in `<state_dir>/realm-owner-<realm>` (`jc` or `import`). Without
+  that file the deployment owns the realm when the import dir defines `portal-api` in it (a Keycloak export), or
+  when the store held a realm other than `jc` before this start; an older `jc` made only `jc` and kept no file.
+  jc writes none of its first-start files (realm, first admin, gateway client, account console) into an imported
+  realm, and makes no other realm. The linker still links the Endpoint scopes there.
+- The import dir applies each realm on its own (files grouped by `realm`, merged in file-name order within one);
+  a file naming no realm joins the single realm the others name, and is refused when they name several.
+- An imported realm keeps its own client secrets: the cutover writes the export's `portal-api`,
+  `portal-reconciler` and `context-gateway` secrets into the state files `portal-client-secret`,
+  `portal-admin-client-secret` and `gateway-client-secret` (jc reads an existing file, never rewrites it), and the
+  export names them as `$(file:...)` under `--kaisatsu-import-secrets-dir`.
+- Tests: `tests/gateway_endpoints.rs::a_deployment_on_realm_dev_admits_its_realm_and_no_other` (an imported `dev`
+  beside a twin `jc` with the same clients, people and secrets; restart without the twin),
+  `tests/portal_siblings.rs::the_portal_runs_on_its_own_host_in_host_mode` (a fresh `dev` jc makes),
+  lib tests in `config`, `setup`, `siblings`, `modules::gateway`, `modules::kaisatsu`.
+
 ### Role split (`src/door.rs`)
 
 - Module container, `[door]` (`issuer`, `jwks_url`, `clients`): a bearer JWT that kaisatsu signed (ES256, RS256 or
@@ -622,6 +645,44 @@ no `JC_PORTAL_CKAN_URL` unless `JC_PORTAL_CKAN_ALLOW_HTTP=true`, so the Portal's
 `apiTokenRef` that must resolve to dataroom's Portal token (`portal_publisher`) through jc's SOPS key or a
 `CKAN_*` variable. Next step: one smoke run with `JC_PORTAL_CKAN_ALLOW_HTTP=true` and the CkanInstance pointed at
 jc's dataroom, reading the wave's report.
+
+## Stage 10: the knowledge assistant inside jc (jc-assistant-module, G2, G7, G18)
+
+- Module `src/modules/assistant.rs` (feature `assistant`, default on; it needs `gateway`). The library half moved
+  out of the `jc-assistant` binary into `assistant::host` (settings through one lookup, pool options, probe, the
+  minute's worker); the binary keeps reading its environment.
+- Public paths: `/d/...` and `/api/v1/d/...` only, as dev's edge routes (slug mode at the root, host mode on
+  `assistant.{base_host}`). Everything else (the Portal's `/internal/v1/projects/...` administration paths, the
+  gateway's `/internal/v1/search`) answers only on the module's own loopback listener, the sibling's internal
+  address. `public_only` refuses the rest with 404.
+- Settings: `JC_ASSISTANT_*`, `JC_MODEL_BASE`, `JC_MODEL_PROVIDER`, `ORT_DYLIB_PATH` from the environment first
+  (`config::assistant_env`), then `modules::assistant::vars` from the siblings (gateway, kaisatsu client
+  `jc-assistant`, the Portal, the gateway's shako checkout for `JC_ASSISTANT_REPO_DIR`). Database:
+  `[assistant.database]` (request role; it migrates as that role so forced RLS holds; `migrate_url` is refused).
+- The model proxy (`jc-agent-proxy`) runs on a loopback port with the key from `JCBIN_MODEL_KEY_FILE` /
+  `[assistant] model_key_file`, read by `jc_secret::read_file` and set on the proxy's config field: no lookup, no
+  environment, no log line carries it. `JCBIN_MODEL_KEY` and `JC_MODEL_KEY` as values refuse the start
+  (`config::tests::the_model_key_is_a_file_only_and_its_value_never_shows`). An explicit `JC_ASSISTANT_PROXY_URL`
+  uses that proxy instead. Client secrets `assistant-client-secret` and `proxy-client-secret` come from setup;
+  the realm gains both clients and portal-api's `jc-assistant` audience (`setup::add_assistant_audience`).
+- Off: no model dir, no ONNX Runtime, no key file and no proxy URL, no `[assistant.database]`, a missing
+  sibling or secret, or any build failure (DB, migrations, model load) logs one `assistant: off` warning with the
+  reason; the mount answers 404 and the module leaves the sibling table, so the Portal gets no
+  `JC_PORTAL_KNOWLEDGE_URL` and dataroom no launcher. jc keeps running.
+- Portal: `siblings::portal_vars` fills `JC_PORTAL_KNOWLEDGE_URL` with the module's loopback listener (G18).
+- dataroom: `BrandingBlock::assistant_widget` (serde-skipped, set only by the host) names the widget page
+  `{assistant}/d/{catalogue_deployment}/widget` or `""` (off); the CSP's frame-src gains that origin when it is
+  cross-origin. The launcher corner is on every page with a footer (about and resource pages added).
+- `[assistant] catalogue_deployment` (default `data`): this jc's https dataroom origin joins that deployment's
+  `allowedOrigins` at run time (`Minute::extra_origins`).
+- kaisatsu introspection answers `username` as Keycloak does: agent-proxy and the assistant admit service
+  accounts by it (`token_endpoint::client_credentials_refusals_and_introspection_and_revocation`).
+- Shared embedder (jc-embedder): `[assistant] embedder_url` fills `JC_ASSISTANT_EMBEDDER_URL`, the realm's token
+  URL, client `jc-assistant` and its setup secret file; the client asks scope `embedder` (audience `embedder`).
+  Named, the module needs no model dir or ONNX Runtime and uses the service only; unnamed, the in-process model
+  stays (`modules::assistant::tests::the_embedder_service_needs_no_model_and_is_the_one_used`).
+- Image: `bins/jc/Dockerfile` fetches PDFium, e5-small and ONNX Runtime with the platform's pinned scripts and sets
+  `JC_ASSISTANT_MODEL_DIR` and `ORT_DYLIB_PATH`.
 
 ## Release binary
 

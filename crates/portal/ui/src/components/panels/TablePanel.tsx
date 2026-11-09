@@ -3,17 +3,19 @@
  * generated Apps use), over the panel's frames held in memory: its sort, paging and column
  * widths, with each cell in its field's unit, mapping and threshold colour (`custom.cellOptions`).
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { clsx } from "clsx";
 import { EntityGrid, fixtureSource, parseGridConfig } from "@joinedcontext/sdk/grid";
 import type { EntityGridProps } from "@joinedcontext/sdk/grid";
 import { gridLabels } from "../entities/PortalEntityGrid";
-import { InlineError } from "../ui";
+import { InlineError, Select, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "../ui";
+import { useIsPhone } from "../../phone";
 import type { Frame } from "./frames";
-import { rowsOf } from "./frames";
+import { frameName, rowsOf } from "./frames";
 import type { FieldConfigSource, FieldSettings } from "./fieldConfig";
-import { colorOf, displayValue, settingsFor, stepFor } from "./fieldConfig";
+import { colorOf, DEFAULT_THRESHOLDS, displayValue, isDateUnit, settingsFor, stepFor } from "./fieldConfig";
 import { Tinted } from "./paint";
 
 /** The type the in-memory rows carry, which no Endpoint has. */
@@ -40,14 +42,35 @@ export function attrOf(name: string, index: number, taken: Set<string>): string 
   return attr;
 }
 
+/** Grafana's saved table sort (`options.sortBy`): a column by its display name, descending or not. */
+export type SortBy = { displayName?: string; desc?: boolean }[];
+
+/** Rows in Grafana's saved order: numbers by value, text by locale, an empty cell last either way. */
+function sorted(rows: Record<string, unknown>[], key: string | undefined, desc: boolean): Record<string, unknown>[] {
+  if (key === undefined) return rows;
+  const order = desc ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const x = a[key];
+    const y = b[key];
+    if (x === null || x === undefined) return y === null || y === undefined ? 0 : 1;
+    if (y === null || y === undefined) return -1;
+    if (typeof x === "number" && typeof y === "number") return order * (x - y);
+    return order * String(x).localeCompare(String(y));
+  });
+}
+
 /** The frames as grid entities, one attribute per column, and the columns that name them. */
-export function tableOf(frames: Frame[], fieldConfig: FieldConfigSource | undefined): { columns: TableColumn[]; entities: Record<string, unknown>[] } {
-  const { columns: fields, names, rows } = rowsOf(frames);
+export function tableOf(frames: Frame[], fieldConfig: FieldConfigSource | undefined, sortBy?: SortBy): { columns: TableColumn[]; entities: Record<string, unknown>[] } {
+  const { columns: fields, names, rows: read } = rowsOf(frames);
   const taken = new Set<string>();
   const columns = names.map((name, index) => {
     const settings = settingsFor(fieldConfig, fields[index]);
     return { attr: attrOf(name, index, taken), label: settings.displayName ?? name, settings, hidden: settings.custom.hidden === true };
   });
+  // Grafana sorts by its first sortBy entry, named by the column's display name.
+  const first = sortBy?.[0];
+  const at = first?.displayName === undefined ? -1 : columns.findIndex((column) => column.label === first.displayName || names[columns.indexOf(column)] === first.displayName);
+  const rows = sorted(read, at < 0 ? undefined : names[at], first?.desc === true);
   const entities = rows.map((row, at) => {
     const entity: Record<string, unknown> = { id: `urn:ngsi-ld:${ROW_TYPE}:${at + 1}`, type: ROW_TYPE };
     names.forEach((name, index) => {
@@ -59,12 +82,63 @@ export function tableOf(frames: Frame[], fieldConfig: FieldConfigSource | undefi
   return { columns: columns.filter((column) => !column.hidden), entities };
 }
 
+/** Whether Grafana's auto alignment puts `value` right: a number, not a time. */
+function numeric(settings: FieldSettings, value: unknown): boolean {
+  return typeof value === "number" && !isDateUnit(settings.unit);
+}
+
+/**
+ * A panel table as Grafana draws it on a phone: plain headers and cells in their unit, mapping and
+ * colour, every column in a compact row. The grid's filter and menu heads need ~8rem a column,
+ * which pushes all but two columns past a 400 px screen.
+ */
+export function PhoneTable({ title, columns, entities, locale }: { title: string; columns: TableColumn[]; entities: Record<string, unknown>[]; locale: string }): JSX.Element {
+  const { t } = useTranslation();
+  const valueOf = (entity: Record<string, unknown>, attr: string): unknown => (entity[attr] as { value?: unknown } | undefined)?.value;
+  const right = columns.map((column) => entities.some((entity) => numeric(column.settings, valueOf(entity, column.attr))));
+  return (
+    <Table caption={title} zebra={false} className="text-body [&_td]:px-2 [&_td]:py-2 [&_th]:px-2 [&_th]:py-2 [&_th]:normal-case [&_th]:tracking-normal">
+      <TableHead>
+        {columns.map((column, index) => (
+          <TableHeaderCell key={column.attr} align={right[index] ? "right" : "left"}>
+            {column.label}
+          </TableHeaderCell>
+        ))}
+      </TableHead>
+      <TableBody>
+        {entities.length === 0 ? (
+          <TableRow>
+            <TableCell>{t("dashboardView.noRows")}</TableCell>
+          </TableRow>
+        ) : (
+          entities.map((entity, row) => (
+            <TableRow key={row}>
+              {columns.map((column) => (
+                <TableCell key={column.attr} className="max-w-40">
+                  <TableCellValue settings={column.settings} value={valueOf(entity, column.attr)} locale={locale} />
+                </TableCell>
+              ))}
+            </TableRow>
+          ))
+        )}
+      </TableBody>
+    </Table>
+  );
+}
+
 /** One cell as Grafana draws it: mapped or in its unit, coloured as `cellOptions.type` says. */
 export function TableCellValue({ settings, value, locale }: { settings: FieldSettings; value: unknown; locale: string }): JSX.Element {
   const shown = displayValue(settings, value, locale);
   const cellType = (settings.custom.cellOptions as { type?: string } | undefined)?.type ?? (settings.custom.displayMode as string | undefined);
-  const step = typeof value === "number" ? stepFor(settings.thresholds, value, settings.min, settings.max) : undefined;
+  const coloured = cellType === "color-text" || cellType === "color-background" || cellType === "color-background-solid";
+  // A coloured cell takes its field's threshold colour, Grafana's defaults when none is saved; text the base step's.
+  const thresholds = settings.thresholds ?? (coloured ? DEFAULT_THRESHOLDS : undefined);
+  const step = typeof value === "number" ? stepFor(thresholds, value, settings.min, settings.max) : coloured ? thresholds?.steps[0] : undefined;
   const color = shown.color ?? (step ? colorOf(step.color) : undefined);
+  // Grafana's `custom.align`: auto puts a number at the right edge, text at the left.
+  const asked = settings.custom.align;
+  const align = asked === "left" || asked === "center" || asked === "right" ? asked : numeric(settings, value) ? "right" : "left";
+  const aligned = align === "right" ? "text-right" : align === "center" ? "text-center" : undefined;
   if (color && (cellType === "color-background" || cellType === "color-background-solid")) {
     return (
       <Tinted color={color} background className="inline-block max-w-full truncate rounded-sm px-1.5 align-middle">
@@ -74,14 +148,14 @@ export function TableCellValue({ settings, value, locale }: { settings: FieldSet
   }
   if (color && (cellType === "color-text" || shown.color)) {
     return (
-      <Tinted color={color} className="block truncate font-medium">
+      <Tinted color={color} className={clsx("block truncate font-medium", aligned)}>
         {shown.text}
       </Tinted>
     );
   }
   // A long name stays in its own column: cut with an ellipsis, whole in the title.
   return (
-    <span className="block truncate" title={shown.text}>
+    <span className={clsx("block truncate", aligned)} title={shown.text}>
       {shown.text}
     </span>
   );
@@ -91,12 +165,19 @@ export interface TablePanelProps {
   title: string;
   frames: Frame[];
   fieldConfig?: FieldConfigSource;
+  options?: Record<string, unknown>;
   locale: string;
 }
 
-export function TablePanel({ title, frames, fieldConfig, locale }: TablePanelProps): JSX.Element {
+export function TablePanel({ title, frames, fieldConfig, options, locale }: TablePanelProps): JSX.Element {
   const { t } = useTranslation();
-  const table = useMemo(() => tableOf(frames, fieldConfig), [frames, fieldConfig]);
+  // Several frames are one table each, picked below the grid, as Grafana's table panel does.
+  const [picked, setPicked] = useState(0);
+  const phone = useIsPhone();
+  const at = picked < frames.length ? picked : 0;
+  const shown = useMemo(() => (frames.length > 1 ? [frames[at]] : frames), [frames, at]);
+  const sortBy = Array.isArray(options?.sortBy) ? (options.sortBy as SortBy) : undefined;
+  const table = useMemo(() => tableOf(shown, fieldConfig, sortBy), [shown, fieldConfig, sortBy]);
   const parsed = useMemo(
     () =>
       parseGridConfig({
@@ -131,7 +212,20 @@ export function TablePanel({ title, frames, fieldConfig, locale }: TablePanelPro
   }
   return (
     <div aria-label={title} className="min-w-0">
-      <EntityGrid config={parsed.config} source={source} labels={labels} renderers={renderers} hidden={["id", "entity:type"]} locale={locale} filterRow={false} queryBox={false} />
+      {phone ? (
+        <PhoneTable title={title} columns={table.columns} entities={table.entities} locale={locale} />
+      ) : (
+        <EntityGrid key={at} config={parsed.config} source={source} labels={labels} renderers={renderers} hidden={["id", "entity:type"]} locale={locale} filterRow={false} queryBox={false} />
+      )}
+      {frames.length > 1 && (
+        <Select className="mt-2 w-full" aria-label={t("dashboardView.frame", { title })} value={String(at)} onChange={(event) => setPicked(Number(event.target.value))}>
+          {frames.map((frame, index) => (
+            <option key={index} value={index}>
+              {frameName(frame, index)}
+            </option>
+          ))}
+        </Select>
+      )}
     </div>
   );
 }

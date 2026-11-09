@@ -1695,6 +1695,15 @@ async fn dcat_feeds_negotiate_format_and_profile_and_page() {
     assert!(!a.body.contains("PartialCollectionView"));
     let a = get(app, "/catalog.ttl?page=2", None).await;
     assert!(a.body.contains("PartialCollectionView"), "{}", a.body);
+    // The paging block comes first after the prefixes, as on CKAN (G6).
+    assert!(
+        a.body
+            .split("\n\n")
+            .nth(1)
+            .is_some_and(|b| b.contains("hydra:PagedCollection")),
+        "{}",
+        a.body
+    );
     assert!(a.body.contains("/catalog.ttl?page=1"));
     assert!(
         !a.body.contains("open.csv"),
@@ -2664,6 +2673,53 @@ async fn pages_show_a_dataset_its_resources_and_its_map_where_package_show_would
 }
 
 #[tokio::test]
+async fn topics_page_lists_the_eu_themes_and_a_topic_opens_its_search() {
+    // G3: CKAN's `/group/` ("Témy"); `/group/{name}` is the topic's dataset search.
+    let w = world().await;
+    let app = &w.app;
+    for uri in [
+        "/group/",
+        "/group",
+        "/sk/group/",
+        "/en/group/?q=env&sort=title%20desc",
+    ] {
+        let a = get(app, uri, None).await;
+        assert_eq!(a.status, StatusCode::OK, "{uri}");
+        assert!(a.header("content-type").starts_with("text/html"), "{uri}");
+        assert!(
+            a.header("content-security-policy")
+                .contains("script-src 'self' 'nonce-"),
+            "{uri}: the page CSP"
+        );
+        assert!(a.body.contains("class=\"media-item\""), "{uri}");
+    }
+    let a = get(app, "/group/", None).await;
+    assert_eq!(a.body.matches("class=\"media-item\"").count(), 13);
+    for (uri, to) in [
+        ("/group/ENVI", "/dataset/?vocab_jc_topic=ENVI"),
+        ("/sk/group/ENVI", "/sk/dataset/?vocab_jc_topic=ENVI"),
+        ("/group/a%26b", "/dataset/?vocab_jc_topic=a%26b"),
+        (
+            "/group/a&organization=x",
+            "/dataset/?vocab_jc_topic=a%26organization%3Dx",
+        ),
+    ] {
+        let a = get(app, uri, None).await;
+        assert_eq!(
+            (a.status, a.header("location")),
+            (StatusCode::FOUND, to),
+            "{uri}"
+        );
+    }
+    // A publisher page past its last page lists nothing and still answers.
+    let a = get(app, "/organization/city?page=2", None).await;
+    assert_eq!(a.status, StatusCode::OK);
+    assert!(!a.body.contains("/dataset/open\""));
+    let a = get(app, "/organization/city?page=1", None).await;
+    assert!(a.body.contains("/dataset/open\""));
+}
+
+#[tokio::test]
 async fn pages_lists_publishers_static_pages_and_routing() {
     let w = world().await;
     let app = &w.app;
@@ -3227,8 +3283,21 @@ async fn a_domain_that_is_no_header_value_never_becomes_a_redirect() {
     })
     .await;
     let a = get(&w.app, "/user/login", None).await;
-    assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
-    assert!(a.body.contains("redirect target is not a valid URL"));
+    // A domain that is no host name names no Portal: the login stays on the catalogue.
+    assert_eq!(a.status, StatusCode::TEMPORARY_REDIRECT, "{}", a.body);
+    assert_eq!(a.header("location"), "/");
+}
+
+#[tokio::test]
+async fn the_login_goes_to_the_portal_address_named_on_its_own() {
+    let mut branding = BrandingBlock::default();
+    branding.apply_override_json(
+        &serde_json::json!({ "addresses": { "portal": "http://localhost:42241/portal" } }),
+    );
+    let w = world_with(|s| router(s.with_installation_branding(branding))).await;
+    let a = get(&w.app, "/user/login", None).await;
+    assert_eq!(a.status, StatusCode::TEMPORARY_REDIRECT, "{}", a.body);
+    assert_eq!(a.header("location"), "http://localhost:42241/portal/login");
 }
 
 #[tokio::test]

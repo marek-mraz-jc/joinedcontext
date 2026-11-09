@@ -256,4 +256,26 @@ describe("RadioGroup", () => {
     await userEvent.click(disabled);
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it("a_refused_answer_is_said_under_the_group_and_its_chosen_radio_takes_the_id", () => {
+    wrap(
+      <RadioGroup
+        name="origin"
+        id="origin-field"
+        legend="Where it comes from"
+        value="ckan"
+        errors={["a CKAN catalogue cannot be read here"]}
+        onChange={vi.fn()}
+        options={[
+          { value: "git", label: "Git repository" },
+          { value: "ckan", label: "CKAN catalogue" },
+        ]}
+      />,
+    );
+    const fieldset = screen.getByRole("radiogroup", { name: "Where it comes from" });
+    expect(fieldset).toHaveAttribute("aria-invalid", "true");
+    expect(fieldset).toHaveAccessibleDescription("a CKAN catalogue cannot be read here");
+    expect(screen.getByRole("alert")).toHaveTextContent("a CKAN catalogue cannot be read here");
+    expect(document.getElementById("origin-field")).toBe(screen.getByRole("radio", { name: "CKAN catalogue" }));
+  });
 });

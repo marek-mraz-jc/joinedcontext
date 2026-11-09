@@ -85,6 +85,19 @@ impl Siblings {
         );
     }
 
+    /// Points a mounted module's internal address at a loopback listener of its own, keeping its
+    /// public mount (the assistant's administration paths answer only there).
+    pub fn set_internal(&mut self, module: Module, addr: SocketAddr) {
+        if let Some(sibling) = self.modules.get_mut(&module) {
+            sibling.internal = format!("http://{}", reach(addr));
+        }
+    }
+
+    /// Drops a module that did not start, so no sibling setting points at it.
+    pub fn remove(&mut self, module: Module) {
+        self.modules.remove(&module);
+    }
+
     #[must_use]
     pub fn get(&self, module: Module) -> Option<&Sibling> {
         self.modules.get(&module)
@@ -97,8 +110,77 @@ impl Siblings {
     }
 }
 
+/// The catalogue's live parts as `jc` places them ([`crate::config::DataroomAddresses`]): each a
+/// base without a trailing slash, or "" when nobody serves it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LiveAddresses {
+    pub viz: String,
+    pub api: String,
+    pub tiles: String,
+    pub assistant: String,
+    pub portal: String,
+    /// The default catalogue's public base (dataroom's mount).
+    pub catalogue: String,
+}
+
+/// The addresses `cfg` names, the others from the mounted modules: viz, the gateway's origin (it
+/// answers `/api/endpoint` and `/api/mcp` at the root of its host), the Portal and dataroom. No
+/// module serves tiles or the assistant, so those come from `cfg` alone.
+#[must_use]
+pub fn live_addresses(
+    cfg: &crate::config::DataroomAddresses,
+    siblings: &Siblings,
+) -> LiveAddresses {
+    let pick =
+        |named: &Option<String>, from: Option<String>| named.clone().or(from).unwrap_or_default();
+    let public = |m: Module| siblings.get(m).map(|s| s.public.clone());
+    LiveAddresses {
+        viz: pick(&cfg.viz, public(Module::Viz)),
+        api: pick(&cfg.api, public(Module::Gateway).map(|g| origin(&g))),
+        tiles: pick(&cfg.tiles, None),
+        assistant: pick(&cfg.assistant, None),
+        portal: pick(&cfg.portal, public(Module::Portal)),
+        catalogue: public(Module::Dataroom).unwrap_or_default(),
+    }
+}
+
+/// `http(s)://host[:port][/path]` with a lowercase host, no user, query, fragment or trailing
+/// slash: what a page may frame, link and name in its CSP (dataroom-core `is_base_url` holds the
+/// same rule for a catalogue's own branding).
+#[must_use]
+pub fn is_base_url(v: &str) -> bool {
+    let Some(rest) = v
+        .strip_prefix("https://")
+        .or_else(|| v.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    let (host, port) = match authority.split_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (authority, None),
+    };
+    let label_ok = |l: &str| {
+        !l.is_empty()
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+            && l.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    };
+    let host_ok = host.split('.').all(label_ok);
+    let port_ok =
+        port.is_none_or(|p| (1..=5).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit()));
+    let path_ok = !path.ends_with('/')
+        && !path.contains("//")
+        && !path.split('/').any(|s| s == "." || s == "..")
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"/-_.~".contains(&b));
+    host_ok && port_ok && path_ok
+}
+
 /// The origin (`scheme://host:port`) of a URL string without a path.
-fn origin(url: &str) -> String {
+pub(crate) fn origin(url: &str) -> String {
     match url.find("://") {
         Some(i) => {
             let rest = &url[i + 3..];
@@ -121,6 +203,7 @@ fn origin(url: &str) -> String {
 /// | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | antares |
 /// | `JC_PORTAL_GATEWAY_URL`, `JC_PORTAL_GATEWAY_CLIENT_ID` | gateway |
 /// | `JC_PORTAL_MODEL_TOOLS_URL` | model-tools (its loopback listener) |
+/// | `JC_PORTAL_KNOWLEDGE_URL` | assistant (its loopback listener; absent while the module is off) |
 #[must_use]
 pub fn portal_vars(
     siblings: &Siblings,
@@ -150,7 +233,7 @@ pub fn portal_vars(
         let mut values = vec![
             (
                 "JC_OIDC_ISSUER",
-                Some(format!("{}/realms/{}", id.public, setup::PORTAL_REALM)),
+                Some(format!("{}/realms/{}", id.public, setup.realm)),
             ),
             ("JC_OIDC_CLIENT_ID", Some(setup::PORTAL_CLIENT.to_owned())),
             ("JC_OIDC_CLIENT_SECRET", secret(Secret::PortalClientSecret)),
@@ -281,6 +364,12 @@ pub fn portal_vars(
             vec![("JC_PORTAL_MODEL_TOOLS_URL", Some(tools.internal.clone()))],
         );
     }
+    if let Some(assistant) = siblings.get(Module::Assistant) {
+        group(
+            "JC_PORTAL_KNOWLEDGE_URL",
+            vec![("JC_PORTAL_KNOWLEDGE_URL", Some(assistant.internal.clone()))],
+        );
+    }
     // The Portal's own secret backend (SOPS + age) unless the environment names a backend: the
     // identity the operator gave (checked at start), else the one setup generated.
     if unset("JC_PORTAL_SOPS_AGE_KEY_FILE")
@@ -355,6 +444,93 @@ mod tests {
         assert_eq!(git.internal, git.public);
         assert_eq!(git.public, "https://git.city.example");
         assert_eq!(siblings.listener, "[::1]:1".parse().unwrap());
+    }
+
+    /// daiya reaches the gateway's Endpoints on the own listener at the address the Portal names
+    /// in the datasources it makes (`{JC_PORTAL_GATEWAY_URL}/api/endpoint/{slug}`), and nothing
+    /// when the gateway answers on a host of its own.
+    #[cfg(feature = "daiya")]
+    #[test]
+    fn daiya_reaches_the_gateway_endpoints_the_portal_names() {
+        use crate::modules::daiya::gateway_reach;
+        use daiya_server::OwnReach;
+        let (siblings, _, _d) = fixture("https");
+        let gateway = siblings.get(Module::Gateway).unwrap().internal.clone();
+        assert_eq!(
+            gateway_reach(&siblings),
+            Some(OwnReach::endpoints(&format!("{gateway}/api/endpoint/")).unwrap())
+        );
+        assert_eq!(
+            gateway_reach(&siblings).map(|r| r.addr()),
+            Some(siblings.listener)
+        );
+        let mut mounts = BTreeMap::new();
+        mounts.insert(
+            Module::Gateway,
+            MountOverride {
+                host: Some("api.city.example".into()),
+                path_prefix: None,
+            },
+        );
+        let siblings = Siblings::new(&plans(mounts, "https"), LISTEN.parse().unwrap());
+        assert_eq!(gateway_reach(&siblings), None);
+    }
+
+    #[test]
+    fn live_addresses_come_from_the_mounts_unless_named_and_nobody_serves_tiles_or_assistant() {
+        let (siblings, _, _d) = fixture("https");
+        let live = live_addresses(&crate::config::DataroomAddresses::default(), &siblings);
+        assert_eq!(live.viz, "https://city.example/viz");
+        assert_eq!(
+            live.api, "https://city.example",
+            "the gateway answers at the host's root"
+        );
+        assert_eq!(live.portal, "https://city.example/portal");
+        assert_eq!(live.catalogue, "https://city.example/opendata");
+        assert_eq!((live.tiles.as_str(), live.assistant.as_str()), ("", ""));
+
+        let named = crate::config::DataroomAddresses {
+            api: Some("https://api.dev.example".into()),
+            tiles: Some("https://tiles.dev.example".into()),
+            ..Default::default()
+        };
+        let live = live_addresses(&named, &siblings);
+        assert_eq!(live.api, "https://api.dev.example");
+        assert_eq!(live.tiles, "https://tiles.dev.example");
+        assert_eq!(live.assistant, "");
+    }
+
+    #[test]
+    fn a_base_url_has_no_query_user_trailing_slash_or_odd_character() {
+        for ok in [
+            "http://localhost:42241/viz",
+            "https://api.city.example",
+            "http://dataroom:8080",
+        ] {
+            assert!(is_base_url(ok), "{ok}");
+        }
+        for bad in [
+            "https://api.example/",
+            "https://api.example/a?x",
+            "https://u@api.example",
+            "javascript:alert(1)",
+            "https://API.example",
+            "https://api.example/a/../b",
+            "https://api.example'; script-src *",
+            "https://api.example:123456",
+            "https://",
+        ] {
+            assert!(!is_base_url(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_portal_signs_in_at_the_configured_realm() {
+        let (siblings, mut setup, _d) = fixture("https");
+        let issuer = |setup: &Setup| portal_vars(&siblings, setup, none)["JC_OIDC_ISSUER"].clone();
+        assert_eq!(issuer(&setup), "https://city.example/id/realms/jc");
+        setup.realm = setup::Realm::parse("dev").unwrap();
+        assert_eq!(issuer(&setup), "https://city.example/id/realms/dev");
     }
 
     /// Asserts the keys of one row come from the sibling and an explicit URL keeps the whole row
@@ -442,6 +618,27 @@ mod tests {
             (k == key).then(|| "http://model-tools.example:8080".to_owned())
         });
         assert!(!explicit.contains_key(key));
+    }
+
+    #[test]
+    fn knowledge_row_follows_the_assistant_and_an_explicit_url_wins() {
+        let (mut siblings, setup, _d) = fixture("https");
+        let key = "JC_PORTAL_KNOWLEDGE_URL";
+        siblings.set_internal(Module::Assistant, "0.0.0.0:40124".parse().unwrap());
+        let filled = portal_vars(&siblings, &setup, none);
+        assert_eq!(filled[key], "http://127.0.0.1:40124");
+        assert_eq!(
+            siblings.get(Module::Assistant).unwrap().public,
+            "https://city.example",
+            "the public mount stays"
+        );
+        let explicit = portal_vars(&siblings, &setup, |k| {
+            (k == key).then(|| "http://jc-assistant.example:8080".to_owned())
+        });
+        assert!(!explicit.contains_key(key));
+        // Off: no knowledge address at all.
+        siblings.remove(Module::Assistant);
+        assert!(!portal_vars(&siblings, &setup, none).contains_key(key));
     }
 
     #[test]

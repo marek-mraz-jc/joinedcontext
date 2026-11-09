@@ -1600,6 +1600,30 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add("go", "Go", "Ísť", "Jít", "Los", "Mehet");
     add(
+        "api_access",
+        "You can also access this registry using the",
+        "Prístup do tohto zoznamu je možný aj cez API rozhranie",
+        "K tomuto seznamu lze přistupovat také přes",
+        "Sie können auf dieses Verzeichnis auch über die",
+        "Ezt a jegyzéket elérheti a következőn keresztül is:",
+    );
+    add(
+        "api_docs",
+        "see API Docs",
+        "viď. dokumentácia API",
+        "viz dokumentace API",
+        "siehe API-Dokumentation",
+        "lásd az API dokumentációt",
+    );
+    add(
+        "api_docs_link",
+        "API Docs",
+        "Dokumenty API",
+        "Dokumentace API",
+        "API-Dokumentation",
+        "API dokumentáció",
+    );
+    add(
         "filter_results",
         "Filter Results",
         "Výsledky filtrovania",
@@ -1622,6 +1646,54 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "{n} datových sad nalezeno",
         "{n} Datensätze gefunden",
         "{n} adatkészlet található",
+    );
+    add(
+        "datasets_found_query",
+        "{n} datasets found for \"{q}\"",
+        "{n} datasety nájdené na dopyt \"{q}\"",
+        "{n} datových sad nalezeno pro dotaz \"{q}\"",
+        "{n} Datensätze gefunden für \"{q}\"",
+        "{n} adatkészlet található erre: \"{q}\"",
+    );
+    add(
+        "resources_nav",
+        "Resources",
+        "Zdroje",
+        "Zdroje",
+        "Ressourcen",
+        "Erőforrások",
+    );
+    add(
+        "remove",
+        "Remove",
+        "Zmazať",
+        "Odstranit",
+        "Entfernen",
+        "Eltávolítás",
+    );
+    add(
+        "search_topics",
+        "Search topics...",
+        "Hľadať témy...",
+        "Hledat témata...",
+        "Themen suchen...",
+        "Témák keresése...",
+    );
+    add(
+        "no_topics_found",
+        "No topics found",
+        "Nenájdené žiadne témy",
+        "Nenalezena žádná témata",
+        "Keine Themen gefunden",
+        "Nincs találat a témák között",
+    );
+    add(
+        "empty_topics",
+        "There are currently no topics in this catalogue.",
+        "V tomto katalógu momentálne nie sú žiadne témy.",
+        "V tomto katalogu nyní nejsou žádná témata.",
+        "In diesem Katalog gibt es derzeit keine Themen.",
+        "Ebben a katalógusban jelenleg nincs téma.",
     );
     add(
         "organizations_found",
@@ -1741,7 +1813,7 @@ pub fn jc_number(value: usize) -> String {
 }
 
 /// Formats a counted noun in `lang` (`jc_rows` in `plugin.py` lines 2080-2089):
-/// `"rows"` or `"datasets_n"`.
+/// `"rows"`, `"datasets_n"` or `"topics_found"`.
 pub fn jc_rows(value: usize, key: &str, lang: &str) -> String {
     let number = jc_number(value);
     let code = normalize_lang_code(lang);
@@ -1751,6 +1823,11 @@ pub fn jc_rows(value: usize, key: &str, lang: &str) -> String {
         ("datasets_n", "de") => ("Datensatz", "Datensätze", "Datensätze"),
         ("datasets_n", "hu") => ("adatkészlet", "adatkészlet", "adatkészlet"),
         ("datasets_n", _) => ("dataset", "datasets", "datasets"),
+        ("topics_found", "sk") => ("téma nájdená", "témy nájdené", "tém nájdených"),
+        ("topics_found", "cs") => ("nalezené téma", "nalezená témata", "nalezených témat"),
+        ("topics_found", "de") => ("Thema gefunden", "Themen gefunden", "Themen gefunden"),
+        ("topics_found", "hu") => ("téma található", "téma található", "téma található"),
+        ("topics_found", _) => ("topic found", "topics found", "topics found"),
         (_, "sk") => ("riadok", "riadky", "riadkov"),
         (_, "cs") => ("řádek", "řádky", "řádků"),
         (_, "de") => ("Zeile", "Zeilen", "Zeilen"),

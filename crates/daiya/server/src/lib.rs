@@ -16,6 +16,7 @@ pub use daiya_api::DaiyaState;
 use daiya_api::{api_router, resolve_request_ctx};
 use daiya_mcp::{call_mcp_tool, list_mcp_tools};
 use daiya_model::{CrError, CrResult, InputLimits, OrgQuotas, RequestCtx};
+pub use daiya_query::OwnReach;
 use jc_router::Mount;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -139,6 +140,10 @@ pub fn router(state: DaiyaState, mount: Mount) -> Router {
         .route("/mcp/tools", get(http_mcp_list))
         .route("/mcp/call", post(http_mcp_call))
         .route("/mount-info", get(http_mount_info))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            daiya_api::state::refuse_unknown_credential,
+        ))
         .with_state(state.clone());
 
     Router::new()

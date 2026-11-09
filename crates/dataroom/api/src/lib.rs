@@ -37,10 +37,11 @@ use dataroom_shacl::ProfileRegistry;
 use dataroom_web::helpers::{jc_robots_txt, jc_sitemap_xml};
 use dataroom_web::i18n::{resolve_request_language, LanguageResolution};
 use dataroom_web::{
-    csp_header_for_domain, render_about_page, render_assistant_guide_page, render_assistants_page,
-    render_dataset_list_page, render_dataset_page_full, render_home_page_mounted, render_map_page,
-    render_organization_list_page, render_organization_read_page, render_resource_page,
-    render_static_page, JC_ENUMS_JSON, JC_LOGO_SVG, JC_THEME_CSS,
+    csp_header_for_branding, render_about_page, render_assistant_guide_page,
+    render_assistants_page, render_dataset_list_page, render_dataset_page_full,
+    render_home_page_mounted, render_map_page, render_organization_list_page,
+    render_organization_read_page, render_resource_page, render_static_page, JC_ENUMS_JSON,
+    JC_LOGO_SVG, JC_THEME_CSS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1184,8 +1185,8 @@ async fn login_redirect(state: &DataroomState, headers: &HeaderMap) -> Response 
         Err(e) => return problem_response(e),
     };
     let branding = cat.effective_branding(Some(&state.installation_branding));
-    let target = if !branding.domain.is_empty() {
-        format!("https://portal.{}/login", branding.domain)
+    let target = if let Some(portal) = branding.address(dataroom_core::branding::Address::Portal) {
+        format!("{portal}/login")
     } else {
         format!("{}/", state.mount_prefix)
     };
@@ -1246,8 +1247,7 @@ fn html_response_with_csp(
     branding: &BrandingBlock,
     framable_map: bool,
 ) -> Response {
-    let domain = (!branding.domain.is_empty()).then_some(branding.domain.as_str());
-    let csp = csp_header_for_domain(nonce, domain, framable_map);
+    let csp = csp_header_for_branding(nonce, branding, framable_map);
     (
         StatusCode::OK,
         [
@@ -1659,11 +1659,17 @@ async fn dispatch_ui_route(
                 .get("sort")
                 .cloned()
                 .unwrap_or_else(|| "score desc, metadata_modified desc".into());
+            let page = q_params
+                .get("page")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(1)
+                .max(1);
             let mut filter = DatasetFilter {
                 q: q.clone(),
                 publishers: vec![pub_rec.name.clone()],
                 sort: Some(sort.clone()),
-                limit: 50,
+                offset: (page - 1).saturating_mul(dataroom_web::listing::PER_PAGE),
+                limit: dataroom_web::listing::PER_PAGE,
                 ..DatasetFilter::default()
             };
             if let Some(t) = q_params.get("tags") {
@@ -1686,7 +1692,7 @@ async fn dispatch_ui_route(
             .unwrap_or_else(|_| dataroom_search::SearchOutcome {
                 total: 0,
                 offset: 0,
-                limit: 50,
+                limit: dataroom_web::listing::PER_PAGE,
                 datasets: Vec::new(),
                 facets: Default::default(),
             });
@@ -1698,14 +1704,57 @@ async fn dispatch_ui_route(
                 &outcome.datasets,
                 &outcome.facets,
                 outcome.total,
+                page,
                 &q,
                 &sort,
+                &q_params,
                 &lang,
                 had_url_prefix,
                 &state.mount_prefix,
                 &nonce,
             );
             html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // G3: Topics (`/group/`), CKAN's group list built from the EU data themes.
+        ["group"] => {
+            let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            let q = q_params.get("q").map(String::as_str).unwrap_or("");
+            let sort = q_params
+                .get("sort")
+                .map(String::as_str)
+                .unwrap_or("title asc");
+            let html = dataroom_web::groups::render_group_list_page(
+                &cat,
+                Some(&state.installation_branding),
+                &datasets,
+                q,
+                sort,
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            );
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // A topic's page is its dataset search (CKAN's `/group/{name}`).
+        ["group", code] => {
+            // The path segment arrives percent-encoded: decode it once (a `+` stays a `+`, a raw
+            // `&` stays in the value), then encode it as one query value.
+            let raw = format!("v={}", code.replace('+', "%2B").replace('&', "%26"));
+            let decoded = url::form_urlencoded::parse(raw.as_bytes())
+                .next()
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_default();
+            let enc: String = url::form_urlencoded::byte_serialize(decoded.as_bytes()).collect();
+            let prefix = if had_url_prefix {
+                format!("{}/{lang}", state.mount_prefix)
+            } else {
+                state.mount_prefix.clone()
+            };
+            safe_redirect(
+                StatusCode::FOUND,
+                &format!("{prefix}/dataset/?vocab_jc_topic={enc}"),
+            )
         }
         // D6: About page (`/about`)
         ["about"] => {

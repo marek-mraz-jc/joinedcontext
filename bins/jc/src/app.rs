@@ -259,6 +259,7 @@ pub async fn build_router(
     cfg: &Config,
     ctx: modules::BuildCtx<'_>,
     plans: Vec<MountPlan>,
+    assistant: Option<Router>,
     shutdown: &CancellationToken,
     tasks: &TaskTracker,
 ) -> Result<Built, StartError> {
@@ -337,6 +338,21 @@ pub async fn build_router(
                 mount: plan.mount,
                 hop: None,
             });
+            continue;
+        }
+        if plan.module == Module::Assistant {
+            // Started already (`start`); off, the mount answers 404.
+            let router = assistant.clone().unwrap_or_default();
+            for spec in plan.specs() {
+                let router = router.clone();
+                #[cfg(feature = "gateway")]
+                let router = if plan.at_root() {
+                    modules::gateway::at_root(router)
+                } else {
+                    router
+                };
+                builder = builder.mount(spec.clone(), router);
+            }
             continue;
         }
         let mut router = modules::build(plan.module, cfg, ctx, plan.mount, shutdown, tasks).await?;
@@ -607,6 +623,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         &split_credentials(cfg),
     )?;
     setup.age_key_file = portal_age_key(cfg, &secrets)?;
+    setup.realm = cfg.realm.clone();
     report_secrets(cfg, &secrets, &setup);
     // Bound before the modules are built: the Portal's sibling addresses name this listener.
     let listener = bind(cfg.listen).await?;
@@ -621,6 +638,25 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         tracing::info!(%at, "model-tools: listening on loopback");
         siblings.insert_loopback(Module::ModelTools, at);
     }
+    // Decided before any router is built: off, the assistant leaves the sibling table, so the
+    // Portal gets no knowledge address and the dataroom no launcher.
+    #[cfg(feature = "assistant")]
+    let assistant = if cfg.roles.contains(&Module::Assistant) {
+        modules::assistant::start(
+            cfg,
+            &setup,
+            &mut siblings,
+            &secrets,
+            &crate::config::assistant_env,
+            &shutdown,
+            &tasks,
+        )
+        .await
+    } else {
+        None
+    };
+    #[cfg(not(feature = "assistant"))]
+    let assistant = None;
     let forwarders = remote_forwarders(cfg, &secrets, &setup, &mut siblings).await?;
     let door = match &cfg.door {
         Some(section) => Some(Arc::new(
@@ -634,7 +670,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         secrets: &secrets,
         door: door.as_ref(),
     };
-    let built = build_router(cfg, ctx, plans, &shutdown, &tasks).await?;
+    let built = build_router(cfg, ctx, plans, assistant, &shutdown, &tasks).await?;
     // A Portal setting that cannot parse refuses the start here; only what needs a sibling to
     // answer (discovery, the forge) is retried after jc serves.
     #[cfg(feature = "portal")]

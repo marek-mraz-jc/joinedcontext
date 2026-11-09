@@ -12,8 +12,10 @@ use crate::app::StartError;
 use crate::config::DataroomSection;
 use crate::module::Module;
 use crate::setup::{Secret, Setup};
+use crate::siblings::Siblings;
 use axum::Router;
 use dataroom_api::DataroomState;
+use dataroom_core::branding::{BrandingAddresses, BrandingBlock};
 use dataroom_core::{CatalogueId, OrgId, PolicyAuthorizer, Store};
 use dataroom_store_memory::MemoryStore;
 use dataroom_store_pg::PgStore;
@@ -54,10 +56,43 @@ async fn open_store(cfg: &DataroomSection) -> Result<Arc<dyn Store>, StartError>
     ))
 }
 
+/// The assistant widget the catalogue docks (G2): the assistant's page of `deployment` when the
+/// module runs in this `jc`; `None` otherwise, so only an assistant address named in
+/// `[dataroom.addresses]` (or none) points a launcher anywhere.
+#[must_use]
+pub fn assistant_widget(siblings: &Siblings, deployment: &str) -> Option<String> {
+    siblings
+        .get(Module::Assistant)
+        .map(|a| format!("{}/d/{deployment}/widget", a.public))
+}
+
+/// The installation branding `jc` hands dataroom: only the live parts' addresses (G1), named in
+/// `[dataroom.addresses]` or taken from the mounted modules, and the assistant widget of jc's own
+/// assistant module. A catalogue's own branding still wins per catalogue; one that nobody serves
+/// stays empty, so no page points at it.
+fn installation_branding(
+    live: &crate::siblings::LiveAddresses,
+    assistant_widget: Option<String>,
+) -> BrandingBlock {
+    BrandingBlock {
+        addresses: BrandingAddresses {
+            viz: live.viz.clone(),
+            api: live.api.clone(),
+            tiles: live.tiles.clone(),
+            assistant: live.assistant.clone(),
+            portal: live.portal.clone(),
+        },
+        assistant_widget,
+        ..BrandingBlock::default()
+    }
+}
+
 pub async fn build(
     cfg: &DataroomSection,
     setup: &Setup,
+    siblings: &Siblings,
     mount: Mount,
+    assistant_widget: Option<String>,
 ) -> Result<Router, StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Dataroom, e);
     let org_id = OrgId::parse_verified(&cfg.org_id).map_err(|e| err(&e))?;
@@ -76,6 +111,10 @@ pub async fn build(
     };
     let state = DataroomState::new(store, Arc::new(authorizer), org_id, catalogue_id)
         .with_tokens(tokens)
+        .with_installation_branding(installation_branding(
+            &crate::siblings::live_addresses(&cfg.addresses, siblings),
+            assistant_widget,
+        ))
         .with_public_base(mount.public_base())
         .with_mount_prefix(mount.path_prefix);
     Ok(dataroom_api::router(state))

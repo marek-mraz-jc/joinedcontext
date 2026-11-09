@@ -34,6 +34,8 @@ const PAGES = [
   `/projects/${PROJECT}/activity`,
   `/projects/${PROJECT}/grafana`,
   `/projects/${PROJECT}/grafana/dashboards/project-helsinki`,
+  `/projects/${PROJECT}/grafana/new`,
+  `/projects/${PROJECT}/grafana/dashboards/jcd-0123456789abcdef/edit`,
   `/projects/${PROJECT}/health`,
   `/projects/${PROJECT}/approvals`,
   `/projects/${PROJECT}/approvals/chg-1a2b3c4d`,

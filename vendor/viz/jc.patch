@@ -1,0 +1,159 @@
+diff -ru a/site/embed.js site/embed.js
+--- a/site/embed.js	2026-11-09 02:34:57.622526482 +0000
++++ b/site/embed.js	2026-11-09 02:35:46.517517619 +0000
+@@ -57,7 +57,8 @@
+   // `component` (our script plus <jc-data-explorer>, which grows the frame to its content).
+   function snippet(kind, o, origin, title) {
+     var s = settings(o);
+-    if (!/^https:\/\/viz\.[a-z0-9.-]+$/.test(origin || "")) throw new Error("origin: https://viz.{domain}");
++    // The explorer's base: https://viz.{domain}, or jc's viz mount at /viz on its host (http only on loopback).
++    if (!/^(https:\/\/viz\.[a-z0-9.-]+(:[0-9]{1,5})?|https:\/\/[a-z0-9.-]+(:[0-9]{1,5})?\/viz|http:\/\/(localhost|127\.0\.0\.1)(:[0-9]{1,5})?(\/viz)?)$/.test(origin || "")) throw new Error("origin: https://viz.{domain}");
+     var name = attr(String(title || "Live data").slice(0, 200));
+     if (kind === "component") {
+       var a = ['endpoint="' + s.slug + '"'];
+@@ -107,7 +108,7 @@
+         shadow.appendChild(frame);
+         this._listen = function (event) {
+           var h = event.data && event.data.type === "jc-viz-height" && Number(event.data.height);
+-          if (event.origin === origin && event.source === frame.contentWindow && h > 0) frame.style.height = Math.min(Math.max(h, HEIGHT.min), 4000) + "px";
++          if (event.origin === new URL(origin).origin && event.source === frame.contentWindow && h > 0) frame.style.height = Math.min(Math.max(h, HEIGHT.min), 4000) + "px";
+         };
+         win.addEventListener("message", this._listen);
+       }
+@@ -122,7 +123,8 @@
+   else if (typeof document !== "undefined" && document.currentScript && /\/embed\.js(\?|$)/.test(document.currentScript.src)) {
+     // Loaded by another site: the frames come from the host this script was served by. The
+     // explorer loads it too, for the snippets alone.
+-    var origin = new URL(document.currentScript.src).origin;
+-    if (origin !== location.origin) define(root, origin);
++    var src = new URL(document.currentScript.src);
++    var origin = src.origin + src.pathname.replace(/\/embed\.js$/, "");
++    if (src.origin !== location.origin) define(root, origin);
+   }
+ })(typeof self !== "undefined" ? self : globalThis);
+diff -ru a/site/explore.js site/explore.js
+--- a/site/explore.js	2026-11-09 02:34:57.622638490 +0000
++++ b/site/explore.js	2026-11-09 02:35:15.032403711 +0000
+@@ -7,8 +7,9 @@
+ (function (root) {
+   "use strict";
+ 
+-  var MAPLIBRE = "/vendor/maplibre-gl-6.14.0.mjs";
+-  var WORKER = "/vendor/maplibre-gl-worker-6.14.0.mjs";
++  // Beside this page, so the explorer works under a path prefix too (jc serves it at /viz).
++  var MAPLIBRE = "./vendor/maplibre-gl-6.14.0.mjs";
++  var WORKER = typeof location !== "undefined" ? new URL("vendor/maplibre-gl-worker-6.14.0.mjs", location.href).href : "/vendor/maplibre-gl-worker-6.14.0.mjs";
+   var MAP_DWELL = 500;
+   var SLUG = /^[a-z0-9]{16,64}$/;
+   var NAME = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
+@@ -123,6 +124,29 @@
+     return "https://api." + String(hostname).replace(/^viz\./, "") + "/api/endpoint/" + slug + "/";
+   }
+ 
++  // The hosts this page reads: the server that serves it may name them in `<meta name="jc-viz"
++  // content='{"api": ..., "tiles": ..., "catalogue": ...}'>` (jc does, its viz mount answering beside
++  // other modules); else they follow this page's host, viz.{domain}. Never a parameter. A meta that is
++  // present names every host: one it leaves out or names badly is "" (none), never a guess.
++  function hosts(meta, hostname) {
++    var domain = String(hostname).replace(/^viz\./, "");
++    var own = { api: "https://api." + domain, tiles: "https://tiles." + domain, catalogue: "https://opendata." + domain };
++    if (meta == null) return own;
++    var given = {};
++    try { given = JSON.parse(meta) || {}; } catch (e) { given = {}; }
++    Object.keys(own).forEach(function (k) {
++      var v = given[k];
++      own[k] = typeof v === "string" && /^https?:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~\/-]*)?$/.test(v) ? v.replace(/\/+$/, "") : "";
++    });
++    return own;
++  }
++
++  // The basemap of `tiles`, or a plain background when the page names no tiles host.
++  function styleOf(tiles, lang) {
++    if (!tiles) return { version: 8, sources: {}, layers: [{ id: "background", type: "background", paint: { "background-color": "#eef0f3" } }] };
++    return tiles + "/styles/light-" + (lang === "sk" ? "sk" : "en") + ".json";
++  }
++
+   function params(map) {
+     return Object.keys(map)
+       .filter(function (k) { return map[k] !== undefined && map[k] !== null && map[k] !== ""; })
+@@ -471,7 +495,9 @@
+       $("app").hidden = true;
+       return tell(t.noAddress, "error");
+     }
+-    var api = base(location.hostname, where.slug);
++    var metaEl = document.querySelector('meta[name="jc-viz"]');
++    var H = hosts(metaEl ? metaEl.getAttribute("content") : null, location.hostname);
++    var api = H.api + "/api/endpoint/" + where.slug + "/";
+     var state = { types: [], type: where.type, q: where.q || "", sort: where.sort, all: where.all, card: null, map: null, mapData: null, mapAsk: 0, tiled: null, tilesets: {},
+       infos: {}, mapping: null, mapRaw: {}, countKey: null, total: null, none: null, inView: null };
+     ["geo", "color", "pop", "cluster"].forEach(function (k) { if (where[k] !== null) state.mapRaw[k] = where[k]; });
+@@ -554,8 +580,7 @@
+       import(MAPLIBRE).then(function (maplibre) {
+         if (box.hidden || !$("detail").open) return;
+         maplibre.setWorkerUrl(WORKER);
+-        var domain = location.hostname.replace(/^viz\./, "");
+-        var m = new maplibre.Map({ container: box, style: "https://tiles." + domain + "/styles/light-" + (lang === "sk" ? "sk" : "en") + ".json", center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false });
++        var m = new maplibre.Map({ container: box, style: styleOf(H.tiles, lang), center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false });
+         m.addControl(new maplibre.AttributionControl({ compact: true }));
+         new maplibre.Marker({ color: COLOUR }).setLngLat([at[0], at[1]]).addTo(m);
+         state.cardMap = m;
+@@ -653,8 +678,7 @@
+               return r.arrayBuffer().then(function (data) { return { data: data }; });
+             });
+         });
+-        var domain = location.hostname.replace(/^viz\./, "");
+-        var map = new maplibre.Map({ container: "map", style: "https://tiles." + domain + "/styles/light-" + (lang === "sk" ? "sk" : "en") + ".json", attributionControl: false, center: [17.1, 48.15], zoom: 4 });
++        var map = new maplibre.Map({ container: "map", style: styleOf(H.tiles, lang), attributionControl: false, center: [17.1, 48.15], zoom: 4 });
+         state.map = map;
+         root.jcExploreMap = map; // for the browser journey
+         state.maplibre = maplibre;
+@@ -955,7 +979,7 @@
+     // The source line of an embed: the dataset's title, publisher and licence from the catalogue,
+     // shown only when that dataset names this very Endpoint; else the catalogue itself.
+     function attribute() {
+-      var catalogue = "https://opendata." + location.hostname.replace(/^viz\./, "");
++      var catalogue = H.catalogue;
+       var line = $("attribution");
+       var draw = function (title, href, publisher, licence, licenceHref) {
+         line.textContent = "";
+@@ -992,7 +1016,7 @@
+       $("embed-keep-hint").textContent = words.length ? say(t.keepHint, { view: words.join("; ") }) : t.keepNone;
+       $("embed-copied").textContent = "";
+       try {
+-        $("embed-code").value = E.snippet($("embed-form").querySelector("input[name=kind]:checked").value, o, location.origin, t.title + (state.type ? ": " + state.type : ""));
++        $("embed-code").value = E.snippet($("embed-form").querySelector("input[name=kind]:checked").value, o, new URL(".", location.href).href.replace(/\/$/, ""), t.title + (state.type ? ": " + state.type : ""));
+         $("embed-preview").href = location.origin + "/embed.html" + E.hash(o);
+         $("embed-error").hidden = true;
+         $("embed-height").removeAttribute("aria-invalid");
+@@ -1058,7 +1082,7 @@
+     if (!root.jcExplorer || typeof root.jcExplorer.mount !== "function") return tell(t.noWidget, "error");
+     try {
+       root.jcExplorer.mount($("grid"), {
+-        origin: "https://api." + String(location.hostname).replace(/^viz\./, ""),
++        origin: H.api,
+         slug: where.slug,
+         lang: lang,
+         link: { type: where.type || undefined, q: where.q || undefined, sort: where.sort || undefined, noDefault: where.all || undefined },
+@@ -1076,7 +1100,7 @@
+     height();
+   }
+ 
+-  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, TEXT: TEXT };
++  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, TEXT: TEXT };
+   if (typeof module === "object" && module.exports) module.exports = root.jcExplore;
+   else if (typeof document !== "undefined") main();
+ })(typeof self !== "undefined" ? self : this);
+diff -ru a/site/map.html site/map.html
+--- a/site/map.html	2026-11-09 02:34:57.622829746 +0000
++++ b/site/map.html	2026-11-09 02:35:15.032830261 +0000
+@@ -8,8 +8,8 @@
+ <link rel="stylesheet" href="vendor/maplibre-gl-6.14.0.css">
+ <link rel="stylesheet" href="map.css">
+ <!-- T-4711: MapLibre and its worker load beside the page, not after map.js asks for them. -->
+-<link rel="modulepreload" href="/vendor/maplibre-gl-6.14.0.mjs">
+-<link rel="modulepreload" href="/vendor/maplibre-gl-worker-6.14.0.mjs">
++<link rel="modulepreload" href="vendor/maplibre-gl-6.14.0.mjs">
++<link rel="modulepreload" href="vendor/maplibre-gl-worker-6.14.0.mjs">
+ <script src="refuse.js" defer></script>
+ <script src="vendor/pmtiles-4.5.0.js" defer></script>
+ <script src="map.js" defer></script>

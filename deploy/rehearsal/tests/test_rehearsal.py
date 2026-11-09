@@ -768,3 +768,20 @@ def test_a_jc_that_ignores_sigterm_is_killed_before_the_next_starts():
     r = subprocess.run([str(HERE / "stop-jc.sh"), str(stuck.pid)], capture_output=True, text=True, timeout=60)
     stuck.wait(timeout=5)
     assert r.returncode == 0 and "SIGKILL" in r.stderr and stuck.returncode == -9
+def test_realm_secrets_become_files_under_the_import_secrets_dir(tmp_path):
+    text = json.dumps({"clients": [{"secret": "$(env:CLIENT_A)"}, {"secret": "$(CLIENT_B)"}],
+                       "users": [{"credentials": [{"value": "$(env:REHEARSAL_TESTER_PASSWORD)"}]}]})
+    out = json.loads(rh.secrets_as_files(text, tmp_path / "realm"))
+    base = (tmp_path / "realm").resolve()
+    assert out["clients"][0]["secret"] == f"$(file:{base / 'CLIENT_A'})"
+    assert out["clients"][1]["secret"] == f"$(file:{base / 'CLIENT_B'})"
+    assert out["users"][0]["credentials"][0]["value"] == f"$(file:{base / 'REHEARSAL_TESTER_PASSWORD'})"
+    assert "env:" not in json.dumps(out)
+
+
+def test_a_service_token_jc_holds_in_memory_is_read_from_the_kit_secrets(tmp_path):
+    (tmp_path / "state").mkdir(); (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets" / "shako-token").write_text("given\n")
+    (tmp_path / "state" / "antares-admin-token").write_text("on-disk\n")
+    assert rh.read_secret(tmp_path / "state", "shako-token") == "given"
+    assert rh.read_secret(tmp_path / "state", "antares-admin-token") == "on-disk"

@@ -163,6 +163,9 @@ pub struct Syncer {
     quality: Option<Arc<crate::quality::Scanner>>,
     alerts: Option<Arc<crate::alerts::Evaluator>>,
     subscriptions: Option<Arc<super::subscriptions::SubscriptionSync>>,
+    /// The repository's builder dashboards, provisioned into the dashboards service. `None`
+    /// without one: the files are read and provisioned nowhere.
+    dashboards: Option<Arc<crate::grafana_builder::DashboardSync>>,
     /// `None` when no Keycloak admin client is configured: the `Group` manifests are then read
     /// and served, and the realm is written by nobody (PF-63).
     groups: Option<Arc<GroupSync>>,
@@ -309,6 +312,7 @@ impl Syncer {
             quality: None,
             alerts: None,
             subscriptions: None,
+            dashboards: None,
             groups: None,
             people: None,
             app_clients: None,
@@ -582,6 +586,15 @@ impl Syncer {
     /// document into the broker (T-3640).
     pub fn with_views(mut self, views: Arc<super::views::ViewSync>) -> Self {
         self.views = Some(views);
+        self
+    }
+
+    /// Makes each leader run provision the repository's builder dashboards.
+    pub fn with_dashboards(
+        mut self,
+        dashboards: Arc<crate::grafana_builder::DashboardSync>,
+    ) -> Self {
+        self.dashboards = Some(dashboards);
         self
     }
 
@@ -1285,6 +1298,20 @@ impl Syncer {
         self.swap(&fresh_mirror, &transitions, seen, &repository, &scratch)
             .await?;
         steps.mark("swap");
+
+        // 5h. Every approved builder dashboard file, provisioned into its project's organization
+        //     of the dashboards service; one no file holds any more is removed, only in a project
+        //     whose repository staged.
+        if let Some(dashboards) = self.dashboards.as_ref() {
+            dashboards
+                .converge(
+                    scratch.path(),
+                    &fresh_mirror.namespaces(),
+                    &scratch.unstaged,
+                )
+                .await;
+        }
+        steps.mark("dashboards");
 
         // 5b. Deploy resident streams for eligible DataSource pipelines (PL-47), each with the
         //     validation stage of its space's model at the version the space pins now (PL-60).

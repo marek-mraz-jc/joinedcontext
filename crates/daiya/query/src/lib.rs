@@ -19,7 +19,7 @@ pub use daiya_model::{
     ColumnValues, FieldColumn, FieldType, Frame, FrameMeta, FrameSet, Notice, NoticeSeverity,
 };
 pub use factory::{DriverDeps, OutboundPolicy, build_driver, guard_for};
-pub use guard::{GuardConfig, OutboundGuard, OutboundRequest, OutboundResponse};
+pub use guard::{GuardConfig, OutboundGuard, OutboundRequest, OutboundResponse, OwnReach};
 pub use loki::LokiDatasource;
 pub use ngsild::NgsiLdDatasource;
 pub use odata::ODataDatasource;
@@ -36,7 +36,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
-use zeroize::Zeroizing;
+pub use zeroize::Zeroizing;
 
 /// Datasource execution error (never carries raw secret values, R3).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

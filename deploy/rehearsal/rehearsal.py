@@ -163,12 +163,19 @@ def loopback_only(base: str) -> None:
 
 
 def read_secret(state: Path, name: str) -> str:
-    """A secret jc keeps in its state dir, or one up.sh gave jc from the secrets dir beside it
-    (the service tokens jc otherwise holds in memory only)."""
-    f = state / name
-    if not f.is_file():
-        f = state.parent / "secrets" / name
-    return f.read_text().strip()
+    """A secret jc keeps in its state dir, else one up.sh gave jc as a JCBIN_*_FILE (jc holds the
+    in-process service tokens in memory only, so the kit makes those files)."""
+    p = state / name
+    return (p if p.exists() else state.parent / "secrets" / name).read_text().strip()
+
+
+SECRET_VAR = re.compile(r"\$\((?:env:)?([A-Z][A-Z0-9_]*)\)")
+
+
+def secrets_as_files(text: str, secrets_dir: Path) -> str:
+    """Every `$(env:NAME)` / `$(NAME)` of a realm file as `$(file:<secrets_dir>/NAME)`: jc's kaisatsu
+    import reads no environment, only files under its import secrets dir."""
+    return SECRET_VAR.sub(lambda m: f"$(file:{secrets_dir.resolve() / m.group(1)})", text)
 
 
 # --------------------------------------------------------------------------------------------
@@ -540,10 +547,13 @@ def cmd_realms(a):
             if dropped:
                 print(f"realm {name}: {len(dropped)} parts kaisatsu refuses left out "
                       f"(realm-{name}-left-out.json): {sorted({d['kind'] for d in dropped})}")
-        write_private(dst / f"{name}.json", json.dumps(clean, indent=1))
+        text = json.dumps(clean, indent=1)
+        # The secret variables the realm names ($(env:NAME)): up.sh makes a file for each.
+        names = sorted(set(SECRET_VAR.findall(text)))
+        if a.secrets_dir:
+            text = secrets_as_files(text, Path(a.secrets_dir))
+        write_private(dst / f"{name}.json", text)
         taken.append(name)
-        # The secret variables the realm names ($(env:NAME)): up.sh makes a value for each.
-        names = sorted(set(re.findall(r"\$\((?:env:)?([A-Z][A-Z0-9_]*)\)", json.dumps(clean))))
         (dst.parent / "realm-vars.txt").write_text("".join(n + "\n" for n in names))
     if len(taken) > 1:
         # jc's kaisatsu import dir merges every file into one realm.
@@ -1306,7 +1316,7 @@ def cmd_smoke(a):
         public = publics[0] if publics else None
         if public:
             ok, detail = code_flow(Http(a.base), name, public,
-                                   (state.parent / "secrets" / "realm-REHEARSAL_TESTER_PASSWORD").read_text().strip())
+                                   (state.parent / "secrets" / "realm" / "REHEARSAL_TESTER_PASSWORD").read_text().strip())
             check(f"realm {name}: test person signs in through {public['clientId']}", ok, detail,
                   f"/id/realms/{name}/protocol/openid-connect/auth")
     # 4. every exported repository is in shako with the exported files
@@ -1644,6 +1654,7 @@ def main(argv=None):
     s.add_argument("--kaisatsu-bin", help="leave out the mappers this kaisatsu refuses (named in the report)")
     s.add_argument("--people", help="a 0700 dir holding users-<realm>.jsonl (dev only): people without credentials")
     s.add_argument("--demo-users", help="the deployment's demo-users.yaml: the personas that keep e-mail and names")
+    s.add_argument("--secrets-dir", help="name each realm secret as $(file:<dir>/NAME) (jc's import secrets dir)")
     s = sub.add_parser("import"); s.add_argument("--export", required=True); s.add_argument("--base", required=True)
     s.add_argument("--state", required=True); s.add_argument("--report", required=True)
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin")

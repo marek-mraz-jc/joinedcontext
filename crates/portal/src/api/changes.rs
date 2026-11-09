@@ -814,6 +814,53 @@ async fn secret_headline(
     project: &str,
     files: Option<&[crate::forge::shako::ChangedFile]>,
 ) -> Result<Option<ManifestData>, ApiError> {
+    file_headline(
+        shako,
+        pr,
+        project,
+        files,
+        SECRET,
+        crate::secret_files::parse_path,
+    )
+    .await
+}
+
+/// Whether `branch` is the dashboard builder's (`portal/grafana-{project}-{uid}`,
+/// api/grafana_builder.rs).
+fn is_dashboard_branch(branch: &str) -> bool {
+    let branch = branch.strip_prefix("refs/heads/").unwrap_or(branch);
+    branch.starts_with("portal/grafana-")
+}
+
+/// The headline of a builder dashboard's change: the Dashboard file of `project` it adds,
+/// changes or removes, named by its uid.
+async fn dashboard_headline(
+    shako: &ShakoClient,
+    pr: &PullRequest,
+    project: &str,
+    files: Option<&[crate::forge::shako::ChangedFile]>,
+) -> Result<Option<ManifestData>, ApiError> {
+    file_headline(
+        shako,
+        pr,
+        project,
+        files,
+        "Dashboard",
+        crate::grafana_builder::parse_path,
+    )
+    .await
+}
+
+/// The headline of a change to one file of `project` that `parse` names `(project, name)`, as
+/// `kind`; the file is not read.
+async fn file_headline(
+    shako: &ShakoClient,
+    pr: &PullRequest,
+    project: &str,
+    files: Option<&[crate::forge::shako::ChangedFile]>,
+    kind: &str,
+    parse: fn(&str) -> Option<(&str, &str)>,
+) -> Result<Option<ManifestData>, ApiError> {
     let fetched;
     let files = match files {
         Some(files) => files,
@@ -823,9 +870,9 @@ async fn secret_headline(
         }
     };
     Ok(files.iter().find_map(|file| {
-        let (home, name) = crate::secret_files::parse_path(&file.path)?;
+        let (home, name) = parse(&file.path)?;
         (home == project).then(|| ManifestData {
-            kind: SECRET.to_owned(),
+            kind: kind.to_owned(),
             name: name.to_owned(),
             operation: if file.deleted {
                 Operation::Delete
@@ -850,6 +897,9 @@ async fn load_manifest_data(
 ) -> Result<Option<ManifestData>, ApiError> {
     if is_secret_branch(&pr.head_branch) {
         return secret_headline(shako, pr, project, files).await;
+    }
+    if is_dashboard_branch(&pr.head_branch) {
+        return dashboard_headline(shako, pr, project, files).await;
     }
     let Some(branch_info) = parse_branch_name(&pr.head_branch) else {
         return bundle_headline(shako, pr, project, files).await;
@@ -2097,6 +2147,18 @@ async fn approve_every_file(
                 file.path
             )));
         }
+        // A builder dashboard approves only as the builder writes it: a file another door put
+        // there (an import, a push to the branch) is refused before any kind is asked.
+        if let (Some((_, uid)), false) =
+            (crate::grafana_builder::parse_path(&file.path), file.deleted)
+        {
+            crate::grafana_builder::read_file(uid, &content).map_err(|why| {
+                ApiError::Denied(format!(
+                    "'{}' is not a dashboard the Portal's builder wrote: {why}",
+                    file.path
+                ))
+            })?;
+        }
         files.push((file, envelope, sealed));
     }
     for (file, envelope, sealed) in &files {
@@ -2108,7 +2170,11 @@ async fn approve_every_file(
             .or_insert_with(|| crate::permissions::for_request(state, identity, &home));
         let Some(envelope) = envelope else {
             // A secrets file is approved as the secret form proposes it: on DataSource (T-6359).
+            // A builder dashboard approves as a Dashboard (its content was checked above).
+            let dashboard = crate::grafana_builder::parse_path(&file.path);
             let kind = crate::api::import::native_kind(&file.path)
+                .filter(|_| dashboard.is_none())
+                .or_else(|| dashboard.map(|_| "Dashboard"))
                 .or_else(|| sealed.then_some(crate::api::secrets::KIND))
                 .ok_or_else(|| {
                     ApiError::Denied(format!(

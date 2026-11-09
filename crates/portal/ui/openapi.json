@@ -12181,6 +12181,682 @@
         }
       }
     },
+    "/api/v1/projects/{project}/grafana/builder": {
+      "get": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Read The Dashboard Builder",
+        "description": "Whether the caller may build dashboards in the project, the builder dashboards whose Change waits for approval, and the refresh intervals, units and colours the forms offer. Changes no data.",
+        "operationId": "builder_start",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The builder's start",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuilderStart"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project the caller has a part in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Propose A New Dashboard",
+        "description": "Compiles a dashboard from choices into a Grafana dashboard file and proposes it as a Change that adds `projects/{project}/grafana/{uid}.json`. The uid is minted here. Needs propose on Dashboard and read on every Endpoint a choice names.",
+        "operationId": "builder_create",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewBoard"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Proposed; waits for approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuilderSaved"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A body that does not parse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not build dashboards, or may not read an Endpoint a choice names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project the caller has a part in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No dashboards service for the project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field the builder does not take; the errors name it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The forge or the dashboards service did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/grafana/builder/preview": {
+      "post": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Preview A Builder Panel",
+        "description": "Runs one panel of an unsaved dashboard as the caller: the Portal compiles the panel's query from its choices, checks it as the dashboard page checks a saved panel, and answers the panel and its frames. The body takes choices only; a query member is refused. Needs propose on Dashboard. Changes no data.",
+        "operationId": "builder_preview",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewAsked"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The panel and its frames, or why it has none",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanelPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A body that does not parse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not build dashboards, or may not read an Endpoint a choice names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project, or no such panel on the board",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No dashboards service for the project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field the builder does not take; the errors name it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/grafana/builder/values": {
+      "get": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Read A Builder Variable's Values",
+        "description": "The current values of one text attribute of a type on an Endpoint the caller may read, read with the caller's rights: what a dashboard variable over it offers. Needs propose on Dashboard. Changes no data.",
+        "operationId": "builder_values",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "endpoint",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "attribute",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariableValues"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown query parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not build dashboards, or may not read the Endpoint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project the caller has a part in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No dashboards service for the project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A type or attribute the model does not have",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/grafana/builder/{uid}": {
+      "get": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Read A Builder Dashboard",
+        "description": "A builder dashboard's file read back into choices for its next edit, with the revision the edit starts from and the Change of it that waits for approval, if any. Needs propose on Dashboard. Changes no data.",
+        "operationId": "builder_get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Dashboard uid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The dashboard as choices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuilderDashboard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not build dashboards",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project, or no builder dashboard of that uid in it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The file was not written by the builder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Propose A Dashboard Edit",
+        "description": "Compiles the edited dashboard from choices and proposes it as a Change of `projects/{project}/grafana/{uid}.json`. `base` is the revision the edit started from; a file changed since is a conflict. Needs propose on Dashboard and read on every Endpoint a choice names.",
+        "operationId": "builder_update",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Dashboard uid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditedBoard"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Proposed; waits for approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuilderSaved"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A body that does not parse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not build dashboards, or may not read an Endpoint a choice names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project, or no builder dashboard of that uid in it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The file changed since the edit started, or a Change of it is open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field the builder does not take; the errors name it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The forge or the dashboards service did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Propose Removing A Dashboard",
+        "description": "Proposes a Change that removes `projects/{project}/grafana/{uid}.json`; once it merges the reconciler takes the dashboard out of the dashboards service. Needs propose on Dashboard.",
+        "operationId": "builder_delete",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Dashboard uid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Proposed; waits for approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuilderSaved"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not build dashboards",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project, or no builder dashboard of that uid in it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A Change of the dashboard is open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The forge did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/grafana/dashboards": {
       "get": {
         "tags": [
@@ -43255,6 +43931,17 @@
           "waiting"
         ]
       },
+      "Aggregation": {
+        "type": "string",
+        "description": "How readings are combined: by the broker per interval for a time series, over the range for a\nstat or gauge. `none` draws each reading (a time series) or the latest value (a stat, a gauge).",
+        "enum": [
+          "none",
+          "avg",
+          "min",
+          "max",
+          "sum"
+        ]
+      },
       "AlertDelivery": {
         "type": "string",
         "enum": [
@@ -44186,6 +44873,32 @@
           }
         }
       },
+      "BarChartOptions": {
+        "type": "object",
+        "description": "A bar chart's own choices: the text attribute that names each bar, one bar per entity.",
+        "required": [
+          "xField"
+        ],
+        "properties": {
+          "xField": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BarGaugeOptions": {
+        "type": "object",
+        "description": "A bar gauge's own choices.",
+        "properties": {
+          "displayMode": {
+            "$ref": "#/components/schemas/DisplayMode"
+          },
+          "orientation": {
+            "$ref": "#/components/schemas/Orientation"
+          }
+        },
+        "additionalProperties": false
+      },
       "Binding": {
         "type": "object",
         "description": "One topic filter's way to an attribute; it ends at the first hop the caller may not read.",
@@ -44257,6 +44970,205 @@
             "type": "string"
           }
         }
+      },
+      "Board": {
+        "type": "object",
+        "description": "A dashboard, as choices: what the builder sends and reads back.",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string",
+            "description": "The default range, Grafana's words (`now-6h`, `now`)."
+          },
+          "panels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoardPanel"
+            }
+          },
+          "refresh": {
+            "type": "string",
+            "description": "One of [`REFRESHES`]; empty is off."
+          },
+          "title": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "variables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoardVariable"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "BoardPanel": {
+        "type": "object",
+        "description": "One panel, as choices.",
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "grid"
+        ],
+        "properties": {
+          "aggregation": {
+            "$ref": "#/components/schemas/Aggregation"
+          },
+          "attribute": {
+            "type": "string"
+          },
+          "barchart": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BarChartOptions"
+              }
+            ]
+          },
+          "bargauge": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BarGaugeOptions",
+                "description": "Each kind's own choices, given for that kind only."
+              }
+            ]
+          },
+          "decimals": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "description": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "An Endpoint of the project, by name; a text panel names none."
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Filter"
+            }
+          },
+          "grid": {
+            "$ref": "#/components/schemas/Grid"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "interval": {
+            "$ref": "#/components/schemas/Interval"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PanelKind"
+          },
+          "max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The scale of a gauge or bar gauge; Grafana scales to the data where none is given."
+          },
+          "piechart": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PieChartOptions"
+              }
+            ]
+          },
+          "text": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TextOptions"
+              }
+            ]
+          },
+          "thresholds": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Thresholds"
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BoardVariable": {
+        "type": "object",
+        "description": "A variable over the current values of one attribute.",
+        "required": [
+          "name",
+          "endpoint",
+          "type",
+          "attribute"
+        ],
+        "properties": {
+          "attribute": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "includeAll": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "Branding": {
         "type": "object",
@@ -44528,6 +45440,98 @@
             ],
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "BuilderDashboard": {
+        "type": "object",
+        "description": "One builder dashboard, for its next edit.",
+        "required": [
+          "uid",
+          "board"
+        ],
+        "properties": {
+          "base": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file's revision on the default branch, sent back with the edit; none while only a\nChange holds the file."
+          },
+          "board": {
+            "$ref": "#/components/schemas/Board"
+          },
+          "pending": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PendingDashboard"
+              }
+            ]
+          },
+          "uid": {
+            "type": "string"
+          }
+        }
+      },
+      "BuilderSaved": {
+        "type": "object",
+        "description": "What a save proposed.",
+        "required": [
+          "uid",
+          "change"
+        ],
+        "properties": {
+          "change": {
+            "$ref": "#/components/schemas/Change"
+          },
+          "uid": {
+            "type": "string"
+          }
+        }
+      },
+      "BuilderStart": {
+        "type": "object",
+        "description": "Where the builder starts: whether the caller may build here, and the dashboards whose\nChange waits for approval.",
+        "required": [
+          "mayEdit",
+          "pending",
+          "refreshes",
+          "units",
+          "colors"
+        ],
+        "properties": {
+          "colors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mayEdit": {
+            "type": "boolean",
+            "description": "The caller may propose dashboards in the project."
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingDashboard"
+            },
+            "description": "Open Changes of builder dashboards; empty for a caller who may not edit."
+          },
+          "refreshes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the forms offer, the server's lists: refresh intervals, units, colours."
+          },
+          "units": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -47299,6 +48303,13 @@
           "tags"
         ],
         "properties": {
+          "folder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The folder the dashboard sits in; none for Grafana's General."
+          },
           "tags": {
             "type": "array",
             "items": {
@@ -47318,9 +48329,11 @@
         "description": "One dashboard: what the page lays out. Panel queries stay on the server.",
         "required": [
           "uid",
+          "orgId",
           "title",
           "from",
           "to",
+          "timePickerHidden",
           "variables",
           "panels"
         ],
@@ -47335,12 +48348,17 @@
             "type": "string",
             "description": "The saved time range, Grafana's words (`now-6h`, `now`)."
           },
+          "orgId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The number of the dashboards service organization that holds it (Grafana's `orgId`)."
+          },
           "panels": {
             "type": "array",
             "items": {
               "type": "object"
             },
-            "description": "Each panel's `id`, `type`, `title`, `description`, `gridPos`, `fieldConfig`, `options`,\nand for a row `collapsed` and its `panels`."
+            "description": "Each panel's `id`, `type`, `title`, `description`, `gridPos`, `fieldConfig`, `options`,\n`maxDataPoints`, its own range (`timeFrom`, `timeShift`, `hideTimeOverride`), and for a\nrow `collapsed` and its `panels`."
           },
           "refresh": {
             "type": [
@@ -47348,6 +48366,17 @@
               "null"
             ],
             "description": "The saved refresh interval (`30s`, `5m`), if any."
+          },
+          "timePickerHidden": {
+            "type": "boolean",
+            "description": "Whether the dashboard hides its time and refresh pickers (`timepicker.hidden`)."
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The saved time zone (`browser`, `utc` or an IANA name), if any."
           },
           "title": {
             "type": "string"
@@ -47748,6 +48777,15 @@
           }
         },
         "additionalProperties": false
+      },
+      "DisplayMode": {
+        "type": "string",
+        "description": "How a bar gauge fills its bars, Grafana's `displayMode`.",
+        "enum": [
+          "gradient",
+          "lcd",
+          "basic"
+        ]
       },
       "DomainVerification": {
         "type": "object",
@@ -48193,6 +49231,76 @@
           }
         },
         "additionalProperties": false
+      },
+      "EditedBoard": {
+        "type": "object",
+        "description": "An edit of a saved dashboard.",
+        "required": [
+          "board",
+          "base"
+        ],
+        "properties": {
+          "base": {
+            "type": "string",
+            "description": "The `base` the edit started from."
+          },
+          "board": {
+            "$ref": "#/components/schemas/Board"
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "base": "3f2a9c",
+          "board": {
+            "panels": [
+              {
+                "aggregation": "avg",
+                "attribute": "availableBikeNumber",
+                "decimals": 0,
+                "endpoint": "helsinki-bikes",
+                "filters": [
+                  {
+                    "attribute": "status",
+                    "op": "eq",
+                    "variable": "status"
+                  }
+                ],
+                "grid": {
+                  "h": 8,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+                },
+                "id": 1,
+                "kind": "stat",
+                "thresholds": {
+                  "base": "green",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": 5
+                    }
+                  ]
+                },
+                "title": "Free bikes",
+                "type": "BikeHireDockingStation",
+                "unit": "none"
+              }
+            ],
+            "refresh": "5m",
+            "title": "Bike stations",
+            "variables": [
+              {
+                "attribute": "status",
+                "endpoint": "helsinki-bikes",
+                "includeAll": true,
+                "label": "Status",
+                "name": "status",
+                "type": "BikeHireDockingStation"
+              }
+            ]
+          }
+        }
       },
       "Effective": {
         "type": "object",
@@ -48837,6 +49945,36 @@
           }
         }
       },
+      "Filter": {
+        "type": "object",
+        "description": "One filter: an attribute compared with a value, or matched against a variable's picks.",
+        "required": [
+          "attribute",
+          "op"
+        ],
+        "properties": {
+          "attribute": {
+            "type": "string"
+          },
+          "op": {
+            "$ref": "#/components/schemas/Op"
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "variable": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A variable of the dashboard; then `op` is `eq` and there is no `value`."
+          }
+        },
+        "additionalProperties": false
+      },
       "Finding": {
         "type": "object",
         "required": [
@@ -49406,6 +50544,39 @@
           }
         }
       },
+      "Grid": {
+        "type": "object",
+        "description": "Where a panel sits on Grafana's 24-column grid.",
+        "required": [
+          "x",
+          "y",
+          "w",
+          "h"
+        ],
+        "properties": {
+          "h": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "w": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "x": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "y": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "GroupRef": {
         "type": "object",
         "required": [
@@ -49913,6 +51084,18 @@
             "description": "Base URL of the catalogue."
           }
         }
+      },
+      "Interval": {
+        "type": "string",
+        "description": "The period the broker aggregates over; `auto` follows the panel's width and range.",
+        "enum": [
+          "auto",
+          "PT1M",
+          "PT5M",
+          "PT15M",
+          "PT1H",
+          "P1D"
+        ]
       },
       "IssuedSecret": {
         "type": "object",
@@ -50818,6 +52001,70 @@
         },
         "additionalProperties": false
       },
+      "NewBoard": {
+        "type": "object",
+        "description": "A new dashboard.",
+        "required": [
+          "board"
+        ],
+        "properties": {
+          "board": {
+            "$ref": "#/components/schemas/Board"
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "board": {
+            "panels": [
+              {
+                "aggregation": "avg",
+                "attribute": "availableBikeNumber",
+                "decimals": 0,
+                "endpoint": "helsinki-bikes",
+                "filters": [
+                  {
+                    "attribute": "status",
+                    "op": "eq",
+                    "variable": "status"
+                  }
+                ],
+                "grid": {
+                  "h": 8,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+                },
+                "id": 1,
+                "kind": "stat",
+                "thresholds": {
+                  "base": "green",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": 5
+                    }
+                  ]
+                },
+                "title": "Free bikes",
+                "type": "BikeHireDockingStation",
+                "unit": "none"
+              }
+            ],
+            "refresh": "5m",
+            "title": "Bike stations",
+            "variables": [
+              {
+                "attribute": "status",
+                "endpoint": "helsinki-bikes",
+                "includeAll": true,
+                "label": "Status",
+                "name": "status",
+                "type": "BikeHireDockingStation"
+              }
+            ]
+          }
+        }
+      },
       "NewConnector": {
         "type": "object",
         "description": "What a person asks for when creating a connector (API/14 §1).",
@@ -51289,6 +52536,18 @@
         },
         "additionalProperties": false
       },
+      "Op": {
+        "type": "string",
+        "description": "A filter's comparison.",
+        "enum": [
+          "eq",
+          "ne",
+          "gt",
+          "ge",
+          "lt",
+          "le"
+        ]
+      },
       "OpenProject": {
         "type": "object",
         "description": "What a person fills in to open a project.",
@@ -51588,6 +52847,15 @@
           }
         }
       },
+      "Orientation": {
+        "type": "string",
+        "description": "Which way bars run, Grafana's `orientation`; `auto` follows the panel's shape.",
+        "enum": [
+          "auto",
+          "horizontal",
+          "vertical"
+        ]
+      },
       "OutOfWindow": {
         "type": "object",
         "description": "One grant of this broker the account carries that is not in force now.",
@@ -51723,6 +52991,39 @@
           }
         }
       },
+      "PanelKind": {
+        "type": "string",
+        "description": "What a panel draws.",
+        "enum": [
+          "timeseries",
+          "stat",
+          "table",
+          "gauge",
+          "bargauge",
+          "piechart",
+          "barchart",
+          "text"
+        ]
+      },
+      "PanelPreview": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PanelData"
+          },
+          {
+            "type": "object",
+            "required": [
+              "panel"
+            ],
+            "properties": {
+              "panel": {
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "description": "The preview of one panel: the panel as the dashboard page draws it, and its data."
+      },
       "Part": {
         "type": "string",
         "enum": [
@@ -51775,6 +53076,33 @@
           "paused": {
             "type": "boolean",
             "description": "`true` switches the loop off, `false` switches it back on."
+          }
+        }
+      },
+      "PendingDashboard": {
+        "type": "object",
+        "description": "A dashboard whose Change waits for approval.",
+        "required": [
+          "uid",
+          "title",
+          "change",
+          "url"
+        ],
+        "properties": {
+          "change": {
+            "type": "string",
+            "description": "The Change, `chg-…`."
+          },
+          "title": {
+            "type": "string",
+            "description": "The Change's title, which names the dashboard."
+          },
+          "uid": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "Where the merge request is read."
           }
         }
       },
@@ -52013,6 +53341,24 @@
         ],
         "title": "Phase",
         "description": "Lifecycle phase enumeration."
+      },
+      "PieChartOptions": {
+        "type": "object",
+        "description": "A pie chart's own choices.",
+        "properties": {
+          "pieType": {
+            "$ref": "#/components/schemas/PieType"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PieType": {
+        "type": "string",
+        "description": "A pie chart's shape, Grafana's `pieType`.",
+        "enum": [
+          "pie",
+          "donut"
+        ]
       },
       "PipelineErrorRatio": {
         "type": "object",
@@ -53105,6 +54451,107 @@
           },
           "state": {
             "$ref": "#/components/schemas/PreviewState"
+          }
+        }
+      },
+      "PreviewAsked": {
+        "type": "object",
+        "description": "One panel of an unsaved board, run as the caller.",
+        "required": [
+          "board",
+          "panel"
+        ],
+        "properties": {
+          "board": {
+            "$ref": "#/components/schemas/Board"
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "panel": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "vars": {
+            "type": "object",
+            "description": "The values picked per variable (`$__all` for All).",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "board": {
+            "panels": [
+              {
+                "aggregation": "avg",
+                "attribute": "availableBikeNumber",
+                "decimals": 0,
+                "endpoint": "helsinki-bikes",
+                "filters": [
+                  {
+                    "attribute": "status",
+                    "op": "eq",
+                    "variable": "status"
+                  }
+                ],
+                "grid": {
+                  "h": 8,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+                },
+                "id": 1,
+                "kind": "stat",
+                "thresholds": {
+                  "base": "green",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": 5
+                    }
+                  ]
+                },
+                "title": "Free bikes",
+                "type": "BikeHireDockingStation",
+                "unit": "none"
+              }
+            ],
+            "refresh": "5m",
+            "title": "Bike stations",
+            "variables": [
+              {
+                "attribute": "status",
+                "endpoint": "helsinki-bikes",
+                "includeAll": true,
+                "label": "Status",
+                "name": "status",
+                "type": "BikeHireDockingStation"
+              }
+            ]
+          },
+          "panel": 1,
+          "vars": {
+            "status": [
+              "open"
+            ]
           }
         }
       },
@@ -56504,6 +57951,56 @@
           }
         ],
         "description": "A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string."
+      },
+      "TextOptions": {
+        "type": "object",
+        "description": "A text panel's own choice: what it says, in Markdown. The Portal shows it as plain text.",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThresholdStep": {
+        "type": "object",
+        "description": "One threshold step above the base colour.",
+        "required": [
+          "value",
+          "color"
+        ],
+        "properties": {
+          "color": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Thresholds": {
+        "type": "object",
+        "description": "A panel's colours by value: the base colour, then each step from its value up.",
+        "required": [
+          "base"
+        ],
+        "properties": {
+          "base": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThresholdStep"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "TrashItem": {
         "type": "object",

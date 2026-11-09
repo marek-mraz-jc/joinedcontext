@@ -3,6 +3,7 @@
  * `barchart`, `piechart`, `heatmap`, `state-timeline` and `histogram`, with a key of what each
  * colour means beside the ones whose colours carry it.
  */
+import { clsx } from "clsx";
 import { useMemo } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
@@ -24,10 +25,10 @@ export interface ChartPanelProps {
 }
 
 /** What each colour stands for, as swatches with their names. */
-export function ColourKey({ items, label }: { items: { name: string; color: string; detail?: string }[]; label: string }): JSX.Element | null {
+export function ColourKey({ items, label, className }: { items: { name: string; color: string; detail?: string }[]; label: string; className?: string }): JSX.Element | null {
   if (items.length === 0) return null;
   return (
-    <ul aria-label={label} className="flex flex-wrap gap-x-4 gap-y-1 text-caption">
+    <ul aria-label={label} className={clsx("flex flex-wrap gap-x-4 gap-y-1 text-caption", className)}>
       {items.map((item) => (
         <li key={item.name} className="flex min-w-0 items-center gap-1.5">
           <Swatch color={item.color} shape="square" />
@@ -100,13 +101,15 @@ export function PieChartPanel({ title, frames, fieldConfig, options, height, loc
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
       <VegaChart
-        className="sm:flex-1"
+        className="min-w-0 sm:flex-1"
         spec={built.spec}
         height={chartHeight}
         label={t("dashboardView.chartLabel", { title, n: built.slices.length })}
         tooltip={(datum) => datumLines(datum, [["name", t("dashboardView.series")], ["value", t("dashboardView.value")]], dateTime)}
       />
+      {/* Beside the pie the key keeps to half the width at most, or the pie gets none. */}
       <ColourKey
+        className="sm:max-w-1/2 sm:flex-col sm:flex-nowrap"
         label={t("dashboardView.legend")}
         items={built.slices.map((slice) => ({ name: slice.name, color: slice.color, detail: percent.format(slice.value / (total || 1)) }))}
       />
