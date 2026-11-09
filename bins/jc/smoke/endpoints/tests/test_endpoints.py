@@ -4,10 +4,12 @@ fake gateway that answers right (green) or breaks one rule at a time (red).
     python3 -m pytest bins/jc/smoke/endpoints/tests -q
 """
 
+import io
 import json
 import sys
 import threading
 import urllib.parse
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -109,6 +111,7 @@ class Fake:
     def __init__(self, broken: str = "", temporal: bool = True):
         self.broken = broken
         self.temporal = temporal  # whether the open Endpoint's view serves a temporal read
+        self.busy_seen = False  # "busy-once" answers 503 to the first file only
 
     def answer(self, method, path, headers):
         u = urllib.parse.urlparse(path)
@@ -153,8 +156,28 @@ class Fake:
                 return 404, {}, {"title": "ResourceNotFound"}
             eid = urllib.parse.unquote(rest.split("/", 3)[3])
             return 200, {}, {"id": eid, "type": "AirQualityObserved"}
+        if rest == "ogc/features/collections" and qs.get("f") == ["zip"]:
+            if self.broken == "no-files":
+                return 400, {}, {"title": "unknown parameter f"}
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                z.writestr("AirQualityObserved.csv", "id\n")
+            return 200, {"Content-Type": "application/zip"}, buf.getvalue()
         if rest == "ogc/features/collections":
             return 200, {}, {"collections": [{"id": "AirQualityObserved"}]}
+        if rest.endswith("/items") and qs.get("f") == ["csv"]:
+            if self.broken == "no-files":
+                return 400, {}, {"title": "unknown parameter f"}
+            rows = 3 if self.broken == "csv-rows" else 2
+            body = "id,geometry\n" + "".join(f'urn:x:{i},"{{""type"":""Point""}}"\n' for i in range(rows))
+            return 200, {"Content-Type": "text/csv; charset=utf-8; header=present"}, body.encode()
+        if rest.endswith("/items") and qs.get("f") == ["parquet"]:
+            if self.broken in ("busy", "busy-once") and not self.busy_seen:
+                self.busy_seen = self.broken == "busy-once"
+                return 503, {"Retry-After": "0"}, {"title": "busy"}
+            if self.broken == "no-files":
+                return 400, {}, {"title": "unknown parameter f"}
+            return 200, {"Content-Type": "application/vnd.apache.parquet"}, b"PAR1" + b"\0" * 8 + b"PAR1"
         if rest.startswith("ogc/features/collections/"):
             return 200, {}, {"type": "FeatureCollection", "numberMatched": 2, "features": []}
         if rest == "odata/v4/$metadata":
@@ -220,13 +243,15 @@ def test_a_healthy_gateway_is_green(tmp_path, serve):
     assert code == 0 and not fails, fails
     ids = {r["id"] for r in res["checks"] if r["result"] == "pass"}
     assert {"anon.count", "anon.by-id.same", "anon.geojson", "anon.temporal.last-24h", "anon.temporal.none-older",
-            "anon.ogc.items", "anon.odata.query", "anon.write-outside", "anon.refused", "dataset", "listing"} <= ids
+            "anon.ogc.items", "anon.ogc.csv", "anon.ogc.parquet", "anon.ogc.zip", "anon.odata.query", "anon.write-outside", "anon.refused", "dataset", "listing"} <= ids
     assert (tmp_path / "out" / "REPORT.md").read_text().startswith("# Smoke suite `endpoints`")
 
 
 @pytest.mark.parametrize("broken,check", [
     ("count", "anon.count"), ("extra-type", "anon.types.match"), ("closed-open", "anon.refused"),
-    ("write-open", "anon.write-outside"), ("old-history", "anon.temporal.none-older")])
+    ("write-open", "anon.write-outside"), ("old-history", "anon.temporal.none-older"),
+    ("no-files", "anon.ogc.csv"), ("no-files", "anon.ogc.parquet"), ("no-files", "anon.ogc.zip"),
+    ("csv-rows", "anon.ogc.csv"), ("busy", "anon.ogc.parquet")])
 def test_each_broken_rule_turns_its_check_red(tmp_path, serve, broken, check):
     code, res = run(tmp_path, serve(Fake(broken)), now_iso())
     red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
@@ -317,6 +342,11 @@ def test_a_query_only_grant_answers_an_id_404_as_prod_does(tmp_path, serve, monk
     # The same grant answering the entity by id serves more than the Policy grants.
     _, res = run(tmp_path / "served", serve(Fake()), now_iso())
     assert {r["result"] for r in res["checks"] if r["id"] == "anon.by-id"} == {"fail"}
+
+
+def test_a_busy_file_is_asked_again(tmp_path, serve):
+    code, res = run(tmp_path, serve(Fake("busy-once")), now_iso())
+    assert code == 0, [r for r in res["checks"] if r["result"] == "fail"]
 
 
 def test_a_stopped_gateway_fails_and_never_passes(tmp_path):

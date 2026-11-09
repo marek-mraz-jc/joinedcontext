@@ -84,7 +84,7 @@ Gates: ekiben workspace `cargo test -p ekiben-server -p ekiben-core -p ekiben-bl
   without a credential when it is unset), no listener of its own (`ANTARES_HTTP_PORT`/`ANTARES_METRICS_PORT` ignored,
   so no clash with the Portal's 9090), mounted with `Router::fallback_service(served.app)` (axum 0.8 refuses
   `nest_service("/")`; the jc-router already strips the slug). Since stage 8 built as dev builds it (`full`,
-  `jc-policy`, `linkml`, `ical`, `feed`; not `parquet`, `tabular`).
+  `jc-policy`, `linkml`, `ical`, `feed`, and since jc-ogc-formats `parquet`, `tabular`: OGC `f=parquet|csv|zip`).
 - One Antares per process: its statics (memory budget, WebSocket hub, caches, 153 statics per the feasibility
   report) are process-wide. The jc tests serialize every start with one lock for this reason.
 - Differences when hosted, not verified against the ETSI suite: responses go through axum's server (lower-case
@@ -315,7 +315,7 @@ documents. The Portal keeps `/`, `/api/v1/*` and `/.well-known/oauth-protected-r
   names the issuer by the Host a request reached it on, and the Portal's internal listener checks it (a token from
   the listener address was refused 401).
 - Antares: `BrokerConfig::defaults` holds keys the host supplies when the environment leaves them unset (unknown or
-  non-`ANTARES_` keys refused): `ANTARES_API_SURFACES` (dev's list without parquet/tabular), `ANTARES_POLICY=
+  non-`ANTARES_` keys refused): `ANTARES_API_SURFACES` (dev's list), `ANTARES_POLICY=
   joinedcontext`, `ANTARES_POLICY_SUBJECT_HEADERS` (a `OnceLock` default behind the env `LazyLock`, no `set_var`),
   `ANTARES_PROVENANCE_FROM` and `ANTARES_POLICY_SUBJECT_FROM` = `context-gateway.jc`.
 - Trust: on dev Linkerd sets `l5d-client-id`. Here the public `/broker` mount drops every `l5d-*` header and the hop
@@ -394,7 +394,6 @@ project `e2e` (layout 1: project, space `things`, a `public` and a `project-list
   to `jc` (built before the gateway), or keep a fixed default.
 - Not filled from siblings: `JC_GATEWAY_PREVIEWS_URL` (workspace previews), `_ACTIVITY_URL`, `_ASSISTANT_URL`,
   `_DOMAIN_VERIFICATIONS_URL`, `_INTERNAL_BIND` (no `/internal/mqtt/auth`; jc runs no MQTT broker).
-- OGC `f=parquet|csv|zip`: features `parquet` and `tabular` are not built.
 - Layout 2 organizations: `jcctl checkouts` runs after the org checkout but is unexercised (shako's project
   repository creation, jc-portal-integrate report).
 - Host mode e2e: only the one_binary probe (`api.city.test/api/endpoints`).

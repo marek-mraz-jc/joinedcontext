@@ -40,7 +40,6 @@ base64 = "0.22"
 hmac = "0.12"
 http-body-util = "0.1"
 ipnet = "2.12"
-p256 = { version = "0.13", features = ["ecdsa", "pem"] }
 parking_lot = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 sha2 = "0.10"

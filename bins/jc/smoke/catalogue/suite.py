@@ -19,7 +19,9 @@ With --export of another environment (the CI gate's synthetic dev slice) the com
 skips and only the control and the feed's shape run.
 
 Names go through RENAMES.md (kind `dataset`, evidence/jc-dev/RENAMES.md): a renamed dataset is
-looked up under its new name, and its old name must still answer package_show with the new one.
+looked up under its new name, and its old name must still answer package_show with the new one. A
+`dataset (extra)` row names a dataset jc holds and prod never did: package_search and the DCAT total
+count it on top of prod's, and a jc name no row lists fails its organisation's search.
 Ids and timestamps never compare: jc mints its own. The checks on jc alone (each Endpoint's
 dataset published, per organisation isolation) are the endpoints, names and multiorg suites'."""
 
@@ -85,7 +87,9 @@ def org_of(pk: dict | None) -> str | None:
 
 def run(a, res: Results) -> dict:
     prod = json.loads(Path(a.prod).read_text())
-    renames = {r.old: r for r in load_renames(a.renames) if r.kind == "dataset"}
+    rename_rows = [r for r in load_renames(a.renames) if r.kind == "dataset"]
+    renames = {r.old: r for r in rename_rows if not r.extra}
+    extras = {r.new for r in rename_rows if r.extra}
     jc_name = {n: (renames[n].new if n in renames else n) for n in prod["datasets"]}
     c = Ckan(a.base_url, a.path)
     call = lambda s: f"GET {a.path}/api/3/action/{s}"
@@ -134,11 +138,17 @@ def run(a, res: Results) -> dict:
     for o, count in sorted(prod["perOrganization"].items()):
         st, rows = search_all(c, fq=f'organization:"{o}"')
         got_names = {r.get("name") for r in rows or []}
-        missing = sorted(by_org.get(o, set()) - got_names)
+        want = by_org.get(o, set())
+        missing = sorted(want - got_names)
+        accepted = sorted((got_names - want) & extras)
+        unexpected = sorted(got_names - want - extras)
         res.check(f"package_search.{o}", o, call(f"package_search?fq=organization:{o}"),
-                  f"{count} datasets, prod's names", f"{st}, {len(rows) if rows is not None else 'unreadable'} datasets"
-                  + (f", missing {len(missing)}: {', '.join(missing[:5])}" if missing else ""),
-                  rows is not None and len(rows) == count and not missing)
+                  f"{count} datasets, prod's names" + (f", and the RENAMES.md extras {', '.join(accepted)}" if accepted else ""),
+                  f"{st}, {len(rows) if rows is not None else 'unreadable'} datasets"
+                  + (f", missing {len(missing)}: {', '.join(missing[:5])}" if missing else "")
+                  + (f", not prod's and no RENAMES.md extra {len(unexpected)}: {', '.join(unexpected[:5])}" if unexpected else "")
+                  + (f", {len(rows) - len(got_names)} names twice" if rows and len(rows) > len(got_names) else ""),
+                  rows is not None and len(rows) == len(got_names) == count + len(accepted) and not missing and not unexpected)
 
     st, everything = search_all(c)
     ids = {r.get("id"): r.get("name") for r in everything or []}
@@ -164,10 +174,19 @@ def run(a, res: Results) -> dict:
     pf = prod["dcat"]
     res.check("dcat.catalog", "dataroom", f"GET {a.path}/catalog.jsonld?page=1..", "a dcat:Catalog node on each page",
               f"{feed['catalogNodes']} catalog nodes over {feed['pages']} pages", feed["catalogNodes"] >= 1)
-    res.check("dcat.total", "dataroom", f"GET {a.path}/catalog.jsonld", f"hydra:totalItems {pf['totalItems']}, as prod's",
-              str(feed["totalItems"]), feed["totalItems"] == pf["totalItems"])
     dist = distributions_by_package(nodes)
     by_name = {ids.get(k, k): v for k, v in dist.items()}
+    in_feed = sorted(extras & set(by_name))
+    # prod's hydra:totalItems counts an orphan index document beside the live dataset of its name
+    # (fetch_prod_ckan.py): jc's feed holds each name once, so the reference is prod's names.
+    total = pf.get("distinctDatasets", pf["totalItems"])
+    twice = prod.get("searchDuplicates") or {}
+    res.check("dcat.total", "dataroom", f"GET {a.path}/catalog.jsonld",
+              f"hydra:totalItems {total}, prod's datasets by name"
+              + (f" (prod's own total {pf['totalItems']} counts {', '.join(twice)} twice: an orphan index document)"
+                 if total != pf["totalItems"] else "")
+              + (f", and the RENAMES.md extras {', '.join(in_feed)}" if in_feed else ""),
+              str(feed["totalItems"]), feed["totalItems"] == total + len(in_feed))
     for n, d in prod["datasets"].items():
         if d.get("dcatDistributions") is None:
             continue

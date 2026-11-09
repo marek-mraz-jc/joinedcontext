@@ -1,9 +1,11 @@
 //! The build of a `static` application on the forge, as its App page shows it (AP-103, ADR-N-028).
 //!
-//! The build is the repository's `.gitea/workflows/build.yml` (AP-100): the Portal starts
-//! nothing, it links the repository, the newest run and the package, and Rebuild dispatches the
-//! workflow on the default branch. The repository is `{project}_{app}` (AP-75), derived from the
-//! path and never read from the manifest, so no manifest points a dispatch at another repository.
+//! The Portal builds an App itself (AP-130, the jc build lane): a push to its repository's
+//! default branch or a Rebuild queues a build, which `apps::build_pods` runs in a pod. The page
+//! links the repository, the newest build and the package, and reads the builds from the
+//! Portal's own record (`apps::build_records`), in place of the forge's workflow runs. The
+//! repository is `{project}_{app}` (AP-75), derived from the path and never read from the
+//! manifest, so no manifest points a build at another repository.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -15,14 +17,12 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::agents::repository;
+use crate::apps::build_records::{self, Record, Trigger};
 use crate::auth::CurrentUser;
 use crate::error::{ApiError, ProblemDetails};
 use crate::forge::{Author, GitError, ShakoClient, WorkflowRun};
 use crate::permissions::ORG_NAMESPACE;
 use crate::state::AppState;
-
-/// The workflow every application repository carries (AP-100).
-const WORKFLOW_FILE: &str = "build.yml";
 
 /// Where an application's build is, and whether this person may ask for another (AP-103).
 #[derive(Debug, Serialize, ToSchema)]
@@ -59,6 +59,64 @@ pub fn router() -> Router<AppState> {
         .route("/projects/{project}/apps/{name}/rebuild", post(rebuild))
         .route("/projects/{project}/apps/{name}/builds", get(builds))
         .route("/projects/{project}/apps/{name}/restore", post(restore))
+        .route(
+            "/projects/{project}/apps/{name}/builds/{id}/log",
+            get(build_log),
+        )
+}
+
+/// The build store, or `None` on a Portal that builds nothing.
+fn records(state: &AppState) -> Option<&sqlx::PgPool> {
+    state.config.build_pods.as_ref()?;
+    state.db.as_ref()
+}
+
+fn store(err: sqlx::Error) -> ApiError {
+    ApiError::Internal(format!("the build store: {err}"))
+}
+
+/// A build as the App page shows a run: `queued`, `in_progress` or `completed` with its
+/// conclusion, and its log as the run's page (AP-103).
+fn as_run(state: &AppState, build: &Record) -> WorkflowRun {
+    let (status, conclusion) = match build.state.as_str() {
+        "pending" => ("queued", None),
+        "running" | "verifying" => ("in_progress", None),
+        "succeeded" => ("completed", Some("success")),
+        _ => ("completed", Some("failure")),
+    };
+    let at = |time: Option<chrono::DateTime<chrono::Utc>>| {
+        time.map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+    };
+    WorkflowRun {
+        status: status.to_owned(),
+        conclusion: conclusion.map(str::to_owned),
+        commit: build.commit.clone(),
+        url: format!(
+            "{}/api/v1/projects/{}/apps/{}/builds/{}/log",
+            state.config.public_base_url.as_str().trim_end_matches('/'),
+            build.project,
+            build.app,
+            build.id
+        ),
+        number: u64::try_from(build.id).ok(),
+        started_at: at(build.started_at),
+        completed_at: at(build.finished_at),
+    }
+}
+
+/// The App's newest builds, newest first; none on a Portal that builds nothing.
+async fn latest_builds(
+    state: &AppState,
+    project: &str,
+    name: &str,
+    limit: i64,
+) -> Result<Vec<Record>, ApiError> {
+    match records(state) {
+        Some(db) => build_records::latest(db, project, name, limit)
+            .await
+            .map_err(store),
+        None => Ok(Vec::new()),
+    }
 }
 
 /// The App as this person may see it, its repository when it is built on the forge, and the
@@ -169,22 +227,14 @@ pub async fn build(
             },
         }));
     };
-    // ponytail: the estimate is the newest successful run of the last five; a median when one
-    // slow run makes it lie.
-    let runs = match repo.latest_runs(5).await {
-        Ok(runs) => runs,
-        // A repository with Actions off, or not created yet, has no run to link.
-        Err(GitError::NotFound) => Vec::new(),
-        Err(err) => {
-            tracing::warn!(app = %name, error = %err, "the application's workflow runs were not read");
-            Vec::new()
-        }
-    };
-    let typical_seconds = runs
+    // ponytail: the estimate is the newest successful build of the last five; a median when one
+    // slow build makes it lie.
+    let recent = latest_builds(&state, &project, &name, 5).await?;
+    let typical_seconds = recent
         .iter()
-        .filter(|run| run.conclusion.as_deref() == Some("success"))
-        .find_map(WorkflowRun::seconds);
-    let run = runs.into_iter().next();
+        .filter(|build| build.state == "succeeded")
+        .find_map(Record::seconds);
+    let run = recent.first().map(|build| as_run(&state, build));
     let build = |field: &str| {
         app.pointer(&format!("/status/build/{field}"))
             .and_then(serde_json::Value::as_str)
@@ -242,21 +292,47 @@ pub async fn rebuild(
         return Err(ApiError::Denied(reason));
     }
     let repo = repo.ok_or_else(|| ApiError::Conflict(NOT_ON_FORGE.into()))?;
+    let db = records(&state).ok_or_else(|| {
+        ApiError::Unavailable(format!(
+            "builds are not configured on this Portal, so the build of '{name}' was not queued \
+             (JC_PORTAL_BUILD_NAMESPACE)"
+        ))
+    })?;
     let refused = |err: GitError| {
         ApiError::Unavailable(format!(
-            "the forge did not start the build of '{name}': {err}"
+            "the forge did not answer for the build of '{name}': {err}"
         ))
     };
     let branch = repo.default_branch().await.map_err(refused)?;
-    repo.dispatch_workflow(WORKFLOW_FILE, &branch)
+    let head = repo.branch_head(&branch).await.map_err(refused)?;
+    let class = crate::apps::build_pods::class_at(&repo, &head)
         .await
-        .map_err(refused)?;
-    tracing::info!(app = %name, project = %project, by = %user.0.identity.username, "rebuild dispatched");
+        .map_err(refused)?
+        .ok_or_else(|| {
+            ApiError::Conflict(format!(
+                "{} at {head} carries no App build workflow ({}), so there is nothing to build \
+                 (AP-100)",
+                repo.repo,
+                crate::apps::build_pods::WORKFLOW_PATH
+            ))
+        })?;
+    let id = build_records::enqueue(
+        db,
+        &project,
+        &name,
+        &head,
+        class,
+        Trigger::Rebuild,
+        Some(&user.0.identity.username),
+    )
+    .await
+    .map_err(store)?;
+    tracing::info!(app = %name, project = %project, commit = %head, build = id, by = %user.0.identity.username, "rebuild queued");
     Ok(StatusCode::ACCEPTED.into_response())
 }
 
-/// How many runs the builds list reads: the forge's page size.
-const BUILDS_READ: u32 = 50;
+/// How many builds the builds list reads.
+const BUILDS_READ: i64 = 50;
 
 const DATA_NOTE: &str =
     "Restore brings back the App's source only; its schema, files and data stay as they are.";
@@ -299,31 +375,50 @@ pub struct Restored {
     pub pull_request_url: String,
 }
 
-/// The successful runs of the repository, one per commit, newest first.
-async fn successful_builds(repo: &ShakoClient, current: Option<&str>) -> Vec<BuildEntry> {
-    let runs = match repo.latest_runs(BUILDS_READ).await {
-        Ok(runs) => runs,
-        Err(GitError::NotFound) => Vec::new(),
-        Err(err) => {
-            tracing::warn!(error = %err, "the application's workflow runs were not read");
-            Vec::new()
-        }
-    };
+/// The successful builds of the App, one per commit, newest first, with the build its
+/// `status.build` names among them even when it was built before the Portal kept a record (a
+/// build carried over from the forge's runs).
+async fn successful_builds(
+    state: &AppState,
+    project: &str,
+    name: &str,
+    app: &serde_json::Value,
+) -> Result<Vec<BuildEntry>, ApiError> {
+    let current = current_commit(app);
     let mut builds: Vec<BuildEntry> = Vec::new();
-    for run in runs {
-        if run.conclusion.as_deref() != Some("success")
-            || builds.iter().any(|b| b.commit == run.commit)
-        {
+    for build in latest_builds(state, project, name, BUILDS_READ).await? {
+        if build.state != "succeeded" || builds.iter().any(|b| b.commit == build.commit) {
             continue;
         }
         builds.push(BuildEntry {
-            current: current == Some(run.commit.as_str()),
-            commit: run.commit,
-            number: run.number,
-            completed_at: run.completed_at,
+            current: current == Some(build.commit.as_str()),
+            number: u64::try_from(build.id).ok(),
+            completed_at: build
+                .finished_at
+                .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+            commit: build.commit,
         });
     }
-    builds
+    if let Some(commit) = current.filter(|c| !builds.iter().any(|b| b.commit == *c)) {
+        let built_at = app
+            .pointer("/status/build/builtAt")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        let at = builds
+            .iter()
+            .position(|b| b.completed_at.as_deref() < built_at.as_deref())
+            .unwrap_or(builds.len());
+        builds.insert(
+            at,
+            BuildEntry {
+                commit: commit.to_owned(),
+                number: None,
+                completed_at: built_at,
+                current: true,
+            },
+        );
+    }
+    Ok(builds)
 }
 
 fn current_commit(app: &serde_json::Value) -> Option<&str> {
@@ -354,7 +449,7 @@ pub async fn builds(
     Path((project, name)): Path<(String, String)>,
 ) -> Result<Json<AppBuilds>, ApiError> {
     let (app, repo) = app_of(&state, &user, &project, &name)?;
-    let Some(repo) = repo else {
+    if repo.is_none() {
         return Ok(Json(AppBuilds {
             builds: Vec::new(),
             restore: Rebuild {
@@ -363,8 +458,8 @@ pub async fn builds(
             },
             data_note: DATA_NOTE,
         }));
-    };
-    let builds = successful_builds(&repo, current_commit(&app)).await;
+    }
+    let builds = successful_builds(&state, &project, &name, &app).await?;
     let refusal = restore_refusal(&state, &user, &project, &app);
     Ok(Json(AppBuilds {
         builds,
@@ -424,7 +519,7 @@ pub async fn restore(
     let commit = request.commit.trim();
     // Only a commit the forge built successfully for this repository: a digest or commit of
     // another App is not among them (AP-171).
-    let builds = successful_builds(&repo, current_commit(&app)).await;
+    let builds = successful_builds(&state, &project, &name, &app).await?;
     let build = builds.iter().find(|b| b.commit == commit).ok_or_else(|| {
         ApiError::Conflict(format!(
             "{commit} is not a successful build of the App '{name}'"
@@ -506,6 +601,57 @@ pub async fn restore(
             branch,
             pull_request_url: pull.url,
         }),
+    )
+        .into_response())
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project}/apps/{name}/builds/{id}/log",
+    summary = "The Log Of One Build Of An Application",
+    description = "The log the build pod sent for one build of the application, as text, with its state and reason last; what a build's page shows (AP-103).",
+    tag = "apps",
+    params(
+        ("project" = String, Path, description = "Project name"),
+        ("name" = String, Path, description = "App name"),
+        ("id" = i64, Path, description = "Build id, the run's number"),
+    ),
+    responses(
+        (status = 200, description = "The build's log", content_type = "text/plain", body = String),
+        (status = 401, description = "Unauthorized", body = ProblemDetails),
+        (status = 404, description = "No such App the caller may read, or no such build of it", body = ProblemDetails),
+        (status = 503, description = "Builds are not configured", body = ProblemDetails)
+    )
+)]
+pub async fn build_log(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path((project, name, id)): Path<(String, String, i64)>,
+) -> Result<Response, ApiError> {
+    app_of(&state, &user, &project, &name)?;
+    let db = records(&state)
+        .ok_or_else(|| ApiError::Unavailable("builds are not configured on this Portal".into()))?;
+    let build = build_records::get_of(db, &project, &name, id)
+        .await
+        .map_err(store)?
+        .ok_or_else(|| ApiError::NotFound(format!("build {id} of App '{name}' not found")))?;
+    let log = build_records::log(db, id).await.map_err(store)?;
+    let text = format!(
+        "{}\n--- build {id} of {name} at {}: {}{}\n",
+        log.unwrap_or_default(),
+        build.commit,
+        build.state,
+        build
+            .reason
+            .map(|reason| format!(": {reason}"))
+            .unwrap_or_default()
+    );
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
+        text,
     )
         .into_response())
 }

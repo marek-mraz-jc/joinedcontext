@@ -114,7 +114,7 @@ daiya-store-pg = { path = "../../crates/daiya/store-pg", optional = true }
 ekiben-server = { path = "../../crates/ekiben/crates/ekiben-server", optional = true }
 ekiben-core = { path = "../../crates/ekiben/crates/ekiben-core", optional = true }
 
-antares-broker = { path = "../../crates/antares/crates/antares-broker", optional = true, features = ["full", "jc-policy", "linkml", "ical", "feed"] }
+antares-broker = { path = "../../crates/antares/crates/antares-broker", optional = true, features = ["full", "jc-policy", "linkml", "ical", "feed", "parquet", "tabular"] }
 
 context-gateway = { path = "../../vendor/joinedcontext-platform/crates/context-gateway", optional = true }
 jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core", optional = true }

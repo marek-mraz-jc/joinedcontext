@@ -235,10 +235,14 @@ if compgen -G "$REHEARSAL_DASHBOARDS/*.datasource.*.json" >/dev/null; then
 fi
 # The hub's search_documents searches the sources the deployment names (base-values of the
 # context-gateway; REHEARSAL_DEPLOYMENT is a deployment clone); jc fills the assistant's address.
-if [ -z "${JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:-}" ]; then
+# Without a deployment clone (the smoke gate's runner) the hub searches no outside source.
+deployment=${REHEARSAL_DEPLOYMENT:-/workspace/joinedcontext-deployment}
+if [ -z "${JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:-}" ] && [ -d "$deployment/components" ]; then
   JC_GATEWAY_HUB_KNOWLEDGE_SOURCES=$(python3 -I "$here/rehearsal.py" hub-sources \
-    --deployment "${REHEARSAL_DEPLOYMENT:-/workspace/joinedcontext-deployment}")
+    --deployment "$deployment")
   export JC_GATEWAY_HUB_KNOWLEDGE_SOURCES
+elif [ -z "${JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:-}" ]; then
+  echo "up.sh: no deployment clone at $deployment: the hub searches no knowledge source" >&2
 fi
 # The datasets this kit renames answer their old names too (RENAMES.md, rehearsal.py CKAN_NAMES).
 alias_config=$(python3 -I "$here/rehearsal.py" aliases)

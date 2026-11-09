@@ -77,9 +77,9 @@ jobs:
             crates/portal/ui/dist
             crates/portal/sdk/dist
           key: ${{ steps.ui.outputs.cache-primary-key }}
-      # The Dockerfile's toolchain (rust:1.97), so both ways of building the image use one compiler.
+      # The Dockerfile's toolchain (rust:1.99.0), so both ways of building the image use one compiler.
       - uses: ./.github/actions/rust
-        with: { key: release, toolchain: "1.97.0" }
+        with: { key: release, toolchain: "1.99.0" }
       - run: cargo build --release --locked -p jc -p kaisatsu-server
       - id: bin
         run: |

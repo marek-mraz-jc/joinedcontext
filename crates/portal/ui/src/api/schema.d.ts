@@ -2042,6 +2042,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/apps/{name}/builds/{id}/log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Log Of One Build Of An Application
+         * @description The log the build pod sent for one build of the application, as text, with its state and reason last; what a build's page shows (AP-103).
+         */
+        get: operations["build_log"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/apps/{name}/dashboard": {
         parameters: {
             query?: never;
@@ -13244,7 +13264,10 @@ export interface components {
          * @enum {string}
          */
         Withheld: "personal" | "hidden";
-        /** @description A workflow run of an application's repository, as the App page links it (AP-86, AP-103). */
+        /**
+         * @description A build of an application, as the App page links it (AP-86, AP-103): the shape the forge's
+         *     workflow runs had, now filled from the Portal's own build record.
+         */
         WorkflowRun: {
             /** @description The commit the run built. */
             commit: string;
@@ -13260,9 +13283,9 @@ export interface components {
             number?: number | null;
             /** @description RFC 3339, once a runner took it. */
             startedAt?: string | null;
-            /** @description `queued`, `in_progress`, `waiting` or `completed`, as the forge says it. */
+            /** @description `queued`, `in_progress` or `completed`. */
             status: string;
-            /** @description The run's page, behind the forge's sign-in (PF-81). */
+            /** @description The build's log. */
             url: string;
         };
         Workspace: {
@@ -19232,6 +19255,60 @@ export interface operations {
                 };
             };
             /** @description No forge is configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    build_log: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description App name */
+                name: string;
+                /** @description Build id, the run's number */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The build's log */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such App the caller may read, or no such build of it */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Builds are not configured */
             503: {
                 headers: {
                     [name: string]: unknown;

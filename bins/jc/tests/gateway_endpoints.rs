@@ -1327,6 +1327,32 @@ async fn a_modelled_endpoint_answers_ogc_and_odata_inside_jc() {
         .filter_map(|c| c["id"].as_str())
         .collect();
     assert!(ids.contains(&"Thing"), "{collections}");
+    // The files prod's broker writes (features `parquet` and `tabular`): items as CSV and
+    // Parquet, /collections as a ZIP. A build without them refuses `f` as an unknown parameter.
+    let ogc = format!("{base}/ogc/features/collections");
+    for (path, media, magic) in [
+        (format!("{ogc}/Thing/items?f=csv"), "text/csv", &b"id"[..]),
+        (
+            format!("{ogc}/Thing/items?f=parquet"),
+            "application/vnd.apache.parquet",
+            &b"PAR1"[..],
+        ),
+        (format!("{ogc}?f=zip"), "application/zip", &b"PK"[..]),
+    ] {
+        let resp = Client::new().get(jc.url(&path)).send().await.unwrap();
+        let status = resp.status();
+        let kind = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        let body = resp.bytes().await.unwrap();
+        let start = String::from_utf8_lossy(&body[..body.len().min(200)]).into_owned();
+        assert_eq!(status, StatusCode::OK, "{path}: {start}");
+        assert!(kind.starts_with(media), "{path}: {kind}");
+        assert!(body.starts_with(magic), "{path}: {start}");
+    }
     // OData reads the same schema through its own surface: it answers once that has it too.
     let metadata = eventually("the OData $metadata answers", &jc, 60, || async {
         let (status, body) = call(

@@ -270,6 +270,10 @@ pub struct Config {
     /// publishing does not spend the public edge's limit. Both or neither; `None` calls every
     /// catalogue at its public URL.
     pub ckan_api_route: Option<(Url, Url)>,
+    /// The loopback address the API URL's host is reached at instead of through DNS
+    /// (`JC_PORTAL_CKAN_API_REACH`, e.g. `127.0.0.1:8080`): jc's own catalogue on a host mount
+    /// is called on jc's listener under its host name, never through the public edge (C1).
+    pub ckan_api_reach: Option<std::net::SocketAddr>,
     /// The directory the ConfigMap `jc-validation-results` is mounted at (`JC_HEALTH_DIR`;
     /// OPS-53): one digest per validation check, read on every request to
     /// `/api/v1/organization/health`. `None` answers an empty list; it is never an error.
@@ -322,10 +326,12 @@ pub struct Config {
     /// cluster does; it is never a guess, because guessing a namespace here would mean writing
     /// a Deployment into somebody else's.
     pub app_settings: Option<crate::apps::reconciler::Settings>,
-    /// Where an App's build pods run and on which runner images (`JC_PORTAL_BUILD_NAMESPACE`
-    /// with `JC_PORTAL_BUILD_IMAGE_NODE`, `JC_PORTAL_BUILD_IMAGE_RUST` and the forge's API base;
-    /// `JC_PORTAL_BUILD_CACHE_SIZE`, default `1Gi`; AP-130, AP-131). `None` starts no build pod,
-    /// and an App's build waits in the forge's queue.
+    /// Where an App's build pods run, on which builder images, and where they report back
+    /// (`JC_PORTAL_BUILD_NAMESPACE` with `JC_PORTAL_BUILD_IMAGE_NODE`, `JC_PORTAL_BUILD_IMAGE_RUST`
+    /// and `JC_PORTAL_BUILD_API_URL`; `JC_PORTAL_BUILD_BIND`, default `0.0.0.0:9092`;
+    /// `JC_PORTAL_BUILD_CACHE_SIZE`, default `1Gi`; `JC_PORTAL_BUILD_TMP_SIZE`, default `4Gi`;
+    /// `JC_PORTAL_BUILD_WORK_DIR`; AP-130, AP-131). `None` builds nothing, and Rebuild answers
+    /// that builds are not configured.
     pub build_pods: Option<crate::apps::build_pods::Settings>,
     /// Where a builder run's workspace is scheduled and how the proxy reaches this Portal
     /// (AG-33, AG-40). `None` leaves every agent-run route answering 503: without a namespace
@@ -456,6 +462,7 @@ impl std::fmt::Debug for Config {
             .field("pipeline_secrets", &self.pipeline_secrets)
             .field("branding_file", &self.branding_file)
             .field("ckan_api_route", &self.ckan_api_route)
+            .field("ckan_api_reach", &self.ckan_api_reach)
             .field("health_dir", &self.health_dir)
             .field(
                 "database_url",
@@ -961,16 +968,41 @@ fn ckan_api_route(
     let in_cluster = api
         .host_str()
         .is_some_and(|host| host.ends_with(".svc") || host.ends_with(".svc.cluster.local"));
-    if api.scheme() != "https" && !in_cluster && !rehearsal {
+    // jc's own catalogue on its loopback listener (C1): the token never leaves the machine.
+    let loopback = match api.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(host)) => host == "localhost",
+        None => false,
+    } || ckan_api_reach(lookup)?.is_some();
+    if api.scheme() != "https" && !in_cluster && !loopback && !rehearsal {
         return Err(ConfigError::Invalid {
             var: "JC_PORTAL_CKAN_API_URL",
             reason:
-                "plain http only to a cluster Service (`<name>.<namespace>.svc.cluster.local`); \
-                     anywhere else the token would cross the network in the clear"
+                "plain http only to a cluster Service (`<name>.<namespace>.svc.cluster.local`) \
+                     or a loopback address; anywhere else the token would cross the network in \
+                     the clear"
                     .into(),
         });
     }
     Ok(Some((public, api)))
+}
+
+/// `JC_PORTAL_CKAN_API_REACH`: a loopback socket address, or nothing. Any other address would
+/// send the token in the clear to a host the URL does not name.
+fn ckan_api_reach(
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<Option<std::net::SocketAddr>, ConfigError> {
+    let Some(raw) = lookup("JC_PORTAL_CKAN_API_REACH").filter(|v| !v.trim().is_empty()) else {
+        return Ok(None);
+    };
+    match raw.trim().parse::<std::net::SocketAddr>() {
+        Ok(addr) if addr.ip().is_loopback() => Ok(Some(addr)),
+        _ => Err(ConfigError::Invalid {
+            var: "JC_PORTAL_CKAN_API_REACH",
+            reason: "a loopback address and port, e.g. 127.0.0.1:8080".into(),
+        }),
+    }
 }
 
 /// `JC_PORTAL_CKAN_ALLOW_HTTP` (a local rehearsal on one machine, e.g. `jc --scheme http`): only
@@ -1021,27 +1053,53 @@ fn build_pod_settings(
             reason: "JC_PORTAL_BUILD_NAMESPACE is set, and a build pod needs its image".into(),
         }),
     };
-    let forge = set("JC_SHAKO_URL").ok_or_else(|| ConfigError::Invalid {
-        var: "JC_PORTAL_BUILD_NAMESPACE",
-        reason: "a build pod registers with the forge, and JC_SHAKO_URL is not set".into(),
+    let api = set("JC_PORTAL_BUILD_API_URL").ok_or_else(|| ConfigError::Invalid {
+        var: "JC_PORTAL_BUILD_API_URL",
+        reason: "JC_PORTAL_BUILD_NAMESPACE is set, and a build pod reports back to the Portal's \
+                 build listener at this in-cluster URL, e.g. http://jc-build.smartcity.svc:9092"
+            .into(),
     })?;
-    let cache_size = set("JC_PORTAL_BUILD_CACHE_SIZE").unwrap_or_else(|| "1Gi".into());
-    let digits = cache_size.trim_end_matches("Gi").trim_end_matches("Mi");
-    if digits.is_empty()
-        || digits.len() == cache_size.len()
-        || !digits.bytes().all(|b| b.is_ascii_digit())
+    if !(api.starts_with("http://") || api.starts_with("https://"))
+        || url::Url::parse(&api).is_err()
     {
         return Err(ConfigError::Invalid {
-            var: "JC_PORTAL_BUILD_CACHE_SIZE",
-            reason: format!("'{cache_size}' is not a size such as 512Mi or 1Gi"),
+            var: "JC_PORTAL_BUILD_API_URL",
+            reason: format!("'{api}' is not an http(s) URL"),
         });
     }
+    let bind = set("JC_PORTAL_BUILD_BIND")
+        .unwrap_or_else(|| "0.0.0.0:9092".into())
+        .parse()
+        .map_err(|e: std::net::AddrParseError| ConfigError::Invalid {
+            var: "JC_PORTAL_BUILD_BIND",
+            reason: e.to_string(),
+        })?;
+    let size = |var: &'static str, default: &str| {
+        let size = set(var).unwrap_or_else(|| default.into());
+        let digits = size.trim_end_matches("Gi").trim_end_matches("Mi");
+        if digits.is_empty()
+            || digits.len() == size.len()
+            || !digits.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Err(ConfigError::Invalid {
+                var,
+                reason: format!("'{size}' is not a size such as 512Mi or 1Gi"),
+            });
+        }
+        Ok(size)
+    };
+    let work_dir = set("JC_PORTAL_BUILD_WORK_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("jc-app-builds"));
     Ok(Some(crate::apps::build_pods::Settings {
         namespace,
-        forge,
+        api,
+        bind,
         node_image: image("JC_PORTAL_BUILD_IMAGE_NODE")?,
         rust_image: image("JC_PORTAL_BUILD_IMAGE_RUST")?,
-        cache_size,
+        cache_size: size("JC_PORTAL_BUILD_CACHE_SIZE", "1Gi")?,
+        tmp_size: size("JC_PORTAL_BUILD_TMP_SIZE", "4Gi")?,
+        work_dir,
     }))
 }
 
@@ -1938,6 +1996,11 @@ impl Config {
         let app_tests = app_tests(&lookup)?;
         let branding_file = lookup("JC_BRANDING_FILE").filter(|path| !path.trim().is_empty());
         let ckan_api_route = ckan_api_route(&lookup)?;
+        let ckan_api_reach = ckan_api_route
+            .as_ref()
+            .map(|_| ckan_api_reach(&lookup))
+            .transpose()?
+            .flatten();
         let health_dir = lookup("JC_HEALTH_DIR").filter(|path| !path.trim().is_empty());
         let database_url = lookup("JC_PORTAL_DATABASE_URL").filter(|url| !url.trim().is_empty());
         let bootstrap_admins = lookup("JC_PORTAL_BOOTSTRAP_ADMINS")
@@ -2015,6 +2078,7 @@ impl Config {
             apps_url,
             branding_file,
             ckan_api_route,
+            ckan_api_reach,
             health_dir,
             database_url,
             bootstrap_admins,
@@ -2100,6 +2164,7 @@ impl Config {
             apps_url: None,
             branding_file: None,
             ckan_api_route: None,
+            ckan_api_reach: None,
             health_dir: None,
             database_url: None,
             // The dev realm's approver role: a test session that carries it may do everything,
@@ -2227,6 +2292,19 @@ mod tests {
         )
         .unwrap()
         .is_some());
+        // jc's own catalogue on its loopback listener (C1).
+        for loopback in [
+            "http://127.0.0.1:42301/opendata",
+            "http://[::1]:42301",
+            "http://localhost:42301",
+        ] {
+            assert!(
+                route(Some("https://o.example.org"), Some(loopback))
+                    .unwrap()
+                    .is_some(),
+                "{loopback}"
+            );
+        }
         for (public, api, named) in [
             (
                 None,
@@ -2255,6 +2333,11 @@ mod tests {
             ),
             (
                 Some("https://o.example.org"),
+                Some("http://localhost.example.org:5000"),
+                "JC_PORTAL_CKAN_API_URL",
+            ),
+            (
+                Some("https://o.example.org"),
                 Some("http://u:p@ckan.ckan.svc:5000"),
                 "JC_PORTAL_CKAN_API_URL",
             ),
@@ -2275,6 +2358,54 @@ mod tests {
                 }
                 other => panic!("{public:?} {api:?}: {other:?}"),
             }
+        }
+    }
+
+    /// C1: jc's own catalogue on a host mount is called on jc's loopback listener under its host
+    /// name, plain http; a reach anywhere but loopback is refused, and without a reach the same
+    /// http API URL is refused as before.
+    #[test]
+    fn the_catalogue_api_is_reached_on_loopback_only() {
+        let lookup = |reach: Option<&'static str>| {
+            move |name: &str| match name {
+                "JC_PORTAL_CKAN_URL" => Some("https://opendata.example.org".to_owned()),
+                "JC_PORTAL_CKAN_API_URL" => Some("http://opendata.example.org".to_owned()),
+                "JC_PORTAL_CKAN_API_REACH" => reach.map(str::to_owned),
+                _ => None,
+            }
+        };
+        assert!(matches!(
+            ckan_api_route(&lookup(None)),
+            Err(ConfigError::Invalid {
+                var: "JC_PORTAL_CKAN_API_URL",
+                ..
+            })
+        ));
+        let reached = lookup(Some("127.0.0.1:8080"));
+        assert!(ckan_api_route(&reached).unwrap().is_some());
+        assert_eq!(
+            ckan_api_reach(&reached).unwrap(),
+            Some("127.0.0.1:8080".parse().unwrap())
+        );
+        assert!(ckan_api_reach(&lookup(Some("[::1]:8080")))
+            .unwrap()
+            .is_some());
+        for bad in [
+            "10.0.0.7:8080",
+            "203.0.113.5:80",
+            "localhost:8080",
+            "127.0.0.1",
+        ] {
+            assert!(
+                matches!(
+                    ckan_api_route(&lookup(Some(bad))),
+                    Err(ConfigError::Invalid {
+                        var: "JC_PORTAL_CKAN_API_REACH",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
         }
     }
 
@@ -3171,7 +3302,7 @@ mod tests {
             "JC_PORTAL_BUILD_NAMESPACE" => Some("dev".to_string()),
             "JC_PORTAL_BUILD_IMAGE_NODE" => Some("r.example.org/builder@sha256:aa".to_string()),
             "JC_PORTAL_BUILD_IMAGE_RUST" => Some("r.example.org/rust@sha256:bb".to_string()),
-            "JC_SHAKO_URL" => Some("http://shako-http.dev.svc.cluster.local:3000".to_string()),
+            "JC_PORTAL_BUILD_API_URL" => Some("http://jc-build.dev.svc:9092".to_string()),
             _ => None,
         };
         let settings = Config::from_vars(complete)
@@ -3179,10 +3310,9 @@ mod tests {
             .build_pods
             .expect("every part is there");
         assert_eq!(settings.cache_size, "1Gi");
-        assert_eq!(
-            settings.forge,
-            "http://shako-http.dev.svc.cluster.local:3000"
-        );
+        assert_eq!(settings.tmp_size, "4Gi");
+        assert_eq!(settings.api, "http://jc-build.dev.svc:9092");
+        assert_eq!(settings.bind.to_string(), "0.0.0.0:9092");
 
         let without_namespace = Config::from_vars(|k| match k {
             "JC_PORTAL_BUILD_NAMESPACE" => None,
@@ -3200,7 +3330,10 @@ mod tests {
             ("JC_PORTAL_BUILD_NAMESPACE", Some("Dev_ns")),
             ("JC_PORTAL_BUILD_CACHE_SIZE", Some("1TB")),
             ("JC_PORTAL_BUILD_CACHE_SIZE", Some("Gi")),
-            ("JC_SHAKO_URL", None),
+            ("JC_PORTAL_BUILD_TMP_SIZE", Some("lots")),
+            ("JC_PORTAL_BUILD_API_URL", None),
+            ("JC_PORTAL_BUILD_API_URL", Some("jc-build:9092")),
+            ("JC_PORTAL_BUILD_BIND", Some("everywhere")),
         ] {
             let refused = Config::from_vars(|k| match k == var {
                 true => value.map(str::to_owned),

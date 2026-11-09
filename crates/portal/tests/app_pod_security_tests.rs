@@ -12,6 +12,7 @@
 
 use jcctl::loader::RawManifest;
 use joinedcontext_portal::apps::build_pods::{self, Class};
+use joinedcontext_portal::apps::build_records::Record;
 use joinedcontext_portal::apps::reconciler::{generate_slug, render, Settings};
 use serde_json::{json, Value};
 
@@ -155,10 +156,32 @@ fn app(kind: &str) -> RawManifest {
 fn build_settings() -> build_pods::Settings {
     build_pods::Settings {
         namespace: "dev-ovzdusie-apps".into(),
-        forge: "http://shako-http.dev.svc.cluster.local:3000".into(),
+        api: "http://jc-portal-build.dev.svc.cluster.local:9092".into(),
+        bind: "0.0.0.0:9092".parse().expect("an address"),
         node_image: "registry.example.org/builder@sha256:aa".into(),
         rust_image: "registry.example.org/builder-rust@sha256:bb".into(),
         cache_size: "1Gi".into(),
+        tmp_size: "4Gi".into(),
+        work_dir: std::env::temp_dir().join("jc-app-builds"),
+    }
+}
+
+fn build(class: Class) -> Record {
+    Record {
+        id: 7,
+        project: "helsinki".into(),
+        app: "air-quality-today".into(),
+        commit: "8c56954a1f0e3d2c1b0a99887766554433221100".into(),
+        class: class.name().into(),
+        trigger: "push".into(),
+        requested_by: None,
+        state: "pending".into(),
+        expires_at: None,
+        created_at: chrono::Utc::now(),
+        started_at: None,
+        finished_at: None,
+        digest: None,
+        reason: None,
     }
 }
 
@@ -185,7 +208,7 @@ fn every_app_pod_passes_the_restricted_pod_security_profile() {
 #[test]
 fn every_build_pod_passes_the_restricted_pod_security_profile() {
     for class in [Class::Node, Class::Rust] {
-        let job = build_pods::job(&build_settings(), class, "air-quality-today", 7);
+        let job = build_pods::job(&build_settings(), &build(class));
         let pod = &job["spec"]["template"]["spec"];
         assert_eq!(
             restricted_violations(pod),
