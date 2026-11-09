@@ -669,17 +669,26 @@ async fn open_project(jc: &Jc) {
 /// the gateway was not built ("git does not run") and every Endpoint read answered 503.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_gateway_reads_the_forge_with_no_program_on_the_path() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    realm_file(
-        &root.join("realms"),
-        &root.join("realm-secrets"),
-        "jc",
-        "00-e2e.json",
-    );
-    let empty = root.join("no-programs");
-    std::fs::create_dir_all(&empty).unwrap();
-    let jc = start_at(root, free_port(), &[], &[("PATH", empty.to_str().unwrap())]).await;
+    // A start that lost its port to another bind begins again in a fresh directory.
+    let mut started = None;
+    for _ in 0..5 {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        realm_file(
+            &root.join("realms"),
+            &root.join("realm-secrets"),
+            "jc",
+            "00-e2e.json",
+        );
+        let empty = root.join("no-programs");
+        std::fs::create_dir_all(&empty).unwrap();
+        let envs = [("PATH", empty.to_str().unwrap())];
+        if let Some(jc) = start_at(root, free_port(), &[], &envs).await {
+            started = Some((dir, jc));
+            break;
+        }
+    }
+    let (_dir, jc) = started.expect("jc lost its listen port to another bind 5 times");
     open_project(&jc).await;
     let (status, body) = call(
         &jc,
