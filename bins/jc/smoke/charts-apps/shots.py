@@ -48,11 +48,12 @@ class Browser:
         self._browser.close()
         self._pw.stop()
 
-    def _page(self, width: int, token: str | None = None):
-        headers = {"Authorization": f"Bearer {token}"} if token else None
-        ctx = self._browser.new_context(viewport={"width": width, "height": 900}, locale="en-GB",
-                                        extra_http_headers=headers)
-        ctx.add_cookies(self.cookies)
+    def _page(self, width: int, portal: bool = True):
+        """`portal`: with the suite's Portal session cookies. An App's page gets none: its host is
+        another origin, and route.fetch would send the Portal's CSRF cookie beside the App's."""
+        ctx = self._browser.new_context(viewport={"width": width, "height": 900}, locale="en-GB")
+        if portal:
+            ctx.add_cookies(self.cookies)
         page = ctx.new_page()
         page.set_default_timeout(self.timeout)
         return ctx, page
@@ -102,7 +103,7 @@ class Browser:
         client, sent as the edge sends it on prod."""
         rows, path = [], app_host(self.base, name) + "/"
         for width in WIDTHS:
-            ctx, page = self._page(width)
+            ctx, page = self._page(width, portal=False)
 
             def edge(route, request, base=self.base):
                 url = edge_rewrite(base, name, request.url)
