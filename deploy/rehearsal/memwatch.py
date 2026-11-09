@@ -6,6 +6,7 @@ from /proc/<pid>/status, and the allocator's allocated and resident bytes plus t
 pool from the broker's /q/health (jemalloc stats of the whole process: one global allocator).
 One CSV row per sample, sizes in KiB. The pid file is reread each sample (up.sh restarts jc); runs
 until killed. Loopback bases only."""
+
 import argparse
 import csv
 import json
@@ -59,7 +60,9 @@ def main(argv):
     if host not in ("localhost", "127.0.0.1", "::1"):
         print(f"refusing {a.base}: loopback only", file=sys.stderr)
         return 2
-    token = Path(a.token_file).read_text(encoding="ascii").strip() if a.token_file else None
+    token = (
+        Path(a.token_file).read_text(encoding="ascii").strip() if a.token_file else None
+    )
     cols = ("ts", "label", "pid", *FIELDS, "allocated", "resident", "poolHeld")
     with open(a.out, "a", newline="", encoding="ascii") as f:
         w = csv.DictWriter(f, fieldnames=cols)
