@@ -338,39 +338,12 @@ fn probe(chat_state: Arc<ChatState>, ready: Arc<AtomicBool>) -> axum::Router {
         )
 }
 
-/// The embedder service when `JC_ASSISTANT_EMBEDDER_URL` names one (with
-/// `JC_ASSISTANT_EMBEDDER_TOKEN_URL`, `JC_ASSISTANT_EMBEDDER_CLIENT_ID`, default `jc-assistant`,
-/// and `JC_ASSISTANT_EMBEDDER_CLIENT_SECRET_FILE`), else the model in this process from
-/// `JC_ASSISTANT_MODEL_DIR`. Either is required; a service that fails later is an error, never a
-/// switch to the local model.
+/// The embedder [`Embedder::from_lookup`] names, over the process environment.
 fn embedder_from_env(env: &impl Fn(&str) -> Option<String>) -> Result<Embedder, String> {
-    let Some(url) = env("JC_ASSISTANT_EMBEDDER_URL") else {
-        let dir = env("JC_ASSISTANT_MODEL_DIR")
-            .ok_or("JC_ASSISTANT_MODEL_DIR or JC_ASSISTANT_EMBEDDER_URL is required")?;
-        let threads = embed_threads(env)?;
-        return Embedder::load(std::path::Path::new(&dir), threads).map_err(|e| e.to_string());
-    };
-    let token_url = env("JC_ASSISTANT_EMBEDDER_TOKEN_URL")
-        .ok_or("JC_ASSISTANT_EMBEDDER_TOKEN_URL is required with JC_ASSISTANT_EMBEDDER_URL")?;
-    let file = env("JC_ASSISTANT_EMBEDDER_CLIENT_SECRET_FILE").ok_or(
-        "JC_ASSISTANT_EMBEDDER_CLIENT_SECRET_FILE is required with JC_ASSISTANT_EMBEDDER_URL",
-    )?;
-    let secret = std::fs::read_to_string(&file)
-        .map_err(|err| {
-            format!("JC_ASSISTANT_EMBEDDER_CLIENT_SECRET_FILE could not be read: {err}")
-        })?
-        .trim()
-        .to_owned();
-    if secret.is_empty() {
-        return Err("JC_ASSISTANT_EMBEDDER_CLIENT_SECRET_FILE is empty".into());
+    if env("JC_ASSISTANT_EMBEDDER_URL").is_some() {
+        return Embedder::from_lookup(env, 1);
     }
-    Embedder::remote(jc_embedder::client::RemoteConfig {
-        url,
-        token_url,
-        client_id: env("JC_ASSISTANT_EMBEDDER_CLIENT_ID").unwrap_or_else(|| "jc-assistant".into()),
-        client_secret: secret,
-    })
-    .map_err(|e| e.to_string())
+    Embedder::from_lookup(env, embed_threads(env)?)
 }
 
 /// `JC_ASSISTANT_EMBED_THREADS`: 2 when unset, else a number from 1 to 16.
@@ -525,30 +498,6 @@ mod startup_tests {
         ];
         pairs.extend_from_slice(extra);
         pairs
-    }
-
-    #[test]
-    fn the_embedder_is_the_local_model_or_the_service_never_neither() {
-        let err = |pairs: &[(&str, &str)]| embedder_from_env(&env(pairs)).err().expect("refused");
-        assert!(err(&[]).contains("JC_ASSISTANT_MODEL_DIR or JC_ASSISTANT_EMBEDDER_URL"));
-        let url = ("JC_ASSISTANT_EMBEDDER_URL", "https://embedder.test");
-        // With the service named, a model directory is not a way around its missing client.
-        assert!(err(&[url, ("JC_ASSISTANT_MODEL_DIR", "/models")])
-            .contains("JC_ASSISTANT_EMBEDDER_TOKEN_URL"));
-        let token = ("JC_ASSISTANT_EMBEDDER_TOKEN_URL", "https://id.test/token");
-        assert!(err(&[url, token]).contains("JC_ASSISTANT_EMBEDDER_CLIENT_SECRET_FILE"));
-        let empty = std::env::temp_dir().join(format!("embedder-secret-{}", std::process::id()));
-        std::fs::write(&empty, "  \n").expect("write");
-        let file = (
-            "JC_ASSISTANT_EMBEDDER_CLIENT_SECRET_FILE",
-            empty.to_str().expect("path"),
-        );
-        assert!(err(&[url, token, file]).contains("is empty"));
-        std::fs::write(&empty, "s3cret\n").expect("write");
-        assert!(embedder_from_env(&env(&[url, token, file])).is_ok());
-        let ftp = ("JC_ASSISTANT_EMBEDDER_URL", "ftp://embedder.test");
-        assert!(embedder_from_env(&env(&[ftp, token, file])).is_err());
-        std::fs::remove_file(&empty).ok();
     }
 
     #[test]
