@@ -261,6 +261,7 @@ async fn write_attrs(
             return Err(Unwritten::Untouched);
         }
         target.insert("modifiedAt".into(), Value::String(ts.clone()));
+        Condition::post(cond.as_ref(), doc)?;
         #[cfg(feature = "views")]
         if let Some(g) = &guard {
             g.post(doc)?;
@@ -290,6 +291,7 @@ async fn write_attrs(
             Err(Unwritten::Failed(e)) => return Err(e.into()),
             Err(Unwritten::Untouched) => {}
             Ok(()) => {
+                Condition::verdict(cond.as_ref())?;
                 #[cfg(feature = "views")]
                 if let Some(g) = &guard {
                     g.settled()?;
@@ -304,6 +306,7 @@ async fn write_attrs(
     } else {
         let res = st.store.mutate(&tenant, Kind::Entity, id, apply).await?;
         crate::history::settle(id, matches!(res, Some(Ok(()))));
+        Condition::verdict(cond.as_ref())?;
         #[cfg(feature = "views")]
         if let Some(g) = &guard {
             g.settled()?;
@@ -945,35 +948,26 @@ async fn partial_update_inner(
     // that is not an Attribute.
     let attr_iri = antares_jsonld::expand_attr_name(attr, &parsed.ctx)?;
     let pre = crate::policy::pre_image(st, &tenant, id, None).await?;
+    // the body as the Attribute it writes, as 5.6.19 passes it: an engine
+    // reading the body's location (an area grant) sees the new one (F-08)
+    let written = serde_json::json!({ attr_iri.clone(): [frag_inst.clone()] });
     let granted = gate!(
         st, &tenant, headers, "5.6.4",
         ids: &[id],
         types: &pre.types,
         stored: pre.stored.as_ref(),
         attrs: std::slice::from_ref(&attr_iri),
-        body: Some(&frag_inst),
+        body: Some(&written),
     )
     .await?;
     #[cfg(feature = "views")]
-    crate::views::schema_admits(
-        st,
-        &tenant,
-        id,
-        &serde_json::json!({ attr_iri.clone(): [frag_inst.clone()] }),
-        &pre.types,
-    )
-    .await?;
+    crate::views::schema_admits(st, &tenant, id, &written, &pre.types).await?;
     let cond = Condition::of(&granted);
     #[cfg(feature = "views")]
     let guard = crate::views::WriteGuard::of(st, [attr_iri.as_str()]).map(|g| g.matching(headers));
     #[cfg(feature = "views")]
     if let Some(g) = &guard {
-        g.targets(
-            st,
-            &tenant,
-            &serde_json::json!({ attr_iri.clone(): [frag_inst.clone()] }),
-        )
-        .await?;
+        g.targets(st, &tenant, &written).await?;
     }
     // 5.6.4.4: "If the target Attribute is scope, then an error of type
     // BadRequestData shall be raised."
@@ -1067,6 +1061,7 @@ async fn partial_update_inner(
                 if found {
                     target.insert("modifiedAt".into(), Value::String(ts.clone()));
                 }
+                Condition::post(cond.as_ref(), doc)?;
                 #[cfg(feature = "views")]
                 if let Some(g) = &guard {
                     g.post(doc)?;
@@ -1074,6 +1069,7 @@ async fn partial_update_inner(
                 Ok::<(), NgsiError>(())
             })
             .await?;
+        Condition::verdict(cond.as_ref())?;
         #[cfg(feature = "views")]
         if let Some(g) = &guard {
             g.settled()?;
@@ -1245,6 +1241,7 @@ pub async fn replace_attr(
                     if found {
                         target.insert("modifiedAt".into(), Value::String(ts.clone()));
                     }
+                    Condition::post(cond.as_ref(), doc)?;
                     #[cfg(feature = "views")]
                     if let Some(g) = &guard {
                         g.post(doc)?;
@@ -1252,6 +1249,7 @@ pub async fn replace_attr(
                     Ok::<(), NgsiError>(())
                 })
                 .await?;
+            Condition::verdict(cond.as_ref())?;
             #[cfg(feature = "views")]
             if let Some(g) = &guard {
                 g.settled()?;
@@ -1434,6 +1432,7 @@ async fn set_attr_value_inner(
                 *slot = ni;
                 found = true;
                 target.insert("modifiedAt".into(), Value::String(ts.clone()));
+                Condition::post(cond.as_ref(), doc)?;
                 #[cfg(feature = "views")]
                 if let Some(g) = &guard {
                     g.post(doc)?;
@@ -1441,6 +1440,7 @@ async fn set_attr_value_inner(
                 Ok::<(), NgsiError>(())
             })
             .await?;
+        Condition::verdict(cond.as_ref())?;
         #[cfg(feature = "views")]
         if let Some(g) = &guard {
             g.settled()?;
@@ -1655,6 +1655,7 @@ async fn delete_attr_inner(
                     if found {
                         target.insert("modifiedAt".into(), Value::String(ts.clone()));
                     }
+                    Condition::post(cond.as_ref(), doc)?;
                     #[cfg(feature = "views")]
                     if let Some(g) = &guard {
                         g.post(doc)?;
@@ -1682,6 +1683,7 @@ async fn delete_attr_inner(
                 if found {
                     target.insert("modifiedAt".into(), Value::String(ts.clone()));
                 }
+                Condition::post(cond.as_ref(), doc)?;
                 #[cfg(feature = "views")]
                 if let Some(g) = &guard {
                     g.post(doc)?;
@@ -1689,6 +1691,7 @@ async fn delete_attr_inner(
                 Ok::<(), NgsiError>(())
             })
             .await?;
+        Condition::verdict(cond.as_ref())?;
         #[cfg(feature = "views")]
         if let Some(g) = &guard {
             g.settled()?;

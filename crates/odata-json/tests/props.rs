@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! Reader round trips: a body built from random values of every declared type reads back to
 //! exactly those values, keys and binds (ADR-0024 decision 8).
 

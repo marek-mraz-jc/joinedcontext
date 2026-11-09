@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! Every bound of `Limits` holds at its value and answers `LimitExceeded` one past it, in both
 //! formats (threat model O11).
 

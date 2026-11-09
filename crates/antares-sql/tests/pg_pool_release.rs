@@ -9,7 +9,7 @@
 
 #![cfg(feature = "postgres")]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -34,6 +34,8 @@ macro_rules! require_db {
 struct Relay {
     url: String,
     open: Arc<Mutex<Vec<Arc<AtomicBool>>>>,
+    /// ReadyForQuery messages the server sent: one per round trip.
+    ready: Arc<AtomicUsize>,
 }
 
 impl Relay {
@@ -53,6 +55,8 @@ impl Relay {
         let through = format!("postgres://{user}@127.0.0.1:{port}/{path}");
         let open: Arc<Mutex<Vec<Arc<AtomicBool>>>> = Arc::default();
         let streams = open.clone();
+        let ready: Arc<AtomicUsize> = Arc::default();
+        let counted = ready.clone();
         tokio::spawn(async move {
             while let Ok((client, _)) = listener.accept().await {
                 let Ok(server) = TcpStream::connect(&upstream).await else {
@@ -62,11 +66,15 @@ impl Relay {
                 streams.lock().expect("lock").push(frozen.clone());
                 let (cr, cw) = client.into_split();
                 let (sr, sw) = server.into_split();
-                tokio::spawn(pipe(cr, sw, frozen.clone()));
-                tokio::spawn(pipe(sr, cw, frozen));
+                tokio::spawn(pipe(cr, sw, frozen.clone(), None));
+                tokio::spawn(pipe(sr, cw, frozen, Some(counted.clone())));
             }
         });
-        Self { url: through, open }
+        Self {
+            url: through,
+            open,
+            ready,
+        }
     }
 
     fn freeze(&self) {
@@ -80,8 +88,12 @@ async fn pipe(
     mut from: tokio::net::tcp::OwnedReadHalf,
     mut to: tokio::net::tcp::OwnedWriteHalf,
     frozen: Arc<AtomicBool>,
+    ready: Option<Arc<AtomicUsize>>,
 ) {
     let mut buf = vec![0u8; 16 * 1024];
+    // The last bytes of the previous read, so a message split across two
+    // reads is still counted.
+    let mut tail: Vec<u8> = Vec::new();
     loop {
         let Ok(n) = from.read(&mut buf).await else {
             return;
@@ -93,10 +105,75 @@ async fn pipe(
             // Holds both halves open and forwards nothing, ever.
             std::future::pending::<()>().await;
         }
+        if let Some(ready) = &ready {
+            tail.extend_from_slice(&buf[..n]);
+            // ReadyForQuery: 'Z', length 5, one status byte.
+            let found = tail
+                .windows(6)
+                .filter(|w| w[..5] == *b"Z\0\0\0\x05" && matches!(w[5], b'I' | b'T' | b'E'))
+                .count();
+            ready.fetch_add(found, Ordering::SeqCst);
+            let keep = tail.len().min(5);
+            tail.drain(..tail.len() - keep);
+        }
         if to.write_all(&buf[..n]).await.is_err() {
             return;
         }
     }
+}
+
+/// T-6606 (R2-003): an operation is BEGIN, its statement and COMMIT, then
+/// the bounded release ping and sqlx's own release ping. sqlx's acquire
+/// ping on a connection released a moment ago added a sixth round trip.
+#[tokio::test]
+async fn a_warm_transaction_costs_five_round_trips() {
+    let url = require_db!();
+    let relay = Relay::start(&url).await;
+    let pool = antares_sql::store::pg::connect_with(&relay.url, 1, Duration::from_secs(30))
+        .await
+        .expect("pool through the relay");
+    sqlx::query("SELECT 1").execute(&pool).await.expect("warm");
+    // its release pings run after `execute` returns
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let before = relay.ready.load(Ordering::SeqCst);
+    const OPS: usize = 10;
+    for _ in 0..OPS {
+        let mut tx = pool.begin().await.expect("begin");
+        sqlx::query("SELECT 1")
+            .execute(&mut *tx)
+            .await
+            .expect("select");
+        tx.commit().await.expect("commit");
+    }
+    // the last release runs after `commit` returns
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let trips = relay.ready.load(Ordering::SeqCst) - before;
+    assert_eq!(trips, OPS * 5, "round trips for {OPS} transactions");
+}
+
+/// T-6606: a connection idle past `ACQUIRE_PING_IDLE` is pinged within the
+/// bound before it serves, so one whose stream stalled in the pool is
+/// replaced instead of hanging its next statement or the acquire.
+#[tokio::test]
+async fn an_idle_connection_whose_stream_stalled_is_replaced_on_acquire() {
+    let url = require_db!();
+    let relay = Relay::start(&url).await;
+    let pool = antares_sql::store::pg::connect_with(&relay.url, 1, Duration::from_secs(30))
+        .await
+        .expect("pool through the relay");
+    sqlx::query("SELECT 1").execute(&pool).await.expect("warm");
+    tokio::time::sleep(antares_sql::store::pg::ACQUIRE_PING_IDLE + Duration::from_millis(200))
+        .await;
+    relay.freeze();
+    let served = tokio::time::timeout(
+        Duration::from_secs(10),
+        sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&pool),
+    )
+    .await;
+    assert!(
+        matches!(served, Ok(Ok(1))),
+        "the stalled idle connection was handed out: {served:?}"
+    );
 }
 
 #[tokio::test]

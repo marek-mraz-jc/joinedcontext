@@ -919,6 +919,7 @@ async fn query_entities_inner(
         page: push_page.then_some((p_offset, p_limit)),
         proj: push_proj.then_some(&repr),
         order_keys: order_keys.as_deref(),
+        q: q_ast.as_ref(),
     };
     let shape = {
         let (repr, ctx) = (repr.clone(), ctx.clone());
@@ -1539,7 +1540,7 @@ impl ReadMembers {
         if st.policy.is_none() {
             return Self::default();
         }
-        match request_context(&st.loader, headers).await {
+        match crate::negotiate::request_context_quiet(&st.loader, headers).await {
             Ok(ctx) => Self::with_ctx(st, params, &ctx),
             Err(_) => Self::default(),
         }
@@ -1556,6 +1557,9 @@ pub struct Pushdown<'a> {
     /// the whole match set, and these alone are what the sort needs
     /// ([`Filtered::trimmed`]).
     pub order_keys: Option<&'a [String]>,
+    /// `params`' own `q`, parsed already by the caller; `None` parses it
+    /// again (T-6610 R1-017: a query parsed its narrowed `q` twice).
+    pub q: Option<&'a antares_ql::QNode>,
 }
 
 /// The full filtering path (5.7.2). `push.page` = (offset, limit) to push into the
@@ -1619,6 +1623,7 @@ async fn filter_rows(
         page,
         proj,
         order_keys,
+        q: parsed_q,
     } = push;
     // a keyset cursor (T-4907): the store seeks past its id, so the rows
     // already start at the client's offset and every page below is counted
@@ -1668,7 +1673,10 @@ async fn filter_rows(
         // the query may be narrowed: every caller parsed its own `q` with
         // `parse_q` before (threat V23)
         Some(q) => Some(antares_ql::eval::apply_expand_values(
-            antares_ql::parse_narrowed_q(q)?,
+            match parsed_q {
+                Some(node) => node.clone(),
+                None => antares_ql::parse_narrowed_q(q)?,
+            },
             antares_ql::eval::expansion_list(
                 params.get("expandValues").map(String::as_str),
                 params.get("jsonKeys").map(String::as_str),
@@ -2363,6 +2371,7 @@ async fn purge_locally(
                 page: Some((offset, PURGE_CHUNK)),
                 proj: None,
                 order_keys: None,
+                q: None,
             },
             // 5.6.21.4 refuses linked q terms before a purge runs
             None,
@@ -2835,6 +2844,7 @@ async fn merge_entity_inner(
             raw.apply(doc, &mut frag)?;
             apply_common_lang(doc, &mut frag, lang);
             merge_into(doc, &frag, &ts);
+            crate::policy::Condition::post(cond.as_ref(), doc)?;
             #[cfg(feature = "views")]
             if let Some(g) = &guard {
                 g.post(doc)?;
@@ -2843,6 +2853,7 @@ async fn merge_entity_inner(
         })
         .await?;
     crate::history::settle(id, matches!(res, Some(Ok(()))));
+    crate::policy::Condition::verdict(cond.as_ref())?;
     #[cfg(feature = "views")]
     if let Some(g) = &guard {
         g.settled()?;
@@ -3389,6 +3400,7 @@ pub async fn replace_entity(
                         o.insert("createdAt".into(), created);
                     }
                     *doc = expanded.clone();
+                    crate::policy::Condition::post(cond.as_ref(), doc)?;
                     #[cfg(feature = "views")]
                     if let Some(g) = &guard {
                         g.post(doc)?;
@@ -3396,6 +3408,7 @@ pub async fn replace_entity(
                     Ok::<(), NgsiError>(())
                 })
                 .await?;
+            crate::policy::Condition::verdict(cond.as_ref())?;
             #[cfg(feature = "views")]
             if let Some(g) = &guard {
                 g.settled()?;
@@ -3707,6 +3720,7 @@ pub(crate) async fn build_query_map(
                 page: Some((offset, st.max_limit)),
                 proj: None,
                 order_keys: None,
+                q: None,
             },
             Some(&narrow),
         )

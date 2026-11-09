@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! Unit tests: every rule of the subset, its errors, its limits and the canonical writer.
 
 use super::*;
@@ -480,6 +480,19 @@ fn methods_and_lambdas() {
         matches!(geo, Expr::Call(Method::GeoIntersects, _)),
         "{geo:?}"
     );
+    // URL 5.1.1.11.1, ABNF distanceMethodCallExpr: the call is a number to compare
+    let far = filter("geo.distance(location,geography'SRID=4326;Point(1 2)') lt 10.5");
+    let Expr::Compare(call, CompareOp::Lt, _) = &far else {
+        panic!("{far:?}")
+    };
+    assert!(
+        matches!(&**call, Expr::Call(Method::GeoDistance, args) if args.len() == 2),
+        "{far:?}"
+    );
+    assert_eq!(
+        far.to_string(),
+        "geo.distance(location,geography'SRID=4326;Point(1%202)')%20lt%2010.5"
+    );
     let any = filter("rooms/any(r:r/area gt 10)");
     let Expr::Any {
         collection,
@@ -573,7 +586,7 @@ fn filter_errors() {
         ("name in (name)", Feature::InExpression, 8),
         ("totalseconds(name) gt 1", Feature::Method, 0),
         ("hassubset(tags,tags)", Feature::Method, 0),
-        ("geo.distance(location,location) lt 1", Feature::Method, 0),
+        ("geo.length(location) lt 1", Feature::Method, 0),
         ("cast(name,Edm.String)", Feature::CastIsOf, 0),
         ("isof(Model.Tower)", Feature::CastIsOf, 0),
         ("[1,2]", Feature::JsonLiteral, 0),
@@ -591,9 +604,9 @@ fn filter_errors() {
         ("name/@Core.Size/x", Feature::AnnotationPath, 5),
         ("tags/@Core.Size/x", Feature::AnnotationPath, 5),
         (
-            "height gt geometry'SRID=0;Point(1 1)'",
+            "height gt geometry'SRID=0;LineString(1 1,2 2)'",
             Feature::Literal,
-            10,
+            26,
         ),
     ] {
         refused(

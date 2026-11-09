@@ -999,7 +999,7 @@ fn sub_members(norm: &Map<String, Value>) -> crate::entities::ReadMembers {
 /// Whether `st` serves through an endpoint view (ADR-0023).
 #[cfg(feature = "views")]
 fn through_a_view(st: &AppState) -> bool {
-    st.view.is_some()
+    st.view().is_some()
 }
 
 /// A vanilla build serves through no view.
@@ -1012,7 +1012,7 @@ fn through_a_view(_: &AppState) -> bool {
 /// view, only that view's own (rule 9, threat V24); at the root, all.
 #[cfg(feature = "views")]
 fn own(st: &AppState, doc: &Value) -> bool {
-    st.view.is_none() || crate::views::owns(st.view.as_deref(), doc)
+    st.view().is_none() || crate::views::owns(st.view().as_deref(), doc)
 }
 
 /// A vanilla build serves every Subscription of the tenant.
@@ -1117,7 +1117,7 @@ pub async fn create(
     // ADR-0023 rule 9: a Subscription made through a view watches only what
     // the view shows, and carries the view's id to match and deliver under.
     #[cfg(feature = "views")]
-    if let Some(view) = st.view.as_deref() {
+    if let Some(view) = st.view().as_deref() {
         view_watched(view, &mut norm)?;
         norm.insert(
             crate::views::VIEW_MEMBER.into(),
@@ -1383,7 +1383,7 @@ pub async fn update(
     #[cfg(feature = "views")]
     let norm = {
         let mut norm = norm;
-        if let Some(view) = st.view.as_deref() {
+        if let Some(view) = st.view().as_deref() {
             view_watched(view, &mut norm)?;
         }
         norm

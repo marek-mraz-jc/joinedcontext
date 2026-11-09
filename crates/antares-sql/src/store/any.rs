@@ -1635,6 +1635,14 @@ impl AnyStore {
             AnyStore::Pg(p) => {
                 async {
                     let mut tx = tenant_tx(p, tenant).await?;
+                    // Waits for every write holding the tenant's shared
+                    // fence (`pg::claim_tenant`) and holds later ones off
+                    // until this commits.
+                    sqlx::query(crate::store::pg::PURGE_FENCE_SQL)
+                        .bind(tenant.as_str())
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db)?;
                     let known = sqlx::query_scalar::<_, i32>(
                         "SELECT 1 FROM tenants WHERE tenant_id = $1 FOR UPDATE",
                     )
@@ -2119,6 +2127,30 @@ impl antares_store::CurrentStateDriver for AnyStore {
             }
         }
         antares_store::record_delivery_via_mutate(self, tenant, kind, id, now).await
+    }
+    /// The Postgres arm books the failure in ONE statement (see
+    /// `pg::doc::record_failure`); every other arm goes through `mutate`.
+    async fn record_failure(
+        &self,
+        tenant: &TenantId,
+        kind: Kind,
+        id: &str,
+        prev_success: Option<Value>,
+        now: &str,
+    ) -> Result<Option<Value>, NgsiError> {
+        #[cfg(feature = "postgres")]
+        {
+            if let (AnyStore::Pg(p), Ok(dk)) = (self, doc_kind(kind)) {
+                if dk.has_bookkeeping() {
+                    return p
+                        .docs
+                        .record_failure(tenant, dk, id, prev_success.as_ref(), now)
+                        .await
+                        .map_err(db);
+                }
+            }
+        }
+        antares_store::record_failure_via_mutate(self, tenant, kind, id, prev_success, now).await
     }
     /// The Postgres arm books every attempt in ONE statement (see
     /// `pg::doc::record_deliveries`); every other arm books them one by one.

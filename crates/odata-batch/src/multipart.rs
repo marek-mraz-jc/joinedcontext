@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! `multipart/mixed` batches (Protocol 4.01 section 11.7.7, RFC 2046 section 5.1) over a byte
 //! slice already bounded by `max_body_bytes`. Strict where a lenient reader would let two parsers
 //! disagree about where a member ends (threat model O10): no preamble, no epilogue, no header

@@ -511,10 +511,8 @@ impl OperationId {
     #[must_use]
     pub fn of(method: &str, path: &str, query: Option<&str>) -> Option<Self> {
         let mut plain = None;
-        for op in Self::ALL {
-            let Some(binding) = Binding::parse(op.binding()) else {
-                continue;
-            };
+        for (op, binding) in BINDINGS.iter() {
+            let op = *op;
             if !binding.matches(method, path, query) {
                 continue;
             }
@@ -527,6 +525,20 @@ impl OperationId {
     }
 }
 
+/// Every operation's binding, parsed once per process: [`OperationId::of`]
+/// runs per inner call (each scan page, history batch and N+1 read), and a
+/// parse per call allocated every path template again (T-6612, R3-004).
+static BINDINGS: std::sync::LazyLock<Vec<(OperationId, Binding<'static>)>> =
+    std::sync::LazyLock::new(|| {
+        OperationId::ALL
+            .into_iter()
+            .filter_map(|op| Some((op, Binding::parse(op.binding())?)))
+            .collect()
+    });
+
+#[cfg(test)]
+static PARSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// A binding as parsed from its matrix text.
 struct Binding<'a> {
     methods: &'a str,
@@ -536,6 +548,8 @@ struct Binding<'a> {
 
 impl<'a> Binding<'a> {
     fn parse(text: &'a str) -> Option<Self> {
+        #[cfg(test)]
+        PARSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if text.contains("broker-initiated") {
             return None;
         }
@@ -595,5 +609,25 @@ fn template_matches(template: &str, path: &str) -> bool {
             (Some(w), Some(h)) if w == h => {}
             _ => return false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_bindings_are_parsed_once_per_process() {
+        for _ in 0..100 {
+            assert_eq!(
+                OperationId::of("GET", "/ngsi-ld/v1/types", None),
+                Some(OperationId::RetrieveEntityTypes)
+            );
+        }
+        let parses = PARSES.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            parses <= OperationId::ALL.len(),
+            "{parses} binding parses for 100 lookups"
+        );
     }
 }

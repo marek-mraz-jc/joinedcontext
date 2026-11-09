@@ -1651,10 +1651,12 @@ fn serve(
     conn_permits: std::sync::Arc<tokio::sync::Semaphore>,
     header_read_timeout: std::time::Duration,
 ) {
-    // Over the connection cap: drop the accepted stream immediately. The
-    // permit rides in the connection task, so the slot frees exactly when
-    // the connection ends — and never enters the inflight drain accounting.
+    // Over the connection cap: answer 503 instead of serving (`refuse`).
+    // The permit rides in the connection task, so the slot frees exactly
+    // when the connection ends — and never enters the inflight drain
+    // accounting.
     let Ok(permit) = conn_permits.try_acquire_owned() else {
+        refuse(stream, header_read_timeout);
         return;
     };
     inflight.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1692,6 +1694,41 @@ fn serve(
             }
         }
         inflight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    });
+}
+
+/// How many over-cap connections are answered at once. Past it the stream is
+/// dropped as before, so a flood costs at most this many small tasks.
+const REFUSE_AT_ONCE: usize = 256;
+static REFUSING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(REFUSE_AT_ONCE);
+
+/// A connection over ANTARES_MAX_CONNECTIONS reads `503` with
+/// `Retry-After: 1` and `Connection: close` instead of a bare reset, so the
+/// client can back off (T-6614, R1-030). Bounded twice: [`REFUSE_AT_ONCE`]
+/// refusals in flight, each cut after five seconds; past that the stream is
+/// dropped, the old behaviour.
+fn refuse(stream: tokio::net::TcpStream, header_read_timeout: std::time::Duration) {
+    let Ok(permit) = REFUSING.try_acquire() else {
+        return;
+    };
+    tokio::spawn(async move {
+        let _permit = permit;
+        let svc = hyper::service::service_fn(|_req: hyper::Request<hyper::body::Incoming>| async {
+            let mut res = hyper::Response::new(axum::body::Body::empty());
+            *res.status_mut() = hyper::StatusCode::SERVICE_UNAVAILABLE;
+            res.headers_mut().insert(
+                hyper::header::RETRY_AFTER,
+                hyper::header::HeaderValue::from_static("1"),
+            );
+            Ok::<_, std::convert::Infallible>(res)
+        });
+        let mut builder = hyper::server::conn::http1::Builder::new();
+        builder
+            .timer(hyper_util::rt::TokioTimer::new())
+            .header_read_timeout(header_read_timeout)
+            .keep_alive(false);
+        let conn = builder.serve_connection(hyper_util::rt::TokioIo::new(stream), svc);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), conn).await;
     });
 }
 
@@ -1911,6 +1948,37 @@ mod accept_loop_tests {
                 "{kind:?} would spin the loop without a pause"
             );
         }
+    }
+
+    /// T-6614 (R1-030): a connection over the cap reads a 503 with
+    /// Retry-After before the close, not a bare reset.
+    #[tokio::test]
+    async fn a_connection_over_the_cap_reads_503() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let client = tokio::spawn(async move {
+            let mut c = tokio::net::TcpStream::connect(addr).await.expect("connect");
+            c.write_all(b"GET /ngsi-ld/v1/entities HTTP/1.1\r\nHost: x\r\n\r\n")
+                .await
+                .expect("write");
+            let mut answer = String::new();
+            let _ = c.read_to_string(&mut answer).await;
+            answer
+        });
+        let (stream, _) = listener.accept().await.expect("accept");
+        super::refuse(stream, std::time::Duration::from_secs(2));
+        let answer = tokio::time::timeout(std::time::Duration::from_secs(5), client)
+            .await
+            .expect("answered in time")
+            .expect("client task");
+        assert!(answer.starts_with("HTTP/1.1 503"), "{answer}");
+        assert!(
+            answer.to_ascii_lowercase().contains("retry-after: 1"),
+            "{answer}"
+        );
     }
 
     /// …and the healthy path still hands the loop its connection.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! JSON batches: the JSON Format 4.01 section 19 example, member shapes and the refused forms.
 
 #[cfg(test)]

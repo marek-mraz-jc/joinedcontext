@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! `queryOptions` (ABNF section 2): system query options, parameter aliases and custom options.
 
 use crate::cursor::{count, Cursor};

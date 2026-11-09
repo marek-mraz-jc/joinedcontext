@@ -301,10 +301,23 @@ past its type's range is refused (`Size eq 9223372036854775808`), and
 `null` compares with any member. A number past 2^53 is `400` (NGSI-LD
 compares `f64`). A filter longer than 4096 bytes as `q` is `400`
 `TooComplexQuery`. Paths past one hop, durations, `cast`, `isof`,
-`case`, `hassubset`, `hassubsequence`, `totalseconds`, `geo.distance` and
-`geo.length` are `501`.
+`case`, `hassubset`, `hassubsequence`, `totalseconds`, `geo.length` and
+`has` (the model declares no enumeration) are `501`. A `geometry'...'`
+literal is `400`: no NGSI-LD value is planar, so it meets no member.
 
-Evaluated by the surface (T-3758, T-3749): `not` over any filter here
+`geo.distance(location, geography'SRID=4326;Point(x y)') lt 500` (or
+`le`, `gt`, `ge`, either side) as a top-level conjunct is the NGSI-LD
+`georel=near;maxDistance==500` (`minDistance` for `gt`, `ge`): the
+distance is in metres, and `maxDistance` holds at the bound itself, so
+`lt` also admits a point exactly 500 m away. Under `or` or `not`, beside
+a second distance or beside `ngsild.georel` it is `501`: a distance has
+no evaluator (ADR-0028 rule 8).
+
+Evaluated by the surface (T-3758, T-3749, T-6631): the base members
+`id` in any expression (`length(id) gt 30`, `matchesPattern(id,'^urn')`),
+`createdAt` and `modifiedAt` (asked with `options=sysAttrs`), and
+`scope` through a lambda (`scope/any(s: s eq '/SK/BB')`, a lone scope
+read as a list of one); `not` over any filter here
 (`not (Price gt 5)` holds where `Price` is absent: OData compares a
 missing value as false), a `geo.intersects` that is not the one top-level
 conjunct, arithmetic (`Price mul Quantity gt 100`, `-Price lt 0`), two

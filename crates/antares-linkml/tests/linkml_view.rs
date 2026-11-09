@@ -150,10 +150,10 @@ impl PolicyEngine for OmitSpeed {
     }
     fn decide<'a>(&'a self, _: &'a Subject, _: &'a Operation<'a>) -> DecisionFuture<'a> {
         let d = if self.0.load(Ordering::SeqCst) {
-            Decision::Filter(Filter {
+            Decision::Filter(std::sync::Arc::new(Filter {
                 omit: vec!["https://e.org/city/speed".into()],
                 ..Filter::default()
-            })
+            }))
         } else {
             Decision::Allow
         };
@@ -715,10 +715,12 @@ impl PolicyEngine for OmitAgeBand {
         "omit-age-band"
     }
     fn decide<'a>(&'a self, _: &'a Subject, _: &'a Operation<'a>) -> DecisionFuture<'a> {
-        Box::pin(std::future::ready(Decision::Filter(Filter {
-            omit: vec!["https://e.org/bb/ageBand".into()],
-            ..Filter::default()
-        })))
+        Box::pin(std::future::ready(Decision::Filter(std::sync::Arc::new(
+            Filter {
+                omit: vec!["https://e.org/bb/ageBand".into()],
+                ..Filter::default()
+            },
+        ))))
     }
     fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
         NotifyDecision::Deliver
@@ -734,14 +736,16 @@ impl PolicyEngine for WholeCar {
         "whole-car"
     }
     fn decide<'a>(&'a self, _: &'a Subject, _: &'a Operation<'a>) -> DecisionFuture<'a> {
-        Box::pin(std::future::ready(Decision::Filter(Filter {
-            rules: vec![Rule {
-                types: vec!["https://e.org/city/Car".into()],
-                every_attribute: true,
-                ..Rule::default()
-            }],
-            ..Filter::default()
-        })))
+        Box::pin(std::future::ready(Decision::Filter(std::sync::Arc::new(
+            Filter {
+                rules: vec![Rule {
+                    types: vec!["https://e.org/city/Car".into()],
+                    every_attribute: true,
+                    ..Rule::default()
+                }],
+                ..Filter::default()
+            },
+        ))))
     }
     fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
         NotifyDecision::Deliver

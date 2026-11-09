@@ -252,7 +252,7 @@ impl PolicyEngine for SlowOnly {
 
     fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
         Box::pin(std::future::ready(if op.clause.starts_with("5.7.") {
-            Decision::Filter(self.0.clone())
+            Decision::Filter(std::sync::Arc::new(self.0.clone()))
         } else {
             Decision::Allow
         }))

@@ -63,6 +63,36 @@ impl serde::Serialize for SpecOrder<'_> {
     }
 }
 
+/// [`SpecOrder`] of an object whose `@context` member is written from `ctx`:
+/// a page shares one @context, so its Entities hold a placeholder there
+/// instead of a clone each.
+pub struct SpecOrderWithContext<'a> {
+    /// The object, `@context` a placeholder member.
+    pub doc: &'a serde_json::Map<String, serde_json::Value>,
+    /// The value written as its `@context`.
+    pub ctx: &'a serde_json::Value,
+}
+
+impl serde::Serialize for SpecOrderWithContext<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = s.serialize_map(Some(self.doc.len()))?;
+        for k in ["id", "type"] {
+            if let Some(v) = self.doc.get(k) {
+                map.serialize_entry(k, &SpecOrder(v))?;
+            }
+        }
+        for (k, v) in self.doc {
+            match k.as_str() {
+                "id" | "type" => {}
+                "@context" => map.serialize_entry(k, &SpecOrder(self.ctx))?,
+                _ => map.serialize_entry(k, &SpecOrder(v))?,
+            }
+        }
+        map.end()
+    }
+}
+
 /// Serialize a response or notification payload in egress key order
 /// (serializing a `Value` cannot fail).
 pub fn ordered_vec(v: &serde_json::Value) -> Vec<u8> {

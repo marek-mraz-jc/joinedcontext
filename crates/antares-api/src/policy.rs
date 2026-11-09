@@ -49,7 +49,8 @@ pub type DecisionsFuture<'a> = Pin<Box<dyn Future<Output = Vec<Decision>> + Send
 /// denies. Deployment knob (`ANTARES_POLICY_TIMEOUT_MS`), read once at
 /// first use. The default is short on purpose: the seam sits in front of
 /// every request, and an engine that cannot answer inside it is an outage
-/// either way — failing closed at 250 ms is the difference between a 403
+/// either way — failing closed at 250 ms is the difference between a 503
+/// with `Retry-After` (negotiate.rs: a timeout is overload, never a 403)
 /// and a broker that stops accepting.
 pub static TIMEOUT: LazyLock<Duration> = LazyLock::new(|| {
     let env = std::env::var("ANTARES_POLICY_TIMEOUT_MS").ok();
@@ -276,8 +277,10 @@ pub enum Decision {
     /// access-denied error, so this is an Antares decision.
     Deny(String),
     /// Allowed over less. The caller cannot tell a hidden entity from an
-    /// absent one.
-    Filter(Filter),
+    /// absent one. Shared: an engine that answers the same input again may
+    /// hand out the same `Arc`, and the broker's per-thread memos (views,
+    /// repr) then find their answer by pointer (T-6618).
+    Filter(std::sync::Arc<Filter>),
     /// Allowed only if the stored Entity the write lands on is one the
     /// filter selects (gap G12): its `q`, `scopeQ`, areas and the types and
     /// conditions of its `rules`, judged on stored values, which the
@@ -406,6 +409,8 @@ impl TimeBound {
     /// The bound at `now` in milliseconds, the precision 4.11 accepts: a
     /// start (`up`) rounds up and an end down, so rounding only narrows.
     fn render(self, now: chrono::DateTime<chrono::Utc>, up: bool) -> String {
+        #[cfg(test)]
+        RENDERS.with(|n| n.set(n.get().saturating_add(1)));
         let t = self.at(now);
         let sub = i64::from(t.timestamp_subsec_nanos() % 1_000_000);
         let t = if up && sub > 0 {
@@ -420,17 +425,51 @@ impl TimeBound {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The [`TimeBound::render`] calls of this thread, for the tests that count them.
+    pub(crate) static RENDERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A [`Window`] with its bounds resolved against one `now`, each as its
+/// [`antares_model::dt_key`]: a request resolves them once and compares
+/// every instance against the keys (T-6612, R1-021: each instance rendered
+/// and keyed both bounds again).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resolved {
+    from: Option<String>,
+    to: Option<String>,
+}
+
+impl Resolved {
+    /// Whether an instance observed at `observed_at` falls inside; 4.11's
+    /// half-open comparison.
+    #[must_use]
+    pub fn admits(&self, observed_at: &str) -> bool {
+        let t = antares_model::dt_key(observed_at);
+        self.from.as_ref().is_none_or(|b| t >= *b) && self.to.as_ref().is_none_or(|b| t < *b)
+    }
+}
+
 impl Window {
+    /// The bounds resolved against `now`.
+    #[must_use]
+    pub fn resolve(&self, now: chrono::DateTime<chrono::Utc>) -> Resolved {
+        Resolved {
+            from: self
+                .from
+                .map(|b| antares_model::dt_key(&b.render(now, true))),
+            to: self
+                .to
+                .map(|b| antares_model::dt_key(&b.render(now, false))),
+        }
+    }
+
     /// Whether an instance observed at `observed_at` falls inside, the
     /// bounds resolved against `now`; 4.11's half-open comparison.
     #[must_use]
     pub fn admits(&self, observed_at: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
-        let t = antares_model::dt_key(observed_at);
-        self.from
-            .is_none_or(|b| t >= antares_model::dt_key(&b.render(now, true)))
-            && self
-                .to
-                .is_none_or(|b| t < antares_model::dt_key(&b.render(now, false)))
+        self.resolve(now).admits(observed_at)
     }
 
     /// Whether every instance observed at or after `start` is past this
@@ -1692,16 +1731,20 @@ pub async fn gate(
     tenant: &antares_model::TenantId,
     headers: &HeaderMap,
     op: &Operation<'_>,
-) -> Result<Filter, Denied> {
+) -> Result<std::sync::Arc<Filter>, Denied> {
     match decide(engine, &subject_of(tenant, headers), op).await {
-        Decision::Allow => Ok(Filter::default()),
+        Decision::Allow => Ok(unnarrowed()),
         // On a write by id the filter is the condition ([`Condition::of`]);
         // `resolve` lets an `AllowIf` through nowhere else, and turns a
         // `Filter` there into a deny, so a handler of such a clause reads
         // what it gets back as the condition and nothing else.
-        Decision::Filter(f) | Decision::AllowIf(f) => {
+        Decision::Filter(f) => {
             metadata::hold(f.metadata.as_deref())?;
             Ok(f)
+        }
+        Decision::AllowIf(f) => {
+            metadata::hold(f.metadata.as_deref())?;
+            Ok(std::sync::Arc::new(f))
         }
         Decision::Deny(why) => Err(Denied(why)),
     }
@@ -1784,6 +1827,10 @@ fn record_image(doc: &Value) -> Value {
 /// judged synchronously on one document.
 pub(crate) type Condition = crate::repr::PolicyReach;
 
+/// Why [`Condition::post`] refuses a write.
+const LEFT_THE_GRANT: &str =
+    "the write would leave the Entity outside what the policy grants (its q, scopeQ or area)";
+
 impl Condition {
     /// The selection `f` makes, whatever it projects.
     pub(crate) fn new(f: &Filter) -> Self {
@@ -1792,6 +1839,7 @@ impl Condition {
             scope_q: f.scope_q.clone(),
             areas: f.areas().cloned().collect(),
             rules: crate::repr::type_rules(f),
+            refused: std::sync::OnceLock::new(),
         }
     }
 
@@ -1842,6 +1890,32 @@ impl Condition {
             Err(antares_model::NgsiError::ResourceNotFound(format!(
                 "entity {id} not found"
             )))
+        }
+    }
+
+    /// Inside the store closure, on the document as the write leaves it: a
+    /// grant bound by `q`, `scopeQ` or an area admits a write only when the
+    /// Entity stays inside it (F-08), so a PATCH cannot move an Entity out
+    /// of the slice and a replace cannot drop the stored scope. The refusal
+    /// is recorded for [`Condition::verdict`] and aborts the commit.
+    pub(crate) fn post(cond: Option<&Self>, doc: &Value) -> Result<(), antares_model::NgsiError> {
+        match cond {
+            Some(c) if !c.holds(doc) => {
+                let _ = c.refused.set(LEFT_THE_GRANT);
+                Err(antares_model::NgsiError::InternalError(
+                    LEFT_THE_GRANT.into(),
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The refusal [`Condition::post`] recorded, as the 403 the handler
+    /// answers.
+    pub(crate) fn verdict(cond: Option<&Self>) -> Result<(), Denied> {
+        match cond.and_then(|c| c.refused.get()) {
+            Some(why) => Err(Denied((*why).to_owned())),
+            None => Ok(()),
         }
     }
 
@@ -2594,11 +2668,13 @@ mod tests {
             "narrowing"
         }
         fn decide<'a>(&'a self, _s: &'a Subject, _o: &'a Operation<'a>) -> DecisionFuture<'a> {
-            Box::pin(std::future::ready(Decision::Filter(Filter {
-                omit: vec!["brand".into()],
-                restricted: true,
-                ..Filter::default()
-            })))
+            Box::pin(std::future::ready(Decision::Filter(std::sync::Arc::new(
+                Filter {
+                    omit: vec!["brand".into()],
+                    restricted: true,
+                    ..Filter::default()
+                },
+            ))))
         }
         fn pre_notify(&self, _s: &Subject, _sub: &Value, n: &mut Value) -> NotifyDecision {
             if let Some(data) = n.get_mut("data").and_then(Value::as_array_mut) {
@@ -2704,10 +2780,10 @@ mod tests {
 
     #[test]
     fn narrowing_a_whole_tenant_operation_is_a_refusal() {
-        let narrowed = Decision::Filter(Filter {
+        let narrowed = Decision::Filter(std::sync::Arc::new(Filter {
             omit: vec!["speed".into()],
             ..Filter::default()
-        });
+        }));
         for clause in WHOLE_TENANT {
             assert!(matches!(
                 resolve(clause, narrowed.clone()),
@@ -2728,14 +2804,14 @@ mod tests {
     /// dropped, and nothing more.
     #[test]
     fn a_filterable_read_keeps_its_narrowing() {
-        let narrowed = Decision::Filter(Filter {
+        let narrowed = Decision::Filter(std::sync::Arc::new(Filter {
             omit: vec!["speed".into()],
             ..Filter::default()
-        });
-        let selected = Decision::Filter(Filter {
+        }));
+        let selected = Decision::Filter(std::sync::Arc::new(Filter {
             scope_q: Some("/mine".into()),
             ..Filter::default()
-        });
+        }));
         for clause in FILTERABLE {
             assert_eq!(resolve(clause, selected.clone()), selected, "{clause}");
             if RECORD_LISTS.contains(&clause) {
@@ -2753,7 +2829,10 @@ mod tests {
     #[test]
     fn an_empty_filter_on_a_whole_tenant_operation_is_not_a_refusal() {
         assert_eq!(
-            resolve("5.6.21", Decision::Filter(Filter::default())),
+            resolve(
+                "5.6.21",
+                Decision::Filter(std::sync::Arc::new(Filter::default()))
+            ),
             Decision::Allow
         );
     }

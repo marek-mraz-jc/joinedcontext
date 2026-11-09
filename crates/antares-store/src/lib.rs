@@ -240,6 +240,53 @@ pub async fn record_delivery_via_mutate(
     Ok(out)
 }
 
+/// The failure stamp expressed as a `mutate` (5.8.6 / 5.11.7 after a failed
+/// attempt): `status` "failed" on the document and its notification, the
+/// optimistic `lastSuccess` rolled back to `prev_success`, `lastFailure` set
+/// to `now` and `timesFailed` moved by one. The rule itself, as
+/// [`record_delivery_via_mutate`] is for a success: a backend that
+/// reimplements [`CurrentStateDriver::record_failure`] must agree with it.
+pub async fn record_failure_via_mutate(
+    d: &(impl CurrentStateDriver + ?Sized),
+    tenant: &TenantId,
+    kind: Kind,
+    id: &str,
+    mut prev_success: Option<Value>,
+    now: &str,
+) -> Result<Option<Value>, NgsiError> {
+    let mut out: Option<Value> = None;
+    d.mutate::<(), ()>(tenant, kind, id, |doc| {
+        if let Some(o) = doc.as_object_mut() {
+            o.insert("status".into(), Value::String("failed".into()));
+        }
+        if let Some(n) = doc
+            .as_object_mut()
+            .and_then(|o| o.get_mut("notification"))
+            .and_then(Value::as_object_mut)
+        {
+            match prev_success.take() {
+                Some(v) => n.insert("lastSuccess".into(), v),
+                None => n.remove("lastSuccess"),
+            };
+            n.insert("lastFailure".into(), Value::String(now.to_owned()));
+            // Table 5.2.14.2-1 timesFailed: "Number of times an
+            // unsuccessful response (or timeout) has been received when
+            // delivering the notification" — an output-only member
+            // implementations shall generate.
+            let failed = n.get("timesFailed").and_then(Value::as_i64).unwrap_or(0);
+            n.insert(
+                "timesFailed".into(),
+                serde_json::json!(failed.saturating_add(1)),
+            );
+            n.insert("status".into(), Value::String("failed".into()));
+        }
+        out = Some(doc.clone());
+        Ok(())
+    })
+    .await?;
+    Ok(out)
+}
+
 /// The forward stamp expressed as a `mutate`. This is the Table 5.2.9-2
 /// rule itself — what `timesSent`, `timesFailed`, `lastSuccess`,
 /// `lastFailure` and `status` become after one distributed operation — so a
@@ -662,6 +709,20 @@ pub trait CurrentStateDriver: Send + Sync {
         now: &str,
     ) -> Result<Option<Delivery>, NgsiError> {
         record_delivery_via_mutate(self, tenant, kind, id, now).await
+    }
+    /// Book one failed attempt (see [`record_failure_via_mutate`]): the
+    /// stored document as it now stands, `None` when the row is gone. The
+    /// default is that `mutate`; a backend whose `mutate` holds the row lock
+    /// across a round trip should write it as one statement (T-6606).
+    async fn record_failure(
+        &self,
+        tenant: &TenantId,
+        kind: Kind,
+        id: &str,
+        prev_success: Option<Value>,
+        now: &str,
+    ) -> Result<Option<Value>, NgsiError> {
+        record_failure_via_mutate(self, tenant, kind, id, prev_success, now).await
     }
     /// [`Self::record_delivery`] for several attempts at once, one answer per
     /// attempt in input order. An attempt is (id, instant, times): the ids

@@ -1614,7 +1614,10 @@ async fn a_write_through_a_writer_view_notifies_a_public_view_socket() {
         let mut socket = Socket::open(
             port,
             "/x/views/transport/ws",
-            &[("x-jc-roles".to_owned(), String::new())],
+            &[
+                ("l5d-client-id".to_owned(), GATEWAY.to_owned()),
+                ("x-jc-roles".to_owned(), String::new()),
+            ],
             Duration::from_millis(1500),
         )
         .expect("the socket");
@@ -1713,6 +1716,7 @@ async fn the_gateway_subscribes_on_a_public_view_only_where_it_is_listed() {
                 port,
                 "/x/views/transport/ws",
                 &[
+                    ("l5d-client-id".to_owned(), GATEWAY.to_owned()),
                     ("x-jc-client".to_owned(), "context-gateway".to_owned()),
                     ("x-jc-roles".to_owned(), String::new()),
                 ],
@@ -1733,6 +1737,46 @@ async fn the_gateway_subscribes_on_a_public_view_only_where_it_is_listed() {
         assert_eq!(
             made["metadata"]["x-status"], expected,
             "listed {listed}: {made}"
+        );
+    }
+}
+
+/// F-01: a view surface believes no subject the gateway did not vouch for. Its in-process call
+/// trusts the subject it carries, so the door of the view root checks it, as the API nest does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_view_surface_refuses_an_unvouched_subject() {
+    let (app, _reload) = broker().await;
+    let policy = json!({"policies": [
+        {"id": "pub", "assignee": {"kind": "role", "id": "public"},
+         "operations": ["5.7.2"], "information": [{"entities": [{"type": "Vehicle"}]}]}]});
+    for (uri, doc) in [
+        (
+            "/q/views/f01",
+            json!({"id": "f01", "tenant": "f01", "operations": ["query_entities"],
+                   "selector": ["Vehicle"], "rules": [{"types": ["Vehicle"], "attributes": ["speed"]}]}),
+        ),
+        ("/q/policy/f01", policy),
+    ] {
+        let (status, _, body) = send(&app, "PUT", uri, &[], Some(&doc)).await;
+        assert!(status.is_success(), "{uri}: {status} {body}");
+    }
+    // vouched, the request reaches the view (its Tenant holds nothing yet: 404)
+    for (vouched, refused) in [(false, true), (true, false)] {
+        let mut req = Request::get("/x/views/f01/ngsi-ld/v1/entities?type=Vehicle")
+            .header("Host", "localhost")
+            .header("x-jc-roles", "");
+        if vouched {
+            req = req.header("l5d-client-id", GATEWAY);
+        }
+        let Ok(res) = app
+            .clone()
+            .call(req.body(Body::empty()).expect("a request"))
+            .await;
+        assert_eq!(
+            res.status() == StatusCode::UNAUTHORIZED,
+            refused,
+            "vouched: {vouched}: {}",
+            res.status()
         );
     }
 }

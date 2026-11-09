@@ -160,6 +160,46 @@ pub async fn connect(url: &str, max_connections: u32) -> Result<PgPool, sqlx::Er
 /// before it is dropped instead of going back to the pool (T-4298).
 pub const RELEASE_PING: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// How long a pooled connection may sit idle before an acquire pings it
+/// first (T-6606). One released inside this window answered its release
+/// ping that long ago at most.
+pub const ACQUIRE_PING_IDLE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// A liveness ping bounded by [`RELEASE_PING`]: `true` keeps the connection.
+///
+/// A failed ping answers `false`, never `Err` (T-6000). On `Err` sqlx closes
+/// "hard": it only flushes and shuts the socket, and over TLS (sqlx 0.9
+/// rustls) a flush with nothing to write waits to READ, which on a healthy
+/// idle server never comes: the slot was held for good (prod 2026-10-28, 13
+/// of 13, each session idle after the ROLLBACK of a request dropped while
+/// its statement failed). On `false` sqlx sends Terminate first, the server
+/// closes, and the read ends. A ping that ran out may sit on a stalled
+/// stream, where no Terminate gets through either: the hook holds the
+/// connection only by reference, so a fresh one takes its place and the
+/// stalled socket is dropped unflushed; sqlx then closes the fresh one.
+async fn bounded_ping(
+    conn: &mut sqlx::PgConnection,
+    connect: &sqlx::postgres::PgConnectOptions,
+) -> bool {
+    use sqlx::Connection;
+    match tokio::time::timeout(RELEASE_PING, conn.ping()).await {
+        Ok(Ok(())) => true,
+        Ok(Err(e)) => {
+            tracing::debug!(%e, "pooled connection failed its ping; closing it");
+            false
+        }
+        Err(_) => {
+            tracing::debug!("pooled connection did not answer its ping; closing it");
+            let fresh =
+                tokio::time::timeout(RELEASE_PING, sqlx::PgConnection::connect_with(connect)).await;
+            if let Ok(Ok(fresh)) = fresh {
+                drop(std::mem::replace(conn, fresh));
+            }
+            false
+        }
+    }
+}
+
 /// How long the server keeps a broker session that sits idle outside a
 /// transaction (`idle_session_timeout`, T-6000). A pooled connection never
 /// gets there: the pool closes an idle one after [`POOL_IDLE`], and its
@@ -275,41 +315,29 @@ fn options(
         // bounded; one that fails or runs out drops the socket at once, and
         // the slot opens a fresh connection on demand. sqlx's own ping after
         // it costs one more round trip on a connection that just answered.
-        //
-        // A failed ping answers `Ok(false)`, never `Err` (T-6000). On `Err`
-        // sqlx closes "hard": it only flushes and shuts the socket, and over
-        // TLS (sqlx 0.9 rustls) a flush with nothing to write waits to READ,
-        // which on a healthy idle server never comes: the slot was held for
-        // good (prod 2026-10-28, 13 of 13, each session idle after the
-        // ROLLBACK of a request dropped while its statement failed). On
-        // `Ok(false)` sqlx sends Terminate first, the server closes, and the
-        // read ends. A ping that ran out may sit on a stalled stream, where
-        // no Terminate gets through either: the hook holds the connection
-        // only by reference, so a fresh one takes its place and the stalled
-        // socket is dropped unflushed; sqlx then closes the fresh one.
-        .after_release(move |conn, _meta| {
+        // How a failed or stalled ping is closed: [`bounded_ping`] (T-6000).
+        .after_release({
+            let connect = connect.clone();
+            move |conn, _meta| {
+                let connect = connect.clone();
+                Box::pin(async move { Ok(bounded_ping(conn, &connect).await) })
+            }
+        })
+        // sqlx's own acquire test is the same unbounded ping, run on every
+        // acquire, so a connection released a moment ago, and pinged twice
+        // then, paid a third round trip before its next statement (T-6606,
+        // R2-003). The hook below pings only a connection idle for
+        // [`ACQUIRE_PING_IDLE`] or longer, the one a server restart or a
+        // stalled stream may have taken while it sat in the pool, and bounds
+        // that ping as the release hook does.
+        .test_before_acquire(false)
+        .before_acquire(move |conn, meta| {
             let connect = connect.clone();
             Box::pin(async move {
-                use sqlx::Connection;
-                match tokio::time::timeout(RELEASE_PING, conn.ping()).await {
-                    Ok(Ok(())) => Ok(true),
-                    Ok(Err(e)) => {
-                        tracing::debug!(%e, "released connection failed its ping; closing it");
-                        Ok(false)
-                    }
-                    Err(_) => {
-                        tracing::debug!("released connection did not answer its ping; closing it");
-                        let fresh = tokio::time::timeout(
-                            RELEASE_PING,
-                            sqlx::PgConnection::connect_with(&connect),
-                        )
-                        .await;
-                        if let Ok(Ok(fresh)) = fresh {
-                            drop(std::mem::replace(conn, fresh));
-                        }
-                        Ok(false)
-                    }
+                if meta.idle_for < ACQUIRE_PING_IDLE {
+                    return Ok(true);
                 }
+                Ok(bounded_ping(conn, &connect).await)
             })
         })
         .after_connect(move |conn, _meta| {
@@ -439,7 +467,7 @@ pub async fn set_service(tx: &mut Transaction<'_, Postgres>) -> Result<(), sqlx:
 /// creation inserts its row in the same transaction as the document"). Two
 /// things ride on it being IN the document's transaction rather than before
 /// it: the tenant row and the rows it accounts for commit together, and the
-/// claim holds a row lock the purge's `SELECT … FOR UPDATE` conflicts with,
+/// claim holds a lock the purge's exclusive one conflicts with,
 /// so the purge waits for an in-flight write instead of stepping over it.
 /// Committed separately, a write racing a purge leaves rows behind for a
 /// tenant the inventory no longer names — readable to whoever sends that
@@ -448,36 +476,39 @@ pub async fn set_service(tx: &mut Transaction<'_, Postgres>) -> Result<(), sqlx:
 /// The lock is SHARED. An upsert whose `DO UPDATE` re-set the tenant id took
 /// the exclusive lock and wrote a row version on every write, so writes in
 /// one tenant serialised behind each other and a table with one row per
-/// tenant collected one dead tuple per write in the broker. `FOR SHARE`
-/// conflicts with `FOR UPDATE` exactly as the exclusive lock did, and is
+/// tenant collected one dead tuple per write in the broker. A shared lock
+/// conflicts with the purge's exclusive one exactly as that did, and is
 /// compatible with itself, so concurrent writers hold it together.
 ///
 /// Idempotent, so two concurrent first writes both succeed (vs Scorpio's
 /// CREATE DATABASE + Flyway deadlock).
+/// The purge's side of the tenant fence [`claim_tenant`] holds shared: one
+/// bound parameter, the tenant id.
+pub const PURGE_FENCE_SQL: &str =
+    "SELECT pg_advisory_xact_lock(hashtext('antares.tenant'), hashtext($1))";
+
 pub async fn claim_tenant(
     tx: &mut Transaction<'_, Postgres>,
     tenant: &TenantId,
 ) -> Result<(), sqlx::Error> {
-    // ponytail: shared row lock, so many concurrent writers in one tenant
-    // register on one row; if multixact contention on that row ever shows up
-    // in `pg_stat_activity`, the upgrade is a shared advisory lock keyed by
-    // the tenant, which the purge takes exclusively and which touches no heap
-    // page at all.
-    let claimed =
-        sqlx::query_scalar::<_, i32>("SELECT 1 FROM tenants WHERE tenant_id = $1 FOR SHARE")
-            .bind(tenant.as_str())
-            .fetch_optional(&mut **tx)
-            .await?
-            .is_some();
-    if claimed {
-        return Ok(());
-    }
-    // First write for this tenant. `DO UPDATE` rather than `DO NOTHING`:
-    // a concurrent first write must block here until the winner commits,
-    // and `DO NOTHING` would return without taking its lock.
+    // A shared advisory lock keyed by the tenant fences the write from a
+    // purge, which takes it exclusively (`AnyStore::purge_tenant`). It
+    // replaced `FOR SHARE` on the tenant's row (T-6606, R2-005): a row lock
+    // writes the locker into the tuple's xmax, so every write of a busy
+    // tenant dirtied the one `tenants` page and, with several writers at
+    // once, minted a multixact; the advisory lock touches no heap page.
+    //
+    // One statement: the lock is taken before the INSERT checks its
+    // conflict, and that check reads the index as it stands now, not the
+    // statement's snapshot, so a purge that committed while this waited
+    // finds its row re-inserted here. `DO NOTHING` takes no row lock and
+    // writes nothing for a tenant that exists; a concurrent first write
+    // waits on the winner's uncommitted index entry, then does nothing.
     sqlx::query(
-        "INSERT INTO tenants (tenant_id) VALUES ($1) \
-         ON CONFLICT (tenant_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id",
+        "INSERT INTO tenants (tenant_id) \
+         SELECT $1 FROM (SELECT pg_advisory_xact_lock_shared(\
+             hashtext('antares.tenant'), hashtext($1))) AS fence \
+         ON CONFLICT (tenant_id) DO NOTHING",
     )
     .bind(tenant.as_str())
     .execute(&mut **tx)

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! CSDL JSON (OData CSDL JSON Representation 4.01).
 
 use std::io::Write;
@@ -6,7 +6,7 @@ use std::io::Write;
 use crate::error::{CsdlError, Feature};
 use crate::model::{
     line_ends, Annotation, CsdlVersion, EntityContainer, EntityType, Expr, Model,
-    NavigationProperty, Property, Schema, Term, TypeRef,
+    NavigationProperty, Operation, OperationKind, Property, Schema, Term, TypeRef,
 };
 use crate::validate::{is_temporal, validate, Limits};
 use crate::xml::{scale_text, srid_text};
@@ -69,7 +69,7 @@ pub fn write_json<W: Write>(model: &Model, limits: &Limits, mut out: W) -> Resul
         document.push(member("$Reference", J::Obj(references)));
     }
     for schema in &model.schemas {
-        document.push((schema.namespace.clone(), schema_json(schema)));
+        document.push((schema.namespace.clone(), schema_json(model, schema)));
     }
     J::Obj(document).write(&mut out, 0)?;
     out.write_all(b"\n")?;
@@ -161,7 +161,7 @@ fn member(name: &str, value: J) -> (String, J) {
     (name.to_owned(), value)
 }
 
-fn schema_json(schema: &Schema) -> J {
+fn schema_json(model: &Model, schema: &Schema) -> J {
     let mut members = Vec::new();
     if let Some(alias) = &schema.alias {
         members.push(member("$Alias", J::str(alias)));
@@ -181,8 +181,14 @@ fn schema_json(schema: &Schema) -> J {
     for term in &schema.terms {
         members.push((term.name.clone(), term_json(term)));
     }
+    for operation in &schema.operations {
+        members.push((
+            operation.name.clone(),
+            J::Arr(vec![operation_json(operation)]),
+        ));
+    }
     if let Some(container) = &schema.entity_container {
-        members.push((container.name.clone(), container_json(container)));
+        members.push((container.name.clone(), container_json(model, container)));
     }
     annotations(&mut members, &schema.annotations);
     J::Obj(members)
@@ -311,7 +317,27 @@ fn term_json(term: &Term) -> J {
     J::Obj(members)
 }
 
-fn container_json(container: &EntityContainer) -> J {
+/// One overload of an action or function: `$Kind`, `$Parameter` and `$ReturnType`.
+fn operation_json(operation: &Operation) -> J {
+    let mut members = vec![member("$Kind", J::str(operation.kind.as_str()))];
+    if !operation.parameters.is_empty() {
+        let parameters = operation.parameters.iter().map(|parameter| {
+            let mut parameter_members = vec![member("$Name", J::str(&parameter.name))];
+            typed(&mut parameter_members, &parameter.ty, parameter.nullable);
+            J::Obj(parameter_members)
+        });
+        members.push(member("$Parameter", J::Arr(parameters.collect())));
+    }
+    if let Some(returned) = &operation.return_type {
+        let mut returned_members = Vec::new();
+        typed(&mut returned_members, returned, operation.return_nullable);
+        members.push(member("$ReturnType", J::Obj(returned_members)));
+    }
+    annotations(&mut members, &operation.annotations);
+    J::Obj(members)
+}
+
+fn container_json(model: &Model, container: &EntityContainer) -> J {
     let mut members = vec![member("$Kind", J::str("EntityContainer"))];
     for set in &container.entity_sets {
         let mut set_members = vec![
@@ -331,6 +357,20 @@ fn container_json(container: &EntityContainer) -> J {
         }
         annotations(&mut set_members, &set.annotations);
         members.push((set.name.clone(), J::Obj(set_members)));
+    }
+    for import in &container.imports {
+        let kind = model
+            .operation(&import.operation)
+            .map_or(OperationKind::Function, |operation| operation.kind);
+        let mut import_members = match kind {
+            OperationKind::Action => vec![member("$Action", J::str(&import.operation))],
+            OperationKind::Function => vec![member("$Function", J::str(&import.operation))],
+        };
+        if kind == OperationKind::Function && import.in_service_document {
+            import_members.push(member("$IncludeInServiceDocument", J::Bool(true)));
+        }
+        annotations(&mut import_members, &import.annotations);
+        members.push((import.name.clone(), J::Obj(import_members)));
     }
     annotations(&mut members, &container.annotations);
     J::Obj(members)

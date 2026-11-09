@@ -31,10 +31,10 @@ impl PolicyEngine for Names {
     fn decide<'a>(&'a self, _s: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
         Box::pin(std::future::ready(
             if self.narrow && NAME_READS.contains(&op.clause) {
-                Decision::Filter(Filter {
+                Decision::Filter(std::sync::Arc::new(Filter {
                     rules: vec![Rule::default()],
                     ..Filter::default()
-                })
+                }))
             } else {
                 Decision::Allow
             },

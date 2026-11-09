@@ -224,7 +224,7 @@ checked; an overflow is `unknown`, not a wrap.
 | `$index` (Q17) | OData | a positional insert, a write with no NGSI-LD operation |
 | `$root` (Q24) | OData | a second read inside a filter: one gated read per evaluated Entity, unbounded fan-out |
 | `$crossjoin`, `$all` (Q36) | OData | a cross product of sets, quadratic in the budget |
-| `geo.distance`, `geo.length` (F30) | OData | URL Conventions 5.1.1.11.1 leaves the unit for SRID 4326 unstated; an answer would pick one |
+| `geo.distance` outside a top-level conjunct, `geo.length` (F30) | OData | a measure has no evaluator; a top-level `geo.distance` compared with a number pushes as the NGSI-LD `near`, in metres (T-6631: URL 5.1.1.11.1 leaves the SRID 4326 unit unstated, and metres are what `near`, PostGIS and SQL Server geography measure) |
 | a navigation path in a filter (F24) | OData, CQL2 | stays gated on the linked-entity checks (T-3470, ADR-0023 rule 6); not this ADR's to open |
 | regex constructs outside the shared subset | OData, CQL2 | rule 7 |
 

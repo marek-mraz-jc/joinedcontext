@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The model of one NGSI-LD view as the OData surface describes it (odata-linkml-mapping.md
 //! sections 3 and 4): every construct and annotation term the surface uses, so the OASIS
 //! schemas, the converter and the vocabularies see each of them once.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! Model validation: the CSDL rules the writers rely on, under the caller's limits.
 
 use std::collections::{HashMap, HashSet};
@@ -6,7 +6,8 @@ use std::collections::{HashMap, HashSet};
 use crate::error::{CsdlError, Feature, LimitKind, Problem, ValidationError};
 use crate::model::{
     Annotation, CsdlVersion, EntityContainer, EntitySet, EntityType, Expr, Model,
-    NavigationProperty, Property, ReferentialConstraint, Schema, Term, TypeRef,
+    NavigationProperty, Operation, OperationKind, Property, ReferentialConstraint, Schema, Term,
+    TypeRef,
 };
 use crate::names::{is_namespace, is_simple_identifier, split_qualified};
 
@@ -182,6 +183,8 @@ enum Use {
     Structural,
     Navigation,
     Term,
+    /// A parameter or return type: any type of the model.
+    Operation,
 }
 
 struct Check<'m> {
@@ -294,6 +297,7 @@ impl<'m> Check<'m> {
             .map(|t| t.name.as_str())
             .chain(schema.complex_types.iter().map(|t| t.name.as_str()))
             .chain(schema.terms.iter().map(|t| t.name.as_str()))
+            .chain(schema.operations.iter().map(|o| o.name.as_str()))
             .chain(schema.entity_container.iter().map(|c| c.name.as_str()));
         for name in declared {
             let at = qualified(schema, name);
@@ -316,6 +320,9 @@ impl<'m> Check<'m> {
         }
         for term in &schema.terms {
             self.term(schema, term)?;
+        }
+        for operation in &schema.operations {
+            self.operation(schema, operation)?;
         }
         if let Some(container) = &schema.entity_container {
             self.container(schema, container)?;
@@ -469,6 +476,31 @@ impl<'m> Check<'m> {
         self.annotations(&at, &term.annotations)
     }
 
+    fn operation(&mut self, schema: &'m Schema, operation: &'m Operation) -> Result<(), CsdlError> {
+        self.count()?;
+        let at = qualified(schema, &operation.name);
+        let mut names = HashSet::new();
+        for parameter in &operation.parameters {
+            self.count()?;
+            let parameter_at = format!("{at}/{}", parameter.name);
+            self.identifier(&parameter_at, &parameter.name);
+            if !names.insert(parameter.name.as_str()) {
+                self.problem(parameter_at.clone(), Problem::Duplicate);
+            }
+            self.type_ref(&parameter_at, &parameter.ty, Use::Operation)?;
+        }
+        match &operation.return_type {
+            Some(returned) => {
+                self.type_ref(&at, returned, Use::Operation)?;
+            }
+            None if operation.kind == OperationKind::Function => {
+                self.problem(at.clone(), Problem::FunctionWithoutReturnType);
+            }
+            None => {}
+        }
+        self.annotations(&at, &operation.annotations)
+    }
+
     fn container(
         &mut self,
         schema: &'m Schema,
@@ -486,6 +518,18 @@ impl<'m> Check<'m> {
         }
         for set in &container.entity_sets {
             self.entity_set(&at, container, set)?;
+        }
+        for import in &container.imports {
+            self.count()?;
+            let import_at = format!("{at}/{}", import.name);
+            self.identifier(&import_at, &import.name);
+            if !names.insert(import.name.as_str()) {
+                self.problem(import_at.clone(), Problem::Duplicate);
+            }
+            if self.model.operation(&import.operation).is_none() {
+                self.problem(import_at.clone(), Problem::UnknownImportOperation);
+            }
+            self.annotations(&import_at, &import.annotations)?;
         }
         self.annotations(&at, &container.annotations)
     }

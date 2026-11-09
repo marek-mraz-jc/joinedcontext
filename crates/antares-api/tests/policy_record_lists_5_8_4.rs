@@ -49,12 +49,12 @@ impl PolicyEngine for Owner {
             "subject"
         };
         let answer = if RECORD_LISTS.contains(&op.clause) {
-            Decision::Filter(Filter {
+            Decision::Filter(std::sync::Arc::new(Filter {
                 q: Some(Box::new(
                     antares_ql::parse_q(&format!("{member}=={me:?}")).unwrap(),
                 )),
                 ..Filter::default()
-            })
+            }))
         } else {
             Decision::Allow
         };
@@ -254,7 +254,7 @@ async fn a_projection_on_a_record_list_stays_a_deny() {
             ..Filter::default()
         },
     ] {
-        let st = state(Arc::new(Fixed(Decision::Filter(f))));
+        let st = state(Arc::new(Fixed(Decision::Filter(std::sync::Arc::new(f)))));
         for path in [
             "/ngsi-ld/v1/subscriptions",
             "/ngsi-ld/v1/csourceSubscriptions",

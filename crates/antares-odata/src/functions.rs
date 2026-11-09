@@ -27,7 +27,7 @@ type Signature = (
 /// `Capabilities.FilterFunctions`: every operator and function a `$filter`
 /// translates to `q` or the residual, in the URL convention's names; a
 /// method parsed without a [`signature`] is not served, `geo.intersects`
-/// is a `georel`.
+/// and `geo.distance` are `georel`s.
 pub(crate) fn filter_functions() -> Vec<&'static str> {
     const OPERATORS: [&str; 18] = [
         "eq", "ne", "gt", "ge", "lt", "le", "and", "or", "not", "in", "add", "sub", "mul", "div",
@@ -37,7 +37,10 @@ pub(crate) fn filter_functions() -> Vec<&'static str> {
         .into_iter()
         .chain(
             Method::all()
-                .filter(|m| *m == Method::GeoIntersects || signature(*m).is_some())
+                .filter(|m| {
+                    matches!(m, Method::GeoIntersects | Method::GeoDistance)
+                        || signature(*m).is_some()
+                })
                 .map(Method::name),
         )
         .collect()
@@ -75,6 +78,6 @@ pub(crate) fn signature(method: Method) -> Option<Signature> {
         Method::Round => (Func::Round, &[NUMBER], None),
         Method::Floor => (Func::Floor, &[NUMBER], None),
         Method::Ceiling => (Func::Ceiling, &[NUMBER], None),
-        Method::GeoIntersects => return None,
+        Method::GeoIntersects | Method::GeoDistance => return None,
     })
 }

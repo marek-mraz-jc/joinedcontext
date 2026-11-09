@@ -107,3 +107,64 @@ async fn a_preview_runs_under_the_subject_the_request_names() {
         "no subject is nobody's reading: {b}"
     );
 }
+
+/// Allows only a request the broker tells it came through view `v`.
+struct OnlyThroughV;
+
+impl PolicyEngine for OnlyThroughV {
+    fn name(&self) -> &'static str {
+        "only-through-v"
+    }
+    fn decide<'a>(&'a self, s: &'a Subject, _: &'a Operation<'a>) -> DecisionFuture<'a> {
+        let d = if s.view() == Some("v") {
+            Decision::Allow
+        } else {
+            Decision::Deny("not through view v".into())
+        };
+        Box::pin(std::future::ready(d))
+    }
+    fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
+        NotifyDecision::Deliver
+    }
+}
+
+/// F-04: a preview is judged as the view's own reads are, with the view named to the engine,
+/// so the view's policyRefs apply and not the whole Tenant's table.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_preview_runs_through_the_views_policy_table() {
+    std::env::set_var("ANTARES_POLICY_SUBJECT_HEADERS", "x-subject");
+    let mut state = AppState::new("antares-test".into());
+    antares_api::wire(&mut state).await;
+    let open = antares_api::router(state.clone());
+    let car = json!({"id": "urn:ngsi-ld:Car:1", "type": "Car",
+                     "speed": {"type": "Property", "value": 10}});
+    let (s, b) = send(
+        &open,
+        post("/ngsi-ld/v1/entities", &car, &[("NGSILD-Tenant", "city")]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let state = state.with_policy(Arc::new(OnlyThroughV));
+    let _reload = antares_ops::views::install(&state)
+        .await
+        .expect("installed");
+    let app = antares_api::router(
+        state
+            .with_surfaces(vec![Box::new(antares_api::Admin)])
+            .expect("admin"),
+    );
+    let draft = json!({"id": "v", "tenant": "city", "selector": ["Car"],
+                       "rules": [{"types": ["Car"], "attributes": ["speed"]}],
+                       "operations": ["query_entities"]});
+    let (s, b) = send(
+        &app,
+        post(
+            "/q/views/v/preview?type=Car",
+            &draft,
+            &[("x-subject", "alice")],
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["count"], 1, "{b}");
+}

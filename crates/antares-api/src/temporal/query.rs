@@ -1167,6 +1167,7 @@ pub async fn batch_temporal_query(
             geo: named.geo.as_ref(),
         )
         .await?;
+        crate::policy::Metadata::refuse_body(&filter, &vp, &parsed.ctx)?;
         query_temporal_inner(&st, &vp, &headers, &filter).await
     };
     go.await.unwrap_or_else(|e| e.into_response())

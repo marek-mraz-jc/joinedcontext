@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! AST → URL → AST (T-3503, T-3749): every tree of the subset writes itself as a URL that parses
 //! back to the same tree, and that URL is its own canonical form.
 

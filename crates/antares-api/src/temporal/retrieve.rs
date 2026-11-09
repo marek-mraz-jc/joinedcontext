@@ -498,16 +498,21 @@ pub(super) fn merge_temporal_docs(base: &mut Value, add: &Value, aux: bool, time
                 target.insert(k.clone(), Value::Array(incoming));
             }
             Some(cur) => {
+                // each instance's canonical time key, worked out once: the
+                // slot search below was a dt_key per held instance for every
+                // incoming one, O(incoming x held) (R2-033)
+                let key = |i: &Value| i.get(timeprop).and_then(Value::as_str).map(dt_key);
+                let mut at: HashMap<String, Vec<usize>> = HashMap::new();
+                for (n, ci) in cur.iter().enumerate() {
+                    if let Some(ts) = key(ci) {
+                        at.entry(ts).or_default().push(n);
+                    }
+                }
                 for ni in incoming {
-                    if aux {
-                        let ts = ni.get(timeprop).and_then(Value::as_str).map(dt_key);
-                        if ts.is_some()
-                            && cur.iter().any(|ci| {
-                                ci.get(timeprop).and_then(Value::as_str).map(dt_key) == ts
-                            })
-                        {
-                            continue;
-                        }
+                    let ni_ts = key(&ni);
+                    let held = ni_ts.as_ref().and_then(|ts| at.get(ts));
+                    if aux && held.is_some() {
+                        continue;
                     }
                     // 4.5.5.3: an instance with the same datasetId (or both
                     // default) AND the same timeproperty value is a
@@ -521,14 +526,11 @@ pub(super) fn merge_temporal_docs(base: &mut Value, add: &Value, aux: bool, time
                     // Context Sources may spell one instant differently: the
                     // slot and its winner are decided on the canonical key,
                     // or the same instance comes back twice.
-                    let ni_ts = ni.get(timeprop).and_then(Value::as_str).map(dt_key);
-                    let slot = ni_ts.and_then(|ts| {
-                        cur.iter_mut().find(|ci| {
-                            ci.get(timeprop).and_then(Value::as_str).map(dt_key) == Some(ts.clone())
-                                && ci.get("datasetId") == ni.get("datasetId")
-                        })
+                    let slot = held.into_iter().flatten().copied().find(|&n| {
+                        cur.get(n)
+                            .is_some_and(|ci| ci.get("datasetId") == ni.get("datasetId"))
                     });
-                    if let Some(existing) = slot {
+                    if let Some(existing) = slot.and_then(|n| cur.get_mut(n)) {
                         let stamp = |i: &Value| {
                             dt_key(i.get("modifiedAt").and_then(Value::as_str).unwrap_or(""))
                         };
@@ -537,6 +539,9 @@ pub(super) fn merge_temporal_docs(base: &mut Value, add: &Value, aux: bool, time
                             *existing = ni;
                         }
                         continue;
+                    }
+                    if let Some(ts) = ni_ts {
+                        at.entry(ts).or_default().push(cur.len());
                     }
                     cur.push(ni);
                 }

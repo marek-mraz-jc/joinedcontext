@@ -1,7 +1,7 @@
 {
  "counts": {
-  "FAIL": 315,
-  "PASS": 823,
+  "FAIL": 314,
+  "PASS": 824,
   "SKIP": 68
  },
  "results": {
@@ -574,7 +574,7 @@
   "[V4] 11.3.7_filter_geo_functions :: Filter using geo.intersects() to test spatial intersection (optional feature)": "SKIP",
   "[V4] 11.3.7_filter_geo_functions :: Filter using geo.length() on linestring geometries (optional feature)": "SKIP",
   "[V4] 11.3.7_filter_geo_functions :: Invalid geospatial function name returns 400 Bad Request": "FAIL",
-  "[V4] 11.3.7_filter_geo_functions :: Missing required parameter for geo.distance returns 400": "FAIL",
+  "[V4] 11.3.7_filter_geo_functions :: Missing required parameter for geo.distance returns 400": "PASS",
   "[V4] 11.3.7_filter_geo_functions :: Properly formatted geography literals are accepted (optional feature)": "SKIP",
   "[V4] 11.3.7_filter_geo_functions :: Test geometry (flat earth) vs geography (round earth) types (optional feature)": "SKIP",
   "[V4] 11.3.8_filter_expanded_properties :: Apply $filter to expanded navigation collection": "FAIL",
