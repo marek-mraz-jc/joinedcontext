@@ -43,6 +43,12 @@ pub(crate) fn internal_listener_bound(addr: std::net::SocketAddr) {
 /// The capture route's base: `JC_PORTAL_PIPELINE_TEST_CAPTURE_URL`, else this process's own
 /// internal listener when it is bound on loopback, so a runner beside the Portal in one process
 /// (jc, which binds `127.0.0.1:0`) reaches it with no setting; never a guess at a remote address.
+/// [`capture_base`] on this process's internal listener: the capture route's base and the
+/// address the validation stage and the run logs post to.
+pub(crate) fn internal_base(configured: Option<&str>) -> Option<String> {
+    capture_base(configured, INTERNAL_LISTENER.get().copied())
+}
+
 // ponytail: one Portal per process; a second one would capture on the first's listener.
 fn capture_base(configured: Option<&str>, bound: Option<std::net::SocketAddr>) -> Option<String> {
     configured.map(str::to_owned).or_else(|| {
@@ -501,13 +507,10 @@ pub(crate) async fn run_stream_within(
         .replace("{project}", project)
         .trim_end_matches('/')
         .to_owned();
-    let capture = capture_base(
-        state.config.pipeline_test_capture_url.as_deref(),
-        INTERNAL_LISTENER.get().copied(),
-    )
-    .ok_or_else(|| {
-        ApiError::Unavailable("no capture route is configured for pipeline tests".into())
-    })?;
+    let capture =
+        internal_base(state.config.pipeline_test_capture_url.as_deref()).ok_or_else(|| {
+            ApiError::Unavailable("no capture route is configured for pipeline tests".into())
+        })?;
 
     let id = share::slug();
     let config = config(&format!("{capture}/internal/pipeline-tests/{id}"))?;

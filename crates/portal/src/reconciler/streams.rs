@@ -134,8 +134,12 @@ pub struct StreamDeployer {
     backoff: Mutex<HashMap<(String, String), Backoff>>,
     /// Where a refused record is posted (the Portal's internal listener, as the runner reaches
     /// it) and the compiled model of each space: with both, every stream into a space that
-    /// names a model carries the validation stage (PL-60, PL-61).
-    validation: Option<(String, Arc<crate::pipeline_validation::ModelSchemas>)>,
+    /// names a model carries the validation stage (PL-60, PL-61). `None` for the address is this
+    /// process's own loopback internal listener once bound (`pipeline_test::internal_base`).
+    validation: Option<(
+        Option<String>,
+        Arc<crate::pipeline_validation::ModelSchemas>,
+    )>,
     /// The projects whose streams under the bare pipeline name were removed from the runner
     /// since this Portal started (T-3002): once per project, then never asked again.
     unqualified_retired: Mutex<HashSet<String>>,
@@ -483,8 +487,25 @@ impl StreamDeployer {
         internal: impl Into<String>,
         schemas: Arc<crate::pipeline_validation::ModelSchemas>,
     ) -> Self {
-        self.validation = Some((internal.into(), schemas));
+        self.validation = Some((Some(internal.into()), schemas));
         self
+    }
+
+    /// Validates as [`Self::with_validation`] on the Portal's own internal listener, whose port
+    /// is known only once it is bound (jc binds `127.0.0.1:0`): the spaces' models load either
+    /// way, so a Portal with no address setting still knows them (UI judge 2026-11-09).
+    pub fn with_own_validation(
+        mut self,
+        schemas: Arc<crate::pipeline_validation::ModelSchemas>,
+    ) -> Self {
+        self.validation = Some((None, schemas));
+        self
+    }
+
+    /// The validation's listener address and models, once the address is known.
+    fn validation(&self) -> Option<(String, &Arc<crate::pipeline_validation::ModelSchemas>)> {
+        let (internal, schemas) = self.validation.as_ref()?;
+        crate::api::pipeline_test::internal_base(internal.as_deref()).map(|base| (base, schemas))
     }
 
     /// The compiled models this deployer renders stages from, when it validates.
@@ -508,7 +529,7 @@ impl StreamDeployer {
     /// different models is left without it and says so.
     /// ponytail: one stage per stream; per-output stages are the upgrade when a fan-out needs them.
     fn validated(&self, stream: &mut Value, project: &str, pipeline: &str, spaces: &[String]) {
-        let Some((internal, schemas)) = &self.validation else {
+        let Some((internal, schemas)) = self.validation() else {
             return;
         };
         let Some(space) = spaces.first() else {
@@ -540,7 +561,7 @@ impl StreamDeployer {
 
     /// Sends the outcome of every batch the stream's write took to the pipeline's log (PL-62).
     fn logged(&self, stream: &mut Value, project: &str, pipeline: &str) {
-        let Some((internal, _)) = &self.validation else {
+        let Some((internal, _)) = self.validation() else {
             return;
         };
         let Some(output) = stream.get_mut("output") else {
@@ -3482,6 +3503,18 @@ output:
             &["BikeHireDockingStation".to_owned()],
             false,
         ))
+    }
+
+    /// A Portal with no listener address setting (jc) still loads the spaces' models: the
+    /// pipeline editor read "names no data model this Portal holds" (UI judge 2026-11-09).
+    #[test]
+    fn a_deployer_on_its_own_listener_still_carries_the_models() {
+        let schemas = Arc::new(crate::pipeline_validation::ModelSchemas::default());
+        let deployer =
+            StreamDeployer::new("http://runner").with_own_validation(Arc::clone(&schemas));
+        assert!(deployer
+            .model_schemas()
+            .is_some_and(|carried| Arc::ptr_eq(carried, &schemas)));
     }
 
     /// PL-60, PL-61: a stream into a space that names a model carries the stage and the
