@@ -114,6 +114,9 @@ interface HistoryCellProps {
   onPlan: (plan: Plan | undefined) => void;
 }
 
+/** The History column's one-line hint, which every select of the column is described by (UI-16). */
+const HISTORY_EXPLAIN = "workbench-history-explain";
+
 /** One attribute's history plan: what is kept, the time of a row, and the server's verdict on it. */
 function HistoryCell({ name, plan, timeSlots, findings, onPlan }: HistoryCellProps): JSX.Element {
   const { t } = useTranslation();
@@ -125,6 +128,7 @@ function HistoryCell({ name, plan, timeSlots, findings, onPlan }: HistoryCellPro
       <Select
         id={id}
         aria-label={t("pipelines.history.keepOf", { name })}
+        aria-describedby={HISTORY_EXPLAIN}
         value={plan?.keep ?? ""}
         onChange={(event) => onPlan(event.target.value ? { ...(plan ?? {}), keep: event.target.value as Keep } : undefined)}
       >
@@ -139,6 +143,7 @@ function HistoryCell({ name, plan, timeSlots, findings, onPlan }: HistoryCellPro
         <Select
           id={`${id}-time`}
           aria-label={t("pipelines.history.timeOf", { name })}
+          aria-describedby={HISTORY_EXPLAIN}
           value={plan.observedAt ?? ""}
           onChange={(event) => onPlan({ ...plan, observedAt: event.target.value || undefined })}
         >
@@ -155,6 +160,7 @@ function HistoryCell({ name, plan, timeSlots, findings, onPlan }: HistoryCellPro
         <Select
           id={`${id}-heartbeat`}
           aria-label={t("pipelines.history.heartbeatOf", { name })}
+          aria-describedby={HISTORY_EXPLAIN}
           value={plan.heartbeat ?? "PT1H"}
           onChange={(event) => onPlan({ ...plan, heartbeat: event.target.value })}
         >
@@ -202,7 +208,7 @@ export function TargetCard({ space, type, target, history, onHistory, timeSlots 
       {type && target.attributes.length > 0 ? (
         <>
           <p className="text-caption text-fg-muted">{t("pipelines.workbench.target.explain", { type })}</p>
-          {onHistory ? <p className="text-caption text-fg-muted">{t("pipelines.history.explain")}</p> : null}
+          {onHistory ? <p id={HISTORY_EXPLAIN} className="text-caption text-fg-muted">{t("pipelines.history.explain")}</p> : null}
           <Table caption={t("pipelines.workbench.target.caption", { type })} {...(onHistory ? {} : { maxHeight: "max-h-80" })}>
             <TableHead>
               <TableHeaderCell>{t("pipelines.workbench.target.field")}</TableHeaderCell>
