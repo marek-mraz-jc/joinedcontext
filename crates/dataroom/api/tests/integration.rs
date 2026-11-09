@@ -1223,6 +1223,8 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
                     title_overrides: BTreeMap::new(),
                     spelling_fixes: BTreeMap::new(),
                     require_column: BTreeMap::new(),
+                    converted: BTreeMap::new(),
+                    gateway: None,
                     schedule: "23 3 * * *".into(),
                     enabled: true,
                     modified: Utc::now(),

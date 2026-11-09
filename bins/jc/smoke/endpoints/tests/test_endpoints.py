@@ -161,6 +161,11 @@ class Fake:
             return 200, {"Content-Type": "application/xml"}, b'<EntitySet Name="AirQualityObserved"/>'
         if rest.startswith("odata/v4/"):
             return 200, {}, {"@odata.count": 2, "value": []}
+        if rest.startswith("ical/v1/") and self.broken == "feed-413":
+            return 413, {"Content-Type": "application/problem+json"}, {
+                "status": 413, "title": "the query selects as many events as one feed reads or more: narrow it with q"}
+        if rest.startswith("ical/v1/"):
+            return 200, {"Content-Type": "text/calendar"}, b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"
         return 404, {}, {}
 
 
@@ -280,6 +285,26 @@ def test_a_partial_history_is_history(tmp_path, serve):
     code, res = run(tmp_path, serve(Fake("partial-history")), now_iso())
     got = [r["result"] for r in res["checks"] if r["id"] == "anon.temporal.last-24h"]
     assert got == ["pass"], got
+
+
+@pytest.mark.parametrize("cap,result", [(2, "skip"), (3, "fail")])
+def test_a_feed_over_more_entities_than_one_feed_reads_is_refused_as_prod_does(tmp_path, serve, monkeypatch, cap, result):
+    """prod's broker answers 413 for an iCal feed whose sources select RESIDUAL_SCAN entities or
+    more (helsinki-events: 11,677 Events): a named same-on-prod row. Under the cap, 413 stays red."""
+    monkeypatch.setattr(suite, "FEED_READS", cap)
+    b = bundle(tmp_path / "x", now_iso())
+    ep = b / "gitea" / "files" / "org" / "city" / "spaces" / "air" / "endpoints" / "open.yaml"
+    ep.write_text(ep.read_text().replace("odata]", "odata, ical]") + (
+        "  representations:\n    ical:\n      - name: all\n        sources:\n          - type: AirQualityObserved\n"))
+    out = tmp_path / "out"
+    suite.main(["--base-url", serve(Fake("feed-413")), "--export", str(b), "--out", str(out), "--workers", "1"])
+    rows = [r for r in json.loads((out / "results.json").read_text())["checks"] if r["id"] == "anon.ical"]
+    assert [r["result"] for r in rows] == [result], rows
+    assert result == "fail" or rows[0]["reason"].startswith("same on prod: 413")
+    # a feed the broker serves passes whatever the cap
+    suite.main(["--base-url", serve(Fake()), "--export", str(b), "--out", str(out), "--workers", "1"])
+    rows = [r for r in json.loads((out / "results.json").read_text())["checks"] if r["id"] == "anon.ical"]
+    assert [r["result"] for r in rows] == ["pass"], rows
 
 
 def test_a_query_only_grant_answers_an_id_404_as_prod_does(tmp_path, serve, monkeypatch):
