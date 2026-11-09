@@ -889,7 +889,20 @@ async fn call(
         Some((public, api))
             if public.as_str().trim_end_matches('/') == base.trim_end_matches('/') =>
         {
-            action_with(&HTTP, api.as_str().trim_end_matches('/'), name, params).await
+            let api_base = api.as_str().trim_end_matches('/');
+            // jc's own catalogue on a host mount: its host on jc's loopback listener (C1).
+            match (state.config.ckan_api_reach, api.host_str()) {
+                (Some(reach), Some(host)) => {
+                    let http = reqwest::Client::builder()
+                        .user_agent("joinedcontext-portal catalogue")
+                        .timeout(Duration::from_secs(10))
+                        .resolve(host, reach)
+                        .build()
+                        .map_err(|e| Failure::Unreachable(e.to_string()))?;
+                    action_with(&http, api_base, name, params).await
+                }
+                _ => action_with(&HTTP, api_base, name, params).await,
+            }
         }
         _ => action(&state.catalogue_http, base, name, params).await,
     }
@@ -2047,6 +2060,32 @@ mod tests {
         assert!(matches!(
             call(&state, &inside, "package_search", &[]).await,
             Err(Failure::Unreachable(reason)) if reason.contains("internal address")
+        ));
+    }
+
+    /// C1: jc's own catalogue on a host mount is read at its host name on jc's loopback
+    /// listener, never through DNS and the public edge.
+    #[tokio::test]
+    async fn the_own_catalogue_on_a_host_mount_is_read_on_its_reach() {
+        let inside = answering(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 27\r\n\r\n{\"success\":true,\"result\":1}",
+            0,
+        )
+        .await;
+        let reach: std::net::SocketAddr = inside
+            .trim_start_matches("http://")
+            .parse()
+            .expect("an address");
+        let mut config = crate::config::Config::for_tests();
+        config.ckan_api_route = Some((
+            "https://opendata.example.invalid".parse().expect("url"),
+            "http://opendata.example.invalid".parse().expect("url"),
+        ));
+        config.ckan_api_reach = Some(reach);
+        let state = crate::state::AppState::new(config, None);
+        assert!(matches!(
+            call(&state, "https://opendata.example.invalid", "package_search", &[]).await,
+            Ok(v) if v == json!(1)
         ));
     }
 

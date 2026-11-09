@@ -1282,10 +1282,6 @@ pub(crate) fn valid_host(host: &str) -> bool {
         && port.is_none_or(|p| p.parse::<u16>().is_ok())
 }
 
-fn default_true() -> bool {
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
