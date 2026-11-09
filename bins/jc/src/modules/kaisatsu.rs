@@ -339,6 +339,55 @@ mod tests {
         assert!(link_endpoint_scopes(&hub, &ours, true).is_none());
     }
 
+    /// The realm `apply_portal_realm` writes when the assistant runs: kaisatsu takes it, the
+    /// assistant's client asks scope `embedder` and introspects for the proxy, and portal-api's
+    /// tokens name `jc-assistant`.
+    #[tokio::test]
+    async fn the_assistants_clients_and_the_portals_audience_apply() {
+        let dir = tempfile::tempdir().unwrap();
+        let roles = crate::module::Module::ALL;
+        let setup = setup::Setup::prepare(dir.path(), &roles, &Default::default()).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(
+            Kek::from_raw_bytes("07".repeat(32).as_bytes()).unwrap(),
+        ));
+        let mut files = setup::portal_realm_files("https://portal.city.example/").unwrap();
+        setup::add_assistant_audience(&mut files);
+        files.push(setup::assistant_realm_file());
+        let options = ApplyOptions {
+            env_vars: setup::realm_env(&setup),
+            ..ApplyOptions::default()
+        };
+        apply_realm_files(&store, &files, &options).await.unwrap();
+        let realm = store.get_realm(setup::PORTAL_REALM).await.unwrap().unwrap();
+        let client = |id: &'static str| {
+            let store = store.clone();
+            let realm = realm.id.clone();
+            async move {
+                store
+                    .get_client_by_client_id(&realm, id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+            }
+        };
+        let assistant = client(setup::ASSISTANT_CLIENT).await;
+        assert!(assistant.service_accounts_enabled);
+        assert_eq!(
+            assistant.optional_client_scopes,
+            vec![setup::EMBEDDER_SCOPE.to_owned()]
+        );
+        let audience = |c: &kaisatsu_core::model::ClientRepresentation| -> Vec<String> {
+            c.protocol_mappers
+                .iter()
+                .filter_map(|m| m.config.get("included.custom.audience").cloned())
+                .collect()
+        };
+        assert_eq!(audience(&assistant), vec![setup::PROXY_CLIENT.to_owned()]);
+        assert!(client(setup::PROXY_CLIENT).await.service_accounts_enabled);
+        let portal = client(setup::PORTAL_CLIENT).await;
+        assert!(audience(&portal).contains(&setup::ASSISTANT_CLIENT.to_owned()));
+    }
+
     #[tokio::test]
     async fn k16_config_parses_database_url_file_refuses_unknown_fields_and_refuses_inline_password()
      {

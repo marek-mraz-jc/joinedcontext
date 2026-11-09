@@ -27,6 +27,8 @@ pub const GATEWAY_CLIENT: &str = "context-gateway";
 pub const ASSISTANT_CLIENT: &str = "jc-assistant";
 /// The assistant's model proxy's client: it introspects the assistant's tokens.
 pub const PROXY_CLIENT: &str = "agent-proxy";
+/// The scope (and audience) the assistant's client asks the shared embedder service with.
+pub const EMBEDDER_SCOPE: &str = "embedder";
 /// The first person, a member of the Portal's bootstrap group.
 pub const FIRST_ADMIN: &str = "admin";
 /// The Portal's default bootstrap group (`JC_PORTAL_BOOTSTRAP_ADMINS`).
@@ -516,6 +518,8 @@ pub fn gateway_realm_file() -> (String, Value) {
 pub fn assistant_realm_file() -> (String, Value) {
     let client = |id: &str, name: &str, secret: &str, audience: Option<&str>| {
         let mappers: Vec<Value> = audience.map(audience_mapper).into_iter().collect();
+        // The assistant asks the shared embedder with scope `embedder` (its audience).
+        let scopes: Vec<&str> = audience.map(|_| EMBEDDER_SCOPE).into_iter().collect();
         json!({
             "clientId": id,
             "name": name,
@@ -532,12 +536,18 @@ pub fn assistant_realm_file() -> (String, Value) {
             "redirectUris": [],
             "webOrigins": [],
             "defaultClientScopes": ["basic"],
-            "optionalClientScopes": [],
+            "optionalClientScopes": scopes,
             "protocolMappers": mappers
         })
     };
     let file = json!({
         "realm": PORTAL_REALM,
+        "clientScopes": [{
+            "name": EMBEDDER_SCOPE,
+            "protocol": "openid-connect",
+            "attributes": { "include.in.token.scope": "true" },
+            "protocolMappers": [audience_mapper(EMBEDDER_SCOPE)]
+        }],
         "clients": [
             client(
                 ASSISTANT_CLIENT,

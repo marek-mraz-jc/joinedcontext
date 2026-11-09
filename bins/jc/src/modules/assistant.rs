@@ -56,6 +56,7 @@ pub fn vars(
     siblings: &Siblings,
     setup: &Setup,
     proxy: Option<SocketAddr>,
+    embedder: Option<&str>,
 ) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let mut put = |key: &str, value: Option<String>| {
@@ -114,6 +115,24 @@ pub fn vars(
         proxy.map(|at| format!("http://{at}")),
     );
     put("JC_ASSISTANT_LLM", Some(DEFAULT_LLM.to_owned()));
+    // The shared embedder asks this realm for scope `embedder` as the assistant's own client.
+    if let Some(url) = embedder {
+        put("JC_ASSISTANT_EMBEDDER_URL", Some(url.to_owned()));
+        put(
+            "JC_ASSISTANT_EMBEDDER_TOKEN_URL",
+            public(Module::Kaisatsu).map(|id| token_url(&id)),
+        );
+        put(
+            "JC_ASSISTANT_EMBEDDER_CLIENT_ID",
+            Some(setup::ASSISTANT_CLIENT.to_owned()),
+        );
+        put(
+            "JC_ASSISTANT_EMBEDDER_CLIENT_SECRET_FILE",
+            setup
+                .path(Secret::AssistantClientSecret)
+                .map(|p| p.display().to_string()),
+        );
+    }
     out
 }
 
@@ -333,7 +352,12 @@ async fn try_start(
         Some(p) => Some(p.listener.local_addr().map_err(|e| e.to_string())?),
         None => None,
     };
-    let filled = vars(siblings, setup, proxy_at);
+    let filled = vars(
+        siblings,
+        setup,
+        proxy_at,
+        cfg.assistant.embedder_url.as_deref(),
+    );
     let lookup = lookup(env, &filled);
     if let Some(why) = missing(cfg, siblings, setup, &lookup) {
         return Err(why);
@@ -507,7 +531,18 @@ mod tests {
     #[test]
     fn the_siblings_fill_the_settings_and_the_environment_wins() {
         let (_cfg, siblings, setup, _d) = fixture();
-        let filled = vars(&siblings, &setup, Some("127.0.0.1:4100".parse().unwrap()));
+        let filled = vars(
+            &siblings,
+            &setup,
+            Some("127.0.0.1:4100".parse().unwrap()),
+            Some("http://127.0.0.1:4200"),
+        );
+        assert_eq!(filled["JC_ASSISTANT_EMBEDDER_URL"], "http://127.0.0.1:4200");
+        assert_eq!(
+            filled["JC_ASSISTANT_EMBEDDER_TOKEN_URL"],
+            filled["JC_ASSISTANT_TOKEN_URL"]
+        );
+        assert!(!vars(&siblings, &setup, None, None).contains_key("JC_ASSISTANT_EMBEDDER_URL"));
         assert_eq!(filled["JC_ASSISTANT_PROXY_URL"], "http://127.0.0.1:4100");
         assert_eq!(filled["JC_ASSISTANT_GATEWAY_URL"], "http://127.0.0.1:8443");
         assert_eq!(

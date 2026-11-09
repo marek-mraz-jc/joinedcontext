@@ -265,6 +265,9 @@ pub struct AssistantSection {
     /// Postgres with pgvector, as the assistant's own role (it migrates itself, as standalone,
     /// under forced row-level security). Without it the assistant stays off.
     pub database: Option<DatabaseSection>,
+    /// The shared embedder service (`JC_ASSISTANT_EMBEDDER_URL`); `jc` fills its token URL,
+    /// client and secret file from kaisatsu and the `jc-assistant` client.
+    pub embedder_url: Option<String>,
 }
 
 impl Default for AssistantSection {
@@ -273,6 +276,7 @@ impl Default for AssistantSection {
             model_key_file: None,
             catalogue_deployment: "data".into(),
             database: None,
+            embedder_url: None,
         }
     }
 }
