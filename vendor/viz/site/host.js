@@ -40,7 +40,8 @@
   // `&lang=sk` (the page's language) in any order.
   function parseHash(hash) {
     var parts = String(hash || "").replace(/^#/, "").split("&");
-    if (!/^[0-9a-f-]{36}$/.test(parts[0])) return null;
+    // jc's catalogue mints `view-<uuid>` where CKAN minted the bare UUID: both name a view.
+    if (!/^(?:view-)?[0-9a-f-]{36}$/.test(parts[0])) return null;
     var lang = parts.map(function (p) { return /^lang=([a-z]{2})$/.exec(p); }).filter(Boolean)[0];
     return { id: parts[0], inline: parts.indexOf("inline") > 0, lang: lang ? lang[1] : null };
   }
