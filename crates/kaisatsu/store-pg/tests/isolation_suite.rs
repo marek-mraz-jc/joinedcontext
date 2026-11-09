@@ -5,7 +5,7 @@
 
 use kaisatsu_core::*;
 use kaisatsu_store_memory::MemoryStore;
-use kaisatsu_store_pg::{MIGRATION_0001_SQL, MIGRATION_0002_SQL};
+use kaisatsu_store_pg::{MIGRATION_0001_SQL, MIGRATION_0002_SQL, MIGRATION_0003_SQL};
 
 mod common;
 use odata_table::QueryOptions;
@@ -263,6 +263,14 @@ fn migration_ddl_enforces_rls_and_leakproof_indexes_on_every_table() {
                 "ALTER TABLE kaisatsu.{t} FORCE ROW LEVEL SECURITY;"
             )),
             "0002 table {t} missing FORCE ROW LEVEL SECURITY"
+        );
+    }
+    for stmt in ["ENABLE", "FORCE"] {
+        assert!(
+            MIGRATION_0003_SQL.contains(&format!(
+                "ALTER TABLE kaisatsu.device_code {stmt} ROW LEVEL SECURITY;"
+            )),
+            "0003 table device_code missing {stmt} ROW LEVEL SECURITY"
         );
     }
     // Verify required W2 leakproof indexes

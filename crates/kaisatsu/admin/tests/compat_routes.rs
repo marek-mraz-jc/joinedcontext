@@ -550,6 +550,56 @@ async fn every_route_refuses_missing_forged_and_revoked_tokens() {
     );
 }
 
+/// D3: `GET /admin/realms/{realm}/clients` answers 401 without a token, 403 to an admin of the
+/// realm whose roles do not list clients (prod's portal-reconciler: manage-users and
+/// query-groups, which Keycloak answers 403), and 200 with view-clients. Never the 404 of a route
+/// that does not exist.
+#[tokio::test]
+async fn the_client_list_answers_401_403_or_200_as_keycloak_does() {
+    let f = fixture().await;
+    let keys = f.store.list_signing_keys("dev").await.unwrap();
+    let with = |sub: &str, roles: &[&str]| {
+        token(
+            &f.kek,
+            &keys[0],
+            claims(
+                sub,
+                json!({"resource_access": {"realm-management": {"roles": roles}}}),
+            ),
+        )
+    };
+    let uri = "/admin/realms/dev/clients?clientId=c-hel";
+    let (st, _, _) = call(&f.app, &Method::GET, uri, None, None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    let reconciler = with(
+        "service-account-portal-reconciler",
+        &["manage-users", "query-groups"],
+    );
+    let (st, _, body) = call(&f.app, &Method::GET, uri, Some(&reconciler), None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
+    // The users list the same token reads: the admin door is the same.
+    let (st, _, _) = call(
+        &f.app,
+        &Method::GET,
+        "/admin/realms/dev/users",
+        Some(&reconciler),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let viewer = with("service-account-portal-api", &["view-clients"]);
+    let (st, _, body) = call(
+        &f.app,
+        &Method::GET,
+        "/admin/realms/dev/clients",
+        Some(&viewer),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(body.as_array().is_some_and(|a| !a.is_empty()), "{body}");
+}
+
 #[tokio::test]
 async fn unknown_ids_answer_404_to_a_realm_admin() {
     let f = fixture().await;

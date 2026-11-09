@@ -20,7 +20,9 @@ OpenID configuration, the gateway's OAuth metadata, five authorize pages without
    reused refresh token revoke its family, logs out in the browser; signs in to the Portal and
    out again; has its token exchanged by portal-api for one Endpoint (audience mcp-hub, scope
    endpoint:<slug>) and read there, while the same token on another Endpoint, its own unexchanged
-   token and a forged one are refused. Refusals: a wrong password, another realm, the revoked
+   token and a forged one are refused. On a realm that enables no exchange for portal-api (prod's),
+   that exchange is an expected refusal and context-gateway exchanges the person's edge token for
+   the broker instead: read by the realm's introspection, refused on a plain Endpoint. Refusals: a wrong password, another realm, the revoked
    family, the foreign audience. The connector door's metadata and 401, and the gateway's
    anonymous register, authorize, token and hub call close it.
 
@@ -61,6 +63,16 @@ BROKER_SCOPE = "context-broker-main"  # prod realm smartcity's broker scope
 PKCE_CLIENT = "mcp-local"
 LOOPBACK_CALLBACK = "http://localhost/callback"
 HUB_AUDIENCE = "mcp-hub"
+# The person's browser client on prod (APISIX's openid-connect plugin); its tokens name the gateway.
+EDGE_CLIENT = "edge"
+EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
+# jc's shipped realm: what kaisatsu serves when the export holds no file of the rehearsal's realm.
+SHIPPED_REALM = HERE.parents[3] / "crates" / "kaisatsu" / "import" / "realms" / "jc-portal.json"
+# Why prod refuses portal-api's exchange: the realm export and the deployment's guard of it.
+EXCHANGE_RULE = ("this realm enables standard.token.exchange for context-gateway and the agent proxy, not portal-api "
+                 "(release v0.1.23's realm, prod's export); deployment main grants portal-api too (T-6063, 76502fd8e, "
+                 "test_only_the_agent_proxy_the_gateway_and_the_portal_may_exchange_a_persons_token), and the suite "
+                 "takes portal-api's path wherever the served realm grants it (ADR-N-038 section 3.2)")
 
 # Keycloak's own clients: the admin console, the account console and the internals they need.
 # kaisatsu has its own admin, so what only they enable is no prod feature jc must carry.
@@ -106,6 +118,30 @@ def realm_of(state) -> str:
 
 
 # ------------------------------------------------------------------------- what prod's realm uses
+
+def served_realm(export: Path, realm: str, state: str | None = None) -> dict:
+    """The realm file kaisatsu serves: the one the rehearsal imports (<state>/realms/<realm>.json,
+    with the kit's changes such as deployment main's client lines), else the export's file of that
+    realm, else jc's shipped realm."""
+    for f in ([Path(state) / "realms" / f"{realm}.json"] if state else []) + [export / "keycloak" / f"realm-{realm}.json"]:
+        if f.is_file():
+            return json.loads(f.read_text())
+    return json.loads(SHIPPED_REALM.read_text()) if SHIPPED_REALM.is_file() else {}
+
+
+def cimd_allowed(realm: dict) -> bool:
+    """Keycloak admits a URL client_id only under an enabled client policy with the client-id-uri
+    condition; kaisatsu's import reads the same (crates/kaisatsu/import/src/lib.rs cimd_policy)."""
+    return any(p.get("enabled", True) and any(c.get("condition") == "client-id-uri" for c in p.get("conditions") or [])
+               for p in (realm.get("clientPolicies") or {}).get("policies") or [])
+
+
+def exchanges(realm: dict, client_id: str) -> bool:
+    """Whether the realm lets `client_id` exchange a person's token (standard token exchange)."""
+    return any(c.get("clientId") == client_id
+               and str((c.get("attributes") or {}).get("standard.token.exchange.enabled", "")).lower() == "true"
+               for c in realm.get("clients") or [])
+
 
 def realm_file(export: Path, realm: str) -> Path | None:
     kc = export / "keycloak"
@@ -301,10 +337,11 @@ def pkce_pair() -> tuple[str, str]:
 class Live:
     """The sign-in paths on the rehearsal, as one test person of its realm."""
 
-    def __init__(self, a, res: Results, realm: str):
+    def __init__(self, a, res: Results, realm: str, realm_doc: dict | None = None):
         from personas import Browser, _follow, _login
         self.Browser, self.follow, self.login_form = Browser, _follow, _login
         self.a, self.r, self.realm = a, res, realm
+        self.realm_doc = realm_doc or {}
         self.base = a.base_url.rstrip("/")
         self.http = Http(self.base)
         self.state = Path(a.state)
@@ -315,6 +352,10 @@ class Live:
 
     def secret(self, name: str) -> str:
         return (self.state / name).read_text().strip()
+
+    def realm_secret(self, var: str) -> str:
+        """A realm client's secret the rehearsal made ($HOME/<env>/secrets/realm-<VAR>, up.sh)."""
+        return (self.state.parent / "secrets" / f"realm-{var}").read_text().strip()
 
     def form(self, path: str, fields: dict, token: str | None = None):
         st, _h, raw = self.http.call("POST", path, token=token, body=urllib.parse.urlencode(fields).encode(),
@@ -359,20 +400,21 @@ class Live:
         url, st, page = self.follow(b, f"{self.kc}/auth?{urllib.parse.urlencode(q)}", stop=redirect)
         return url, st, page, verifier, nonce
 
-    def code_flow(self, b, scope: str = "openid mcp:portal") -> tuple[dict, str]:
-        """Signs the person in at `mcp-local`; answers (token answer, nonce sent)."""
-        url, st, page, verifier, nonce = self.authorize(b, PKCE_CLIENT, LOOPBACK_CALLBACK, scope)
+    def code_flow(self, b, scope: str = "openid mcp:portal", client: str = PKCE_CLIENT,
+                  redirect: str = LOOPBACK_CALLBACK, secret: str | None = None) -> tuple[dict, str]:
+        """Signs the person in at `client` (`mcp-local`); answers (token answer, nonce sent)."""
+        url, st, page, verifier, nonce = self.authorize(b, client, redirect, scope)
         if st != 200:
-            raise RuntimeError(f"authorize {PKCE_CLIENT}: {st}")
+            raise RuntimeError(f"authorize {client}: {st}")
         loc = self.login_form(b, url, page, self.user, self.password)
-        if not loc.startswith(LOOPBACK_CALLBACK):
-            loc, _, _ = self.follow(b, urllib.parse.urljoin(url, loc), stop=LOOPBACK_CALLBACK)
+        if not loc.startswith(redirect):
+            loc, _, _ = self.follow(b, urllib.parse.urljoin(url, loc), stop=redirect)
         q = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)
         if q.get("state") != ["smoke-state"]:
             raise RuntimeError("the callback did not carry the state back")
         st, body, raw = self.form(f"{self.kc}/token", {
-            "grant_type": "authorization_code", "client_id": PKCE_CLIENT, "code": q.get("code", [""])[0],
-            "redirect_uri": LOOPBACK_CALLBACK, "code_verifier": verifier})
+            "grant_type": "authorization_code", "client_id": client, "code": q.get("code", [""])[0],
+            "redirect_uri": redirect, "code_verifier": verifier, **({"client_secret": secret} if secret else {})})
         if st != 200 or not isinstance(body, dict):
             raise RuntimeError(f"code for token: {st} {redact(raw[:160])}")
         return body, nonce
@@ -502,13 +544,94 @@ class Live:
                  "no code (the person is not in that realm)", detail, ok)
 
     def exchange(self, subject: str, endpoints: list[str]) -> None:
-        """portal-api exchanges the person's token for one Endpoint (auth/oidc.rs exchange_for_endpoint);
-        the gateway (auth/subject.rs admit_on) takes it there and refuses it elsewhere."""
+        """The exchange the realm allows: portal-api's for one Endpoint where the realm enables it
+        (jc's shipped realm), else context-gateway's for the broker (prod's realm), each read and
+        refused where it does not belong."""
         if len(endpoints) < 2:
             self.r.skip("exchange", "gateway", "token exchange", "two public NGSI-LD Endpoints",
                         "the export holds fewer than two public Endpoints serving NGSI-LD")
             return
         own, other = endpoints[0], endpoints[1]
+        if exchanges(self.realm_doc, EXCHANGE_CLIENT):
+            self.portal_exchange(subject, own, other)
+        else:
+            self.gateway_exchange(subject, own, other)
+
+    def exchange_form(self, client: str, secret: str, subject: str, **extra) -> tuple[int, dict, str | None]:
+        st, body, _raw = self.form(f"{self.kc}/token", {
+            "grant_type": EXCHANGE_GRANT, "client_id": client, "client_secret": secret, "subject_token": subject,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "requested_token_type": "urn:ietf:params:oauth:token-type:access_token", **extra})
+        body = body if isinstance(body, dict) else {}
+        return st, body, body.get("access_token") if st == 200 else None
+
+    def controls(self, read: str, own: str, other: str) -> None:
+        st0, _, _ = self.http.call("GET", read.format(other))
+        self.row("exchange.control-anonymous", other, f"GET {read.format(other)} without a token",
+                 "200 (a public Endpoint)", str(st0), st0 == 200)
+        st1, _, _ = self.http.call("GET", read.format(own), token=forged_jwt())
+        self.row("exchange.control-forged", own, f"GET {read.format(own)} with a forged token", "401", str(st1), st1 == 401)
+
+    def gateway_exchange(self, subject: str, own: str, other: str) -> None:
+        """Prod's realm: portal-api may not exchange; context-gateway exchanges the person's edge
+        token for the broker (federation/exchange.rs), the token a federated read carries."""
+        read = "/api/endpoint/{}/ngsi-ld/v1/types"
+        st, body, tok = self.exchange_form(EXCHANGE_CLIENT, self.secret("portal-client-secret"), subject,
+                                           audience=HUB_AUDIENCE, scope=f"gateway-hub endpoint:{own}")
+        self.row("refuse.exchange.portal-api", EXCHANGE_CLIENT,
+                 f"token exchange by {EXCHANGE_CLIENT}, audience {HUB_AUDIENCE}, scope endpoint:{own}",
+                 "400 (the realm enables no exchange for portal-api)",
+                 f"{st} {body.get('error', '')} {body.get('error_description', '')}".strip(),
+                 st == 400 and not tok, EXCHANGE_RULE)
+        try:
+            edge, _ = self.code_flow(self.Browser(self.base), "openid", EDGE_CLIENT, f"{self.base}/smoke-kaisatsu/callback",
+                                     self.realm_secret("KC_EDGE_SECRET"))
+        except Exception as err:  # noqa: BLE001 - a broken sign-in is a failing row, never a pass
+            self.row("exchange.issued", GATEWAY_CLIENT, f"sign in at {EDGE_CLIENT}, then exchange by {GATEWAY_CLIENT}",
+                     "tokens", str(err)[:200], False, EXCHANGE_RULE)
+            for id in ("exchange.read", "refuse.foreign-audience", "refuse.unexchanged"):
+                self.r.skip(id, "gateway", "a read with the exchanged token", "", f"no {EDGE_CLIENT} token to exchange")
+            return
+        gst, gbody, gtok = self.exchange_form(GATEWAY_CLIENT, self.secret("gateway-client-secret"),
+                                              edge["access_token"], scope=BROKER_SCOPE)
+        gc = jwt_claims(gtok)
+        aud = gc.get("aud")
+        aud = aud if isinstance(aud, list) else [aud]
+        person = lambda sub: "the person" if sub == self.uid else sub
+        self.row("exchange.issued", GATEWAY_CLIENT,
+                 f"token exchange by {GATEWAY_CLIENT} of the person's {EDGE_CLIENT} token, scope {BROKER_SCOPE}",
+                 f"200, aud {BROKER_SCOPE}, azp {GATEWAY_CLIENT}, sub the person",
+                 f"{gst} {gbody.get('error', '')} {gbody.get('error_description', '')}".strip()
+                 + (f", aud {aud}, azp {gc.get('azp')}, sub {person(gc.get('sub'))}" if gtok else ""),
+                 bool(gtok) and BROKER_SCOPE in aud and gc.get("azp") == GATEWAY_CLIENT and gc.get("sub") == self.uid,
+                 EXCHANGE_RULE)
+        self.controls(read, own, other)
+        if not gtok:
+            for id in ("exchange.read", "refuse.foreign-audience", "refuse.unexchanged"):
+                self.r.skip(id, "gateway", "a read with the exchanged token", "", "the realm refused the exchange")
+            return
+        st, info, _ = self.form(f"{self.kc}/token/introspect", {
+            "token": gtok, "client_id": GATEWAY_CLIENT, "client_secret": self.secret("gateway-client-secret")})
+        info = info if isinstance(info, dict) else {}
+        iaud = info.get("aud")
+        iaud = iaud if isinstance(iaud, list) else [iaud]
+        self.row("exchange.read", GATEWAY_CLIENT, f"POST {self.kc}/token/introspect as {GATEWAY_CLIENT}",
+                 f"200, active, sub the person, aud {BROKER_SCOPE}",
+                 f"{st}, active {info.get('active')}, sub {person(info.get('sub'))}, aud {iaud}",
+                 st == 200 and info.get("active") is True and info.get("sub") == self.uid and BROKER_SCOPE in iaud,
+                 "only a federated read whose hub reads with the caller's identity takes the broker token at an "
+                 "Endpoint (admit_on), and prod's export registers none: the broker's reader asks the realm")
+        st3, _, _ = self.http.call("GET", read.format(own), token=gtok)
+        self.row("refuse.foreign-audience", own, f"GET {read.format(own)} with the broker token, outside a federated read",
+                 "401 (a foreign audience here, though the Endpoint is public)", str(st3), st3 == 401,
+                 "admit_on adds the broker audience only for a caller-identity member of a federated read")
+        st4, _, _ = self.http.call("GET", read.format(own), token=subject)
+        self.row("refuse.unexchanged", own, f"GET {read.format(own)} with the person's mcp:portal token",
+                 "401 (no Endpoint audience)", str(st4), st4 == 401)
+
+    def portal_exchange(self, subject: str, own: str, other: str) -> None:
+        """portal-api exchanges the person's token for one Endpoint (auth/oidc.rs exchange_for_endpoint);
+        the gateway (auth/subject.rs admit_on) takes it there and refuses it elsewhere."""
         st, body, _raw = self.form(f"{self.kc}/token", {
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange", "client_id": EXCHANGE_CLIENT,
             "client_secret": self.secret("portal-client-secret"), "subject_token": subject,
@@ -554,11 +677,7 @@ class Live:
             gs, _, _ = self.http.call("GET", read.format(own), token=gtok)
             self.row("refuse.broker-audience", own, f"GET {read.format(own)} with the broker token, outside a federated read",
                      "401 (a foreign audience here)", str(gs), gs == 401)
-        st0, _, _ = self.http.call("GET", read.format(other))
-        self.row("exchange.control-anonymous", other, f"GET {read.format(other)} without a token",
-                 "200 (a public Endpoint)", str(st0), st0 == 200)
-        st1, _, _ = self.http.call("GET", read.format(own), token=forged_jwt())
-        self.row("exchange.control-forged", own, f"GET {read.format(own)} with a forged token", "401", str(st1), st1 == 401)
+        self.controls(read, own, other)
         if not tok:
             for id in ("exchange.read", "refuse.foreign-audience", "refuse.unexchanged"):
                 self.r.skip(id, "gateway", "a read with the exchanged token", "", "the realm refused the exchange")
@@ -672,6 +791,7 @@ def run(a, res: Results) -> dict:
     rf = realm_file(export, realm)
     realm_doc = json.loads(rf.read_text()) if rf else {}
     used = used_features(realm_doc, export / "gitea" / "files")
+    served = served_realm(export, realm, a.state)
     http = Http(a.base_url)
     base = a.base_url.rstrip("/")
 
@@ -708,9 +828,16 @@ def run(a, res: Results) -> dict:
             res.check("authorize.cimd-claude.prod", "prod realm", "fixture: prod's answer to the same request",
                       "recorded", brief(want), True,
                       "prod's realm has no CIMD: claude.ai connects through the gateway's DCR and mcp-hub")
-            res.check(f"authorize.{pid}", "kaisatsu", call, "200, the login form (the connector sign-in jc offers)",
-                      brief(got), got.get("page") == "login",
-                      "jc's /c/{id} connectors need it (connector:<id> offline_access, CIMD client)")
+            if cimd_allowed(served):
+                res.check(f"authorize.{pid}", "kaisatsu", call, "200, the login form (the connector sign-in jc offers)",
+                          brief(got), got.get("page") == "login",
+                          f"realm {realm} has a client-id-uri client policy; jc's /c/{{id}} connectors need it "
+                          "(connector:<id> offline_access, CIMD client)")
+            else:
+                res.check(f"authorize.{pid}", "kaisatsu", call, f"refused as prod: {brief(want)}", brief(got),
+                          same_answer(want, got),
+                          f"realm {realm} has no client-id-uri client policy (the realm export), so a URL client_id "
+                          "is an unknown client, as on prod; jc's /c/{id} connectors there wait for an owner decision")
             continue
         res.check(f"authorize.{pid}", "kaisatsu" if door == "kc" else "gateway", call,
                   f"as prod: {brief(want)}", brief(got), same_answer(want, got))
@@ -723,7 +850,7 @@ def run(a, res: Results) -> dict:
     for name in ("jc", "master"):
         if name != realm and http.call("GET", f"/id/realms/{name}")[0] == 200:
             others.append(name)
-    live = Live(a, res, realm)
+    live = Live(a, res, realm, served)
     try:
         live.run(public_ngsi_endpoints(export), others[0] if others else None)
     except Exception as err:  # noqa: BLE001 - a broken fixture is a failing row, never a pass

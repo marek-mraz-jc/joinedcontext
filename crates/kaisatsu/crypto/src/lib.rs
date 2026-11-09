@@ -67,6 +67,40 @@ pub fn sha256_base64url(input: &str) -> String {
     URL_SAFE_NO_PAD.encode(digest)
 }
 
+/// The letters a device user code is made of (RFC 8628 §6.1): no vowels, so no words, and none
+/// of the shapes people confuse (0/O, 1/I).
+pub const USER_CODE_ALPHABET: &[u8] = b"BCDFGHJKLMNPQRSTVWXZ";
+
+/// A CSPRNG device user code `XXXX-XXXX` over [`USER_CODE_ALPHABET`] (20^8, about 2^34.6).
+#[must_use]
+pub fn random_user_code() -> String {
+    let n = USER_CODE_ALPHABET.len();
+    // Bytes at or above the largest multiple of 20 are drawn again, so every letter is as likely.
+    let limit = (256 / n * n) as u8;
+    let mut rng = rand::rng();
+    let mut out = String::with_capacity(9);
+    while out.len() < 9 {
+        if out.len() == 4 {
+            out.push('-');
+        }
+        let b = rng.next_u32() as u8;
+        if b < limit {
+            out.push(USER_CODE_ALPHABET[usize::from(b) % n] as char);
+        }
+    }
+    out
+}
+
+/// The form a user code is compared in: letters upper-cased, everything that is not a letter of
+/// [`USER_CODE_ALPHABET`] (hyphens, spaces) dropped.
+#[must_use]
+pub fn normalize_user_code(raw: &str) -> String {
+    raw.chars()
+        .map(|c| c.to_ascii_uppercase())
+        .filter(|c| c.is_ascii() && USER_CODE_ALPHABET.contains(&(*c as u8)))
+        .collect()
+}
+
 /// Generates a 256-bit (32-byte) CSPRNG opaque token/session handle encoded as base64url (W2, W10).
 #[must_use]
 pub fn random_handle_256() -> String {

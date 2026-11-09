@@ -36,6 +36,8 @@ use std::time::Duration;
 pub const MIGRATION_0001_SQL: &str = include_str!("../migrations/0001_init.sql");
 /// Embedded migration 0002 SQL (`webauthn_credential`, `idp_links`, `email_outbox` & domain columns).
 pub const MIGRATION_0002_SQL: &str = include_str!("../migrations/0002_k_items.sql");
+/// Embedded migration 0003 SQL (`device_code`, RFC 8628 device authorizations).
+pub const MIGRATION_0003_SQL: &str = include_str!("../migrations/0003_device_code.sql");
 
 /// Table holding the applied migration versions (outside schema `kaisatsu`, so the request role
 /// has no grant on it and the RLS boot check does not see it).
@@ -274,6 +276,13 @@ impl PgStore {
                 MIGRATION_0002_SQL.into_sql_str(),
                 false,
             ),
+            Migration::new(
+                3,
+                "device_code".into(),
+                MigrationType::Simple,
+                MIGRATION_0003_SQL.into_sql_str(),
+                false,
+            ),
         ]);
         migrator.create_schema("kaisatsu_migrations");
         migrator.dangerous_set_table_name(MIGRATIONS_TABLE);
@@ -366,6 +375,7 @@ impl PgStore {
             sweep_sql!("auth_session"),
             sweep_sql!("auth_code"),
             sweep_sql!("par_request"),
+            sweep_sql!("device_code"),
             sweep_sql!("sso_session"),
             sweep_sql!("offline_session"),
             sweep_sql!("refresh_token_family"),
@@ -2590,6 +2600,112 @@ impl Store for PgStore {
             };
             tx.commit().await.map_err(storage)?;
             Ok(out)
+        })
+    }
+
+    fn put_device_code<'a>(&'a self, rec: DeviceCodeRecord) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.begin(&rec.realm_id, None).await?;
+            sqlx::query(
+                "INSERT INTO kaisatsu.device_code
+                     (realm_id, token_hash, user_code_hash, consumed, doc, expires_at)
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+            )
+            .bind(&rec.realm_id)
+            .bind(&rec.device_code_hash)
+            .bind(&rec.user_code_hash)
+            .bind(rec.consumed)
+            .bind(to_doc(&rec)?)
+            .bind(rec.expires_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            Ok(())
+        })
+    }
+
+    fn get_device_code_by_user_code<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_code_hash: &'a str,
+    ) -> StoreFuture<'a, Option<DeviceCodeRecord>> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, None).await?;
+            let doc: Option<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.device_code WHERE realm_id = $1 AND user_code_hash = $2",
+            )
+            .bind(realm_id)
+            .bind(user_code_hash)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            doc.map(from_doc).transpose()
+        })
+    }
+
+    fn decide_device_code<'a>(&'a self, rec: DeviceCodeRecord) -> StoreFuture<'a, bool> {
+        Box::pin(async move {
+            let mut tx = self.begin(&rec.realm_id, None).await?;
+            // One UPDATE decides the race: only a pending, unused row takes the answer.
+            let res = sqlx::query(
+                "UPDATE kaisatsu.device_code SET doc = $3
+                 WHERE realm_id = $1 AND token_hash = $2 AND NOT consumed
+                   AND doc->>'status' = 'pending'",
+            )
+            .bind(&rec.realm_id)
+            .bind(&rec.device_code_hash)
+            .bind(to_doc(&rec)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            Ok(res.rows_affected() == 1)
+        })
+    }
+
+    fn poll_device_code<'a>(
+        &'a self,
+        realm_id: &'a str,
+        device_code_hash: &'a str,
+        client_id: &'a str,
+        now: chrono::DateTime<Utc>,
+    ) -> StoreFuture<'a, Option<(DeviceCodeRecord, DevicePoll)>> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, None).await?;
+            // The row lock makes poll and answer one step: two polls of one approved code never
+            // both see it unused.
+            let doc: Option<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.device_code
+                 WHERE realm_id = $1 AND token_hash = $2 AND doc->>'clientId' = $3
+                 FOR UPDATE",
+            )
+            .bind(realm_id)
+            .bind(device_code_hash)
+            .bind(client_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(storage)?;
+            let Some(doc) = doc else {
+                tx.commit().await.map_err(storage)?;
+                return Ok(None);
+            };
+            let before: DeviceCodeRecord = from_doc(doc)?;
+            let (next, answer) = before.polled(now);
+            sqlx::query(
+                "UPDATE kaisatsu.device_code SET doc = $3, consumed = $4
+                 WHERE realm_id = $1 AND token_hash = $2",
+            )
+            .bind(realm_id)
+            .bind(device_code_hash)
+            .bind(to_doc(&next)?)
+            .bind(next.consumed)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            Ok(Some((before, answer)))
         })
     }
 
