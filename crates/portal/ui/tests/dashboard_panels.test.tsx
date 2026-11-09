@@ -12,7 +12,7 @@ import { loadVega } from "../src/components/panels/VegaChart";
 import type { Spec } from "../src/components/panels/specs";
 import { autoPoints, spanned, barChartSpec, gaugeSpec, heatmapSpec, histogramSpec, pieChartSpec, stateTimelineSpec, timeSeriesSpec } from "../src/components/panels/specs";
 import { FALLBACK } from "../src/components/panels/palette";
-import { PanelView } from "../src/components/panels/PanelView";
+import { PanelView, plainText } from "../src/components/panels/PanelView";
 import type { PanelDefinition } from "../src/components/panels/PanelView";
 import { barGradient, BarGaugePanel, DEFAULT_THRESHOLDS, globalRange, shownValues, StatPanel } from "../src/components/panels/ValuePanels";
 import { PhoneTable, TableCellValue, tableOf, TablePanel } from "../src/components/panels/TablePanel";
@@ -26,6 +26,9 @@ import { Fill, Swatch } from "../src/components/panels/paint";
 import { panelQuery } from "../src/pages/grafana/DashboardPage";
 import { resolveTime } from "../src/components/panels/timeRange";
 import * as frames from "./fixtures/panel_frames";
+import builderFile from "../../tests/fixtures/grafana-builder/bike-stations.json";
+import recordedPm25 from "./fixtures/frames/helsinki-2.json";
+import recordedBikes from "./fixtures/frames/helsinki-4.json";
 
 const theme = { ...FALLBACK, font: "sans-serif" };
 
@@ -552,5 +555,70 @@ describe("the dashboard around the panels", () => {
     const config = { defaults: { unit: "percent" }, overrides: [{ matcher: { id: "byName", options: "pm25" }, properties: [{ id: "unit", value: "bytes" }] }] };
     expect(settingsFor(config, { name: "pm25", type: "number", values: [] }).unit).toBe("bytes");
     expect(settingsFor(config, { name: "no2", type: "number", values: [] }).unit).toBe("percent");
+  });
+});
+
+describe("the builder's kinds, drawn from the file the Portal wrote and frames recorded on dev", () => {
+  // The panels as `grafana_builder_tests` pins them, and helsinki's recorded NGSI-LD answers:
+  // the 6-hour pm25 averages per station, and the bike stations' current values.
+  const file = builderFile as { panels: PanelDefinition[] };
+  const panel = (type: string): PanelDefinition => {
+    const found = file.panels.find((one) => one.type === type);
+    if (!found) throw new Error(`no ${type} in the builder fixture`);
+    return found;
+  };
+  const history = (recordedPm25 as { frames: Frame[] }).frames;
+  // A bar chart reads the bars' names and one value: the recorded read narrowed to them.
+  const bikes: Frame[] = (recordedBikes as { frames: Frame[] }).frames.map((frame) => ({
+    ...frame,
+    fields: frame.fields.filter((field) => ["name", "availableBikeNumber"].includes(field.name)),
+  }));
+  const view = (one: PanelDefinition, data: Frame[]) =>
+    render(<PanelView panel={one} data={{ frames: data }} from={frames.FROM} to={frames.TO} locale="en" height={240} />);
+
+  it("draws a bar gauge per station on the saved 0 to 40 scale, LCD and horizontal", () => {
+    const bars = panel("bargauge");
+    expect(bars.options).toMatchObject({ displayMode: "lcd", orientation: "horizontal" });
+    view(bars, history);
+    const meters = screen.getAllByRole("meter");
+    expect(meters).toHaveLength(history.length);
+    for (const meter of meters) {
+      expect(meter).toHaveAttribute("aria-valuemin", "0");
+      expect(meter).toHaveAttribute("aria-valuemax", "40");
+    }
+  });
+
+  it("scales a gauge to its saved minimum and maximum, not to the data", () => {
+    const gauge = panel("gauge");
+    expect(gauge.fieldConfig?.defaults).toMatchObject({ min: 0, max: 40 });
+    const shown = shownValues(history, gauge.fieldConfig ?? { defaults: {}, overrides: [] }, gauge.options ?? {}, "en");
+    expect(shown.every((one) => one.min === 0 && one.max === 40)).toBe(true);
+  });
+
+  it("draws a donut with a slice per station from the reduced history", async () => {
+    const pie = panel("piechart");
+    const built = pieChartSpec(history, { fieldConfig: pie.fieldConfig, options: pie.options, locale: "en", theme, height: 200 });
+    expect(built.slices).toHaveLength(history.length);
+    expect((built.spec.mark as { innerRadius: number }).innerRadius).toBeGreaterThan(0);
+    const svg = await svgOf(built.spec);
+    expect(count(svg, /class="mark-arc/)).toBeGreaterThanOrEqual(1);
+  });
+
+  it("draws a bar per station named by its name attribute", async () => {
+    const chart = panel("barchart");
+    expect(chart.options?.xField).toBe("name");
+    const built = barChartSpec(bikes, { fieldConfig: chart.fieldConfig, options: chart.options, locale: "en", theme, height: 200 });
+    expect(built.names).toEqual(["availableBikeNumber"]);
+    const svg = await svgOf(built.spec);
+    expect(count(svg, /<path [^>]*role="graphics-symbol"/)).toBe(bikes[0].fields[0].values.length);
+    expect(svg).toContain("Kaivopuisto");
+  });
+
+  it("shows a text panel as plain text with its Markdown taken out", () => {
+    view(panel("text"), []);
+    const card = screen.getByRole("region", { name: "About these stations" });
+    expect(card).toHaveTextContent("Bike stations Free bikes per station, read every 5 minutes.");
+    expect(card.textContent).not.toMatch(/[#*]/);
+    expect(plainText("## Hi\n- [a link](https://x.example) and <b>bold</b>\n> `code`")).toBe("Hi\n• a link and bold\ncode");
   });
 });

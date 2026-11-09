@@ -12127,7 +12127,11 @@
       "timeseries": "Time series",
       "stat": "Stat",
       "table": "Table",
-      "gauge": "Gauge"
+      "gauge": "Gauge",
+      "bargauge": "Bar gauge",
+      "piechart": "Pie chart",
+      "barchart": "Bar chart",
+      "text": "Text"
     },
     "aggregation": {
       "none": "Latest value",
@@ -12225,7 +12229,9 @@
       "filter": "Complete or remove each filter first.",
       "boardTitle": "Give the dashboard a title first.",
       "panel": "Add a panel first.",
-      "panels": "Complete every panel first: each needs a title, an Endpoint, a type and an attribute."
+      "panels": "Complete every panel first: each needs a title and what it shows, an attribute or a text.",
+      "content": "Write the panel's text first.",
+      "xField": "Choose what names each bar first."
     },
     "pending": "Waiting for approval",
     "pendingTitle": "A change of this dashboard waits for approval",
@@ -12270,7 +12276,14 @@
       "filterVariable": "Variable",
       "filterOp": "Comparison",
       "panel": "Panel",
-      "inFilter": "Filter: {field}"
+      "inFilter": "Filter: {field}",
+      "min": "Minimum",
+      "max": "Maximum",
+      "displayMode": "Bar style",
+      "orientation": "Direction",
+      "pieType": "Shape",
+      "xField": "Bars named by",
+      "content": "Text"
     },
     "hint": {
       "title": "Shown at the top of the dashboard, for example Bike stations in the centre.",
@@ -12295,11 +12308,44 @@
       "aggregationGauge": "Latest value, or one figure over the time range, for example the average.",
       "variableEndpoint": "The data the variable offers values from, for example Bike stations.",
       "variableType": "Whose values people pick, for example a docking station.",
-      "variableAttribute": "A text whose current values people pick, for example status."
+      "variableAttribute": "A text whose current values people pick, for example status.",
+      "content": "Markdown; the Portal shows it as plain text. For example: ## About, then a line on the data. Up to {max} characters, {left} left.",
+      "min": "Where the scale starts, for example 0; empty follows the data.",
+      "max": "Where the scale ends, for example 40; it must be above the minimum.",
+      "displayMode": "How each bar fills, for example Gradient.",
+      "orientation": "Which way the bars run, for example Horizontal; automatic follows the panel's shape.",
+      "pieType": "A full pie or a ring, for example Donut.",
+      "xField": "A text attribute naming each bar, for example name.",
+      "aggregationPie": "Latest value per entity, or one figure each over the time range, for example the sum."
     },
     "conflictLead": "Someone saved this dashboard after you opened it. Opening the saved version drops your changes.",
     "readOnlyHeading": "Dashboard builder",
     "lockedConflict": "Locked until you open the saved version.",
-    "readOnlyLead": "Dashboards built here read the project's data and open beside its other dashboards."
+    "readOnlyLead": "Dashboards built here read the project's data and open beside its other dashboards.",
+    "kindHint": {
+      "timeseries": "Lines over time, for example free bikes per hour.",
+      "stat": "One big figure, for example the free bikes now.",
+      "table": "Each entity's current values in rows, for example one row per station.",
+      "gauge": "One figure on a dial between a minimum and a maximum, for example 0 to 40 bikes.",
+      "bargauge": "One bar per entity filled up to its value, for example free bikes per station.",
+      "piechart": "Each entity's share of the whole, for example where the free bikes are.",
+      "barchart": "One bar per entity, named by a text attribute, for example free bikes by station name.",
+      "text": "Words with no data, for example what the dashboard shows and who to ask."
+    },
+    "notWritten": "No text yet",
+    "displayMode": {
+      "gradient": "Gradient",
+      "lcd": "Retro LCD",
+      "basic": "Basic"
+    },
+    "orientation": {
+      "auto": "Automatic",
+      "horizontal": "Horizontal",
+      "vertical": "Vertical"
+    },
+    "pieType": {
+      "pie": "Pie",
+      "donut": "Donut"
+    }
   }
 }

@@ -20,7 +20,17 @@ export type Interval = components["schemas"]["Interval"];
 export type Op = components["schemas"]["Op"];
 type AttributeOption = components["schemas"]["AttributeOption"];
 
-export const PANEL_KINDS: readonly PanelKind[] = ["timeseries", "stat", "table", "gauge"];
+export const PANEL_KINDS: readonly PanelKind[] = ["timeseries", "stat", "table", "gauge", "bargauge", "piechart", "barchart", "text"];
+export type DisplayMode = components["schemas"]["DisplayMode"];
+export type Orientation = components["schemas"]["Orientation"];
+export type PieType = components["schemas"]["PieType"];
+export const DISPLAY_MODES: readonly DisplayMode[] = ["gradient", "lcd", "basic"];
+export const ORIENTATIONS: readonly Orientation[] = ["auto", "horizontal", "vertical"];
+export const PIE_TYPES: readonly PieType[] = ["pie", "donut"];
+/** The longest text a text panel holds, the server's `MAX_CONTENT`. */
+export const MAX_CONTENT = 4000;
+/** The kinds with a scale: a minimum and a maximum. */
+export const SCALED: readonly PanelKind[] = ["gauge", "bargauge"];
 export const AGGREGATIONS: readonly Aggregation[] = ["none", "avg", "min", "max", "sum"];
 export const INTERVALS: readonly Interval[] = ["auto", "PT1M", "PT5M", "PT15M", "PT1H", "P1D"];
 export const OPS: readonly Op[] = ["eq", "ne", "gt", "ge", "lt", "le"];
@@ -66,25 +76,50 @@ export function isText(option: AttributeOption): boolean {
   return option.kinds.includes("table") && !option.kinds.includes("timeseries") && !option.kinds.includes("map");
 }
 
-/** The attributes `kind` can draw: numbers, or anything but a link for a table. */
+/** The attributes `kind` can draw: numbers, anything but a link for a table, nothing for text. */
 export function drawable(kind: PanelKind, options: readonly AttributeOption[]): AttributeOption[] {
+  if (kind === "text") return [];
   return options.filter((option) => (kind === "table" ? option.kinds.includes("table") : isNumber(option)));
 }
 
-/** The panel after its kind changes: a table takes no aggregation, a chart wants one. */
+/** A kind reading each entity's current value only: no aggregation over time. */
+export function currentOnly(kind: PanelKind): boolean {
+  return kind === "table" || kind === "barchart";
+}
+
+/**
+ * The panel after its kind changes: a table and a bar chart take no aggregation, a chart wants
+ * one, a scale stays on a gauge or bar gauge, each kind gets its own choices, and a text panel
+ * keeps nothing it would read.
+ */
 export function withKind(panel: BoardPanel, kind: PanelKind): BoardPanel {
-  if (kind === "table") return { ...panel, kind, aggregation: "none", interval: "auto" };
-  if (kind === "timeseries" && (panel.aggregation ?? "none") === "none") return { ...panel, kind, aggregation: "avg" };
-  return { ...panel, kind };
+  const { bargauge, piechart, barchart, text, min, max, ...rest } = panel;
+  if (kind === "text") {
+    const { id, title, description, grid } = panel;
+    return { id, kind, title, ...(description === undefined ? {} : { description }), grid, text: text ?? { content: "" } };
+  }
+  const next: BoardPanel = { ...rest, kind };
+  if (SCALED.includes(kind)) Object.assign(next, { min, max });
+  if (kind === "bargauge") next.bargauge = bargauge ?? { displayMode: "gradient", orientation: "auto" };
+  if (kind === "piechart") next.piechart = piechart ?? { pieType: "pie" };
+  if (kind === "barchart") next.barchart = barchart ?? { xField: "" };
+  if (currentOnly(kind)) return { ...next, aggregation: "none", interval: "auto" };
+  if (kind === "timeseries" && (panel.aggregation ?? "none") === "none") return { ...next, aggregation: "avg" };
+  return next;
 }
 
 /** What a panel still needs before it can be previewed or saved, as locale keys. */
 export function missing(panel: BoardPanel): string[] {
   const out: string[] = [];
   if (!panel.title.trim()) out.push("builder.need.title");
+  if (panel.kind === "text") {
+    if (!(panel.text?.content ?? "").trim()) out.push("builder.need.content");
+    return out;
+  }
   if (!panel.endpoint) out.push("builder.need.endpoint");
   if (!panel.type) out.push("builder.need.type");
   if (!panel.attribute) out.push("builder.need.attribute");
+  if (panel.kind === "barchart" && !panel.barchart?.xField) out.push("builder.need.xField");
   for (const filter of panel.filters ?? []) {
     if (!filter.attribute || (!filter.variable && !(filter.value ?? "").trim())) {
       out.push("builder.need.filter");
@@ -141,7 +176,21 @@ const LEAVES: Record<string, string> = {
   value: "builder.field.filterValue",
   variable: "builder.field.filterVariable",
   op: "builder.field.filterOp",
+  min: "builder.field.min",
+  max: "builder.field.max",
+  displayMode: "builder.field.displayMode",
+  orientation: "builder.field.orientation",
+  pieType: "builder.field.pieType",
+  xField: "builder.field.xField",
+  content: "builder.field.content",
+  bargauge: "builder.field.displayMode",
+  piechart: "builder.field.pieType",
+  barchart: "builder.field.xField",
+  text: "builder.field.content",
 };
+
+/** The control a kind's own choices start at, by the member they sit under. */
+const KIND_FIRST: Record<string, string> = { bargauge: "displayMode", piechart: "pieType", barchart: "xField", text: "content" };
 
 function leafWords(rest: string, t: Words): string {
   if (!rest) return t("builder.field.panel");
@@ -150,7 +199,8 @@ function leafWords(rest: string, t: Words): string {
     return t("builder.field.inFilter", { field: t(LEAVES[leaf] ?? "builder.field.filters") });
   }
   if (rest.startsWith("thresholds")) return t("builder.field.thresholds");
-  const leaf = rest.split(".")[0];
+  const parts = rest.split(".");
+  const leaf = parts.length > 1 && LEAVES[parts[parts.length - 1]] ? parts[parts.length - 1] : parts[0];
   return t(LEAVES[leaf] ?? "builder.field.board");
 }
 
@@ -176,6 +226,7 @@ export function fieldId(path: string, board: Board): string | undefined {
     if (leaf === "filters" && panel[3] !== undefined) return `builder-filter-${id}-${panel[3]}-${panel[4] || "attribute"}`;
     if (leaf === "grid" || leaf === "id") return `builder-panel-${id}-x`;
     if (leaf === "thresholds" || leaf === "kind") return `builder-panel-${id}-title`;
+    if (KIND_FIRST[leaf]) return `builder-panel-${id}-${new RegExp(`\\.${leaf}\\.([a-zA-Z]+)`).exec(path)?.[1] ?? KIND_FIRST[leaf]}`;
     return `builder-panel-${id}-${leaf}`;
   }
   const variable = /^variables\[(\d+)\]\.?([a-zA-Z]*)/.exec(path);

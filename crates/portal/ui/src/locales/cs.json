@@ -12127,7 +12127,11 @@
       "timeseries": "Časová řada",
       "stat": "Číslo",
       "table": "Tabulka",
-      "gauge": "Ukazatel"
+      "gauge": "Ukazatel",
+      "bargauge": "Pruhový ukazatel",
+      "piechart": "Koláčový graf",
+      "barchart": "Sloupcový graf",
+      "text": "Text"
     },
     "aggregation": {
       "none": "Poslední hodnota",
@@ -12225,7 +12229,9 @@
       "filter": "Nejprve dokončete nebo odeberte každý filtr.",
       "boardTitle": "Nejprve dashboard pojmenujte.",
       "panel": "Nejprve přidejte panel.",
-      "panels": "Nejprve dokončete každý panel: potřebuje název, Endpoint, typ a atribut."
+      "panels": "Nejprve dokončete každý panel: každý potřebuje název a to, co ukazuje, atribut nebo text.",
+      "content": "Nejprve napište text panelu.",
+      "xField": "Nejprve vyberte, co pojmenovává každý sloupec."
     },
     "pending": "Čeká na schválení",
     "pendingTitle": "Změna tohoto dashboardu čeká na schválení",
@@ -12270,7 +12276,14 @@
       "filterVariable": "Proměnná",
       "filterOp": "Porovnání",
       "panel": "Panel",
-      "inFilter": "Filtr: {field}"
+      "inFilter": "Filtr: {field}",
+      "min": "Minimum",
+      "max": "Maximum",
+      "displayMode": "Styl pruhů",
+      "orientation": "Směr",
+      "pieType": "Tvar",
+      "xField": "Sloupce pojmenovává",
+      "content": "Text"
     },
     "hint": {
       "title": "Zobrazí se nahoře na dashboardu, například Stanice kol v centru.",
@@ -12295,11 +12308,44 @@
       "aggregationGauge": "Poslední hodnota nebo jedno číslo za časový rozsah, například průměr.",
       "variableEndpoint": "Data, ze kterých proměnná nabízí hodnoty, například Stanice kol.",
       "variableType": "Čí hodnoty lidé vybírají, například dokovací stanice.",
-      "variableAttribute": "Text, jehož aktuální hodnoty lidé vybírají, například status."
+      "variableAttribute": "Text, jehož aktuální hodnoty lidé vybírají, například status.",
+      "content": "Markdown; Portál ho ukáže jako prostý text. Například ## O nástěnce a pak řádek o datech. Nejvýše {max} znaků, zbývá {left}.",
+      "min": "Kde stupnice začíná, například 0; prázdné se řídí daty.",
+      "max": "Kde stupnice končí, například 40; musí být nad minimem.",
+      "displayMode": "Jak se každý pruh vyplňuje, například Přechod.",
+      "orientation": "Kterým směrem pruhy vedou, například Vodorovně; automaticky se řídí tvarem panelu.",
+      "pieType": "Celý koláč nebo prstenec, například Prstenec.",
+      "xField": "Textový atribut, který pojmenovává každý sloupec, například name.",
+      "aggregationPie": "Poslední hodnota každé entity nebo jedno číslo za časový rozsah, například součet."
     },
     "conflictLead": "Někdo tento dashboard uložil poté, co jste ho otevřeli. Otevření uložené verze zahodí vaše změny.",
     "readOnlyHeading": "Tvorba dashboardů",
     "lockedConflict": "Uzamčeno, dokud neotevřete uloženou verzi.",
-    "readOnlyLead": "Dashboardy vytvořené zde čtou data projektu a otevírají se u jeho dalších dashboardů."
+    "readOnlyLead": "Dashboardy vytvořené zde čtou data projektu a otevírají se u jeho dalších dashboardů.",
+    "kindHint": {
+      "timeseries": "Čáry v čase, například volná kola za hodinu.",
+      "stat": "Jedno velké číslo, například volná kola teď.",
+      "table": "Aktuální hodnoty každé entity v řádcích, například jeden řádek na stanici.",
+      "gauge": "Jedno číslo na stupnici mezi minimem a maximem, například 0 až 40 kol.",
+      "bargauge": "Jeden pruh na entitu vyplněný po její hodnotu, například volná kola na stanici.",
+      "piechart": "Podíl každé entity na celku, například kde jsou volná kola.",
+      "barchart": "Jeden sloupec na entitu pojmenovaný textovým atributem, například volná kola podle názvu stanice.",
+      "text": "Slova bez dat, například co nástěnka ukazuje a koho se zeptat."
+    },
+    "notWritten": "Zatím bez textu",
+    "displayMode": {
+      "gradient": "Přechod",
+      "lcd": "Retro displej",
+      "basic": "Základní"
+    },
+    "orientation": {
+      "auto": "Automaticky",
+      "horizontal": "Vodorovně",
+      "vertical": "Svisle"
+    },
+    "pieType": {
+      "pie": "Koláč",
+      "donut": "Prstenec"
+    }
   }
 }

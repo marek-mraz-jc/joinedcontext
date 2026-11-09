@@ -5,12 +5,14 @@
  * waits for approval.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { jsonResponse, renderRoute } from "./pageHarness";
-import { boardOf, drawable, emptyBoard, fieldWords, missing, newPanel, refusals, withKind } from "../src/pages/grafana/builderModel";
+import { boardOf, drawable, emptyBoard, fieldId, fieldWords, missing, newPanel, refusals, withKind } from "../src/pages/grafana/builderModel";
 import i18n from "../src/i18n";
-import { PositionEditor, SaveProblem } from "../src/pages/grafana/DashboardBuilder";
+import { DisplayEditor, KindOptions, PositionEditor, SaveProblem, TextEditor } from "../src/pages/grafana/DashboardBuilder";
 import { ApiError } from "../src/api/client";
 
 const BUILDER = "/api/v1/projects/helsinki/grafana/builder";
@@ -96,6 +98,84 @@ describe("the builder's model", () => {
     expect(withKind(panel, "timeseries").aggregation).toBe("avg");
     expect(missing(panel)).toEqual(["builder.need.endpoint", "builder.need.type", "builder.need.attribute"]);
     expect(missing({ ...PANEL, filters: [{ attribute: "status", op: "eq", value: " " }] } as never)).toEqual(["builder.need.filter"]);
+  });
+});
+
+describe("the builder's new kinds", () => {
+  const t = (key: string, values?: Record<string, unknown>) => i18n.t(key, values);
+  const panel = newPanel(emptyBoard(), "stat", "One");
+
+  it("gives each kind its own choices, a scale to gauges only, and a text panel nothing it reads", () => {
+    const bars = withKind({ ...PANEL, min: 0, max: 40 } as never, "bargauge");
+    expect(bars).toMatchObject({ kind: "bargauge", min: 0, max: 40, bargauge: { displayMode: "gradient", orientation: "auto" } });
+    const pie = withKind(bars, "piechart");
+    expect(pie).toMatchObject({ kind: "piechart", piechart: { pieType: "pie" } });
+    expect(pie).not.toHaveProperty("bargauge");
+    expect(pie.min).toBeUndefined();
+    const chart = withKind({ ...pie, aggregation: "max", interval: "PT1H" }, "barchart");
+    expect(chart).toMatchObject({ kind: "barchart", aggregation: "none", interval: "auto", barchart: { xField: "" } });
+    expect(missing(chart)).toEqual(["builder.need.xField"]);
+    const words = withKind({ ...chart, unit: "percent", filters: [{ attribute: "status", op: "eq", value: "open" }] }, "text");
+    expect(Object.keys(words).sort()).toEqual(["grid", "id", "kind", "text", "title"]);
+    expect(missing(words)).toEqual(["builder.need.content"]);
+    expect(missing({ ...words, text: { content: "## About" } })).toEqual([]);
+    expect(drawable("text", OPTIONS.attributes as never)).toEqual([]);
+    expect(drawable("piechart", OPTIONS.attributes as never).map((a) => a.name)).toEqual(["availableBikeNumber"]);
+    expect(panel.kind).toBe("stat");
+  });
+
+  it("names and finds each new field a refusal names", () => {
+    const board = boardOf({ ...SAVED.board, panels: [{ ...PANEL, kind: "barchart", barchart: { xField: "status" } }] } as never);
+    expect(fieldWords("panels[0].barchart.xField", board, t)).toBe("Panel “Free bikes”, Bars named by");
+    expect(fieldWords("panels[0].max", board, t)).toBe("Panel “Free bikes”, Maximum");
+    expect(fieldWords("panels[0].text.content", board, t)).toBe("Panel “Free bikes”, Text");
+    expect(fieldWords("panels[0].bargauge", board, t)).toBe("Panel “Free bikes”, Bar style");
+    expect(fieldId("panels[0].barchart.xField", board)).toBe("builder-panel-1-xField");
+    expect(fieldId("panels[0].bargauge.orientation", board)).toBe("builder-panel-1-orientation");
+    expect(fieldId("panels[0].piechart", board)).toBe("builder-panel-1-pieType");
+    expect(fieldId("panels[0].text.content", board)).toBe("builder-panel-1-content");
+    expect(fieldId("panels[0].min", board)).toBe("builder-panel-1-min");
+  });
+
+  it("offers a bar gauge's style and direction, a pie's shape, and text attributes to name bars", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(OPTIONS)));
+    const onChange = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    const { rerender } = render(<KindOptions project="helsinki" panel={withKind(PANEL as never, "bargauge")} onChange={onChange} />, { wrapper });
+    fireEvent.change(screen.getByLabelText("Bar style"), { target: { value: "lcd" } });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ bargauge: { displayMode: "lcd", orientation: "auto" } }));
+    fireEvent.change(screen.getByLabelText("Direction"), { target: { value: "vertical" } });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ bargauge: { displayMode: "gradient", orientation: "vertical" } }));
+    rerender(<KindOptions project="helsinki" panel={withKind(PANEL as never, "piechart")} onChange={onChange} />);
+    fireEvent.change(screen.getByLabelText("Shape"), { target: { value: "donut" } });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ piechart: { pieType: "donut" } }));
+    rerender(<KindOptions project="helsinki" panel={withKind(PANEL as never, "barchart")} onChange={onChange} />);
+    const names = screen.getByLabelText(/^Bars named by/);
+    await waitFor(() => expect(within(names).getByRole("option", { name: "status" })).toBeInTheDocument());
+    // Only text names a bar: the number and the place are not offered.
+    expect(within(names).queryByRole("option", { name: "availableBikeNumber" })).toBeNull();
+    expect(within(names).queryByRole("option", { name: "location" })).toBeNull();
+    fireEvent.change(names, { target: { value: "status" } });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ barchart: { xField: "status" } }));
+  });
+
+  it("takes a gauge's scale as numbers, empty as none, and a text panel's words up to the cap", () => {
+    const onChange = vi.fn();
+    const gauge = withKind(PANEL as never, "gauge");
+    const { rerender } = render(<DisplayEditor panel={gauge} start={START as never} onChange={onChange} />);
+    fireEvent.change(screen.getByLabelText("Maximum"), { target: { value: "40" } });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ max: 40 }));
+    rerender(<DisplayEditor panel={{ ...gauge, max: 40 }} start={START as never} onChange={onChange} />);
+    fireEvent.change(screen.getByLabelText("Maximum"), { target: { value: "" } });
+    expect(onChange.mock.lastCall?.[0].max).toBeUndefined();
+    rerender(<DisplayEditor panel={withKind(PANEL as never, "stat")} start={START as never} onChange={onChange} />);
+    expect(screen.queryByLabelText("Maximum")).toBeNull();
+    rerender(<TextEditor panel={withKind(PANEL as never, "text")} onChange={onChange} />);
+    const text = screen.getByLabelText(/^Text/);
+    expect(text).toHaveAttribute("maxlength", "4000");
+    fireEvent.change(text, { target: { value: "## About" } });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ text: { content: "## About" } }));
   });
 });
 
