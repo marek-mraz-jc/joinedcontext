@@ -21,6 +21,11 @@ rm -rf "$export_dir"; mkdir -p "$export_dir"
 tar -xzf "$here/synth-export.tgz" -C "$export_dir"
 python3 -I "$here/redate.py" "$export_dir"
 "$repo/deploy/rehearsal/import.sh" gate "$port" "$pg_port" "$export_dir"
+# The red proof: SMOKE_STOP=<module> restarts jc without that module, and the verdict must be RED.
+if [ -n "${SMOKE_STOP:-}" ]; then
+  roles=$(printf '%s\n' kaisatsu dataroom daiya ekiben antares gateway portal shako | grep -vx "$SMOKE_STOP" | paste -sd,)
+  REHEARSAL_ROLE=$roles "$repo/deploy/rehearsal/up.sh" gate "$port" "$pg_port"
+fi
 
 # jc names itself localhost:<port> (up.sh --base-host): tokens carry that issuer.
 # The suites read their credentials from one state dir: jc's own, plus the service tokens
