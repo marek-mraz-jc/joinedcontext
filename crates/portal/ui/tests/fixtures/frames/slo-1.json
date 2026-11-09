@@ -1,0 +1,59 @@
+{
+ "dashboard": "jc-slo",
+ "panel": 1,
+ "title": "Availability over 30 days",
+ "from": 1791525600000,
+ "to": 1794117600000,
+ "frames": [
+  {
+   "name": "A",
+   "refId": "A",
+   "fields": [
+    {
+     "name": "Time",
+     "type": "time",
+     "labels": {},
+     "values": [
+      1794117600000,
+      1794117600000,
+      1794117600000,
+      1794117600000
+     ]
+    },
+    {
+     "name": "surface",
+     "type": "string",
+     "labels": {},
+     "values": [
+      "ui",
+      "api",
+      "ui",
+      "api"
+     ]
+    },
+    {
+     "name": "target",
+     "type": "string",
+     "labels": {},
+     "values": [
+      "portal",
+      "portal",
+      "gateway",
+      "gateway"
+     ]
+    },
+    {
+     "name": "Value #A",
+     "type": "number",
+     "labels": {},
+     "values": [
+      0.59822,
+      0.73595,
+      0.77138,
+      0.76859
+     ]
+    }
+   ]
+  }
+ ]
+}

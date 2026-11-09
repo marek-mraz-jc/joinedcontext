@@ -17,13 +17,13 @@ export function Swatch({ color, shape = "line", faded }: { color: string; shape?
   );
 }
 
-/** The filled share (0 to 1) of a bar, across or up. */
-export function Fill({ share, color, vertical }: { share: number; color: string; vertical?: boolean }): JSX.Element {
+/** The filled share (0 to 1) of a bar, across or up, in one colour or a `paint` gradient. */
+export function Fill({ share, color, paint, vertical }: { share: number; color: string; paint?: string; vertical?: boolean }): JSX.Element {
   const percent = `${Math.round(Math.min(1, Math.max(0, share)) * 100)}%`;
   return (
     <span
       className={clsx("block rounded-sm", vertical ? "w-full" : "h-full")}
-      style={vertical ? { height: percent, backgroundColor: color } : { width: percent, backgroundColor: color }}
+      style={vertical ? { height: percent, backgroundColor: color, backgroundImage: paint } : { width: percent, backgroundColor: color, backgroundImage: paint }}
     />
   );
 }

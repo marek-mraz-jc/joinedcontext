@@ -12,6 +12,7 @@ import { andQ, cellText } from "@joinedcontext/sdk";
 import type { EntitySource, RichCell } from "@joinedcontext/sdk";
 import { Button, buttonClass, Select } from "../ui";
 import { Icon } from "../ui/icons";
+import type { IconName } from "../ui/icons";
 
 export const ROW_SIZES = ["small", "medium", "large"] as const;
 export type RowSize = (typeof ROW_SIZES)[number];
@@ -61,9 +62,15 @@ export function ToolbarPopover({
   anchored,
   inPlace,
   closeLabel,
+  icon,
+  chevron,
   children,
 }: {
   label: string;
+  /** An icon before the label (a clock on a time range). */
+  icon?: IconName;
+  /** A chevron after the label, as on a select. */
+  chevron?: boolean;
   /** A sheet over the page: names a button that closes it, for a person who cannot tap beside it. */
   closeLabel?: string;
   /** One line of a folded menu: the panel opens under its line, inside the menu. */
@@ -116,7 +123,9 @@ export function ToolbarPopover({
           ),
         )}
       >
+        {icon ? <Icon name={icon} className="size-4" /> : null}
         {label}
+        {chevron && !inPlace ? <Icon name="chevronDown" className="size-4 group-open/tool:rotate-180" /> : null}
         {count ? <span className="ml-1 rounded-full bg-primary-soft px-1.5 text-caption">{count}</span> : null}
         {inPlace ? <Icon name="chevronDown" className="ml-auto size-4 group-open/tool:rotate-180" /> : null}
       </summary>

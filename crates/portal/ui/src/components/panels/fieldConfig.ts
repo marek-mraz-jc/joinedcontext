@@ -19,6 +19,9 @@ export interface Thresholds {
   steps: ThresholdStep[];
 }
 
+/** Grafana's thresholds for a field whose dashboard saves none: green, red from 80. */
+export const DEFAULT_THRESHOLDS: Thresholds = { mode: "absolute", steps: [{ color: "green", value: null }, { color: "red", value: 80 }] };
+
 export interface ValueMapping {
   type: "value" | "range" | "regex" | "special";
   options: Record<string, unknown>;
@@ -36,6 +39,8 @@ export interface FieldSettings {
   thresholds?: Thresholds;
   color?: { mode?: string; fixedColor?: string };
   custom: Record<string, unknown>;
+  /** A time field spanning less than a minute shows milliseconds, as Grafana's display processor does. */
+  showMs?: boolean;
 }
 
 export interface FieldConfigSource {
@@ -126,7 +131,81 @@ export function settingsFor(config: FieldConfigSource | undefined, field: FrameF
       if (property.id) apply(settings, property.id, property.value);
     }
   }
+  // Grafana draws a time field as a date whatever unit the panel set for its numbers.
+  if (field.type === "time" && !isDateUnit(settings.unit)) {
+    settings.unit = "dateTimeAsSystem";
+    const first = instantOf(field.values[0]);
+    const last = instantOf(field.values[field.values.length - 1]);
+    settings.showMs = field.values.length > 1 && first !== undefined && last !== undefined && Math.abs(last - first) < 60_000;
+  }
   return settings;
+}
+
+/** The units Grafana formats as a date (`time:<format>` is its custom one). */
+const DATE_UNITS = new Set(["dateTimeAsIso", "dateTimeAsIsoNoDateIfToday", "dateTimeAsUS", "dateTimeAsUSNoDateIfToday", "dateTimeAsLocal", "dateTimeAsLocalNoDateIfToday", "dateTimeAsSystem", "dateTimeFromNow"]);
+
+export function isDateUnit(unit: string | undefined): boolean {
+  return unit !== undefined && (DATE_UNITS.has(unit) || unit.startsWith("time:"));
+}
+
+/** Epoch milliseconds of a number or an ISO text. */
+function instantOf(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? undefined : ms;
+  }
+  return undefined;
+}
+
+const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
+
+/** A moment.js format Grafana writes (`YYYY-MM-DD HH:mm:ss.SSS`, `MM/DD/YYYY h:mm:ss a`) in local time. */
+function momentFormat(date: Date, format: string): string {
+  const hours = date.getHours();
+  const tokens: Record<string, string> = {
+    YYYY: String(date.getFullYear()),
+    MM: pad(date.getMonth() + 1),
+    DD: pad(date.getDate()),
+    HH: pad(hours),
+    hh: pad(hours % 12 || 12),
+    h: String(hours % 12 || 12),
+    mm: pad(date.getMinutes()),
+    ss: pad(date.getSeconds()),
+    SSS: pad(date.getMilliseconds(), 3),
+    a: hours < 12 ? "am" : "pm",
+    A: hours < 12 ? "AM" : "PM",
+  };
+  return format.replace(/YYYY|MM|DD|HH|hh|h|mm|ss|SSS|a|A/g, (token) => tokens[token]);
+}
+
+/** An instant in one of Grafana's date units, `now` for the units that read it relative to today. */
+export function formatDate(ms: number, unit: string, showMs = false, locale = "en", now = Date.now()): string {
+  const date = new Date(ms);
+  const today = new Date(now).toDateString() === date.toDateString();
+  switch (unit) {
+    case "dateTimeAsIso":
+      return momentFormat(date, "YYYY-MM-DD HH:mm:ss");
+    case "dateTimeAsIsoNoDateIfToday":
+      return momentFormat(date, today ? "HH:mm:ss" : "YYYY-MM-DD HH:mm:ss");
+    case "dateTimeAsUS":
+      return momentFormat(date, "MM/DD/YYYY h:mm:ss a");
+    case "dateTimeAsUSNoDateIfToday":
+      return momentFormat(date, today ? "h:mm:ss a" : "MM/DD/YYYY h:mm:ss a");
+    case "dateTimeAsLocal":
+      return date.toLocaleString(locale);
+    case "dateTimeAsLocalNoDateIfToday":
+      return today ? date.toLocaleTimeString(locale) : date.toLocaleString(locale);
+    case "dateTimeFromNow": {
+      const seconds = Math.round((ms - now) / 1000);
+      const steps: [Intl.RelativeTimeFormatUnit, number][] = [["year", 31_536_000], ["month", 2_592_000], ["day", 86_400], ["hour", 3_600], ["minute", 60], ["second", 1]];
+      const [name, size] = steps.find(([, size]) => Math.abs(seconds) >= size) ?? ["second", 1];
+      return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(Math.round(seconds / size), name);
+    }
+    default:
+      if (unit.startsWith("time:")) return momentFormat(date, unit.slice("time:".length));
+      return momentFormat(date, showMs ? "YYYY-MM-DD HH:mm:ss.SSS" : "YYYY-MM-DD HH:mm:ss");
+  }
 }
 
 /** The threshold step `value` falls in: the last whose value is at most it, the base step below all. */
@@ -236,17 +315,49 @@ const SI_PREFIX = ["", "k", "M", "G", "T", "P"];
 const BIN_PREFIX = ["", "Ki", "Mi", "Gi", "Ti", "Pi"];
 
 function digits(value: number, decimals: number | undefined, locale: string): string {
-  // Below one, two significant digits: fixed decimals printed 0.005 and 0.015 as 0.01 and 0.02,
-  // so an axis repeated its labels.
-  if (decimals === undefined && value !== 0 && Math.abs(value) < 1) {
-    return new Intl.NumberFormat(locale, { maximumSignificantDigits: 2 }).format(value);
-  }
-  const auto = Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 10 ? 1 : 2;
-  const fraction = decimals ?? auto;
-  return new Intl.NumberFormat(locale, {
-    minimumFractionDigits: decimals ?? 0,
-    maximumFractionDigits: fraction,
-  }).format(value);
+  // Grafana's toFixed: without decimals, getDecimalsForValue picks them, and the text keeps its
+  // trailing zeros (7.1 weeks is `7.10 weeks`, 0.005 is `0.00500`).
+  const fraction = Math.max(0, decimals ?? decimalsFor(value));
+  return new Intl.NumberFormat(locale, { useGrouping: false, minimumFractionDigits: fraction, maximumFractionDigits: fraction }).format(value);
+}
+
+/** Grafana's getDecimalsForValue: one significant digit past the first, two when the rest is above 2.25. */
+export function decimalsFor(value: number): number {
+  if (value === 0 || !Number.isFinite(value)) return 0;
+  if (value % 1 === 0) return 0;
+  const abs = Math.abs(value);
+  let dec = -Math.floor(Math.log10(abs)) + 1;
+  if (abs / 10 ** -dec > 2.25) dec += 1;
+  return Math.max(0, dec);
+}
+
+/**
+ * Grafana's time units (`ns` … `d`, valueFormats/dateTimeFormatters): each a ladder of
+ * [below this, divide by, word]; the last step catches the rest. A scaled word takes an `s` above
+ * 1 (`7.10 weeks`), the first step's never does (`3 day`), as Grafana writes them.
+ */
+const TIME_STEPS: Record<string, [number, number, string][]> = {
+  ns: [[1e3, 1, " ns"], [1e6, 1e3, " µs"], [1e9, 1e6, " ms"], [6e10, 1e9, " s"], [36e11, 6e10, " min"], [864e11, 36e11, " hour"], [Infinity, 864e11, " day"]],
+  µs: [[1e3, 1, " µs"], [1e6, 1e3, " ms"], [Infinity, 1e6, " s"]],
+  ms: [[1e3, 1, " ms"], [6e4, 1e3, " s"], [36e5, 6e4, " min"], [864e5, 36e5, " hour"], [31536e6, 864e5, " day"], [Infinity, 31536e6, " year"]],
+  s: [[1e-6, 1e-9, " ns"], [0.001, 1e-6, " µs"], [1, 0.001, " ms"], [60, 1, " s"], [3600, 60, " min"], [86400, 3600, " hour"], [604800, 86400, " day"], [31536e3, 604800, " week"], [Infinity, 31556900, " year"]],
+  m: [[60, 1, " min"], [1440, 60, " hour"], [10080, 1440, " day"], [604800, 10080, " week"], [Infinity, 525948, " year"]],
+  h: [[24, 1, " hour"], [168, 24, " day"], [8760, 168, " week"], [Infinity, 8760, " year"]],
+  d: [[7, 1, " day"], [365, 7, " week"], [Infinity, 365, " year"]],
+};
+const PLURAL = new Set([" min", " hour", " day", " week", " year"]);
+
+function timeUnit(value: number, steps: [number, number, string][], decimals: number | undefined, locale: string): string {
+  // Seconds alone print zero as `0 s`; below its first step `s` scales down to ms, µs and ns.
+  if (value === 0 && steps === TIME_STEPS.s) return "0 s";
+  const abs = Math.abs(value);
+  const at = steps.findIndex(([below]) => abs < below);
+  const [, size, word] = steps[at];
+  const shown = value / size;
+  // Grafana's first step of each unit keeps its own word; `s` has no plural at all.
+  const first = size === 1 && steps !== TIME_STEPS.s ? true : steps === TIME_STEPS.s && word === " s";
+  const plural = !first && PLURAL.has(word) && Math.abs(shown) > 1 ? "s" : "";
+  return `${digits(shown, decimals, locale)}${word}${plural}`;
 }
 
 function duration(ms: number, decimals: number | undefined, locale: string): string {
@@ -275,7 +386,9 @@ function duration(ms: number, decimals: number | undefined, locale: string): str
 export function formatUnit(value: number | null, unit: string | undefined, decimals?: number, locale = "en"): string {
   if (value === null || !Number.isFinite(value)) return "";
   const shape: UnitShape | undefined = unit ? UNITS[unit] : undefined;
-  if (!unit || unit === "none" || unit === "locale" || unit === "") {
+  // Grafana's `locale` unit is toLocaleString: grouped thousands (1,514).
+  if (unit === "locale") return new Intl.NumberFormat(locale, decimals === undefined ? {} : { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(value);
+  if (!unit || unit === "none" || unit === "") {
     return digits(value, decimals, locale);
   }
   if (!shape) {
@@ -285,6 +398,7 @@ export function formatUnit(value: number | null, unit: string | undefined, decim
     return `${digits(value, decimals, locale)} ${unit}`;
   }
   const scaled = value * (shape.scale ?? 1);
+  if (unit in TIME_STEPS) return timeUnit(scaled, TIME_STEPS[unit], decimals, locale);
   if (shape.durationMs !== undefined) return duration(scaled * shape.durationMs, decimals, locale);
   let shown = scaled;
   let prefix = "";
@@ -309,6 +423,10 @@ export function displayValue(settings: FieldSettings, value: unknown, locale = "
   if (mapped?.text !== undefined) return { text: mapped.text, color: mapped.color ? colorOf(mapped.color) : undefined };
   if (value === null || value === undefined || value === "") {
     return { text: settings.noValue ?? "–", color: mapped?.color ? colorOf(mapped.color) : undefined };
+  }
+  if (isDateUnit(settings.unit)) {
+    const ms = instantOf(value);
+    if (ms !== undefined) return { text: formatDate(ms, settings.unit!, settings.showMs, locale), color: mapped?.color ? colorOf(mapped.color) : undefined };
   }
   if (typeof value === "number") {
     return { text: formatUnit(value, settings.unit, settings.decimals, locale), color: mapped?.color ? colorOf(mapped.color) : undefined };

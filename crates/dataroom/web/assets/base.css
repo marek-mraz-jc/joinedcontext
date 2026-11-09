@@ -1,0 +1,123 @@
+/* Base layout the theme was written on top of. On CKAN, Bootstrap 5 and CKAN's main.css gave these
+   classes; the templates keep CKAN's markup, so dataroom serves the subset they use, ahead of the
+   theme (which overrides colours, type and spacing). Without it the masthead and footer lists render
+   as bullet lists and the grid collapses into one column (jc-parity, 2026-11-08). */
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; }
+img, svg { vertical-align: middle; }
+.container { width: 100%; max-width: 1200px; margin-inline: auto; padding-inline: .75rem; }
+.row { --bs-gutter-x: 1.5rem; display: flex; flex-wrap: wrap; margin-inline: calc(var(--bs-gutter-x) * -.5); }
+.row > * { flex-shrink: 0; width: 100%; max-width: 100%; padding-inline: calc(var(--bs-gutter-x) * .5); }
+.gy-4 { row-gap: 1.5rem; }
+.col-12, .col-xs-12 { flex: 0 0 auto; width: 100%; }
+@media (min-width: 768px) {
+  .col-md-3 { flex: 0 0 auto; width: 25%; }
+  .col-md-6 { flex: 0 0 auto; width: 50%; }
+  .col-md-9 { flex: 0 0 auto; width: 75%; }
+}
+.list-unstyled, .list-inline { list-style: none; padding-left: 0; }
+.list-inline-item { display: inline-block; }
+.list-inline-item:not(:last-child) { margin-right: .5rem; }
+.d-flex { display: flex; }
+.d-none, .js .js-hide { display: none; }
+.justify-content-center { justify-content: center; }
+.ms-auto { margin-left: auto; }
+.me-2 { margin-right: .5rem; }
+.mb-2 { margin-bottom: .5rem; }
+.img-fluid { max-width: 100%; height: auto; }
+.visually-hidden, .hide-heading, .visually-hidden-focusable:not(:focus):not(:focus-within) {
+  position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important;
+  overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important;
+}
+.account-masthead .account ul { display: flex; justify-content: flex-end; gap: 1rem; margin: 0; padding: .35rem 0; }
+.navbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1.5rem; }
+.navbar-left { margin: 0; }
+.navbar-nav { display: flex; flex-wrap: wrap; gap: .25rem 1rem; list-style: none; margin: 0; padding-left: 0; }
+.navbar-collapse { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; flex-basis: 100%; }
+@media (min-width: 992px) {
+  .navbar-expand-lg { flex-wrap: nowrap; }
+  .navbar-expand-lg .navbar-collapse { flex-basis: auto; flex-grow: 1; }
+  .mb-lg-0 { margin-bottom: 0; }
+}
+.nav { display: flex; flex-wrap: wrap; list-style: none; margin: 0; padding-left: 0; }
+.nav-tabs > li > a, .nav-tabs .nav-link { display: block; padding: .5rem 1rem; text-decoration: none; }
+.breadcrumb { display: flex; flex-wrap: wrap; list-style: none; margin: 0 0 1rem; padding: 0; }
+.breadcrumb > li + li::before { content: "/"; padding: 0 .5rem; opacity: .6; }
+.input-group, .search-input-group { display: flex; align-items: stretch; width: 100%; }
+.input-group > input, .search-input-group > input { flex: 1 1 auto; min-width: 0; }
+.form-group { margin-bottom: 1rem; }
+.pagination { display: flex; flex-wrap: wrap; gap: .25rem; list-style: none; padding-left: 0; }
+.filter-list { list-style: none; padding-left: 0; }
+.navbar > hgroup, .jc-brand { flex-shrink: 0; }
+.btn { display: inline-block; padding: .375rem .75rem; font: inherit; line-height: 1.5; text-align: center; text-decoration: none; vertical-align: middle;
+  cursor: pointer; user-select: none; border: 1px solid transparent; background: transparent; color: inherit; }
+.btn-sm { padding: .25rem .5rem; font-size: .875rem; }
+.btn-lg { padding: .5rem 1rem; font-size: 1.125rem; }
+.form-control, .form-select { display: block; width: 100%; padding: .375rem .75rem; font: inherit; line-height: 1.5; border: 1px solid #dee2e6; appearance: none; }
+.form-select { appearance: auto; }
+.page-link { display: block; padding: .375rem .75rem; border: 1px solid #dee2e6; text-decoration: none; }
+.page-item.active .page-link { background: var(--jc-primary, #0d6efd); border-color: var(--jc-primary, #0d6efd); color: #fff; }
+.control-order-by { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.control-order-by .form-control, .control-order-by .form-select { width: auto; }
+/* CKAN's phone filter modal: below 768px the facets wait behind "Výsledky filtrovania" and open
+   over the page (public__jc-forms.js toggles body.filters-modal); without script they stay inline. */
+.show-filters.btn, .hide-filters { display: none; }
+@media (max-width: 767.98px) {
+  .js body.filters-modal { overflow: hidden; }
+  .js .secondary .filters { display: none; position: fixed; overflow: auto; inset: 0; z-index: 1000; padding: 10px; background: rgba(0, 0, 0, .5); }
+  .js body.filters-modal .secondary .filters { display: block; }
+  .js .secondary .filters > div { background: #fff; border-radius: 4px; overflow: hidden; }
+  .js body.filters-modal .secondary .filters .hide-filters { display: inline-flex; align-items: center; justify-content: center; position: fixed; top: 14px; right: 14px; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: var(--jc-primary, #0d6efd); color: #fff; z-index: 1001; }
+  .js .show-filters.btn { display: inline-block; margin-top: .75rem; }
+}
+/* Facets, the publisher box, filter pills and icons as CKAN's main.css and Font Awesome drew them
+   (jc-dataroom-pages, parity gaps G4-G6): without `display: block` a facet list is a flex row and
+   its items sit two to a line; without the `.nums` row the publisher's counts stack. */
+.nav-simple, .nav-aside { display: block; margin: 0; padding-left: 0; list-style: none; }
+.nav-simple > li { font-size: 12px; border-bottom: 1px dotted #ddd; }
+.nav-simple > li:last-of-type { border-bottom: 0; }
+.nav-item > a { display: block; font-size: .875rem; line-height: 1.5; text-decoration: none; }
+.badge { display: inline-block; padding: .35em .65em; font-size: .75em; font-weight: 700; line-height: 1; text-align: center; white-space: nowrap; border-radius: 10px; }
+.module-heading { margin: 0; padding: 15px; font-size: .875rem; line-height: 1.3; }
+.module-footer { margin: 0; padding: .5rem 15px; }
+.context-info .module-content { padding: 15px; }
+.context-info .image { margin-bottom: 10px; }
+.context-info .image img { display: block; width: 100%; height: auto; border-radius: 4px; }
+.context-info h1.heading { margin: 0 0 5px; font-size: 18px; line-height: 1.3; overflow-wrap: break-word; hyphens: auto; }
+.nums { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; padding-top: 10px; border-top: 1px dotted #ddd; }
+.nums dl { margin: 0; }
+.nums dt { font-size: 13px; font-weight: 300; }
+.nums dd { margin: 0; font-size: 30px; font-weight: 700; line-height: 36px; }
+.filter-list { line-height: 32px; margin: 10px 0 0; }
+.pill { display: inline-block; padding: 2px 10px 1px; margin-right: 5px; line-height: 21px; color: #fff; background: #4e5f65; border-radius: 100px; }
+.pill a { color: #fff; text-decoration: none; }
+.pill a.remove { font-size: 11px; }
+.facet { margin-right: .25rem; }
+.media-grid { margin: 0; padding-left: 0; list-style: none; }
+.pagination-wrapper { text-align: center; padding-top: .5rem; }
+.toolbar .home a { text-decoration: none; }
+.toolbar .home span { display: none; }
+.fa { display: inline-block; font-style: normal; line-height: 1; }
+.fa-home, .fa-search { position: relative; width: 1em; height: 1em; vertical-align: -.125em; }
+.fa-home::before, .fa-home::after, .fa-search::before, .fa-search::after { content: ""; position: absolute; }
+.fa-home::before { left: 0; top: 0; border-left: .5em solid transparent; border-right: .5em solid transparent; border-bottom: .45em solid currentColor; }
+.fa-home::after { left: .15em; right: .15em; top: .44em; bottom: .05em; background: currentColor; }
+.fa-search::before { left: 0; top: 0; width: .72em; height: .72em; border: .13em solid currentColor; border-radius: 50%; }
+.fa-search::after { left: .6em; top: .6em; width: .42em; height: .14em; background: currentColor; border-radius: .07em; transform: rotate(45deg); transform-origin: 0 50%; }
+.fa-filter::before { content: "\25BC"; font-size: .7em; vertical-align: .1em; }
+.fa-bars::before { content: "\2630"; }
+.fa-times::before { content: "\00D7"; font-size: 1.4em; vertical-align: -.1em; }
+.media-item { position: relative; padding: .75rem; }
+.media-heading { margin: 5px 0; line-height: 1.3; }
+.media-image { border-radius: 4px; }
+.media-view { position: absolute; inset: 0; border: 1px solid #ddd; border-radius: 3px; overflow: hidden; }
+.media-view span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.jc-topic-code { display: inline-block; padding: .2rem .5rem; font-size: .75rem; font-weight: 700; letter-spacing: .04em; color: var(--jc-primary-fg, #fff); background: var(--jc-primary, #0d6efd); border-radius: 4px; }
+.control-order-by label { font-weight: 700; }
+.search-form .control-order-by { margin-top: 1rem; }
+.control-order-by label::after { content: ":"; }
+@media (min-width: 768px) {
+  .search-form .control-order-by { float: right; margin: .75rem 0 0 15px; }
+}
+.search-form::after { content: ""; display: block; clear: both; }
+.jc-resource-nav .nav-item > a:first-child { padding: .5rem 1rem; }

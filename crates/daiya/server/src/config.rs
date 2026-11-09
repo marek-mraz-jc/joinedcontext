@@ -60,6 +60,10 @@ pub struct DaiyaConfig {
     pub mount: MountConfig,
     #[serde(default)]
     pub organization: OrganizationConfig,
+    /// Organizations held from the start under their Grafana numbers (`{"id": 4, "name":
+    /// "bbsk"}`), so provisioning files can name them by `orgId`.
+    #[serde(default)]
+    pub organizations: Vec<NumberedOrganization>,
     #[serde(default)]
     pub store: StoreConfig,
     /// JSON list of [`TokenEntry`]: API credentials by SHA-256, never the token itself.
@@ -97,6 +101,7 @@ impl Default for DaiyaConfig {
             listen: default_listen(),
             mount: MountConfig::default(),
             organization: OrganizationConfig::default(),
+            organizations: Vec::new(),
             store: StoreConfig::default(),
             tokens_file: None,
             secrets_dir: None,
@@ -144,6 +149,28 @@ pub struct OrganizationConfig {
     pub id: OrgId,
     #[serde(default = "default_org_name")]
     pub name: String,
+}
+
+/// One organization held from the start: its Grafana number (2 and up) and its name.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NumberedOrganization {
+    pub id: i64,
+    pub name: String,
+}
+
+/// Holds `organizations` in `state`'s directory (see `compat::declare_organization`).
+///
+/// # Errors
+/// A number below 2, or a number or name held twice.
+pub fn declare_organizations(
+    state: &DaiyaState,
+    organizations: &[NumberedOrganization],
+) -> CrResult<()> {
+    for org in organizations {
+        daiya_api::compat::declare_organization(state, org.id, &org.name)?;
+    }
+    Ok(())
 }
 
 fn default_org_id() -> OrgId {
@@ -402,6 +429,7 @@ pub async fn build_state(cfg: &DaiyaConfig) -> CrResult<Built> {
                 .insert(1, (cfg.organization.name.clone(), org));
         }
     }
+    declare_organizations(&state, &cfg.organizations)?;
     let provisioning = match &cfg.provisioning_dir {
         Some(dir) => Some(provision(&state, dir, &cfg.provisioning_vars).await?),
         None => None,
@@ -412,19 +440,30 @@ pub async fn build_state(cfg: &DaiyaConfig) -> CrResult<Built> {
     })
 }
 
-/// Loads the provisioning directory `dir` into the default organization of `state` and lets
+/// Loads the provisioning directory `dir` into the organizations of `state` its `orgId`s name
+/// (1 the default organization, another number one the directory holds) and lets
 /// the datasources it wrote reach [`DaiyaState::own_addresses`] (`DaiyaState::trust_provisioned`).
 pub async fn provision(
     state: &DaiyaState,
     dir: &Path,
     vars: &BTreeMap<String, String>,
 ) -> CrResult<ProvisioningLoadReport> {
+    // The registry's read guard ends here, before the load awaits.
+    let organizations = state
+        .org_registry
+        .read()
+        .by_num
+        .iter()
+        .filter(|(num, _)| **num != 1)
+        .map(|(num, (_, org))| (*num, *org))
+        .collect();
     let report = load_provisioning_dir(
         state.store.as_ref(),
         ProvisioningTarget {
             installation_id: state.installation_id,
             org_id: state.default_org_id,
             instance_id: state.default_instance_id,
+            organizations,
         },
         dir,
         &state.limits,

@@ -1,0 +1,109 @@
+{
+ "dashboard": "project-bbsk",
+ "frames": [
+  {
+   "fields": [
+    {
+     "labels": {},
+     "name": "id",
+     "type": "string",
+     "values": [
+      "urn:ngsi-ld:KeyPerformanceIndicator:obyvatelstvo-stav-0",
+      "urn:ngsi-ld:KeyPerformanceIndicator:obyvatelstvo-stav-1",
+      "urn:ngsi-ld:KeyPerformanceIndicator:obyvatelstvo-stav-2",
+      "urn:ngsi-ld:KeyPerformanceIndicator:obyvatelstvo-stav-3",
+      "urn:ngsi-ld:KeyPerformanceIndicator:obyvatelstvo-stav-4"
+     ]
+    },
+    {
+     "labels": {},
+     "name": "type",
+     "type": "string",
+     "values": [
+      "KeyPerformanceIndicator",
+      "KeyPerformanceIndicator",
+      "KeyPerformanceIndicator",
+      "KeyPerformanceIndicator",
+      "KeyPerformanceIndicator"
+     ]
+    },
+    {
+     "labels": {},
+     "name": "observedAt",
+     "type": "time",
+     "unit": "dateTimeAsIso",
+     "values": [
+      1794031200000,
+      1794031200000,
+      1794031200000,
+      1794031200000,
+      1794031200000
+     ]
+    },
+    {
+     "labels": {},
+     "name": "title",
+     "type": "string",
+     "values": [
+      "Banskobystrický kraj, okres Banská Bystrica",
+      "Banskobystrický kraj, okres Brezno",
+      "Banskobystrický kraj, okres Detva",
+      "Banskobystrický kraj, okres Lučenec",
+      "Banskobystrický kraj, okres Zvolen"
+     ]
+    },
+    {
+     "labels": {},
+     "name": "currentValue",
+     "type": "number",
+     "values": [
+      65537,
+      53511,
+      85841,
+      66204,
+      105813
+     ]
+    }
+   ],
+   "name": "A",
+   "refId": "A"
+  }
+ ],
+ "from": 1791525600000,
+ "panel": 1,
+ "served": [
+  {
+   "fields": [
+    {
+     "displayName": "Územie",
+     "name": "Územie",
+     "type": "string",
+     "values": [
+      "Banskobystrický kraj, okres Banská Bystrica",
+      "Banskobystrický kraj, okres Brezno",
+      "Banskobystrický kraj, okres Detva",
+      "Banskobystrický kraj, okres Lučenec",
+      "Banskobystrický kraj, okres Zvolen"
+     ]
+    },
+    {
+     "displayName": "Obyvatelia",
+     "name": "Obyvatelia",
+     "type": "number",
+     "values": [
+      65537,
+      53511,
+      85841,
+      66204,
+      105813
+     ]
+    }
+   ],
+   "meta": {},
+   "name": "A",
+   "refId": "A"
+  }
+ ],
+ "title": "Obyvateľstvo",
+ "to": 1794117600000
+}

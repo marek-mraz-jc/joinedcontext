@@ -1,0 +1,117 @@
+{
+ "dashboard": "jc-k6-load",
+ "panel": 5,
+ "title": "p50 / p95 / p99 by query kind",
+ "from": 1794106800000,
+ "to": 1794117600000,
+ "frames": [
+  {
+   "name": "A",
+   "refId": "A",
+   "fields": [
+    {
+     "name": "Time",
+     "type": "time",
+     "labels": {},
+     "values": [
+      1794117600000,
+      1794117600000,
+      1794117600000
+     ]
+    },
+    {
+     "name": "kind",
+     "type": "string",
+     "labels": {},
+     "values": [
+      "entities",
+      "temporal",
+      "geo"
+     ]
+    },
+    {
+     "name": "Value #A",
+     "type": "number",
+     "labels": {},
+     "values": [
+      0.06174,
+      0.050939,
+      0.047378
+     ]
+    }
+   ]
+  },
+  {
+   "name": "B",
+   "refId": "B",
+   "fields": [
+    {
+     "name": "Time",
+     "type": "time",
+     "labels": {},
+     "values": [
+      1794117600000,
+      1794117600000,
+      1794117600000
+     ]
+    },
+    {
+     "name": "kind",
+     "type": "string",
+     "labels": {},
+     "values": [
+      "entities",
+      "temporal",
+      "geo"
+     ]
+    },
+    {
+     "name": "Value #B",
+     "type": "number",
+     "labels": {},
+     "values": [
+      0.04913,
+      0.039566,
+      0.037935
+     ]
+    }
+   ]
+  },
+  {
+   "name": "C",
+   "refId": "C",
+   "fields": [
+    {
+     "name": "Time",
+     "type": "time",
+     "labels": {},
+     "values": [
+      1794117600000,
+      1794117600000,
+      1794117600000
+     ]
+    },
+    {
+     "name": "kind",
+     "type": "string",
+     "labels": {},
+     "values": [
+      "entities",
+      "temporal",
+      "geo"
+     ]
+    },
+    {
+     "name": "Value #C",
+     "type": "number",
+     "labels": {},
+     "values": [
+      0.02577,
+      0.035194,
+      0.036295
+     ]
+    }
+   ]
+  }
+ ]
+}

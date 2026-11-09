@@ -47299,6 +47299,13 @@
           "tags"
         ],
         "properties": {
+          "folder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The folder the dashboard sits in; none for Grafana's General."
+          },
           "tags": {
             "type": "array",
             "items": {
@@ -47318,9 +47325,11 @@
         "description": "One dashboard: what the page lays out. Panel queries stay on the server.",
         "required": [
           "uid",
+          "orgId",
           "title",
           "from",
           "to",
+          "timePickerHidden",
           "variables",
           "panels"
         ],
@@ -47335,12 +47344,17 @@
             "type": "string",
             "description": "The saved time range, Grafana's words (`now-6h`, `now`)."
           },
+          "orgId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The number of the dashboards service organization that holds it (Grafana's `orgId`)."
+          },
           "panels": {
             "type": "array",
             "items": {
               "type": "object"
             },
-            "description": "Each panel's `id`, `type`, `title`, `description`, `gridPos`, `fieldConfig`, `options`,\nand for a row `collapsed` and its `panels`."
+            "description": "Each panel's `id`, `type`, `title`, `description`, `gridPos`, `fieldConfig`, `options`,\n`maxDataPoints`, its own range (`timeFrom`, `timeShift`, `hideTimeOverride`), and for a\nrow `collapsed` and its `panels`."
           },
           "refresh": {
             "type": [
@@ -47348,6 +47362,17 @@
               "null"
             ],
             "description": "The saved refresh interval (`30s`, `5m`), if any."
+          },
+          "timePickerHidden": {
+            "type": "boolean",
+            "description": "Whether the dashboard hides its time and refresh pickers (`timepicker.hidden`)."
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The saved time zone (`browser`, `utc` or an IANA name), if any."
           },
           "title": {
             "type": "string"

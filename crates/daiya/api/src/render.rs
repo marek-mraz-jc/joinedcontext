@@ -33,6 +33,11 @@ pub struct PanelTimeRange {
     pub max_data_points: Option<u32>,
     #[serde(default)]
     pub variables: BTreeMap<String, String>,
+    /// The values picked per variable, as repeated `var-<name>` (`$__all` for All), formatted
+    /// from the saved variable as Grafana's Prometheus datasource formats them (see
+    /// [`format_picked`]); a name here wins over the same name in `variables`.
+    #[serde(default)]
+    pub picked: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for PanelTimeRange {
@@ -43,6 +48,7 @@ impl Default for PanelTimeRange {
             interval_ms: Some(15_000),
             max_data_points: Some(1000),
             variables: BTreeMap::new(),
+            picked: BTreeMap::new(),
         }
     }
 }
@@ -286,7 +292,14 @@ pub(crate) async fn execute_targets_with_authorizer(
     };
 
     let mut ds_frame_sets: Vec<FrameSet> = Vec::with_capacity(ds_targets.len());
-    let principals = req_ctx.subject.principals();
+    // A person a server administrator reads for is a principal of the cache key too.
+    let person = req_ctx
+        .subject
+        .on_behalf_of
+        .as_ref()
+        .map(|sub| format!("person:{sub}"));
+    let mut principals = req_ctx.subject.principals();
+    principals.extend(person.as_deref());
 
     for (ds_uid, query, raw_target) in ds_targets {
         if !has_expressions && hidden_ds_refs.contains(&query.ref_id) {
@@ -544,6 +557,14 @@ pub async fn panel_view(
     for (k, v) in range.variables {
         vars.insert(k, v);
     }
+    let saved = doc
+        .templating
+        .as_ref()
+        .map_or(&[][..], |t| t.list.as_slice());
+    for (name, values) in range.picked {
+        let variable = saved.iter().find(|v| v.name == name);
+        vars.insert(name, format_picked(variable, &values));
+    }
 
     let mut frame_sets = if raw_targets.is_empty() {
         Vec::new()
@@ -623,4 +644,59 @@ pub async fn panel_view(
         html_table,
         access_denied_message: None,
     })
+}
+
+/// A regex sign Grafana's Prometheus datasource escapes in a picked value
+/// (`prometheusSpecialRegexEscape`).
+fn regex_escaped(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if "\\$^*{}[]'+?.()|".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The text the picked `values` of `variable` stand for in a query, as Grafana 12's Prometheus
+/// datasource formats them (`interpolateQueryExpr`): a single-value variable as picked; a
+/// multi-value or All variable regex-escaped, several values as `(a|b)`; All as the variable's
+/// `allValue` unchanged, else every value it offers. The quoting of the literal the text lands
+/// in is left to the query's own interpolation (`interpolate_promql_variables`), so a `\` here
+/// becomes the `\\` Grafana writes into the PromQL string.
+#[must_use]
+pub fn format_picked(variable: Option<&daiya_model::VariableModel>, values: &[String]) -> String {
+    let multi = variable.is_some_and(|v| v.multi == Some(true) || v.include_all == Some(true));
+    let all = values.iter().any(|v| v == "$__all");
+    let values: Vec<String> = if all {
+        if let Some(all_value) = variable
+            .and_then(|v| v.all_value.as_deref())
+            .filter(|v| !v.is_empty())
+        {
+            return all_value.to_owned();
+        }
+        variable
+            .and_then(|v| v.options.as_ref())
+            .into_iter()
+            .flatten()
+            .filter_map(|o| o.value.as_ref().and_then(Value::as_str))
+            .filter(|v| *v != "$__all")
+            .map(str::to_owned)
+            .collect()
+    } else {
+        values.to_vec()
+    };
+    match values.as_slice() {
+        [] => String::new(),
+        [one] if !multi => one.clone(),
+        [one] => regex_escaped(one),
+        many => format!(
+            "({})",
+            many.iter()
+                .map(|v| regex_escaped(v))
+                .collect::<Vec<_>>()
+                .join("|")
+        ),
+    }
 }

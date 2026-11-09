@@ -98,6 +98,30 @@ async fn compat_create_org(
 /// The id of organization `name`: the same in every process of the installation, so the rows a
 /// Postgres store keeps under it are found again when `provision.sh` creates it after a restart
 /// (the directory of names is held in memory, as Grafana's database in its pod).
+/// Holds organization `name` under Grafana number `num` from the start, as an operator's
+/// configuration declares it, so provisioning files can name it by `orgId` and the Portal finds
+/// it by name; its id is the one [`compat_create_org`] would give it.
+///
+/// # Errors
+/// A number below 2 (1 is the main organization) or a number or name already held.
+pub fn declare_organization(state: &DaiyaState, num: i64, name: &str) -> CrResult<OrgId> {
+    let mut reg = state.org_registry.write();
+    if num < 2
+        || reg.by_num.contains_key(&num)
+        || reg.by_name.contains_key(name)
+        || name.trim().is_empty()
+    {
+        return Err(CrError::BadRequest(format!(
+            "organization {num} '{name}': a number from 2 and a name no other organization holds"
+        )));
+    }
+    let org_id = org_id_for_name(state, name);
+    reg.by_num.insert(num, (name.to_owned(), org_id));
+    reg.by_name.insert(name.to_owned(), (num, org_id));
+    reg.next_num = reg.next_num.max(num.saturating_add(1));
+    Ok(org_id)
+}
+
 fn org_id_for_name(state: &DaiyaState, name: &str) -> OrgId {
     use sha2::Digest as _;
     let digest = sha2::Sha256::digest(format!("daiya-org\n{}\n{name}", state.installation_id));
@@ -894,6 +918,16 @@ async fn compat_search(
     if params.search_type.as_deref() != Some("dash-folder")
         && let Ok(dashboards) = state.store.list_dashboards(ctx.org_id).await
     {
+        // Grafana names each hit's folder: only a folder the caller may read gives its title.
+        let folder_titles: BTreeMap<String, String> = state
+            .store
+            .list_folders(ctx.org_id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|f| can_read_folder(&state, &ctx, &f.uid))
+            .map(|f| (f.uid, f.title))
+            .collect();
         for d in dashboards {
             let readable = state
                 .authorizer
@@ -922,6 +956,7 @@ async fn compat_search(
                     "type": "dash-db",
                     "url": format!("/d/{}/{}", d.uid, d.slug),
                     "tags": d.tags,
+                    "folderTitle": d.folder_uid.as_ref().and_then(|f| folder_titles.get(f)),
                     "folderUid": d.folder_uid,
                 }));
             }
@@ -980,7 +1015,7 @@ fn render_range(params: Vec<(String, String)>) -> (u32, PanelTimeRange) {
             "maxDataPoints" => range.max_data_points = value.parse().ok(),
             other => {
                 if let Some(name) = other.strip_prefix("var-") {
-                    range.variables.insert(name.to_owned(), value);
+                    range.picked.entry(name.to_owned()).or_default().push(value);
                 }
             }
         }
