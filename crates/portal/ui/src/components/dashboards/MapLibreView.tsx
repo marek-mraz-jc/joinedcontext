@@ -32,6 +32,17 @@ export interface MapLayer {
    * holds. Only for a point layer; MapLibre clusters points alone.
    */
   cluster?: boolean;
+  /**
+   * One fixed look for every circle: a colour MapLibre parses, the radius in px and the opacity,
+   * as a Grafana geomap markers layer sets them. It wins over `colorBy` and `sizeBy`.
+   */
+  marker?: { color: string; size: number; opacity: number };
+  /** `false` opens no popup on a click (a geomap layer with its tooltip off). */
+  popup?: boolean;
+  /** The property a popup shows as its heading, out of its list (a geomap row's `name`). */
+  titleProperty?: string;
+  /** The property the heading carries after the title (a geomap row's time): readings of one name differ by it. */
+  timeProperty?: string;
   /** The popup's own button, opening the feature's entity by its `id` property (T-3256). */
   open?: { label: string; onOpen: (id: string) => void };
 }
@@ -56,6 +67,8 @@ export interface MapLibreViewProps {
    * same map instead of a second one beside it.
    */
   onReady?: (map: MapLibreMap) => (() => void) | void;
+  /** Told once the map draws on the plain ground: no project, or its basemap route failed. */
+  onPlainGround?: () => void;
 }
 
 /**
@@ -123,6 +136,16 @@ function paintFor(layer: MapLayer): Record<string, unknown> {
     return { "fill-color": color, "fill-opacity": 0.5, "fill-outline-color": outlineColour() };
   }
 
+  if (layer.marker) {
+    return {
+      "circle-color": layer.marker.color,
+      "circle-radius": layer.marker.size,
+      "circle-opacity": layer.marker.opacity,
+      "circle-stroke-width": 1,
+      "circle-stroke-color": outlineColour(),
+      "circle-stroke-opacity": layer.marker.opacity,
+    };
+  }
   const [minRadius, maxRadius] = layer.sizeBy?.range ?? [5, 5];
   const [low, high] = layer.colorBy?.domain ?? [0, 100];
   const radius =
@@ -145,16 +168,33 @@ export function popupNode(
   feature: Pick<MapGeoJSONFeature, "properties">,
   properties?: string[],
   open?: MapLayer["open"],
+  titleProperty?: string,
+  timeProperty?: string,
+  /** Values a stacked popup shows once above its readings, left out of each. */
+  shared: ReadonlySet<string> = new Set(),
 ): HTMLElement {
   const props = feature.properties ?? {};
-  const keys = properties?.length ? properties : Object.keys(props).filter((key) => key !== "id").slice(0, 6);
+  const keys = (properties?.length ? properties : Object.keys(props).filter((key) => key !== "id").slice(0, 6)).filter((key) => key !== titleProperty && key !== timeProperty && !shared.has(key));
   const root = document.createElement("div");
+  const said = (key?: string) => (key === undefined || shared.has(key) || props[key] === undefined || props[key] === null || props[key] === "" ? undefined : String(props[key]));
+  const title = [said(titleProperty), said(timeProperty)].filter(Boolean).join(" · ");
+  if (title) {
+    const heading = document.createElement("p");
+    heading.className = "mb-1 pr-6 text-body font-semibold text-fg";
+    heading.textContent = title;
+    root.append(heading);
+  }
   const list = document.createElement("dl");
+  list.className = "grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-body";
   for (const key of keys) {
     const term = document.createElement("dt");
+    term.className = "text-fg-muted";
     term.textContent = key;
     const value = document.createElement("dd");
+    // One line a value: a long address is cut and kept whole in its title.
+    value.className = "min-w-0 truncate text-fg";
     value.textContent = props[key] === undefined || props[key] === null ? "—" : String(props[key]);
+    value.title = value.textContent;
     list.append(term, value);
   }
   root.append(list);
@@ -169,6 +209,9 @@ export function popupNode(
   }
   return root;
 }
+
+/** The features one popup lists when markers stack under a click; the rest are counted. */
+const STACKED = 5;
 
 /** The layer a clustered source adds beside its own: the circles that grow with what they hold. */
 const clusterLayers = (name: string) => [`${name}--clusters`];
@@ -210,6 +253,7 @@ export function MapLibreView({
   onReady,
   onMoveEnd,
   fill,
+  onPlainGround,
 }: MapLibreViewProps): JSX.Element {
   const { t } = useTranslation();
   const container = useRef<HTMLDivElement | null>(null);
@@ -221,6 +265,10 @@ export function MapLibreView({
   useEffect(() => {
     moveEnd.current = onMoveEnd;
   }, [onMoveEnd]);
+  const plainGround = useRef(onPlainGround);
+  useEffect(() => {
+    plainGround.current = onPlainGround;
+  }, [onPlainGround]);
   // The layers on the map, by name, to diff the next render against.
   const drawn = useRef(new Map<string, MapLayer>());
   /** The click handlers each drawn layer added, so its removal takes them along (F-UI1-016). */
@@ -254,6 +302,9 @@ export function MapLibreView({
       return;
     }
     map.current = instance;
+    if (!project) {
+      plainGround.current?.();
+    }
     const detach = onReady?.(instance);
     instance.on("load", () => setLoaded(instance));
     // A platform without a basemap answers the style with 404: the map falls back to the plain
@@ -266,6 +317,7 @@ export function MapLibreView({
         // `style.load` is what says the layers may be added now (T-3256).
         instance.once("style.load", () => setLoaded(instance));
         instance.setStyle(blankStyle());
+        plainGround.current?.();
       }
     });
     instance.on("moveend", () => {
@@ -360,14 +412,60 @@ export function MapLibreView({
         });
       }
       listen(layer.name, "click", (event) => {
-        const feature = event.features?.[0];
-        if (!feature) {
+        const features = event.features ?? [];
+        if (features.length === 0 || layer.popup === false) {
           return;
         }
-        new Popup()
+        // Every feature under the click, a few: stacked markers each get their rows, not only the top one.
+        // What every one of them holds alike (one vehicle's name, one source) is said once above them.
+        const same = [layer.titleProperty, ...(layer.popupProperties ?? [])].filter(
+          (key): key is string => key !== undefined && key !== layer.timeProperty && features.every((feature) => feature.properties?.[key] != null && feature.properties[key] === features[0].properties?.[key]),
+        );
+        const shared = new Set(features.length > 1 ? same : []);
+        const root = document.createElement("div");
+        const count = document.createElement("p");
+        count.className = "mb-1 pr-6 text-body font-semibold text-fg";
+        root.className = "flex flex-col gap-2 divide-y divide-border overflow-hidden [&>*+*]:pt-2";
+        root.dataset.stacked = "";
+        for (const feature of features.slice(0, STACKED)) {
+          root.append(popupNode(feature, layer.popupProperties, layer.open, layer.titleProperty, layer.timeProperty, shared));
+        }
+        const more = document.createElement("p");
+        more.className = "mt-2 border-t border-border pt-2 text-body text-fg-muted";
+        const stacked = document.createElement("div");
+        stacked.append(count);
+        if (shared.size > 0) {
+          // The shared title alone lists no row: a list of only the title keeps popupNode off its every-key fallback.
+          const rows = [...shared].filter((key) => key !== layer.titleProperty);
+          const common = popupNode(features[0], rows.length > 0 ? rows : [...shared], undefined, shared.has(layer.titleProperty ?? "") ? layer.titleProperty : undefined);
+          common.className = "mb-2 border-b border-border pb-2";
+          stacked.append(common);
+        }
+        stacked.append(root, more);
+        const counted = () => {
+          const shown = root.children.length;
+          count.textContent = t("dashboards.stackedHere", { n: features.length, shown });
+          more.textContent = features.length > shown ? t("dashboards.moreHere", { n: features.length - shown }) : "";
+          more.hidden = !more.textContent;
+        };
+        counted();
+        // A phone map is narrow: the popup keeps to it, a wider map lets a heading and its time share a line.
+        // z-10 puts it above the map's own controls (the scale, the attribution).
+        const popup = new Popup({ className: "z-10", maxWidth: (container.current?.clientWidth ?? 0) < 500 ? "18rem" : "20rem" })
           .setLngLat(event.lngLat)
-          .setDOMContent(popupNode(feature, layer.popupProperties, layer.open))
+          .setDOMContent(features.length === 1 ? popupNode(features[0], layer.popupProperties, layer.open, layer.titleProperty, layer.timeProperty) : stacked)
           .addTo(instance);
+        // Only whole readings, within a share of the map's height so the tapped spot stays in view;
+        // the rest are counted, never cut in half.
+        const mapHeight = container.current?.clientHeight ?? 400;
+        const room = mapHeight * (mapHeight < 480 ? 0.42 : 0.45);
+        // Measured afresh each round: a popup anchored at its bottom moves its top as readings go.
+        while (root.children.length > 1 && root.lastElementChild!.getBoundingClientRect().bottom - root.getBoundingClientRect().top > room) {
+          root.lastElementChild!.remove();
+        }
+        counted();
+        // MapLibre placed the popup at its full size: placing it again keeps the shorter one inside the map.
+        popup.setLngLat(event.lngLat);
       });
       drawn.current.set(layer.name, layer);
     }
@@ -378,10 +476,12 @@ export function MapLibreView({
       if (boxes.length > 0) {
         const box = boxes.reduce((a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])]);
         fitted.current = true;
-        instance.fitBounds([box[0], box[1], box[2], box[3]], { padding: 40, maxZoom: 14, duration: 0 });
+        // A phone's map is a few hundred px: the desktop margin would leave the markers a third of it.
+        const padding = (container.current?.clientWidth ?? 800) < 500 ? 16 : 40;
+        instance.fitBounds([box[0], box[1], box[2], box[3]], { padding, maxZoom: 14, duration: 0 });
       }
     }
-  }, [layers, loaded, center]);
+  }, [layers, loaded, center, t]);
 
   if (failed) {
     return (

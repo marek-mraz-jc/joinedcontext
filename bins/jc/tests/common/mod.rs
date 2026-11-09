@@ -258,3 +258,20 @@ pub async fn sign_in_at(
     let (_, home) = browser.follow(callback, |_| false).await;
     assert!(home.status.is_success(), "{} {}", home.status, home.text);
 }
+
+/// A loopback port nothing listens on now, for jc's `--listen`. jc binds its own socket and
+/// takes none from its parent, so the test cannot hold the port until jc has it: another bind
+/// on the host (a sibling test's jc, an outgoing connection) can take it in between. A start
+/// whose jc says [`lost_the_port`] picks another port and starts again.
+pub fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Whether jc stopped because another bind took the port of [`free_port`] before jc bound it.
+pub fn lost_the_port(text: &str) -> bool {
+    text.contains("cannot listen on") && text.contains("in use")
+}

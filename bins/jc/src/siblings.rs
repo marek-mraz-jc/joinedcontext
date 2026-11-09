@@ -394,7 +394,7 @@ mod tests {
 
     const LISTEN: &str = "0.0.0.0:8443";
 
-    fn plans(mounts: BTreeMap<Module, MountOverride>, scheme: &str) -> Vec<MountPlan> {
+    fn plans(mounts: BTreeMap<Module, Vec<MountOverride>>, scheme: &str) -> Vec<MountPlan> {
         let mut cfg = Config::merge(
             Cli {
                 role: Some("all".into()),
@@ -434,10 +434,10 @@ mod tests {
         let mut mounts = BTreeMap::new();
         mounts.insert(
             Module::Shako,
-            MountOverride {
+            vec![MountOverride {
                 host: Some("git.city.example".into()),
                 path_prefix: None,
-            },
+            }],
         );
         let siblings = Siblings::new(&plans(mounts, "https"), "[::]:1".parse().unwrap());
         let git = siblings.get(Module::Shako).unwrap();
@@ -467,10 +467,10 @@ mod tests {
         let mut mounts = BTreeMap::new();
         mounts.insert(
             Module::Gateway,
-            MountOverride {
+            vec![MountOverride {
                 host: Some("api.city.example".into()),
                 path_prefix: None,
-            },
+            }],
         );
         let siblings = Siblings::new(&plans(mounts, "https"), LISTEN.parse().unwrap());
         assert_eq!(gateway_reach(&siblings), None);

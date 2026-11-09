@@ -159,7 +159,14 @@ pub struct GroupSync {
     admin: super::app_clients::Admin,
     /// Where a run records the groups it may not write, for the write doors (AP-115).
     foreign: Option<std::sync::Arc<super::foreign::ForeignNames>>,
+    /// The user ids the realm answered 404 for, and when: a manifest naming an id the realm
+    /// lacks asked the realm again on every run (jc-smoke-logs: ~600 `GET /users/{id}` a minute
+    /// at a 10 s sync). Asked again once [`ABSENT_FOR`] has passed.
+    absent: std::sync::Mutex<BTreeMap<String, std::time::Instant>>,
 }
+
+/// How long a user the realm lacks is taken as still missing before the realm is asked again.
+const ABSENT_FOR: std::time::Duration = std::time::Duration::from_secs(300);
 
 impl GroupSync {
     /// Makes each run record the realm's unmanaged group names where the write doors read them.
@@ -174,6 +181,7 @@ impl GroupSync {
         Some(Self {
             admin: super::app_clients::Admin::new(issuer, client_id, auth)?,
             foreign: None,
+            absent: Default::default(),
         })
     }
 
@@ -488,7 +496,20 @@ impl GroupSync {
 
     /// Whether the realm has a user with this id; a 404 is `false`, any other refusal an error.
     async fn user_exists(&self, token: &str, user: &str) -> Result<bool, String> {
-        self.admin.exists(token, &format!("/users/{user}")).await
+        let recently_absent = |absent: &BTreeMap<String, std::time::Instant>| {
+            absent.get(user).is_some_and(|at| at.elapsed() < ABSENT_FOR)
+        };
+        if recently_absent(&self.absent.lock().unwrap_or_else(|e| e.into_inner())) {
+            return Ok(false);
+        }
+        let exists = self.admin.exists(token, &format!("/users/{user}")).await?;
+        let mut absent = self.absent.lock().unwrap_or_else(|e| e.into_inner());
+        if exists {
+            absent.remove(user);
+        } else {
+            absent.insert(user.to_owned(), std::time::Instant::now());
+        }
+        Ok(exists)
     }
 }
 

@@ -3722,7 +3722,9 @@
       "timeAxisUnit": "Čas v pásme {zone}; hodnoty v jednotke {unit}."
     },
     "emptyHint": "Dashboard je stránka s mapami a číslami, postavená z endpointov, ktoré tento projekt vie čítať. Vytvorte jeden alebo požiadajte asistenta o dashboard z toho, čo už zverejňujete.",
-    "layerEndpointGone": "Endpoint „{name}“ už v tomto projekte nie je, preto táto vrstva nemá z čoho vybrať typ ani filter. Vyberte pre túto vrstvu iný endpoint."
+    "layerEndpointGone": "Endpoint „{name}“ už v tomto projekte nie je, preto táto vrstva nemá z čoho vybrať typ ani filter. Vyberte pre túto vrstvu iný endpoint.",
+    "moreHere": "Mimo zoznamu: {n}; priblížte mapu, aby ste ich rozlíšili",
+    "stackedHere": "Na tomto mieste: {n}, v zozname {shown}"
   },
   "access": {
     "title": "Prístup",
@@ -11899,7 +11901,20 @@
       "quick": "Rýchle rozsahy"
     },
     "refreshAuto": "Automaticky",
-    "none": "Žiadna"
+    "none": "Žiadna",
+    "geomap": {
+      "label": "Mapa {title}: {n} značiek",
+      "noneTitle": "Žiadny riadok nemá polohu",
+      "none": "Žiadny z {rows} riadkov nemá polohu: bod GeoJSON (location, geometry) ani polia zemepisnej šírky a dĺžky. Riadky ukážu tabuľky.",
+      "mode": "Táto mapa číta polohu z bodu GeoJSON alebo z polí zemepisnej šírky a dĺžky, nie spôsobom „{mode}“.",
+      "missing": "{n} z {rows} riadkov nemá polohu a nie je vykreslených.",
+      "basemap": "Podklad „{type}“ sa tu nekreslí.",
+      "view": "Uložený pohľad sa nezachová; mapa sa prispôsobí značkám.",
+      "layers": "Kreslí sa len prvá z {n} vrstiev.",
+      "plain": "bez podkladovej mapy, len polohy",
+      "count": "Značky: {n}, posledné hodnoty; časový rozsah ich nezužuje",
+      "empty": "Zdroj údajov nevrátil žiadne riadky. Mapa ukazuje posledné hodnoty, dlhší časový rozsah nepridá ďalšie."
+    }
   },
   "repositories": {
     "title": "Repozitáre",

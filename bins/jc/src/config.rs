@@ -172,12 +172,47 @@ pub enum LogFormat {
     Text,
 }
 
-/// An explicit mount of one module (`[mounts.<module>]` in the file).
+/// An explicit mount of one module (`[mounts.<module>]` in the file, or one entry of
+/// `[[mounts.<module>]]`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct MountOverride {
     pub host: Option<String>,
     pub path_prefix: Option<String>,
+}
+
+/// The mounts of one module in the file: one table (`[mounts.<module>]`) or an array of them
+/// (`[[mounts.<module>]]`). The first entry is the module's own address; `plan_mounts` refuses
+/// the bad ones.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MountEntries(pub Vec<MountOverride>);
+
+impl<'de> Deserialize<'de> for MountEntries {
+    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = MountEntries;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a mount table or an array of mount tables")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let one =
+                    MountOverride::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(MountEntries(vec![one]))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                Vec::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))
+                    .map(MountEntries)
+            }
+        }
+        de.deserialize_any(Visitor)
+    }
 }
 
 /// `[kaisatsu]` section.
@@ -405,7 +440,7 @@ pub struct FileConfig {
     pub state_dir: Option<PathBuf>,
     pub portal_siblings: Option<bool>,
     #[serde(default)]
-    pub mounts: BTreeMap<String, MountOverride>,
+    pub mounts: BTreeMap<String, MountEntries>,
     #[serde(default)]
     pub kaisatsu: KaisatsuSection,
     #[serde(default)]
@@ -442,6 +477,8 @@ pub enum ConfigError {
     Role(#[from] RoleError),
     #[error("[mounts.{0}] names no module of this jc build")]
     UnknownMount(String),
+    #[error("[mounts.{module}]: {message}")]
+    Mount { module: Module, message: String },
     #[error("scheme must be http or https, not '{0}'")]
     Scheme(String),
     #[error("base host must be a plain host name, not '{0}'")]
@@ -487,7 +524,8 @@ pub struct Config {
     pub profile: Profile,
     pub state_dir: PathBuf,
     pub portal_siblings: bool,
-    pub mounts: BTreeMap<Module, MountOverride>,
+    /// Every module's explicit mounts, in file order: the first is the module's own address.
+    pub mounts: BTreeMap<Module, Vec<MountOverride>>,
     pub kaisatsu: KaisatsuSection,
     pub dataroom: DataroomSection,
     pub ekiben: EkibenSection,
@@ -566,7 +604,7 @@ impl Config {
             let module: Module = name
                 .parse()
                 .map_err(|_| ConfigError::UnknownMount(name.clone()))?;
-            mounts.insert(module, mount);
+            mounts.insert(module, mount.0);
         }
         let mut trusted_proxies = file.trusted_proxies;
         trusted_proxies.extend(cli.trusted_proxies);
@@ -1102,7 +1140,7 @@ impl Config {
 }
 
 /// A host name of letters, digits, dots and hyphens, optionally with `:port`.
-fn valid_host(host: &str) -> bool {
+pub(crate) fn valid_host(host: &str) -> bool {
     let (name, port) = match host.rsplit_once(':') {
         Some((n, p)) => (n, Some(p)),
         None => (host, None),
@@ -1195,7 +1233,7 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         );
         assert_eq!(from_file.log_format, LogFormat::Text);
         assert_eq!(
-            from_file.mounts[&Module::Daiya].host.as_deref(),
+            from_file.mounts[&Module::Daiya][0].host.as_deref(),
             Some("grafana.example")
         );
         assert_eq!(
@@ -1238,6 +1276,58 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         let err = Config::parse_file(Path::new("jc.toml"), "[mounts.dataroom]\nprefix = \"/x\"\n")
             .unwrap_err();
         assert!(matches!(err, ConfigError::Parse { .. }), "{err}");
+    }
+
+    #[test]
+    fn a_mount_is_one_table_or_an_array_of_tables() {
+        let one = Config::parse_file(
+            Path::new("jc.toml"),
+            "[mounts.portal]\nhost = \"portal.city.test\"\npath_prefix = \"\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            one.mounts["portal"].0,
+            vec![MountOverride {
+                host: Some("portal.city.test".into()),
+                path_prefix: Some(String::new()),
+            }]
+        );
+        let many = Config::parse_file(
+            Path::new("jc.toml"),
+            r#"
+[[mounts.gateway]]
+host = "api.city.test"
+
+[[mounts.gateway]]
+host = "portal.city.test"
+path_prefix = "/api/endpoint"
+"#,
+        )
+        .unwrap();
+        let merged = Config::merge(cli(&["--role", "gateway"]), many).unwrap();
+        assert_eq!(
+            merged.mounts[&Module::Gateway],
+            vec![
+                MountOverride {
+                    host: Some("api.city.test".into()),
+                    path_prefix: None,
+                },
+                MountOverride {
+                    host: Some("portal.city.test".into()),
+                    path_prefix: Some("/api/endpoint".into()),
+                },
+            ]
+        );
+        // An unknown key is refused inside an array entry as in a single table.
+        let err = Config::parse_file(
+            Path::new("jc.toml"),
+            "[[mounts.gateway]]\nhost = \"a.test\"\n[[mounts.gateway]]\nprefix = \"/x\"\n",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("unknown field `prefix`"), "{err}");
+        let err =
+            Config::parse_file(Path::new("jc.toml"), "mounts.gateway = \"api\"\n").unwrap_err();
+        assert!(err.to_string().contains("array of mount tables"), "{err}");
     }
 
     #[test]

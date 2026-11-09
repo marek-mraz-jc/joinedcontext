@@ -1,0 +1,84 @@
+{
+ "description": "Saved from the Portal. It reads through the Endpoint with your own rights.",
+ "editable": false,
+ "panels": [
+  {
+   "datasource": {
+    "type": "ngsild-grafana-datasource",
+    "uid": "helsinki-air-quality"
+   },
+   "gridPos": {
+    "h": 18,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "options": {
+    "basemap": {
+     "type": "default"
+    },
+    "layers": [
+     {
+      "config": {
+       "style": {
+        "color": {
+         "fixed": "#FF9830"
+        },
+        "opacity": 0.9,
+        "size": {
+         "fixed": 9
+        }
+       }
+      },
+      "location": {
+       "mode": "auto"
+      },
+      "name": "Air quality map (t6516-mw3xzrhm)",
+      "tooltip": true,
+      "type": "markers"
+     }
+    ],
+    "view": {
+     "id": "fit",
+     "lat": 0,
+     "lon": 0,
+     "zoom": 10
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "ngsild-grafana-datasource",
+      "uid": "helsinki-air-quality"
+     },
+     "entityName": "name",
+     "entityType": "AirQualityObserved",
+     "geoproperty": "location",
+     "limit": 100,
+     "namePattern": "entity_name",
+     "queryType": "geo",
+     "refId": "A"
+    }
+   ],
+   "title": "Air quality map (t6516-mw3xzrhm)",
+   "transformations": [],
+   "type": "geomap"
+  }
+ ],
+ "refresh": "1h",
+ "schemaVersion": 39,
+ "tags": [
+  "project",
+  "helsinki",
+  "portal"
+ ],
+ "time": {
+  "from": "now-7d",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Air quality map (t6516-mw3xzrhm)",
+ "uid": "pv-97058e3a30c95eb36b80743122d56561",
+ "version": 1
+}

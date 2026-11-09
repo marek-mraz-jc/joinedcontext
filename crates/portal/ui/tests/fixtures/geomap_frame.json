@@ -1,0 +1,1568 @@
+[
+  {
+    "name": "A",
+    "refId": "A",
+    "fields": [
+      {
+        "name": "id",
+        "type": "string",
+        "values": [
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25004",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25005",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25006",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25007",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25008",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25022",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25023",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25024",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25025",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25026",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-24760",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25058",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25059",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25060",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25061",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25062",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25076",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25028",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25030",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25031",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25032",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25034",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25035",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25036",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25037",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25038",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25040",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25054",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25055",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25056",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25226",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25227",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25230",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25077",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25078",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25079",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25082",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25083",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25084",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25092",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25093",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25095",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25099",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25100",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25101",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25208",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491871-25225",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21147",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21151",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21152",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21153",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21155",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21156",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21157",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21158",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21159",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21161",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21162",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21163",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21164",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21165",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21167",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21168",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21169",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21170",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21171",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21173",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21174",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21175",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21176",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21177",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21180",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21181",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21182",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21183",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21185",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21186",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21187",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21188",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21189",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21192",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21198",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21199",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21202",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21203",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21204",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21206",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21210",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21211",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21212",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21213",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21215",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21216",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21217",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21219",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21221",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21222",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21223",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21224",
+          "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:swarco-89011702278837491897-21225"
+        ]
+      },
+      {
+        "name": "type",
+        "type": "string",
+        "values": [
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved",
+          "AirQualityObserved"
+        ]
+      },
+      {
+        "name": "observedAt",
+        "type": "time",
+        "unit": "dateTimeAsIso",
+        "values": [
+          1684814620000,
+          1684814800000,
+          1684814980000,
+          1684815161000,
+          1684815341000,
+          1684815701000,
+          1684815880000,
+          1684816061000,
+          1684816241000,
+          1684816421000,
+          1684745671000,
+          1684821834000,
+          1684822014000,
+          1684822194000,
+          1684822374000,
+          1684822554000,
+          1684822914000,
+          1684816780000,
+          1684817140000,
+          1684817320000,
+          1684817500000,
+          1684817860000,
+          1684818040000,
+          1684818221000,
+          1684818401000,
+          1684818580000,
+          1684818941000,
+          1684819301000,
+          1684819480000,
+          1684821474000,
+          1684903000000,
+          1684903180000,
+          1684903720000,
+          1684823093000,
+          1684823274000,
+          1684823454000,
+          1684823994000,
+          1684824174000,
+          1684824354000,
+          1684831348000,
+          1684832248000,
+          1684833508000,
+          1684833688000,
+          1684833868000,
+          1684834048000,
+          1684900660000,
+          1684902820000,
+          1681446511000,
+          1681447230000,
+          1681447411000,
+          1681447591000,
+          1681447951000,
+          1681448130000,
+          1681448311000,
+          1681448752000,
+          1681448932000,
+          1681452133000,
+          1681452317000,
+          1681452493000,
+          1681452673000,
+          1681452853000,
+          1681453216000,
+          1681453393000,
+          1681453572000,
+          1681453753000,
+          1681453933000,
+          1681454293000,
+          1681454473000,
+          1681454653000,
+          1681454833000,
+          1681455013000,
+          1681460740000,
+          1681460920000,
+          1681461099000,
+          1681461280000,
+          1681461640000,
+          1681461820000,
+          1681461999000,
+          1681462180000,
+          1681462360000,
+          1681462899000,
+          1681463980000,
+          1681464160000,
+          1681464700000,
+          1681464880000,
+          1681465060000,
+          1681465420000,
+          1681466140000,
+          1681466320000,
+          1681466499000,
+          1681466680000,
+          1681703134000,
+          1681703314000,
+          1681703494000,
+          1681703854000,
+          1681704214000,
+          1681704394000,
+          1681705933000,
+          1681706113000,
+          1681706293000
+        ]
+      },
+      {
+        "name": "location",
+        "type": "json",
+        "values": [
+          {
+            "type": "Point",
+            "coordinates": [
+              25.06024169921875,
+              60.22816467285156
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.051759719848633,
+              60.23043441772461
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.053630828857425,
+              60.24344253540039
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.120115280151367,
+              60.25603866577149
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.158260345458984,
+              60.23879623413086
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.155536651611328,
+              60.215946197509766
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.15549087524414,
+              60.21592712402344
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.156185150146484,
+              60.21581268310547
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.146120071411133,
+              60.22383117675781
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.123619079589844,
+              60.22871780395508
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.18023681640625,
+              60.21199417114258
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.097192764282227,
+              60.20831680297851
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.085752487182617,
+              60.214839935302734
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.0838565826416,
+              60.21923065185547
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.083744049072266,
+              60.22132873535156
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.08240127563477,
+              60.222137451171875
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.099456787109375,
+              60.23201370239258
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.10066032409668,
+              60.23686981201172
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.08816909790039,
+              60.23656463623047
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.09052848815918,
+              60.23727035522461
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.087326049804688,
+              60.23492813110352
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.07825088500977,
+              60.23000717163086
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.077878952026367,
+              60.22618103027344
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.077943801879883,
+              60.226173400878906
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.081254959106445,
+              60.224605560302734
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.080976486206055,
+              60.223392486572266
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.119611740112305,
+              60.20513153076172
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.155426025390625,
+              60.215911865234375
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.155366897583008,
+              60.215850830078125
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.157461166381836,
+              60.21561050415039
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.09109115600586,
+              60.234764099121094
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.09119987487793,
+              60.23482894897461
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.093563079833984,
+              60.2354736328125
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.119733810424805,
+              60.23100662231445
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.122718811035156,
+              60.229225158691406
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.118860244750977,
+              60.231502532958984
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.10890007019043,
+              60.23661422729492
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.11153221130371,
+              60.23323059082031
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.13043785095215,
+              60.23173522949219
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.12877082824707,
+              60.2332878112793
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.1038875579834,
+              60.21824264526367
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.182462692260746,
+              60.2110481262207
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.18118667602539,
+              60.210445404052734
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.175670623779297,
+              60.2104377746582
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.1751708984375,
+              60.20844650268555
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.10731506347656,
+              60.23765182495117
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.09109115600586,
+              60.234764099121094
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.13622283935547,
+              60.209678649902344
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.14254379272461,
+              60.20954513549805
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.147314071655273,
+              60.20960235595703
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.148509979248047,
+              60.20884323120117
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.146957397460938,
+              60.20968246459961
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.146957397460938,
+              60.20968246459961
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.146156311035156,
+              60.20962142944336
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.13829040527344,
+              60.20969009399414
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.149578094482425,
+              60.20731735229492
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.1403865814209,
+              60.20965194702149
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.140066146850582,
+              60.209136962890625
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.140222549438477,
+              60.209381103515625
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.141027450561523,
+              60.21045684814453
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.142160415649418,
+              60.210655212402344
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.142993927001953,
+              60.210670471191406
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.143478393554688,
+              60.21070861816406
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.14114761352539,
+              60.21078109741211
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.141660690307617,
+              60.21271514892578
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.14142608642578,
+              60.21321105957031
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.14075088500977,
+              60.21417999267578
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.14063262939453,
+              60.21412658691406
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.14073181152344,
+              60.21397018432617
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.14101219177246,
+              60.21384048461914
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.14112663269043,
+              60.21392822265625
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.148679733276367,
+              60.207969665527344
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.141345977783203,
+              60.2138786315918
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.14053726196289,
+              60.215240478515625
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.140623092651367,
+              60.214019775390625
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.14093017578125,
+              60.21397018432617
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.14076042175293,
+              60.21414566040039
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.140783309936523,
+              60.214229583740234
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.1406307220459,
+              60.21413040161133
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.1406307220459,
+              60.21413040161133
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.140586853027344,
+              60.21394729614258
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.140586853027344,
+              60.21394729614258
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.140586853027344,
+              60.21394729614258
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.140457153320312,
+              60.21574020385742
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.140579223632812,
+              60.21451950073242
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.140579223632812,
+              60.214202880859375
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.140579223632812,
+              60.214202880859375
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.140579223632812,
+              60.214202880859375
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.14897918701172,
+              60.21410369873047
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.15553092956543,
+              60.215946197509766
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.1555233001709,
+              60.21592712402344
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.156848907470703,
+              60.21583557128906
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.156848907470703,
+              60.21583557128906
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.156848907470703,
+              60.21583557128906
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.141353607177734,
+              60.20695495605469
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.0825252532959,
+              60.20798110961914
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.060956954956055,
+              60.2073974609375
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.05999755859375,
+              60.2070426940918
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.057857513427734,
+              60.20599365234375
+            ]
+          },
+          {
+            "type": "Point",
+            "coordinates": [
+              25.05662727355957,
+              60.20695495605469
+            ]
+          }
+        ]
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "values": [
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Volvo (pesuauto)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)",
+          "Wille (harjakone)"
+        ]
+      },
+      {
+        "name": "pm10",
+        "type": "number",
+        "unit": "conμgm3",
+        "values": [
+          5.205667,
+          7.964,
+          13.10033,
+          8.098,
+          5.043333,
+          6.316667,
+          10.07433,
+          10.72733,
+          5.442999,
+          16.55333,
+          3.54,
+          17.03167,
+          19.15,
+          4.653333,
+          7.345334,
+          4.233,
+          12.93733,
+          9.964,
+          5.149667,
+          14.90233,
+          8.937333,
+          4.868,
+          4.361333,
+          5.065,
+          42.658,
+          5.485001,
+          19.21833,
+          6.071,
+          3.960667,
+          18.661,
+          6.851667,
+          7.264666,
+          7.402,
+          5.719334,
+          8.481667,
+          15.62733,
+          3.429333,
+          6.337,
+          3.710667,
+          4.475667,
+          4.813334,
+          7.463333,
+          21.894,
+          5.244333,
+          4.052,
+          21.265,
+          7.113,
+          25.20433,
+          31.37267,
+          24.38533,
+          9.919,
+          2.370333,
+          3.063334,
+          12.21333,
+          13.35133,
+          27.46133,
+          18.21,
+          4.190333,
+          5.985334,
+          20.94333,
+          18.751,
+          11.87933,
+          5.786667,
+          16.939,
+          43.412,
+          9.256333,
+          6.628666,
+          9.997666,
+          22.717,
+          10.06567,
+          5.987667,
+          82.868,
+          37.318,
+          135.047,
+          17.371,
+          2.660667,
+          9.816667,
+          9.378667,
+          5.502666,
+          2.918667,
+          6.249,
+          7.143667,
+          3.873,
+          11.10067,
+          4.940333,
+          5.815,
+          4.969333,
+          36.551,
+          59.04467,
+          2.912334,
+          6.88,
+          20.092,
+          21.29467,
+          15.03867,
+          28.23067,
+          102.712,
+          137.8563,
+          43.764,
+          125.652,
+          97.82534
+        ]
+      },
+      {
+        "name": "pm25",
+        "type": "number",
+        "unit": "conμgm3",
+        "values": [
+          4.627667,
+          5.285334,
+          11.645,
+          7.198667,
+          4.483334,
+          5.615,
+          4.469333,
+          9.535666,
+          4.838666,
+          7.499001,
+          3.147,
+          10.12333,
+          12.11633,
+          4.136667,
+          6.529667,
+          3.763,
+          8.025333,
+          5.334,
+          4.577667,
+          7.968,
+          6.411,
+          4.327333,
+          3.877,
+          4.502666,
+          36.14,
+          4.876,
+          7.401,
+          5.396667,
+          3.521,
+          6.470333,
+          6.090666,
+          6.458,
+          6.58,
+          5.084333,
+          5.852333,
+          10.356,
+          3.048667,
+          3.836667,
+          3.298667,
+          3.978667,
+          4.279,
+          6.634666,
+          19.462,
+          4.662,
+          3.602,
+          17.721,
+          6.210333,
+          22.147,
+          24.74067,
+          16.50433,
+          8.817333,
+          2.107333,
+          2.723333,
+          10.85667,
+          8.080667,
+          21.789,
+          12.77967,
+          3.725,
+          5.320667,
+          10.74633,
+          16.668,
+          10.55967,
+          5.144,
+          15.05733,
+          31.56067,
+          8.228333,
+          5.892667,
+          8.887333,
+          16.804,
+          8.947666,
+          5.322667,
+          32.04766,
+          14.05133,
+          73.94334,
+          13.77433,
+          2.365333,
+          6.999333,
+          6.652,
+          4.891667,
+          2.594667,
+          5.555,
+          4.731,
+          3.443,
+          7.912,
+          4.391667,
+          5.169333,
+          4.417334,
+          18.28533,
+          30.25367,
+          2.589334,
+          6.116,
+          14.57933,
+          18.77733,
+          13.368,
+          23.891,
+          45.54967,
+          72.26467,
+          32.78634,
+          69.913,
+          46.679
+        ]
+      },
+      {
+        "name": "source",
+        "type": "string",
+        "values": [
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz",
+          "https://dl.fvh.fi/sbox_public/liidi2/Swarco_air_quality/swarco_sensors.json.gz"
+        ]
+      },
+      {
+        "name": "dateObserved",
+        "type": "string",
+        "values": [
+          "2023-05-23T04:03:40Z",
+          "2023-05-23T04:06:40Z",
+          "2023-05-23T04:09:40Z",
+          "2023-05-23T04:12:41Z",
+          "2023-05-23T04:15:41Z",
+          "2023-05-23T04:21:41Z",
+          "2023-05-23T04:24:40Z",
+          "2023-05-23T04:27:41Z",
+          "2023-05-23T04:30:41Z",
+          "2023-05-23T04:33:41Z",
+          "2023-05-22T08:54:31Z",
+          "2023-05-23T06:03:54Z",
+          "2023-05-23T06:06:54Z",
+          "2023-05-23T06:09:54Z",
+          "2023-05-23T06:12:54Z",
+          "2023-05-23T06:15:54Z",
+          "2023-05-23T06:21:54Z",
+          "2023-05-23T04:39:40Z",
+          "2023-05-23T04:45:40Z",
+          "2023-05-23T04:48:40Z",
+          "2023-05-23T04:51:40Z",
+          "2023-05-23T04:57:40Z",
+          "2023-05-23T05:00:40Z",
+          "2023-05-23T05:03:41Z",
+          "2023-05-23T05:06:41Z",
+          "2023-05-23T05:09:40Z",
+          "2023-05-23T05:15:41Z",
+          "2023-05-23T05:21:41Z",
+          "2023-05-23T05:24:40Z",
+          "2023-05-23T05:57:54Z",
+          "2023-05-24T04:36:40Z",
+          "2023-05-24T04:39:40Z",
+          "2023-05-24T04:48:40Z",
+          "2023-05-23T06:24:53Z",
+          "2023-05-23T06:27:54Z",
+          "2023-05-23T06:30:54Z",
+          "2023-05-23T06:39:54Z",
+          "2023-05-23T06:42:54Z",
+          "2023-05-23T06:45:54Z",
+          "2023-05-23T08:42:28Z",
+          "2023-05-23T08:57:28Z",
+          "2023-05-23T09:18:28Z",
+          "2023-05-23T09:21:28Z",
+          "2023-05-23T09:24:28Z",
+          "2023-05-23T09:27:28Z",
+          "2023-05-24T03:57:40Z",
+          "2023-05-24T04:33:40Z",
+          "2023-04-14T04:28:31Z",
+          "2023-04-14T04:40:30Z",
+          "2023-04-14T04:43:31Z",
+          "2023-04-14T04:46:31Z",
+          "2023-04-14T04:52:31Z",
+          "2023-04-14T04:55:30Z",
+          "2023-04-14T04:58:31Z",
+          "2023-04-14T05:05:52Z",
+          "2023-04-14T05:08:52Z",
+          "2023-04-14T06:02:13Z",
+          "2023-04-14T06:05:17Z",
+          "2023-04-14T06:08:13Z",
+          "2023-04-14T06:11:13Z",
+          "2023-04-14T06:14:13Z",
+          "2023-04-14T06:20:16Z",
+          "2023-04-14T06:23:13Z",
+          "2023-04-14T06:26:12Z",
+          "2023-04-14T06:29:13Z",
+          "2023-04-14T06:32:13Z",
+          "2023-04-14T06:38:13Z",
+          "2023-04-14T06:41:13Z",
+          "2023-04-14T06:44:13Z",
+          "2023-04-14T06:47:13Z",
+          "2023-04-14T06:50:13Z",
+          "2023-04-14T08:25:40Z",
+          "2023-04-14T08:28:40Z",
+          "2023-04-14T08:31:39Z",
+          "2023-04-14T08:34:40Z",
+          "2023-04-14T08:40:40Z",
+          "2023-04-14T08:43:40Z",
+          "2023-04-14T08:46:39Z",
+          "2023-04-14T08:49:40Z",
+          "2023-04-14T08:52:40Z",
+          "2023-04-14T09:01:39Z",
+          "2023-04-14T09:19:40Z",
+          "2023-04-14T09:22:40Z",
+          "2023-04-14T09:31:40Z",
+          "2023-04-14T09:34:40Z",
+          "2023-04-14T09:37:40Z",
+          "2023-04-14T09:43:40Z",
+          "2023-04-14T09:55:40Z",
+          "2023-04-14T09:58:40Z",
+          "2023-04-14T10:01:39Z",
+          "2023-04-14T10:04:40Z",
+          "2023-04-17T03:45:34Z",
+          "2023-04-17T03:48:34Z",
+          "2023-04-17T03:51:34Z",
+          "2023-04-17T03:57:34Z",
+          "2023-04-17T04:03:34Z",
+          "2023-04-17T04:06:34Z",
+          "2023-04-17T04:32:13Z",
+          "2023-04-17T04:35:13Z",
+          "2023-04-17T04:38:13Z"
+        ]
+      }
+    ],
+    "meta": {
+      "preferredVisualisationType": "table"
+    }
+  }
+]

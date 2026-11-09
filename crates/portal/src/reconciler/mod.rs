@@ -34,6 +34,7 @@ pub mod subscriptions;
 pub mod temporal_q;
 pub mod transitions;
 pub mod views;
+pub mod warned;
 pub mod wasm_shards;
 pub mod workload_clients;
 

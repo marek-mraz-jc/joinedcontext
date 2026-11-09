@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Starts one rehearsal environment: PostgreSQL 17 in docker and `jc --role all` on it.
+# Starts one rehearsal environment: PostgreSQL 17 in docker and `jc --role all` on it
+# (REHEARSAL_ROLE: another role list, e.g. one module left out for a red smoke run).
 #
 #   deploy/rehearsal/up.sh <env> <public port> <postgres port>
 #
@@ -203,7 +204,7 @@ if compgen -G "$REHEARSAL_DASHBOARDS/*.datasource.*.json" >/dev/null; then
   db_config+=$(printf '\n[daiya]\nprovisioning_dir = "%s"\n' "$home/daiya-provisioning")
 fi
 printf '[mounts.portal]\npath_prefix = ""\n%s\n%s\n' "$db_config" "$realm_config" > "$home/jc.toml"
-nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.toml" \
+nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" \
   --kaisatsu-import-secrets-dir "$home/secrets/realm" \

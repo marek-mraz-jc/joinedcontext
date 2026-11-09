@@ -61,7 +61,7 @@ fn fixture() -> Fixture {
     }
 }
 
-fn config(fx: &Fixture, mode: MountMode, mounts: BTreeMap<Module, MountOverride>) -> Config {
+fn config(fx: &Fixture, mode: MountMode, mounts: BTreeMap<Module, Vec<MountOverride>>) -> Config {
     let mut cfg = Config::merge(
         Cli {
             role: Some("all".into()),
@@ -334,17 +334,17 @@ async fn explicit_mounts_mix_hosts_and_slugs() {
     let mounts = BTreeMap::from([
         (
             Module::Kaisatsu,
-            MountOverride {
+            vec![MountOverride {
                 host: Some("Login.City.Test".into()),
                 path_prefix: None,
-            },
+            }],
         ),
         (
             Module::Dataroom,
-            MountOverride {
+            vec![MountOverride {
                 host: None,
                 path_prefix: Some("/data/".into()),
-            },
+            }],
         ),
     ]);
     let cfg = config(&fx, MountMode::Slug, mounts);
@@ -391,6 +391,201 @@ async fn a_forwarded_host_from_an_untrusted_peer_is_ignored() {
     running.stop().await.expect("clean stop");
 }
 
+/// dev's edge rows as jc mounts (CUTOVER.md section 4).
+fn dev_mounts() -> BTreeMap<Module, Vec<MountOverride>> {
+    let file = Config::parse_file(
+        std::path::Path::new("dev-mounts.toml"),
+        include_str!("fixtures/dev-mounts.toml"),
+    )
+    .expect("dev table parses");
+    let cli = Cli {
+        role: Some("all".into()),
+        ..Cli::default()
+    };
+    Config::merge(cli, file).expect("dev table").mounts
+}
+
+/// Sends `GET path` with `Host: host` (as APISIX sends it with `pass_host: pass`) and an
+/// optional client-sent `X-Forwarded-Host`; answers the status, the body and whether the gateway
+/// answered (it stamps `Server-Timing: pdp;...` on every answer, no other module does).
+async fn get_as(
+    addr: SocketAddr,
+    host: &str,
+    forwarded: Option<&str>,
+    path: &str,
+) -> (StatusCode, String, bool) {
+    let mut req = reqwest::Client::new()
+        .get(format!("http://{addr}{path}"))
+        .header("host", host);
+    if let Some(f) = forwarded {
+        req = req.header("x-forwarded-host", f);
+    }
+    let resp = req.send().await.expect("request");
+    let status = resp.status();
+    let gateway = resp
+        .headers()
+        .get("server-timing")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("pdp;"));
+    (status, resp.text().await.unwrap_or_default(), gateway)
+}
+
+#[tokio::test]
+async fn host_mode_answers_every_dev_row_from_its_module() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
+    let fx = fixture();
+    let mut cfg = config(&fx, MountMode::Host, dev_mounts());
+    // APISIX's addresses only: the test client on loopback is an untrusted peer.
+    cfg.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+    let running = jc::start(&cfg, CancellationToken::new())
+        .await
+        .expect("start");
+    running.portal_ready().await;
+    let addr = running.addr;
+
+    // One row per module on its own host or prefix: (host, path, status, a string of the answer).
+    for (host, path, want, needle) in [
+        (
+            "idm.city.test",
+            "/realms/jc/.well-known/openid-configuration",
+            StatusCode::OK,
+            "\"issuer\":\"http://idm.city.test/realms/jc\"",
+        ),
+        (
+            "portal.city.test",
+            "/api/v1/health",
+            StatusCode::OK,
+            "\"status\":\"ok\"",
+        ),
+        (
+            "opendata.city.test",
+            "/api/3/action/status_show",
+            StatusCode::OK,
+            "\"success\"",
+        ),
+        (
+            "city.test",
+            "/grafana/api/health",
+            StatusCode::OK,
+            "\"database\"",
+        ),
+        (
+            "city.test",
+            "/git/api/healthz",
+            StatusCode::OK,
+            "\"status\":\"ok\"",
+        ),
+        (
+            "api.city.test",
+            "/api/endpoints",
+            StatusCode::OK,
+            "endpoints",
+        ),
+        (
+            "api.city.test",
+            "/catalog.ttl",
+            StatusCode::OK,
+            "@prefix dcat:",
+        ),
+    ] {
+        let (status, body, gateway) = get_as(addr, host, None, path).await;
+        assert_eq!(status, want, "{host}{path}: {body}");
+        assert!(body.contains(needle), "{host}{path}: {body}");
+        assert_eq!(gateway, host == "api.city.test", "{host}{path}");
+    }
+
+    // The gateway's rows on `{d}` and `portal.{d}`, one request per spelling: the gateway
+    // answers, as it does on its own host. Unrouted, the Portal would answer
+    // `portal.{d}/api/endpoint/x` (its SPA for `/api/endpointx`, checked below).
+    for (host, path) in [
+        ("city.test", "/cs/nope"),
+        ("city.test", "/api/endpoint/x"),
+        ("city.test", "/api/mcp"),
+        ("city.test", "/catalog"),
+        ("city.test", "/catalog.jsonld"),
+        ("city.test", "/catalog.ttl"),
+        ("portal.city.test", "/cs/nope"),
+        ("portal.city.test", "/api/endpoint/x"),
+        ("portal.city.test", "/api/mcp"),
+        ("api.city.test", "/.well-known/oauth-authorization-server"),
+        (
+            "api.city.test",
+            "/.well-known/oauth-protected-resource/api/mcp",
+        ),
+        (
+            "api.city.test",
+            "/.well-known/oauth-protected-resource/api/endpoint",
+        ),
+    ] {
+        let (status, body, gateway) = get_as(addr, host, None, path).await;
+        let (own_status, own_body, own) = get_as(addr, "api.city.test", None, path).await;
+        assert!(
+            gateway && own,
+            "{host}{path} not answered by the gateway: {status} {body}"
+        );
+        assert_eq!((status, &body), (own_status, &own_body), "{host}{path}");
+    }
+    // A segment past the gateway's prefix stays the Portal's.
+    let (status, body, gateway) = get_as(addr, "portal.city.test", None, "/api/endpointx").await;
+    assert!(status == StatusCode::OK && !gateway, "{status} {body}");
+
+    // Unlisted hosts and paths dev does not route on a host answer 404.
+    for (host, path) in [
+        ("nope.city.test", "/api/endpoints"),
+        ("data.city.test", "/"),
+        ("city.test", "/"),
+        ("city.test", "/catalogue"),
+        ("city.test", "/oauth/register"),
+        (
+            "id.city.test",
+            "/realms/jc/.well-known/openid-configuration",
+        ),
+        ("portal.city.test.evil", "/api/v1/health"),
+    ] {
+        let (status, body, _) = get_as(addr, host, None, path).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{host}{path}: {body}");
+    }
+
+    // A client-sent X-Forwarded-Host from an untrusted peer moves no request to another module.
+    let (status, _, _) = get_as(
+        addr,
+        "nope.city.test",
+        Some("api.city.test"),
+        "/api/endpoints",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, _) = get_as(
+        addr,
+        "city.test",
+        Some("portal.city.test"),
+        "/api/v1/health",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, body, gateway) = get_as(
+        addr,
+        "portal.city.test",
+        Some("api.city.test"),
+        "/api/v1/health",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body.contains("\"status\":\"ok\"") && !gateway,
+        "still the Portal: {body}"
+    );
+    let (_, body, gateway) = get_as(
+        addr,
+        "api.city.test",
+        Some("portal.city.test"),
+        "/api/endpoints",
+    )
+    .await;
+    assert!(gateway, "still the gateway: {body}");
+    running.stop().await.expect("clean stop");
+}
+
 #[tokio::test]
 async fn overlapping_mounts_refuse_to_start() {
     let _serial = ONE_JC_AT_A_TIME.lock().await;
@@ -402,7 +597,10 @@ async fn overlapping_mounts_refuse_to_start() {
     let cfg = config(
         &fx,
         MountMode::Slug,
-        BTreeMap::from([(Module::Dataroom, same.clone()), (Module::Daiya, same)]),
+        BTreeMap::from([
+            (Module::Dataroom, vec![same.clone()]),
+            (Module::Daiya, vec![same]),
+        ]),
     );
     let err = jc::start(&cfg, CancellationToken::new())
         .await
@@ -417,10 +615,10 @@ async fn overlapping_mounts_refuse_to_start() {
         MountMode::Slug,
         BTreeMap::from([(
             Module::Daiya,
-            MountOverride {
+            vec![MountOverride {
                 host: None,
                 path_prefix: Some("/id".into()),
-            },
+            }],
         )]),
     );
     assert!(matches!(jc::plan_mounts(&cfg), Err(StartError::Mount(_))));
@@ -435,10 +633,10 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
         MountMode::Slug,
         BTreeMap::from([(
             Module::Dataroom,
-            MountOverride {
+            vec![MountOverride {
                 host: None,
                 path_prefix: Some("/a/../b".into()),
-            },
+            }],
         )]),
     );
     assert!(matches!(

@@ -1155,7 +1155,19 @@ pub(crate) async fn view_payload(
     let before = sent.len();
     one_entity_per_create(endpoint, operation, sent)?;
     if operation.is_write() {
-        endpoint_held(endpoint, path, operation, sent, divided)?;
+        // A caller the Endpoint's Policy refuses learns that alone, not why the body would be
+        // refused (DM-61's model, a hidden attribute), as `model_judged` answers too.
+        if let Err(answer) = endpoint_held(endpoint, path, operation, sent, divided) {
+            let requested = query::requested(params);
+            if gateway
+                .pdp
+                .decide(subject, operation, &requested, endpoint)
+                .is_deny()
+            {
+                return Err(Box::new(refused(operation, path)));
+            }
+            return Err(answer);
+        }
     }
     let declared = endpoint.declared_types.as_ref();
     let mut filled = Vec::new();
