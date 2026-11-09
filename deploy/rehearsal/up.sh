@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Starts one rehearsal environment: PostgreSQL 17 in docker and `jc --role all` on it.
+# Starts one rehearsal environment: PostgreSQL 17 in docker and `jc --role all` on it
+# (REHEARSAL_ROLE: another role list, e.g. one module left out for a red smoke run).
 #
 #   deploy/rehearsal/up.sh <env> <public port> <postgres port>
 #
@@ -181,7 +182,7 @@ fi
 printf '[mounts.portal]\npath_prefix = ""\n%s\n' "$db_config" > "$home/jc.toml"
 # The service tokens jc would hold in memory only (shako, ekiben, daiya's Portal password) come
 # from files here instead, so the import and the smoke suites can call those modules too.
-nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.toml" \
+nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" --kaisatsu-import-secrets-dir "$home/secrets" \
   --shako-token-file "$(secret shako-token)" --ekiben-token-file "$(secret ekiben-token)" \
