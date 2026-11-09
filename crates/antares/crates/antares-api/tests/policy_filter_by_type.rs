@@ -1452,6 +1452,51 @@ async fn a_type_wide_rule_beside_a_narrow_one_admits_the_whole_type() {
     }
 }
 
+/// Rules each narrowing a type by their own pattern hold for the Entities
+/// matching one of them: the page and the count are theirs. A Car that is
+/// also a User and matches only the User rule's pattern is still admitted
+/// (the rules are never read as Car patterns alone then).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rules_narrowing_a_type_by_their_own_patterns_hold_for_either() {
+    let by = |t: &str, pattern: &str| Rule {
+        id_patterns: vec![pattern.to_owned()],
+        ..rule(t, &["speed"])
+    };
+    for both in [false, true] {
+        let st = state(Filter {
+            rules: vec![
+                by("Car", "urn:ngsi-ld:Car:[01]"),
+                by("Car", "urn:ngsi-ld:Car:3"),
+                by("User", "urn:ngsi-ld:CarUser:9"),
+            ],
+            ..Filter::default()
+        })
+        .await;
+        fleet(&st).await;
+        if both {
+            create(
+                &st,
+                json!({"id": "urn:ngsi-ld:CarUser:9", "type": ["Car", "User"],
+                       "speed": prop(json!(9))}),
+            )
+            .await;
+        }
+        let mut want = id_list("Car", &[0, 1, 3]);
+        if both {
+            want.push("urn:ngsi-ld:CarUser:9".to_owned());
+        }
+        let got = pages(&st, "/ngsi-ld/v1/entities?type=Car").await;
+        let mut seen: Vec<String> = got.iter().flat_map(|p| p.0.clone()).collect();
+        seen.sort();
+        assert_eq!(seen, want, "{both}");
+        assert_eq!(
+            count(&st, "/ngsi-ld/v1/entities?type=Car&count=true&limit=0").await,
+            Some(want.len() as u64),
+            "{both}"
+        );
+    }
+}
+
 /// A conditional rule is judged on the Entity, a page at a time: the page
 /// still holds only what the rule admits, and the last one links nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -303,6 +303,36 @@ async fn a_views_id_pattern_over_a_whole_type_is_counted_in_the_store() {
         assert!(read <= 10, "{query} read {read} Entity rows for a page");
     }
 
+    // Each dataset Policy of a whole space narrows the type by its own
+    // pattern: the rules' patterns united decide in the store.
+    let datasets = Filter {
+        rules: ["green", "other"]
+            .iter()
+            .map(|layer| Rule {
+                types: vec![iri("Tree")],
+                id_patterns: vec![format!(
+                    "^urn:ngsi-ld:Tree:[a-z0-9.-]+:praha-mesto:{layer}-[a-z-]+-[0-9a-f-]{{36}}$"
+                )],
+                attributes: vec![iri("name")],
+                ..Rule::default()
+            })
+            .collect(),
+        ..Filter::default()
+    };
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
+    let mut st = AppState::with_store("me".into(), Arc::new(store), "postgres")
+        .with_policy(Arc::new(Narrowing(datasets)));
+    antares_api::wire(&mut st).await;
+    rows.take();
+    let (code, count, body, took) = get(&st, &tenant, "type=Tree&count=true&limit=0").await;
+    let read = rows.take();
+    eprintln!("datasets type=Tree&count=true&limit=0: {code} in {took:?}, {read} Entity rows read");
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(count.as_deref(), Some("164003"));
+    assert!(read <= 10, "read {read} Entity rows for a count");
+
     antares_sql::sqlx::query("DELETE FROM entities WHERE tenant_id = $1")
         .bind(&tenant)
         .execute(&pool)
