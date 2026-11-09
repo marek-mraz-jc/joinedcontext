@@ -731,6 +731,18 @@ fn key_from_row(row: (Value, Vec<u8>)) -> Result<SigningKeyRecord> {
     Ok(k)
 }
 
+/// Serializes the delete-and-insert upserts of one row (`table`, `realm_id`, `id`) for the rest of
+/// the transaction: two parallel upserts (parallel refresh grants of one session) would otherwise
+/// both delete the old row and the second insert would hit the primary key.
+async fn lock_row(conn: &mut PgConnection, table: &str, realm_id: &str, id: &str) -> Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("kaisatsu.{table}:{realm_id}:{id}"))
+        .execute(&mut *conn)
+        .await
+        .map_err(storage)?;
+    Ok(())
+}
+
 async fn insert_signing_key(conn: &mut PgConnection, key: &SigningKeyRecord) -> Result<()> {
     sqlx::query("DELETE FROM kaisatsu.signing_keys WHERE realm_id = $1 AND kid = $2")
         .bind(&key.realm_id)
@@ -2628,6 +2640,7 @@ impl Store for PgStore {
         Box::pin(async move {
             let realm_id = session.realm_id.clone();
             let mut tx = self.begin(&realm_id, None).await?;
+            lock_row(&mut tx, "sso_session", &realm_id, &session.id).await?;
             sqlx::query("DELETE FROM kaisatsu.sso_session WHERE realm_id = $1 AND id = $2")
                 .bind(&realm_id)
                 .bind(&session.id)
@@ -2873,6 +2886,7 @@ impl Store for PgStore {
     fn upsert_refresh_family<'a>(&'a self, family: RefreshTokenFamily) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             let mut tx = self.begin(&family.realm_id, None).await?;
+            lock_row(&mut tx, "refresh_token_family", &family.realm_id, &family.id).await?;
             sqlx::query(
                 "DELETE FROM kaisatsu.refresh_token_family WHERE realm_id = $1 AND id = $2",
             )

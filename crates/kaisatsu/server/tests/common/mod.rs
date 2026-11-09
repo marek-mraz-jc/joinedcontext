@@ -26,6 +26,12 @@ pub fn decode_jwt_payload(jwt: &str) -> Value {
 pub async fn setup_dev_realm_state() -> (KaisatsuState, Arc<MemoryStore>, Kek) {
     let kek = Kek::generate_for_tests();
     let store = Arc::new(MemoryStore::new(kek.clone()));
+    let state = setup_dev_realm_on(store.clone(), kek.clone()).await;
+    (state, store, kek)
+}
+
+/// The realm of `ri_dev.json` on `store` (memory or PostgreSQL), and the state serving it.
+pub async fn setup_dev_realm_on(store: Arc<dyn Store>, kek: Kek) -> KaisatsuState {
     let guard = OutboundGuard::default();
 
     let ri_raw = include_str!("../../../import/tests/fixtures/ri_dev.json");
@@ -62,8 +68,7 @@ pub async fn setup_dev_realm_state() -> (KaisatsuState, Arc<MemoryStore>, Kek) {
             ("CLIENT_SECRET_CKAN".into(), "ckan-secret-123".into()),
         ]),
     };
-    let store_dyn: Arc<dyn Store> = store.clone();
-    apply_realm_files(&store_dyn, &[("ri_dev.json".into(), ri_doc)], &opts)
+    apply_realm_files(&store, &[("ri_dev.json".into(), ri_doc)], &opts)
         .await
         .expect("apply ri_dev.json");
 
@@ -87,8 +92,7 @@ pub async fn setup_dev_realm_state() -> (KaisatsuState, Arc<MemoryStore>, Kek) {
     portal_api.optional_client_scopes.push(ep_scope.name);
     store.upsert_client(portal_api).await.unwrap();
 
-    let state = KaisatsuState::new(store_dyn, kek.clone(), guard, Arc::new(LocalAuthorizer));
-    (state, store, kek)
+    KaisatsuState::new(store, kek, guard, Arc::new(LocalAuthorizer))
 }
 
 pub async fn post_form(
