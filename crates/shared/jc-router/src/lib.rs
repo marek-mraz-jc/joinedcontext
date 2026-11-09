@@ -9,6 +9,8 @@
 //! - Trusts `X-Forwarded-Proto`, `X-Forwarded-Host` and `X-Forwarded-For` only when the peer IP is
 //!   in the configured trusted proxy list, and injects the resolved [`ClientAddr`].
 //! - Answers 404 for unmounted paths.
+//! - A host `*.{suffix}` matches any host one label under `{suffix}`, after every exact host and
+//!   before a host-less entry (the App hosts `*.apps.{domain}`, edge-session-design S4a).
 
 use axum::Router;
 use axum::body::Body;
@@ -135,6 +137,18 @@ pub fn normalize_prefix(raw: &str) -> Result<String, RouterError> {
     Ok(trimmed.trim_end_matches('/').to_owned())
 }
 
+/// The suffix of a wildcard host `*.{suffix}` (with its leading dot), `None` for a plain host.
+fn wildcard_suffix(host: &str) -> Option<&str> {
+    host.strip_prefix('*').filter(|rest| rest.starts_with('.'))
+}
+
+/// Whether `host` is exactly one non-empty label in front of `suffix` (`.apps.city.example`):
+/// `a.apps.city.example` is, `apps.city.example` and `a.b.apps.city.example` are not.
+fn one_label_under(host: &str, suffix: &str) -> bool {
+    host.strip_suffix(suffix)
+        .is_some_and(|label| !label.is_empty() && !label.contains('.'))
+}
+
 struct MountedEntry {
     module: String,
     host: Option<String>,
@@ -223,11 +237,16 @@ impl JcRouterBuilder {
                 router,
             });
         }
-        // Sort most-specific host and longest path prefix first so `/id/sub` matches before `/id` or `/`
+        // Sort most-specific host and longest path prefix first so `/id/sub` matches before `/id` or `/`:
+        // an exact host, then a wildcard host, then none.
+        let rank = |host: &Option<String>| match host.as_deref() {
+            Some(h) if wildcard_suffix(h).is_some() => 1,
+            Some(_) => 2,
+            None => 0,
+        };
         entries.sort_by(|a, b| {
-            b.host
-                .is_some()
-                .cmp(&a.host.is_some())
+            rank(&b.host)
+                .cmp(&rank(&a.host))
                 .then_with(|| b.prefix.len().cmp(&a.prefix.len()))
         });
         Ok(JcRouter {
@@ -316,7 +335,13 @@ impl JcRouter {
     fn find(&self, host_with_port: &str, host_only: &str, path: &str) -> Option<&MountedEntry> {
         self.entries.iter().find(|entry| {
             let host_ok = match &entry.host {
-                Some(h) => h == host_with_port || h == host_only,
+                Some(h) => match wildcard_suffix(h) {
+                    Some(suffix) => {
+                        one_label_under(host_with_port, suffix)
+                            || one_label_under(host_only, suffix)
+                    }
+                    None => h == host_with_port || h == host_only,
+                },
                 None => true,
             };
             if !host_ok {
@@ -772,5 +797,55 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn a_wildcard_host_takes_one_label_after_every_exact_host() {
+        let named = |module: &'static str| {
+            Router::new()
+                .fallback(move |uri: Uri| async move { format!("{module} {}", uri.path()) })
+        };
+        let spec = |module: &str, host: &str, prefix: Option<&str>| MountSpec {
+            module: module.into(),
+            host: Some(host.into()),
+            path_prefix: prefix.map(str::to_owned),
+        };
+        let jc = JcRouterBuilder::new("https", "city.example")
+            // Mounted first, so only the order of the table can let an exact host win.
+            .mount(spec("portal", "*.apps.city.example", None), named("portal"))
+            .mount(spec("shako", "git.apps.city.example", None), named("shako"))
+            .mount(spec("gateway", "api.city.example", None), named("gateway"))
+            .build()
+            .unwrap();
+        let on = |host: &str, path: &str| {
+            let jc = jc.clone();
+            let req = Request::builder()
+                .uri(path)
+                .header("host", host)
+                .body(Body::empty())
+                .unwrap();
+            async move {
+                let resp = jc.dispatch(req, None).await;
+                let status = resp.status();
+                let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+                (status, String::from_utf8(bytes.to_vec()).unwrap())
+            }
+        };
+        assert_eq!(on("bikes.apps.city.example", "/x").await.1, "portal /x");
+        assert_eq!(on("Bikes.Apps.City.Example:443", "/").await.1, "portal /");
+        // An exact host beats the wildcard that also covers it.
+        assert_eq!(on("git.apps.city.example", "/x").await.1, "shako /x");
+        // No other host reaches the wildcard's module: not the suffix itself, not two labels,
+        // not a look-alike, not a host another entry names.
+        for host in [
+            "apps.city.example",
+            "a.b.apps.city.example",
+            "bikesapps.city.example",
+            "bikes.apps.city.example.evil.test",
+            "portal.city.example",
+        ] {
+            assert_eq!(on(host, "/").await.0, StatusCode::NOT_FOUND, "{host}");
+        }
+        assert_eq!(on("api.city.example", "/cs").await.1, "gateway /cs");
     }
 }

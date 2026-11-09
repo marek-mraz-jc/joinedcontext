@@ -126,7 +126,8 @@ pub async fn build(
             .map(gateway::at_root),
         #[cfg(feature = "portal")]
         Module::Portal => {
-            let organizations = portal::organization_vars(cfg, ctx.siblings.listener);
+            let mut organizations = portal::organization_vars(cfg, ctx.siblings.listener);
+            organizations.extend(portal::apps_vars(cfg));
             portal::build(ctx, cfg.portal_siblings, organizations, mount, shutdown)
                 .await
                 .map(|(router, _)| router)
