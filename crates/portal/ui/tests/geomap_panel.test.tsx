@@ -147,6 +147,7 @@ describe("the helsinki air quality geomap", () => {
     calls.clicks.get("markers")!({ features: under, lngLat: [0, 0] });
     expect(calls.popups[0].querySelectorAll("dl")).toHaveLength(5);
     expect(calls.popups[0].textContent).toContain("2 more here");
+    expect(calls.popups[0].firstElementChild!.textContent).toBe("7 at this spot");
   });
 
   it("opens no tooltip when the layer has it off", () => {
@@ -159,8 +160,11 @@ describe("the helsinki air quality geomap", () => {
 
   it("shows the designed empty state for a frame without rows", () => {
     const empty = frames.map((frame) => ({ ...frame, fields: frame.fields.map((field) => ({ ...field, values: [] })) }));
-    draw(empty);
+    render(<PanelView panel={panel} data={{ frames: empty }} from={0} to={1} locale="en" height={400} onWiden={() => {}} asked={{ range: "Last 7 days" }} />);
     expect(screen.getByRole("status").textContent).toContain("No data");
+    // The query reads latest values: no "longer range" step that would bring nothing.
+    expect(screen.getByRole("status").textContent).toContain("a longer time range brings no more");
+    expect(screen.queryByRole("button", { name: "Show a longer range" })).toBeNull();
     expect(calls.constructed).toHaveLength(0);
   });
 
@@ -170,9 +174,10 @@ describe("the helsinki air quality geomap", () => {
     expect(calls.sources[0].source.data.features).toHaveLength(97);
   });
 
-  it("says no row has a location instead of an empty map", () => {
-    draw(without(() => true));
+  it("says no row has a location instead of an empty map, and opens the tables", () => {
+    render(<PanelView panel={panel} data={{ frames: without(() => true) }} from={0} to={1} locale="en" height={400} tablesHref="/dashboards/d/x?orgId=3" />);
     expect(screen.getByRole("status").textContent).toContain("No row has a location");
+    expect(screen.getByRole("link", { name: "Open as tables" }).getAttribute("href")).toBe("/dashboards/d/x?orgId=3");
     expect(calls.constructed).toHaveLength(0);
   });
 
@@ -217,7 +222,7 @@ describe("the geomap's basemap", () => {
   it("draws on the plain ground without a project, fetching nothing, and says so beside a scale", () => {
     draw(frames);
     expect(calls.constructed[0].style).toEqual(blankStyle());
-    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100, latest values · no basemap, positions only");
+    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100, latest values; the time range does not narrow them · no basemap, positions only");
     expect(calls.controls).toContainEqual(["ScaleControl", "bottom-left"]);
   });
 
@@ -228,10 +233,10 @@ describe("the geomap's basemap", () => {
     expect(url.origin).toBe(window.location.origin);
     expect(url.pathname).toBe("/api/v1/projects/helsinki/basemap/default/style.json");
     expect(url.search).toBe("");
-    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100, latest values");
+    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100, latest values; the time range does not narrow them");
     act(() => calls.errorHandlers[0]());
     expect(calls.styles).toEqual([blankStyle()]);
-    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100, latest values · no basemap, positions only");
+    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100, latest values; the time range does not narrow them · no basemap, positions only");
   });
 });
 

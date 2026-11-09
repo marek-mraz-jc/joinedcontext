@@ -416,14 +416,16 @@ for (const width of [1440, 400]) {
         const map = card(page, "geomap");
         if (state === "empty") {
           await expect(map.getByText("No data")).toBeVisible();
+          await expect(map.getByRole("button", { name: "Show a longer range" })).toHaveCount(0);
         } else if (state === "nolocation") {
           await expect(map.getByText("No row has a location")).toBeVisible();
-          await expect(map.getByText("None of the 100 rows has a location: a GeoJSON point (location, geometry) or latitude and longitude fields. Use “Open as tables” to see the rows.")).toBeVisible();
+          await expect(map.getByText("None of the 100 rows has a location: a GeoJSON point (location, geometry) or latitude and longitude fields. The tables show the rows.")).toBeVisible();
+          await expect(map.getByRole("link", { name: "Open as tables" })).toHaveAttribute("href", /^\/dashboards\/d\/pv-97058e3a30c95eb36b80743122d56561\?/);
           await expect(map.locator("canvas")).toHaveCount(0);
         } else {
           await expect(map.getByRole("application", { name: `Map of Air quality map (t6516-mw3xzrhm): ${state === "filled" ? 100 : 88} markers` })).toBeVisible();
           await expect(map.locator("canvas")).toHaveCount(1);
-          await expect(map.getByText(`Markers: ${state === "filled" ? 100 : 88}, latest values · no basemap, positions only`)).toBeVisible();
+          await expect(map.getByText(`Markers: ${state === "filled" ? 100 : 88}, latest values; the time range does not narrow them · no basemap, positions only`)).toBeVisible();
           await expect(map.getByText(/shown as a table/)).toHaveCount(0);
           if (state === "unlocated") await expect(map.getByText("12 of 100 rows have no location and are not drawn.")).toBeVisible();
           // The markers are drawn: a shot of the map holds the layer's orange (#FF9830).

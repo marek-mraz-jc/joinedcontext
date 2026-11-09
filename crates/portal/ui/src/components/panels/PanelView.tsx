@@ -7,7 +7,7 @@
 import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
-import { Button, Card, Icon, InlineError, Skeleton } from "../ui";
+import { Button, buttonClass, Card, Icon, InlineError, Skeleton } from "../ui";
 import type { IconName } from "../ui";
 import type { Frame } from "./frames";
 import { hasData, outsideRange } from "./frames";
@@ -73,9 +73,11 @@ export interface PanelViewProps {
   timeInfo?: string;
   /** The project, whose basemap route a geomap panel draws on. */
   project?: string;
+  /** The dashboard as tables (daiya's own page): where a panel that cannot draw its rows sends a person. */
+  tablesHref?: string;
 }
 
-function Body({ panel, data, from, to, locale, height, project }: Required<Pick<PanelViewProps, "panel" | "from" | "to" | "locale" | "height">> & { data: PanelData; project?: string }): ReactNode {
+function Body({ panel, data, from, to, locale, height, project, tablesHref }: Required<Pick<PanelViewProps, "panel" | "from" | "to" | "locale" | "height">> & { data: PanelData; project?: string; tablesHref?: string }): ReactNode {
   const title = panel.title ?? "";
   const common = { title, frames: data.frames, fieldConfig: panel.fieldConfig, options: panel.options, height, locale };
   switch (panel.type) {
@@ -98,10 +100,31 @@ function Body({ panel, data, from, to, locale, height, project }: Required<Pick<
     case "state-timeline":
       return <StateTimelinePanel {...common} from={from} to={to} />;
     case "geomap":
-      return <GeomapPanel {...common} project={project} empty={(text, description) => <PanelState icon="globe" title={text} description={description} />} />;
+      return (
+        <GeomapPanel
+          {...common}
+          project={project}
+          empty={(text, description) => (
+            <PanelState icon="globe" title={text} description={description}>
+              {tablesHref ? <TablesLink href={tablesHref} /> : null}
+            </PanelState>
+          )}
+        />
+      );
     default:
       return <TablePanel title={title} frames={data.frames} fieldConfig={panel.fieldConfig} options={panel.options} locale={locale} />;
   }
+}
+
+/** The dashboard's table page, opened beside this one. */
+function TablesLink({ href }: { href: string }): JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <a className={buttonClass("secondary", "sm")} href={href} target="_blank" rel="noopener noreferrer">
+      <Icon name="external" className="size-4" />
+      {t("dashboardView.asTables")}
+    </a>
+  );
 }
 
 /** What the service said, folded: the operator's detail, not the person's next step. */
@@ -142,7 +165,7 @@ function sentence(text: string): string {
   return /[.!?…]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
-export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2", asked, onWiden, onZoom, quiet, timeInfo, project }: PanelViewProps): JSX.Element {
+export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2", asked, onWiden, onZoom, quiet, timeInfo, project, tablesHref }: PanelViewProps): JSX.Element {
   const { t } = useTranslation();
   const Heading = headingLevel;
   const title = panel.title || t("dashboardView.untitled");
@@ -176,6 +199,9 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
     );
   } else if (data.accessDenied) {
     body = <PanelState icon="lock" title={t("dashboardView.deniedTitle")} description={`${sentence(data.accessDenied)} ${t("dashboardView.askOwner")}`} />;
+  } else if (!hasData(data.frames) && panel.type === "geomap") {
+    // A map reads each entity's latest values: a longer range would bring nothing more.
+    body = <PanelState icon="globe" title={noValue ?? t("dashboardView.emptyTitle")} description={t("dashboardView.geomap.empty")} />;
   } else if (!hasData(data.frames)) {
     body = (
       <PanelState icon="dashboards" title={noValue ?? t("dashboardView.emptyTitle")} description={asked ? t(asked.vars ? "dashboardView.emptyInFor" : "dashboardView.emptyIn", asked) : t("dashboardView.empty")}>
@@ -198,7 +224,7 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
       </PanelState>
     );
   } else {
-    body = <Body panel={panel} data={data} from={from} to={to} locale={locale} height={height} project={project} />;
+    body = <Body panel={panel} data={data} from={from} to={to} locale={locale} height={height} project={project} tablesHref={tablesHref} />;
   }
   return (
     <Card as="section" padding="sm" aria-label={title} className="flex h-full min-w-0 flex-col gap-2" data-panel-type={panel.type}>

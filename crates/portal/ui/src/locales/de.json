@@ -3723,7 +3723,8 @@
     },
     "emptyHint": "Ein Dashboard ist eine Seite aus Karten und Zahlen, gebaut aus Endpunkten, die dieses Projekt lesen kann. Erstellen Sie eines, oder bitten Sie die Assistentin um ein Dashboard aus dem, was Sie schon veröffentlichen.",
     "layerEndpointGone": "Der Endpoint „{name}“ gehört nicht mehr zu diesem Projekt, daher hat diese Ebene weder Typ noch Filter zur Auswahl. Wählen Sie für diese Ebene einen anderen Endpoint.",
-    "moreHere": "Weitere hier: {n}"
+    "moreHere": "Weitere hier: {n}",
+    "stackedHere": "An dieser Stelle: {n}"
   },
   "access": {
     "title": "Zugriff",
@@ -11904,14 +11905,15 @@
     "geomap": {
       "label": "Karte von {title}: {n} Markierungen",
       "noneTitle": "Keine Zeile hat einen Ort",
-      "none": "Keine der {rows} Zeilen hat einen Ort: einen GeoJSON-Punkt (location, geometry) oder Breiten- und Längenfelder. „Als Tabellen öffnen“ zeigt die Zeilen.",
+      "none": "Keine der {rows} Zeilen hat einen Ort: einen GeoJSON-Punkt (location, geometry) oder Breiten- und Längenfelder. Die Tabellen zeigen die Zeilen.",
       "mode": "Diese Karte liest Orte aus einem GeoJSON-Punkt oder aus Breiten- und Längenfeldern, nicht über „{mode}“.",
       "missing": "{n} von {rows} Zeilen haben keinen Ort und werden nicht gezeichnet.",
       "basemap": "Die Grundkarte „{type}“ wird hier nicht gezeichnet.",
       "view": "Die gespeicherte Ansicht bleibt nicht erhalten; die Karte passt sich den Markierungen an.",
       "layers": "Nur die erste von {n} Ebenen wird gezeichnet.",
       "plain": "ohne Grundkarte, nur Positionen",
-      "count": "Markierungen: {n}, letzte Werte"
+      "count": "Markierungen: {n}, letzte Werte; der Zeitraum grenzt sie nicht ein",
+      "empty": "Die Datenquelle lieferte keine Zeilen. Diese Karte zeigt letzte Werte, ein längerer Zeitraum bringt keine weiteren."
     }
   },
   "repositories": {

@@ -56,10 +56,12 @@ interface LivePanelProps {
   /** Tells the page whether this panel failed, so several failures make one notice. */
   onFailed: (id: number, failed: boolean) => void;
   quiet: boolean;
+  /** daiya's table page of the dashboard, a panel's next step when it cannot draw its rows. */
+  tablesHref?: string;
 }
 
 /** One panel and its own read, refetched on the refresh tick. */
-function LivePanel({ project, uid, panel, asked, tick, locale, at, words, onWiden, onZoom, onFailed, quiet }: LivePanelProps): JSX.Element {
+function LivePanel({ project, uid, panel, asked, tick, locale, at, words, onWiden, onZoom, onFailed, quiet, tablesHref }: LivePanelProps): JSX.Element {
   const queryClient = useQueryClient();
   const range = panelRange(panel, asked, at);
   const key = ["projects", project, "grafana", "dashboards", uid, "panel", panel.id, asked, tick];
@@ -98,6 +100,7 @@ function LivePanel({ project, uid, panel, asked, tick, locale, at, words, onWide
       quiet={quiet && failed}
       timeInfo={panel.hideTimeOverride ? undefined : overrideWords(range, t)}
       project={project}
+      tablesHref={tablesHref}
     />
   );
 }
@@ -356,6 +359,7 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
               onZoom={(from, to) => link({ from: String(from), to: String(to) })}
               onFailed={onFailed}
               quiet={failed > 1}
+              tablesHref={safe}
             />
           )}
         />
