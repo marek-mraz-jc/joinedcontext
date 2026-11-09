@@ -26,7 +26,7 @@ chmod 700 "$home" "$home"/secrets "$home"/secrets/realm "$home"/state
 secret() { # secret <name>: a random secret file, made once
   local f="$home/secrets/$1"
   if [ ! -s "$f" ]; then
-    (umask 077; head -c 24 /dev/urandom | base64 | tr -d '/+=\n' > "$f")
+    (umask 077; head -c 32 /dev/urandom | base64 | tr -d '/+=\n' > "$f")
   fi
   printf '%s' "$f"
 }
