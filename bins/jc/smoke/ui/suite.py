@@ -371,14 +371,64 @@ def viz_sandbox(w: Walker, ctx, page, dataset: str):
     w.res.check("viz.opaque", "viz", f"the explorer frame on {dataset}, a host cookie set",
                 "origin null, no cookie readable" if shared else "the viz origin (own host)",
                 f"origin {seen['origin']}, cookie: {seen['cookie'][:60]}", opaque if shared else True)
-    try:
-        frame.wait_for_selector("table tbody tr", timeout=45000)
-        rows = frame.locator("table tbody tr").count()
-    except Exception as e:  # noqa: BLE001 - the row says what the frame shows
-        status = frame.locator("#status").text_content() or ""
-        rows, why = 0, f"{type(e).__name__}; status: {status[:120]}"
+    rows, why = grid_rows(frame)
+    if not rows and frame.locator(".jc-grid-empty").count():
+        # The explorer opens on one type; an hour without a write empties a type whose writer stopped
+        # (the space's retention), and its empty state is then right. Rows are still owed: drawn in
+        # the same frame on a type the Endpoint holds entities of, and never excused while the
+        # Endpoint holds entities of the type shown.
+        rows, why = other_type_rows(w, page, frame)
     w.res.check("viz.grid", "viz", f"the explorer grid on {dataset}", "rows drawn",
-                f"{rows} rows" if rows else why, rows > 0)
+                f"{rows} rows{why}" if rows else why, rows > 0)
+
+
+def grid_rows(frame) -> tuple[int, str]:
+    """Rows the explorer grid draws, waiting for them or its empty state; else why none came."""
+    try:
+        frame.wait_for_selector("table tbody tr, .jc-grid-empty", timeout=45000)
+        return frame.locator("table tbody tr").count(), ""
+    except Exception as e:  # noqa: BLE001 - the row says what the frame shows
+        status = frame.locator("#status").text_content(timeout=2000) or ""
+        return 0, f"{type(e).__name__}; status: {status[:120]}"
+
+
+def endpoint_count(w: Walker, page, slug: str, entity_type: str) -> int:
+    r = page.request.get(f"{w.base}/api/endpoint/{slug}/ngsi-ld/v1/entities",
+                         params={"type": entity_type, "count": "true", "limit": "0"})
+    return int(r.headers.get("ngsild-results-count", "0") or 0) if r.ok else 0
+
+
+def other_type_rows(w: Walker, page, frame) -> tuple[int, str]:
+    """The explorer showed its empty state on the type it opened: rows of another type, drawn in
+    the same frame, when the Endpoint holds none of the first; a fail when it holds some."""
+    url = frame.url
+    slug = url.split("#", 1)[1].split("&", 1)[0] if "#" in url else ""
+    shown = re.search(r"[#&]type=([^&]+)", url)
+    shown = shown.group(1) if shown else ""
+    held = endpoint_count(w, page, slug, shown) if shown else 0
+    if held:
+        return 0, f"the grid shows no {shown} while the Endpoint holds {held}"
+    r = page.request.get(f"{w.base}/api/endpoint/{slug}/ngsi-ld/v1/types")
+    types = (r.json().get("typeList") if r.ok else None) or []
+    full = next((t for t in types if t != shown and endpoint_count(w, page, slug, t)), None)
+    if not full:
+        return 0, f"the Endpoint holds no entity of {shown or 'the type shown'} or any other type"
+    other = re.sub(r"([#&])type=[^&]+", rf"\1type={full}", url) if shown else f"{url}&type={full}"
+    # Through about:blank: a src that differs only after `#` would not load the page again.
+    el = page.locator("iframe.jc-explorer-frame").first
+    el.evaluate("f => { f.src = 'about:blank'; }")
+    page.wait_for_function("f => f.contentWindow && f.contentWindow.location.href === 'about:blank'", arg=el.element_handle())
+    el.evaluate("(f, u) => { f.src = u; }", other)
+    for _ in range(60):
+        frame = next((f for f in page.frames if "/explore.html" in f.url and f"type={full}" in f.url), None)
+        if frame:
+            break
+        page.wait_for_timeout(500)
+    if not frame:
+        return 0, f"no {shown} at the Endpoint (empty state shown); the frame did not load {full}"
+    frame.wait_for_load_state("load")
+    rows, why = grid_rows(frame)
+    return rows, f" of {full}; the opened type {shown} holds no entity at the Endpoint (empty state shown)" if rows else why
 
 
 # The browser person of shako's own web pages: a bearer token of audience shako. Its name is in

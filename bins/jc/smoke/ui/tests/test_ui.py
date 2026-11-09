@@ -172,3 +172,70 @@ def test_a_page_whose_only_finding_is_the_assistants_5xx_is_a_kept_component_ski
     # Any other finding on the page keeps the row a fail, naming only that finding.
     mixed = rows(["console: boom"])
     assert [r["result"] for r in mixed] == ["fail"] and "knowledge" not in mixed[0]["actual"]
+
+
+# Gate 2026-11-09T192034Z: the explorer of helsinki-transport opened on Alert after the space's
+# retention (Alert current: PT1H) had removed the rehearsal's 28 Alerts, whose writer cannot write
+# there; the grid showed its empty state and the check waited 45 s for rows that could not come.
+EXPLORE = """<html><body><p id="status"></p><div id="g"></div><script>
+const t = (location.hash.match(/type=([^&]+)/) || [])[1];
+document.getElementById("g").innerHTML = DRAWN[t]
+  ? "<table><tbody><tr><td>" + t + " 1</td></tr></tbody></table>"
+  : "<table><tbody></tbody></table><div class='jc-grid-empty'>No entities here.</div>";
+</script></body></html>"""
+
+
+def viz_server(held: dict, drawn: dict):
+    import http.server
+    import threading
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            path, _, query = self.path.partition("?")
+            headers, body = {"Content-Type": "text/html"}, ""
+            if path == "/opendata/dataset/x":
+                body = '<iframe class="jc-explorer-frame" src="/viz/explore.html#slug1&inline&type=Alert"></iframe>'
+            elif path in suite.SANDBOX_PAGES:
+                headers["Content-Security-Policy"] = "sandbox allow-scripts"
+                body = EXPLORE.replace("DRAWN", json.dumps(drawn))
+            elif path == "/api/endpoint/slug1/ngsi-ld/v1/types":
+                headers["Content-Type"], body = "application/json", json.dumps({"typeList": sorted(held) + ["Alert"]})
+            elif path == "/api/endpoint/slug1/ngsi-ld/v1/entities":
+                t = re.search(r"type=([^&]+)", query).group(1)
+                headers["Content-Type"], headers["NGSILD-Results-Count"], body = "application/json", str(held.get(t, 0)), "[]"
+            self.send_response(200 if body else 404)
+            for k, v in headers.items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body.encode())
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+@pytest.mark.parametrize("held, drawn, ok, said", [
+    ({"Alert": 2}, {"Alert": 1}, True, "1 rows"),
+    ({"GtfsStop": 3}, {"GtfsStop": 1}, True, "1 rows of GtfsStop; the opened type Alert holds no entity at the Endpoint"),
+    ({"GtfsStop": 3, "Alert": 2}, {"GtfsStop": 1}, False, "the grid shows no Alert while the Endpoint holds 2"),
+    ({}, {}, False, "the Endpoint holds no entity of Alert or any other type"),
+])
+def test_an_explorer_opened_on_an_empty_type_still_owes_rows_of_a_type_the_endpoint_holds(held, drawn, ok, said):
+    sync = pytest.importorskip("playwright.sync_api")
+    srv = viz_server(held, drawn)
+    try:
+        with sync.sync_playwright() as pw:
+            browser = pw.chromium.launch(args=["--disable-dev-shm-usage"])
+            ctx = browser.new_context()
+            w = object.__new__(suite.Walker)
+            w.res, w.base = Results("ui", "http://x"), f"http://127.0.0.1:{srv.server_port}"
+            suite.viz_sandbox(w, ctx, ctx.new_page(), "/opendata/dataset/x")
+            browser.close()
+        row = next(r for r in w.res.rows if r["id"] == "viz.grid")
+        assert (row["result"] == "pass") == ok, row["actual"]
+        assert said in row["actual"], row["actual"]
+    finally:
+        srv.shutdown()
