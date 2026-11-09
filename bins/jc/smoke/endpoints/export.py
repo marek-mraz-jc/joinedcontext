@@ -15,7 +15,8 @@ from pathlib import Path
 import yaml  # PyYAML ships with /opt/jc-py (and every python the sandbox runs)
 
 READ_OPS = {"retrieveOps", "queryEntity", "retrieveEntity", "queryBatch"}
-TEMPORAL_OPS = {"retrieveOps", "queryTemporal", "retrieveTemporal"}
+# CIM 009 Table 4.20-2: retrieveOps is retrieveEntity and queryEntity only, no temporal row.
+TEMPORAL_OPS = {"queryTemporal", "retrieveTemporal"}
 DEFAULT_CONTEXT = "https://uri.etsi.org/ngsi-ld/default-context/"
 LOCATION = "https://uri.etsi.org/ngsi-ld/location"
 CLOSED = {"organization", "project-list"}
@@ -215,7 +216,8 @@ def build_index(export: Path, patterns: dict) -> dict:
     tenants[tenant][short type] = {"iri", "count", "sample", "location", "expires",
                                    "patterns": {pattern: count}}
     temporal[tenant][short type] = {"id", "attr", "newest", "oldest", "rows"} of the id with the
-    newest instance."""
+    newest instance, plus "pseries": {pattern: {"id", "newest"}} of the newest id each idPattern
+    a grant names matches."""
     compiled = {k: [(p, re.compile(p)) for p in v] for k, v in patterns.items()}
     tenants: dict = {}
     with (export / "antares" / "entities.jsonl").open("rb") as fh:
@@ -261,6 +263,11 @@ def build_index(export: Path, patterns: dict) -> dict:
             slot["oldest"] = min(slot["oldest"], at)
             if at > slot["newest"]:
                 slot.update(id=row["id"], attr=row["attr"], newest=at)
+            for p, rx in compiled.get((row["tenant"], st), ()):
+                if rx.search(row["id"]):
+                    ps = slot.setdefault("pseries", {}).setdefault(p, {"id": row["id"], "newest": at})
+                    if at > ps["newest"]:
+                        ps.update(id=row["id"], newest=at)
     for per in temporal.values():
         for slot in per.values():
             slot.pop("ids", None)
@@ -270,7 +277,7 @@ def build_index(export: Path, patterns: dict) -> dict:
 def load_index(export: Path, endpoints, cache_dir: Path, log=print) -> dict:
     manifest = json.loads((export / "manifest.json").read_text())
     patterns = patterns_needed(endpoints)
-    key = hashlib.sha256(json.dumps([manifest.get("exportedAt"), str(export.resolve()),
+    key = hashlib.sha256(json.dumps(["index-v2", manifest.get("exportedAt"), str(export.resolve()),
                                      sorted((list(k), v) for k, v in patterns.items())]).encode()).hexdigest()[:16]
     cache = cache_dir / f"index-{key}.json"
     if cache.exists():

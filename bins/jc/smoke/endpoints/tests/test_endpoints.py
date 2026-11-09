@@ -106,8 +106,9 @@ def test_expected_counts_follow_the_policy_patterns(tmp_path):
 class Fake:
     """Answers as a healthy gateway does for the bundle; `broken` names one rule it breaks."""
 
-    def __init__(self, broken: str = ""):
+    def __init__(self, broken: str = "", temporal: bool = True):
         self.broken = broken
+        self.temporal = temporal  # whether the open Endpoint's view serves a temporal read
 
     def answer(self, method, path, headers):
         u = urllib.parse.urlparse(path)
@@ -132,6 +133,9 @@ class Fake:
             return 200, {}, {"typeList": types}
         if rest.startswith("ngsi-ld/v1/types/") or rest == "ngsi-ld/v1/attributes":
             return 200, {}, {"attributeNames": ["pm10"]}
+        if rest.startswith("ngsi-ld/v1/temporal/entities/") and self.broken == "view-404" and (
+                ":north-" not in urllib.parse.unquote(rest) or slug == OPEN and not self.temporal):
+            return 404, {}, {"title": "ResourceNotFound"}
         if rest.startswith("ngsi-ld/v1/temporal/entities/"):
             if qs.get("timerel") == ["after"]:
                 return 200, {}, {"id": "x", "pm10": [{"type": "Property", "value": 3}]}
@@ -241,6 +245,30 @@ def test_a_view_serving_no_create_refuses_with_405(tmp_path, serve, ops, result)
     res = json.loads((out / "results.json").read_text())
     got = [r["result"] for r in res["checks"] if r["id"] == "anon.write-outside"]
     assert got == [result], got
+
+
+@pytest.mark.parametrize("ops,temporal,result", [
+    ("retrieveOps, retrieveEntityTypes", False, "skip"),
+    ("retrieveOps, retrieveEntityTypes, queryTemporal, retrieveTemporal", True, "pass")])
+def test_a_temporal_read_is_checked_where_a_grant_opens_it(tmp_path, serve, ops, temporal, result):
+    """retrieveOps holds no temporal operation (CIM 009 Table 4.20-2), and the history checked is
+    of an id the grant's idPattern opens, not the type's newest series (here south-2, outside
+    ':north-'): a view answering 404 for both is right."""
+    import datetime as dt
+    earlier = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    b = bundle(tmp_path / "x", earlier)
+    pol = b / "gitea" / "files" / "org" / "city" / "spaces" / "air" / "policies" / "public-read.yaml"
+    pol.write_text(pol.read_text().replace("retrieveOps, retrieveEntityTypes, queryTemporal, retrieveTemporal", ops))
+    t = b / "antares" / "temporal.jsonl"
+    row = json.loads(t.read_text())
+    row["id"], row["instance"]["observedAt"] = "urn:ngsi-ld:AirQualityObserved:south-2", now_iso()
+    t.write_text(t.read_text() + json.dumps(row) + "\n")
+    out = tmp_path / "out"
+    suite.main(["--base-url", serve(Fake("view-404", temporal)), "--export", str(b), "--out", str(out), "--workers", "1",
+                "--cache", str(tmp_path / "cache")])
+    res = json.loads((out / "results.json").read_text())
+    got = {r["result"] for r in res["checks"] if r["id"].startswith("anon.temporal")}
+    assert got == {result}, [r for r in res["checks"] if r["id"].startswith("anon.temporal")]
 
 
 def test_a_stopped_gateway_fails_and_never_passes(tmp_path):

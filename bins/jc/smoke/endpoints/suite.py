@@ -199,7 +199,7 @@ class Suite:
                          not missing and not extra,
                          "extra = a type no granting Policy names or the export holds no row of" if extra else "")
         self.ok_json(f"{who}.attributes", e.slug, f"{base}/ngsi-ld/v1/attributes", token)
-        temporal = any(g.temporal() for g in grants)
+        temporal = [g for g in grants if g.temporal()]
         for t, count in sorted(want.items()):
             self.one_type(e, token, who, t, count, narrowed, tenant[t], temporal)
         self.surfaces(e, token, who, want, narrowed)
@@ -257,15 +257,26 @@ class Suite:
     def selectors_for(self, e, t):
         return [s for g in e.grants for s in g.selectors if s.type in (t, "*")]
 
-    def temporal(self, e, token, who, t, granted: bool):
+    def temporal(self, e, token, who, t, grants: list):
         base = f"/api/endpoint/{e.slug}/ngsi-ld/v1/temporal/entities"
         target = f"{e.slug} {t}"
         series = (self.index["temporal"].get(e.tenant) or {}).get(t)
         if not series:
             return
-        if not granted:
-            self.r.skip(f"{who}.temporal", target, f"GET {base}/{{id}}", "history", "no bound Policy grants a temporal read")
+        # the grants of a temporal read that name this type, and the idPatterns they narrow it by
+        sels = [s for g in grants for s in (g.selectors or [ex.Selector("*", None)]) if s.type in (t, "*")]
+        if not sels:
+            self.r.skip(f"{who}.temporal", target, f"GET {base}/{{id}}", "history",
+                        "no bound Policy grants a temporal read of this type")
             return
+        if all(s.pattern for s in sels):
+            found = [(series.get("pseries") or {}).get(s.pattern) for s in sels]
+            found = [f for f in found if f]
+            if not found:
+                self.r.skip(f"{who}.temporal", target, f"GET {base}/{{id}}", "history",
+                            "no exported history of an id the grant's idPattern opens")
+                return
+            series = {**series, **max(found, key=lambda f: f["newest"])}
         eid = series["id"]
         recent = ex.parse_time(series["newest"]) >= self.window
         path = f"{base}/{q(eid)}?timerel=after&timeAt={iso(self.window)}"
