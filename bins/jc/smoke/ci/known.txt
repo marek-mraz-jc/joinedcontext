@@ -12,6 +12,8 @@
 ^charts-apps/session$  # the charts-apps person session is refused 401 on the rehearsal realm (jc-smoke-charts-apps)
 ^mcp/(hub|endpoint)\.temporal\.\d+h$  # the catalog Endpoint grants no queryTemporal; the endpoint MCP has no temporal tool (jc-smoke-mcp)
 ^mcp/hub\.(describe_schema|search)$  # Dataset is not a type the catalog view describes; search over an empty catalogue (jc-smoke-mcp, dataroom gap 2)
-^mcp/(connector|portal\.(organization|platform|project))\.data_query$  # "not open to data reads yet": the realm links no endpoint scope in time (jc-smoke-mcp)
-^logs/metrics\.public\.closed$  # the Portal serves telemetry at the public root (modules/portal.rs, not ours; jc-smoke-logs row 3)
 ^logs/secrets\.results\d+\.(REPORT\.md|results\.json)\.shapes$  # false positive: a `WWW-Authenticate: Bearer resource_metadata=` challenge in the mcp results (jc-smoke-logs)
+^endpoints/anon\.write-outside$  # 405 from the Antares view (antares-ops Refusal::NotAllowed): no bound Policy grants createEntity, so the view lists it for nobody; dev runs the same code (jc-smoke-gate REPORT)
+^pipelines/(status|history|held)$  # every run RunnerRefused: the runner lacks JC_GATEWAY_URL, JC_TOKEN_URL, JC_CLIENT_SECRET_<PROJECT> (jc hands ekiben only EKIBEN_VAR_*; jc-portal-1 + jc-migrate, jc-smoke-gate REPORT)
+^logs/(metrics\.ekiben\.own|rid\.flow\.ekiben-antares)$  # no stream runs in the rehearsal (the pipelines line above), so ekiben has no series and no write reaches the broker
+^logs/secrets\.log\.shapes$  # false positive: jc's start lists each secret's name and source (`secret="dashboards-password" source="generated"`), no value (jc-smoke-logs)

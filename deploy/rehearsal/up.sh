@@ -154,10 +154,11 @@ export JC_PORTAL_CKAN_URL=https://catalogue.rehearsal.invalid JC_PORTAL_CKAN_API
 # The CkanInstances name apiTokenRef.envVar CKAN_API_TOKEN: here it is jc's own dataroom publisher
 # token (Read and Propose on the rehearsal's default catalogue), made before jc's first start,
 # which keeps an existing file.
-if [ ! -s "$home/state/catalogue-token" ]; then
-  (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$home/state/catalogue-token")
+# jc holds this one in memory unless given as a file (--dataroom-portal-token-file below).
+if [ ! -s "$home/secrets/catalogue-token" ]; then
+  (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$home/secrets/catalogue-token")
 fi
-CKAN_API_TOKEN=$(cat "$home/state/catalogue-token"); export CKAN_API_TOKEN
+CKAN_API_TOKEN=$(cat "$home/secrets/catalogue-token"); export CKAN_API_TOKEN
 # The Portal's internal listener (/metrics, run callbacks) on loopback, one port per environment.
 export JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 100))
 export RUST_LOG=${RUST_LOG:-info,sqlx=warn}
@@ -187,6 +188,7 @@ nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text 
   --kaisatsu-import-dir "$home/state/realms" --kaisatsu-import-secrets-dir "$home/secrets" \
   --shako-token-file "$(secret shako-token)" --ekiben-token-file "$(secret ekiben-token)" \
   --daiya-portal-password-file "$(secret dashboards-password)" \
+  --dataroom-portal-token-file "$home/secrets/catalogue-token" \
   --kaisatsu-database-url-file "$home/secrets/kaisatsu-db-url" \
   --kaisatsu-db-password-file "$(secret kaisatsu-app-pw)" \
   --shako-repo-root "$home/repos" --ekiben-file-root "$home/files" \
