@@ -3,5 +3,7 @@
 # operations are affected. The portal is an OIDC relying party: it verifies RS256 signatures
 # with the Keycloak realm's public keys and never holds or uses an RSA private key
 # (`CoreRsaPrivateSigningKey` is never constructed). Re-check on every `openidconnect` bump.
+# RUSTSEC-2026-0387: crypto-bigint 0.5.5 only via age 0.12.1 (newest) -> p256 0.13 / hpke; runtime age use is x25519 only (portal secret_files.rs, jcctl sops.rs, jc setup.rs, portal pipeline_secrets.rs), p256 0.13 elsewhere only in portal tests; drop when age moves to p256 0.14.
+# RUSTSEC-2026-0459: libsqlite3-sys 0.37, optional dep locked by sqlx 0.9.0 (sqlx-sqlite requires libsqlite3-sys <0.38), never compiled (no sqlite feature), cargo deny clean; drop when sqlx takes libsqlite3-sys >= 0.39.
 [advisories]
-ignore = ["RUSTSEC-2023-0071"]
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0387", "RUSTSEC-2026-0459"]
