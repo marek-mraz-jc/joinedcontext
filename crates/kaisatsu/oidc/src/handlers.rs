@@ -2062,9 +2062,9 @@ async fn handle_refresh_token_grant(
     .await
     {
         // Another request rotated this handle first: the handle was used twice, which is reuse.
-        Err(KaisatsuError::OAuth { description, .. }) if description == LOST_ROTATION => Err(
-            revoke_reused_family(state, realm, reused, "concurrent_rotation", client_ip).await,
-        ),
+        Err(KaisatsuError::OAuth { description, .. }) if description == LOST_ROTATION => {
+            Err(revoke_reused_family(state, realm, reused, "concurrent_rotation", client_ip).await)
+        }
         other => other,
     }
 }

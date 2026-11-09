@@ -58,10 +58,7 @@ async fn world_on(store: Arc<dyn Store>, kek: Kek) -> World {
             enabled: true,
             client_authenticator_type: "client-secret".into(),
             secret: Some("tx-secret".into()),
-            attributes: BTreeMap::from([(
-                "standard.token.exchange.enabled".into(),
-                "true".into(),
-            )]),
+            attributes: BTreeMap::from([("standard.token.exchange.enabled".into(), "true".into())]),
             ..Default::default()
         })
         .await
@@ -328,7 +325,10 @@ async fn assert_silent_sign_in(w: &World, s: &Session, client_id: &str) {
     let (st, h, body) = get(&w.app, &auth_query(client_id), Some(&s.sso)).await;
     assert_eq!(st, StatusCode::SEE_OTHER, "{body}");
     let loc = location(&h);
-    assert!(loc.starts_with(CALLBACK), "login form instead of a code: {loc}");
+    assert!(
+        loc.starts_with(CALLBACK),
+        "login form instead of a code: {loc}"
+    );
     assert!(query_param(&loc, "code").is_some(), "{loc}");
 }
 
@@ -388,7 +388,10 @@ async fn reuse_once(w: &World, who: Who<'_>) -> (Session, [String; 2], [String; 
     // Live before the reuse.
     assert_eq!(introspect(w, &at2).await["active"], true);
     let (st, body) = who.refresh(&w.app, &rt1).await;
-    assert_eq!((st, str_of(&body, "error")), (StatusCode::BAD_REQUEST, "invalid_grant"));
+    assert_eq!(
+        (st, str_of(&body, "error")),
+        (StatusCode::BAD_REQUEST, "invalid_grant")
+    );
     (s, [at1, at2], [rt1, rt2])
 }
 
@@ -405,7 +408,10 @@ async fn assert_family_dead_session_alive(w: &World, who: Who<'_>, s: &Session, 
         "the SSO session stays"
     );
     let (st, body) = who.refresh(&w.app, newest).await;
-    assert_eq!((st, str_of(&body, "error")), (StatusCode::BAD_REQUEST, "invalid_grant"));
+    assert_eq!(
+        (st, str_of(&body, "error")),
+        (StatusCode::BAD_REQUEST, "invalid_grant")
+    );
     assert_silent_sign_in(w, s, who.client_id()).await;
 }
 
@@ -428,7 +434,10 @@ async fn parallel_renewals(w: World) {
         if st == StatusCode::OK {
             winners.push(body);
         } else {
-            assert_eq!((st, str_of(&body, "error")), (StatusCode::BAD_REQUEST, "invalid_grant"));
+            assert_eq!(
+                (st, str_of(&body, "error")),
+                (StatusCode::BAD_REQUEST, "invalid_grant")
+            );
         }
     }
     assert_eq!(winners.len(), 1, "exactly one request rotates: {winners:?}");
@@ -438,11 +447,17 @@ async fn parallel_renewals(w: World) {
     // The losers reused the handle: the family is dead, its access tokens with it, the
     // person's SSO session lives on.
     assert_family_dead_session_alive(&w, Who::Edge, &s, newest).await;
-    for at in [str_of(&s.tokens, "access_token"), str_of(won, "access_token")] {
+    for at in [
+        str_of(&s.tokens, "access_token"),
+        str_of(won, "access_token"),
+    ] {
         assert_eq!(introspect(&w, at).await["active"], false);
     }
 }
-on_both_stores!(ten_parallel_renewals_leave_one_winner_and_the_sso_session, parallel_renewals);
+on_both_stores!(
+    ten_parallel_renewals_leave_one_winner_and_the_sso_session,
+    parallel_renewals
+);
 
 async fn reuse_inactive_at_introspection(w: World) {
     let (s, ats, rts) = reuse_once(&w, Who::Edge).await;
@@ -457,7 +472,10 @@ async fn reuse_inactive_at_introspection(w: World) {
         true
     );
 }
-on_both_stores!(an_access_token_of_a_reused_family_is_inactive_at_introspection, reuse_inactive_at_introspection);
+on_both_stores!(
+    an_access_token_of_a_reused_family_is_inactive_at_introspection,
+    reuse_inactive_at_introspection
+);
 
 async fn reuse_refused_at_userinfo(w: World) {
     let s = sign_in(&w.app, Who::Edge).await;
@@ -470,7 +488,10 @@ async fn reuse_refused_at_userinfo(w: World) {
     // Another family of the same person and client is untouched.
     assert_eq!(userinfo(&w, &control).await, StatusCode::OK);
 }
-on_both_stores!(an_access_token_of_a_reused_family_is_rejected_at_userinfo, reuse_refused_at_userinfo);
+on_both_stores!(
+    an_access_token_of_a_reused_family_is_rejected_at_userinfo,
+    reuse_refused_at_userinfo
+);
 
 async fn reuse_refused_at_exchange(w: World) {
     let s = sign_in(&w.app, Who::Edge).await;
@@ -482,7 +503,10 @@ async fn reuse_refused_at_exchange(w: World) {
         assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
     }
 }
-on_both_stores!(an_access_token_of_a_reused_family_is_refused_at_token_exchange, reuse_refused_at_exchange);
+on_both_stores!(
+    an_access_token_of_a_reused_family_is_refused_at_token_exchange,
+    reuse_refused_at_exchange
+);
 
 async fn two_rotations_old(w: World) {
     let s = sign_in(&w.app, Who::Edge).await;
@@ -493,11 +517,20 @@ async fn two_rotations_old(w: World) {
     assert_eq!(st, StatusCode::OK, "{third}");
     let rt3 = str_of(&third, "refresh_token");
     let (st, body) = Who::Edge.refresh(&w.app, &rt1).await;
-    assert_eq!((st, str_of(&body, "error")), (StatusCode::BAD_REQUEST, "invalid_grant"));
+    assert_eq!(
+        (st, str_of(&body, "error")),
+        (StatusCode::BAD_REQUEST, "invalid_grant")
+    );
     assert_family_dead_session_alive(&w, Who::Edge, &s, rt3).await;
-    assert_eq!(introspect(&w, str_of(&third, "access_token")).await["active"], false);
+    assert_eq!(
+        introspect(&w, str_of(&third, "access_token")).await["active"],
+        false
+    );
 }
-on_both_stores!(a_handle_two_rotations_old_revokes_the_family_too, two_rotations_old);
+on_both_stores!(
+    a_handle_two_rotations_old_revokes_the_family_too,
+    two_rotations_old
+);
 
 async fn public_client(w: World) {
     let (s, ats, rts) = reuse_once(&w, Who::Public(None)).await;
@@ -506,7 +539,10 @@ async fn public_client(w: World) {
         assert_eq!(introspect(&w, at).await["active"], false);
     }
 }
-on_both_stores!(a_public_client_family_is_revoked_the_same_way, public_client);
+on_both_stores!(
+    a_public_client_family_is_revoked_the_same_way,
+    public_client
+);
 
 async fn dpop_bound(w: World) {
     let h = holder();

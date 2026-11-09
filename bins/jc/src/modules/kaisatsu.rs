@@ -321,7 +321,10 @@ async fn check_edge_client(store: &Arc<dyn Store>, realm: &setup::Realm) -> Resu
         .ensure_signing_key(&realm.id, "RS256")
         .await
         .map_err(|e| err(&e))?;
-    let keys = store.list_signing_keys(&realm.id).await.map_err(|e| err(&e))?;
+    let keys = store
+        .list_signing_keys(&realm.id)
+        .await
+        .map_err(|e| err(&e))?;
     active_rs256(&keys, &realm.realm).map_err(|e| err(&e))
 }
 

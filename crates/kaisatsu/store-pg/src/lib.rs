@@ -2886,7 +2886,13 @@ impl Store for PgStore {
     fn upsert_refresh_family<'a>(&'a self, family: RefreshTokenFamily) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             let mut tx = self.begin(&family.realm_id, None).await?;
-            lock_row(&mut tx, "refresh_token_family", &family.realm_id, &family.id).await?;
+            lock_row(
+                &mut tx,
+                "refresh_token_family",
+                &family.realm_id,
+                &family.id,
+            )
+            .await?;
             sqlx::query(
                 "DELETE FROM kaisatsu.refresh_token_family WHERE realm_id = $1 AND id = $2",
             )

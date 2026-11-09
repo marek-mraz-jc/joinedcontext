@@ -123,7 +123,12 @@ async fn a_client_pinning_an_algorithm_the_realm_cannot_sign_is_refused() {
     let text = e.to_string();
     assert!(text.contains("edge"), "{text}");
     assert!(text.contains("access.token.signed.response.alg"), "{text}");
-    assert!(s.get_client_by_client_id("algs", "edge").await.unwrap().is_none());
+    assert!(
+        s.get_client_by_client_id("algs", "edge")
+            .await
+            .unwrap()
+            .is_none()
+    );
     // EdDSA and an empty attribute (the realm default) are accepted.
     let doc = json!({
         "realm": "algs",

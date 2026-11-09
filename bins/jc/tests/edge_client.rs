@@ -43,14 +43,21 @@ fn jc(state: &Path, import: &Path) -> Command {
             cmd.env_remove(key);
         }
     }
-    cmd.args(["--role", "kaisatsu", "--scheme", "http", "--log-format", "text"])
-        .args(["--listen", "127.0.0.1:0", "--base-host", "city.test"])
-        .args(["--identity-realm", "dev"])
-        .arg("--state-dir")
-        .arg(state)
-        .arg("--kaisatsu-import-dir")
-        .arg(import)
-        .env("RUST_LOG", "info,sqlx=warn");
+    cmd.args([
+        "--role",
+        "kaisatsu",
+        "--scheme",
+        "http",
+        "--log-format",
+        "text",
+    ])
+    .args(["--listen", "127.0.0.1:0", "--base-host", "city.test"])
+    .args(["--identity-realm", "dev"])
+    .arg("--state-dir")
+    .arg(state)
+    .arg("--kaisatsu-import-dir")
+    .arg(import)
+    .env("RUST_LOG", "info,sqlx=warn");
     cmd
 }
 
@@ -96,7 +103,9 @@ fn an_edge_client_without_rs256_stops_jc_and_with_it_jc_starts() {
     let dir = tempfile::tempdir().unwrap();
     let import = dir.path().join("import");
     realm_file(&import, json!({}));
-    let (code, log) = run(jc(&dir.path().join("state"), &import)).err().expect("refused");
+    let (code, log) = run(jc(&dir.path().join("state"), &import))
+        .err()
+        .expect("refused");
     assert_eq!(code, Some(1), "{log}");
     assert!(log.contains("client edge"), "{log}");
     assert!(log.contains(ID_ALG), "{log}");

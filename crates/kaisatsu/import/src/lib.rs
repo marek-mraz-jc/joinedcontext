@@ -679,9 +679,8 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
                     .and_then(|a| a.get(attribute))
                     .and_then(Value::as_str)
                 {
-                    check_signature_alg(cid, attribute, alg).map_err(|e| {
-                        KaisatsuError::BadRequest(format!("$.clients[{i}]: {e}"))
-                    })?;
+                    check_signature_alg(cid, attribute, alg)
+                        .map_err(|e| KaisatsuError::BadRequest(format!("$.clients[{i}]: {e}")))?;
                 }
             }
             if let Some(sec) = c.get("secret").and_then(Value::as_str) {

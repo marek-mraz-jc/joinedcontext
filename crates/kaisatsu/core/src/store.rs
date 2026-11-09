@@ -257,8 +257,11 @@ pub trait Store: Send + Sync {
     -> StoreFuture<'a, Vec<SigningKeyRecord>>;
     /// Makes sure the realm holds an `ACTIVE` key of `algorithm` (ES256, RS256 or EdDSA),
     /// generating one when it does not; any other algorithm is `BadRequest`.
-    fn ensure_signing_key<'a>(&'a self, realm_id: &'a str, algorithm: &'a str)
-    -> StoreFuture<'a, ()>;
+    fn ensure_signing_key<'a>(
+        &'a self,
+        realm_id: &'a str,
+        algorithm: &'a str,
+    ) -> StoreFuture<'a, ()>;
 
     // Sessions, Codes, PAR, Refresh Families, Revocations, Brute Force, Consents
     fn put_auth_session<'a>(&'a self, session: AuthSession) -> StoreFuture<'a, ()>;
