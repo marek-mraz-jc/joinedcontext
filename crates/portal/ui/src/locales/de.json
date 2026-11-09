@@ -5456,7 +5456,8 @@
       "lastFailedAsk": "Letzter Lauf fehlgeschlagen {time}: {summary}. Eine Projektverantwortliche Person veröffentlicht erneut, sobald die Ursache behoben ist.",
       "notPublishedTo": "nicht veröffentlicht in {instance}",
       "needsCatalogue": "Fügen Sie zuerst oben einen Katalog hinzu: ein Datensatz braucht ein CKAN-Portal.",
-      "mapAndTable": "Karte und Tabelle auf der Seite des Datensatzes"
+      "mapAndTable": "Karte und Tabelle auf der Seite des Datensatzes",
+      "formats": "{count} Wege, sie zu lesen: API, Dateien und Feeds"
     },
     "statusFailed": "Der Katalogstatus dieses Projekts konnte nicht gelesen werden, daher kann die Liste unten unvollständig sein: {reason}. Laden Sie die Seite neu, um es erneut zu versuchen.",
     "access": {

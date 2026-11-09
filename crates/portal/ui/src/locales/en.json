@@ -5456,7 +5456,8 @@
       "lastFailedAsk": "Last run failed {time}: {summary}. A project steward publishes it again once the cause is fixed.",
       "notPublishedTo": "not published to {instance}",
       "needsCatalogue": "Add a catalogue above first: a dataset needs a CKAN portal to land in.",
-      "mapAndTable": "Map and table on the dataset page"
+      "mapAndTable": "Map and table on the dataset page",
+      "formats": "{count} ways to read it: API, files and feeds"
     },
     "statusFailed": "The catalogue status of this project could not be read, so what is listed below may be incomplete: {reason}. Reload the page to try again.",
     "access": {

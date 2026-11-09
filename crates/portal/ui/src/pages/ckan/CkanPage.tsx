@@ -551,34 +551,39 @@ function Publications({
                     )}
                   </p>
                 ) : null}
-                <ul className="mt-2 flex flex-wrap gap-2">
-                  {publication.resources.map((resource) => (
-                    <li key={resource.url}>
-                      <ExternalLink
-                        href={resource.url}
-                        hideIcon
-                        className="rounded border border-border px-2 py-1 text-sm hover:no-underline"
-                      >
-                        {resource.name && resource.name !== resource.format
-                          ? `${resource.name} (${resource.format})`
-                          : resource.format}
-                      </ExternalLink>
-                    </li>
-                  ))}
-                  {/* The theme draws the map and the explorer on the dataset page itself
-                      (T-4639, T-5059), so that page is where both open. */}
-                  {publication.datasetUrl ? (
-                    <li>
-                      <ExternalLink
-                        href={publication.datasetUrl}
-                        hideIcon
-                        className="rounded border border-border px-2 py-1 text-sm hover:no-underline"
-                      >
-                        {t("ckan.publications.mapAndTable")}
-                      </ExternalLink>
-                    </li>
-                  ) : null}
-                </ul>
+                {/* Nine links per card made the list 4,850 px tall on a phone (UI judge 2026-11-09):
+                    the dataset page stays in view, the formats open on demand. */}
+                {publication.datasetUrl ? (
+                  <ExternalLink
+                    href={publication.datasetUrl}
+                    hideIcon
+                    className="mt-2 inline-block rounded border border-border px-2 py-1 text-sm hover:no-underline"
+                  >
+                    {t("ckan.publications.mapAndTable")}
+                  </ExternalLink>
+                ) : null}
+                {publication.resources.length > 0 ? (
+                  <details className="mt-2">
+                    <summary className="focus-ring w-fit cursor-pointer rounded-sm text-sm font-medium">
+                      {t("ckan.publications.formats", { count: publication.resources.length })}
+                    </summary>
+                    <ul className="mt-2 flex flex-wrap gap-2">
+                      {publication.resources.map((resource) => (
+                        <li key={resource.url}>
+                          <ExternalLink
+                            href={resource.url}
+                            hideIcon
+                            className="rounded border border-border px-2 py-1 text-sm hover:no-underline"
+                          >
+                            {resource.name && resource.name !== resource.format
+                              ? `${resource.name} (${resource.format})`
+                              : resource.format}
+                          </ExternalLink>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
               </Card>
             </li>
           );

@@ -244,6 +244,15 @@ describe("ckan publishing manager", () => {
     );
   });
 
+  it("keeps the dataset page in view and folds the formats under one line", async () => {
+    // UI judge 2026-11-09: nine format links per card made the list 4,850 px tall on a phone.
+    renderCkan();
+    const summary = await screen.findByText(en.ckan.publications.formats.replace("{count}", "2"));
+    expect(summary.tagName).toBe("SUMMARY");
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getAllByText(en.ckan.publications.mapAndTable)[0].closest("a")).toHaveAttribute("href", expect.stringContaining("/dataset/"));
+  });
+
   it("says which endpoint points at a catalogue that is not there", async () => {
     renderCkan();
 

@@ -5456,7 +5456,8 @@
       "lastFailedAsk": "Poslední běh selhal {time}: {summary}. Po odstranění příčiny jej znovu zveřejní správce projektu.",
       "notPublishedTo": "nepublikováno do {instance}",
       "needsCatalogue": "Nejprve výše přidejte katalog: dataset potřebuje portál CKAN, kam se zveřejní.",
-      "mapAndTable": "Mapa a tabulka na stránce datové sady"
+      "mapAndTable": "Mapa a tabulka na stránce datové sady",
+      "formats": "{count} způsobů čtení: API, soubory a živé aktualizace"
     },
     "statusFailed": "Stav katalogů tohoto projektu se nepodařilo přečíst, takže níže uvedené může být neúplné: {reason}. Obnovte stránku a zkuste to znovu.",
     "access": {
