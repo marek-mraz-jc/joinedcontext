@@ -3208,6 +3208,7 @@
     "lastRun": {
       "unavailable": "Runs could not be read",
       "never": "Has not run yet",
+      "noneWritten": "Nothing written yet: the status says why",
       "runFailedBadge": "Run failed",
       "written": "{count, plural, one {# written} other {# written}}",
       "rejected": "{n} rejected",

@@ -3208,6 +3208,7 @@
     "lastRun": {
       "unavailable": "Läufe konnten nicht gelesen werden",
       "never": "Noch nicht gelaufen",
+      "noneWritten": "Noch nichts geschrieben: der Status sagt, warum",
       "runFailedBadge": "Lauf fehlgeschlagen",
       "written": "{count, plural, one {# geschrieben} other {# geschrieben}}",
       "rejected": "{n} abgelehnt",

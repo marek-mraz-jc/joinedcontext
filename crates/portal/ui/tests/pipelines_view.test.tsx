@@ -202,6 +202,9 @@ describe("pipelines view", () => {
       expect.stringContaining("/pipelines/aq-mqtt-ingest"),
     );
     expect(within(await rowOf("parking-daily")).queryByTestId("pipeline-error-reason")).toBeNull();
+    // Its Last run cell no longer says "Has not run yet" beside "the last run … failed".
+    expect(within(row).queryByText(en.pipelines.lastRun.never)).toBeNull();
+    expect(await within(row).findByText(en.pipelines.lastRun.noneWritten)).toBeInTheDocument();
   });
 
   it("says in the row that the runner refused the sweep, with its reason", async () => {

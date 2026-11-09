@@ -67,6 +67,7 @@ function RowLastRun({
   name,
   latest,
   counted,
+  refused,
   now,
 }: {
   project: string;
@@ -75,6 +76,8 @@ function RowLastRun({
   latest: ReturnType<typeof useLatestRuns>;
   /** A running resident stream: its runner has counters to read. */
   counted: boolean;
+  /** The status says why the pipeline is in Error. */
+  refused: boolean;
   now: number;
 }): JSX.Element {
   const counters = useStreamCounters(project, name, counted);
@@ -84,6 +87,7 @@ function RowLastRun({
       name={name}
       run={latest.data ? (latest.data.get(name) ?? null) : undefined}
       failed={latest.isError}
+      refused={refused}
       // "4 min ago" moves on with each refetch rather than staying where the page opened.
       now={Math.max(now, latest.dataUpdatedAt)}
       counters={counted ? counters.data : undefined}
@@ -333,7 +337,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
             reconciler wrote says why, and the pipeline's page is where it is fixed. */}
         {failureText ? (
           <div className="mt-1 max-w-64 text-caption">
-            <p className="line-clamp-3 text-danger [overflow-wrap:anywhere]" title={failureText} data-testid="pipeline-error-reason">
+            <p className="text-danger [overflow-wrap:anywhere]" data-testid="pipeline-error-reason">
               {t("pipelines.errorReason", { reason: failureText })}
             </p>
             <RecordLink project={project} plural="pipelines" name={pipeline.metadata.name}>
@@ -351,7 +355,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
         ) : null}
       </>
     );
-    return { spec, klass, running, counted, phase, source };
+    return { spec, klass, running, counted, phase, source, refused: failureText !== "" };
   };
 
   const pipelines = asManifests(list.data?.items ?? []);
@@ -581,7 +585,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
             label: t("pipelines.field.lastRun"),
             text: () => "",
             cell: (pipeline) => (
-              <RowLastRun project={project} name={pipeline.metadata.name} latest={latestRuns} counted={rowParts(pipeline).counted} now={now} />
+              <RowLastRun project={project} name={pipeline.metadata.name} latest={latestRuns} counted={rowParts(pipeline).counted} refused={rowParts(pipeline).refused} now={now} />
             ),
           },
           { id: "period", label: t("grid.field.period"), field: "period", hidden: true, text: (pipeline) => String((pipeline.spec as { period?: string }).period ?? "") },

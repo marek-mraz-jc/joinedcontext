@@ -3208,6 +3208,7 @@
     "lastRun": {
       "unavailable": "Behy sa nepodarilo načítať",
       "never": "Ešte nebežala",
+      "noneWritten": "Zatiaľ nič nezapísal: prečo, hovorí stav",
       "runFailedBadge": "Beh zlyhal",
       "written": "{count, plural, one {# zapísaný} few {# zapísané} other {# zapísaných}}",
       "rejected": "odmietnuté: {n}",

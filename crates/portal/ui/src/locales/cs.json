@@ -3208,6 +3208,7 @@
     "lastRun": {
       "unavailable": "Běhy se nepodařilo načíst",
       "never": "Ještě neběžela",
+      "noneWritten": "Zatím nic nezapsal: proč, říká stav",
       "runFailedBadge": "Běh selhal",
       "written": "{count, plural, one {# zapsaný} few {# zapsané} other {# zapsaných}}",
       "rejected": "odmítnuté: {n}",
