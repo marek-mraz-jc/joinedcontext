@@ -59,10 +59,15 @@ describe("ProjectHidden", () => {
 });
 
 /** The routed create form of an Endpoint, as an outsider, a role, or a failed read meets it. */
-async function newEndpoint(project: string, permissionsFor: (project: string) => Response | Promise<Response> | undefined) {
+async function newEndpoint(
+  project: string,
+  permissionsFor: (project: string) => Response | Promise<Response> | undefined,
+  // The projects the person reads: none for an outsider; a role holder reads the project.
+  listed: string[] = [],
+) {
   return renderRoute({
     path: `/projects/${project}/endpoints/new`,
-    projects: () => jsonResponse(list([])),
+    projects: () => jsonResponse(list(listed.map((name) => ({ name })))),
     permissionsFor,
     // Every read of a project out of reach answers the 404 of an unknown one (PF-59).
     answer: (path) => (path.startsWith(`/api/v1/projects/${project}/`) ? notFound(project) : undefined),
@@ -92,7 +97,7 @@ describe("the create form of a project out of reach", () => {
   });
 
   it("holds the form while the permissions are on their way", async () => {
-    await newEndpoint("helsinki", () => new Promise<Response>(() => {}));
+    await newEndpoint("helsinki", () => new Promise<Response>(() => {}), ["helsinki"]);
     const propose = await screen.findByRole("button", { name: PROPOSE });
     expect(propose).toHaveAttribute("aria-disabled", "true");
     expect(propose).toHaveAccessibleDescription(en.permissions.checking);
@@ -102,7 +107,7 @@ describe("the create form of a project out of reach", () => {
   });
 
   it("keeps the form after a 500 on the permissions: the API re-checks the write", async () => {
-    await newEndpoint("helsinki", () => problem(500, "the store is away"));
+    await newEndpoint("helsinki", () => problem(500, "the store is away"), ["helsinki"]);
     const propose = await screen.findByRole("button", { name: PROPOSE });
     await waitFor(() => expect(propose).not.toHaveAccessibleDescription(en.permissions.checking));
     expect(screen.queryByText(en.form.mayNotCreate)).toBeNull();
@@ -114,6 +119,7 @@ describe("the create form of a project out of reach", () => {
   it("refuses a role that proposes nothing here with a way back to the list", async () => {
     await newEndpoint("helsinki", () =>
       jsonResponse({ project: "helsinki", bootstrap: false, grants: [{ role: "viewer", binding: "v", rule: { kinds: ["*"], verbs: ["read"] } }] }),
+      ["helsinki"],
     );
     const refusal = (await screen.findByText(en.form.mayNotCreate)).closest("[role=status]")?.parentElement as HTMLElement;
     expect(within(refusal).getAllByRole("button", { name: en.form.backToList }).length).toBeGreaterThan(0);
@@ -121,7 +127,7 @@ describe("the create form of a project out of reach", () => {
   });
 
   it("offers the bootstrap administrator the whole form, with no refusal", async () => {
-    await newEndpoint("helsinki", () => jsonResponse(BOOTSTRAP));
+    await newEndpoint("helsinki", () => jsonResponse(BOOTSTRAP), ["helsinki"]);
     const propose = await screen.findByRole("button", { name: PROPOSE });
     await waitFor(() => expect(propose).not.toHaveAccessibleDescription(en.permissions.checking));
     expect(propose).not.toHaveAccessibleDescription(/Endpoint/);
