@@ -76,7 +76,7 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: sh .github/scripts/gitleaks.sh
       - if: steps.paths.outputs.workflows == 'true'
-        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest
+        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
       - if: steps.paths.outputs.workflows == 'true'
         run: >-
           docker run --rm -v "$PWD:/repo" -w /repo
@@ -435,6 +435,7 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh .github/scripts/check-build-context.sh
       - run: sh .github/scripts/free-disk.sh --wait
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       # Exports ACTIONS_RESULTS_URL and ACTIONS_RUNTIME_TOKEN to the steps after it (the build's
