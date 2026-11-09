@@ -83,8 +83,15 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   personas of `demo-users.yaml` (`$REHEARSAL_HOME/demo-users.yaml`) keep e-mail and names; anyone
   else becomes `person-<id>`. The realm file is 0600 in `state/realms`; the counts are in
   `state/realm-<name>-people.json`. Prod gets no people.
+- Realm: jc runs on the export's realm (`[identity] realm` in `jc.toml`: `dev` for dev, `smartcity`
+  for prod; `realms` writes it to `state/realm-name.txt`). That realm keeps its own clients, so each
+  start copies the realm's `portal-api`, `portal-reconciler` and `context-gateway` secrets into jc's
+  state files `portal-client-secret`, `portal-admin-client-secret` and `gateway-client-secret`, and
+  each `<project>-pipelines` client's secret into `secrets/realm/<project>-pipelines`, which jc's
+  `--ekiben-client-secrets-dir` reads for the runner's `JC_CLIENT_SECRET_<PROJECT>`.
 - Test persons: `smoke` and `shots.py` create their own (`rehearsal-*`, random passwords kept in
-  memory) in realm `jc`; the imported realm gets `rehearsal-tester`.
+  memory) in that realm, in group `platform-admins` (the Portal's default bootstrap admins; added
+  to an imported realm without it, as `rehearsal-tester` is).
 
 ## 3. The 24-hour rule (Antares history only)
 
