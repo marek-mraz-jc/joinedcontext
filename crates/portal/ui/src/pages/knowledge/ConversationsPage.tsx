@@ -71,6 +71,9 @@ export function ConversationsPage({
   const shown: ConversationFilter = { ...filter, q: useDebounced(typed) || undefined };
   const list = useQuery({
     queryKey: conversationKeys.list(project, shown),
+    // A failed read says so with its Retry at once; the silent retry left "Loading…" over a 503
+    // (UI judge 2026-11-09).
+    retry: false,
     queryFn: () => listConversations(project, shown),
     enabled: allowed,
     placeholderData: keepPreviousData,
