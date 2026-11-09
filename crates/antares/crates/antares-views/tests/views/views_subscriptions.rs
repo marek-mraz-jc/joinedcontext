@@ -221,6 +221,100 @@ async fn a_hidden_only_change_leaves_times_sent_unchanged() -> Result<(), String
     Ok(())
 }
 
+/// Create `doc` as tenant `city` through the NGSI-LD root.
+async fn create(f: &Fixture, doc: &Value) -> Result<(), String> {
+    let a = send(
+        &f.app,
+        Method::POST,
+        "/ngsi-ld/v1/entities",
+        &[("NGSILD-Tenant", "city")],
+        Some(doc),
+    )
+    .await;
+    if a.status == StatusCode::CREATED {
+        Ok(())
+    } else {
+        Err(format!("create: {} {}", a.status, a.text))
+    }
+}
+
+/// A Subscription `id` to every Person, notifying `uri`.
+fn to_people(id: &str, uri: &str) -> Value {
+    json!({
+        "id": id, "type": "Subscription", "entities": [{"type": "Person"}],
+        "notification": {"endpoint": {"uri": uri}}
+    })
+}
+
+/// Rule 9, entityCreated: an Entity created with no Attribute the view shows
+/// (a bare {id, type}, or one with hidden Attributes only) reaches a view
+/// Subscription that watches nothing, as the Entity the view reads; one
+/// with watchedAttributes waits for a watched one; one the view does not
+/// select (a Car its q refuses) reaches nobody; and a later change of a
+/// hidden Attribute alone stays silent. Each silence is proven by the next
+/// notification being another Entity's.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bare_create_reaches_a_view_subscription_that_watches_nothing() -> Result<(), String> {
+    let f = fixture().await?;
+    let (all_uri, mut all) = sink().await?;
+    let (named_uri, mut named) = sink().await?;
+    let (cars_uri, mut cars) = sink().await?;
+    subscribe(&f, FLEET, &to_people("urn:ngsi-ld:Subscription:bare", &all_uri)).await?;
+    let watching = with(
+        to_people("urn:ngsi-ld:Subscription:named", &named_uri),
+        "",
+        "watchedAttributes",
+        json!(["name"]),
+    );
+    subscribe(&f, FLEET, &watching).await?;
+    subscribe(&f, FLEET, &to_cars("urn:ngsi-ld:Subscription:cars", &cars_uri)).await?;
+
+    create(&f, &json!({"id": "urn:ngsi-ld:Person:bare", "type": "Person"})).await?;
+    let n = next(&mut all).await?;
+    assert_eq!(
+        only(&n)?,
+        &json!({"id": "urn:ngsi-ld:Person:bare", "type": "Person"}),
+        "{n}"
+    );
+    create(
+        &f,
+        &json!({"id": "urn:ngsi-ld:Person:quiet", "type": "Person", "salary": prop(&json!(4_242))}),
+    )
+    .await?;
+    let n = next(&mut all).await?;
+    assert_eq!(
+        only(&n)?,
+        &json!({"id": "urn:ngsi-ld:Person:quiet", "type": "Person"}),
+        "the hidden salary stays hidden: {n}"
+    );
+    create(&f, &json!({"id": "urn:ngsi-ld:Car:bare", "type": "Car"})).await?;
+
+    let hidden = send(
+        &f.app,
+        Method::PATCH,
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:Person:bare/attrs",
+        &[("NGSILD-Tenant", "city")],
+        Some(&json!({"salary": prop(&json!(7))})),
+    )
+    .await;
+    assert_eq!(hidden.status, StatusCode::NO_CONTENT, "{}", hidden.text);
+    create(
+        &f,
+        &json!({"id": "urn:ngsi-ld:Person:named", "type": "Person", "name": prop(&json!("Ida"))}),
+    )
+    .await?;
+    patch(&f, "1", &json!({"colour": prop(&json!("green"))})).await?;
+    for (rx, want) in [
+        (&mut all, "urn:ngsi-ld:Person:named"),
+        (&mut named, "urn:ngsi-ld:Person:named"),
+        (&mut cars, "urn:ngsi-ld:Car:1"),
+    ] {
+        let n = next(rx).await?;
+        assert_eq!(only(&n)?.get("id"), Some(&json!(want)), "{n}");
+    }
+    Ok(())
+}
+
 /// Rule 9: the view is applied at match time, so removing it stops
 /// delivery of the Subscriptions made through it.
 #[tokio::test(flavor = "multi_thread")]

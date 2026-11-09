@@ -598,10 +598,16 @@ pub(super) async fn matches_for(
             .iter()
             .filter(|(k, _)| watched.as_ref().is_none_or(|w| w.contains(&k.as_str())))
             .collect();
+        // A view's Subscription that watches nothing still hears the
+        // creation of an Entity the view selects with no Attribute it shows
+        // (a bare {id, type}): the view reads that Entity whole, so its
+        // creation tells nothing hidden. Every other empty change stays
+        // silent, so a hidden Attribute's change does not leak its timing.
         #[cfg(feature = "views")]
         if let Some((shown, _, _)) = seen.as_deref() {
             relevant.retain(|(k, _)| shown.allows(k));
-            if relevant.is_empty() {
+            let bare_create = entity_trigger == "entityCreated" && watched.is_none();
+            if relevant.is_empty() && !bare_create {
                 continue;
             }
         }
