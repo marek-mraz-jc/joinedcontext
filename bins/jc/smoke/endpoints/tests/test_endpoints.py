@@ -114,6 +114,8 @@ class Fake:
         p, qs = u.path, urllib.parse.parse_qs(u.query)
         tok = headers.get("Authorization", "")
         if p == "/api/endpoints":
+            if self.broken == "paged-list" and not qs.get("cursor"):
+                return 200, {}, {"items": [{"slug": "c" * 32}], "nextCursor": "1"}
             return 200, {}, {"items": [{"slug": OPEN}]}
         if p.startswith("/opendata/api/3/action/package_show"):
             return 200, {}, {"success": True, "result": {"resources": [{"url": "x"}]}}
@@ -214,6 +216,14 @@ def test_each_broken_rule_turns_its_check_red(tmp_path, serve, broken, check):
     code, res = run(tmp_path, serve(Fake(broken)), now_iso())
     red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
     assert code == 1 and check in red, red
+
+
+def test_a_paged_listing_is_read_to_its_end(tmp_path, serve):
+    """/api/endpoints names at most 100 a page and the next page's cursor: an Endpoint on page 2
+    is listed."""
+    code, res = run(tmp_path, serve(Fake("paged-list")), now_iso())
+    listing = [r for r in res["checks"] if r["id"] == "listing"]
+    assert [r["result"] for r in listing] == ["pass"], listing
 
 
 def test_a_stopped_gateway_fails_and_never_passes(tmp_path):

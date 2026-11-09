@@ -392,9 +392,16 @@ class Suite:
     # ---------------------------------------------------------------- whole run
 
     def listing(self, eps):
-        path = "/api/endpoints"
-        st, _, raw = self.get(path, accept="application/json")
-        slugs = set(re.findall(r'"slug"\s*:\s*"([a-z2-7]+)"', raw.decode(errors="replace")))
+        # The list pages (at most 100 a page) and names the next page's cursor: read every page.
+        path, slugs, cursor, pages = "/api/endpoints", set(), None, 0
+        while True:
+            page = f"{path}?limit=100" + (f"&cursor={q(cursor)}" if cursor else "")
+            st, _, raw = self.get(page, accept="application/json")
+            slugs |= set(re.findall(r'"slug"\s*:\s*"([a-z2-7]+)"', raw.decode(errors="replace")))
+            body, pages = as_json(raw), pages + 1
+            cursor = body.get("nextCursor") if st == 200 and isinstance(body, dict) else None
+            if not cursor or pages >= 1000:
+                break
         want = {e.slug for e in eps if not e.closed and e.public_grants()}
         missing = sorted(want - slugs)
         self.r.check("listing", "gateway", f"GET {path}", f"{len(want)} public Endpoints listed",
