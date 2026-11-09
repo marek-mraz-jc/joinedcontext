@@ -5,7 +5,8 @@
 # i18n.toml inside age's i18n-embed-fl proc-macro (jcctl -> age 0.12.1 -> i18n-embed-fl 0.10.1 ->
 # i18n-config 0.4.8, the newest of each). age decrypts the pipelines' SOPS files, so it stays; no
 # release drops basic-toml yet. The platform's paste ignore (owner decision (a), T-3209) is the same case.
-ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0374"]
+# RUSTSEC-2026-0387: crypto-bigint 0.5.5 only via age 0.12.1 (newest) -> p256 0.13 / hpke; runtime age use is x25519 only (portal secret_files.rs, jcctl sops.rs, jc setup.rs, portal pipeline_secrets.rs), p256 0.13 elsewhere only in portal tests; drop when age moves to p256 0.14.
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0374", "RUSTSEC-2026-0387"]
 [licenses]
 # CDLA-Permissive-2.0 covers the Mozilla CA root data in `webpki-roots`, which arrives with
 # reqwest's rustls-tls feature. It is a permissive data licence, not a code licence.
