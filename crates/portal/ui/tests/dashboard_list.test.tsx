@@ -53,4 +53,17 @@ describe("the dashboard list", () => {
     expect(screen.getByLabelText("Tag")).toHaveValue("");
     expect(screen.getByRole("list", { name: "Dashboards by folder" })).toBeInTheDocument();
   });
+
+  it("switches between Grafana's folder view and one list of every dashboard", async () => {
+    const user = userEvent.setup();
+    renderList();
+    const folderView = await screen.findByRole("button", { name: "Folder view" });
+    expect(folderView).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("list", { name: "Dashboards by folder" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "List view" }));
+    const list = screen.getByRole("list", { name: "Search results" });
+    expect(within(list).getAllByRole("link").map((link) => link.textContent)).toEqual(["Context broker", "Helsinki air", "k6 load", "Scratch board"]);
+    await user.click(folderView);
+    expect(screen.getByRole("list", { name: "Dashboards by folder" })).toBeInTheDocument();
+  });
 });

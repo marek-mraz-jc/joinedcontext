@@ -6785,6 +6785,11 @@
       "alphaDesc": "Alphabetisch (Z–A)",
       "clear": "Suche und Filter zurücksetzen",
       "noMatch": "Kein Dashboard passt zu dieser Suche.",
+      "view": "Ansicht",
+      "folderView": "Ordneransicht",
+      "listView": "Listenansicht",
+      "name": "Name",
+      "tags": "Schlagwörter",
       "results": "Suchergebnisse",
       "tree": "Dashboards nach Ordner",
       "inFolder": "{count, plural, one {# Dashboard} other {# Dashboards}}"

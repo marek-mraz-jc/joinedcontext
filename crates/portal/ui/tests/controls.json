@@ -1418,7 +1418,7 @@
     },
     "src/pages/grafana/DashboardList.tsx": {
       "controls": {
-        "Button": 2
+        "Button": 4
       },
       "tests": [
         "dashboard_list.test.tsx"

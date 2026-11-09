@@ -95,12 +95,14 @@ export function DashboardList({ project, items }: { project: string; items: read
   const [query, setQuery] = useState("");
   const [tag, setTag] = useState("");
   const [sort, setSort] = useState<Sort>("alpha-asc");
+  // Grafana's two browse views: the folder tree, or every dashboard in one list with its folder.
+  const [flat, setFlat] = useState(false);
   const tags = useMemo(() => [...new Set(items.flatMap((item) => item.tags))].sort(), [items]);
   const shown = browse(items, query, tag, sort);
   const searching = Boolean(query.trim() || tag);
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem_12rem]">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem_auto_12rem]">
         <Field id="dashboard-search" label={t("grafana.dashboards.search")} help={t("grafana.dashboards.searchHint")}>
           <Input id="dashboard-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} />
         </Field>
@@ -114,6 +116,14 @@ export function DashboardList({ project, items }: { project: string; items: read
             ))}
           </Select>
         </Field>
+        <div role="group" aria-label={t("grafana.dashboards.view")} className="flex items-start gap-1 sm:pt-6">
+          <Button variant="secondary" aria-pressed={!flat} aria-label={t("grafana.dashboards.folderView")} title={t("grafana.dashboards.folderView")} onClick={() => setFlat(false)} className={!flat ? "bg-primary-soft text-primary-soft-fg" : undefined}>
+            <Icon name="folder" className="size-4" />
+          </Button>
+          <Button variant="secondary" aria-pressed={flat} aria-label={t("grafana.dashboards.listView")} title={t("grafana.dashboards.listView")} onClick={() => setFlat(true)} className={flat ? "bg-primary-soft text-primary-soft-fg" : undefined}>
+            <Icon name="menu" className="size-4" />
+          </Button>
+        </div>
         <Field id="dashboard-sort" label={t("grafana.dashboards.sort")} help={t("grafana.dashboards.sortHint")}>
           <Select id="dashboard-sort" value={sort} onChange={(event) => setSort(event.target.value as Sort)}>
             <option value="alpha-asc">{t("grafana.dashboards.alphaAsc")}</option>
@@ -136,7 +146,15 @@ export function DashboardList({ project, items }: { project: string; items: read
             {t("grafana.dashboards.clear")}
           </Button>
         </div>
-      ) : searching ? (
+      ) : null}
+      {shown.length > 0 ? (
+        // Grafana's column heads over the browse list.
+        <div aria-hidden="true" className="flex justify-between border-b border-border bg-surface-subtle px-2 py-1.5 text-caption font-semibold text-fg-muted">
+          <span>{t("grafana.dashboards.name")}</span>
+          <span>{t("grafana.dashboards.tags")}</span>
+        </div>
+      ) : null}
+      {shown.length === 0 ? null : searching || flat ? (
         <ul aria-label={t("grafana.dashboards.results")}>
           {shown.map((item) => (
             <Row key={item.uid} project={project} item={item} location />

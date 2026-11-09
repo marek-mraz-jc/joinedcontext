@@ -6785,6 +6785,11 @@
       "alphaDesc": "Alphabetically (Z–A)",
       "clear": "Clear search and filters",
       "noMatch": "No dashboard matches this search.",
+      "view": "View",
+      "folderView": "Folder view",
+      "listView": "List view",
+      "name": "Name",
+      "tags": "Tags",
       "results": "Search results",
       "tree": "Dashboards by folder",
       "inFolder": "{count, plural, one {# dashboard} other {# dashboards}}"
