@@ -375,6 +375,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "antares-export"
+version = "0.3.0"
+dependencies = [
+ "parquet",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "antares-feed"
 version = "0.3.0"
 dependencies = [
@@ -467,8 +476,10 @@ dependencies = [
 name = "antares-ogc"
 version = "0.3.0"
 dependencies = [
+ "antares-export",
  "antares-ops",
  "axum",
+ "chrono",
  "futures-util",
  "linkml-model",
  "ogc-cql2",

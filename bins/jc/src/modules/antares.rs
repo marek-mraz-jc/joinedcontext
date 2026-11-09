@@ -39,8 +39,9 @@ fn err(e: impl std::fmt::Display) -> StartError {
     StartError::module(Module::Antares, e)
 }
 
-/// The surfaces dev's broker serves (deployment `context-broker` base values), without
-/// `parquet` and `tabular` (OGC `f=parquet|csv|zip`), which this build leaves out.
+/// The surfaces dev's broker serves (deployment `context-broker` base values). OGC
+/// `f=parquet|csv|zip` are the build features `parquet` and `tabular` of the `ogc` surface,
+/// not surfaces of their own.
 pub const SURFACES: &str = "admin,views,mcp,access,ws,ws-views,ogc,linkml,odata,sta,ical,feed";
 
 /// The largest Tenant schema the broker stores, dev's 1 MiB (`linkml_model::SURFACE_LIMITS`).
