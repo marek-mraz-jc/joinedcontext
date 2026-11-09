@@ -19,6 +19,9 @@ export interface Thresholds {
   steps: ThresholdStep[];
 }
 
+/** Grafana's thresholds for a field whose dashboard saves none: green, red from 80. */
+export const DEFAULT_THRESHOLDS: Thresholds = { mode: "absolute", steps: [{ color: "green", value: null }, { color: "red", value: 80 }] };
+
 export interface ValueMapping {
   type: "value" | "range" | "regex" | "special";
   options: Record<string, unknown>;

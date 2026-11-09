@@ -10,7 +10,7 @@ import { clsx } from "clsx";
 import type { Frame, Reduced } from "./frames";
 import { reducedOf } from "./frames";
 import type { FieldConfigSource, FieldSettings, Thresholds } from "./fieldConfig";
-import { colorOf, displayValue, settingsFor, stepFor } from "./fieldConfig";
+import { colorOf, DEFAULT_THRESHOLDS, displayValue, settingsFor, stepFor } from "./fieldConfig";
 import { gaugeSpec } from "./specs";
 import { chartTheme, VegaChart } from "./VegaChart";
 import { Fill, Swatch, Tinted } from "./paint";
@@ -41,8 +41,7 @@ interface Shown {
   max: number;
 }
 
-/** Grafana's thresholds for a value panel whose dashboard saves none: green, red from 80. */
-export const DEFAULT_THRESHOLDS: Thresholds = { mode: "absolute", steps: [{ color: "green", value: null }, { color: "red", value: 80 }] };
+export { DEFAULT_THRESHOLDS };
 
 /**
  * The lowest and highest of every number in the frames, every row of every numeric field: the

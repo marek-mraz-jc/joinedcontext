@@ -196,6 +196,12 @@ describe("table", () => {
     expect(screen.queryByText("dev")).toBeNull();
   });
 
+  it("colours a color-text cell no mapping names in its field's base colour, Grafana's green by default", () => {
+    const settings = settingsFor({ defaults: { custom: { cellOptions: { type: "color-text" } } } }, { name: "Status", type: "string", values: [] });
+    render(<TableCellValue settings={settings} value="withIncidence" locale="en" />);
+    expect(screen.getByText("withIncidence")).toHaveStyle({ color: colorOf("green") });
+  });
+
   it("puts a number at the cell's right edge and text at the left, unless custom.align says", () => {
     const { container, rerender } = render(<TableCellValue settings={settingsFor(undefined, { name: "n", type: "number", values: [] })} value={12} locale="en" />);
     expect(container.firstElementChild).toHaveClass("text-right");

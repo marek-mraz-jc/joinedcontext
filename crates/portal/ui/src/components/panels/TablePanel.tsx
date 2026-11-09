@@ -14,7 +14,7 @@ import { InlineError, Select } from "../ui";
 import type { Frame } from "./frames";
 import { frameName, rowsOf } from "./frames";
 import type { FieldConfigSource, FieldSettings } from "./fieldConfig";
-import { colorOf, displayValue, settingsFor, stepFor } from "./fieldConfig";
+import { colorOf, DEFAULT_THRESHOLDS, displayValue, settingsFor, stepFor } from "./fieldConfig";
 import { Tinted } from "./paint";
 
 /** The type the in-memory rows carry, which no Endpoint has. */
@@ -85,7 +85,10 @@ export function tableOf(frames: Frame[], fieldConfig: FieldConfigSource | undefi
 export function TableCellValue({ settings, value, locale }: { settings: FieldSettings; value: unknown; locale: string }): JSX.Element {
   const shown = displayValue(settings, value, locale);
   const cellType = (settings.custom.cellOptions as { type?: string } | undefined)?.type ?? (settings.custom.displayMode as string | undefined);
-  const step = typeof value === "number" ? stepFor(settings.thresholds, value, settings.min, settings.max) : undefined;
+  const coloured = cellType === "color-text" || cellType === "color-background" || cellType === "color-background-solid";
+  // A coloured cell takes its field's threshold colour, Grafana's defaults when none is saved; text the base step's.
+  const thresholds = settings.thresholds ?? (coloured ? DEFAULT_THRESHOLDS : undefined);
+  const step = typeof value === "number" ? stepFor(thresholds, value, settings.min, settings.max) : coloured ? thresholds?.steps[0] : undefined;
   const color = shown.color ?? (step ? colorOf(step.color) : undefined);
   // Grafana's `custom.align`: auto puts a number at the right edge, text at the left.
   const asked = settings.custom.align;
