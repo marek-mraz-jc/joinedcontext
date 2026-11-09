@@ -345,6 +345,32 @@ describe("the activity feed (UI-31)", () => {
   });
 });
 
+// UI judge on the prod rehearsal (jc-ui-tables): an outsider read "project 'banskabystrica' not
+// found" beside a Retry that could not help. A project out of reach says so, with no retry.
+describe("a feed of a project out of reach", () => {
+  it("says the project is not open to them and offers no retry", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ type: "https://joinedcontext.com/errors/resource-not-found", title: "Not Found", status: 404, detail: `project '${PROJECT}' not found` }),
+          { status: 404, headers: { "Content-Type": "application/problem+json" } },
+        ),
+      ),
+    );
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <I18nextProvider i18n={i18n}>
+          <ActivityFeed project={PROJECT} />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(en.app.listHidden.replace("{project}", PROJECT))).toBeInTheDocument();
+    expect(screen.queryByText(`project '${PROJECT}' not found`)).toBeNull();
+    expect(screen.queryByRole("button", { name: en.app.error.retry })).toBeNull();
+  });
+});
+
 describe("the tail's reducer", () => {
   it("keeps one copy of an event the page already showed", () => {
     const known = [event({ summary: "One." })];
