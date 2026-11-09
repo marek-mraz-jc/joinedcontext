@@ -3,7 +3,7 @@ the all-Rust copy keeps every production name; a rename only where RENAMES.md li
 address still answers).
 
    bins/jc/smoke/run names --base-url <url> --export <bundle> --out <dir> [--state <jc state>]
-       [--renames <RENAMES.md>] [--prod-tools <prod-tools.json>] [--realm-secrets-dir <dir>]
+       [--renames <RENAMES.md>] [--prod-tools <prod-tools.json>]
 
 Production's names come from the export alone (prodnames.py) and from --prod-tools, which
 fetch_prod_tools.py writes by hand once: this suite never contacts prod or dev. Per kind:
@@ -11,15 +11,16 @@ fetch_prod_tools.py writes by hand once: this suite never contacts prod or dev. 
   project        Portal GET /api/v1/projects (a signed-in test administrator)
   space          GET /api/v1/projects/{p}/spaces, as {p}/{space}
   endpoint-name  GET /api/v1/projects/{p}/endpoints, as {p}/{name}
-  endpoint       the slug of each, from the same listing
+  endpoint       GET /api/endpoint/{slug} answers (an unknown slug's answer is 404)
   surface        /api/endpoint/{slug}/<surface path> of each enabled surface (NGSI-LD, OData, OGC,
-                 STA, WebSocket, MCP) answers anything but 404 (an unknown slug's must be 404)
+                 STA, WebSocket, MCP) answers, and otherwise than an unknown slug
   mcp-server     /api/mcp and each McpServer's /api/mcp/{project}/{name} answer initialize
   tool           anonymous tools/list per server against prod's (public reads only), and the
                  write and admin tool names of prod's pinned source against this clone's
   dataset        /opendata/api/3/action/package_list (CKAN dataset names)
   app, dashboard GET /api/v1/projects/{p}/apps, .../dashboards
-  realm, client  /id/realms/{realm} and the realm's client ids (only those)
+  realm, client  /id/realms/{realm}, and each prod client id of it is known: an anonymous
+                 authorization request without redirect is refused otherwise than an unknown id
   connector      skipped: /c/{id} is runtime state in the Portal database, no read-only source
 
 A prod name missing on jc fails; an extra jc name is a report line (REPORT.md "Extra on jc");
@@ -159,48 +160,19 @@ class Jc:
         st, _, raw = self.http.call("GET", path, headers={"Accept": "application/json"})
         return st == 200 and isinstance(as_json(raw), dict), f"GET {path} {st}"
 
-    def clients(self, realm: str, token: str | None):
-        """The realm's client ids through the admin API, or None and why."""
-        if not token:
-            return None, "no admin token for the realm"
-        out, first = set(), 0
-        while True:
-            path = f"/id/admin/realms/{q(realm)}/clients?first={first}&max=500&briefRepresentation=true"
-            st, _, raw = self.http.call("GET", path, token=token, headers={"Accept": "application/json"})
-            body = as_json(raw)
-            if st != 200 or not isinstance(body, list):
-                return None, f"GET {path} {st} {short(raw, 80)}"
-            out |= {c["clientId"] for c in body if isinstance(c, dict) and c.get("clientId")}
-            if len(body) < 500:
-                return out, ""
-            first += 500
+    def client_answer(self, realm: str, client: str) -> tuple[int, str]:
+        """(status, OAuth error) of an authorization request naming `client` and no redirect: an
+        unknown client id gets the realm's `invalid_client`, a known one another refusal (missing
+        redirect_uri, flow disabled). Read-only and anonymous: nothing signs in."""
+        path = (f"/id/realms/{q(realm)}/protocol/openid-connect/auth?client_id={q(client)}"
+                "&response_type=code&scope=openid")
+        st, _, raw = self.http.call("GET", path, headers={"Accept": "application/json"})
+        body = as_json(raw)
+        return st, str(body.get("error")) if isinstance(body, dict) else short(raw, 40)
 
-
-def realm_token(http: Http, realm: str, export_realm: dict, secrets_dir: Path | None, state: Path | None):
-    """A token that may read `realm`'s clients: jc's own administrator client of the Portal realm
-    (portal-reconciler, --state) when the realm is jc's, else a client of the imported realm whose
-    secret the rehearsal made (--realm-secrets-dir, `$(env:NAME)` -> <dir>/NAME). Answers
-    (token or None, which client)."""
-    tries = []
-    if state and (state / "portal-admin-client-secret").exists():
-        tries.append(("jc", "portal-reconciler", (state / "portal-admin-client-secret").read_text().strip()))
-    for c in export_realm.get("clients") or []:
-        sec = str(c.get("secret") or "")
-        if secrets_dir and c.get("serviceAccountsEnabled") and sec.startswith("$(") and sec.endswith(")"):
-            f = secrets_dir / sec[2:-1].split(":")[-1]
-            if f.exists() and c.get("clientId") == "portal-reconciler":
-                tries.insert(0, (realm, c["clientId"], f.read_text().strip()))
-    for in_realm, client, secret in tries:
-        form = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": client,
-                                       "client_secret": secret}).encode()
-        st, _, raw = http.call("POST", f"/id/realms/{q(in_realm)}/protocol/openid-connect/token",
-                               headers={"Content-Type": "application/x-www-form-urlencoded"}, body=form)
-        tok = (as_json(raw) or {}).get("access_token") if st == 200 else None
-        if tok:
-            st, _, _ = http.call("GET", f"/id/admin/realms/{q(realm)}/clients?max=1", token=tok)
-            if st == 200:
-                return tok, f"{in_realm}/{client}"
-    return None, ", ".join(f"{r}/{c}" for r, c, _ in tries) or "no client secret"
+    def client_answers(self, realm: str, clients: list[str]) -> dict:
+        with cf.ThreadPoolExecutor(self.workers) as pool:
+            return dict(zip(clients, pool.map(lambda c: self.client_answer(realm, c), clients)))
 
 
 # ---------------------------------------------------------------------- the run
@@ -238,60 +210,9 @@ def run(a, prod: dict, jc: Jc, res: Results, renames, prod_tools: dict | None, e
 
     portal_kind("space", "spaces", prod["spaces"])
     ep_listing = portal_kind("endpoint-name", "endpoints", [f"{e.project}/{e.name}" for e in prod["endpoints"]])
-    jc_slugs = None if ep_listing is None else {
-        str((m.get("spec") or {}).get("slug")) for m in ep_listing.values() if (m.get("spec") or {}).get("slug")}
-    slug_calls = {e.slug: ("GET", f"/api/endpoint/{e.slug}{prodnames.SURFACES['ngsi-ld'][1]}") for e in prod["endpoints"]}
-    for old, new in renamed.get("endpoint", {}).items():
-        slug_calls[old] = ("GET", f"/api/endpoint/{old}{prodnames.SURFACES['ngsi-ld'][1]}")
     portal_kind("app", "apps", prod["apps"])
     portal_kind("dashboard", "dashboards", prod["dashboards"])
-
-    # ---- Endpoint slugs and their surface paths (anonymous; a closed Endpoint answers 401)
-    control = "smoke-names-" + secrets.token_hex(6)
-    surface_calls = {}
-    for e in prod["endpoints"]:
-        for rep in e.representations:
-            if rep in prodnames.SURFACES:
-                m, suffix = prodnames.SURFACES[rep]
-                surface_calls[f"/api/endpoint/{e.slug}{suffix}"] = (m, f"/api/endpoint/{e.slug}{suffix}")
-    for old, new in renamed.get("surface", {}).items():
-        surface_calls.setdefault(old, ("GET", old))
-        surface_calls.setdefault(new, ("GET", new))
-    controls = {rep: (m, f"/api/endpoint/{control}{suffix}") for rep, (m, suffix) in prodnames.SURFACES.items()}
-    got = jc.statuses(sorted(set(surface_calls.values()) | set(controls.values()) | set(slug_calls.values())))
-    bad_controls = {rep: got[c] for rep, c in controls.items() if got[c] != 404}
-    for rep, c in controls.items():
-        res.check("surface.control", rep, f"{c[0]} {c[1]}", "404 for a slug no Endpoint has", str(got[c]),
-                  rep not in bad_controls, "without it an answering path proves no name")
-
-    def answered(call):
-        return got.get(call, 0) not in (0, 404)
-
-    jc_slugs_answering = {s for s, c in slug_calls.items() if answered(c)}
-    extra["endpoint"] = cmp.compare(
-        res, "endpoint", [e.slug for e in prod["endpoints"]],
-        None if jc_slugs is None else (jc_slugs & jc_slugs_answering) | (jc_slugs - set(slug_calls)), renames,
-        lambda old: (answered(slug_calls[old]), f"{' '.join(slug_calls[old])} {got.get(slug_calls[old])}"),
-        "spec.slug listed and GET /api/endpoint/{slug}/ngsi-ld/v1/types not 404",
-        "no endpoint listing")
-    ok_surfaces = {p for p, c in surface_calls.items() if answered(c) and p.split("/")[3] != control}
-    surface_rep = {p: rep for e in prod["endpoints"] for rep in e.representations if rep in prodnames.SURFACES
-                   for p in [f"/api/endpoint/{e.slug}{prodnames.SURFACES[rep][1]}"]}
-    unproven = {p for p, rep in surface_rep.items() if rep in bad_controls}
-    jc_surface_names = None
-    if ep_listing is not None:
-        jc_surface_names = set()
-        for m in ep_listing.values():
-            s = m.get("spec") or {}
-            for rep in s.get("enabledRepresentations") or []:
-                if rep in prodnames.SURFACES:
-                    jc_surface_names.add(f"/api/endpoint/{s.get('slug')}{prodnames.SURFACES[rep][1]}")
-    listed_ok = (ok_surfaces - unproven) | ((jc_surface_names or set()) - set(surface_calls))
-    extra["surface"] = cmp.compare(
-        res, "surface", sorted(surface_calls if not renamed.get("surface") else set(surface_rep)),
-        listed_ok, renames,
-        lambda old: (answered(surface_calls[old]), f"{' '.join(surface_calls[old])} {got.get(surface_calls[old])}"),
-        "the surface path answers (not 404)")
+    endpoints_and_surfaces(res, jc, prod, renames, renamed, ep_listing, extra)
 
     # ---- MCP doors
     servers = {"/api/mcp": None, **{s["path"]: s for s in prod["mcpServers"]}}
@@ -316,27 +237,99 @@ def run(a, prod: dict, jc: Jc, res: Results, renames, prod_tools: dict | None, e
     jc_realms = {r for r in [*prod["realms"], *renamed.get("realm", {}).values()] if jc.realm(r)[0]}
     extra["realm"] = cmp.compare(res, "realm", sorted(prod["realms"]), jc_realms, renames, jc.realm,
                                  "GET /id/realms/{realm}/.well-known/openid-configuration")
-    realm_files = {}
-    for f in (export / "keycloak").glob("realm-*.json"):
-        doc = json.loads(f.read_text())
-        realm_files[doc.get("realm")] = doc
     for realm, clients in sorted(prod["realms"].items()):
         target = renamed.get("realm", {}).get(realm, realm)
-        tok, who = realm_token(jc.http, target, realm_files.get(realm) or {},
-                               Path(a.realm_secrets_dir) if a.realm_secrets_dir else None,
-                               Path(a.state) if a.state else None)
-        listed, why = jc.clients(target, tok)
-        if listed is None and not why.startswith("no admin token"):
-            why = f"{why} (as {who})"
-        elif listed is None:
-            why = f"{why}: tried {who}"
-        listed_names = None if listed is None else {f"{realm}/{c}" for c in listed}
+        control = "smoke-names-" + secrets.token_hex(6)
+        news = [r.new.split("/", 1)[1] for r in renames if r.kind == "client" and r.old.startswith(f"{realm}/")]
+        got = jc.client_answers(target, [control, *clients, *news])
+        unknown = got.pop(control)
+        res.check("client.control", target, f"GET /id/realms/{target}/protocol/openid-connect/auth?client_id=<unknown>",
+                  "the realm's refusal of an unknown client", f"{unknown[0]} {unknown[1]}",
+                  unknown[0] not in (0, 200, 404), "without it an answering client id proves nothing")
+        known = None if unknown[0] in (0, 200, 404) else {f"{realm}/{c}" for c, ans in got.items() if ans != unknown}
         extra["client"] = cmp.compare(
-            res, "client", [f"{realm}/{c}" for c in clients], listed_names, renames,
-            lambda old, listed=listed: (listed is not None and old.split("/", 1)[1] in listed, "client id still in the realm"),
-            f"GET /id/admin/realms/{target}/clients", why)
+            res, "client", [f"{realm}/{c}" for c in clients], known, renames,
+            lambda old, got=got, unknown=unknown: (got.get(old.split("/", 1)[1], unknown) != unknown,
+                                                   "the old client id is still known"),
+            f"GET /id/realms/{target}/protocol/openid-connect/auth?client_id={{id}} (not {unknown[0]} {unknown[1]})",
+            f"the realm answers an unknown client {unknown[0]}", "no listing: extra client ids are not seen")
     res.skip("connector", "/c/{id}", "", "every prod connector id answers on jc", CONNECTORS)
     return extra
+
+
+def endpoints_and_surfaces(res, jc: Jc, prod: dict, renames, renamed: dict, listing, extra: dict) -> None:
+    """Each prod slug answers at /api/endpoint/{slug}, and each enabled surface at its path.
+
+    An unknown slug (the control) must answer 404 there. Where it does not (MCP asks for a token
+    before it looks the slug up, 401), a path answering the same proves nothing: a public
+    Endpoint must answer otherwise (MCP initialize 200), a closed one is a skip row."""
+    control = "smoke-names-" + secrets.token_hex(6)
+    roots, paths, public = {}, {}, {}
+    for e in prod["endpoints"]:
+        roots[e.slug] = ("GET", f"/api/endpoint/{e.slug}")
+        public[e.slug] = not e.closed
+        for rep in e.representations:
+            if rep in prodnames.SURFACES:
+                m, suffix = prodnames.SURFACES[rep]
+                paths[f"/api/endpoint/{e.slug}{suffix}"] = (m, f"/api/endpoint/{e.slug}{suffix}", e.slug, rep)
+    for r in renames:
+        if r.kind == "endpoint":
+            for slug in (r.old, r.new):
+                roots.setdefault(slug, ("GET", f"/api/endpoint/{slug}"))
+        if r.kind == "surface":
+            for path in (r.old, r.new):
+                slug, rep = path.split("/")[3], surface_of(path)
+                paths.setdefault(path, (prodnames.SURFACES.get(rep, ("GET",))[0], path, slug, rep))
+    controls = {"": ("GET", f"/api/endpoint/{control}")}
+    controls |= {rep: (m, f"/api/endpoint/{control}{suffix}") for rep, (m, suffix) in prodnames.SURFACES.items()}
+    got = jc.statuses(sorted({*roots.values(), *((m, p) for m, p, _, _ in paths.values()), *controls.values()}))
+    ctl = {rep: got[c] for rep, c in controls.items()}
+    for rep, c in controls.items():
+        res.check("surface.control", rep or "endpoint", f"{c[0]} {c[1]}", "404, or a refusal read around",
+                  str(ctl[rep]), ctl[rep] not in (0, 200), "an unknown slug's answer; a path answering the same proves no name")
+
+    def present(st: int, rep: str, slug: str):
+        if st in (0, 404):
+            return False
+        if st == ctl[rep] and ctl[rep] != 404:
+            return False if public.get(slug, True) else None
+        return True
+
+    slugs_ok = {s for s, c in roots.items() if present(got[c], "", s)}
+    if listing is not None:
+        listed = {str((m.get("spec") or {}).get("slug")) for m in listing.values()}
+        slugs_ok |= listed - set(roots)
+    extra["endpoint"] = cmp.compare(
+        res, "endpoint", [e.slug for e in prod["endpoints"]], slugs_ok, renames,
+        lambda old: (old in slugs_ok, f"GET /api/endpoint/{old} {got.get(roots.get(old))}"),
+        "GET /api/endpoint/{slug} (an unknown slug answers 404)")
+    verdict = {p: present(got[(m, p)], rep, slug) for p, (m, _, slug, rep) in paths.items()}
+    renamed_surfaces = {r.old for r in renames if r.kind == "surface"}
+    want = [p for p, (_, _, slug, _) in paths.items() if slug in public and (p in renamed_surfaces or p not in
+            {r.new for r in renames if r.kind == "surface"})]
+    for p in sorted(want):
+        if verdict[p] is None:
+            m, _, slug, rep = paths[p]
+            res.skip("surface", p, f"{m} {p}", "the surface path answers",
+                     f"closed Endpoint: {m} answers {ctl[rep]} to any slug without a token, as here")
+    ok = {p for p, v in verdict.items() if v}
+    if listing is not None:
+        for m in listing.values():
+            sp = m.get("spec") or {}
+            for rep in sp.get("enabledRepresentations") or []:
+                if rep in prodnames.SURFACES:
+                    path = f"/api/endpoint/{sp.get('slug')}{prodnames.SURFACES[rep][1]}"
+                    if path not in paths:
+                        ok.add(path)
+    extra["surface"] = cmp.compare(
+        res, "surface", sorted(p for p in want if verdict[p] is not None), ok, renames,
+        lambda old: (bool(verdict.get(old)), f"{paths[old][0]} {old} {got.get(paths[old][:2])}"),
+        "the surface path answers (not 404, not an unknown slug's answer)")
+
+
+def surface_of(path: str) -> str:
+    rest = "/" + "/".join(path.split("/")[4:])
+    return next((rep for rep, (_, suffix) in prodnames.SURFACES.items() if rest == suffix), "")
 
 
 def tools(res, jc: Jc, prod_tools: dict | None, servers: list[str], renames, repo: Path) -> None:
@@ -390,7 +383,6 @@ def main(argv=None) -> int:
     ap.add_argument("--person-token-file", help="unused by this suite")
     ap.add_argument("--renames", help="RENAMES.md: | kind | old | new | why | how old clients keep working |")
     ap.add_argument("--prod-tools", help="prod-tools.json of fetch_prod_tools.py")
-    ap.add_argument("--realm-secrets-dir", help="the rehearsal's realm secrets (secrets/realm): the realm's client list")
     ap.add_argument("--repo", default=str(REPO), help="the clone jc was built from (its tool sources)")
     ap.add_argument("--timeout", type=float, default=30)
     ap.add_argument("--workers", type=int, default=8)

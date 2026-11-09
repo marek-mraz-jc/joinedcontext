@@ -187,7 +187,11 @@ class FakeJc:
         out = {}
         for m, path in calls:
             known = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in path or path == "/api/mcp" or path == "/api/mcp/p/open"
-            out[(m, path)] = 404 if not known or path in self.missing else (200 if m == "GET" else 401)
+            # As jc: an Endpoint's MCP door asks for a token before it looks the slug up.
+            if m == "POST" and path.startswith("/api/endpoint/") and not known:
+                out[(m, path)] = 401
+                continue
+            out[(m, path)] = 404 if not known or path in self.missing else 200
         return out
 
     def tools(self, path):
@@ -199,8 +203,9 @@ class FakeJc:
     def realm(self, name):
         return name == "city", "200"
 
-    def clients(self, realm, token):
-        return {"portal-api", "gone"} - self.missing, ""
+    def client_answers(self, realm, clients):
+        known = {"portal-api", "gone"} - self.missing
+        return {c: (400, "invalid_request") if c in known else (401, "invalid_client") for c in clients}
 
 
 def run_fixture(tmp_path, missing=(), renames=()):
@@ -209,7 +214,7 @@ def run_fixture(tmp_path, missing=(), renames=()):
     import prodnames
     prod = prodnames.load(export)
     res = Results("names", "http://localhost")
-    a = type("A", (), {"repo": suite.REPO, "realm_secrets_dir": None, "state": None})()
+    a = type("A", (), {"repo": suite.REPO, "state": None})()
     prod_tools = {"public": {"/api/mcp": {"tools": ["list_endpoints"]}, "/api/mcp/p/open": {"tools": ["list_endpoints"]}},
                   "source": {"tools": {"gateway": ["create_entity"], "anonymous": ["list_endpoints"],
                                        "broker": ["query_entities"]}}}
@@ -245,8 +250,37 @@ def test_a_surface_that_answers_for_an_unknown_slug_proves_nothing(tmp_path):
     write_export(export)
     import prodnames
     res = Results("names", "http://localhost")
-    a = type("A", (), {"repo": suite.REPO, "realm_secrets_dir": None, "state": None})()
+    a = type("A", (), {"repo": suite.REPO, "state": None})()
     suite.run(a, prodnames.load(export), Lenient(), res, [], None, export)
     failed = {(r["id"], r["target"]) for r in res.rows if r["result"] == FAIL}
     assert ("surface.control", "ngsi-ld") in failed
+    # The Endpoint is public: answering like an unknown slug is no answer.
     assert ("surface", "/api/endpoint/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/ngsi-ld/v1/types") in failed
+    assert ("endpoint", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") in failed
+
+
+def test_a_closed_endpoints_mcp_door_that_answers_any_slug_401_is_a_skip_row(tmp_path):
+    export = tmp_path / "export"
+    write_export(export)
+    f = export / "gitea/files/joinedcontext/p/spaces/air/endpoints/open.yaml"
+    f.write_text(f.read_text().replace("audience: public", "audience: organization"))
+
+    class Closed(FakeJc):
+        def statuses(self, calls):
+            return {(m, p): 404 if "smoke-names-" in p and m == "GET" else 401 if p.startswith("/api/endpoint/")
+                    else 200 for m, p in calls}
+
+    import prodnames
+    res = Results("names", "http://localhost")
+    a = type("A", (), {"repo": suite.REPO, "state": None})()
+    suite.run(a, prodnames.load(export), Closed(), res, [], None, export)
+    r = {(x["id"], x["target"]): x["result"] for x in res.rows}
+    assert r[("surface", "/api/endpoint/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/mcp")] == SKIP
+    assert r[("surface", "/api/endpoint/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/ngsi-ld/v1/types")] == PASS
+    assert r[("endpoint", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")] == PASS
+
+
+def test_an_unknown_client_id_and_a_known_one_are_told_apart_by_the_realms_refusal(tmp_path):
+    res, _ = run_fixture(tmp_path)
+    r = {(x["id"], x["target"]): x["result"] for x in res.rows}
+    assert r[("client.control", "city")] == PASS and r[("client", "city/portal-api")] == PASS

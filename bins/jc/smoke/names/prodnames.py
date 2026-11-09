@@ -27,9 +27,29 @@ SURFACES = {
 }
 
 
+CONFIG_REPO = "configuration"
+
+
+def project_repos(files: Path) -> set[tuple[str, str]]:
+    """(owner, repo) of every repository holding its own Project manifest (`project.yaml` naming
+    the repository): the projects the Portal serves. An App's source repository
+    (`<project>_<app>`) or a repository of another kind is none."""
+    out = set()
+    for f in files.glob("*/*/project.yaml"):
+        if any(d.get("kind") == "Project" and (d.get("metadata") or {}).get("name") == f.parent.name
+               for d in ex._load_yaml(f)):
+            out.add((f.parent.parent.name, f.parent.name))
+    return out
+
+
 def _docs(files: Path, kind: str):
-    """(path relative to files, document) of every YAML document of `kind`."""
+    """(path relative to files, document) of every YAML document of `kind` in a project
+    repository or the configuration repository: where the Portal reads manifests from."""
+    repos = project_repos(files)
     for f in sorted(files.rglob("*.yaml")):
+        rel = f.relative_to(files)
+        if (rel.parts[0], rel.parts[1]) not in repos and rel.parts[1] != CONFIG_REPO:
+            continue
         try:
             text = f.read_text()
         except UnicodeDecodeError:
@@ -38,7 +58,7 @@ def _docs(files: Path, kind: str):
             continue
         for d in ex._load_yaml(f):
             if d.get("kind") == kind and isinstance(d.get("metadata"), dict):
-                yield f.relative_to(files), d
+                yield rel, d
 
 
 def _project(rel: Path, d: dict) -> str:
@@ -47,7 +67,9 @@ def _project(rel: Path, d: dict) -> str:
 
 
 def projects(files: Path) -> list[str]:
-    return sorted({d["metadata"]["name"] for _, d in _docs(files, "Project")})
+    """A Project counts once its repository exists: the configuration repository also lists
+    Projects (projects/<p>.yaml), and a sliced bundle can keep those without the repository."""
+    return sorted(repo for _, repo in project_repos(files))
 
 
 def spaces(files: Path) -> list[str]:
@@ -71,12 +93,20 @@ def dashboards(files: Path) -> list[str]:
     return sorted({f"{_project(r, d)}/{d['metadata']['name']}" for r, d in _docs(files, "Dashboard")})
 
 
+# Keycloak's built-in administration realm: EXPORT.md leaves it out of a bundle (a synthetic one
+# may still carry it), no client of the deployment signs in there, and kaisatsu has none.
+MASTER = "master"
+
+
 def realms(export: Path) -> dict:
     """{realm name: sorted client ids} of keycloak/realm-*.json."""
     out = {}
     for f in sorted((export / "keycloak").glob("realm-*.json")):
         doc = json.loads(f.read_text())
-        out[doc.get("realm") or f.stem[len("realm-"):]] = sorted(
+        name = doc.get("realm") or f.stem[len("realm-"):]
+        if name == MASTER:
+            continue
+        out[name] = sorted(
             {c["clientId"] for c in doc.get("clients") or [] if isinstance(c, dict) and c.get("clientId")})
     return out
 
