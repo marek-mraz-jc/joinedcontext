@@ -146,8 +146,9 @@ def run(a, res: Results) -> dict:
                   f"{count} datasets, prod's names" + (f", and the RENAMES.md extras {', '.join(accepted)}" if accepted else ""),
                   f"{st}, {len(rows) if rows is not None else 'unreadable'} datasets"
                   + (f", missing {len(missing)}: {', '.join(missing[:5])}" if missing else "")
-                  + (f", not prod's and no RENAMES.md extra {len(unexpected)}: {', '.join(unexpected[:5])}" if unexpected else ""),
-                  rows is not None and len(rows) == count + len(accepted) and not missing and not unexpected)
+                  + (f", not prod's and no RENAMES.md extra {len(unexpected)}: {', '.join(unexpected[:5])}" if unexpected else "")
+                  + (f", {len(rows) - len(got_names)} names twice" if rows and len(rows) > len(got_names) else ""),
+                  rows is not None and len(rows) == len(got_names) == count + len(accepted) and not missing and not unexpected)
 
     st, everything = search_all(c)
     ids = {r.get("id"): r.get("name") for r in everything or []}
@@ -176,9 +177,16 @@ def run(a, res: Results) -> dict:
     dist = distributions_by_package(nodes)
     by_name = {ids.get(k, k): v for k, v in dist.items()}
     in_feed = sorted(extras & set(by_name))
-    res.check("dcat.total", "dataroom", f"GET {a.path}/catalog.jsonld", f"hydra:totalItems {pf['totalItems']}, as prod's"
+    # prod's hydra:totalItems counts an orphan index document beside the live dataset of its name
+    # (fetch_prod_ckan.py): jc's feed holds each name once, so the reference is prod's names.
+    total = pf.get("distinctDatasets", pf["totalItems"])
+    twice = prod.get("searchDuplicates") or {}
+    res.check("dcat.total", "dataroom", f"GET {a.path}/catalog.jsonld",
+              f"hydra:totalItems {total}, prod's datasets by name"
+              + (f" (prod's own total {pf['totalItems']} counts {', '.join(twice)} twice: an orphan index document)"
+                 if total != pf["totalItems"] else "")
               + (f", and the RENAMES.md extras {', '.join(in_feed)}" if in_feed else ""),
-              str(feed["totalItems"]), feed["totalItems"] == pf["totalItems"] + len(in_feed))
+              str(feed["totalItems"]), feed["totalItems"] == total + len(in_feed))
     for n, d in prod["datasets"].items():
         if d.get("dcatDistributions") is None:
             continue

@@ -179,6 +179,60 @@ def test_the_committed_prod_fixture_holds_no_ids_or_timestamps():
         assert set(d) <= {"organization", "resources", "dcatDistributions", "inSearch"}
 
 
+def prod_with_an_orphan():
+    """prod's CKAN whose index holds an orphan document of `trees` (package_show answers the live
+    one) beside the live dataset: search, the per-organisation count and the DCAT feed count 3."""
+    live = {"air": ("id-air", 2), "trees": ("id-trees", 1)}
+    rows = [("air", "id-air", 2), ("trees", "id-trees", 1), ("trees", "id-orphan", 7)]
+
+    def answer(path):
+        u = urllib.parse.urlparse(path)
+        q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
+        ok = lambda r: (200, {"success": True, "result": r})
+        pkg = lambda n, i, k: {"id": i, "name": n, "organization": {"name": "praha"}, "resources": [{}] * k}
+        if u.path == "/api/3/action/organization_list":
+            return ok(["praha"])
+        if u.path == "/api/3/action/package_list":
+            return ok(sorted(live))
+        if u.path == "/api/3/action/package_show":
+            return ok(pkg(q["id"], *live[q["id"]]))
+        if u.path == "/api/3/action/package_search":
+            start, n = int(q.get("start", 0)), int(q.get("rows", 10))
+            return ok({"count": len(rows), "results": [pkg(*r) for r in rows][start:start + n]})
+        if u.path == "/catalog.jsonld":
+            d, h = "http://www.w3.org/ns/dcat#", "http://www.w3.org/ns/hydra/core#"
+            return 200, [{"@id": "c", "@type": [f"{d}Catalog"]}] + [
+                {"@id": f"u/dataset/{i}", "@type": [f"{d}Dataset"], f"{d}distribution": [{"@id": "x"}] * k}
+                for _, i, k in rows] + [{"@id": "p", "@type": [f"{h}PagedCollection"],
+                                        f"{h}totalItems": [{"@value": len(rows)}]}]
+        return 404, {}
+    return answer
+
+
+def test_the_fixture_counts_a_name_once_with_the_suites_query_and_keeps_the_live_dataset(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetch_prod_ckan.time, "sleep", lambda s: None)
+    srv = serve(prod_with_an_orphan())
+    try:
+        out = tmp_path / "prod.json"
+        assert fetch_prod_ckan.main(["--base", f"http://127.0.0.1:{srv.server_port}", "--out", str(out)]) == 0
+    finally:
+        srv.shutdown()
+    doc = json.loads(out.read_text())
+    assert doc["perOrganization"] == {"praha": 2} and doc["searchDuplicates"] == {"trees": 2}
+    assert doc["datasets"]["trees"] == {"organization": "praha", "resources": 1, "dcatDistributions": 1}
+    assert doc["dcat"]["totalItems"] == 3 and doc["dcat"]["distinctDatasets"] == 2
+    # jc holding each name once passes against it; prod's own total of 3 would not.
+    global PROD
+    saved, PROD = PROD, dict(doc, organizations=["praha"])
+    try:
+        code, rows = run(tmp_path, dataroom({"air": ("praha", 2), "trees": ("praha", 1)}, aliases={}),
+                         renames="")
+    finally:
+        PROD = saved
+    assert fails(rows) == [] and code == 0, fails(rows)
+    assert "counts trees twice" in rows["dcat.total"]["expected"]
+
+
 def test_expand_reads_compact_and_expanded_feeds_alike():
     compact = {"@context": {"dcat": "http://www.w3.org/ns/dcat#"},
                "@graph": [{"@id": "c", "@type": "dcat:Catalog",
