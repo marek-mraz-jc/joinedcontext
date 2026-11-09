@@ -845,6 +845,16 @@ fn check_text(at: &str, panel: &BoardPanel) -> Result<(), Refusal> {
             "this reads like a credential; write something else",
         ));
     }
+    // Every viewer reads the text: a key in a link's address leaks as surely as a bare one.
+    let link_with_key = content
+        .split(|c: char| c.is_whitespace() || "()<>[]\"'".contains(c))
+        .any(|part| part.contains("://") && crate::secret_scan::secret_text(part));
+    if link_with_key {
+        return Err(refuse(
+            field,
+            "a link in it carries a credential in its address; take the key out",
+        ));
+    }
     Ok(())
 }
 

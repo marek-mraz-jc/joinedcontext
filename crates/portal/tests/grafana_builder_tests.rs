@@ -1196,11 +1196,19 @@ async fn a_preview_of_a_bar_chart_reads_one_row_per_entity_and_a_text_panel_read
         Some(json!({ "board": sent })),
     )
     .await;
-    assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", answer.text);
+    assert_eq!(
+        answer.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        answer.text
+    );
+    let errors = &body(&answer)["errors"][0];
+    assert_eq!(errors["path"], "panels[5].kind");
     assert!(
-        answer.text.contains(
-            "panels[5].kind: a pie chart cannot draw status: the data model holds it as text"
-        ),
+        errors["message"]
+            .as_str()
+            .is_some_and(|m| m
+                .starts_with("a pie chart cannot draw status: the data model holds it as text")),
         "{}",
         answer.text
     );
