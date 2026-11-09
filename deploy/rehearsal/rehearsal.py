@@ -50,6 +50,16 @@ MAX_BATCH_BYTES = 900_000  # below Antares' 4 MiB body cap and shako's request l
 MAX_BATCH_ENTITIES = 500
 # jc's client that administers people in realm jc (bins/jc/src/setup.rs PORTAL_ADMIN_CLIENT).
 PORTAL_ADMIN_CLIENT = "portal-reconciler"
+# jc's state files of the clients an imported realm keeps (bins/jc STATUS.md, jc-realm-name): the
+# cutover writes the export's secret of each into them before every start. jc applies its own
+# realm files (these clients with the state file's secret) beside the imported realm into the same
+# realm, so the realm's secret is the one source: a state file of its own would clash (F5).
+STATE_CLIENT_SECRETS = {"portal-api": "portal-client-secret", PORTAL_ADMIN_CLIENT: "portal-admin-client-secret",
+                        "context-gateway": "gateway-client-secret", "jc-assistant": "assistant-client-secret",
+                        "agent-proxy": "proxy-client-secret"}
+# The Portal's default bootstrap admins (JC_PORTAL_BOOTSTRAP_ADMINS): the rehearsal's test persons
+# join it; an imported realm without it gets it, as it gets rehearsal-tester.
+ADMIN_GROUP = "platform-admins"
 IMPORT_WORKERS = 4  # parallel batch writes into the local broker
 MAX_REPORTED = 200  # refused calls kept in the report; the rest are only counted
 
@@ -429,7 +439,103 @@ def add_tester(realm: dict) -> dict:
               "emailVerified": True, "firstName": "Rehearsal", "lastName": "Tester",
               "credentials": [{"type": "password", "value": "$(env:REHEARSAL_TESTER_PASSWORD)", "temporary": False}]}
     out["users"] = list(out.get("users") or []) + [tester]
+    if not any(g.get("name") == ADMIN_GROUP for g in out.get("groups") or []):
+        out["groups"] = list(out.get("groups") or []) + [{"name": ADMIN_GROUP, "path": f"/{ADMIN_GROUP}"}]
     return out
+
+
+def state_client_secrets(realm: dict) -> list[tuple[str, str]]:
+    """(jc state file, NAME) for each client of STATE_CLIENT_SECRETS whose secret is `$(env:NAME)`."""
+    out = []
+    for c in realm.get("clients", []):
+        m = SECRET_VAR.fullmatch(str(c.get("secret", "")).strip())
+        if c.get("clientId") in STATE_CLIENT_SECRETS and m:
+            out.append((STATE_CLIENT_SECRETS[c["clientId"]], m[1]))
+    return sorted(out)
+
+
+def jc_clients_by_secret(realm: dict) -> tuple[dict, list[str]]:
+    """The realm with each client of STATE_CLIENT_SECRETS signing in by its secret: prod and dev
+    give them `federated-jwt` (Keycloak trusts the Kubernetes service account token of the pod),
+    and jc, one process with no Kubernetes issuer, signs in as them with the secret of its state
+    file. Every other client keeps its authenticator. Answers the realm and the clients changed."""
+    out, changed = dict(realm), []
+    clients = []
+    for c in realm.get("clients", []):
+        if c.get("clientId") in STATE_CLIENT_SECRETS and c.get("clientAuthenticatorType") == "federated-jwt":
+            attrs = {k: v for k, v in (c.get("attributes") or {}).items() if not k.startswith("jwt.credential.")}
+            c = {**c, "clientAuthenticatorType": "client-secret", "attributes": attrs}
+            changed.append(c["clientId"])
+        clients.append(c)
+    if "clients" in realm:
+        out["clients"] = clients
+    return out, sorted(changed)
+
+
+SHIPPED_REALM = Path(__file__).resolve().parents[2] / "crates/kaisatsu/import/realms/jc-portal.json"
+
+
+def add_service_accounts(realm: dict, shipped: dict) -> tuple[dict, list[str]]:
+    """The service-account users of jc's shipped realm (`service-account-portal-api`, `-portal-
+    reconciler`, with prod's realm-management roles) for each of their clients the realm defines
+    without one: an export without users lost them, and the Portal's admin calls then see nothing.
+    Answers the realm and the clients given one."""
+    clients = {c.get("clientId") for c in realm.get("clients", [])}
+    have = {u.get("serviceAccountClientId") for u in realm.get("users") or []}
+    add = [u for u in shipped.get("users") or []
+           if u.get("serviceAccountClientId") in clients - have and not u.get("credentials")]
+    out = dict(realm)
+    if add:
+        out["users"] = list(realm.get("users") or []) + add
+    return out, sorted(u["serviceAccountClientId"] for u in add)
+
+
+def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
+    """Each client URL on the source Portal's origin (`portal-api` rootUrl, e.g.
+    https://portal.smartcity.joinedcontext.com) or its domain's (https://smartcity.joinedcontext.com,
+    where the Apps live) gets a twin on the rehearsal's `base` beside it, in redirectUris, webOrigins
+    and post.logout.redirect.uris: the rehearsal answers on loopback, and the source URL stays.
+    Answers the realm and how many URLs were added."""
+    root = next((c.get("rootUrl") for c in realm.get("clients", []) if c.get("clientId") == "portal-api"), None)
+    if not root:
+        return realm, 0
+    u = urllib.parse.urlsplit(root)
+    origins = {f"{u.scheme}://{u.netloc}"}
+    if u.netloc.startswith("portal."):
+        origins.add(f"{u.scheme}://{u.netloc[len('portal.'):]}")
+    base = base.rstrip("/")
+
+    def twins(values):
+        out = list(values)
+        for v in values:
+            o = next((o for o in origins if v == o or v.startswith(o + "/")), None)
+            if o and base + v[len(o):] not in out:
+                out.append(base + v[len(o):])
+        return out
+
+    added, clients = 0, []
+    for c in realm.get("clients", []):
+        c = dict(c)
+        for key in ("redirectUris", "webOrigins"):
+            if c.get(key):
+                new = twins(c[key])
+                added += len(new) - len(c[key])
+                c[key] = new
+        attrs = dict(c.get("attributes") or {})
+        if attrs.get("post.logout.redirect.uris") not in (None, "", "+"):
+            old = attrs["post.logout.redirect.uris"].split("##")
+            new = twins(old)
+            added += len(new) - len(old)
+            attrs["post.logout.redirect.uris"] = "##".join(new)
+            c["attributes"] = attrs
+        clients.append(c)
+    return {**realm, "clients": clients}, added
+
+
+def realm_of(state: Path) -> str:
+    """The deployment's realm the rehearsal's jc runs on (`realms` writes it), else jc's default."""
+    p = state / "realm-name.txt"
+    return p.read_text().strip() if p.exists() else "jc"
 
 
 SECRET_VAR = re.compile(r"\$\((?:env:)?([A-Z][A-Z0-9_]*)\)")
@@ -440,6 +546,18 @@ def to_file_refs(realm: dict, secrets_dir: Path) -> dict:
     reads no environment, only files under its import secrets dir."""
     text = SECRET_VAR.sub(lambda m: "$(file:%s)" % (secrets_dir / m[1]), json.dumps(realm))
     return json.loads(text)
+
+
+def pipeline_clients(realm: dict) -> list[tuple[str, str]]:
+    """(clientId, NAME) of each `<project>-pipelines` client whose secret is `$(env:NAME)`: jc's
+    `[ekiben] client_secrets_dir` reads `<project>-pipelines` files for the runner's
+    `JC_CLIENT_SECRET_<PROJECT>`, as dev's runner Deployment takes them from the realm's Secret."""
+    out = []
+    for c in realm.get("clients", []):
+        cid, m = c.get("clientId", ""), SECRET_VAR.fullmatch(str(c.get("secret", "")).strip())
+        if cid.endswith("-pipelines") and m:
+            out.append((cid, m[1]))
+    return sorted(out)
 
 
 def secret_file(ref: str, secrets: Path) -> Path:
@@ -554,6 +672,15 @@ def cmd_realms(a):
             (dst.parent / f"realm-{name}-people.json").write_text(json.dumps(counts))
             print(f"realm {name}: {counts}")
         clean = add_tester(clean)
+        clean, by_secret = jc_clients_by_secret(clean)
+        if a.public_base:
+            clean, twins = add_rehearsal_origin(clean, a.public_base)
+            print(f"realm {name}: {twins} client URLs of the source host got a twin on {a.public_base}")
+        clean, accounts = add_service_accounts(clean, json.loads(SHIPPED_REALM.read_text()))
+        if accounts:
+            print(f"realm {name}: service accounts of {accounts} taken from jc's shipped realm (the export has none)")
+        if by_secret:
+            print(f"realm {name}: {by_secret} sign in by their secret (federated-jwt has no Kubernetes issuer in jc)")
         if a.kaisatsu_bin:
             tmp = dst.parent / f".check-{name}.json"
             clean, dropped = drop_refused_mappers(clean, kaisatsu_check(a.kaisatsu_bin, tmp))
@@ -565,6 +692,11 @@ def cmd_realms(a):
         # The secret variables the realm names ($(env:NAME)): up.sh makes a value for each.
         names = sorted(set(SECRET_VAR.findall(json.dumps(clean))))
         (dst.parent / "realm-vars.txt").write_text("".join(n + "\n" for n in names))
+        (dst.parent / "realm-name.txt").write_text(name + "\n")
+        (dst.parent / "realm-state-secrets.txt").write_text(
+            "".join(f"{f} {var}\n" for f, var in state_client_secrets(clean)))
+        (dst.parent / "realm-pipeline-clients.txt").write_text(
+            "".join(f"{cid} {var}\n" for cid, var in pipeline_clients(clean)))
         if a.secrets_dir:
             clean = to_file_refs(clean, Path(a.secrets_dir))
         write_private(dst / f"{name}.json", json.dumps(clean, indent=1))
@@ -599,6 +731,70 @@ def fence_writes(data: bytes) -> bytes:
     return CKAN_URL.sub(lambda m: m.group(1) + REHEARSAL_CATALOGUE, data)
 
 
+# The one rename of evidence/jc-dev/RENAMES.md: prod's three catalog Endpoints publish one CKAN
+# name `catalog` and overwrite each other's package; jc refuses that collision, so each gets its
+# own name (namespace, Endpoint) -> spec.publish.ckan.name, and dataroom answers the old name as
+# an alias of the city that held it (DATASET_ALIASES, jc.toml [dataroom.aliases]).
+CKAN_NAMES = {("helsinki", "catalog"): "helsinki-catalog", ("praha", "catalog"): "praha-catalog",
+              ("zilina", "catalog"): "zilina-catalog"}
+DATASET_ALIASES = {"catalog": "zilina-catalog"}
+_META = re.compile(rb"^metadata:\s*\n((?:[ \t]+.*\n|\s*\n)*)", re.M)
+_CKAN = re.compile(rb"^([ \t]+)ckan:[ \t]*\n", re.M)
+
+
+def name_datasets(data: bytes) -> bytes:
+    """An Endpoint of CKAN_NAMES with a `publish.ckan` block and no name gets its new name, as
+    the first key of that block. Every other file is returned as it is."""
+    if not re.search(rb"^kind:\s*Endpoint\s*$", data, re.M):
+        return data
+    meta = _META.search(data)
+    if not meta:
+        return data
+    field = lambda k: (re.search(rb"^[ \t]+" + k + rb":\s*(\S+)\s*$", meta.group(1), re.M) or [None, b""])[1]
+    new = CKAN_NAMES.get((field(b"namespace").decode(), field(b"name").decode()))
+    m = _CKAN.search(data)
+    if not new or not m:
+        return data
+    indent = m.group(1) + b"  "
+    rest = data[m.end():]
+    block = re.match(rb"(?:" + re.escape(indent) + rb".*\n)*", rest).group(0)
+    if re.search(rb"^" + re.escape(indent) + rb"name:", block, re.M):
+        return data
+    return data[:m.end()] + indent + b"name: " + new.encode() + b"\n" + rest
+
+
+# The hub's `search_documents` sources, as the deployment gives the gateway (MF-57).
+GATEWAY_VALUES = "components/context-gateway/values/gateway/base-values.yaml.gotmpl"
+_HUB_SOURCES = re.compile(r'^\s*JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:\s*"([^"]*)"\s*$', re.M)
+_SOURCE = re.compile(r"[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*")
+
+
+def hub_sources(deployment: Path) -> str:
+    """The deployment's JC_GATEWAY_HUB_KNOWLEDGE_SOURCES (comma-separated `{project}/{source}`);
+    a file without the key gives none, a malformed list stops the start."""
+    m = _HUB_SOURCES.search((deployment / GATEWAY_VALUES).read_text())
+    if not m:
+        return ""
+    parts = [x.strip() for x in m.group(1).split(",") if x.strip()]
+    bad = [x for x in parts if not _SOURCE.fullmatch(x)]
+    if bad:
+        raise SystemExit(f"{GATEWAY_VALUES}: JC_GATEWAY_HUB_KNOWLEDGE_SOURCES: not {{project}}/{{source}}: {bad}")
+    return ",".join(parts)
+
+
+def cmd_hub_sources(a):
+    print(hub_sources(Path(a.deployment)))
+    return 0
+
+
+def cmd_aliases(a):
+    """jc.toml's [dataroom.aliases] for the renames this kit makes."""
+    print("[dataroom.aliases]")
+    for old, new in DATASET_ALIASES.items():
+        print(f'{old} = "{new}"')
+    return 0
+
+
 def import_shako(h: Http, token: str, export: Path, report: dict):
     auth = {"Authorization": f"token {token}"}
     listing = json.loads((export / "gitea" / "repos.json").read_text())
@@ -610,9 +806,13 @@ def import_shako(h: Http, token: str, export: Path, report: dict):
         for p in sorted(root.rglob("*")):
             if p.is_file() and not p.is_symlink():
                 data = p.read_bytes()
-                files[p.relative_to(root).as_posix()] = fenced = fence_writes(data)
+                rel = p.relative_to(root).as_posix()
+                fenced = fence_writes(data)
+                files[rel] = named = name_datasets(fenced)
                 if fenced != data:
-                    report.setdefault("fenced", []).append(f"{owner}/{name}/{p.relative_to(root).as_posix()}")
+                    report.setdefault("fenced", []).append(f"{owner}/{name}/{rel}")
+                if named != fenced:
+                    report.setdefault("renamed", []).append(f"{owner}/{name}/{rel}")
         row = {"repo": f"{owner}/{name}", "files": len(files)}
         st, _ = h.json("GET", f"/git/api/v1/projects/{owner}/repositories/{name}", headers=auth)
         if st == 404:
@@ -846,9 +1046,18 @@ def _daiya_kind(name: str) -> str:
 
 def rehearsal_endpoint_url(url: str, base: str) -> str:
     """A datasource's Endpoint URL (`<gateway>/api/endpoint/<slug>[/...]`) on the rehearsal's own
-    gateway: the same slug, the rehearsal's base. Any other URL is left as it is."""
+    gateway: the same slug, the rehearsal's base with `localhost` spelled 127.0.0.1, as the Portal
+    writes it (daiya's reach refuses the name). Any other URL is left as it is."""
     head, sep, rest = url.partition("/api/endpoint/")
-    return f"{base.rstrip('/')}/api/endpoint/{rest}" if sep and head and rest else url
+    return f"{loopback_ip(base)}/api/endpoint/{rest}" if sep and head and rest else url
+
+
+def loopback_ip(base: str) -> str:
+    """`base` without a trailing slash, its host `localhost` written as 127.0.0.1."""
+    u = urllib.parse.urlsplit(base.rstrip("/"))
+    if u.hostname == "localhost":
+        u = u._replace(netloc="127.0.0.1" + (f":{u.port}" if u.port else ""))
+    return urllib.parse.urlunsplit(u)
 
 
 def daiya_org(h: Http, auth: dict, project: str) -> int:
@@ -1215,7 +1424,7 @@ def sign_in(h: Http, username: str, password: str):
 
 
 def admin_token(h: Http, state: Path) -> str:
-    st, body = h.json("POST", "/id/realms/jc/protocol/openid-connect/token", form={
+    st, body = h.json("POST", f"/id/realms/{realm_of(state)}/protocol/openid-connect/token", form={
         "grant_type": "client_credentials", "client_id": PORTAL_ADMIN_CLIENT,
         "client_secret": read_secret(state, "portal-admin-client-secret")})
     if st != 200:
@@ -1295,11 +1504,11 @@ def cmd_smoke(a):
     # 1. a test person signs in (no person was imported)
     try:
         tok = admin_token(h, state)
-        _, pw = make_person(h, tok, "jc", "rehearsal-steward", groups=["/platform-admins"])
+        _, pw = make_person(h, tok, realm_of(state), "rehearsal-steward", groups=[f"/{ADMIN_GROUP}"])
         ok, detail = sign_in(h, "rehearsal-steward", pw)
         check("sign-in as a test person", ok, detail, "GET /api/v1/auth/login")
     except Exception as e:  # noqa: BLE001 - every failure is a report row
-        check("sign-in as a test person", False, str(e)[:300], "/id/admin/realms/jc/users")
+        check("sign-in as a test person", False, str(e)[:300], f"/id/admin/realms/{realm_of(state)}/users")
     st, me = h.json("GET", "/api/v1/auth/me")
     check("Portal knows the person", st == 200, f"{st}", "GET /api/v1/auth/me")
     # 2. Portal pages load (the SPA shell and its API reads)
@@ -1493,7 +1702,7 @@ def panel_class(status: int, answer, datasource_url: str, base: str) -> str:
             and not answer.get("error"):
         return "data"
     text = json.dumps(answer) if not isinstance(answer, str) else answer
-    own = datasource_url.startswith(base.rstrip("/") + "/api/endpoint/")
+    own = datasource_url.startswith((base.rstrip("/") + "/api/endpoint/", loopback_ip(base) + "/api/endpoint/"))
     guard = any(r in text for r in OWN_LISTENER_REFUSALS) and any(c in text for c in OWN_LISTENER_CODES)
     return "expected" if own and guard else "red"
 
@@ -1613,7 +1822,7 @@ def cmd_portal_dashboards(a):
     loopback_only(a.base)
     h, state = Http(a.base), Path(a.state)
     tok = admin_token(h, state)
-    _, pw = make_person(h, tok, "jc", "rehearsal-dashboards", groups=["/platform-admins"])
+    _, pw = make_person(h, tok, realm_of(state), "rehearsal-dashboards", groups=[f"/{ADMIN_GROUP}"])
     ok, detail = sign_in(h, "rehearsal-dashboards", pw)
     if not ok:
         raise SystemExit(f"sign-in failed: {detail}")
@@ -1665,6 +1874,7 @@ def main(argv=None):
     s.add_argument("--env", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("realms"); s.add_argument("--export", required=True); s.add_argument("--out", required=True)
     s.add_argument("--kaisatsu-bin", help="leave out the mappers this kaisatsu refuses (named in the report)")
+    s.add_argument("--public-base", help="the rehearsal's own address: a twin of each client URL on the source host")
     s.add_argument("--people", help="a 0700 dir holding users-<realm>.jsonl (dev only): people without credentials")
     s.add_argument("--demo-users", help="the deployment's demo-users.yaml: the personas that keep e-mail and names")
     s.add_argument("--secrets-dir", help="write each secret as $(file:<dir>/NAME), the form kaisatsu in jc reads")
@@ -1686,9 +1896,11 @@ def main(argv=None):
     s.add_argument("--dashboards", required=True); s.add_argument("--report", required=True)
     s = sub.add_parser("provisioning"); s.add_argument("--dashboards", required=True)
     s.add_argument("--port", type=int, required=True); s.add_argument("--out", required=True)
+    sub.add_parser("aliases")
+    s = sub.add_parser("hub-sources"); s.add_argument("--deployment", required=True)
     s = sub.add_parser("policy-check"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     a = p.parse_args(argv)
-    return {"provisioning": cmd_provisioning, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import,
+    return {"provisioning": cmd_provisioning, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import, "aliases": cmd_aliases, "hub-sources": cmd_hub_sources,
             "retain": cmd_retain, "smoke": cmd_smoke}[a.cmd](a) or 0
 
 

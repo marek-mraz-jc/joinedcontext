@@ -339,6 +339,15 @@ def surface_of(path: str) -> str:
     return next((rep for rep, (_, suffix) in prodnames.SURFACES.items() if rest == suffix), "")
 
 
+# Tools a component that stays beside jc on dev serves through jc's gateway (bins/jc/CUTOVER.md
+# section 1, GOAL-jc-dev "Scope of jc on dev"): the gateway lists them only when it knows that
+# component's address, which the docker rehearsal (no Kubernetes) has none of. Proven on dev.
+KEPT_TOOLS = {
+    "search_documents": "assistant (stays a separate component on dev; jc's gateway lists the tool "
+                        "once JC_GATEWAY_ASSISTANT_URL names it, bins/jc/CUTOVER.md section 1)",
+}
+
+
 def tools(res, jc: Jc, prod_tools: dict | None, servers: list[str], renames, repo: Path) -> None:
     if prod_tools is None:
         for s in servers:
@@ -354,7 +363,8 @@ def tools(res, jc: Jc, prod_tools: dict | None, servers: list[str], renames, rep
         names = None if have is None else {f"{s}#{t}" for t in have}
         cmp.compare(res, "tool", [f"{s}#{t}" for t in want["tools"]], names, renames,
                     lambda old, have=have: (have is not None and old.split("#", 1)[1] in have, "the old name is still listed"),
-                    f"POST {s} tools/list (anonymous)", why, PUBLIC_ONLY)
+                    f"POST {s} tools/list (anonymous)", why, PUBLIC_ONLY,
+                    kept={f"{s}#{t}": KEPT_TOOLS[t] for t in want["tools"] if t in KEPT_TOOLS})
     src = (prod_tools.get("source") or {}).get("tools") or {}
     mine = sources.jc_source_tools(repo)
     for part in ("gateway", "anonymous", "broker"):

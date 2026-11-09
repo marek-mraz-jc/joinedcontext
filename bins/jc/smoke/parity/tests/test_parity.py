@@ -62,3 +62,11 @@ def test_the_old_side_guard_lets_only_reads_and_the_sign_in_post_through():
         calls.clear()
         parity.guard_old(Route(), Req(method, url), kc)
         assert calls == [want], (method, url)
+
+
+def test_without_old_captures_or_a_person_the_run_is_one_named_skip(tmp_path):
+    import suite
+    assert suite.main(["--base-url", "http://127.0.0.1:9", "--out", str(tmp_path)]) == 0
+    doc = json.loads((tmp_path / "results.json").read_text())
+    assert [c["status"] if "status" in c else c.get("result") for c in doc["checks"]] == ["skip"]
+    assert "no --old-dir and no --person-file" in json.dumps(doc["checks"])

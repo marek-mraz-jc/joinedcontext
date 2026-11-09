@@ -47,7 +47,7 @@ from common import (
     short,
 )
 
-from manifests import Pipeline, load_pipelines  # noqa: E402
+from manifests import Pipeline, cron_out_of_range, load_pipelines  # noqa: E402
 from people import Admin  # noqa: E402
 
 SECRET_WORDS = ("secret", "sops", "decrypt", "envVar", "credential")
@@ -73,7 +73,12 @@ def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline) 
     bad = [c for c in conditions(item) if c.get("type") == "StreamDeployed" and c.get("status") == "False"]
     said = "; ".join(f"{c.get('reason')}: {c.get('message')}" for c in bad)
     actual = f"phase {status.get('phase')}" + (f", {said}" if said else "")
-    if bad and p.secret_refs and any(w.lower() in said.lower() for w in SECRET_WORDS):
+    out_of_range = cron_out_of_range(p.spec.get("schedule"))
+    if bad and out_of_range and "schedule" in said:
+        r.skip("status", p.key, f"GET {base} (status)", "no StreamDeployed=False",
+               f"same on prod: schedule {out_of_range} out of range (`{p.spec.get('schedule')}` in {p.file}); "
+               "prod's Portal (run_queue.rs Cron::parse) refuses it the same way, the seed fix is the deployment's")
+    elif bad and p.secret_refs and any(w.lower() in said.lower() for w in SECRET_WORDS):
         r.skip("status", p.key, f"GET {base} (status)", "no StreamDeployed=False",
                f"secretRefs {p.secret_refs}: {said[:200]}")
     else:
@@ -179,12 +184,21 @@ def _ts(text):
         return None
 
 
+def ekiben_token(state: Path) -> str | None:
+    """ekiben's token: <state>/ekiben-token, else the file jc was given (<home>/secrets/ekiben-token),
+    as rehearsal.py read_secret looks; jc removes the state copy at start when given a file."""
+    for p in (state / "ekiben-token", state.parent / "secrets" / "ekiben-token"):
+        if p.exists():
+            return p.read_text().strip()
+    return None
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="run pipelines")
     ap.add_argument("--base-url", required=True)
     ap.add_argument("--export", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--state", help="jc state dir: portal-admin-client-secret, ekiben-token")
+    ap.add_argument("--state", help="jc state dir: portal-admin-client-secret, ekiben-token (or ../secrets/ekiben-token)")
     ap.add_argument("--admin-token-file", help="unused: the suite signs in a test administrator")
     ap.add_argument("--person-token-file", help="unused by this suite")
     ap.add_argument("--runs", type=int, default=10, help="how many Pipelines to run once")
@@ -197,9 +211,7 @@ def main(argv):
     pipelines = load_pipelines(Path(a.export) / "gitea" / "files")
     if a.only:
         pipelines = [p for p in pipelines if p.key in set(a.only)]
-    ekiben_tok = None
-    if a.state and (Path(a.state) / "ekiben-token").exists():
-        ekiben_tok = (Path(a.state) / "ekiben-token").read_text().strip()
+    ekiben_tok = ekiben_token(Path(a.state)) if a.state else None
     st, h, raw = http.call("GET", "/streams/streams", ekiben_tok)
     listed = runner_list(h, raw)
     r.check("runner", "ekiben", "GET /streams/streams", "200 the runner's JSON stream list",
