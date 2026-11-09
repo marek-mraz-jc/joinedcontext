@@ -36,6 +36,21 @@ fn free_port() -> u16 {
         .port()
 }
 
+/// jc on a port of [`free_port`]. The base host names the port before jc binds it, so the port
+/// is free only when asked: when another bind took it in between, jc starts on another one.
+async fn start_on_a_free_port(cfg_of: impl Fn(u16) -> Config, what: &str) -> (u16, jc::Running) {
+    for _ in 0..5 {
+        let port = free_port();
+        match jc::start(&cfg_of(port), CancellationToken::new()).await {
+            Ok(running) => return (port, running),
+            Err(jc::StartError::Bind { source, .. })
+                if source.kind() == std::io::ErrorKind::AddrInUse => {}
+            Err(e) => panic!("{what}: {e}"),
+        }
+    }
+    panic!("{what}: another bind took jc's port 5 times");
+}
+
 /// A realm with two service-account clients, each allowed one scope per module; the scope puts
 /// the module's name into `aud`.
 fn realm(secret_file: &Path) -> Value {
@@ -163,40 +178,45 @@ async fn a_module_in_another_container_admits_a_kaisatsu_token_for_its_audience_
     std::fs::write(import.join("split.json"), realm(&secret_file).to_string()).unwrap();
 
     // The identity container.
-    let id_port = free_port();
-    let mut id_cfg = config(
-        "kaisatsu",
-        id_port,
-        &dir.path().join("a"),
-        FileConfig::default(),
-    );
-    id_cfg.kaisatsu.import_dir = Some(import);
-    id_cfg.kaisatsu.import_secrets_dir = Some(secret_dir.clone());
-    let id = jc::start(&id_cfg, CancellationToken::new())
-        .await
-        .expect("kaisatsu starts");
+    let (id_port, id) = start_on_a_free_port(
+        |port| {
+            let mut id_cfg = config(
+                "kaisatsu",
+                port,
+                &dir.path().join("a"),
+                FileConfig::default(),
+            );
+            id_cfg.kaisatsu.import_dir = Some(import.clone());
+            id_cfg.kaisatsu.import_secrets_dir = Some(secret_dir.clone());
+            id_cfg
+        },
+        "kaisatsu starts",
+    )
+    .await;
     let realm_base = format!("http://127.0.0.1:{id_port}/id/realms/{REALM}");
     let token_url = format!("{realm_base}/protocol/openid-connect/token");
 
     // The modules' container, behind the door.
-    let mod_port = free_port();
-    let door = DoorSection {
-        issuer: realm_base.clone(),
-        jwks_url: format!("{realm_base}/protocol/openid-connect/certs"),
-        clients: vec![CLIENT.into()],
-    };
-    let mod_cfg = config(
-        "shako,ekiben,daiya,dataroom,antares",
-        mod_port,
-        &dir.path().join("b"),
-        FileConfig {
-            door: Some(door),
-            ..FileConfig::default()
+    let (mod_port, modules) = start_on_a_free_port(
+        |port| {
+            let door = DoorSection {
+                issuer: realm_base.clone(),
+                jwks_url: format!("{realm_base}/protocol/openid-connect/certs"),
+                clients: vec![CLIENT.into()],
+            };
+            config(
+                "shako,ekiben,daiya,dataroom,antares",
+                port,
+                &dir.path().join("b"),
+                FileConfig {
+                    door: Some(door),
+                    ..FileConfig::default()
+                },
+            )
         },
-    );
-    let modules = jc::start(&mod_cfg, CancellationToken::new())
-        .await
-        .expect("the modules start behind the door");
+        "the modules start behind the door",
+    )
+    .await;
 
     let mut wrong_audience_admitted = Vec::new();
     for module in SERVED {

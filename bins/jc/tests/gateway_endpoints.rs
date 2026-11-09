@@ -12,7 +12,7 @@
 mod common;
 
 use base64::Engine as _;
-use common::{Browser, sign_in};
+use common::{Browser, free_port, lost_the_port, sign_in};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
@@ -83,6 +83,17 @@ impl Jc {
         self.log.lock().unwrap().iter().any(|l| l.contains(needle))
     }
 
+    /// Waits until jc's log holds `needle`: the reader thread copies jc's stderr a moment after
+    /// jc wrote it, so a line jc logged before it answered can still be on its way.
+    async fn wait_log(&self, what: &str, needle: &str) {
+        eventually(what, self, 30, || async {
+            self.log_has(needle)
+                .then_some(())
+                .ok_or(format!("no line holding {needle:?} yet"))
+        })
+        .await;
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.base)
     }
@@ -108,14 +119,6 @@ impl Jc {
             self.log_file.display()
         )
     }
-}
-
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
 }
 
 /// The test's people and clients, imported into realm `jc` before the Portal's own files. Their
@@ -250,6 +253,16 @@ async fn start(test: &str) -> Jc {
 /// the listener's own address: a stream asks kaisatsu's public token endpoint, and ekiben refuses
 /// a loopback name such as `localhost`.
 async fn start_with(test: &str, pipelines: bool) -> Jc {
+    for _ in 0..5 {
+        if let Some(jc) = start_once(test, pipelines).await {
+            return jc;
+        }
+    }
+    panic!("jc lost its listen port to another bind 5 times");
+}
+
+/// One jc; `None` when it stopped because another bind took its port first.
+async fn start_once(test: &str, pipelines: bool) -> Option<Jc> {
     let dir = tempfile::tempdir().unwrap();
     let state = dir.path().join("state");
     let realms = dir.path().join("realms");
@@ -341,7 +354,8 @@ async fn start_with(test: &str, pipelines: bool) -> Jc {
         )),
     };
     match rx.recv_timeout(Duration::from_secs(180)) {
-        Ok(Ok(())) => jc,
+        Ok(Ok(())) => Some(jc),
+        Ok(Err(())) if lost_the_port(&jc.log.lock().unwrap().join("\n")) => None,
         other => panic!("jc did not start ({other:?}):\n{}", jc.tail()),
     }
 }
@@ -596,6 +610,21 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
         },
     )
     .await;
+    // The hub and its MCP tools decide from the gateway's own table (its checkout of the
+    // repository, reloaded after every forge pass, every 10 s), not from the views above: wait
+    // until that table grants the public Endpoint to an anonymous caller.
+    eventually(
+        "the gateway's own table lists the public Endpoint to an anonymous caller",
+        &jc,
+        60,
+        || async {
+            let (status, body) = call(&jc, get.clone(), "/api/endpoints", None, None).await;
+            (status == StatusCode::OK && body.contains(PUBLIC))
+                .then_some(())
+                .ok_or(format!("{status} {body}"))
+        },
+    )
+    .await;
 
     // A write through the closed Endpoint by a writer of the project lands in Antares.
     let person = token(&jc, "e2e-reader").await;
@@ -733,11 +762,12 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
         !body.contains("urn:ngsi-ld:Thing:one"),
         "a person without a grant read the closed Endpoint: {body}"
     );
-    assert!(
-        jc.log_has("the gateway refused a shared Endpoint read"),
-        "the stranger's read never reached the gateway's refusal:\n{}",
-        jc.tail()
-    );
+    // The Portal logs the refusal before it answers; the line may still be in the pipe.
+    jc.wait_log(
+        "the stranger's read reaches the gateway's refusal",
+        "the gateway refused a shared Endpoint read",
+    )
+    .await;
 
     // A caller who claims the gateway's mesh identity or a subject on the public broker mount
     // is nobody but itself: the claim reaches no rule, and the admin token is still asked for.
@@ -785,13 +815,9 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
 
     // The gateway's revocation poll (every 10 s) is admitted by the Portal's internal listener:
-    // its token names the issuer the Portal checks and the client the route belongs to.
+    // its token names the issuer the Portal checks and the client the route belongs to. Checked
+    // below, once the log has passed a poll that landed.
     tokio::time::sleep(Duration::from_secs(25).saturating_sub(started.elapsed())).await;
-    assert!(
-        !jc.log_has("the Portal answered 401"),
-        "the Portal refused the gateway:\n{}",
-        jc.tail()
-    );
 
     // A person the Portal disables is refused by the gateway within one revocation poll (10 s)
     // with the token they still hold: the gateway reads the Portal's internal listener at the
@@ -855,6 +881,18 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     println!("refused {:?} after the revocation", revoked.elapsed());
+    // The refusal follows a poll the Portal answered; once its line is in the test's copy of the
+    // log, every poll before it is too, and none of them was refused.
+    jc.wait_log(
+        "the gateway's refusal of the revoked token",
+        "token issued before its subject was revoked",
+    )
+    .await;
+    assert!(
+        !jc.log_has("the Portal answered 401"),
+        "the Portal refused the gateway:\n{}",
+        jc.tail()
+    );
 }
 
 const MODELLED: &str = "modelled";
@@ -963,15 +1001,21 @@ async fn a_modelled_endpoint_answers_ogc_and_odata_inside_jc() {
         .filter_map(|c| c["id"].as_str())
         .collect();
     assert!(ids.contains(&"Thing"), "{collections}");
-    let (status, metadata) = call(
-        &jc,
-        get.clone(),
-        &format!("{base}/odata/v4/$metadata"),
-        None,
-        None,
-    )
+    // OData reads the same schema through its own surface: it answers once that has it too.
+    let metadata = eventually("the OData $metadata answers", &jc, 60, || async {
+        let (status, body) = call(
+            &jc,
+            get.clone(),
+            &format!("{base}/odata/v4/$metadata"),
+            None,
+            None,
+        )
+        .await;
+        (status == StatusCode::OK)
+            .then(|| body.clone())
+            .ok_or(format!("{status} {body}"))
+    })
     .await;
-    assert_eq!(status, StatusCode::OK, "{metadata}");
     assert!(metadata.contains("EntitySet"), "{metadata}");
     assert!(metadata.contains("Thing"), "{metadata}");
 }
@@ -1057,6 +1101,24 @@ fn pipeline() -> Value {
             "output": { "type": "Thing", "mode": "upsert" }
         }
     })
+}
+
+/// A client-credentials token of `client`.
+async fn client_token(jc: &Jc, client: &str, secret: &str) -> String {
+    let resp = Client::new()
+        .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+        .form(&[
+            ("grant_type", "client_credentials"),
+            ("client_id", client),
+            ("client_secret", secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or(Value::Null);
+    assert_eq!(status, StatusCode::OK, "{client}'s token: {body}");
+    body["access_token"].as_str().unwrap().to_owned()
 }
 
 /// A kaisatsu admin token of the Portal's own people client.
@@ -1194,6 +1256,30 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
             .ok_or(format!("{status} {body}"))
     })
     .await;
+    // The stream's writes pass the gateway's own table (its checkout, reloaded after each forge
+    // pass, every 10 s), not only the views above: a run that starts before that table holds the
+    // `pipelines` ServiceAccount is refused at the door and ends. Wait until the account's token
+    // passes the door with the read its Policy grants (queryBatch), which writes nothing.
+    let pipelines = client_token(&jc, &format!("{PROJECT}-pipelines"), PIPELINES_SECRET).await;
+    eventually(
+        "the gateway's own table admits the pipelines account at the closed Endpoint",
+        &jc,
+        60,
+        || async {
+            let (status, body) = call(
+                &jc,
+                reqwest::Method::POST,
+                &format!("{closed}/entityOperations/query"),
+                Some(&pipelines),
+                Some(&json!({ "type": "Query", "entities": [{ "type": "Thing" }] })),
+            )
+            .await;
+            (status == StatusCode::OK)
+                .then_some(())
+                .ok_or(format!("{status} {body}"))
+        },
+    )
+    .await;
 
     // The administrator proposes the Pipeline, a second administrator approves it.
     let mut proposer = Browser::new();
@@ -1264,9 +1350,13 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
     let started = Instant::now();
     let deadline = started + Duration::from_secs(180);
     let mut rendered = None;
+    let mut landed = None;
     let entity = loop {
-        // The stream first: it is held before it writes, so a Thing that lands between two
-        // polls never leaves the stream unseen.
+        // Both until both are seen: a run loads, writes and ends between two reads of one round
+        // (117 ms on a loaded host), and the Portal loads the run again at its next tick.
+        if let (Some(_), Some(body)) = (&rendered, &landed) {
+            break String::clone(body);
+        }
         if rendered.is_none() {
             let held = Client::new()
                 .get(jc.url(&format!("/streams/streams/{PROJECT}.feed")))
@@ -1286,8 +1376,14 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
             None,
         )
         .await;
-        if status == StatusCode::OK && body.contains("Thing:") {
-            break body;
+        if landed.is_none() && status == StatusCode::OK && body.contains("Thing:") {
+            landed = Some(body.clone());
+        }
+        if Instant::now() > deadline && landed.is_some() {
+            panic!(
+                "the Thing landed, and the runner never showed the stream within 180 s:\n{}",
+                jc.tail()
+            );
         }
         if Instant::now() > deadline {
             let pipeline = proposer
@@ -1298,24 +1394,12 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
                 .await;
             println!("the Endpoint: {}", endpoint.text);
             // What the stream's own write answers, for the reader of a failure.
-            let tok: Value = Client::new()
-                .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
-                .form(&[
-                    ("grant_type", "client_credentials"),
-                    ("client_id", &format!("{PROJECT}-pipelines")),
-                    ("client_secret", PIPELINES_SECRET),
-                ])
-                .send()
-                .await
-                .unwrap()
-                .json()
-                .await
-                .unwrap();
+            let tok = client_token(&jc, &format!("{PROJECT}-pipelines"), PIPELINES_SECRET).await;
             let (wstatus, wbody) = call(
                 &jc,
                 reqwest::Method::POST,
                 &format!("{closed}/entityOperations/upsert?options=update"),
-                tok["access_token"].as_str(),
+                Some(&tok),
                 Some(&json!([{"id": "urn:ngsi-ld:Thing:probe", "type": "Thing", "name": {"type": "Property", "value": "p"}}])),
             )
             .await;
