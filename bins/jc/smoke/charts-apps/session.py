@@ -11,6 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# The realm of the rehearsal (common.realm_of): callers pass `realm`, default jc's own.
 REALM = "jc"
 ADMIN_CLIENT = "portal-reconciler"
 PERSON = "smoke-charts-apps"
@@ -107,30 +108,30 @@ def _hidden(page: str, name: str) -> str:
     return html.unescape(v.group(1))
 
 
-def admin_token(s: Session, client_secret: str) -> str:
-    st, body = s.json("POST", f"/id/realms/{REALM}/protocol/openid-connect/token", form={
+def admin_token(s: Session, client_secret: str, realm: str = REALM) -> str:
+    st, body = s.json("POST", f"/id/realms/{realm}/protocol/openid-connect/token", form={
         "grant_type": "client_credentials", "client_id": ADMIN_CLIENT, "client_secret": client_secret})
     if st != 200 or not isinstance(body, dict) or "access_token" not in body:
         raise RuntimeError(f"{ADMIN_CLIENT} token: {st}")
     return body["access_token"]
 
 
-def make_person(s: Session, token: str, groups=("/platform-admins",)) -> str:
-    """The suite's person in realm `jc`, made or reused; a fresh random password each run."""
+def make_person(s: Session, token: str, groups=("/platform-admins",), realm: str = REALM) -> str:
+    """The suite's person in `realm`, made or reused; a fresh random password each run."""
     auth = {"Authorization": f"Bearer {token}"}
     password = secrets.token_urlsafe(18) + "-7aZ"
-    st, body = s.json("POST", f"/id/admin/realms/{REALM}/users", headers=auth, body={
+    st, body = s.json("POST", f"/id/admin/realms/{realm}/users", headers=auth, body={
         "username": PERSON, "enabled": True, "email": f"{PERSON}@smoke.invalid", "emailVerified": True,
         "firstName": "Smoke", "lastName": "Charts"})
     if st not in (201, 409):
         raise RuntimeError(f"create {PERSON}: {st} {str(body)[:200]}")
-    st, users = s.json("GET", f"/id/admin/realms/{REALM}/users?username={PERSON}&exact=true", headers=auth)
+    st, users = s.json("GET", f"/id/admin/realms/{realm}/users?username={PERSON}&exact=true", headers=auth)
     uid = users[0]["id"]
-    st, body = s.json("PUT", f"/id/admin/realms/{REALM}/users/{uid}/reset-password", headers=auth,
+    st, body = s.json("PUT", f"/id/admin/realms/{realm}/users/{uid}/reset-password", headers=auth,
                       body={"type": "password", "value": password, "temporary": False})
     if st not in (200, 204):
         raise RuntimeError(f"password of {PERSON}: {st}")
-    st, tree = s.json("GET", f"/id/admin/realms/{REALM}/groups?briefRepresentation=false", headers=auth)
+    st, tree = s.json("GET", f"/id/admin/realms/{realm}/groups?briefRepresentation=false", headers=auth)
     by_path, todo = {}, list(tree or [])
     while todo:
         g = todo.pop()
@@ -138,8 +139,8 @@ def make_person(s: Session, token: str, groups=("/platform-admins",)) -> str:
         todo += g.get("subGroups") or []
     for path in groups:
         if path not in by_path:
-            raise RuntimeError(f"group {path}: not in realm {REALM}")
-        st, _ = s.json("PUT", f"/id/admin/realms/{REALM}/users/{uid}/groups/{by_path[path]}", headers=auth)
+            raise RuntimeError(f"group {path}: not in realm {realm}")
+        st, _ = s.json("PUT", f"/id/admin/realms/{realm}/users/{uid}/groups/{by_path[path]}", headers=auth)
         if st not in (200, 204):
             raise RuntimeError(f"group {path} of {PERSON}: {st}")
     return password

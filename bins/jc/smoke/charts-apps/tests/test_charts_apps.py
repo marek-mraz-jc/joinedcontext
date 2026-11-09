@@ -84,3 +84,16 @@ def test_temporal_index_keys_short_names(tmp_path):
         {"tenant": "t", "id": "x", "type": iri + "AirQualityObserved", "attr": iri + "pm25",
          "instance": {"observedAt": "2026-11-08T01:00:00Z"}}) + "\n")
     assert inv.temporal_index(tmp_path, {"AirQualityObserved"}) == {("t", "AirQualityObserved", "pm25"): ["2026-11-08T01:00:00Z"]}
+
+
+def test_the_session_helpers_call_the_realm_they_are_given(monkeypatch):
+    import pytest
+    import session
+    seen = []
+    monkeypatch.setattr(session.Session, "json", lambda self, m, path, *a, **k: seen.append(path) or (401, None))
+    s = session.Session("http://127.0.0.1:9")
+    with pytest.raises(RuntimeError, match="401"):
+        session.admin_token(s, "x", "smartcity")
+    with pytest.raises(RuntimeError, match="401"):
+        session.make_person(s, "t", realm="smartcity")
+    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token", "/id/admin/realms/smartcity/users"]

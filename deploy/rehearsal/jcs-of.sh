@@ -6,7 +6,8 @@ set -u
 want=${1:?jc.toml}
 for d in /proc/[0-9]*; do
   [ "${d#/proc/}" = "$$" ] && continue
-  args=$(tr '\0' '\n' < "$d/cmdline" 2>/dev/null) || continue
+  # A process may exit between the glob and the read: the redirect then fails, silently.
+  args=$( { tr '\0' '\n' < "$d/cmdline"; } 2>/dev/null) || continue
   if printf '%s\n' "$args" | grep -qxF -- "--config" && printf '%s\n' "$args" | grep -A1 -xF -- "--config" | tail -1 | grep -qxF -- "$want"; then
     echo "${d#/proc/}"
   fi

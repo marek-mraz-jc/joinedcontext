@@ -78,6 +78,7 @@ pub fn work_dir(setup: &Setup) -> PathBuf {
 /// |---|---|
 /// | `JC_GATEWAY_BROKER_URL` | Antares' hop |
 /// | `JC_GATEWAY_ORG_DOMAIN`, `JC_GATEWAY_PUBLIC_URL`, `JC_GATEWAY_PREVIEWS_DIR` | the mounts, the state dir |
+/// | `JC_GATEWAY_ASSISTANT_URL` | the assistant's internal listener |
 /// | `JC_GATEWAY_OAUTH_KEY` | the generated `gateway-oauth-key` |
 /// | `JC_OIDC_ISSUER`, `_JWKS_URL`, `_CLIENT_ID`, `_CLIENT_SECRET`, `JC_GATEWAY_REVOCATIONS_URL`, `_CONNECTORS_URL`, `_USAGE_URL` | kaisatsu and the Portal |
 /// | `JC_GATEWAY_REPO_DIR`, `_PROJECTS_DIR`, `_ASSEMBLY_DIR` | shako, checked out by [`follow_forge`] |
@@ -123,6 +124,12 @@ pub fn vars(
     )]);
     group(vec![("JC_GATEWAY_PUBLIC_URL", Some(mount.public_base()))]);
     group(vec![("JC_GATEWAY_PREVIEWS_DIR", path("previews"))]);
+    // `search_documents` asks the assistant's internal listener (EP-133); without an assistant
+    // the gateway offers the tool nowhere.
+    group(vec![(
+        "JC_GATEWAY_ASSISTANT_URL",
+        siblings.get(Module::Assistant).map(|a| a.internal.clone()),
+    )]);
     if !wire {
         return out;
     }
@@ -522,8 +529,12 @@ pub fn sync_forge(
     std::fs::create_dir_all(&current).map_err(|e| e.to_string())?;
     let next = current.join(".current.next");
     let _ = std::fs::remove_file(&next);
+    // Relative to `repo/`, so a state dir restored at another path still reads its tree.
+    let target = tree
+        .strip_prefix(work)
+        .map_or_else(|_| tree.clone(), |inside| Path::new("..").join(inside));
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&tree, &next).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(&target, &next).map_err(|e| e.to_string())?;
     std::fs::rename(&next, current.join("current")).map_err(|e| e.to_string())?;
     resolver.prune("org", &tree);
     let layout = std::fs::read_to_string(tree.join(".jc/layout")).unwrap_or_default();
@@ -950,6 +961,23 @@ mod tests {
     }
 
     #[test]
+    fn search_documents_asks_the_assistants_internal_listener_unless_the_operator_names_one() {
+        let (mut siblings, setup, mount, _d) = fixture();
+        let none = |_: &str| None;
+        siblings.set_internal(Module::Assistant, "127.0.0.1:40124".parse().unwrap());
+        let v = vars(&siblings, &setup, false, &mount, None, None, none);
+        assert_eq!(v["JC_GATEWAY_ASSISTANT_URL"], "http://127.0.0.1:40124");
+        let own =
+            |k: &str| (k == "JC_GATEWAY_ASSISTANT_URL").then(|| "http://a.example".to_owned());
+        let v = vars(&siblings, &setup, true, &mount, None, None, own);
+        assert!(!v.contains_key("JC_GATEWAY_ASSISTANT_URL"));
+        // The assistant off: no address, so the gateway offers `search_documents` nowhere.
+        siblings.remove(Module::Assistant);
+        let v = vars(&siblings, &setup, true, &mount, None, None, none);
+        assert!(!v.contains_key("JC_GATEWAY_ASSISTANT_URL"));
+    }
+
+    #[test]
     fn the_siblings_fill_the_realm_the_forge_and_the_hop_and_an_explicit_key_wins() {
         let (siblings, setup, mount, _d) = fixture();
         let hop = Hop {
@@ -1012,6 +1040,7 @@ mod tests {
         assert_eq!(
             bare.keys().map(String::as_str).collect::<Vec<_>>(),
             [
+                "JC_GATEWAY_ASSISTANT_URL",
                 "JC_GATEWAY_BROKER_URL",
                 "JC_GATEWAY_ORG_DOMAIN",
                 "JC_GATEWAY_PREVIEWS_DIR",
@@ -1235,6 +1264,13 @@ mod tests {
                 .ends_with(format!("p.tree-{TAGGED}"))
         );
         assert!(!work.path().join("projects/x").exists());
+        // A state dir moved elsewhere (a restore on another volume) still reads its tree.
+        let moved = tempfile::tempdir().unwrap();
+        let to = moved.path().join("gateway");
+        std::fs::rename(work.path(), &to).unwrap();
+        assert!(to.join("repo/current/projects/p.yaml").is_file());
+        assert!(to.join("projects/p/project.yaml").is_file());
+        std::fs::rename(&to, work.path()).unwrap();
     }
 
     #[test]

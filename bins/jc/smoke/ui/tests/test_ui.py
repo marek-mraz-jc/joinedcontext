@@ -107,3 +107,58 @@ def test_the_judge_passes_only_scores_of_four_and_up_without_a_high_finding(tmp_
     suite.fold_judge(res, shots, str(tmp_path / "j.json"))
     got = {r["id"].rsplit("/", 1)[1]: r["result"] for r in res.rows}
     assert got == {"a": "pass", "b": "fail", "c": "fail", "d": "skip"}
+
+
+def test_the_persona_admin_calls_the_realm_it_is_given():
+    import personas
+
+    class H:
+        seen = []
+
+        def call(self, m, path, *a, **k):
+            self.seen.append(path)
+            return 200, {}, b"[]"
+
+    h = H()
+    personas.Admin(h, "t", "smartcity").groups()
+    assert h.seen == ["/id/admin/realms/smartcity/groups?briefRepresentation=false&max=1000"]
+
+
+def test_a_page_whose_only_finding_is_the_assistants_5xx_is_a_kept_component_skip(tmp_path):
+    assert suite.kept_component("http-5xx: 503 GET /api/v1/projects/bbsk/knowledge/sources")
+    assert suite.kept_component("http-5xx: 503 GET /api/v1/projects/bbsk/knowledge?x=1")
+    assert not suite.kept_component("http-5xx: 503 POST /api/v1/projects/bbsk/endpoints/a/preview")
+    assert not suite.kept_component("http: 404 GET /api/v1/projects/bbsk/knowledge/sources")
+
+    class Loc:
+        first = property(lambda self: self)
+        def wait_for(self, timeout=0): pass
+
+    class Page:
+        def __init__(self, extra):
+            self.extra = extra
+        def goto(self, url, **k):
+            w.current += ["http-5xx: 503 GET /api/v1/projects/bbsk/knowledge/sources"] + self.extra
+            return type("R", (), {"status": 200})()
+        def wait_for_load_state(self, *a, **k): pass
+        def locator(self, *a): return Loc()
+        def set_viewport_size(self, *a): pass
+        def wait_for_timeout(self, *a): pass
+
+    def rows(extra):
+        global w
+        res = Results("ui", "http://x")
+        w = object.__new__(suite.Walker)
+        w.a = type("A", (), {"widths": [1440]})()
+        w.res, w.out, w.shots, w.current, w.allow, w.base = res, tmp_path, [], [], [], "http://x"
+        w.dom = lambda page, **k: []
+        w.h1 = lambda page: "Knowledge"
+        w.screenshot = lambda page, who, width, address: tmp_path / "s.png"
+        suite.Walker.judge(w, Page(extra), "admin", "portal", "/projects/$p/knowledge",
+                           "/projects/bbsk/knowledge", portal=False, viewer=False)
+        return res.rows
+    only = rows([])
+    assert [r["result"] for r in only] == ["skip"] and only[0]["reason"].startswith("kept component: assistant")
+    # Any other finding on the page keeps the row a fail, naming only that finding.
+    mixed = rows(["console: boom"])
+    assert [r["result"] for r in mixed] == ["fail"] and "knowledge" not in mixed[0]["actual"]

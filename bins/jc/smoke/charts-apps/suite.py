@@ -43,7 +43,7 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE.parent / "endpoints"))
 
 import export as ex
-from common import FAIL, PASS, SKIP, Results, loopback_only, read_token
+from common import FAIL, PASS, SKIP, Results, loopback_only, read_token, realm_of
 
 import inventory as inv
 from session import HOLDER, TESTER, Realm, Session, admin_token, app_token, make_person, sign_in
@@ -166,14 +166,15 @@ def main(argv=None) -> int:
 
     # ---- the person and the Portal session
     signed = False
+    realm = realm_of(a.state)
     try:
-        tok = read_token(a.admin_token_file) or (admin_token(s, secret("portal-admin-client-secret"))
+        tok = read_token(a.admin_token_file) or (admin_token(s, secret("portal-admin-client-secret"), realm)
                                                   if secret("portal-admin-client-secret") else None)
         if not tok:
             res.skip("session", "portal", "sign in", "a signed-in platform admin",
                      "no --admin-token-file and no portal-admin-client-secret in --state")
         else:
-            ok, detail = sign_in(s, make_person(s, tok))
+            ok, detail = sign_in(s, make_person(s, tok, realm=realm))
             res.check("session", "portal", "GET /api/v1/auth/login (code flow)", "signed in", detail, ok)
             signed = ok
     except RuntimeError as e:
@@ -302,7 +303,7 @@ def main(argv=None) -> int:
         shako = secret("shako-token")
         sauth = {"Authorization": f"token {shako}"} if shako else None
         named = {x.git for x in apps}
-        realm = Realm(state)
+        app_realm = Realm(state)
         counts.update(apps=len(apps), appRepos=len(repos))
         for r in repos:
             full = f"{r['owner']}/{r['name']}"
@@ -353,8 +354,8 @@ def main(argv=None) -> int:
             token = None
             if app.visibility != "public":
                 try:
-                    refused = app_token(a.base_url, realm, f"app-{app.name}", TESTER, a.timeout)
-                    token = app_token(a.base_url, realm, f"app-{app.name}", HOLDER, a.timeout)
+                    refused = app_token(a.base_url, app_realm, f"app-{app.name}", TESTER, a.timeout)
+                    token = app_token(a.base_url, app_realm, f"app-{app.name}", HOLDER, a.timeout)
                 except RuntimeError as e:
                     res.check("app.served", tgt, call, "a person's token of the App's client", str(e)[:200], False)
                     continue
@@ -380,7 +381,7 @@ def main(argv=None) -> int:
                 from shots import Browser
                 browser = Browser(a.base_url, s.jar)
             if token:  # a fresh one: the App's tokens live 60 s
-                token = app_token(a.base_url, realm, f"app-{app.name}", HOLDER, a.timeout)
+                token = app_token(a.base_url, app_realm, f"app-{app.name}", HOLDER, a.timeout)
             for row in browser.app(f"/apps/{urllib.parse.quote(app.name)}/", app.name, shots_dir, token):
                 ok = row.get("status") == 200 and row.get("dataCount", 0) > 0 and not row.get("bad") and not row.get("error")
                 res.check(f"app.page.{row['width']}", tgt, f"browser {row['url']} at {row['width']} px",

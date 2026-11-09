@@ -3,7 +3,9 @@
     python3 -m pytest bins/jc/smoke/multiorg/tests -q
 """
 
+import argparse
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -59,3 +61,24 @@ def test_an_address_off_this_jc_is_refused_and_never_sent(monkeypatch):
     http = suite.HostHttp("http://127.0.0.1:42301", "portal.hel.localhost:42301", ["portal.hel.localhost:42301"])
     with pytest.raises(RuntimeError, match="not a host of this jc"):
         http.call("GET", "https://dev.joinedcontext.com/api/v1/me")
+
+
+def args(tmp_path, state=None):
+    exp = tmp_path / "export"
+    exp.mkdir()
+    (exp / "manifest.json").write_text(json.dumps({"installation": "prod"}))
+    return argparse.Namespace(base_url="http://127.0.0.1:9", state=state, export=str(exp), jc_config=None)
+
+
+def test_an_export_without_a_multiorg_block_is_one_named_skip(tmp_path):
+    s = suite.Suite(args(tmp_path))
+    s.run()
+    assert [(r["id"], r["result"]) for r in s.rows] == [("setup", "skip")]
+    assert s.rows[0]["reason"].startswith("not applicable: the export is one installation")
+
+
+def test_the_suite_takes_the_state_realm(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "realm-name.txt").write_text("smartcity")
+    assert suite.Suite(args(tmp_path, str(state))).realm == "smartcity"

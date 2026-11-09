@@ -8,9 +8,10 @@
 
 use crate::pdp::evaluator::Constraints;
 use crate::pdp::geo::{entity_point, granted_polygon};
-use crate::pdp::projection::ungranted;
+use crate::pdp::projection::{model_type_iris, type_iri, ungranted};
 use jc_core::{ProblemDetails, Urn};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 /// Why a write was refused (GW16, GW17).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -68,13 +69,24 @@ const POLICY_VOCABULARY: &[&str] = &[
     "policy",
 ];
 
-/// Checks one write payload against the constraint set (GW16, GW17, GW19).
+/// Checks one write payload against the constraint set (GW16, GW17, GW19), reading its type
+/// under the NGSI-LD core context alone: [`check_in`] with no model.
+pub fn check(entity: &Value, constraints: &Constraints) -> Result<(), Refusal> {
+    check_in(entity, constraints, &[])
+}
+
+/// Checks one write payload against the constraint set (GW16, GW17, GW19). `contexts` are the
+/// Endpoint's models' own `@context`s, which with the core context read an expanded type.
 ///
 /// The payload must be a single NGSI-LD entity; a batch is checked per entity by the
 /// caller, so a mixed outcome can answer 207 (GW18).
-pub fn check(entity: &Value, constraints: &Constraints) -> Result<(), Refusal> {
+pub fn check_in(
+    entity: &Value,
+    constraints: &Constraints,
+    contexts: &[&Value],
+) -> Result<(), Refusal> {
     check_no_smuggled_policy(entity)?;
-    check_id(entity)?;
+    check_id(entity, contexts)?;
     check_type(entity, constraints)?;
     if let Some(raw) = entity_id(entity) {
         check_granted_id(raw, constraints)?;
@@ -134,20 +146,42 @@ pub fn check_fragment(fragment: &Value, constraints: &Constraints) -> Result<(),
     check_location(fragment, constraints)
 }
 
-/// Checks one entity identifier (PF-43): an NGSI-LD URN, and of the type the payload states.
+/// Checks one entity identifier (PF-43) under the NGSI-LD core context alone:
+/// [`check_identifier_in`] with no model.
+pub fn check_identifier(raw: &str, declared_type: Option<&str>) -> Result<(), Refusal> {
+    check_identifier_in(raw, declared_type, &[])
+}
+
+/// Checks one entity identifier (PF-43): an NGSI-LD URN, and of the type the payload states,
+/// by its short name or the IRI the core context or one of `contexts` expands the URN's type to.
 ///
 /// Nothing else of the URN is read (ADR-N-041, PF-42): the space the write lands in is the one
 /// the path or the Endpoint resolved, and the Policy of that space decides it, so a URN naming
 /// another organization or space reaches nothing it names. `declared_type` is the `type` the
 /// payload states, when it states one.
-pub fn check_identifier(raw: &str, declared_type: Option<&str>) -> Result<(), Refusal> {
+pub fn check_identifier_in(
+    raw: &str,
+    declared_type: Option<&str>,
+    contexts: &[&Value],
+) -> Result<(), Refusal> {
     let urn: Urn = raw
         .parse()
         .map_err(|_| Refusal::MalformedId(raw.to_owned()))?;
-    if declared_type.is_some_and(|declared| declared != urn.entity_type()) {
+    if declared_type.is_some_and(|declared| !names_type(declared, urn.entity_type(), contexts)) {
         return Err(Refusal::MalformedId(raw.to_owned()));
     }
     Ok(())
+}
+
+/// Whether a payload's `declared` type names the type `name`: the name itself, or the IRI the
+/// NGSI-LD core context or an Endpoint model's `@context` expands it to (F3). The request's own
+/// `@context` never counts: the gateway refuses it before the broker reads it (T-3287), and a
+/// remote context is never fetched.
+fn names_type(declared: &str, name: &str, contexts: &[&Value]) -> bool {
+    declared == name
+        || type_iri(name).as_deref() == Some(declared)
+        || model_type_iris(&BTreeSet::from([name.to_owned()]), contexts.iter().copied())
+            .contains(declared)
 }
 
 /// GW16: "may edit only data in location X" is a statement about the entity's own
@@ -190,9 +224,9 @@ fn check_location(entity: &Value, constraints: &Constraints) -> Result<(), Refus
 }
 
 /// The id the payload carries must be an NGSI-LD URN of its type (PF-43).
-fn check_id(entity: &Value) -> Result<(), Refusal> {
+fn check_id(entity: &Value, contexts: &[&Value]) -> Result<(), Refusal> {
     let raw = entity_id(entity).ok_or_else(|| Refusal::MalformedId(String::new()))?;
-    check_identifier(raw, entity.get("type").and_then(Value::as_str))
+    check_identifier_in(raw, entity.get("type").and_then(Value::as_str), contexts)
 }
 
 fn check_type(entity: &Value, constraints: &Constraints) -> Result<(), Refusal> {
@@ -204,7 +238,15 @@ fn check_type(entity: &Value, constraints: &Constraints) -> Result<(), Refusal> 
         .and_then(Value::as_str)
         .ok_or_else(|| Refusal::TypeOutsideGrant(String::new()))?;
 
-    if constraints.types.contains(declared) {
+    // A granted name, or the IRI the core context or the space's models give one: the
+    // decision point read `type_iris` from the Endpoint's own models, never the request (F3).
+    let granted = constraints.types.contains(declared)
+        || constraints.type_iris.contains(declared)
+        || constraints
+            .types
+            .iter()
+            .any(|name| type_iri(name).as_deref() == Some(declared));
+    if granted {
         Ok(())
     } else {
         Err(Refusal::TypeOutsideGrant(declared.to_owned()))
@@ -282,4 +324,105 @@ fn covers(granted: &str, scope: &str) -> bool {
         || scope
             .strip_prefix(granted)
             .is_some_and(|rest| rest.starts_with('/'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const ID: &str = "urn:ngsi-ld:AirQualityObserved:station-01";
+    const MODEL_IRI: &str = "https://smartdatamodels.org/dataModel.Environment/AirQualityObserved";
+    const CORE_IRI: &str = "https://uri.etsi.org/ngsi-ld/default-context/AirQualityObserved";
+
+    /// The space's model, as the Endpoint carries it.
+    fn model() -> Value {
+        json!({"@context": {"AirQualityObserved": MODEL_IRI}})
+    }
+
+    /// A grant of the short name, with the model's reading the decision point adds to it.
+    fn grant() -> Constraints {
+        let types: BTreeSet<String> = ["AirQualityObserved".to_owned()].into();
+        let model = model();
+        Constraints {
+            type_iris: crate::pdp::projection::model_type_iris(&types, [&model].into_iter()),
+            types,
+            ..Constraints::default()
+        }
+    }
+
+    fn entity(id: &str, kind: &str) -> Value {
+        json!({"id": id, "type": kind})
+    }
+
+    /// F3: a type written as the IRI the server's core context or the Endpoint's model gives the
+    /// granted short name passes the URN check and the grant, as the short name does.
+    #[test]
+    fn an_expanded_type_equal_to_a_granted_type_passes_both_checks() {
+        let model = model();
+        for kind in ["AirQualityObserved", MODEL_IRI, CORE_IRI] {
+            check_in(&entity(ID, kind), &grant(), &[&model])
+                .unwrap_or_else(|refusal| panic!("{kind}: {refusal}"));
+        }
+        // The core reading needs no model.
+        check(&entity(ID, CORE_IRI), &grant()).expect("the core context's IRI");
+        check_identifier(ID, Some(CORE_IRI)).expect("the core context's IRI");
+    }
+
+    /// F3: a type other than the URN's is refused whether it is written short or expanded, and
+    /// a type outside the grant stays outside it in either form.
+    #[test]
+    fn a_mismatched_type_is_refused_short_and_expanded() {
+        let model = model();
+        for kind in [
+            "WeatherObserved",
+            "https://smartdatamodels.org/dataModel.Weather/WeatherObserved",
+            "https://uri.etsi.org/ngsi-ld/default-context/WeatherObserved",
+            "https://smartdatamodels.org/dataModel.Environment/AirQualityObservedX",
+        ] {
+            assert!(
+                matches!(
+                    check_in(&entity(ID, kind), &grant(), &[&model]),
+                    Err(Refusal::MalformedId(_))
+                ),
+                "{kind}"
+            );
+        }
+        let other = "urn:ngsi-ld:WeatherObserved:station-01";
+        for kind in [
+            "WeatherObserved",
+            "https://uri.etsi.org/ngsi-ld/default-context/WeatherObserved",
+        ] {
+            assert!(
+                matches!(
+                    check_in(&entity(other, kind), &grant(), &[&model]),
+                    Err(Refusal::TypeOutsideGrant(_))
+                ),
+                "{kind}"
+            );
+        }
+    }
+
+    /// F3: only the server's and the Endpoint's own contexts expand a name. A request that maps
+    /// the granted short name to another IRI gains nothing: that IRI is neither the URN's type
+    /// nor a granted one, and the request's context itself never reaches the broker.
+    #[test]
+    fn a_request_context_never_widens_the_grant() {
+        let model = model();
+        let mut write = entity("urn:ngsi-ld:AirQualityObserved:x", "https://x/B");
+        write["@context"] = json!({"AirQualityObserved": "https://x/B"});
+        assert!(matches!(
+            check_in(&write, &grant(), &[&model]),
+            Err(Refusal::MalformedId(_))
+        ));
+        let mut write = entity("urn:ngsi-ld:B:x", "https://x/B");
+        write["@context"] = json!({"AirQualityObserved": "https://x/B"});
+        assert!(check_in(&write, &grant(), &[&model]).is_err());
+        assert!(matches!(
+            check_type(&write, &grant()),
+            Err(Refusal::TypeOutsideGrant(_))
+        ));
+        let body = serde_json::to_vec(&write).expect("json");
+        assert!(crate::context_guard::check_body(&body).is_err());
+    }
 }

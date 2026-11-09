@@ -83,10 +83,15 @@ impl Filter {
     }
 
     /// Whether a change of these attributes is one this filter notifies: any change when it
-    /// watches nothing, else a change of a watched attribute (5.2.12 `watchedAttributes`).
-    fn fires_on(&self, changed: &BTreeSet<String>) -> bool {
-        !changed.is_empty()
-            && (self.watched.is_empty() || self.watched.iter().any(|a| changed.contains(a)))
+    /// watches nothing, else a change of a watched attribute (5.2.12 `watchedAttributes`). An
+    /// entity the broker says it `created` notifies a filter that watches nothing even with no
+    /// attribute, as the broker's own `entityCreated` does; a filter watching attributes waits
+    /// for one of them.
+    fn fires_on(&self, changed: &BTreeSet<String>, created: bool) -> bool {
+        match self.watched.is_empty() {
+            true => created || !changed.is_empty(),
+            false => self.watched.iter().any(|a| changed.contains(a)),
+        }
     }
 }
 
@@ -561,11 +566,11 @@ impl Index {
         &self,
         id: FilterId,
         doc: &Value,
-        changed: &BTreeSet<String>,
+        (changed, created): (&BTreeSet<String>, bool),
         ctx: &Context,
     ) -> bool {
         self.filters.get(&id).is_some_and(|filter| {
-            filter.fires_on(changed)
+            filter.fires_on(changed, created)
                 && antares_matcher::would_notify(&filter.sub, doc, ctx, &|_| None)
         })
     }
@@ -643,6 +648,15 @@ fn entity_cells(doc: &Value) -> Option<Vec<(i32, i32)>> {
     Some(out)
 }
 
+/// Whether the broker's notification is of the entity's creation: the hub's upstream asks
+/// `sysAttrs`, and a write that creates an entity stamps its `createdAt` and `modifiedAt` with one
+/// instant (CIM 009 4.8), which every later write moves on. The hub's table cannot say it: it is
+/// bounded, evicts, and empties with its last filter, so first seen is not created (F2).
+pub fn created(entity: &Value) -> bool {
+    let stamp = |name: &str| entity.get(name).and_then(Value::as_str);
+    stamp("createdAt").is_some_and(|at| stamp("modifiedAt") == Some(at))
+}
+
 /// The attributes whose instances differ between the two states, the system members aside; every
 /// attribute of an entity seen for the first time.
 pub fn changed(previous: Option<&Value>, doc: &Value) -> BTreeSet<String> {
@@ -687,12 +701,13 @@ mod tests {
         /// (any, when it watches none) differs from the previous state.
         fn notified(&self, doc: &Value, previous: Option<&Value>, ctx: &Context) -> Vec<FilterId> {
             let changed = changed(previous, doc);
-            if changed.is_empty() {
+            let created = created(doc);
+            if changed.is_empty() && !created {
                 return Vec::new();
             }
             self.candidates(doc, ctx)
                 .into_iter()
-                .filter(|id| self.decides(*id, doc, &changed, ctx))
+                .filter(|id| self.decides(*id, doc, (&changed, created), ctx))
                 .collect()
         }
 
@@ -700,11 +715,12 @@ mod tests {
         /// kept as the ground truth the index is tested against.
         fn scanned(&self, doc: &Value, previous: Option<&Value>, ctx: &Context) -> Vec<FilterId> {
             let changed = changed(previous, doc);
+            let created = created(doc);
             let mut ids: Vec<FilterId> = self
                 .filters
                 .keys()
                 .copied()
-                .filter(|id| self.decides(*id, doc, &changed, ctx))
+                .filter(|id| self.decides(*id, doc, (&changed, created), ctx))
                 .collect();
             ids.sort_unstable();
             ids

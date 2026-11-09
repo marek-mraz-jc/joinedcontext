@@ -10,7 +10,7 @@
 #   EVENT=push BEFORE=<sha> sh changes.sh      # in ci.yml
 #   sh changes.sh --selftest
 set -eu
-JOBS="root antares ekiben portal ui supply workflows image dockerfiles"
+JOBS="root antares ekiben portal ui supply workflows image dockerfiles platform"
 
 # map: changed paths on stdin -> the job lines
 map() {
@@ -25,6 +25,10 @@ map() {
     # the App bundles both images ship in /srv/apps: their lists must stay equal
     /^bins\/jc\/Dockerfile$/ || /^crates\/portal\/Dockerfile$/ || /^crates\/portal\/apps\// || /^crates\/portal\/scripts\/(app-integrity\.mjs|ci\/check-dockerfile-members\.py)$/ { on["dockerfiles"] = "true" }
     /(^|\/)Cargo\.lock$/ || /(^|\/)deny\.toml$/ || /(^|\/)\.cargo\/audit\.toml$/ { on["supply"] = "true" }
+    # the vendored platform crates (platform-test), the assistant aside (a root member), and the
+    # root lockfile and manifest its lockfile repeats
+    /^vendor\/joinedcontext-platform\// && !/^vendor\/joinedcontext-platform\/crates\/assistant\// { on["platform"] = "true" }
+    /^Cargo\.(lock|toml)$/ { on["platform"] = "true" }
     /^crates\/antares\// { on["antares"] = "true" }
     /^crates\/ekiben\// { on["ekiben"] = "true" }
     /^crates\/portal\/(ui|sdk)\// { on["ui"] = "true" }
@@ -46,8 +50,11 @@ covered() {
   awk -v done="${TMPDIR:-/tmp}/ci-done.$$" '
     BEGIN {
       while ((getline l < done) > 0) ok[l] = 1
-      jobs["root"] = "root-clippy root-test"; jobs["antares"] = "antares-clippy antares-test"
-      jobs["ekiben"] = "ekiben"; jobs["portal"] = "portal-clippy portal-test"; jobs["ui"] = "ui"
+      # every job of a key, each test partition of ci.yml (matrix part) by its name
+      jobs["root"] = "root-clippy root-test-1 root-test-2 root-test-3"
+      jobs["antares"] = "antares-clippy antares-test-1 antares-test-2 antares-test-3"
+      jobs["platform"] = "platform-test"
+      jobs["ekiben"] = "ekiben"; jobs["portal"] = "portal-clippy portal-test-1 portal-test-2"; jobs["ui"] = "ui ui-test-1 ui-test-2 ui-test-3 ui-test-4"
     }
     {
       split($0, kv, "=")
@@ -85,13 +92,15 @@ if [ "${1:-}" = --selftest ]; then
   check 'crates/portal/apps/bbsk-mapa/ui/src/App.tsx' 'root portal dockerfiles'
   check 'crates/portal/Dockerfile' 'root portal dockerfiles'
   check 'vendor/ngsild/x.rs' 'root portal'
+  check 'vendor/joinedcontext-platform/crates/context-gateway/src/lib.rs' 'root portal platform'
+  check 'vendor/joinedcontext-platform/crates/assistant/src/lib.rs' 'root portal'
   check 'bins/jc/Dockerfile' 'root image dockerfiles'
-  check 'Cargo.lock' 'root supply'
+  check 'Cargo.lock' 'root supply platform'
   check '.github/workflows/image.yml' 'workflows'
   check '.github/scripts/changes.sh' "$JOBS"
   [ "$(printf 'root=false\nui=true\nimage=false\n' | ship)" = ship=true ] || { echo "FAIL: ship ui"; exit 1; }
   [ "$(printf 'root=false\nui=false\nimage=false\n' | ship)" = ship=false ] || { echo "FAIL: ship docs"; exit 1; }
-  [ "$(printf 'root=true\nportal=true\nsupply=true\n' | covered 'root-clippy\nroot-test\nportal-clippy')" = "$(printf 'root=false\nportal=true\nsupply=true')" ] \
+  [ "$(printf 'root=true\nportal=true\nsupply=true\n' | covered 'root-clippy\nroot-test-1\nroot-test-2\nroot-test-3\nportal-clippy\nportal-test-1')" = "$(printf 'root=false\nportal=true\nsupply=true')" ] \
     || { echo "FAIL: covered"; exit 1; }
   echo "changes.sh selftest ok"
   exit 0

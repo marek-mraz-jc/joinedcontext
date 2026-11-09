@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # deploy/rehearsal/apps.sh: the rehearsal's Apps, sourced by up.sh right before jc starts
 # (up.sh's variables: here, home, port, bind, export_dir, secret(); owner of this file: jc-apps-export).
 #

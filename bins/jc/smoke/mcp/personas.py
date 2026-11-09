@@ -24,9 +24,7 @@ from pathlib import Path
 
 import yaml
 
-from common import Http
-
-REALM = "jc"
+from common import Http, realm_of
 ADMIN_CLIENT = "portal-reconciler"
 MCP_CLIENT = "mcp-local"
 REDIRECT = "http://localhost/callback"
@@ -132,6 +130,7 @@ class Person:
 class Fixture:
     def __init__(self, base: str, state: Path, config_repo: str, log=print):
         self.base, self.state, self.log = base, state, log
+        self.realm = realm_of(state)
         self.owner, self.repo = config_repo.split("/", 1)
         self.http = Http(base)
         self.people: dict[str, Person] = {}
@@ -146,7 +145,7 @@ class Fixture:
     def admin_token(self) -> str:
         form = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": ADMIN_CLIENT,
                                        "client_secret": self._secret("portal-admin-client-secret")}).encode()
-        st, _, raw = self.http.call("POST", f"/id/realms/{REALM}/protocol/openid-connect/token",
+        st, _, raw = self.http.call("POST", f"/id/realms/{self.realm}/protocol/openid-connect/token",
                                     headers={"Content-Type": "application/x-www-form-urlencoded"}, body=form)
         if st != 200:
             raise RuntimeError(f"{ADMIN_CLIENT} token: {st}")
@@ -156,15 +155,15 @@ class Fixture:
 
     def make_person(self, p: Person, admin: str) -> None:
         p.password = secrets.token_urlsafe(18) + "-7aZ"
-        st, _, raw = self.http.call("POST", f"/id/admin/realms/{REALM}/users", token=admin, body={
+        st, _, raw = self.http.call("POST", f"/id/admin/realms/{self.realm}/users", token=admin, body={
             "username": p.username, "enabled": True, "email": f"{p.username}@rehearsal.invalid",
             "emailVerified": True, "firstName": "Smoke", "lastName": p.key})
         if st not in (201, 409):
             raise RuntimeError(f"create {p.username}: {st} {raw[:160]!r}")
-        st, _, raw = self.http.call("GET", f"/id/admin/realms/{REALM}/users?username={p.username}&exact=true",
+        st, _, raw = self.http.call("GET", f"/id/admin/realms/{self.realm}/users?username={p.username}&exact=true",
                                     token=admin)
         p.uid = json.loads(raw)[0]["id"]
-        st, _, raw = self.http.call("PUT", f"/id/admin/realms/{REALM}/users/{p.uid}/reset-password", token=admin,
+        st, _, raw = self.http.call("PUT", f"/id/admin/realms/{self.realm}/users/{p.uid}/reset-password", token=admin,
                                     body={"type": "password", "value": p.password, "temporary": False})
         if st not in (200, 204):
             raise RuntimeError(f"password of {p.username}: {st}")
@@ -178,7 +177,7 @@ class Fixture:
         q = urllib.parse.urlencode({"client_id": MCP_CLIENT, "redirect_uri": REDIRECT, "response_type": "code",
                                     "scope": f"openid {scope}", "state": "smoke", "code_challenge": challenge,
                                     "code_challenge_method": "S256"})
-        url, st, page = _follow(b, f"/id/realms/{REALM}/protocol/openid-connect/auth?{q}", stop=REDIRECT)
+        url, st, page = _follow(b, f"/id/realms/{self.realm}/protocol/openid-connect/auth?{q}", stop=REDIRECT)
         if st != 200:
             raise RuntimeError(f"authorize for {p.username}: {st} {page[:160]!r}")
         loc = _login(b, url, page, p.username, p.password)
@@ -188,7 +187,7 @@ class Fixture:
         code = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query).get("code", [""])[0]
         form = urllib.parse.urlencode({"grant_type": "authorization_code", "client_id": MCP_CLIENT, "code": code,
                                        "redirect_uri": REDIRECT, "code_verifier": verifier}).encode()
-        st, _, raw = self.http.call("POST", f"/id/realms/{REALM}/protocol/openid-connect/token",
+        st, _, raw = self.http.call("POST", f"/id/realms/{self.realm}/protocol/openid-connect/token",
                                     headers={"Content-Type": "application/x-www-form-urlencoded"}, body=form)
         if st != 200:
             raise RuntimeError(f"token for {p.username} ({scope}): {st} {raw[:200]!r}")
@@ -298,7 +297,7 @@ class Fixture:
             admin = self.admin_token()
             for p in self.people.values():
                 if p.uid:
-                    self.http.call("DELETE", f"/id/admin/realms/{REALM}/users/{p.uid}", token=admin)
+                    self.http.call("DELETE", f"/id/admin/realms/{self.realm}/users/{p.uid}", token=admin)
         except Exception as e:  # noqa: BLE001
             problems.append(f"people: {e}")
         return problems

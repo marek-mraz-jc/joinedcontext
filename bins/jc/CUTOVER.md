@@ -266,6 +266,15 @@ the prod soak, once the backup of section 6 exists.
    Gitea repositories.
 5. `jc-identity` route: jc stops no longer on a failed discovery read (jc-rest item 1), so this
    route is optional in host mode. Keep it: the Portal is ready sooner.
+6. jc's environment carries the Portal's two workload namespaces, as the old Portal's does
+   (`components/portal/values/portal/base-values.yaml.gotmpl`):
+   - `JC_PORTAL_PIPELINE_NAMESPACE`: `pipeline-runner.identities.pipelineNamespace`
+     (prod `smartcity-pipeline-identities`);
+   - `JC_PORTAL_APP_IDENTITY_NAMESPACE`: `wasm-host.identities.appNamespace`
+     (prod `smartcity-app-identities`).
+
+   Without them the Portal keeps every imported `pl-`/`appjob-` client, including one whose
+   Pipeline or App is gone, and warns once at start (`workload_clients.rs` `derives`).
 
 ## 7. Backup that must exist before prod
 
