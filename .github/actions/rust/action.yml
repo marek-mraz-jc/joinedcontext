@@ -3,8 +3,8 @@ description: >-
   The toolchain, the target cache and sccache for one Cargo workspace of this repository. The
   target cache (Swatinem/rust-cache: every dependency, build scripts already run) and sccache
   (GitHub Actions cache backend: the workspace's own crates, which rust-cache drops) are written
-  only by main and ship-proof/** pushes and read by every run, so a branch starts warm from main
-  and never evicts main's entries.
+  only by pushes to jc-portal-1 (the default branch: every branch reads its caches), main and
+  ship-proof/**, and read by every run, so a branch starts warm and never evicts those entries.
 inputs:
   workspace: { description: "workspace directory, relative to the repository root", default: "." }
   key: { description: "cache key of this job's build (one per build kind: clippy, test, release)", required: true }
@@ -23,17 +23,17 @@ runs:
         shared-key: ${{ inputs.key }}
         # A red test leaves the compiled dependencies as good as a green one.
         cache-on-failure: true
-        save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ship-proof/') }}
+        save-if: ${{ github.ref == 'refs/heads/jc-portal-1' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ship-proof/') }}
     - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       with: { version: v0.18.0 }
     - shell: sh
       env:
-        RELEASE_REF: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ship-proof/') }}
+        CACHE_WRITER: ${{ github.ref == 'refs/heads/jc-portal-1' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ship-proof/') }}
       run: |
         {
           echo RUSTC_WRAPPER=sccache
           echo SCCACHE_GHA_ENABLED=true
           # never stop the server mid-build: one release crate can compile for longer than the 600 s default
           echo SCCACHE_IDLE_TIMEOUT=0
-          [ "$RELEASE_REF" = true ] || echo SCCACHE_GHA_RW_MODE=READ_ONLY
+          [ "$CACHE_WRITER" = true ] || echo SCCACHE_GHA_RW_MODE=READ_ONLY
         } >> "$GITHUB_ENV"

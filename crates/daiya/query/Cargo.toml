@@ -20,7 +20,9 @@ regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+# float_roundtrip as every jc build has it (ekiben turns it on workspace-wide): a `-p daiya-query`
+# test then parses numbers as jc does, and the geomap frame fixture holds in both builds.
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 sha2 = "0.10"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "chrono", "json", "uuid"] }
 thiserror = "2"
