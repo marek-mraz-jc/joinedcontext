@@ -61,6 +61,8 @@ def expected_4xx(who: str, status: int, method: str, url: str) -> bool:
     path = url.split("?", 1)[0]
     if status == 403 and who != "admin":
         return True
+    if status == 401 and who == "anonymous":
+        return True
     # A project the outsider holds nothing in is hidden from them: its reads answer 404.
     if status == 404 and who == "outsider" and "/api/v1/projects/" in path:
         return True
@@ -164,8 +166,12 @@ class Walker:
         try:
             if page.evaluate("() => !window.__jcSmoke"):
                 page.add_script_tag(content=self.script)
-            if portal and page.evaluate("() => window.__jcSmoke.blankDocument()"):
+            blank = page.evaluate("() => window.__jcSmoke.blankDocument()")
+            if portal and blank:
                 return ["document: blank (no Portal root, lang or title)"]
+            if not portal and page.evaluate("() => !!document.getElementById('root')"):
+                # A stopped module's path falls through to the Portal's page fallback.
+                return ["document: the Portal answered, not the module this address belongs to"]
             out = page.evaluate("o => window.__jcSmoke.pageFindings(o)", {"namespaces": self.namespaces, "layout": True})
             out += page.evaluate(checks.TABLE_URN)
             if viewer:

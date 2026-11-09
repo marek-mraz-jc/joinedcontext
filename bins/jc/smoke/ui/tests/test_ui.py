@@ -87,6 +87,8 @@ def test_the_project_pages_follow_walk_routes_ts():
     ("admin", 404, "http://x/api/v1/projects/p/spaces/a", False),
     ("admin", 410, "http://x/api/v1/anything", True),
     ("outsider", 404, "http://x/api/v1/projects/p/spaces", True),
+    ("anonymous", 401, "http://x/api/v1/auth/me", True),
+    ("viewer", 401, "http://x/api/v1/auth/me", False),
     ("viewer", 404, "http://x/api/v1/projects/p/spaces", False),
 ])
 def test_expected_4xx_follows_the_walker(who, status, url, ok):
