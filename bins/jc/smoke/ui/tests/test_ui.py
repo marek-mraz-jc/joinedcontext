@@ -223,19 +223,16 @@ def viz_server(held: dict, drawn: dict):
     ({"GtfsStop": 3, "Alert": 2}, {"GtfsStop": 1}, False, "the grid shows no Alert while the Endpoint holds 2"),
     ({}, {}, False, "the Endpoint holds no entity of Alert or any other type"),
 ])
-def test_an_explorer_opened_on_an_empty_type_still_owes_rows_of_a_type_the_endpoint_holds(held, drawn, ok, said):
-    sync = pytest.importorskip("playwright.sync_api")
+def test_an_explorer_opened_on_an_empty_type_still_owes_rows_of_a_type_the_endpoint_holds(page, held, drawn, ok, said):
     srv = viz_server(held, drawn)
+    ctx = page.context.browser.new_context()
     try:
-        with sync.sync_playwright() as pw:
-            browser = pw.chromium.launch(args=["--disable-dev-shm-usage"])
-            ctx = browser.new_context()
-            w = object.__new__(suite.Walker)
-            w.res, w.base = Results("ui", "http://x"), f"http://127.0.0.1:{srv.server_port}"
-            suite.viz_sandbox(w, ctx, ctx.new_page(), "/opendata/dataset/x")
-            browser.close()
+        w = object.__new__(suite.Walker)
+        w.res, w.base = Results("ui", "http://x"), f"http://127.0.0.1:{srv.server_port}"
+        suite.viz_sandbox(w, ctx, ctx.new_page(), "/opendata/dataset/x")
         row = next(r for r in w.res.rows if r["id"] == "viz.grid")
         assert (row["result"] == "pass") == ok, row["actual"]
         assert said in row["actual"], row["actual"]
     finally:
+        ctx.close()
         srv.shutdown()

@@ -2880,7 +2880,7 @@
         "title": "Sample",
         "hint": "The first records the source answers, as the pipeline will read them.",
         "waiting": "Pick a source or give a file to see its records.",
-        "generated": "{source} makes the pipeline's start message itself: its records come from the mapping's own requests, so there is nothing to read before a run. Give a file of records to try the mapping.",
+        "generated": "{source} makes its records when the pipeline runs, so there is nothing to read in advance. Give a file of records to try the mapping.",
         "credential": "{source} signs in with a credential, which a test never uses. Give a file of its records to try the mapping.",
         "empty": "The source answered no records.",
         "count": "{count, plural, one {# record} other {# records}} with {fields, plural, one {# field} other {# fields}}",
