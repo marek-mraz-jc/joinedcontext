@@ -55,6 +55,22 @@ def ids_in(data) -> set[str]:
     return {str(e.get("id")) for e in entities_of(data) if e.get("id")}
 
 
+# The hub's answer when the broker misses its ten-second read deadline (context-gateway mcp/hub.rs).
+DEADLINE = "the broker did not answer within ten seconds"
+
+
+def narrowed_count(a) -> tuple[str, str]:
+    """The verdict on a count over grants that narrow the type: a total passes; the broker's named
+    deadline miss is a skip, as prod answers no total for those counts either (403 TooManyResults
+    after 58 s for bratislava's 454 KPI patterns, 504 for praha-mesto's NoiseZone; REPORT.md of
+    jc-hub-mcp); anything else fails."""
+    if a.ok and total_of(a.data) is not None:
+        return "pass", ""
+    if a.refused and DEADLINE in a.brief(400):
+        return "skip", "; the broker missed the read deadline counting them, and prod's count gives no total either"
+    return "fail", ""
+
+
 def instances(data) -> int:
     """Temporal instances in a query_temporal answer, whatever the representation."""
     n = 0
@@ -128,12 +144,49 @@ class Expect:
         """The (type, slot) of the temporally granted type with the newest exported instance."""
         types = [t for t in types if t in self.temporal_types(e)]
         per = self.index["temporal"].get(e.tenant, {})
+        grants = [g for g in e.grants if (g.public() or e.own_role(g)) and g.temporal()]
         best = None
         for t in types:
-            s = per.get(t)
-            if s and (best is None or s["newest"] > best[1]["newest"]):
-                best = (t, s)
+            for s in self.series(per.get(t), self.patterns(grants, t)):
+                if best is None or s["newest"] > best[1]["newest"]:
+                    best = (t, s)
         return best
+
+    @staticmethod
+    def patterns(grants, t) -> list | None:
+        """The idPatterns the grants open type `t` under; None when one opens every id."""
+        out = []
+        for g in grants:
+            for s in g.selectors or [ex.Selector("*", None)]:
+                if s.type in (t, "*"):
+                    if s.pattern is None:
+                        return None
+                    out.append(s.pattern)
+        return out
+
+    @staticmethod
+    def series(slot, patterns) -> list:
+        """The exported history series a grant of `patterns` opens: the type's newest, or the
+        newest under each idPattern (a grant naming swarco stations never shows an fmi one)."""
+        if not slot:
+            return []
+        if patterns is None:
+            return [slot]
+        return [dict(slot, **p) for k, p in (slot.get("psample") or {}).items() if k in patterns]
+
+    def sample(self, e: ex.Endpoint, typ: str) -> str | None:
+        """An exported id of `typ` the public grants open: any row when one grant opens every
+        id, else the first row of a granted idPattern; None when only grants with q, scopeQ or
+        validity open it, or the type expires (expiresAt), as the export cannot say which rows
+        pass those now."""
+        slot = self.tenant_types(e)[typ]
+        if slot.get("expires"):
+            return None
+        grants = [g for g in e.public_grants() if not g.narrowed]
+        patterns = self.patterns(grants, typ)
+        if patterns is None:
+            return slot["sample"]
+        return next((slot["psample"][p] for p in patterns if p in (slot.get("psample") or {})), None)
 
     def klass(self, e: ex.Endpoint) -> str:
         types = self.granted(e) if not e.closed else ex.expected_types(e, e.grants, self.tenant_types(e))[0]
@@ -245,33 +298,38 @@ class Suite:
                             "rows is current any more: the broker answered total 0")
                 self.hub_temporal(e, t, types)
                 return
-        a = self.hub.call("query_entities", {"endpoint": e.slug, "type": [typ], "limit": 5})
+        a, note = self.hub.query({"endpoint": e.slug, "type": [typ], "limit": 5})
         got = entities_of(a.data)
         wrong = [x.get("id") for x in got if ex.short_type(str(x.get("type"))) != typ]
         self.check("hub.query.page", t, f"query_entities endpoint={e.slug} type={typ} limit=5",
-                   f"1-5 {typ} entities (export holds {slot['count']})", f"{len(got)} entities; {a.brief(100)}",
+                   f"1-5 {typ} entities (export holds {slot['count']})", f"{len(got)} entities; {note}{a.brief(100)}",
                    a.ok and 0 < len(got) <= 5 and not wrong)
-        sample = (slot.get("psample") or {}).get(next((s.pattern for s in e.selectors(e.public_grants()) or []
-                                                       if s.type in (typ, "*") and s.pattern), None)) \
-            or slot["sample"]
-        a = self.hub.call("query_entities", {"endpoint": e.slug, "id": [sample], "type": [typ]})
-        self.check("hub.query.by-id", t, f"query_entities endpoint={e.slug} id={sample}",
-                   "the exported entity", a.brief(400), a.ok and sample in ids_in(a.data))
+        sample = self.x.sample(e, typ)
+        listed = "" if sample else "an id the page listed (the grant's q, scopeQ or validity, or expiresAt, decides which rows are readable); "
+        sample = sample or next((str(x.get("id")) for x in got if x.get("id")), None)
+        if sample:
+            a, note = self.hub.query({"endpoint": e.slug, "id": [sample], "type": [typ]})
+            self.check("hub.query.by-id", t, f"query_entities endpoint={e.slug} id={sample}",
+                       "the exported entity", f"{listed}{note}{a.brief(400)}", a.ok and sample in ids_in(a.data))
+        else:
+            self.r.skip("hub.query.by-id", t, f"query_entities endpoint={e.slug}", "the exported entity",
+                        "the page listed no id, and the export cannot name a readable one (q, scopeQ, validity or expiresAt)")
         want = types[typ]
-        a = self.hub.call("query_entities", {"endpoint": e.slug, "type": [typ], "count": True, "limit": 1})
+        a, note = self.hub.query({"endpoint": e.slug, "type": [typ], "count": True, "limit": 1})
         total = total_of(a.data)
         if want is None:
+            result, why = narrowed_count(a)
             self.r.add("hub.query.count", t, f"query_entities type={typ} count=true", "a total",
-                       f"total {total}", "pass" if a.ok and total is not None else "fail",
+                       f"total {total}; {note}{a.brief(120) if total is None else ''}", result,
                        "the grants narrow the type (q, scopeQ, attributes or overlapping patterns): no export "
-                       "count to compare")
+                       f"count to compare{why}")
         elif slot.get("expires"):
             self.check("hub.query.count", t, f"query_entities type={typ} count=true",
                        f"<= {want} (the type carries expiresAt)", f"total {total}",
                        a.ok and total is not None and 0 < total <= want)
         else:
             self.check("hub.query.count", t, f"query_entities type={typ} count=true", f"total {want} (export)",
-                       f"total {total}; {a.brief(80) if total is None else ''}", a.ok and total == want)
+                       f"total {total}; {note}{a.brief(80) if total is None else ''}", a.ok and total == want)
         a = self.hub.call("describe_schema", {"endpoint": e.slug, "entityType": typ})
         self.check("hub.describe_schema", t, f"describe_schema endpoint={e.slug} entityType={typ}",
                    f"a schema naming {typ}", a.brief(100), a.ok and typ in json.dumps(a.result))
@@ -287,7 +345,7 @@ class Suite:
         typ, s = found
         ops = self.x.temporal_ops(e)
         # A grant of retrieveTemporal alone answers one Entity's history, never a query.
-        tool = "query_temporal" if ops & {"queryTemporal", "retrieveOps"} else "retrieve_temporal"
+        tool = "query_temporal" if "queryTemporal" in ops else "retrieve_temporal"
         attr = ex.short_type(s["attr"])
         newest = ex.parse_time(s["newest"])
         # No attrs: a grant may list the attributes it shows (propertyNames), and every
@@ -369,10 +427,14 @@ class Suite:
         if types:
             tt = self.x.tenant_types(e)
             typ = self.x.pick(e, types)
-            sample = tt[typ]["sample"]
-            a = door.call("query_entities", {"type": [typ], "id": [sample]})
+            sample, listed = self.x.sample(e, typ), ""
+            if not sample:
+                a, _ = door.query({"type": [typ], "limit": 1})
+                sample = next((str(x.get("id")) for x in entities_of(a.data) if x.get("id")), tt[typ]["sample"])
+                listed = "an id the door listed (the grant's q, scopeQ or validity, or expiresAt, decides which rows are readable); "
+            a, note = door.query({"type": [typ], "id": [sample]})
             self.check("endpoint.query.by-id", t, f"query_entities type={typ} id={sample}", "the exported entity",
-                       a.brief(400), a.ok and sample in ids_in(a.data))
+                       f"{listed}{note}{a.brief(400)}", a.ok and sample in ids_in(a.data))
             self.hub_temporal(e, t, types, door=door, label="endpoint")
         else:
             self.r.skip("endpoint.query.by-id", t, "query_entities", "the exported entity",
