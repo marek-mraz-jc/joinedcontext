@@ -536,31 +536,44 @@ export function OtherPageCrumb({ project, label, model }: { project: string; lab
  * loading when undefined): that project's own, or, for one they read none of (another
  * Organization's project on this Organization's Portal host, a mistyped name), the not-found page
  * in the frame of the first one they do read, never another project's navigation and switcher
- * (jc-multiorg-portal). `null`: the not-found page with no project frame at all.
+ * (jc-multiorg-portal). `null`: the not-found page with no project frame at all. Only a project
+ * the address names is refused: a page that needs none (the router's not-found, a failed list)
+ * drawn in the project last worked in keeps its own content in a frame the person reads.
  */
-export function frameFor(project: string, known: string[] | undefined): { project: string; notFound: boolean } | null {
+export function frameFor(
+  project: string,
+  known: string[] | undefined,
+  fromAddress = true,
+): { project: string; notFound: boolean } | null {
   if (project === ORG_NAMESPACE || known === undefined || known.includes(project)) {
     return { project, notFound: false };
+  }
+  if (!fromAddress) {
+    return { project: known[0] ?? project, notFound: false };
   }
   return known[0] === undefined ? null : { project: known[0], notFound: true };
 }
 
 export function Shell(props: Parameters<typeof ProjectFrame>[0]): JSX.Element {
+  const { t } = useTranslation();
   const known = useProjects().data;
-  const frame = frameFor(props.project, known);
+  const path = useRouterState({ select: (state) => state.location.pathname });
+  const frame = frameFor(props.project, known, path.startsWith(`/projects/${encodeURIComponent(props.project)}`));
+  // Hidden and missing read the same (PF-59): the words every refused project page uses.
+  const hidden = t("form.projectHidden");
   if (frame === null) {
     return (
       <main id="main" className="mx-auto max-w-3xl px-4 py-10 sm:px-gutter">
-        <NotFoundState />
+        <NotFoundState description={hidden} />
       </main>
     );
   }
   return frame.notFound ? (
     <ProjectFrame project={frame.project}>
-      <NotFoundState />
+      <NotFoundState description={hidden} />
     </ProjectFrame>
   ) : (
-    <ProjectFrame {...props} />
+    <ProjectFrame {...props} project={frame.project} />
   );
 }
 
