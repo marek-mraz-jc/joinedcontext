@@ -35,13 +35,20 @@ export function administersOrganization(effective: Effective | undefined): boole
 /**
  * The Organization whose own settings, bindings and groups the caller administers without
  * administering the installation (ADR-N-058 section 2.4, T-5248): the `organization` of their
- * narrowed grants at the organization namespace, else `undefined`.
+ * narrowed grants at the organization namespace that propose or approve, else `undefined`.
  */
 export function ownOrganizationOf(effective: Effective | undefined): string | undefined {
   if (effective === undefined || !Array.isArray(effective.grants) || administersOrganization(effective)) {
     return undefined;
   }
-  return effective.grants.find((grant) => grant.organization)?.organization ?? undefined;
+  // Only a grant that changes something there administers: every reader of an Organization holds
+  // a narrowed `read` on it too, and opening its sections to them read lists the API refuses.
+  return (
+    effective.grants.find((grant) => {
+      const verbs = (grant.rule as Rule).verbs ?? [];
+      return grant.organization && (verbs.includes("propose") || verbs.includes("approve"));
+    })?.organization ?? undefined
+  );
 }
 
 /** A grant allows a verb on a kind when its rule names both; `*` matches any kind. */

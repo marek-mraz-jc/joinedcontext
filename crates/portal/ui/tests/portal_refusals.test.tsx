@@ -157,6 +157,29 @@ describe("Administration for a person who reads no project (PF-61)", () => {
   });
 });
 
+describe("an Organization's reader on its Administration", () => {
+  // Every reader of zilina holds a `read` on its Organization manifest narrowed to zilina (the
+  // server's own-settings grant); only a grant that proposes or approves administers it.
+  const READER = {
+    project: "org",
+    bootstrap: false,
+    grants: [{ role: "viewer", binding: "zilina-viewers", organization: "zilina", rule: { kinds: ["Organization"], verbs: ["read"] } }],
+  };
+
+  it.each(["/organization/groups", "/organization/members"])("refuses %s in words and reads no list the API refuses", async (path) => {
+    const page = await renderRoute({
+      path,
+      projects: () => jsonResponse(list([{ name: "zilina" }])),
+      permissionsFor: (project) => (project === "org" ? jsonResponse(READER) : undefined),
+      answer: (p) => (p.startsWith("/api/v1/projects/org/") && !p.endsWith("/organizations") ? notFound("org") : undefined),
+    });
+    expect(await screen.findByText(en.organization.adminOnly)).toBeInTheDocument();
+    expect(screen.queryByText(/not found/)).toBeNull();
+    expect(page.calls()).not.toContain("GET /api/v1/projects/org/groups");
+    expect(page.calls()).not.toContain("GET /api/v1/projects/org/rolebindings");
+  });
+});
+
 describe("Project settings, General, for a member who may not read the organization's repository", () => {
   it("reads no project manifest it would be refused, and leaves nothing loading", async () => {
     const page = await renderRoute({
