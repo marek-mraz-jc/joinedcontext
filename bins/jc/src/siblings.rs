@@ -467,10 +467,10 @@ mod tests {
         let mut mounts = BTreeMap::new();
         mounts.insert(
             Module::Gateway,
-            MountOverride {
+            vec![MountOverride {
                 host: Some("api.city.example".into()),
                 path_prefix: None,
-            },
+            }],
         );
         let siblings = Siblings::new(&plans(mounts, "https"), LISTEN.parse().unwrap());
         assert_eq!(gateway_reach(&siblings), None);
