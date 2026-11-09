@@ -1,0 +1,65 @@
+# dev's edge rows (deployment db7b9a38c, components/*/apisix-routes.yaml) as jc mounts, with
+# city.test for the domain: CUTOVER.md section 4 prints the same table. App hosts are not here.
+mode = "host"
+base_host = "city.test"
+
+[mounts.kaisatsu]
+host = "idm.city.test"
+path_prefix = ""
+
+[mounts.portal]
+host = "portal.city.test"
+path_prefix = ""
+
+[mounts.dataroom]
+host = "opendata.city.test"
+path_prefix = ""
+
+[mounts.daiya]
+host = "city.test"
+path_prefix = "/grafana"
+
+[mounts.shako]
+host = "city.test"
+path_prefix = "/git"
+
+# The gateway's own host first: its issuer and absolute URLs.
+[[mounts.gateway]]
+host = "api.city.test"
+path_prefix = ""
+
+[[mounts.gateway]]
+host = "city.test"
+path_prefix = "/cs"
+
+[[mounts.gateway]]
+host = "city.test"
+path_prefix = "/api/endpoint"
+
+[[mounts.gateway]]
+host = "city.test"
+path_prefix = "/api/mcp"
+
+[[mounts.gateway]]
+host = "city.test"
+path_prefix = "/catalog"
+
+[[mounts.gateway]]
+host = "city.test"
+path_prefix = "/catalog.jsonld"
+
+[[mounts.gateway]]
+host = "city.test"
+path_prefix = "/catalog.ttl"
+
+[[mounts.gateway]]
+host = "portal.city.test"
+path_prefix = "/cs"
+
+[[mounts.gateway]]
+host = "portal.city.test"
+path_prefix = "/api/endpoint"
+
+[[mounts.gateway]]
+host = "portal.city.test"
+path_prefix = "/api/mcp"
