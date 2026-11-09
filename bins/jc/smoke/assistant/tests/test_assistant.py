@@ -67,8 +67,8 @@ INDEX = {"tenants": {"hel-air": {
                            "location": False, "expires": False, "patterns": {}},
     "Payroll": {"iri": DC + "Payroll", "count": 2, "sample": "urn:ngsi-ld:Payroll:secret-1", "location": False,
                 "expires": False, "patterns": {}}}}}
-ROWS = {"hel/open": ("AirQualityObserved", "urn:ngsi-ld:AirQualityObserved:a1"),
-        "hel/payroll": ("Payroll", "urn:ngsi-ld:Payroll:secret-1")}
+ROWS = {"open": ("AirQualityObserved", "urn:ngsi-ld:AirQualityObserved:a1"),
+        "payroll": ("Payroll", "urn:ngsi-ld:Payroll:secret-1")}
 
 
 class Assistant:
@@ -77,7 +77,7 @@ class Assistant:
     serves every id."""
 
     def __init__(self, model_port: int, leaky=False, deaf=False):
-        public = {"hel-public": {"hel/open"}}
+        public = {"hel-public": {"open"}}
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -127,7 +127,10 @@ class Assistant:
                 if deaf:  # the model unreachable: an error and done, nothing read
                     raw = b'event: error\ndata: {"status": 503}\n\nevent: done\ndata: {}\n\n'
                     return self.send(200, raw, "text/event-stream")
-                route = fake.model({"messages": [{"role": "system", "content": modelstub.ROUTER}]})
+                # The router's catalogue lists what the deployment may read, as jc's does.
+                shown = "".join(f"- {n} (title): {ROWS[n][0]}; id, type\n" for n in sorted(public.get(p[4], set())))
+                route = fake.model({"messages": [{"role": "system", "content": modelstub.ROUTER},
+                                                 {"role": "user", "content": [{"type": "text", "text": shown}]}]})
                 item = (json.loads(route).get("data") or [{}])[0]
                 events = []
                 if item.get("endpoint") in public.get(p[4], set()) or (leaky and item.get("endpoint") in ROWS):
@@ -222,6 +225,20 @@ def test_the_proof_has_the_leading_zero_bits_asked():
     nonce = suite.solve("abc.1.12.sig", 12)
     assert suite.zero_bits(hashlib.sha256(f"abc.1.12.sig:{nonce}".encode()).digest()) >= 12
     assert suite.zero_bits(b"\x00\x0f") == 12 and suite.zero_bits(b"\x80") == 0
+
+
+def test_the_stub_routes_by_the_catalogue_only_when_asked_to_pick():
+    stub = modelstub.Stub()
+    try:
+        told = {"messages": [{"role": "system", "content": modelstub.ROUTER}, {"role": "user", "content": [
+            {"type": "text", "text": "Live data:\n- bbsk-verejne (Region, public): KeyPerformanceIndicator; id\n"
+                                     "- bbsk-otvorene-data (tables): Bridge, Grant; id, name\n"}]}]}
+        stub.plan({"data": [{"endpoint": "app-bbsk-data", "type": "Bridge"}]}, pick=True)
+        assert stub.routed_for(told)["data"][0]["endpoint"] == "bbsk-otvorene-data"
+        stub.plan({"data": [{"endpoint": "bbsk-mesto", "type": "Bridge"}]})
+        assert stub.routed_for(told)["data"][0]["endpoint"] == "bbsk-mesto"
+    finally:
+        stub.close()
 
 
 def test_the_stub_streams_when_asked_and_tells_the_router_from_the_answer():

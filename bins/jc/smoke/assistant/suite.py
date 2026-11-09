@@ -235,9 +235,12 @@ class Suite:
         tok = (as_json(raw) or {}).get("token")
         return (tok, "") if st == 200 and tok else (None, f"token {st} {short(raw, 100)}")
 
-    def ask(self, stub, pid: str, endpoint: str, st: str, question: str, origin: str | None = None):
+    def ask(self, stub, pid: str, endpoint: str, st: str, question: str, origin: str | None = None,
+            pick: bool = False):
+        """The router names `endpoint` (an Endpoint's name, as jc's router catalogue lists it);
+        with `pick`, whichever Endpoint the catalogue lists for `st` when that one is not listed."""
         stub.plan({"route": "data", "lang": "en", "queries": [question], "followups": [],
-                   "data": [{"endpoint": endpoint, "type": st}]})
+                   "data": [{"endpoint": endpoint.split("/")[-1], "type": st}]}, pick)
         tok, why = self.visitor(pid)
         if not tok:
             return 0, [], why
@@ -275,14 +278,14 @@ class Suite:
         if not name:
             self.r.skip(f"chat.{d['publicId']}.granted", t, call, "a data table and the answer", e)
         else:
-            q = f"What are the current values of {st}?"
-            code, evs, raw = self.ask(stub, pid, name, st, q)
+            q = f"What are the current values of {st}? (smoke {secrets.token_hex(3)})"
+            code, evs, raw = self.ask(stub, pid, name, st, q, pick=True)
             tables = [x for n, x in evs if n == "data" and isinstance(x, dict)
                       and ex.short_type(str(x.get("type", ""))) == st and x.get("rows")]
             answer = next((x.get("text") for n, x in evs if n == "answer" and isinstance(x, dict)), None)
             ok = code == 200 and bool(tables) and answer == modelstub.ANSWER
             names = sorted({n for n, _ in evs})
-            self.r.check(f"chat.{d['publicId']}.granted", t, f"{call}: {q} (routed to {name})",
+            self.r.check(f"chat.{d['publicId']}.granted", t, f"{call}: {q} (routed to {', '.join(stub.routed) or name})",
                          f"200, a data table of {st}, the stub's answer",
                          f"{code}; events {names}; {len(tables)} table(s); answer {'ok' if answer == modelstub.ANSWER else answer!r}"
                          + ("" if evs else f"; {raw}") + told(evs), ok, f"Endpoint {e.slug}")
@@ -290,7 +293,7 @@ class Suite:
         if not name:
             self.r.skip(f"chat.{d['publicId']}.closed-refused", t, call, "nothing of a closed Endpoint read", e)
         else:
-            q = f"List the {st} rows."
+            q = f"List the {st} rows. (smoke {secrets.token_hex(3)})"
             code, evs, raw = self.ask(stub, pid, name, st, q)
             read = [x for n, x in evs if n == "data"]
             leaked = bool(sample) and any(sample in json.dumps(c, ensure_ascii=False) for c in stub.answer_calls())
