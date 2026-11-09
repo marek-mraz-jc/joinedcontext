@@ -490,6 +490,31 @@ def test_the_import_bounds_each_high_rate_types_history_in_the_space_manifest():
     assert yaml.safe_load(rh.bound_retention(flat.encode(), "city", {"BikeHireDockingStation"})) \
         ["spec"]["retention"][1]["history"] == "P1D"
 
+
+def test_the_import_bounds_the_spaces_of_every_repository_not_only_the_first(tmp_path):
+    export = tmp_path / "export"
+    (export / "antares").mkdir(parents=True)
+    (export / "antares" / "entities.jsonl").write_text("".join(
+        json.dumps({"tenant": t, "entity": {"id": f"urn:ngsi-ld:BikeHireDockingStation:{t}", "type": "BikeHireDockingStation"}}) + "\n"
+        for t in ("first", "second")))
+    repos = []
+    for repo in ("a", "b"):
+        space = "first" if repo == "a" else "second"
+        d = export / "gitea" / "files" / "joinedcontext" / repo / "spaces" / space
+        d.mkdir(parents=True)
+        (d / "space.yaml").write_text(SPACE.replace("name: city", f"name: {space}"))
+        repos.append({"owner": "joinedcontext", "name": repo})
+    (export / "gitea" / "repos.json").write_text(json.dumps(repos))
+
+    class Refusing:  # every forge call fails: only the files the import would write are of interest
+        def json(self, *a, **k):
+            return 500, {}
+
+    report = {}
+    rh.import_shako(Refusing(), "token", export, report)
+    assert report["retentionBounded"] == ["joinedcontext/a/spaces/first/space.yaml",
+                                          "joinedcontext/b/spaces/second/space.yaml"]
+
 PG_IMAGE = "postgis/postgis:17-3.5"
 
 

@@ -1040,7 +1040,7 @@ def cmd_aliases(a):
 
 def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: bytes = REHEARSAL_CATALOGUE):
     auth = {"Authorization": f"token {token}"}
-    held = space_types(export) if (export / "antares" / "entities.jsonl").is_file() else {}
+    types_of = space_types(export) if (export / "antares" / "entities.jsonl").is_file() else {}
     listing = json.loads((export / "gitea" / "repos.json").read_text())
     rows = []
     for r in listing:
@@ -1057,7 +1057,7 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
                 if hidden != named:
                     report.setdefault("harvestOff", []).append(f"{owner}/{name}/{rel}")
                 space = re.fullmatch(r"spaces/([^/]+)/space\.yaml", rel)
-                files[rel] = bounded = bound_retention(hidden, space.group(1), held.get(space.group(1), set())) \
+                files[rel] = bounded = bound_retention(hidden, space.group(1), types_of.get(space.group(1), set())) \
                     if space else hidden
                 if bounded != hidden:
                     report.setdefault("retentionBounded", []).append(f"{owner}/{name}/{rel}")
