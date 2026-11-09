@@ -185,8 +185,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends make cmake jq &
 ARG CARGO_BUILD_JOBS=
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 
-# The dependency layer's input: every manifest and lockfile, and an empty file for each target of
+# The dependency layer's input: every manifest and lockfile, and a stub file for each target of
 # every path package (`cargo metadata` names them, explicit `[[bin]]`/`path =` targets included).
+# Each stub has a crate doc line: the Antares crates deny missing_docs in their [lints].
 # This stage reruns on any change, but its output only changes with a manifest, so the
 # `COPY --from=plan` below and the dependency build after it stay cached across source changes.
 FROM rust AS plan
@@ -199,8 +200,8 @@ RUN set -eu; mkdir /stub; \
       | jq -r '.packages[] | select(.source == null) | .targets[] | "\(.kind[0]) \(.src_path)"' \
       | while read -r kind path; do \
           rel="${path#/src/}"; mkdir -p "/stub/$(dirname "$rel")"; \
-          case "$kind" in lib|rlib|cdylib|staticlib|dylib|proc-macro) : > "/stub/$rel" ;; \
-            *) echo 'fn main() {}' > "/stub/$rel" ;; esac; \
+          case "$kind" in lib|rlib|cdylib|staticlib|dylib|proc-macro) echo '//! stub' > "/stub/$rel" ;; \
+            *) printf '//! stub\nfn main() {}\n' > "/stub/$rel" ;; esac; \
         done
 
 FROM rust AS build
