@@ -31,7 +31,7 @@ HERE = Path(__file__).resolve().parent
 SMOKE = HERE.parent
 REPO = SMOKE.parent.parent.parent
 sys.path.insert(0, str(SMOKE))
-from common import FAIL, PASS, SKIP, loopback_only  # noqa: E402
+from common import FAIL, PASS, SKIP, loopback_only
 
 # Flags `all` hands on, each only to a suite whose suite.py declares it.
 COMMON = ("--export", "--state", "--log-file", "--admin-url", "--admin-token-file", "--person-token-file")
@@ -104,8 +104,8 @@ def tail(text: str, n: int = 3) -> str:
     return " / ".join(lines[-n:])[:400]
 
 
-TEST_LINE = re.compile(r"^test (\S+) \.\.\. (ok|FAILED|ignored)", re.M)
-RUNNING = re.compile(r"^\s+Running (?:unittests )?(\S+)", re.M)
+TEST_LINE = re.compile(r"^test (\S+) \.\.\. (ok|FAILED|ignored)", re.MULTILINE)
+RUNNING = re.compile(r"^\s+Running (?:unittests )?(\S+)", re.MULTILINE)
 
 
 def parse_e2e(text: str, call: str) -> list[dict]:
@@ -188,8 +188,8 @@ def write(out: Path, base: str, runs: list[dict], seconds: int, fixed: list[str]
            "newFailures": len(new_fails), "knownFixed": fixed or [], "suites": summary, "checks": rows}
     (out / "results.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False))
     lines = [f"# Smoke suite `all`: {verdict}", "",
-             f"Base {base}; {len(rows)} checks, {t[PASS]} pass, {t[FAIL]} fail "
-             f"({len(new_fails)} not on the known list), {t[SKIP]} skip ({seconds} s).", "",
+             (f"Base {base}; {len(rows)} checks, {t[PASS]} pass, {t[FAIL]} fail "
+              f"({len(new_fails)} not on the known list), {t[SKIP]} skip ({seconds} s)."), "",
              "| suite | checks | pass | fail | of them known | skip | seconds | report |",
              "|---|---|---|---|---|---|---|---|"]
     for s in summary:

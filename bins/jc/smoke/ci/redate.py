@@ -24,7 +24,7 @@ def main(argv):
     root = Path(argv[0])
     manifest = json.loads((root / "manifest.json").read_text())
     then = dt.datetime.strptime(manifest["exportedAt"], FMT + "Z")
-    now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None, microsecond=0)
+    now = dt.datetime.now(dt.UTC).replace(tzinfo=None, microsecond=0)
     delta = now - then
     for f in sorted((root / "antares").glob("*.jsonl")):
         f.write_bytes(shifted(f.read_bytes(), delta))

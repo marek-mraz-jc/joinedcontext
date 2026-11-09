@@ -13,7 +13,7 @@ def test_every_stamp_moves_by_the_same_amount_and_the_manifest_comes_last(tmp_pa
     redate.main([str(tmp_path)])
     m = json.loads((tmp_path / "manifest.json").read_text())
     now = dt.datetime.strptime(m["exportedAt"], "%Y-%m-%dT%H:%M:%SZ")
-    assert abs((dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) - now).total_seconds()) < 5
+    assert abs((dt.datetime.now(dt.UTC).replace(tzinfo=None) - now).total_seconds()) < 5
     got = json.loads((tmp_path / "antares" / "temporal.jsonl").read_text())
     obs = dt.datetime.strptime(got["instance"]["observedAt"], "%Y-%m-%dT%H:%M:%S.250Z")
     assert now - obs == dt.timedelta(hours=1)

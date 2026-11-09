@@ -7,7 +7,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE.parent.parent))
 
-import suite as all_suite  # noqa: E402
+import suite as all_suite
 
 GOOD = '''
 import argparse, sys
