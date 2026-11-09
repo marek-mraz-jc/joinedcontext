@@ -81,6 +81,7 @@ class Endpoint:
     representations: list
     grants: list                       # bound Policies [Grant]
     ical: list = field(default_factory=list)      # names of representations.ical outputs
+    ical_types: dict = field(default_factory=dict)  # ical output name -> the types its sources read
     datasets: list = field(default_factory=list)  # CKAN dataset names (public catalogue)
     slices: list = field(default_factory=list)    # spec.catalog.datasets names
     file: str = ""
@@ -185,11 +186,12 @@ def load_endpoints(files: Path) -> list[Endpoint]:
             slices = [x["name"] for x in catalog.get("datasets") or [] if isinstance(x, dict) and x.get("name")]
             ckan = (s.get("publish") or {}).get("ckan")
             datasets = (slices or [ckan.get("name") or meta["name"]]) if isinstance(ckan, dict) else []
+            ical = {o["name"]: [x.get("type") for x in o.get("sources") or [] if isinstance(x, dict)]
+                    for o in (s.get("representations") or {}).get("ical") or [] if isinstance(o, dict) and o.get("name")}
             out.append(Endpoint(
                 project=project, name=meta["name"], space=space, tenant=tenant, slug=str(s.get("slug")),
                 audience=str(s.get("audience")), representations=list(s.get("enabledRepresentations") or []),
-                grants=bound, ical=[o["name"] for o in (s.get("representations") or {}).get("ical") or []
-                                    if isinstance(o, dict) and o.get("name")],
+                grants=bound, ical=list(ical), ical_types=ical,
                 datasets=datasets, slices=slices, file=str(f.relative_to(files)),
                 caller_role=bool(s.get("callerRole"))))
     return out
