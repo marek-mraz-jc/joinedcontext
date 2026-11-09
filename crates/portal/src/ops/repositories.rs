@@ -459,12 +459,12 @@ async fn folder(repo: &Owned, git_ref: &str, segments: &[&str]) -> Result<Vec<Va
     let path = format!("Repositories('{}')/Tree", repo.id()?);
     let mut answer = odata(&repo.client, &path, &[("Ref", git_ref)]).await?;
     for (depth, segment) in segments.iter().enumerate() {
-        let sha = answer["tree"]
+        let sha = answer["Tree"]
             .as_array()
             .into_iter()
             .flatten()
-            .find(|entry| entry["path"] == *segment && entry["type"] == "tree")
-            .and_then(|entry| entry["sha"].as_str())
+            .find(|entry| entry["Path"] == *segment && entry["Type"] == "tree")
+            .and_then(|entry| entry["Sha"].as_str())
             .filter(|sha| sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit()))
             .map(str::to_owned)
             .ok_or_else(|| {
@@ -475,7 +475,7 @@ async fn folder(repo: &Owned, git_ref: &str, segments: &[&str]) -> Result<Vec<Va
             })?;
         answer = odata(&repo.client, &path, &[("Ref", &sha)]).await?;
     }
-    Ok(answer["tree"].as_array().cloned().unwrap_or_default())
+    Ok(answer["Tree"].as_array().cloned().unwrap_or_default())
 }
 
 /// A file's bytes at `git_ref`, or `None` when it is not there.
@@ -483,7 +483,7 @@ async fn blob(repo: &Owned, git_ref: &str, path: &str) -> Result<Option<Vec<u8>>
     let at = format!("Repositories('{}')/File", repo.id()?);
     match odata(&repo.client, &at, &[("Ref", git_ref), ("Path", path)]).await {
         Ok(answer) => {
-            let encoded = answer["contentBase64"].as_str().unwrap_or_default();
+            let encoded = answer["Content"].as_str().unwrap_or_default();
             base64::engine::general_purpose::STANDARD
                 .decode(encoded)
                 .map(Some)
@@ -698,12 +698,12 @@ async fn last_commit(repo: &Owned, git_ref: &str) -> Result<Option<Value>, ApiEr
 }
 
 fn commit_row(commit: &Value) -> Value {
-    let message = commit["message"].as_str().unwrap_or_default();
+    let message = commit["Message"].as_str().unwrap_or_default();
     json!({
-        "sha": commit["sha"],
+        "sha": commit["Sha"],
         "message": message.lines().next().unwrap_or_default(),
-        "author": commit["author_name"],
-        "date": commit["author_date"],
+        "author": commit["Author"],
+        "date": commit["Date"],
     })
 }
 
@@ -723,9 +723,9 @@ async fn get(state: &AppState, project: &str, name: &str) -> Result<Value, ApiEr
         answer["lastCommit"] = last_commit(&repo, &branch).await?.unwrap_or(Value::Null);
     }
     let readme = root.iter().find(|entry| {
-        entry["type"] == "blob"
+        entry["Type"] == "blob"
             && ["readme.md", "readme", "readme.txt"].contains(
-                &entry["path"]
+                &entry["Path"]
                     .as_str()
                     .unwrap_or_default()
                     .to_lowercase()
@@ -733,8 +733,8 @@ async fn get(state: &AppState, project: &str, name: &str) -> Result<Value, ApiEr
             )
     });
     if let Some(entry) = readme {
-        let path = entry["path"].as_str().unwrap_or_default();
-        if entry["size"].as_u64().unwrap_or(u64::MAX) <= MAX_README_BYTES {
+        let path = entry["Path"].as_str().unwrap_or_default();
+        if entry["Size"].as_u64().unwrap_or(u64::MAX) <= MAX_README_BYTES {
             if let Some(bytes) = blob(&repo, &branch, path).await? {
                 if !is_binary(&bytes) {
                     answer["readme"] = json!({
@@ -760,8 +760,8 @@ async fn tree(state: &AppState, project: &str, input: PathInput) -> Result<Value
         .await?
         .iter()
         .map(|entry| {
-            let name = entry["path"].as_str().unwrap_or_default();
-            let kind = match entry["type"].as_str() {
+            let name = entry["Path"].as_str().unwrap_or_default();
+            let kind = match entry["Type"].as_str() {
                 Some("tree") => "folder",
                 Some("commit") => "submodule",
                 _ => "file",
@@ -770,7 +770,7 @@ async fn tree(state: &AppState, project: &str, input: PathInput) -> Result<Value
                 "name": name,
                 "path": if prefix.is_empty() { name.to_owned() } else { format!("{prefix}/{name}") },
                 "type": kind,
-                "size": entry["size"].as_u64().unwrap_or(0),
+                "size": entry["Size"].as_u64().unwrap_or(0),
             })
         })
         .collect();
@@ -804,9 +804,9 @@ async fn file(state: &AppState, project: &str, input: PathInput) -> Result<Value
     let entry = folder(&repo, &git_ref, parents)
         .await?
         .into_iter()
-        .find(|entry| entry["path"] == *leaf && entry["type"] == "blob")
+        .find(|entry| entry["Path"] == *leaf && entry["Type"] == "blob")
         .ok_or_else(|| ApiError::NotFound(format!("file '{path}' not found at '{git_ref}'")))?;
-    let size = entry["size"].as_u64().unwrap_or(0);
+    let size = entry["Size"].as_u64().unwrap_or(0);
     let mut answer = json!({
         "repository": repo.name(),
         "ref": git_ref,
@@ -895,10 +895,10 @@ async fn commit(state: &AppState, project: &str, input: CommitInput) -> Result<V
     .await?;
     let info = history["value"]
         .get(0)
-        .filter(|c| c["sha"] == input.sha)
+        .filter(|c| c["Sha"] == input.sha)
         .cloned()
         .ok_or_else(|| ApiError::NotFound(format!("commit '{}' not found", input.sha)))?;
-    let parent = info["parent_shas"]
+    let parent = info["Parents"]
         .get(0)
         .and_then(Value::as_str)
         .map(str::to_owned);
@@ -925,14 +925,14 @@ async fn commit(state: &AppState, project: &str, input: CommitInput) -> Result<V
             &format!("Repositories('{id}')/Tree"),
             &[("Ref", &input.sha), ("Recursive", "true")],
         )
-        .await?["tree"]
+        .await?["Tree"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|e| e["type"] == "blob")
+            .filter(|e| e["Type"] == "blob")
             .map(|e| {
                 (
-                    e["path"].as_str().unwrap_or_default().to_owned(),
+                    e["Path"].as_str().unwrap_or_default().to_owned(),
                     "added".to_owned(),
                 )
             })
@@ -973,12 +973,12 @@ async fn commit(state: &AppState, project: &str, input: CommitInput) -> Result<V
     }
     Ok(json!({
         "repository": repo.name(),
-        "sha": info["sha"],
-        "message": info["message"],
-        "author": info["author_name"],
-        "email": info["author_email"],
-        "date": info["author_date"],
-        "parents": info["parent_shas"],
+        "sha": info["Sha"],
+        "message": info["Message"],
+        "author": info["Author"],
+        "email": info["Email"],
+        "date": info["Date"],
+        "parents": info["Parents"],
         "files": files,
         "truncated": truncated,
     }))
@@ -1087,7 +1087,7 @@ async fn pull(state: &AppState, project: &str, input: PullInput) -> Result<Value
         .as_array()
         .into_iter()
         .flatten()
-        .map(|f| json!({ "path": f["filename"], "status": f["status"] }))
+        .map(|f| json!({ "path": f["Filename"], "status": f["Status"] }))
         .collect::<Vec<_>>());
     answer["reviews"] = json!(pr["Reviews"]
         .as_array()

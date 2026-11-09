@@ -7,7 +7,7 @@
 use jc_router::{JcRouterBuilder, Mount, MountSpec};
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::{Author, GiteaClient, ReviewEvent};
+use joinedcontext_portal::forge::shako::{Author, ReviewEvent, ShakoClient};
 use joinedcontext_portal::ops::{self, Caller, Via};
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{API_VERSION, ObjectMeta, ResourceEnvelope};
@@ -113,16 +113,16 @@ impl World {
         }
     }
 
-    /// The Portal's organization client, as `jc` configures it (`JC_GITEA_*`).
-    fn client(&self) -> GiteaClient {
+    /// The Portal's organization client, as `jc` configures it (`JC_SHAKO_*`).
+    fn client(&self) -> ShakoClient {
         let base = self.base.clone();
-        GiteaClient::from_env(move |key| match key {
-            "JC_GITEA_URL" => Some(base.clone()),
-            "JC_GITEA_OWNER" => Some(OWNER.into()),
-            "JC_GITEA_REPO" => Some("configuration".into()),
-            "JC_GITEA_TOKEN" => Some(PORTAL_TOKEN.into()),
-            "JC_GITEA_APPS_OWNER" => Some(APPS_OWNER.into()),
-            "JC_GITEA_APPS_TOKEN" => Some(APPS_TOKEN.into()),
+        ShakoClient::from_env(move |key| match key {
+            "JC_SHAKO_URL" => Some(base.clone()),
+            "JC_SHAKO_OWNER" => Some(OWNER.into()),
+            "JC_SHAKO_REPO" => Some("configuration".into()),
+            "JC_SHAKO_TOKEN" => Some(PORTAL_TOKEN.into()),
+            "JC_SHAKO_APPS_OWNER" => Some(APPS_OWNER.into()),
+            "JC_SHAKO_APPS_TOKEN" => Some(APPS_TOKEN.into()),
             _ => None,
         })
         .expect("config")
@@ -160,7 +160,7 @@ fn person(name: &str, group: &str) -> Caller {
 /// who approves on Project and a viewer who reads.
 fn portal(world: &World) -> AppState {
     let state = AppState::new(Config::for_tests(), None)
-        .with_gitea(Arc::new(world.client()))
+        .with_shako(Arc::new(world.client()))
         .with_mirror(Arc::new(Mirror::new()));
     state.mirror.set_layout(2);
     state
@@ -327,7 +327,7 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
             .ends_with(&format!("/{OWNER}/{CONFIG}.git")),
         "{repo}"
     );
-    assert_eq!(repo["lastCommit"]["sha"], c2);
+    assert_eq!(repo["lastCommit"]["sha"], c2, "{repo}");
     assert!(
         repo["readme"]["text"]
             .as_str()

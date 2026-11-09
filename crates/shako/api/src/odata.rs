@@ -1567,6 +1567,7 @@ async fn exec_bound_repo_history(
                 "Author": c.author_name,
                 "Email": c.author_email,
                 "Date": c.author_date,
+                "Parents": c.parent_shas,
             })
         })
         .collect();

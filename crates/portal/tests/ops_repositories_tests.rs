@@ -68,8 +68,8 @@ async fn get_with(server: &MockServer, at: &str, name: &str, value: &str, answer
 fn blob(content: &[u8]) -> Value {
     use base64::Engine;
     json!({
-        "sha": "b", "content": String::from_utf8_lossy(content),
-        "contentBase64": base64::engine::general_purpose::STANDARD.encode(content),
+        "Sha": "b", "Size": content.len(),
+        "Content": base64::engine::general_purpose::STANDARD.encode(content),
     })
 }
 
@@ -96,11 +96,11 @@ async fn world() -> (MockServer, AppState) {
         &tree,
         "Ref",
         "main",
-        json!({ "sha": ROOT, "tree": [
-        { "path": "README.md", "mode": "100644", "type": "blob", "size": XSS.len(), "sha": "r" },
-        { "path": "logo.png", "mode": "100644", "type": "blob", "size": 6, "sha": "p" },
-        { "path": "big.csv", "mode": "100644", "type": "blob", "size": 5_000_000, "sha": "c" },
-        { "path": "src", "mode": "040000", "type": "tree", "size": 0, "sha": SRC },
+        json!({ "Sha": ROOT, "Tree": [
+        { "Path": "README.md", "Mode": "100644", "Type": "blob", "Size": XSS.len(), "Sha": "r" },
+        { "Path": "logo.png", "Mode": "100644", "Type": "blob", "Size": 6, "Sha": "p" },
+        { "Path": "big.csv", "Mode": "100644", "Type": "blob", "Size": 5_000_000, "Sha": "c" },
+        { "Path": "src", "Mode": "040000", "Type": "tree", "Size": 0, "Sha": SRC },
     ] }),
     )
     .await;
@@ -109,8 +109,8 @@ async fn world() -> (MockServer, AppState) {
         &tree,
         "Ref",
         SRC,
-        json!({ "sha": SRC, "tree": [
-        { "path": "page.html", "mode": "100644", "type": "blob", "size": XSS.len(), "sha": "h" },
+        json!({ "Sha": SRC, "Tree": [
+        { "Path": "page.html", "Mode": "100644", "Type": "blob", "Size": XSS.len(), "Sha": "h" },
     ] }),
     )
     .await;
@@ -130,9 +130,9 @@ async fn world() -> (MockServer, AppState) {
         &server,
         &history,
         json!({ "value": [{
-        "sha": HEAD, "message": "Change b\n\nWhy it changed", "author_name": "Alice",
-        "author_email": "alice@city.example", "author_date": "2026-11-08T10:00:00Z",
-        "parent_shas": [PARENT],
+        "Sha": HEAD, "Message": "Change b\n\nWhy it changed", "Author": "Alice",
+        "Email": "alice@city.example", "Date": "2026-11-08T10:00:00Z",
+        "Parents": [PARENT],
     }] }),
     )
     .await;
@@ -180,7 +180,7 @@ async fn world() -> (MockServer, AppState) {
     get(&server, &format!("/odata/PullRequests('{CONFIG_ID}:7')"), json!({
         "Number": 7, "Title": "Add c", "State": "open", "Merged": false, "Author": "jc-portal",
         "Head": "portal/x", "Base": "main", "Body": XSS,
-        "Files": [{ "filename": "c.yaml", "status": "added" }],
+        "Files": [{ "Filename": "c.yaml", "Status": "added" }],
         "Reviews": [{ "Author": "jana", "Verdict": "APPROVED", "Body": "ok", "CommitId": HEAD }],
     }))
     .await;
