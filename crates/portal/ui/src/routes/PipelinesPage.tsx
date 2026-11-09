@@ -61,6 +61,16 @@ export function notWriting(pipeline: Manifest): string | null {
 
 export { executionClass };
 
+/**
+ * The cause at the end of a reconciler sentence, "the last run, ended <time>, failed: the runner
+ * refused the run: <cause>": the row said the whole chain ten times over, with its ISO times (UI
+ * judge 2026-11-09). The pipeline's page keeps the whole sentence.
+ */
+export function failureCause(message: string): string {
+  const cause = message.split(": ").at(-1)?.trim() ?? "";
+  return cause.length >= 12 ? cause : message;
+}
+
 /** When one row's pipeline last ran, with a resident runner's totals beside it (T-4817). */
 function RowLastRun({
   project,
@@ -318,7 +328,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
           (condition) => condition.status === "False" && condition.type !== "ExpirySweep" && (condition.message ?? condition.reason),
         )
       : undefined;
-    const failureText = failure ? (failure.message ?? failure.reason ?? "") : "";
+    const failureText = failure ? failureCause(failure.message ?? failure.reason ?? "") : "";
     const phase = (
       <>
         {/* The row said "Live" beside a stream that said "Paused" (T-2759): a paused

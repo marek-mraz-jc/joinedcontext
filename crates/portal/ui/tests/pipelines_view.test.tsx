@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { App } from "../src/App";
-import { executionClass } from "../src/routes/PipelinesPage";
+import { executionClass, failureCause } from "../src/routes/PipelinesPage";
 
 const IDENTITY = {
   subject: "b7c1e0f4",
@@ -138,6 +138,13 @@ describe("pipelines view", () => {
     vi.restoreAllMocks();
   });
 
+  it("keeps a row's failure to its cause, and the whole sentence when the cause is too short to read", () => {
+    expect(failureCause("the last run, ended 2026-11-09T11:20:02Z, failed: the runner refused the run: environment variable 'X' was not defined"))
+      .toBe("environment variable 'X' was not defined");
+    expect(failureCause("runner answered 502: busy")).toBe("runner answered 502: busy");
+    expect(failureCause("SourceUnreachable")).toBe("SourceUnreachable");
+  });
+
   it("classifies by the 30-second rule when the manifest says auto", () => {
     expect(executionClass({ class: "resident", period: "1h" })).toBe("resident");
     expect(executionClass({ class: "scheduled" })).toBe("scheduled");
@@ -189,7 +196,7 @@ describe("pipelines view", () => {
       phase: "Error",
       conditions: [
         { type: "SourceReachable", status: "True", reason: "Reached" },
-        { type: "StreamDeployed", status: "False", reason: "RunnerRefused", message: "environment variable 'JC_MQTT_NAMESPACE' was not defined" },
+        { type: "StreamDeployed", status: "False", reason: "RunnerRefused", message: "the last run, ended 2026-11-09T11:20:02Z, failed: the runner refused the run: environment variable 'JC_MQTT_NAMESPACE' was not defined" },
       ],
     } as never;
     renderPipelines(METRICS, 200, failed);
