@@ -1,41 +1,49 @@
-//! A build pod per App (AP-130, AP-131, ADR-N-028 §5 amended 2026-09-25, T-2794).
+//! A build pod per App (AP-130, AP-131, ADR-N-028 §5 amended 2026-09-25, T-2794), started by
+//! the Portal itself (the jc build lane).
 //!
-//! An App's `build` job asks for the label `app-build-{class}`, which no shared runner carries.
-//! Each pass lists the organization's queued jobs, and for a job of an App's repository creates
-//! one Kubernetes Job in the runner's namespace. Its pod registers once, `--ephemeral`, with a
-//! registration token of that repository alone, takes that one job and ends, so it can never
-//! take another repository's job. The token reaches the pod's init container only, through a
-//! Secret the Job owns, and goes with the Job.
+//! A build is queued when the head of an App's default branch is not the commit its
+//! `status.build` names (a push to it), or when a person asks for a Rebuild; the queue is
+//! `app_builds` ([`crate::apps::build_records`]). Each pass starts the oldest queued build as one
+//! Kubernetes Job in the build namespace. Its pod holds one token of that build alone, valid
+//! until the Job's deadline: it fetches that commit's source from the Portal's build listener and
+//! puts that build's artifact back, and can do nothing else (`api::build_listener`). The token
+//! reaches the pod's init container only, through a Secret the Job owns, and goes with the Job;
+//! the Portal keeps only its hash.
 //!
 //! The pod mounts `build-cache-{app}`, the App's own build cache, which no other pod mounts:
 //! whatever an App's code writes there is only ever read by a later build of the same
 //! repository. A claim whose App is gone is deleted on the next pass.
 //!
 //! At most [`MAX_RUNNING`](crate::apps::build_pods::MAX_RUNNING) build Jobs run in the cluster
-//! at once; the other jobs stay queued in the forge and the next pass after one ends starts the
-//! next (T-5815: a seed sync queued five builds, their pods took the node's memory requests to
-//! 98 % and a rollout's surge pod stayed Pending).
+//! at once, and one per App; the other builds wait in the queue and the next pass after one ends
+//! starts the next (T-5815: a seed sync queued five builds, their pods took the node's memory
+//! requests to 98 % and a rollout's surge pod stayed Pending).
 
 use std::collections::BTreeSet;
 
 use serde_json::{json, Value};
+use sqlx::PgPool;
 
+use crate::apps::build_records::{self, Record, Trigger};
 use crate::apps::kube::{KubeClient, KubeError};
-use crate::forge::shako::{QueuedJob, ShakoClient};
+use crate::forge::ShakoClient;
 use crate::resource::ResourceEnvelope;
 use crate::store::{ListOptions, Mirror};
 
 /// The label every build pod, its Job, its Secret and its claim carry, with the App's name.
 pub const APP_LABEL: &str = "joinedcontext.com/build-app";
 
-/// What a build pod is to the network policies: a runner, walled in like the shared one (AP-81).
-const RUNNER_NAME: &str = "gitea-runner";
+/// What a build pod is to the network policies: a pod of its own, which reaches the Portal's
+/// build listener and DNS and nothing else (the deployment's NetworkPolicy selects this name).
+pub const POD_NAME: &str = "jc-app-build";
 
 /// The annotation a Job gets once its token Secret is written. A Job without it lost its token
 /// half way through a pass, and the Portal learns that from the Job alone: its Role in the
-/// runner's namespace reads no Secret, so the forge's own credentials there stay out of its
-/// reach (T-4798).
+/// build namespace reads no Secret (T-4798).
 pub const TOKEN_WRITTEN: &str = "joinedcontext.com/build-token-written";
+
+/// The build's id on its Job, so a pass finds the Job of a running build.
+pub const BUILD_ID: &str = "joinedcontext.com/build-id";
 
 /// How long a finished Job, its pod and its token Secret stay for a person to read the logs.
 const FINISHED_TTL_SECONDS: u64 = 600;
@@ -44,20 +52,35 @@ const FINISHED_TTL_SECONDS: u64 = 600;
 /// platform workload, and a Rust build alone requests 1.5 GiB.
 pub const MAX_RUNNING: usize = 1;
 
-/// Where a build pod runs and what it runs (AP-130).
+/// How long a build's token outlives its Job's deadline, for the last upload and the report.
+const TOKEN_GRACE_SECONDS: i64 = 5 * 60;
+
+/// The workflow every application repository carries (AP-100): its `runs-on` names the class.
+pub const WORKFLOW_PATH: &str = ".gitea/workflows/build.yml";
+
+/// Where a build pod runs, what it runs, and where it reports back (AP-130).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
-    /// The runner's namespace, where the Portal may write Jobs, Secrets and claims and nothing
+    /// The build namespace, where the Portal may write Jobs, Secrets and claims and nothing
     /// else (its Role there).
     pub namespace: String,
-    /// The forge as a runner reaches it, in-cluster.
-    pub forge: String,
-    /// The `node-22` runner image, by digest.
+    /// The Portal's build listener as a build pod reaches it, in-cluster
+    /// (`JC_PORTAL_BUILD_API_URL`).
+    pub api: String,
+    /// Where the build listener binds (`JC_PORTAL_BUILD_BIND`, default `0.0.0.0:9092`): a port of
+    /// its own, so a NetworkPolicy lets a build pod reach it and nothing else of this process.
+    pub bind: std::net::SocketAddr,
+    /// The `node-22` builder image, by digest.
     pub node_image: String,
-    /// The `rust-1.90` runner image, by digest.
+    /// The `rust-1.90` builder image, by digest.
     pub rust_image: String,
     /// The size of each App's cache claim, `1Gi` unless the deployment says otherwise.
     pub cache_size: String,
+    /// The most a build may write to `/tmp`, `4Gi` unless the deployment says otherwise; the
+    /// kubelet evicts a pod that writes more.
+    pub tmp_size: String,
+    /// Where the uploads of a running build are kept until the Portal publishes them.
+    pub work_dir: std::path::PathBuf,
 }
 
 /// The two kinds of build, as the workflow names them in `runs-on`.
@@ -65,21 +88,24 @@ pub struct Settings {
 pub enum Class {
     /// A static App: Node, the SDK and the template's packages.
     Node,
-    /// A fullstack App: the Rust toolchain besides.
+    /// A fullstack or wasm App: the Rust toolchain besides.
     Rust,
 }
 
 impl Class {
-    /// The class a job asks for, or `None` when it is not an App's build.
-    pub fn of(labels: &[String]) -> Option<Self> {
-        labels.iter().find_map(|label| match label.as_str() {
-            "app-build-node" => Some(Self::Node),
-            "app-build-rust" => Some(Self::Rust),
-            _ => None,
+    /// The class an App's workflow file asks for in its build job's `runs-on`, or `None` when it
+    /// is not an App's build workflow (one of the three the Portal writes, AP-100).
+    pub fn of_workflow(text: &str) -> Option<Self> {
+        text.lines().find_map(|line| {
+            match line.trim().strip_prefix("runs-on:")?.trim() {
+                "app-build-node" => Some(Self::Node),
+                "app-build-rust" => Some(Self::Rust),
+                _ => None,
+            }
         })
     }
 
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Node => "node",
             Self::Rust => "rust",
@@ -92,6 +118,13 @@ impl Class {
             Self::Node => 20 * 60,
             Self::Rust => 30 * 60,
         }
+    }
+
+    /// How long a build's token admits its pod: the deadline and a grace for the report.
+    pub fn token_lifetime(self) -> chrono::Duration {
+        chrono::Duration::seconds(
+            i64::try_from(self.deadline_seconds()).unwrap_or(i64::MAX) + TOKEN_GRACE_SECONDS,
+        )
     }
 
     fn resources(self) -> Value {
@@ -113,15 +146,11 @@ fn builds(app: &ResourceEnvelope) -> bool {
     app.spec.get("lifecycle").and_then(Value::as_str) != Some("retired")
 }
 
-/// The App a repository belongs to, `(project, app)`: `{project}_{app}` names it (AP-75), and
-/// only an App the mirror holds and that is not retired counts, so a repository that merely
-/// looks like one gets no pod.
-pub fn app_of(mirror: &Mirror, repository: &str) -> Option<(String, String)> {
-    let (project, app) = repository.split_once('_')?;
-    mirror
-        .get(project, "App", app)
-        .filter(builds)
-        .map(|_| (project.to_owned(), app.to_owned()))
+/// An App built on the forge: it names its own repository (AP-100).
+fn on_forge(app: &ResourceEnvelope) -> bool {
+    app.spec
+        .pointer("/source/git")
+        .is_some_and(|git| !git.is_null())
 }
 
 /// `build-cache-{app}`: App names are unique in the organization (AP-14a).
@@ -129,9 +158,9 @@ pub fn claim_name(app: &str) -> String {
     format!("build-cache-{app}")
 }
 
-/// `build-{app}-{job}`, cut to a DNS label: the forge's job id keeps it unique.
-pub fn job_name(app: &str, job: u64) -> String {
-    let suffix = format!("-{job}");
+/// `build-{app}-{build}`, cut to a DNS label: the build's id keeps it unique.
+pub fn job_name(app: &str, build: i64) -> String {
+    let suffix = format!("-{build}");
     let room = 63 - "build-".len() - suffix.len();
     let app = app.get(..app.len().min(room)).unwrap_or(app);
     format!("build-{}{suffix}", app.trim_end_matches('-'))
@@ -139,7 +168,7 @@ pub fn job_name(app: &str, job: u64) -> String {
 
 fn labels(app: &str) -> Value {
     json!({
-        "app.kubernetes.io/name": RUNNER_NAME,
+        "app.kubernetes.io/name": POD_NAME,
         "app.kubernetes.io/component": "build-pod",
         "app.kubernetes.io/part-of": "joinedcontext",
         "app.kubernetes.io/managed-by": "joinedcontext-portal",
@@ -164,9 +193,12 @@ pub fn claim(settings: &Settings, app: &str) -> Value {
     })
 }
 
-/// The Job that runs one forge job of one App (AP-130).
-pub fn job(settings: &Settings, class: Class, app: &str, id: u64) -> Value {
-    let name = job_name(app, id);
+/// The Job that runs one build of one App (AP-130). Offline: the image holds every package
+/// and crate the build may use, no step installs anything, and the pod reaches nothing but the
+/// build listener (AP-82).
+pub fn job(settings: &Settings, build: &Record) -> Value {
+    let (class, app) = (build.class(), build.app.as_str());
+    let name = job_name(app, build.id);
     let image = match class {
         Class::Node => &settings.node_image,
         Class::Rust => &settings.rust_image,
@@ -181,7 +213,12 @@ pub fn job(settings: &Settings, class: Class, app: &str, id: u64) -> Value {
     json!({
         "apiVersion": "batch/v1",
         "kind": "Job",
-        "metadata": { "name": name, "namespace": settings.namespace, "labels": labels(app) },
+        "metadata": {
+            "name": name,
+            "namespace": settings.namespace,
+            "labels": labels(app),
+            "annotations": { BUILD_ID: build.id.to_string() },
+        },
         "spec": {
             "backoffLimit": 0,
             "activeDeadlineSeconds": class.deadline_seconds(),
@@ -191,7 +228,7 @@ pub fn job(settings: &Settings, class: Class, app: &str, id: u64) -> Value {
                     "labels": labels(app),
                     "annotations": {
                         "linkerd.io/inject": "enabled",
-                        // The proxy ends with the runner, so the Job can finish.
+                        // The proxy ends with the build, so the Job can finish.
                         "config.alpha.linkerd.io/proxy-enable-native-sidecar": "true",
                     },
                 },
@@ -206,50 +243,47 @@ pub fn job(settings: &Settings, class: Class, app: &str, id: u64) -> Value {
                         "fsGroup": 1000,
                         "seccompProfile": { "type": "RuntimeDefault" },
                     },
-                    // Only this container sees the repository's registration token: it copies
-                    // it into memory, and the runner reads it once and deletes it.
+                    // Only this container sees the build's token: it copies it into memory, and
+                    // the build reads it once and deletes it.
                     "initContainers": [{
-                        "name": "registration-token",
+                        "name": "build-token",
                         "image": image,
-                        "command": ["/bin/sh", "-c", "cp /secret/token /tmp/runner-secret/token"],
+                        "command": ["/bin/sh", "-c", "cp /secret/token /tmp/build-secret/token"],
                         "securityContext": restricted,
                         "resources": {
                             "requests": { "cpu": "10m", "memory": "16Mi" },
                             "limits": { "cpu": "100m", "memory": "64Mi" }
                         },
                         "volumeMounts": [
-                            { "name": "registration", "mountPath": "/secret", "readOnly": true },
-                            { "name": "runner-secret", "mountPath": "/tmp/runner-secret" }
+                            { "name": "token", "mountPath": "/secret", "readOnly": true },
+                            { "name": "build-secret", "mountPath": "/tmp/build-secret" }
                         ]
                     }],
                     "containers": [{
-                        "name": "runner",
+                        "name": "build",
                         "image": image,
-                        "command": ["/usr/local/bin/runner"],
+                        "command": ["/usr/local/bin/jc-build"],
                         "env": [
-                            { "name": "GITEA_INSTANCE", "value": settings.forge },
-                            { "name": "GITEA_RUNNER_NAME", "value": name },
-                            { "name": "GITEA_RUNNER_ONCE", "value": "1" }
+                            { "name": "JC_BUILD_API", "value": settings.api },
+                            { "name": "JC_BUILD_ID", "value": build.id.to_string() },
+                            { "name": "JC_APP_COMMIT", "value": build.commit },
+                            { "name": "JC_BUILD_TOKEN_FILE", "value": "/tmp/build-secret/token" }
                         ],
                         "securityContext": restricted,
                         "resources": class.resources(),
                         "volumeMounts": [
-                            { "name": "config", "mountPath": "/opt/runner", "readOnly": true },
-                            { "name": "runner-secret", "mountPath": "/tmp/runner-secret" },
+                            { "name": "build-secret", "mountPath": "/tmp/build-secret" },
                             { "name": "tmp", "mountPath": "/tmp" },
                             { "name": "cache", "mountPath": "/cache" }
                         ]
                     }],
                     "volumes": [
-                        { "name": "registration", "secret": {
+                        { "name": "token", "secret": {
                             "secretName": name,
                             "items": [{ "key": "token", "path": "token" }]
                         } },
-                        { "name": "runner-secret", "emptyDir": { "medium": "Memory", "sizeLimit": "1Mi" } },
-                        { "name": "tmp", "emptyDir": {} },
-                        { "name": "config", "configMap": {
-                            "name": format!("gitea-runner-build-{}", class.name())
-                        } },
+                        { "name": "build-secret", "emptyDir": { "medium": "Memory", "sizeLimit": "1Mi" } },
+                        { "name": "tmp", "emptyDir": { "sizeLimit": settings.tmp_size } },
                         { "name": "cache", "persistentVolumeClaim": { "claimName": claim_name(app) } }
                     ]
                 }
@@ -266,9 +300,15 @@ fn token_was_written(job: &Value) -> bool {
         == Some("true")
 }
 
-/// The Secret holding the repository's registration token, owned by its Job so it goes with it.
-pub fn token_secret(settings: &Settings, app: &str, id: u64, job_uid: &str, token: &str) -> Value {
-    let name = job_name(app, id);
+/// The Secret holding the build's token, owned by its Job so it goes with it.
+pub fn token_secret(
+    settings: &Settings,
+    app: &str,
+    build: i64,
+    job_uid: &str,
+    token: &str,
+) -> Value {
+    let name = job_name(app, build);
     json!({
         "apiVersion": "v1",
         "kind": "Secret",
@@ -289,46 +329,43 @@ pub fn token_secret(settings: &Settings, app: &str, id: u64, job_uid: &str, toke
     })
 }
 
+/// The condition that ended a Job, `Complete` or `Failed` with its reason, or `None` while it
+/// runs.
+fn ended(job: &Value) -> Option<(String, String)> {
+    job.pointer("/status/conditions")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|condition| {
+            matches!(
+                condition.get("type").and_then(Value::as_str),
+                Some("Complete" | "Failed")
+            ) && condition.get("status").and_then(Value::as_str) == Some("True")
+        })
+        .map(|condition| {
+            let text = |key: &str| {
+                condition
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            (text("type"), text("reason"))
+        })
+}
+
 /// Whether a build Job still holds its pod's requests: not yet complete or failed, and not
 /// being deleted.
 fn running(job: &Value) -> bool {
-    if job.pointer("/metadata/deletionTimestamp").is_some() {
-        return false;
-    }
-    let ended = job
-        .pointer("/status/conditions")
-        .and_then(Value::as_array)
-        .is_some_and(|conditions| {
-            conditions.iter().any(|condition| {
-                matches!(
-                    condition.get("type").and_then(Value::as_str),
-                    Some("Complete" | "Failed")
-                ) && condition.get("status").and_then(Value::as_str) == Some("True")
-            })
-        });
-    !ended
-}
-
-/// How many build Jobs run in the runner's namespace now.
-async fn running_builds(kube: &KubeClient, settings: &Settings) -> Result<usize, KubeError> {
-    Ok(kube
-        .list(
-            "batch/v1",
-            "Job",
-            &settings.namespace,
-            &format!("app.kubernetes.io/component=build-pod,{APP_LABEL}"),
-        )
-        .await?
-        .iter()
-        .filter(|job| running(job))
-        .count())
+    job.pointer("/metadata/deletionTimestamp").is_none() && ended(job).is_none()
 }
 
 /// What one pass did, for the log.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Pass {
-    /// `build-{app}-{job}` of every Job this pass created.
+    /// `build-{app}-{build}` of every Job this pass created.
     pub started: Vec<String>,
+    /// Every build this pass ended because its Job ended or its token expired, with why.
+    pub ended: Vec<(i64, String)>,
     /// Every claim this pass deleted because its App is gone.
     pub removed: Vec<String>,
 }
@@ -336,90 +373,118 @@ pub struct Pass {
 /// Why a pass stopped.
 #[derive(Debug, thiserror::Error)]
 pub enum DispatchError {
-    /// The forge did not list the queue or mint a token.
+    /// The forge did not answer.
     #[error("the forge: {0}")]
     Forge(#[from] crate::forge::GitError),
     /// The API server refused or was not reached.
     #[error("the cluster: {0}")]
     Kube(#[from] KubeError),
+    /// The build store did not answer.
+    #[error("the build store: {0}")]
+    Store(#[from] sqlx::Error),
 }
 
-/// One pass: a pod for a queued App build that has none while fewer than [`MAX_RUNNING`] build
-/// Jobs run, and no claim for an App that is gone. A job of a repository that is not an App's
-/// gets no pod and waits in the queue; so does a build while another one runs.
+/// One pass: running builds whose Job ended or whose token expired are ended, then, while fewer
+/// than [`MAX_RUNNING`] build Jobs run, the oldest queued build of an App with none running gets
+/// its Job; last, no claim for an App that is gone.
 pub async fn dispatch_once(
     kube: &KubeClient,
-    forge: &ShakoClient,
+    db: &PgPool,
     mirror: &Mirror,
     settings: &Settings,
 ) -> Result<Pass, DispatchError> {
     let mut pass = Pass::default();
-    // Read once, when the first build would start, and counted up as this pass starts more.
-    let mut busy: Option<usize> = None;
-    for QueuedJob {
-        id,
-        labels,
-        repository,
-    } in forge.applications().queued_jobs().await?
-    {
-        let Some(class) = Class::of(&labels) else {
-            continue;
-        };
-        let Some((_, app)) = app_of(mirror, &repository) else {
-            tracing::debug!(%repository, job = id, "a queued build of no App: no pod");
-            continue;
-        };
-        let name = job_name(&app, id);
-        if let Some(existing) = kube
-            .get("batch/v1", "Job", &settings.namespace, &name)
-            .await?
-        {
-            // A Job whose token never arrived (a pass that stopped half way) would wait for it
-            // until its deadline; removing it lets the next pass start the job again.
-            if !token_was_written(&existing) {
-                kube.delete("batch/v1", "Job", &settings.namespace, &name)
-                    .await?;
-            }
-            continue;
+    let jobs = kube
+        .list(
+            "batch/v1",
+            "Job",
+            &settings.namespace,
+            &format!("app.kubernetes.io/component=build-pod,{APP_LABEL}"),
+        )
+        .await?;
+    pass.ended = settle(db, &jobs).await?;
+    if jobs.iter().filter(|job| running(job)).count() < MAX_RUNNING {
+        if let Some(build) = build_records::next_pending(db).await? {
+            let name = job_name(&build.app, build.id);
+            start(kube, db, settings, &build).await?;
+            pass.started.push(name);
         }
-        let now = match busy {
-            Some(now) => now,
-            None => running_builds(kube, settings).await?,
-        };
-        busy = Some(now);
-        if now >= MAX_RUNNING {
-            tracing::debug!(job = %name, running = now, "a build waits for the one running");
-            continue;
-        }
-        start(kube, forge, settings, class, &app, id, &repository).await?;
-        busy = Some(now.saturating_add(1));
-        pass.started.push(name);
     }
-
     pass.removed = sweep_claims(kube, mirror, settings).await?;
     Ok(pass)
 }
 
-/// Starts one build: the runner token first (a forge that mints none leaves nothing behind in
-/// the cluster), then the cache claim, the Job, the token Secret the Job owns, and last the
-/// annotation that says the Job holds its token.
+/// Ends every running build whose Job ended without the pod reporting, is gone, or whose token
+/// expired; a build being verified is the Portal's own and is left to finish.
+async fn settle(db: &PgPool, jobs: &[Value]) -> Result<Vec<(i64, String)>, DispatchError> {
+    let now = chrono::Utc::now();
+    let mut ended_now = Vec::new();
+    for build in build_records::in_state(db, "running").await? {
+        let name = job_name(&build.app, build.id);
+        let job = jobs
+            .iter()
+            .find(|job| job.pointer("/metadata/name").and_then(Value::as_str) == Some(&name));
+        let why = match job.and_then(ended) {
+            Some((kind, reason)) => Some(format!(
+                "the build Job {name} ended ({kind}{}) before the build reported",
+                if reason.is_empty() { String::new() } else { format!(": {reason}") }
+            )),
+            None if build.expires_at.is_some_and(|at| at <= now) => {
+                Some(format!("the build did not report before its token expired ({name})"))
+            }
+            // A Job applied in this pass is not listed yet; one gone after its start is.
+            None if job.is_none() && build.started_at.is_some_and(|at| now - at > chrono::Duration::minutes(2)) => {
+                Some(format!("the build Job {name} is gone"))
+            }
+            None => None,
+        };
+        if let Some(why) = why {
+            build_records::finish(db, build.id, Err(&why)).await?;
+            ended_now.push((build.id, why));
+        }
+    }
+    Ok(ended_now)
+}
+
+/// Starts one build: the token is minted and its hash stored first, then the cache claim, the
+/// Job, the token Secret the Job owns, and last the annotation that says the Job holds its
+/// token. A cluster that refuses any of it puts the build back in the queue.
 async fn start(
     kube: &KubeClient,
-    forge: &ShakoClient,
+    db: &PgPool,
     settings: &Settings,
-    class: Class,
-    app: &str,
-    id: u64,
-    repository: &str,
+    build: &Record,
 ) -> Result<(), DispatchError> {
-    let name = job_name(app, id);
-    let token = forge
-        .for_application(repository)
-        .repository_registration_token()
-        .await?;
-    kube.apply(&claim(settings, app)).await?;
-    let mut build = job(settings, class, app, id);
-    kube.apply(&build).await?;
+    let name = job_name(&build.app, build.id);
+    // A Job of this build whose token never arrived (a pass that stopped half way) would wait
+    // for it until its deadline: it goes, and this pass starts the build again.
+    if let Some(existing) = kube.get("batch/v1", "Job", &settings.namespace, &name).await? {
+        if token_was_written(&existing) {
+            return Ok(());
+        }
+        kube.delete("batch/v1", "Job", &settings.namespace, &name).await?;
+    }
+    let token = build_records::new_token();
+    if !build_records::start(db, build.id, &token, build.class().token_lifetime()).await? {
+        return Ok(());
+    }
+    if let Err(err) = apply_job(kube, settings, build, &token).await {
+        build_records::requeue(db, build.id).await?;
+        return Err(err.into());
+    }
+    Ok(())
+}
+
+async fn apply_job(
+    kube: &KubeClient,
+    settings: &Settings,
+    build: &Record,
+    token: &str,
+) -> Result<(), KubeError> {
+    let name = job_name(&build.app, build.id);
+    kube.apply(&claim(settings, &build.app)).await?;
+    let mut spec = job(settings, build);
+    kube.apply(&spec).await?;
     let uid = kube
         .get("batch/v1", "Job", &settings.namespace, &name)
         .await?
@@ -429,11 +494,63 @@ async fn start(
             path: name.clone(),
             message: "the Job was applied and is not there".into(),
         })?;
-    kube.apply(&token_secret(settings, app, id, &uid, &token))
+    kube.apply(&token_secret(settings, &build.app, build.id, &uid, token))
         .await?;
-    build["metadata"]["annotations"] = json!({ TOKEN_WRITTEN: "true" });
-    kube.apply(&build).await?;
-    Ok(())
+    spec["metadata"]["annotations"][TOKEN_WRITTEN] = json!("true");
+    kube.apply(&spec).await
+}
+
+/// The class of a build of `commit` of the App's repository, read from its workflow file at
+/// that commit, or `None` when the repository carries no App build workflow there.
+pub async fn class_at(repo: &ShakoClient, commit: &str) -> Result<Option<Class>, crate::forge::GitError> {
+    Ok(repo
+        .get_file(WORKFLOW_PATH, commit)
+        .await?
+        .and_then(|file| Class::of_workflow(&file.content)))
+}
+
+/// One trigger pass: for every App built on the forge that still builds, a build of the head of
+/// its default branch is queued when `status.build` names another commit and that commit was
+/// never queued. Returns the `(app, commit)` of every build it queued.
+pub async fn trigger_once(
+    forge: &ShakoClient,
+    db: &PgPool,
+    mirror: &Mirror,
+) -> Result<Vec<(String, String)>, DispatchError> {
+    let mut queued = Vec::new();
+    let apps: Vec<ResourceEnvelope> = mirror
+        .namespaces()
+        .iter()
+        .flat_map(|namespace| mirror.list(namespace, "App", &ListOptions::default()).items)
+        .filter(|app| builds(app) && on_forge(app))
+        .collect();
+    for app in apps {
+        let (Some(project), name) = (app.metadata.namespace.as_deref(), &app.metadata.name) else {
+            continue;
+        };
+        let repo = forge.for_application(crate::agents::repository::name(project, name));
+        let head = match repo.default_branch().await {
+            Ok(branch) => repo.branch_head(&branch).await,
+            Err(err) => Err(err),
+        };
+        let head = match head {
+            Ok(head) => head,
+            // A repository not created yet has nothing to build.
+            Err(crate::forge::GitError::NotFound) => continue,
+            Err(err) => return Err(err.into()),
+        };
+        let built = app.status.as_ref().and_then(|s| s.build.as_ref()).map(|b| b.commit.as_str());
+        if built == Some(head.as_str()) || build_records::known(db, project, name, &head).await? {
+            continue;
+        }
+        let Some(class) = class_at(&repo, &head).await? else {
+            tracing::debug!(app = %name, commit = %head, "no App build workflow at the head: nothing to build");
+            continue;
+        };
+        build_records::enqueue(db, project, name, &head, class, Trigger::Push, None).await?;
+        queued.push((name.clone(), head));
+    }
+    Ok(queued)
 }
 
 /// Deletes the cache claim of every App that is gone and returns the claims it deleted.
@@ -519,10 +636,32 @@ impl Backoff {
     }
 }
 
-/// Runs [`dispatch_once`] every few seconds on the replica that holds the reconciler's lease.
+/// How many dispatch passes go by between two trigger passes: the heads are read once a minute,
+/// as often as the Portal reads main.
+const TRIGGER_EVERY_PASSES: u32 = 12;
+
+/// One tick: every [`TRIGGER_EVERY_PASSES`]th a trigger pass first, then a dispatch pass.
+async fn tick(
+    kube: &KubeClient,
+    forge: &ShakoClient,
+    db: &PgPool,
+    mirror: &Mirror,
+    settings: &Settings,
+    count: u32,
+) -> Result<Pass, DispatchError> {
+    if count % TRIGGER_EVERY_PASSES == 0 && !mirror.is_empty() {
+        for (app, commit) in trigger_once(forge, db, mirror).await? {
+            tracing::info!(%app, %commit, "a build of a new head of the App is queued");
+        }
+    }
+    dispatch_once(kube, db, mirror, settings).await
+}
+
+/// Runs [`trigger_once`] and [`dispatch_once`] on the replica that holds the reconciler's lease.
 /// Outside a cluster there is nowhere to start a pod, which is not an error.
 pub fn spawn_periodic(
     forge: std::sync::Arc<ShakoClient>,
+    db: PgPool,
     syncer: std::sync::Arc<crate::reconciler::Syncer>,
     mirror: std::sync::Arc<Mirror>,
     settings: Settings,
@@ -530,7 +669,7 @@ pub fn spawn_periodic(
     let kube = match KubeClient::in_cluster() {
         Ok(Some(kube)) => kube,
         Ok(None) => {
-            tracing::info!("no cluster: App builds wait for a runner that nobody starts");
+            tracing::info!("no cluster: App builds wait in the queue and nobody starts them");
             return;
         }
         Err(err) => {
@@ -543,18 +682,24 @@ pub fn spawn_periodic(
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut backoff = Backoff::default();
         let mut resume = tokio::time::Instant::now();
+        let mut count: u32 = 0;
         loop {
             ticker.tick().await;
             if !syncer.is_leader() || tokio::time::Instant::now() < resume {
                 continue;
             }
-            match dispatch_once(&kube, &forge, &mirror, &settings).await {
+            let outcome = tick(&kube, &forge, &db, &mirror, &settings, count).await;
+            count = count.wrapping_add(1);
+            match outcome {
                 Ok(pass) => {
                     if backoff.recovered() {
                         tracing::info!("build pods: the pass runs again");
                     }
                     for job in &pass.started {
                         tracing::info!(%job, "build pod started");
+                    }
+                    for (build, why) in &pass.ended {
+                        tracing::warn!(build, %why, "build failed");
                     }
                     for claim in &pass.removed {
                         tracing::info!(%claim, "build cache of a retired App deleted");
@@ -577,28 +722,37 @@ pub fn spawn_periodic(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 
     fn settings() -> Settings {
         Settings {
-            namespace: "dev".into(),
-            forge: "http://shako-http.dev.svc.cluster.local:3000".into(),
+            namespace: "smartcity".into(),
+            api: "http://jc-build.smartcity.svc.cluster.local:9092".into(),
+            bind: "0.0.0.0:9092".parse().expect("an address"),
             node_image: "registry.example.org/builder@sha256:aa".into(),
             rust_image: "registry.example.org/builder-rust@sha256:bb".into(),
             cache_size: "1Gi".into(),
+            tmp_size: "4Gi".into(),
+            work_dir: "/tmp/jc-app-builds".into(),
         }
     }
 
-    fn mirror_with(project: &str, app: &str) -> Mirror {
-        let mirror = Mirror::new();
-        mirror.upsert(ResourceEnvelope {
-            api_version: API_VERSION.to_owned(),
-            kind: "App".into(),
-            metadata: ObjectMeta::new(app, project),
-            spec: json!({}),
-            status: None,
-        });
-        mirror
+    fn record(app: &str, id: i64, class: Class) -> Record {
+        Record {
+            id,
+            project: "helsinki".into(),
+            app: app.into(),
+            commit: "8c56954a1f0e3d2c1b0a99887766554433221100".into(),
+            class: class.name().into(),
+            trigger: "push".into(),
+            requested_by: None,
+            state: "pending".into(),
+            expires_at: None,
+            created_at: chrono::Utc::now(),
+            started_at: None,
+            finished_at: None,
+            digest: None,
+            reason: None,
+        }
     }
 
     #[test]
@@ -626,45 +780,37 @@ mod tests {
     }
 
     #[test]
-    fn only_the_two_build_labels_are_an_apps_build() {
-        let of =
-            |labels: &[&str]| Class::of(&labels.iter().map(|l| l.to_string()).collect::<Vec<_>>());
-        assert_eq!(of(&["app-build-node"]), Some(Class::Node));
-        assert_eq!(of(&["app-build-rust"]), Some(Class::Rust));
+    fn the_workflows_build_job_names_the_class_and_nothing_else_does() {
+        let workflow = |build: &str| {
+            format!(
+                "on:\n  push:\n    branches: [main]\njobs:\n  build:\n    runs-on: {build}\n  propose:\n    runs-on: node-22\n"
+            )
+        };
+        assert_eq!(Class::of_workflow(&workflow("app-build-node")), Some(Class::Node));
+        assert_eq!(Class::of_workflow(&workflow("app-build-rust")), Some(Class::Rust));
         assert_eq!(
-            of(&["node-22"]),
+            Class::of_workflow(&workflow("ubuntu-latest")),
             None,
-            "the propose job stays on the shared runner"
+            "a workflow the Portal did not write builds nothing here"
         );
-        assert_eq!(of(&[]), None);
+        assert_eq!(Class::of_workflow(""), None);
+        // The three templates the Portal writes into an App's first commit.
+        for (template, class) in [
+            ("template", Class::Node),
+            ("template-fullstack", Class::Rust),
+            ("template-wasm", Class::Rust),
+        ] {
+            let path = format!(
+                "{}/sdk/{template}/.gitea/workflows/build.yml",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let text = std::fs::read_to_string(&path).expect("the template's workflow");
+            assert_eq!(Class::of_workflow(&text), Some(class), "{template}");
+        }
     }
 
     #[test]
-    fn a_repository_is_an_apps_only_when_the_mirror_holds_that_app() {
-        let mirror = mirror_with("helsinki", "bikes");
-        assert_eq!(
-            app_of(&mirror, "helsinki_bikes"),
-            Some(("helsinki".into(), "bikes".into()))
-        );
-        assert_eq!(app_of(&mirror, "helsinki_events"), None);
-        assert_eq!(app_of(&mirror, "configuration"), None);
-
-        mirror.upsert(ResourceEnvelope {
-            api_version: API_VERSION.to_owned(),
-            kind: "App".into(),
-            metadata: ObjectMeta::new("old", "helsinki"),
-            spec: json!({ "lifecycle": "retired" }),
-            status: None,
-        });
-        assert_eq!(
-            app_of(&mirror, "helsinki_old"),
-            None,
-            "a retired App builds no more"
-        );
-    }
-
-    #[test]
-    fn a_job_name_is_a_dns_label_unique_per_forge_job() {
+    fn a_job_name_is_a_dns_label_unique_per_build() {
         assert_eq!(job_name("bikes", 42), "build-bikes-42");
         let long = "a".repeat(63);
         let name = job_name(&long, 9_007_199_254_740_991);
@@ -675,7 +821,7 @@ mod tests {
 
     #[test]
     fn the_pod_mounts_its_own_apps_cache_and_nothing_else_of_another() {
-        let rendered = job(&settings(), Class::Rust, "bikes", 7);
+        let rendered = job(&settings(), &record("bikes", 7, Class::Rust));
         let volumes = rendered
             .pointer("/spec/template/spec/volumes")
             .and_then(Value::as_array)
@@ -685,22 +831,27 @@ mod tests {
             .filter_map(|v| v.pointer("/persistentVolumeClaim/claimName")?.as_str())
             .collect();
         assert_eq!(claims, ["build-cache-bikes"]);
-        let other = job(&settings(), Class::Rust, "events", 8);
+        let other = job(&settings(), &record("events", 8, Class::Rust));
         assert!(!other.to_string().contains("build-cache-bikes"));
     }
 
     #[test]
     fn the_pod_keeps_the_walls_of_the_shared_runner() {
-        let rendered = job(&settings(), Class::Node, "bikes", 7);
+        let rendered = job(&settings(), &record("bikes", 7, Class::Node));
         let spec = rendered.pointer("/spec/template/spec").expect("pod spec");
         assert_eq!(spec["automountServiceAccountToken"], false);
+        assert_eq!(spec["enableServiceLinks"], false);
+        assert_eq!(spec["securityContext"]["runAsNonRoot"], true);
+        assert_eq!(spec["securityContext"]["runAsUser"], 1000);
         assert_eq!(rendered["spec"]["backoffLimit"], 0);
         assert_eq!(rendered["spec"]["activeDeadlineSeconds"], 1200);
         for container in ["initContainers", "containers"] {
             let context = &spec[container][0]["securityContext"];
+            assert_eq!(context["runAsNonRoot"], true);
             assert_eq!(context["allowPrivilegeEscalation"], false);
             assert_eq!(context["readOnlyRootFilesystem"], true);
-            assert_eq!(context["capabilities"]["drop"][0], "ALL");
+            assert_eq!(context["capabilities"]["drop"], json!(["ALL"]));
+            assert!(context["capabilities"].get("add").is_none());
         }
         assert_eq!(
             spec["containers"][0]["resources"]["limits"]["memory"],
@@ -708,34 +859,60 @@ mod tests {
         );
         assert_eq!(
             rendered.pointer("/spec/template/metadata/labels/app.kubernetes.io~1name"),
-            Some(&json!("gitea-runner")),
-            "the runner's network policies select it"
+            Some(&json!(POD_NAME)),
+            "the build pods' network policy selects it"
         );
-        // No hostPath, no runtime socket: the only volumes are these five.
+        // No hostPath, no runtime socket, no ServiceAccount: the only volumes are these four.
         let names: Vec<&str> = spec["volumes"]
             .as_array()
             .expect("volumes")
             .iter()
             .filter_map(|v| v["name"].as_str())
             .collect();
-        assert_eq!(
-            names,
-            ["registration", "runner-secret", "tmp", "config", "cache"]
-        );
+        assert_eq!(names, ["token", "build-secret", "tmp", "cache"]);
         assert!(!rendered.to_string().contains("hostPath"));
+        assert!(spec.get("serviceAccountName").is_none());
     }
 
     #[test]
-    fn only_the_init_container_mounts_the_registration_token() {
-        let rendered = job(&settings(), Class::Node, "bikes", 7);
+    fn tmp_has_a_size_limit_and_the_token_folder_lives_in_memory() {
+        let rendered = job(&settings(), &record("bikes", 7, Class::Node));
+        let volume = |name: &str| {
+            rendered
+                .pointer("/spec/template/spec/volumes")
+                .and_then(Value::as_array)
+                .and_then(|all| all.iter().find(|v| v["name"] == name).cloned())
+                .expect("the volume")
+        };
+        assert_eq!(volume("tmp")["emptyDir"]["sizeLimit"], "4Gi");
+        assert_eq!(volume("build-secret")["emptyDir"]["medium"], "Memory");
+        assert_eq!(volume("build-secret")["emptyDir"]["sizeLimit"], "1Mi");
+    }
+
+    #[test]
+    fn only_the_init_container_mounts_the_token_and_the_build_knows_only_its_own_build() {
+        let rendered = job(&settings(), &record("bikes", 7, Class::Node));
         let spec = rendered.pointer("/spec/template/spec").expect("pod spec");
         let mounts = |container: &str| spec[container][0]["volumeMounts"].to_string();
-        assert!(mounts("initContainers").contains("\"registration\""));
-        assert!(!mounts("containers").contains("\"registration\""));
+        assert!(mounts("initContainers").contains("\"token\""));
+        assert!(!mounts("containers").contains("\"token\""));
+        let env: Vec<(String, String)> = spec["containers"][0]["env"]
+            .as_array()
+            .expect("env")
+            .iter()
+            .map(|e| (e["name"].as_str().unwrap_or_default().to_owned(), e["value"].as_str().unwrap_or_default().to_owned()))
+            .collect();
         assert_eq!(
-            spec["containers"][0]["env"][2]["value"], "1",
-            "one job, then the pod ends"
+            env,
+            [
+                ("JC_BUILD_API".to_owned(), settings().api),
+                ("JC_BUILD_ID".to_owned(), "7".to_owned()),
+                ("JC_APP_COMMIT".to_owned(), "8c56954a1f0e3d2c1b0a99887766554433221100".to_owned()),
+                ("JC_BUILD_TOKEN_FILE".to_owned(), "/tmp/build-secret/token".to_owned()),
+            ],
+            "no forge address, no forge or lane token, no install source"
         );
+        assert_eq!(rendered["metadata"]["annotations"][BUILD_ID], "7");
     }
 
     #[test]
@@ -749,9 +926,9 @@ mod tests {
         assert!(!running(&with(
             json!({ "conditions": [{ "type": "Complete", "status": "True" }] })
         )));
-        assert!(!running(&with(
-            json!({ "conditions": [{ "type": "Failed", "status": "True" }] })
-        )));
+        let failed = with(json!({ "conditions": [{ "type": "Failed", "status": "True", "reason": "DeadlineExceeded" }] }));
+        assert!(!running(&failed));
+        assert_eq!(ended(&failed), Some(("Failed".into(), "DeadlineExceeded".into())));
         assert!(!running(&json!({
             "metadata": { "name": "build-a-1", "deletionTimestamp": "2026-10-26T19:06:00Z" }
         })));
@@ -773,5 +950,11 @@ mod tests {
         assert_eq!(rendered["metadata"]["labels"][APP_LABEL], "bikes");
         assert_eq!(rendered["spec"]["resources"]["requests"]["storage"], "1Gi");
         assert_eq!(rendered["spec"]["accessModes"][0], "ReadWriteOnce");
+    }
+
+    #[test]
+    fn a_token_admits_its_pod_until_the_deadline_and_a_grace() {
+        assert_eq!(Class::Node.token_lifetime(), chrono::Duration::seconds(1200 + 300));
+        assert_eq!(Class::Rust.token_lifetime(), chrono::Duration::seconds(1800 + 300));
     }
 }

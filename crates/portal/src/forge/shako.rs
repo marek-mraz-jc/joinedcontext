@@ -1889,6 +1889,37 @@ impl ShakoClient {
             .map_err(|e| GitError::Transport(format!("failed to read the bundle: {e}")))
     }
 
+    /// The tree of `git_ref` as one `.tar.gz`, at most `limit` bytes: `GET
+    /// R/Shako.ArchiveLink(Ref=@r,Format=@f)` names the download, fetched from the base the
+    /// Portal dials as [`Self::bundle`] does. What a build pod builds from (AP-130).
+    pub async fn source_archive(&self, git_ref: &str, limit: u64) -> Result<Vec<u8>, GitError> {
+        #[derive(Deserialize)]
+        struct Link {
+            value: String,
+        }
+        let mut url = self.repo_url(&["Shako.ArchiveLink(Ref=@r,Format=@f)"])?;
+        url.query_pairs_mut()
+            .append_pair("@r", &literal(git_ref))
+            .append_pair("@f", &literal("tar.gz"));
+        let link: Link = self.get_json(url, "the archive link").await?;
+        let named = Url::parse(&link.value)
+            .map_err(|e| GitError::Transport(format!("the archive link is no URL: {e}")))?;
+        let path = named.path();
+        let api = path
+            .find("/api/v1/repos/")
+            .map(|at| &path[at..])
+            .ok_or_else(|| GitError::Transport("the archive link names no repository".into()))?;
+        let full = format!("{}{api}", self.base.as_str().trim_end_matches('/'));
+        let here = Url::parse(&full)
+            .map_err(|e| GitError::Config(format!("invalid url '{full}': {e}")))?;
+        let res = Self::check_status(
+            self.send(self.http.get(here).timeout(Duration::from_secs(120)))
+                .await?,
+        )
+        .await?;
+        read_capped(res, limit, &format!("the archive of {git_ref}")).await
+    }
+
     /// `GET R/Tags?$top=50&$skip=…`: every tag of the repository and the commit it names, all
     /// pages.
     pub async fn list_tags(&self) -> Result<Vec<(String, String)>, GitError> {

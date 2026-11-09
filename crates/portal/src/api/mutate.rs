@@ -373,8 +373,22 @@ fn build_lane_write(
     if !build_only {
         return Err(computed());
     }
-    if !crate::permissions::for_request(state, identity, project)
-        .may_write_status_field("App", "status.build")
+    // The Portal's own build lane writes the build it holds, of exactly this App, commit and
+    // digest, with no role: the build pod's token never reaches this door (AP-73, jc lane).
+    let name = body
+        .pointer("/metadata/name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let built = |key: &str| {
+        body.pointer(&format!("/status/build/{key}"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    };
+    let portal_lane =
+        crate::apps::built::held_for(project, name, built("commit"), built("digest")).is_some();
+    if !portal_lane
+        && !crate::permissions::for_request(state, identity, project)
+            .may_write_status_field("App", "status.build")
     {
         return Err(ApiError::Denied(
             "status.build is written by the build lane when it publishes the artifact: the one \
@@ -385,10 +399,6 @@ fn build_lane_write(
     }
     // The lane writes the build of an App on `main` and nothing else of it (AP-73): a stolen
     // lane token can neither create an App nor change what one reads, shows or who opens it.
-    let name = body
-        .pointer("/metadata/name")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
     let Some(current) = state.mirror.get(project, "App", name) else {
         return Err(ApiError::Denied(format!(
             "status.build is written back to an App on main; project {project} holds no App \

@@ -322,10 +322,12 @@ pub struct Config {
     /// cluster does; it is never a guess, because guessing a namespace here would mean writing
     /// a Deployment into somebody else's.
     pub app_settings: Option<crate::apps::reconciler::Settings>,
-    /// Where an App's build pods run and on which runner images (`JC_PORTAL_BUILD_NAMESPACE`
-    /// with `JC_PORTAL_BUILD_IMAGE_NODE`, `JC_PORTAL_BUILD_IMAGE_RUST` and the forge's API base;
-    /// `JC_PORTAL_BUILD_CACHE_SIZE`, default `1Gi`; AP-130, AP-131). `None` starts no build pod,
-    /// and an App's build waits in the forge's queue.
+    /// Where an App's build pods run, on which builder images, and where they report back
+    /// (`JC_PORTAL_BUILD_NAMESPACE` with `JC_PORTAL_BUILD_IMAGE_NODE`, `JC_PORTAL_BUILD_IMAGE_RUST`
+    /// and `JC_PORTAL_BUILD_API_URL`; `JC_PORTAL_BUILD_BIND`, default `0.0.0.0:9092`;
+    /// `JC_PORTAL_BUILD_CACHE_SIZE`, default `1Gi`; `JC_PORTAL_BUILD_TMP_SIZE`, default `4Gi`;
+    /// `JC_PORTAL_BUILD_WORK_DIR`; AP-130, AP-131). `None` builds nothing, and Rebuild answers
+    /// that builds are not configured.
     pub build_pods: Option<crate::apps::build_pods::Settings>,
     /// Where a builder run's workspace is scheduled and how the proxy reaches this Portal
     /// (AG-33, AG-40). `None` leaves every agent-run route answering 503: without a namespace
@@ -1021,27 +1023,52 @@ fn build_pod_settings(
             reason: "JC_PORTAL_BUILD_NAMESPACE is set, and a build pod needs its image".into(),
         }),
     };
-    let forge = set("JC_SHAKO_URL").ok_or_else(|| ConfigError::Invalid {
-        var: "JC_PORTAL_BUILD_NAMESPACE",
-        reason: "a build pod registers with the forge, and JC_SHAKO_URL is not set".into(),
+    let api = set("JC_PORTAL_BUILD_API_URL").ok_or_else(|| ConfigError::Invalid {
+        var: "JC_PORTAL_BUILD_API_URL",
+        reason: "JC_PORTAL_BUILD_NAMESPACE is set, and a build pod reports back to the Portal's \
+                 build listener at this in-cluster URL, e.g. http://jc-build.smartcity.svc:9092"
+            .into(),
     })?;
-    let cache_size = set("JC_PORTAL_BUILD_CACHE_SIZE").unwrap_or_else(|| "1Gi".into());
-    let digits = cache_size.trim_end_matches("Gi").trim_end_matches("Mi");
-    if digits.is_empty()
-        || digits.len() == cache_size.len()
-        || !digits.bytes().all(|b| b.is_ascii_digit())
+    if !(api.starts_with("http://") || api.starts_with("https://")) || url::Url::parse(&api).is_err()
     {
         return Err(ConfigError::Invalid {
-            var: "JC_PORTAL_BUILD_CACHE_SIZE",
-            reason: format!("'{cache_size}' is not a size such as 512Mi or 1Gi"),
+            var: "JC_PORTAL_BUILD_API_URL",
+            reason: format!("'{api}' is not an http(s) URL"),
         });
     }
+    let bind = set("JC_PORTAL_BUILD_BIND")
+        .unwrap_or_else(|| "0.0.0.0:9092".into())
+        .parse()
+        .map_err(|e: std::net::AddrParseError| ConfigError::Invalid {
+            var: "JC_PORTAL_BUILD_BIND",
+            reason: e.to_string(),
+        })?;
+    let size = |var: &'static str, default: &str| {
+        let size = set(var).unwrap_or_else(|| default.into());
+        let digits = size.trim_end_matches("Gi").trim_end_matches("Mi");
+        if digits.is_empty()
+            || digits.len() == size.len()
+            || !digits.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Err(ConfigError::Invalid {
+                var,
+                reason: format!("'{size}' is not a size such as 512Mi or 1Gi"),
+            });
+        }
+        Ok(size)
+    };
+    let work_dir = set("JC_PORTAL_BUILD_WORK_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("jc-app-builds"));
     Ok(Some(crate::apps::build_pods::Settings {
         namespace,
-        forge,
+        api,
+        bind,
         node_image: image("JC_PORTAL_BUILD_IMAGE_NODE")?,
         rust_image: image("JC_PORTAL_BUILD_IMAGE_RUST")?,
-        cache_size,
+        cache_size: size("JC_PORTAL_BUILD_CACHE_SIZE", "1Gi")?,
+        tmp_size: size("JC_PORTAL_BUILD_TMP_SIZE", "4Gi")?,
+        work_dir,
     }))
 }
 
@@ -3171,7 +3198,7 @@ mod tests {
             "JC_PORTAL_BUILD_NAMESPACE" => Some("dev".to_string()),
             "JC_PORTAL_BUILD_IMAGE_NODE" => Some("r.example.org/builder@sha256:aa".to_string()),
             "JC_PORTAL_BUILD_IMAGE_RUST" => Some("r.example.org/rust@sha256:bb".to_string()),
-            "JC_SHAKO_URL" => Some("http://shako-http.dev.svc.cluster.local:3000".to_string()),
+            "JC_PORTAL_BUILD_API_URL" => Some("http://jc-build.dev.svc:9092".to_string()),
             _ => None,
         };
         let settings = Config::from_vars(complete)
@@ -3179,10 +3206,9 @@ mod tests {
             .build_pods
             .expect("every part is there");
         assert_eq!(settings.cache_size, "1Gi");
-        assert_eq!(
-            settings.forge,
-            "http://shako-http.dev.svc.cluster.local:3000"
-        );
+        assert_eq!(settings.tmp_size, "4Gi");
+        assert_eq!(settings.api, "http://jc-build.dev.svc:9092");
+        assert_eq!(settings.bind.to_string(), "0.0.0.0:9092");
 
         let without_namespace = Config::from_vars(|k| match k {
             "JC_PORTAL_BUILD_NAMESPACE" => None,
@@ -3200,7 +3226,10 @@ mod tests {
             ("JC_PORTAL_BUILD_NAMESPACE", Some("Dev_ns")),
             ("JC_PORTAL_BUILD_CACHE_SIZE", Some("1TB")),
             ("JC_PORTAL_BUILD_CACHE_SIZE", Some("Gi")),
-            ("JC_SHAKO_URL", None),
+            ("JC_PORTAL_BUILD_TMP_SIZE", Some("lots")),
+            ("JC_PORTAL_BUILD_API_URL", None),
+            ("JC_PORTAL_BUILD_API_URL", Some("jc-build:9092")),
+            ("JC_PORTAL_BUILD_BIND", Some("everywhere")),
         ] {
             let refused = Config::from_vars(|k| match k == var {
                 true => value.map(str::to_owned),

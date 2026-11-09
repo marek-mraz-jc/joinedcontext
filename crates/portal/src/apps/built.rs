@@ -194,25 +194,14 @@ pub async fn check_and_publish(
     } else {
         ("bundle", MAX_BUNDLE_BYTES)
     };
-    let built = newest_of(&repo, &format!("{artifact}-{commit}"), commit, None)
-        .await
-        .map_err(forge)?
-        .ok_or_else(|| {
-            ApiError::BadRequest(format!(
-                "{at} holds no artifact {artifact}-{commit} from a run of commit {commit} (AP-104)"
-            ))
-        })?;
-    if built.size > limit {
-        return Err(ApiError::BadRequest(format!(
-            "artifact {artifact}-{commit} of {at} is {} bytes, more than the {limit} a \
-             {artifact} may be",
-            built.size
-        )));
-    }
-    let bytes = repo
-        .download_artifact(built.id, limit)
-        .await
-        .map_err(forge)?;
+    let (bytes, sbom) = match held_for(project, name, commit, digest) {
+        Some(held) => held.bytes(&at, artifact, limit)?,
+        None => match from_actions(&repo, &at, artifact, commit, limit).await {
+            Ok(both) => both,
+            Err(ActionsError::Forge(err)) => return Err(forge(err)),
+            Err(ActionsError::Refused(refusal)) => return Err(refusal),
+        },
+    };
     let image = if ui_rust {
         let image = image_of(&bytes, digest).map_err(|reason| {
             ApiError::BadRequest(format!(
@@ -249,20 +238,6 @@ pub async fn check_and_publish(
     } else {
         None
     };
-    let sbom = newest_of(&repo, &format!("sbom-{commit}"), commit, Some(built.run))
-        .await
-        .map_err(forge)?
-        .ok_or_else(|| {
-            ApiError::BadRequest(format!(
-                "{at} holds no artifact sbom-{commit} from the run that uploaded the \
-                 {artifact} (AP-101, AP-104)"
-            ))
-        })?;
-    let sbom = repo
-        .download_artifact(sbom.id, MAX_SBOM_BYTES)
-        .await
-        .map_err(forge)?;
-
     let package = package(name);
     let conflict = |err: GitError| match err {
         GitError::Conflict(message) => ApiError::Conflict(message),
@@ -296,6 +271,103 @@ pub async fn check_and_publish(
             .map_err(conflict)?;
     }
     Ok(published)
+}
+
+/// A build the Portal's own lane holds (the jc build lane): the artifact and the SBOM one build
+/// pod of `commit` uploaded with its build's token, frozen before the Portal hashed them. While
+/// [`with_held`] runs, the lane's `status.build` of exactly this App, commit and digest is the
+/// Portal's own write, checked and published from these bytes instead of the forge's artifacts
+/// (AP-73, AP-104). Only Portal code sets it: no request can.
+#[derive(Debug, Clone)]
+pub struct Held {
+    pub project: String,
+    pub app: String,
+    pub commit: String,
+    pub digest: String,
+    pub artifact: std::sync::Arc<Vec<u8>>,
+    pub sbom: std::sync::Arc<Vec<u8>>,
+}
+
+tokio::task_local! {
+    static HELD: Held;
+}
+
+/// Runs `work` with `held` as the build the Portal's lane writes.
+pub async fn with_held<F: std::future::Future>(held: Held, work: F) -> F::Output {
+    HELD.scope(held, work).await
+}
+
+/// The build the Portal's lane holds for exactly this App, commit and digest, if any.
+pub fn held_for(project: &str, app: &str, commit: &str, digest: &str) -> Option<Held> {
+    HELD.try_with(|held| {
+        (held.project == project && held.app == app && held.commit == commit && held.digest == digest)
+            .then(|| held.clone())
+    })
+    .ok()
+    .flatten()
+}
+
+impl Held {
+    /// The artifact and SBOM, within the artifact's limit.
+    fn bytes(&self, at: &str, artifact: &str, limit: u64) -> Result<(Vec<u8>, Vec<u8>), ApiError> {
+        let size = self.artifact.len() as u64;
+        if size > limit {
+            return Err(ApiError::BadRequest(format!(
+                "the {artifact} of the build of {} in {at} is {size} bytes, more than the {limit} a \
+                 {artifact} may be",
+                self.commit
+            )));
+        }
+        Ok((self.artifact.to_vec(), self.sbom.to_vec()))
+    }
+}
+
+/// The artifact and SBOM of a forge workflow run of `commit`: the newest `{artifact}-{commit}`
+/// of a run of that commit within `limit`, and the `sbom-{commit}` of the same run.
+async fn from_actions(
+    repo: &ShakoClient,
+    at: &str,
+    artifact: &str,
+    commit: &str,
+    limit: u64,
+) -> Result<(Vec<u8>, Vec<u8>), ActionsError> {
+    let built = newest_of(repo, &format!("{artifact}-{commit}"), commit, None)
+        .await?
+        .ok_or_else(|| {
+            ActionsError::Refused(ApiError::BadRequest(format!(
+                "{at} holds no artifact {artifact}-{commit} from a run of commit {commit} (AP-104)"
+            )))
+        })?;
+    if built.size > limit {
+        return Err(ActionsError::Refused(ApiError::BadRequest(format!(
+            "artifact {artifact}-{commit} of {at} is {} bytes, more than the {limit} a \
+             {artifact} may be",
+            built.size
+        ))));
+    }
+    let bytes = repo.download_artifact(built.id, limit).await?;
+    let sbom = newest_of(repo, &format!("sbom-{commit}"), commit, Some(built.run))
+        .await?
+        .ok_or_else(|| {
+            ActionsError::Refused(ApiError::BadRequest(format!(
+                "{at} holds no artifact sbom-{commit} from the run that uploaded the \
+                 {artifact} (AP-101, AP-104)"
+            )))
+        })?;
+    let sbom = repo.download_artifact(sbom.id, MAX_SBOM_BYTES).await?;
+    Ok((bytes, sbom))
+}
+
+/// Why the forge's artifacts were not read: the forge, or a check of what it holds.
+enum ActionsError {
+    Forge(GitError),
+    Refused(ApiError),
+}
+
+impl From<GitError> for ActionsError {
+    fn from(err: GitError) -> Self {
+        Self::Forge(err)
+    }
 }
 
 /// The App's migration files at the built commit: the `.sql` files directly in the folder its
