@@ -6230,6 +6230,7 @@ dependencies = [
  "daiya-store-pg",
  "dataroom-api",
  "dataroom-core",
+ "dataroom-harvest",
  "dataroom-server",
  "dataroom-store-memory",
  "dataroom-store-pg",
@@ -6280,6 +6281,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "zeroize",
+ "zip",
 ]
 
 [[package]]
@@ -6968,12 +6970,14 @@ dependencies = [
  "kaisatsu-store-pg",
  "odata-table",
  "pbkdf2 0.13.0",
+ "rcgen",
  "serde",
  "serde_json",
  "serde_norway",
  "sha2 0.11.1",
  "sqlx",
  "tokio",
+ "tokio-rustls",
  "totp-rs",
  "tower",
  "tower-http 0.6.11",
@@ -10189,9 +10193,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "3.5.1"
+version = "3.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab5023804cbe0304cbe06197ac16e645a0a0d0ffa2953bf735c15c2fa0213350"
+checksum = "d24a7e92f4bcaa36b97fa93c4fa7ca8f3e669eced949345b3462dba333c7f909"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -10203,6 +10207,7 @@ dependencies = [
  "http-body",
  "http-body-util",
  "indexmap 2.14.2",
+ "libc",
  "pastey 0.2.3",
  "pin-project-lite",
  "rand 0.10.3",

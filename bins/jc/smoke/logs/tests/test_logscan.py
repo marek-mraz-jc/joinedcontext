@@ -1,3 +1,4 @@
+import pytest
 import base64
 import json
 import os
@@ -192,3 +193,15 @@ def test_the_suite_windows_count_only_passed_writes(tmp_path):
 def test_metric_names_drop_labels_and_comments():
     text = "# HELP x y\nantares_up 1\njc_portal_requests_total{route=\"/\"} 3\n"
     assert suite.metric_names(text) == {"antares_up", "jc_portal_requests_total"}
+
+
+def test_the_reader_and_the_refused_token_call_use_the_state_realm(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(suite.Session, "call", lambda self, m, path, *a, **k: seen.append(path) or (401, {}, b""))
+    (tmp_path / "portal-admin-client-secret").write_text("x")
+    (tmp_path / "realm-name.txt").write_text("smartcity")
+    with pytest.raises(RuntimeError, match="401"):
+        suite.Person("http://127.0.0.1:9", tmp_path)._admin_token()
+    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]
+    kaisatsu = [c for c in suite.refused_calls("m", None, "smartcity") if c["module"] == "kaisatsu"]
+    assert [c["path"] for c in kaisatsu] == ["/id/realms/smartcity/protocol/openid-connect/token"]

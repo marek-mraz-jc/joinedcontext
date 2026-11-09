@@ -1537,6 +1537,30 @@ pub fn drop_subject_unless_from(headers: &mut HeaderMap, names: &[String], from:
     }
 }
 
+/// [`drop_subject_unless_from`], except on a `/q` request carrying the admin bearer: the admin
+/// caller names whose reading a `/q` route runs under (`POST /q/views/{id}/preview`, T-3813), and
+/// a subject only narrows what the admin credential reads unnamed. Without it, a Portal that
+/// reaches the broker beside the gateway (jc) previews under nobody and meets `401`.
+pub fn drop_subject_unless_from_or_admin(
+    path: &str,
+    headers: &mut HeaderMap,
+    names: &[String],
+    from: &[String],
+    admin: Option<&crate::admin_auth::AdminAuth>,
+) {
+    let admin_call = (path == "/q" || path.starts_with("/q/"))
+        && admin.is_some_and(|auth| {
+            auth.admits(
+                headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .map(axum::http::HeaderValue::as_bytes),
+            )
+        });
+    if !admin_call {
+        drop_subject_unless_from(headers, names, from);
+    }
+}
+
 /// Who this request is from, as far as the seam is concerned: the tenant it
 /// addresses and the headers a deployment named. A header the request does
 /// not carry is simply absent — the seam invents nothing.
@@ -2172,6 +2196,88 @@ pub(crate) fn shared_id_patterns(rules: &[Rule]) -> Option<&[String]> {
     .then_some(first.id_patterns.as_slice())
 }
 
+/// Whether `rules` admit every Entity the type selection `groups` selects
+/// and show each the same Attributes: each group names a type some rule
+/// admits by type alone, so whatever the other rules narrow, that one
+/// holds, and every rule naming a selected type shows what it shows, so
+/// the stored Entity orders and filters as the shown one. A whole-space
+/// Endpoint binds the space's every Policy: a type-wide public read beside
+/// a dataset's `idPattern` rule of the same type was judged per row, and a
+/// count over 255 283 Gardens stopped at the gateway's 10 s.
+pub(crate) fn admit_every(rules: &[Rule], groups: &[Vec<String>]) -> bool {
+    let wide = |t: &String| {
+        rules
+            .iter()
+            .any(|r| r.admits_by_type_alone() && r.types.contains(t))
+    };
+    let first = naming(rules, groups).next().map(shows);
+    !groups.is_empty()
+        && groups.iter().all(|g| g.iter().any(wide))
+        && naming(rules, groups).all(|r| Some(shows(r)) == first)
+}
+
+/// The rules naming a type of `groups` (a rule naming no type holds for
+/// nothing, [`Rule::types`]).
+fn naming<'a>(rules: &'a [Rule], groups: &'a [Vec<String>]) -> impl Iterator<Item = &'a Rule> {
+    rules
+        .iter()
+        .filter(|r| groups.iter().flatten().any(|t| r.types.contains(t)))
+}
+
+/// What a rule shows: every Attribute, or these.
+fn shows(r: &Rule) -> (bool, Vec<&String>) {
+    let mut a: Vec<&String> = r.attributes.iter().collect();
+    a.sort();
+    a.dedup();
+    (r.every_attribute, a)
+}
+
+/// The `idPattern`s of every rule naming a type of `groups`, united, when
+/// each narrows by exact patterns alone and all show the same Attributes,
+/// and no Entity of those types carries a type another rule names: then
+/// the rules hold for exactly the selected Entities whose id matches one,
+/// and the store decides, pages and counts them as under
+/// [`shared_id_patterns`]. A whole-space Endpoint binds the space's every
+/// dataset Policy: 431 rules each narrowing KeyPerformanceIndicator by its
+/// own pattern were judged per row, and a count over bratislava's 128 678
+/// KPIs passed the gateway's 10 s.
+pub(crate) async fn united_id_patterns(
+    st: &crate::state::AppState,
+    tenant: &antares_model::TenantId,
+    rules: &[Rule],
+    groups: &[Vec<String>],
+) -> Result<Option<Vec<String>>, antares_model::NgsiError> {
+    let exact = |p: &String| {
+        antares_store::filter::id_pattern_sql(p).is_some()
+            && antares_ql::regex::compile(&format!("^(?:{p})$")).is_ok()
+    };
+    let first = naming(rules, groups).next().map(shows);
+    let alike = naming(rules, groups).all(|r| {
+        !r.is_conditional()
+            && r.ids.is_empty()
+            && !r.id_patterns.is_empty()
+            && r.id_patterns.iter().all(exact)
+            && Some(shows(r)) == first
+    });
+    if groups.is_empty() || first.is_none() || !alike {
+        return Ok(None);
+    }
+    let selected: Vec<String> = groups.iter().flatten().cloned().collect();
+    let Some(beside) = st.store.entity_types_beside(tenant, &selected).await? else {
+        return Ok(None);
+    };
+    let elsewhere = |t: &String| !selected.contains(t) && rules.iter().any(|r| r.types.contains(t));
+    if beside.iter().any(elsewhere) {
+        return Ok(None);
+    }
+    let mut all: Vec<String> = naming(rules, groups)
+        .flat_map(|r| r.id_patterns.iter().cloned())
+        .collect();
+    all.sort();
+    all.dedup();
+    Ok(Some(all))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2210,6 +2316,39 @@ mod tests {
             assert!(h.get("x-jc-groups").is_none(), "{id:?}");
             assert_eq!(h.get("x-other").unwrap(), "kept");
         }
+    }
+
+    #[test]
+    fn an_admin_q_request_names_its_subject_and_nothing_else_does() {
+        let names = vec!["x-jc-subject".to_owned(), "x-jc-roles".to_owned()];
+        let from = vec!["context-gateway.jc".to_owned()];
+        let secret = &"0123456789abcdef".repeat(2);
+        let admin = crate::admin_auth::AdminAuth::new(secret, false).unwrap();
+        let request = |bearer: Option<&str>| {
+            let mut h = HeaderMap::new();
+            h.insert("x-jc-roles", "public".parse().unwrap());
+            if let Some(b) = bearer {
+                h.insert("authorization", format!("Bearer {b}").parse().unwrap());
+            }
+            h
+        };
+        let kept =
+            |path: &str, bearer: Option<&str>, admin: Option<&crate::admin_auth::AdminAuth>| {
+                let mut h = request(bearer);
+                drop_subject_unless_from_or_admin(path, &mut h, &names, &from, admin);
+                h.contains_key("x-jc-roles")
+            };
+        assert!(kept("/q/views/v/preview", Some(secret), Some(&admin)));
+        // the wrong bearer, no bearer, no admin credential configured, or outside /q: dropped
+        assert!(!kept(
+            "/q/views/v/preview",
+            Some("not-the-secret-not-the-secret-xx"),
+            Some(&admin)
+        ));
+        assert!(!kept("/q/views/v/preview", None, Some(&admin)));
+        assert!(!kept("/q/views/v/preview", Some(secret), None));
+        assert!(!kept("/ngsi-ld/v1/entities", Some(secret), Some(&admin)));
+        assert!(!kept("/qx/views", Some(secret), Some(&admin)));
     }
 
     /// `admits` is `shown(..).is_some()` without the set (T-3667).

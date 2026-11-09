@@ -403,7 +403,9 @@ export function ServiceAccounts({ project }: { project: string }): JSX.Element {
                   <dl className="mt-2 grid gap-x-6 gap-y-1 text-body sm:grid-cols-2">
                     <div className="flex gap-2">
                       <dt className="text-fg-muted">{t("access.accounts.owner")}</dt>
-                      <dd className="font-medium text-fg">{personLabel(spec.owner?.user ?? "", ownerNames)}</dd>
+                      <dd className="font-medium text-fg" title={spec.owner?.user}>
+                        {personLabel(spec.owner?.user ?? "", ownerNames)}
+                      </dd>
                     </div>
                     <div className="flex gap-2">
                       <dt className="text-fg-muted">{t("access.accounts.roles")}</dt>

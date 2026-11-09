@@ -48,7 +48,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
 import logscan as ls  # noqa: E402
-from common import PASS, FAIL, Results, as_json, loopback_only, read_token, short  # noqa: E402
+from common import PASS, FAIL, Results, as_json, loopback_only, read_token, realm_of, short  # noqa: E402
 
 PORTAL_ADMIN_CLIENT = "portal-reconciler"
 PERSON = "smoke-logs-reader"
@@ -153,6 +153,7 @@ class Person:
 
     def __init__(self, base: str, state: Path):
         self.base, self.state = base, state
+        self.realm = realm_of(state)
         self.uid = None
         self.session = Session(base)
         self.admin = None
@@ -160,7 +161,7 @@ class Person:
     def _admin_token(self) -> str:
         secret = (self.state / "portal-admin-client-secret").read_text().strip()
         st, _, raw = Session(self.base).call(
-            "POST", "/id/realms/jc/protocol/openid-connect/token", cookies=False,
+            "POST", f"/id/realms/{self.realm}/protocol/openid-connect/token", cookies=False,
             form={"grant_type": "client_credentials", "client_id": PORTAL_ADMIN_CLIENT, "client_secret": secret})
         tok = as_json(raw) or {}
         if st != 200 or "access_token" not in tok:
@@ -172,21 +173,21 @@ class Person:
         auth = {"Authorization": f"Bearer {self.admin}"}
         s = Session(self.base)
         password = secrets.token_urlsafe(18) + "-7aZ"
-        st, _, raw = s.call("POST", "/id/admin/realms/jc/users", headers=auth, cookies=False, body={
+        st, _, raw = s.call("POST", f"/id/admin/realms/{self.realm}/users", headers=auth, cookies=False, body={
             "username": PERSON, "enabled": True, "email": f"{PERSON}@smoke.invalid", "emailVerified": True,
             "firstName": "Smoke", "lastName": "Logs"})
         if st not in (201, 409):
             raise RuntimeError(f"create {PERSON}: {st} {short(raw)}")
-        st, _, raw = s.call("GET", f"/id/admin/realms/jc/users?username={PERSON}&exact=true", headers=auth,
+        st, _, raw = s.call("GET", f"/id/admin/realms/{self.realm}/users?username={PERSON}&exact=true", headers=auth,
                             cookies=False)
         self.uid = (as_json(raw) or [{}])[0].get("id")
         if not self.uid:
             raise RuntimeError(f"find {PERSON}: {st}")
-        st, _, raw = s.call("PUT", f"/id/admin/realms/jc/users/{self.uid}/reset-password", headers=auth,
+        st, _, raw = s.call("PUT", f"/id/admin/realms/{self.realm}/users/{self.uid}/reset-password", headers=auth,
                             cookies=False, body={"type": "password", "value": password, "temporary": False})
         if st not in (200, 204):
             raise RuntimeError(f"password of {PERSON}: {st}")
-        st, _, raw = s.call("GET", "/id/admin/realms/jc/groups?briefRepresentation=false", headers=auth,
+        st, _, raw = s.call("GET", f"/id/admin/realms/{self.realm}/groups?briefRepresentation=false", headers=auth,
                             cookies=False)
         todo, gid = list(as_json(raw) or []), None
         while todo:
@@ -195,8 +196,8 @@ class Person:
                 gid = g["id"]
             todo += g.get("subGroups") or []
         if not gid:
-            raise RuntimeError("group /platform-admins: not in realm jc")
-        st, _, _ = s.call("PUT", f"/id/admin/realms/jc/users/{self.uid}/groups/{gid}", headers=auth, cookies=False)
+            raise RuntimeError(f"group /platform-admins: not in realm {self.realm}")
+        st, _, _ = s.call("PUT", f"/id/admin/realms/{self.realm}/users/{self.uid}/groups/{gid}", headers=auth, cookies=False)
         if st not in (200, 204):
             raise RuntimeError(f"group of {PERSON}: {st}")
         login_url, st, page = self.session.follow("/api/v1/auth/login")
@@ -215,13 +216,13 @@ class Person:
 
     def delete(self) -> None:
         if self.uid and self.admin:
-            Session(self.base).call("DELETE", f"/id/admin/realms/jc/users/{self.uid}", cookies=False,
+            Session(self.base).call("DELETE", f"/id/admin/realms/{self.realm}/users/{self.uid}", cookies=False,
                                     headers={"Authorization": f"Bearer {self.admin}"})
 
 
 # ------------------------------------------------------------------ refused calls, one per door
 
-def refused_calls(marker: str, slug: str | None = None) -> list[dict]:
+def refused_calls(marker: str, slug: str | None = None, realm: str = "jc") -> list[dict]:
     """(module, method, path, headers, body, accepted statuses): each refused before any work.
     The gateway's call names a public Endpoint when one is known (a forged token is 401 there),
     else an unknown one (404, which says nothing more)."""
@@ -237,7 +238,7 @@ def refused_calls(marker: str, slug: str | None = None) -> list[dict]:
         {"module": "shako", "method": "GET", "path": "/git/api/v1/user", "headers": bad,
          "ok": (401, 403)},
         {"module": "ekiben", "method": "GET", "path": "/streams/streams", "headers": bad, "ok": (401, 403)},
-        {"module": "kaisatsu", "method": "POST", "path": "/id/realms/jc/protocol/openid-connect/token",
+        {"module": "kaisatsu", "method": "POST", "path": f"/id/realms/{realm}/protocol/openid-connect/token",
          "headers": {}, "form": {"grant_type": "client_credentials", "client_id": PORTAL_ADMIN_CLIENT,
                                  "client_secret": marker}, "ok": (400, 401)},
         {"module": "daiya", "method": "POST", "path": "/dashboards/api/folders", "headers": bad,
@@ -501,7 +502,8 @@ def main(argv=None) -> int:
     marker = "smokelogs" + secrets.token_hex(6)
 
     slugs, hub = public_slugs(h)
-    probes = [run_probe(h, pr) for pr in refused_calls(marker, slugs[0] if slugs else None)]
+    realm = realm_of(a.state) if a.state else "jc"
+    probes = [run_probe(h, pr) for pr in refused_calls(marker, slugs[0] if slugs else None, realm)]
 
     # Flows: each with its own request id.
     flows = []

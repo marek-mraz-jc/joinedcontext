@@ -20,7 +20,7 @@ import { PublicFrame } from "./components/layout/PublicFrame";
 import { MemberFrame } from "./components/layout/MemberFrame";
 import { isHiddenSection } from "./components/layout/navigation";
 import { useHiddenSections } from "./branding";
-import { EmptyState, PageFailed, PageLoading } from "./components/ui";
+import { Alert, EmptyState, PageFailed, PageLoading } from "./components/ui";
 import { ChunkFailed, ErrorPage, errorReference, isChunkLoadError } from "./components/ErrorBoundary";
 import { NotFoundState } from "./components/NotFoundState";
 import { LoginPage } from "./routes/LoginPage";
@@ -1356,10 +1356,12 @@ const sectionRoute = createRoute({
   // `?dataType=`, `?dataQ=` and `?dataSort=` hold what an endpoint's Data section shows (T-5082).
   validateSearch: (
     search: Record<string, unknown>,
-  ): { edit?: string; draft?: string; dataType?: string; dataQ?: string; dataSort?: string } => {
+  ): { edit?: string; draft?: string; dataType?: string; dataQ?: string; dataSort?: string; hidden?: "dashboards" } => {
     const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
     return {
       edit: text(search.edit),
+      // The hidden section a visit came from, for the notice on the page it lands on.
+      hidden: search.hidden === "dashboards" ? "dashboards" : undefined,
       draft: text(search.draft),
       dataType: text(search.dataType),
       dataQ: text(search.dataQ),
@@ -1390,7 +1392,8 @@ const sectionRoute = createRoute({
   },
   component: function SectionRoute() {
     const { project, plural } = sectionRoute.useParams();
-    const { edit } = sectionRoute.useSearch();
+    const { edit, hidden: cameFrom } = sectionRoute.useSearch();
+    const { t } = useTranslation();
     const hiddenSections = useHiddenSections();
     const navigate = useNavigate();
     const child = useChildMatches({
@@ -1409,9 +1412,15 @@ const sectionRoute = createRoute({
     const leave = hidden && hiddenSections !== undefined;
     useEffect(() => {
       if (leave) {
-        void navigate({ to: "/projects/$project/$plural", params: { project, plural: "spaces" }, replace: true });
+        void navigate({
+          to: "/projects/$project/$plural",
+          params: { project, plural: "spaces" },
+          // Said on arrival, so the visit does not land on another page without a word.
+          search: plural === "dashboards" ? { hidden: "dashboards" } : {},
+          replace: true,
+        });
       }
-    }, [leave, navigate, project]);
+    }, [leave, navigate, project, plural]);
     if (hidden) {
       return null;
     }
@@ -1435,6 +1444,11 @@ const sectionRoute = createRoute({
       <Shell project={project}>
         <HandOff>
           <DraftElsewhere project={project} page={plural} />
+          {cameFrom && plural === "spaces" ? (
+            <Alert tone="info" title={t("hiddenSection.title")} className="mb-4">
+              {t("hiddenSection.body")}
+            </Alert>
+          ) : null}
           <FormRouteHost project={project} plural={plural} form={form}>
             <ResourceListPage
               project={project}

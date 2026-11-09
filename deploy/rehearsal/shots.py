@@ -46,7 +46,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     h = rh.Http(a.base)
     token = rh.admin_token(h, Path(a.state))
-    _, password = rh.make_person(h, token, "jc", "rehearsal-shots", groups=["/platform-admins"])
+    _, password = rh.make_person(h, token, rh.realm_of(Path(a.state)), "rehearsal-shots", groups=[f"/{rh.ADMIN_GROUP}"])
     rows = []
     with sync_playwright() as pw:
         browser = pw.chromium.launch(args=["--disable-dev-shm-usage", "--disable-gpu"])

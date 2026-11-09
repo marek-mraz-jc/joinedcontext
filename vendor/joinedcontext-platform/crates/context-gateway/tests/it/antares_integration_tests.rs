@@ -614,10 +614,11 @@ async fn the_whole_path_through_the_gateway_to_a_real_broker() {
             .expect("a request"),
     )
     .await;
-    // The view serves no merge here, so the broker answers 405 with `Allow` (views.md 4).
-    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    // No Policy grants the merge, so the gateway refuses it 403 before the view (2c3cf1e1,
+    // GW1): the view's 405 would name in `Allow` the writes it serves to somebody else.
+    assert_eq!(status, StatusCode::FORBIDDEN);
     let problem: Value = serde_json::from_slice(&body).expect("problem+json");
-    assert_eq!(problem["status"], json!(405));
+    assert_eq!(problem["status"], json!(403));
     // CIM 009 clause 6.3.3 carries `detail`; GW1 and R20 say it names no rule: not the
     // policy, not its assignee, not the attribute that was outside the grant.
     assert!(

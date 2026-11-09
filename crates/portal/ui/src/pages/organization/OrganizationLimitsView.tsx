@@ -120,7 +120,8 @@ export function OrganizationLimitsView({
           {t("organization.limits.perProject")}
         </h3>
         <p className="text-body text-fg-muted">{t("organization.limits.perProjectLead")}</p>
-        <Table caption={t("organization.limits.perProject")}>
+        {/* A card per project below 640 px: a row of ten quota columns was cut off at 400 px. */}
+        <Table stack caption={t("organization.limits.perProject")}>
           <TableHead>
             <TableHeaderCell scope="col">{t("organization.limits.project")}</TableHeaderCell>
             <TableHeaderCell scope="col">{t("organization.limits.whose")}</TableHeaderCell>
@@ -137,9 +138,9 @@ export function OrganizationLimitsView({
               (limits.projects ?? []).map((row) => (
                 <TableRow key={row.project}>
                   <TableCell className="font-mono">{row.project}</TableCell>
-                  <TableCell>{t(`organization.limits.origin.${row.origin}`)}</TableCell>
+                  <TableCell data-label={t("organization.limits.whose")}>{t(`organization.limits.origin.${row.origin}`)}</TableCell>
                   {[...COUNTED, ...RUNTIME, ...MQTT].map((dimension) => (
-                    <TableCell key={dimension}>
+                    <TableCell key={dimension} data-label={t(`organization.limit.projects.quota.${dimension}.label`)}>
                       {quotaCell(row.quota[dimension]?.used, row.quota[dimension]?.limit)}
                     </TableCell>
                   ))}

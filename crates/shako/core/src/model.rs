@@ -321,7 +321,7 @@ pub struct WebhookRecord {
     pub url: String,
     pub events: Vec<String>,
     pub active: bool,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, default)]
     pub secret_ref: String,
     #[serde(skip_serializing)]
     pub previous_secret_ref: Option<String>,
@@ -367,7 +367,7 @@ pub struct PushMirrorRecord {
     pub repo_id: RepoId,
     pub remote_name: String,
     pub remote_address: String,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, default)]
     pub credential_secret_ref: String,
     pub interval: String,
     pub sync_on_commit: bool,
@@ -403,7 +403,8 @@ pub struct PackageVersionRecord {
     pub version: String,
     pub digest: String,
     pub media_type: String,
-    #[serde(skip_serializing)]
+    /// Kept out of every API answer; the store log still writes it (shako-store-pg `hidden`).
+    #[serde(skip_serializing, default)]
     pub manifest_bytes: Vec<u8>,
     pub subject_digest: Option<String>,
     pub artifact_type: Option<String>,

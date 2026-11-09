@@ -35,6 +35,7 @@ dataroom = [
   "dep:dataroom-server",
   "dep:dataroom-api",
   "dep:dataroom-core",
+  "dep:dataroom-harvest",
   "dep:dataroom-store-memory",
   "dep:dataroom-store-pg",
   "dep:chrono",
@@ -49,7 +50,7 @@ ekiben = ["dep:ekiben-server", "dep:ekiben-core", "dep:futures"]
 # The platform's broker build (Antares image-jc FEATURES without parquet and tabular): Endpoint
 # views, the joinedcontext engine and every surface dev's broker serves.
 antares = ["dep:antares-broker"]
-gateway = ["dep:context-gateway", "dep:jc-core", "dep:jc-manifest", "dep:jcctl"]
+gateway = ["dep:context-gateway", "dep:jc-core", "dep:jc-manifest", "dep:jcctl", "dep:zip"]
 portal = ["dep:joinedcontext-portal"]
 # POST /generate for the reconciler: broker schema and @context of a LinkML model.
 model-tools = ["dep:linkml-model", "dep:serde_norway"]
@@ -84,7 +85,7 @@ base64 = "0.22"
 age = { version = "0.12", default-features = false }
 serde_json = { version = "1", features = ["preserve_order"] }
 tower = { version = "0.5", features = ["util"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "json", "migrate"] }
 url = "2"
 futures = { version = "0.3", optional = true }
@@ -100,6 +101,7 @@ kaisatsu-import = { path = "../../crates/kaisatsu/import", optional = true }
 dataroom-server = { path = "../../crates/dataroom/server", optional = true }
 dataroom-api = { path = "../../crates/dataroom/api", optional = true }
 dataroom-core = { path = "../../crates/dataroom/core", optional = true }
+dataroom-harvest = { path = "../../crates/dataroom/harvest", optional = true }
 dataroom-store-memory = { path = "../../crates/dataroom/store-memory", optional = true }
 dataroom-store-pg = { path = "../../crates/dataroom/store-pg", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
@@ -118,6 +120,8 @@ context-gateway = { path = "../../vendor/joinedcontext-platform/crates/context-g
 jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core", optional = true }
 jc-manifest = { path = "../../vendor/joinedcontext-platform/crates/jc-manifest", optional = true }
 jcctl = { path = "../../vendor/joinedcontext-platform/crates/jcctl", optional = true, default-features = false }
+# The gateway reads shako's repositories as zip archives (the image has no git).
+zip = { version = "9.2", default-features = false, features = ["deflate"], optional = true }
 
 joinedcontext-portal = { path = "../../crates/portal", optional = true }
 

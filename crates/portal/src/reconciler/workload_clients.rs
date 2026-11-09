@@ -684,6 +684,8 @@ pub struct WorkloadClientSync {
     app_jobs: Option<String>,
     /// What ends a removed client's tokens at once; `None` leaves them valid until they expire.
     revoke: Option<Revoke>,
+    /// Whether a run already warned that it keeps `pl-`/`appjob-` clients it cannot judge.
+    warned_kept: std::sync::atomic::AtomicBool,
 }
 
 impl WorkloadClientSync {
@@ -696,6 +698,7 @@ impl WorkloadClientSync {
             pipelines: None,
             app_jobs: None,
             revoke: None,
+            warned_kept: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -784,6 +787,7 @@ impl WorkloadClientSync {
         }
 
         // A managed workload client no bound account names is this wave's to remove (PF-47).
+        let mut kept = Vec::new();
         for client in listed.as_array().into_iter().flatten() {
             let Some(account) = client
                 .get("attributes")
@@ -793,6 +797,10 @@ impl WorkloadClientSync {
                 continue;
             };
             if !managed(client) || wanted.contains(account) {
+                continue;
+            }
+            if !self.derives(account) {
+                kept.push(account);
                 continue;
             }
             let mut outcome = ClientOutcome::of(account);
@@ -821,7 +829,35 @@ impl WorkloadClientSync {
             }
             outcomes.push(outcome);
         }
+        if !kept.is_empty()
+            && !self
+                .warned_kept
+                .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            tracing::warn!(
+                clients = kept.len(),
+                first = kept[0],
+                "managed pipeline or App job clients exist and JC_PORTAL_PIPELINE_NAMESPACE or \
+                 JC_PORTAL_APP_IDENTITY_NAMESPACE is unset: they are kept, and one whose \
+                 Pipeline or App is gone stays until the namespace is set"
+            );
+        }
         outcomes
+    }
+
+    /// Whether this sync derives the account `{project}/{name}` when it is wanted: a Pipeline's
+    /// (`pl-`) or an App job's (`appjob-`) only with that namespace set. A Portal without it (jc,
+    /// whose runner holds no Kubernetes identity) cannot tell a stale one from a live one, so it
+    /// leaves the realm's clients of that kind as they came (an imported realm keeps them all).
+    fn derives(&self, account: &str) -> bool {
+        let name = account.rsplit('/').next().unwrap_or(account);
+        if jc_core::kinds::pipeline_identity::is_derived(name) {
+            self.pipelines.is_some()
+        } else if jc_core::kinds::app_identity::is_derived(name) {
+            self.app_jobs.is_some()
+        } else {
+            true
+        }
     }
 
     /// Revokes the service-account user of the client `uuid` before the client goes: Keycloak

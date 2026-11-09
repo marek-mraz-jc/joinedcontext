@@ -939,6 +939,37 @@ fn anonymous_subscription_refusal(
     })
 }
 
+/// A write the gateway's decision point refuses this caller outright: answered 403 before the
+/// body is read or the view asked, as every other refusal the decision point makes (GW1,
+/// `writes::refused`). The view would refuse it as well, but with a 405 whose `Allow` names the
+/// writes it serves to somebody else. The same decision as the rest of the request
+/// (`Gateway::pdp`, the Endpoint's bound Policies), with no request narrowing: a write any
+/// permit could pass goes on to the guards and the view, which decide the rest.
+fn ungranted_write_refusal(
+    gateway: &Gateway,
+    endpoint: &Endpoint,
+    subject: &Subject,
+    operation: Operation,
+) -> Option<Response<Body>> {
+    if !operation.is_write() {
+        return None;
+    }
+    // `PATCH …/attrs` is 5.6.2, which the broker also grants under `updateEntity`.
+    let also = (operation == Operation::UpdateAttrs).then_some(Operation::UpdateEntity);
+    let request = crate::pdp::evaluator::Request::default();
+    let denied = std::iter::once(operation).chain(also).all(|op| {
+        gateway
+            .pdp
+            .decide(subject, op, &request, endpoint)
+            .is_deny()
+    });
+    denied.then(|| {
+        ProblemDetails::forbidden()
+            .with_detail("no Policy of this endpoint grants you this write")
+            .into_response()
+    })
+}
+
 /// The longest `JC-Reason` the gateway takes, in characters once decoded (DM-113).
 const MAX_REASON: usize = 500;
 
@@ -1025,6 +1056,10 @@ pub(crate) async fn view_request(
     }
     if let Some(refusal) = anonymous_subscription_refusal(subject, operation) {
         tracing::info!(slug = %endpoint.slug, %operation, "refused: an anonymous subscription");
+        return Err(Box::new(refusal));
+    }
+    if let Some(refusal) = ungranted_write_refusal(gateway, endpoint, subject, operation) {
+        tracing::info!(slug = %endpoint.slug, %operation, "write refused: no Policy grants it");
         return Err(Box::new(refusal));
     }
     if operation.is_write() {

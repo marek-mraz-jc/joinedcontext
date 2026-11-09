@@ -868,6 +868,55 @@ async fn a_hook_of_another_repository_is_not_redelivered() {
     assert_eq!(w.delivered.lock().len(), before + 1);
 }
 
+/// A secret reference is a key name of the secret store: a caller who pastes a credential there
+/// gets 422 naming the field, and nothing reaches the store (whose log writes the reference in
+/// clear); the answer never repeats the value.
+#[tokio::test]
+async fn a_credential_pasted_as_a_secret_reference_is_refused() {
+    let w = world();
+    create_repo(&w, "helsinki").await;
+    let pasted = &format!("{}_abcdefghijklmnopqrstuvwxyz0123456789", "ghp");
+    for (uri, body, field) in [
+        (
+            "/api/v1/repos/joinedcontext/helsinki/hooks",
+            json!({ "url": HOOK_URL, "secret_ref": pasted }),
+            "secretRef",
+        ),
+        (
+            "/api/v1/repos/joinedcontext/helsinki/push_mirrors",
+            json!({
+                "remote_address": "https://github.com/joinedcontext-apps/helsinki.git",
+                "secret_ref": pasted,
+            }),
+            "secretRef",
+        ),
+    ] {
+        let (st, answer, raw) = call(&w.app, "POST", uri, Some("portal-token"), Some(body)).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{uri}: {answer}");
+        let text = String::from_utf8_lossy(&raw);
+        assert!(text.contains(field), "{uri}: {text}");
+        assert!(!text.contains(pasted), "{uri}: the value is echoed");
+    }
+    let org = OrgId::from_u128(10);
+    let instance = w.state.default_instance_id;
+    assert!(
+        w.state
+            .store()
+            .list_webhooks(instance, org, None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        w.state
+            .store()
+            .list_push_mirrors(instance, org, None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
 /// A mirror password never overwrites a secret already stored under the reference it names.
 #[tokio::test]
 async fn a_mirror_password_does_not_overwrite_a_named_secret() {

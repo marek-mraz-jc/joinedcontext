@@ -620,7 +620,18 @@ impl Input for MqttInput {
             return Ok(());
         }
         self.closed = false;
-        self.open(ctx).await
+        // A broker that is down or a name that does not resolve yet keeps the stream running, as
+        // in Bento: `read_batch` dials again with its backoff. Before, the stream ended at its
+        // first dial and the Portal sent it again on every pass. A refused or malformed address
+        // stays an error: no retry makes it pass.
+        match self.open(ctx).await {
+            Err(e @ (CoreError::AccessDenied { .. } | CoreError::Config(_))) => Err(e),
+            Err(e) => {
+                tracing::warn!("mqtt: connect failed, dialling again: {e}");
+                Ok(())
+            }
+            Ok(()) => Ok(()),
+        }
     }
 
     async fn read_batch(

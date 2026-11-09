@@ -1,4 +1,4 @@
-"""The suite's one person: a test administrator in the Portal realm `jc` (group /platform-admins),
+"""The suite's one person: a test administrator in the rehearsal's realm (`<state>/realm-name.txt`, else `jc`; group /platform-admins),
 signed in to the Portal the way the browser does it, so every Portal call carries its session
 cookie and the CSRF echo. Made at the start with a random password kept in memory, deleted at the
 end. Named smoke-pipelines-*; nothing secret reaches the results."""
@@ -15,9 +15,7 @@ import urllib.request
 from http.cookies import SimpleCookie
 from pathlib import Path
 
-from common import Http, as_json
-
-REALM = "jc"
+from common import Http, as_json, realm_of
 ADMIN_CLIENT = "portal-reconciler"
 GROUP = "/platform-admins"
 CSRF_COOKIE = "__Host-jc_csrf"
@@ -97,10 +95,11 @@ class Admin:
         self.browser = Browser(base)
         self.username = "smoke-pipelines-" + secrets.token_hex(3)
         self.uid = None
+        self.realm = realm_of(state)
         secret = (state / "portal-admin-client-secret").read_text().strip()
         form = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": ADMIN_CLIENT,
                                        "client_secret": secret}).encode()
-        st, _, raw = self.http.call("POST", f"/id/realms/{REALM}/protocol/openid-connect/token",
+        st, _, raw = self.http.call("POST", f"/id/realms/{self.realm}/protocol/openid-connect/token",
                                     headers={"Content-Type": "application/x-www-form-urlencoded"}, body=form)
         doc = as_json(raw) or {}
         if st != 200 or "access_token" not in doc:
@@ -108,7 +107,7 @@ class Admin:
         self.admin = doc["access_token"]
 
     def _api(self, method, path, body=None):
-        st, _, raw = self.http.call(method, f"/id/admin/realms/{REALM}{path}", self.admin, body=body)
+        st, _, raw = self.http.call(method, f"/id/admin/realms/{self.realm}{path}", self.admin, body=body)
         return st, as_json(raw)
 
     def sign_in(self) -> None:
@@ -132,7 +131,7 @@ class Admin:
                 gid = g["id"]
             todo += g.get("subGroups") or []
         if not gid:
-            raise RuntimeError(f"no group {GROUP} in realm {REALM}")
+            raise RuntimeError(f"no group {GROUP} in realm {self.realm}")
         st, _ = self._api("PUT", f"/users/{self.uid}/groups/{gid}")
         if st not in (200, 204):
             raise RuntimeError(f"group {GROUP}: {st}")

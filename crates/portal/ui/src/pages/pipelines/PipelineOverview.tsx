@@ -141,6 +141,7 @@ export function LastRunCell({
   run,
   now,
   failed: unreadable = false,
+  refused = false,
   counters,
 }: {
   project: string;
@@ -149,6 +150,8 @@ export function LastRunCell({
   now: number;
   /** The runs could not be read. */
   failed?: boolean;
+  /** The pipeline's status says its runs are refused: no run wrote anything, which is not "never ran". */
+  refused?: boolean;
   counters?: { received?: number | null; errors?: number | null } | null;
 }): JSX.Element {
   const { t, i18n } = useTranslation();
@@ -172,7 +175,8 @@ export function LastRunCell({
   } else if (run === undefined) {
     head = <span className="text-fg-subtle">{t("app.loading")}</span>;
   } else if (run === null) {
-    head = <span className="text-fg-subtle">{t("pipelines.lastRun.never")}</span>;
+    // "Has not run yet" beside "the last run … failed" read as two answers (UI judge 2026-11-09).
+    head = <span className="text-fg-subtle">{t(refused ? "pipelines.lastRun.noneWritten" : "pipelines.lastRun.never")}</span>;
   } else {
     const tone = runTone(run);
     head = (

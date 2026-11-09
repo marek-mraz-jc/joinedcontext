@@ -82,6 +82,9 @@ export function KnowledgePage({ project }: { project: string }): JSX.Element {
   const [queued, setQueued] = useState<string | null>(null);
   const sources = useQuery({
     queryKey: knowledgeKeys.sources(project),
+    // A failed read says so with its Retry at once; the silent retry left "Loading…" over a 503
+    // (UI judge 2026-11-09).
+    retry: false,
     queryFn: () => listSources(project),
   });
   const crawl = useMutation({

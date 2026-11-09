@@ -128,7 +128,8 @@ fn run_output_schema() -> Value {
 /// address, which the record keeps relative to the Portal. An MCP client has no Portal to resolve
 /// it against.
 pub(super) fn with_pages(state: &crate::state::AppState, mut run: Value) -> Value {
-    let base = state.config.public_base_url.as_str().trim_end_matches('/');
+    let base = state.config.public_base();
+    let base = base.as_str().trim_end_matches('/');
     let (Some(project), Some(id)) = (run["project"].as_str(), run["id"].as_str()) else {
         return run;
     };

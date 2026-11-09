@@ -270,6 +270,16 @@ pub async fn deliver_webhook_with_retries(
     };
     let body_bytes = serde_json::to_vec(&body).map_err(|e| ShakoError::Internal(e.to_string()))?;
     let delivery_id = uuid::Uuid::now_v7();
+    // A reference stored before the API refused non-key names still signs; the warning names
+    // the hook, never the reference, which may be a pasted secret.
+    if !shako_core::is_secret_ref(&hook.secret_ref)
+        || hook
+            .previous_secret_ref
+            .as_deref()
+            .is_some_and(|r| !shako_core::is_secret_ref(r))
+    {
+        tracing::warn!(hook = %hook.id, "a webhook's secret reference is not a secret-store key name; register the hook again");
+    }
     // A hook whose secret is gone is not delivered: a body signed with an empty key would
     // pass any receiver that, like this forge, accepts an empty secret, and fail the others.
     let Some(secret) = state

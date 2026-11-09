@@ -30,6 +30,9 @@ pub struct Sibling {
 pub struct Siblings {
     pub listener: SocketAddr,
     modules: BTreeMap<Module, Sibling>,
+    /// The Portal's public base on each `[[organizations]]` host, beside its own mount's: what
+    /// the realm registers a redirect URI for.
+    pub organization_portals: Vec<String>,
 }
 
 /// The loopback address that reaches a listener bound to `addr` (an unspecified bind address is
@@ -63,6 +66,7 @@ impl Siblings {
         Self {
             listener: reach,
             modules,
+            organization_portals: Vec::new(),
         }
     }
 

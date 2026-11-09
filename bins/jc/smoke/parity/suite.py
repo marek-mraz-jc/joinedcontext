@@ -7,6 +7,7 @@ Each feature of an old page becomes a check that the new page has it; a page or 
 lacks is a skip with the reason."""
 
 import argparse
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -15,18 +16,28 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import pages as P  # noqa: E402
 import parity  # noqa: E402
+sys.path.insert(0, str(HERE.parent))
+from common import Results  # noqa: E402
 
 
 def main(argv):
     ap = argparse.ArgumentParser(prog="run parity")
     ap.add_argument("--base-url", required=True)
-    ap.add_argument("--person-file", required=True)
-    ap.add_argument("--old-dir", required=True)
+    ap.add_argument("--person-file", help="'<user> <password>' of a person in the rehearsal realm (new_person.py)")
+    ap.add_argument("--old-dir", help="the old pages' captures (parity.py capture --side old)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--pairs")
     ap.add_argument("--admin-token-file")  # accepted for the common runner; parity signs in as a person
     ap.add_argument("--person-token-file")
     a = ap.parse_args(argv)
+    if not (a.person_file and a.old_dir):
+        missing = [f for f, v in (("--old-dir", a.old_dir), ("--person-file", a.person_file)) if not v]
+        r = Results("parity", a.base_url)
+        r.skip("run", "parity", "capture the new pages, compare with the old", "",
+               f"no {' and no '.join(missing)}: parity compares with captures of the old stack, which this run lacks")
+        r.write(Path(a.out), {"pairs": a.pairs or ",".join(P.PAIRS)})
+        print(json.dumps({"skip": 1, "out": a.out}))
+        return 0
     out, old = Path(a.out), Path(a.old_dir)
     pairs = a.pairs.split(",") if a.pairs else list(P.PAIRS)
     for pair in pairs:

@@ -204,6 +204,21 @@ pub trait Store: Send + Sync {
         run: HarvestRun,
     ) -> BoxFuture<'a, Result<HarvestRun>>;
 
+    /// Starts `run` (state Running) unless another run of its source is still running: the
+    /// per-source lock of scheduled and manual harvests. A Running run started before
+    /// `stale_before` is one a stopped process left behind: it is marked failed first.
+    /// `false`: another run holds the source and nothing was written.
+    fn claim_harvest_run<'a>(
+        &'a self,
+        _ctx: &'a RequestCtx,
+        _run: HarvestRun,
+        _stale_before: chrono::DateTime<chrono::Utc>,
+    ) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(std::future::ready(Err(
+            crate::error::DataroomError::NotSupported("this store holds no harvest lock".into()),
+        )))
+    }
+
     /// Appends an activity audit row (`C13`).
     fn record_activity<'a>(
         &'a self,

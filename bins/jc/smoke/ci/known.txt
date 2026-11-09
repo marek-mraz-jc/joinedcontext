@@ -2,6 +2,8 @@
 # A known failure stays in the report and does not turn the verdict red; a pattern nothing
 # matches any more is listed under "known and now passing", so the line can go.
 # Each reason names where the gap is filed. Keep the list short: a new failure is a red gate.
+# assistant/*: no line. The assistant is a kept component on dev beside jc (tasks/GOAL-jc-dev.md scope
+# decision); its rehearsal rows are named skips "kept component: assistant" (gate.sh --kept-component).
 
 ^endpoints/dataset$  # the Portal publishes no catalogue into dataroom in jc (jc-smoke-endpoints gap 2)
 ^endpoints/anon\.temporal\.last-\d+h$  # the synthetic bundle's DataService rows carry no history in the window (bundle, jc-smoke-gate)
@@ -15,3 +17,4 @@
 ^pipelines/(status|history|held)$  # every run RunnerRefused: the runner lacks JC_GATEWAY_URL, JC_TOKEN_URL, JC_CLIENT_SECRET_<PROJECT> (jc hands ekiben only EKIBEN_VAR_*; jc-portal-1 + jc-migrate, jc-smoke-gate REPORT)
 ^logs/(metrics\.ekiben\.own|rid\.flow\.ekiben-antares)$  # no stream runs in the rehearsal (the pipelines line above), so ekiben has no series and no write reaches the broker
 ^logs/secrets\.log\.shapes$  # false positive: jc's start lists each secret's name and source (`secret="dashboards-password" source="generated"`), no value (jc-smoke-logs)
+^restore/control\.relocatable$  # a restored state dir names the source home: the realm files' $(file:<abs>) secrets (deploy/rehearsal/rehearsal.py:441; kaisatsu resolves only absolute ones, crates/kaisatsu/import/src/lib.rs:372) and the gateway's absolute repo/current link (bins/jc/src/modules/gateway.rs:520); handed to @supervisor (jc-smoke-restore REPORT)

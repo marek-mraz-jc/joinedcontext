@@ -513,9 +513,11 @@ async fn a_delete_without_a_reason_is_refused_before_the_broker() {
     let broker = common::BrokerStub::start(vec![json!([])]).await;
     let path = format!("/api/endpoint/{AIR}/ngsi-ld/v1/entities/{ENTITY}");
     let edge = token(&realm, json!(["/ovzdusie"]));
+    // `writer_app` grants the steward `deleteEntity`; `app` granted no delete, which the gateway
+    // now refuses 403 before it asks for a reason, as prod's stack refuses an ungranted write.
 
     let (code, problem) = answer(
-        app(&broker.url, &realm),
+        writer_app(&broker.url, &realm),
         request(Method::DELETE, &path, Some(&edge), &[], None),
     )
     .await;
@@ -524,7 +526,7 @@ async fn a_delete_without_a_reason_is_refused_before_the_broker() {
     assert!(broker.hops().is_empty());
 
     let (code, _) = answer(
-        app(&broker.url, &realm),
+        writer_app(&broker.url, &realm),
         request(
             Method::DELETE,
             &path,
@@ -540,7 +542,7 @@ async fn a_delete_without_a_reason_is_refused_before_the_broker() {
     // The Portal's UI asks a reason too (DM-113): its token, not a header, says it is the UI.
     let ui = token_of(&realm, "portal-ui");
     let (code, problem) = answer(
-        app(&broker.url, &realm),
+        writer_app(&broker.url, &realm),
         request(Method::DELETE, &path, Some(&ui), &[], None),
     )
     .await;

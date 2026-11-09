@@ -51,3 +51,6 @@ aws-lc-rs = "1.19"
 # `openidconnect` 4 stays out: it pulls the banned `rsa` (deny.toml, RUSTSEC-2023-0071), so the
 # test copies its ID token rules instead.
 jsonwebtoken9 = { package = "jsonwebtoken", version = "9" }
+# A stub Kubernetes API server JWKS over TLS with a cluster CA of the test's own (federated_jwt.rs).
+rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }

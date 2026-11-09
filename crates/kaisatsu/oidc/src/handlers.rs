@@ -68,6 +68,14 @@ pub fn oidc_router(state: OidcState) -> Router {
             get(authorize_get),
         )
         .route(
+            "/realms/{realm}/protocol/openid-connect/auth/device",
+            post(crate::device::device_authorization),
+        )
+        .route(
+            "/realms/{realm}/device",
+            get(crate::device::device_page).post(crate::device::device_submit),
+        )
+        .route(
             "/realms/{realm}/protocol/openid-connect/ext/par/request",
             post(par_endpoint),
         )
@@ -140,6 +148,7 @@ async fn openid_configuration(
         "end_session_endpoint": format!("{oidc_base}/logout"),
         "revocation_endpoint": format!("{oidc_base}/revoke"),
         "pushed_authorization_request_endpoint": format!("{oidc_base}/ext/par/request"),
+        "device_authorization_endpoint": format!("{oidc_base}/auth/device"),
         "jwks_uri": format!("{oidc_base}/certs"),
         "response_types_supported": ["code"],
         "response_modes_supported": ["query", "fragment", "form_post"],
@@ -148,7 +157,8 @@ async fn openid_configuration(
             "refresh_token",
             "client_credentials",
             "urn:ietf:params:oauth:grant-type:token-exchange",
-            "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            crate::device::DEVICE_CODE_GRANT
         ],
         "subject_types_supported": ["public", "pairwise"],
         "id_token_signing_alg_values_supported": ["ES256", "RS256", "EdDSA"],
@@ -204,6 +214,12 @@ pub async fn resolve_or_fetch_client(
     realm: &RealmConfig,
     client_id: &str,
 ) -> Result<ClientRepresentation> {
+    // A realm whose config allows no CIMD (no `client-id-uri` client policy, as prod's smartcity)
+    // knows no https client_id, fetched or stored earlier: the unknown client's answer, as
+    // Keycloak's "Client not found.".
+    if client_id.starts_with("https://") && realm.cimd_allowed_client_domains.is_empty() {
+        return Err(KaisatsuError::invalid_client("unknown client_id"));
+    }
     if let Some(existing) = state
         .store
         .get_client_by_client_id(&realm.id, client_id)
@@ -574,7 +590,7 @@ pub(crate) fn html_escape(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
-fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
+pub(crate) fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
     let target = mount.cookie_name("sso");
     for val in headers.get_all(header::COOKIE) {
         if let Ok(s) = val.to_str() {
@@ -1057,6 +1073,19 @@ fn form_urldecode(raw: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
+/// What a client assertion's `aud` may name for the realm at `realm_issuer`: the issuer or one of
+/// its endpoints that take client authentication.
+fn assertion_audiences(realm_issuer: &str) -> [String; 5] {
+    let endpoints = format!("{realm_issuer}/protocol/openid-connect");
+    [
+        realm_issuer.to_owned(),
+        format!("{endpoints}/token"),
+        format!("{endpoints}/token/introspect"),
+        format!("{endpoints}/revoke"),
+        format!("{endpoints}/ext/par/request"),
+    ]
+}
+
 /// True when the JWT `aud` claim (a string or an array) names one of `allowed`.
 fn audience_matches(claims: &Value, allowed: &[String]) -> bool {
     match claims.get("aud") {
@@ -1135,16 +1164,47 @@ async fn verify_client_assertion(
                 format!("{}/openid/v1/jwks", expected_iss.trim_end_matches('/'))
             });
 
-        let jwks: Value = state.guard.get_json(&jwks_url, None, None).await?;
+        // The projected token must be minted for this realm: `aud` is the realm issuer, on the
+        // realm's own address or the one the call came in on (a pod calls the internal host
+        // with a token minted for `https://idm.{domain}/realms/{slug}`), so a token the cluster
+        // minted for another audience (the API server, another realm) fails.
+        let allowed_aud = [
+            realm_issuer.clone(),
+            state.default_mount.realm_issuer(&realm.realm),
+        ];
+        let kid = jsonwebtoken::decode_header(assertion)
+            .ok()
+            .and_then(|h| h.kid);
+        let mut jwks = state
+            .guard
+            .cluster_jwks(&jwks_url, false)
+            .await
+            .map_err(|_| KaisatsuError::invalid_client("cluster JWKS unavailable"))?;
+        let names_kid = |jwks: &Value| {
+            kid.as_deref().is_none_or(|kid| {
+                jwks.get("keys")
+                    .and_then(Value::as_array)
+                    .is_some_and(|keys| {
+                        keys.iter()
+                            .any(|k| k.get("kid").and_then(Value::as_str) == Some(kid))
+                    })
+            })
+        };
+        if !names_kid(&jwks) {
+            // A rotated signing key: read the set again (rate-limited in the guard).
+            jwks = state
+                .guard
+                .cluster_jwks(&jwks_url, true)
+                .await
+                .map_err(|_| KaisatsuError::invalid_client("cluster JWKS unavailable"))?;
+        }
         let keys = jwks
             .get("keys")
             .and_then(Value::as_array)
             .ok_or_else(|| KaisatsuError::invalid_client("cluster JWKS has no keys"))?;
-        // The projected token must be minted for this realm: `aud` is the realm issuer, so a
-        // token the cluster minted for another audience (the API server, another realm) fails.
         let verified = keys.iter().any(|jwk| {
-            verify_jwt_with_jwk::<Value>(assertion, jwk, Some(expected_iss), Some(&realm_issuer))
-                .is_ok()
+            verify_jwt_with_jwk::<Value>(assertion, jwk, Some(expected_iss), None)
+                .is_ok_and(|(_, claims)| audience_matches(&claims, &allowed_aud))
         });
         if !verified {
             return Err(KaisatsuError::invalid_client(
@@ -1177,16 +1237,8 @@ async fn verify_client_assertion(
         .get("keys")
         .and_then(Value::as_array)
         .ok_or_else(|| KaisatsuError::invalid_client("client jwks has no keys"))?;
-    // RFC 7523 §3: `iss` and `sub` are the client, `aud` names this server (the realm issuer or
-    // one of its endpoints that take client authentication).
-    let endpoints = format!("{realm_issuer}/protocol/openid-connect");
-    let allowed_aud = [
-        realm_issuer.clone(),
-        format!("{endpoints}/token"),
-        format!("{endpoints}/token/introspect"),
-        format!("{endpoints}/revoke"),
-        format!("{endpoints}/ext/par/request"),
-    ];
+    // RFC 7523 §3: `iss` and `sub` are the client, `aud` names this server.
+    let allowed_aud = assertion_audiences(&realm_issuer);
     let verified = keys.iter().any(|jwk| {
         verify_jwt_with_jwk::<Value>(assertion, jwk, Some(sub), None)
             .is_ok_and(|(_, claims)| audience_matches(&claims, &allowed_aud))
@@ -1337,6 +1389,7 @@ async fn mint_tokens_for_principal(
     act: Option<ActClaim>,
     include_refresh: bool,
     existing_family: Option<RefreshTokenFamily>,
+    only_audience: Option<&str>,
 ) -> Result<Value> {
     let issuer = mount.realm_issuer(&realm.realm);
     let keys = state.store.list_signing_keys(&realm.id).await?;
@@ -1396,7 +1449,13 @@ async fn mint_tokens_for_principal(
         active_org: resolved_active_org.as_deref(),
     };
 
-    let access_claims = evaluate_mappers(&mapper_ctx, TokenKind::AccessToken)?;
+    let mut access_claims = evaluate_mappers(&mapper_ctx, TokenKind::AccessToken)?;
+    // A token exchange naming `audience` gets that audience alone, as Keycloak 26's standard
+    // exchange issues it: the requester's own audience mappers do not ride along.
+    // ponytail: a SAME_SESSION refresh of such a token mints the requester's full audience again.
+    if let Some(only) = only_audience {
+        access_claims["aud"] = Value::String(only.to_owned());
+    }
     let access_key = select_signing_key(state, &keys, realm, client, false).await?;
     let access_token = sign_jwt(&access_key, &state.kek, Some("JWT"), &access_claims)?;
 
@@ -1749,6 +1808,18 @@ async fn token_endpoint(
             )
             .await?
         }
+        crate::device::DEVICE_CODE_GRANT => {
+            handle_device_code_grant(
+                &state,
+                &mount,
+                &realm,
+                &client,
+                &form,
+                dpop_jkt.as_deref(),
+                &client_ip,
+            )
+            .await?
+        }
         "password" => {
             handle_password_grant(
                 &state,
@@ -1925,6 +1996,107 @@ async fn handle_authorization_code_grant(
         None,
         true,
         None,
+        None,
+    )
+    .await
+}
+
+/// RFC 8628 §3.4/§3.5 (D1): one poll of a device code by the client it was issued to. The
+/// answer is `authorization_pending`, `slow_down`, `access_denied` or `expired_token` until the
+/// person allowed it; then the tokens, once.
+async fn handle_device_code_grant(
+    state: &OidcState,
+    mount: &Mount,
+    realm: &RealmConfig,
+    client: &ClientRepresentation,
+    form: &BTreeMap<String, String>,
+    dpop_jkt: Option<&str>,
+    client_ip: &ClientIp,
+) -> Result<Value> {
+    crate::device::ensure_device_enabled(client)?;
+    let raw = form
+        .get("device_code")
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| KaisatsuError::invalid_request("missing device_code"))?;
+    let (rec, answer) = state
+        .store
+        .poll_device_code(&realm.id, &sha256_hex(raw), &client.client_id, Utc::now())
+        .await?
+        .ok_or_else(|| KaisatsuError::invalid_grant("Device code not valid"))?;
+    let pending = |error: &str, text: &str| Err(KaisatsuError::oauth(400, error, text));
+    match answer {
+        DevicePoll::Pending => {
+            return pending(
+                "authorization_pending",
+                "The authorization request is still pending",
+            );
+        }
+        DevicePoll::SlowDown => return pending("slow_down", "Slow down"),
+        DevicePoll::Denied => {
+            return pending(
+                "access_denied",
+                "The end user denied the authorization request",
+            );
+        }
+        DevicePoll::Expired => return pending("expired_token", "Device code is expired"),
+        DevicePoll::Used => return Err(KaisatsuError::invalid_grant("Device code already used")),
+        DevicePoll::Approved => {}
+    }
+    let (Some(user_id), Some(sso_id)) = (rec.user_id.as_deref(), rec.sso_session_id.as_deref())
+    else {
+        return Err(KaisatsuError::invalid_grant("Device code not valid"));
+    };
+    let user = state
+        .store
+        .get_user_by_id(&realm.id, None, user_id)
+        .await?
+        .filter(|u| u.enabled)
+        .ok_or_else(|| KaisatsuError::invalid_grant("User disabled or not found"))?;
+    // The tokens hang on the session the person allowed the device in: a logout since ends them.
+    let mut sso = state
+        .store
+        .get_sso_session(&realm.id, sso_id)
+        .await?
+        .ok_or_else(|| KaisatsuError::invalid_grant("Session not active"))?;
+    sso.clients
+        .insert(client.client_id.clone(), client.client_id.clone());
+    state.store.upsert_sso_session(sso).await?;
+    let (active_scopes, granted_scope_str) =
+        resolve_stored_scopes(&state.store, realm, client, &rec.scope, &rec.mapper_scopes).await?;
+    state
+        .store
+        .append_event(AuditEvent {
+            id: uuid::Uuid::now_v7().to_string(),
+            realm_id: realm.id.clone(),
+            org_id: user.org_id.clone(),
+            time: Utc::now().timestamp_millis(),
+            event_type: "OAUTH2_DEVICE_CODE_TO_TOKEN".into(),
+            client_id: Some(client.client_id.clone()),
+            user_id: Some(user.id.clone()),
+            session_id: Some(sso_id.to_owned()),
+            ip_address: client_ip.for_audit(),
+            error: None,
+            details: BTreeMap::new(),
+        })
+        .await?;
+    mint_tokens_for_principal(
+        state,
+        mount,
+        realm,
+        client,
+        &user,
+        &active_scopes,
+        &granted_scope_str,
+        &rec.acr,
+        &rec.amr,
+        Some(sso_id),
+        None,
+        Some(rec.auth_time),
+        dpop_jkt,
+        None,
+        true,
+        None,
+        None,
     )
     .await
 }
@@ -2058,6 +2230,7 @@ async fn handle_refresh_token_grant(
         None,
         true,
         Some(family),
+        None,
     )
     .await
     {
@@ -2249,6 +2422,7 @@ async fn handle_client_credentials_grant(
         None,
         false,
         None,
+        None,
     )
     .await
 }
@@ -2431,6 +2605,9 @@ async fn handle_token_exchange_grant(
         act,
         wants_refresh,
         None,
+        form.get("audience")
+            .filter(|s| !s.is_empty())
+            .map(String::as_str),
     )
     .await?;
     out["issued_token_type"] =
@@ -2557,6 +2734,7 @@ async fn handle_jwt_bearer_grant(
         dpop_jkt,
         None,
         false,
+        None,
         None,
     )
     .await
@@ -2733,6 +2911,7 @@ async fn handle_password_grant(
         dpop_jkt,
         None,
         true,
+        None,
         None,
     )
     .await

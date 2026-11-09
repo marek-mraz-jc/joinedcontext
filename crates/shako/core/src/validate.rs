@@ -44,6 +44,53 @@ pub fn validate_repo_or_owner_name(name: &str, what: &str) -> ShakoResult<()> {
     Ok(())
 }
 
+/// Prefixes of credentials a caller might paste where a secret's key name belongs.
+const CREDENTIAL_PREFIXES: [&str; 9] = [
+    "ghp_",
+    "gho_",
+    "ghs_",
+    "ghu_",
+    "ghr_",
+    "github_pat_",
+    "glpat-",
+    "xox",
+    "sk-",
+];
+
+/// Whether `r` is a secret-store key name: `[a-z0-9][a-z0-9:._-]{0,127}`, no known credential
+/// prefix, and no segment between separators of 33 or more characters mixing letters and digits
+/// (a token or a hash, not a name; a UUID's segments are at most 12).
+#[must_use]
+pub fn is_secret_ref(r: &str) -> bool {
+    let named = r.len() <= 128
+        && r.bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && r.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b':' | b'.' | b'_' | b'-')
+        });
+    let credential = CREDENTIAL_PREFIXES.iter().any(|p| r.starts_with(p))
+        || r.split([':', '.', '_', '-']).any(|seg| {
+            seg.len() >= 33
+                && seg.bytes().any(|b| b.is_ascii_digit())
+                && seg.bytes().any(|b| b.is_ascii_lowercase())
+        });
+    named && !credential
+}
+
+/// Refuses (422 naming `field`) a caller-named secret reference that is not a secret-store key
+/// name. The store log writes the reference in clear, so a pasted credential must never get
+/// there; the answer never repeats the value.
+pub fn check_secret_ref(field: &str, r: &str) -> ShakoResult<()> {
+    if is_secret_ref(r) {
+        return Ok(());
+    }
+    Err(ShakoError::Unprocessable(format!(
+        "{field} must name a key of the secret store ([a-z0-9][a-z0-9:._-]{{0,127}}), never a \
+         secret value; send the secret itself in the field made for it"
+    )))
+}
+
 /// Validates a full Git reference name (e.g. `refs/heads/main`, `refs/tags/v1.0`).
 pub fn validate_full_ref_name(refname: &str) -> ShakoResult<()> {
     if refname.is_empty() || refname.len() > 255 {
@@ -179,6 +226,46 @@ pub fn repo_disk_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A secret reference is free text a caller names, and the store log writes it in clear:
+    // a pasted credential must be refused, with the field named and the value never echoed.
+    #[test]
+    fn a_secret_reference_is_a_key_name_and_never_a_credential() {
+        for good in [
+            "hook-sec",
+            "webhook-0190a000-0000-7000-8000-000000000005",
+            "mirror:0190a000-0000-7000-8000-000000000006:mirror-3f2a9c1b0d4e",
+            "forge.hooks.portal",
+            "helsinki_hook-2",
+        ] {
+            assert!(is_secret_ref(good), "{good}");
+            assert!(check_secret_ref("secretRef", good).is_ok(), "{good}");
+        }
+        let long = "a".repeat(129);
+        for bad in [
+            "",
+            "Bearer eyJhbGciOiJSUzI1NiJ9",
+            "bearer abc",
+            &format!("{}_abcdefghijklmnopqrstuvwxyz0123456789", "ghp"),
+            &format!("{}_pat_11abcdefg0123456789", "github"),
+            &format!("{}-abcdefghij0123456789", "glpat"),
+            "MySecret",
+            "dGhpcyBpcyBhIHNlY3JldA==",
+            "x9f3k2l8q0w7e5r1t6y4u2i8o0p3a5s7d9f1g3h5",
+            "hooks/a",
+            long.as_str(),
+        ] {
+            assert!(!is_secret_ref(bad), "{bad}");
+            let err = check_secret_ref("secretRef", bad)
+                .expect_err(bad)
+                .to_string();
+            assert!(err.contains("secretRef"), "{err}");
+            assert!(
+                bad.is_empty() || !err.contains(bad),
+                "the value is never echoed: {err}"
+            );
+        }
+    }
 
     #[test]
     fn hostile_names_are_refused() {

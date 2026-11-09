@@ -226,7 +226,7 @@ pub struct CreateParams {
 pub(crate) fn base(state: &AppState) -> String {
     state
         .config
-        .public_base_url
+        .public_base()
         .as_str()
         .trim_end_matches('/')
         .to_owned()

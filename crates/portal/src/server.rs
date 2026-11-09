@@ -121,7 +121,12 @@ pub fn app(state: AppState) -> Router {
             )),
         )
         .merge(portal)
-        .with_state(state)
+        .with_state(state.clone())
+        // An Organization's own Portal host pins every request on it, MCP and Apps included.
+        .layer(from_fn_with_state(
+            state,
+            crate::organization_host::middleware,
+        ))
         .layer(from_fn(telemetry::record))
         // Outermost of the logging layers, so every line of the request carries its id.
         .layer(from_fn(crate::request_id::middleware))
@@ -375,6 +380,7 @@ pub async fn spawn_internal_listener(
     }
     let internal = tokio::net::TcpListener::bind(state.config.internal_bind).await?;
     let addr = internal.local_addr()?;
+    crate::api::pipeline_test::internal_listener_bound(addr);
     tracing::info!(bind = %addr, "portal internal listener listening");
     let internal_router = internal_app(state.clone());
     tokio::spawn(async move {
