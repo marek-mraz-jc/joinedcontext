@@ -226,7 +226,7 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
     return { from, to, vars: picked };
   }, [data, from, to, vars]);
   // The tables page lives in the dashboards service, in the organization that holds the dashboard.
-  const fallback = data
+  const safe = data
     ? safeHref(`/dashboards/d/${encodeURIComponent(uid)}?${new URLSearchParams({ orgId: String(data.orgId), from, to })}`)
     : undefined;
   const header = (
@@ -234,8 +234,8 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
       title={data?.title || t("dashboardView.title")}
       description={data?.description || t("dashboardView.lead")}
       actions={
-        fallback ? (
-          <a className={buttonClass("ghost", "sm")} href={fallback} target="_blank" rel="noopener noreferrer">
+        safe ? (
+          <a className={buttonClass("ghost", "sm")} href={safe} target="_blank" rel="noopener noreferrer">
             <Icon name="external" className="size-4" />
             {t("dashboardView.asTables")}
           </a>

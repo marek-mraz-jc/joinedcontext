@@ -90,6 +90,10 @@ export const UNPICKED: Record<string, Record<string, string>> = {
   Role: { "rules[].kinds[]": "a manifest kind: roleUiSchema makes it checkboxes of the kinds the author holds (PF-68)" },
   Organization: { "projects.creation": "anyone, org-admin or group:<name>: a rule, validated by its pattern" },
   SyncSource: { "platformApi.project": "a project on another platform, which this one cannot list" },
+  Endpoint: {
+    "catalog.datasets[].types[]":
+      "an enum of the space model's types (endpointSchema's types, EP-175); a free type name only while the model is unknown",
+  },
 };
 
 function nodeAt(schema: unknown, path: string): Record<string, unknown> | undefined {
