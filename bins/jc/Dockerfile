@@ -277,9 +277,11 @@ COPY --from=build /jc /usr/local/bin/jc
 # kaisatsu_migrate role, before jc connects as kaisatsu_app (an init container in components/jc).
 COPY --from=build /kaisatsu /usr/local/bin/kaisatsu
 COPY --from=apps /srv/apps /srv/apps
-# The assistant's embedding model and ONNX Runtime; without them the module stays off.
-COPY --from=build /opt/e5-small /opt/e5-small
-COPY --from=build /opt/onnxruntime/libonnxruntime.so /usr/local/lib/libonnxruntime.so
+# The assistant's embedding model and ONNX Runtime; without them the module stays off. From
+# `rust`, which downloads them: ship hands in `build` as a named context holding only the
+# binaries and state/ (image.yml), so a COPY from `build` finds nothing there.
+COPY --from=rust /opt/e5-small /opt/e5-small
+COPY --from=rust /opt/onnxruntime/libonnxruntime.so /usr/local/lib/libonnxruntime.so
 ENV JC_ASSISTANT_MODEL_DIR=/opt/e5-small ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so
 # The state dir (generated secrets, JCBIN_STATE_DIR) owned by nonroot and 0700; in a pod a volume
 # goes over it and the root filesystem stays read-only (/tmp is an emptyDir there too).

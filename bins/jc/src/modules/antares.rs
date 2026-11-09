@@ -39,8 +39,9 @@ fn err(e: impl std::fmt::Display) -> StartError {
     StartError::module(Module::Antares, e)
 }
 
-/// The surfaces dev's broker serves (deployment `context-broker` base values), without
-/// `parquet` and `tabular` (OGC `f=parquet|csv|zip`), which this build leaves out.
+/// The surfaces dev's broker serves (deployment `context-broker` base values). OGC
+/// `f=parquet|csv|zip` are the build features `parquet` and `tabular` of the `ogc` surface,
+/// not surfaces of their own.
 pub const SURFACES: &str = "admin,views,mcp,access,ws,ws-views,ogc,linkml,odata,sta,ical,feed";
 
 /// The largest Tenant schema the broker stores, dev's 1 MiB (`linkml_model::SURFACE_LIMITS`).
@@ -223,7 +224,7 @@ async fn serve_hop(
             move |req: Request, next: Next| hop_guard(Arc::clone(&guard_secret), req, next),
         ));
     // The gateway hands its request id on through the hop: the broker's lines carry it.
-    let router = crate::access::layer("antares", router);
+    let router = crate::access::hop_layer("antares", router);
     let token = shutdown.clone();
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, router)
