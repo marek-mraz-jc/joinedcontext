@@ -823,6 +823,20 @@ impl HarvestRunState {
     }
 }
 
+/// Marks a Running run a stopped process left behind as failed (the stores' harvest lock).
+pub fn abandon_run(run: &mut HarvestRun) {
+    let now = Utc::now();
+    run.state = HarvestRunState::Failed;
+    run.finished_at = Some(now);
+    run.error = Some("abandoned: still running after the harvest deadline".into());
+    run.logs.push(HarvestLogLine {
+        at: now,
+        level: "error".into(),
+        fingerprint: "harvest.abandoned".into(),
+        message: "the run passed its deadline without finishing; the source is free again".into(),
+    });
+}
+
 /// One item skipped during a harvest run, with its reason.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

@@ -6230,6 +6230,7 @@ dependencies = [
  "daiya-store-pg",
  "dataroom-api",
  "dataroom-core",
+ "dataroom-harvest",
  "dataroom-server",
  "dataroom-store-memory",
  "dataroom-store-pg",
