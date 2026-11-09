@@ -1,0 +1,584 @@
+{
+ "jc-assistant": {
+  "1": {
+   "text": "Answer latency p50 and p95\np50\np95",
+   "rows": []
+  },
+  "2": {
+   "text": "Model call latency p95 by run kind\nentities\ntemporal\ngeo",
+   "rows": []
+  },
+  "3": {
+   "text": "Runs by final status, last day\n2xx\n131\n4xx\n134\n5xx\n163",
+   "rows": []
+  },
+  "4": {
+   "text": "Expired runs per day\nexpired",
+   "rows": []
+  },
+  "5": {
+   "text": "Failed tool steps by tool, last day\njc_data_query\n135\njc_change_plan\n151",
+   "rows": []
+  },
+  "6": {
+   "text": "Model tokens per day by part\nprompt\ncompletion",
+   "rows": []
+  }
+ },
+ "project-bbsk": {
+  "1": {
+   "text": "Obyvateľstvo\nÚzemie\nObyvatelia\nokres Zvolen\n105,813\nokres Detva\n85,841\nokres Lučenec\n66,204\nokres Banská Bystrica\n65,537\nokres Brezno\n53,511",
+   "rows": [
+    [
+     "Územie",
+     "Obyvatelia"
+    ],
+    [
+     "okres Zvolen",
+     "105,813"
+    ],
+    [
+     "okres Detva",
+     "85,841"
+    ],
+    [
+     "okres Lučenec",
+     "66,204"
+    ],
+    [
+     "okres Banská Bystrica",
+     "65,537"
+    ],
+    [
+     "okres Brezno",
+     "53,511"
+    ]
+   ]
+  },
+  "2": {
+   "text": "Emisie tuhých látok, t/km²\nÚzemie\nt/km²\nokres Zvolen\n1.86\nokres Lučenec\n1.65\nokres Banská Bystrica\n1.52\nokres Brezno\n1.39\nokres Detva\n1.25",
+   "rows": [
+    [
+     "Územie",
+     "t/km²"
+    ],
+    [
+     "okres Zvolen",
+     "1.86"
+    ],
+    [
+     "okres Lučenec",
+     "1.65"
+    ],
+    [
+     "okres Banská Bystrica",
+     "1.52"
+    ],
+    [
+     "okres Brezno",
+     "1.39"
+    ],
+    [
+     "okres Detva",
+     "1.25"
+    ]
+   ]
+  }
+ },
+ "jc-context-broker": {
+  "1": {
+   "text": "Transactions per second by status class\n2xx\n4xx\n5xx",
+   "rows": []
+  },
+  "2": {
+   "text": "Transactions per second by method\nGET\nPOST\nPATCH",
+   "rows": []
+  },
+  "3": {
+   "text": "Service time, p50 / p95 / p99\np50\np95\np99",
+   "rows": []
+  },
+  "4": {
+   "text": "Notifications delivered and failed\nsent http\nsent https\nfailed http\nfailed https",
+   "rows": []
+  },
+  "5": {
+   "text": "Postgres pool: time to begin a transaction, p95\np95",
+   "rows": []
+  },
+  "6": {
+   "text": "Pool acquire timeouts\ntimeouts",
+   "rows": []
+  },
+  "7": {
+   "text": "Resident memory\nantares-0\nantares-1",
+   "rows": []
+  }
+ },
+ "jc-context-gateway": {
+  "1": {
+   "text": "Requests per second by route\n/ngsi-ld/v1/entities\n/ngsi-ld/v1/temporal/entities\n/api/v1/projects",
+   "rows": []
+  },
+  "2": {
+   "text": "Answers by status\n2xx\n4xx\n5xx",
+   "rows": []
+  },
+  "3": {
+   "text": "Service time, p95 by route\n/ngsi-ld/v1/entities\n/ngsi-ld/v1/temporal/entities\n/api/v1/projects",
+   "rows": []
+  },
+  "4": {
+   "text": "Policy decisions per second, by verdict\npermit\ndeny",
+   "rows": []
+  },
+  "5": {
+   "text": "Denials per second, by operation\nretrieveEntity\nqueryEntity",
+   "rows": []
+  },
+  "6": {
+   "text": "Broker round trip, p95\nreached: yes\nreached: no",
+   "rows": []
+  },
+  "7": {
+   "text": "At the edge: requests per second by route\n/ngsi-ld/v1/entities\n/ngsi-ld/v1/temporal/entities\n/api/v1/projects",
+   "rows": []
+  },
+  "8": {
+   "text": "At the edge: refusals per second\n200\n404\n503",
+   "rows": []
+  }
+ },
+ "jc-edge-apisix": {
+  "1": {
+   "text": "Requests per second by status\n200\n404\n503",
+   "rows": []
+  },
+  "2": {
+   "text": "5xx share of all requests\n5xx ratio",
+   "rows": []
+  },
+  "3": {
+   "text": "Request latency, p50 / p95 / p99\np50\np95\np99",
+   "rows": []
+  },
+  "4": {
+   "text": "Time the edge itself spends, p95\np95 apisix",
+   "rows": []
+  },
+  "5": {
+   "text": "Standalone configuration accepted\n1",
+   "rows": []
+  },
+  "6": {
+   "text": "Open connections\nactive\nidle",
+   "rows": []
+  },
+  "7": {
+   "text": "Bandwidth\nEndpoint\nPipeline",
+   "rows": []
+  }
+ },
+ "project-helsinki": {
+  "1": {
+   "text": "Cyclists per day, by counting station\nName\tLast *\tMax\n\nBaana\n\t1,514\t2,330\n\nEläintarhanlahti\n\t1,436\t2,134\n\nKulosaaren silta\n\t1,362\t2,169\n\nLauttasaaren silta\n\t1,290\t2,201\n\nHuopalahdentie\n\t1,222\t1,997",
+   "rows": [
+    [
+     "Name",
+     "Last *",
+     "Max"
+    ],
+    [
+     "Baana",
+     "1,514",
+     "2,330"
+    ],
+    [
+     "Eläintarhanlahti",
+     "1,436",
+     "2,134"
+    ],
+    [
+     "Kulosaaren silta",
+     "1,362",
+     "2,169"
+    ],
+    [
+     "Lauttasaaren silta",
+     "1,290",
+     "2,201"
+    ],
+    [
+     "Huopalahdentie",
+     "1,222",
+     "1,997"
+    ]
+   ]
+  },
+  "2": {
+   "text": "PM2.5 by station, µg/m³ (6 h average)\nName\tMax\n\nVartiokylä Huivipolku (avg)\n\t14.7\n\nKallio 2 (avg)\n\t14.2\n\nLänsisatama 4 (avg)\n\t13.9\n\nMäkelänkatu (avg)\n\t13.8",
+   "rows": [
+    [
+     "Name",
+     "Max"
+    ],
+    [
+     "Vartiokylä Huivipolku (avg)",
+     "14.7"
+    ],
+    [
+     "Kallio 2 (avg)",
+     "14.2"
+    ],
+    [
+     "Länsisatama 4 (avg)",
+     "13.9"
+    ],
+    [
+     "Mäkelänkatu (avg)",
+     "13.8"
+    ]
+   ]
+  },
+  "3": {
+   "text": "Air quality now, µg/m³\nStation\nPM2.5\nPM10\nLänsisatama 4\n48.8\nNo readings in this range\nMäkelänkatu\n27.4\n41.0\nKallio 2\n12.1\n19.6\nVartiokylä Huivipolku\n6.3\n11.2",
+   "rows": [
+    [
+     "Station",
+     "PM2.5",
+     "PM10"
+    ],
+    [
+     "Länsisatama 4",
+     "48.8",
+     "No readings in this range"
+    ],
+    [
+     "Mäkelänkatu",
+     "27.4",
+     "41.0"
+    ],
+    [
+     "Kallio 2",
+     "12.1",
+     "19.6"
+    ],
+    [
+     "Vartiokylä Huivipolku",
+     "6.3",
+     "11.2"
+    ]
+   ]
+  },
+  "4": {
+   "text": "City bikes, members\nStation\nBikes\nFree\nStatus\nKaivopuisto\n8\n14\nOpen\nLaivasillankatu\n19\n6\nClosed\nKapteeninpuistikko\n15\n8\nOpen\nViiskulma\n8\n1\nwithIncidence\nSepänkatu\n20\n10\nOpen\nHietalahdentori\n18\n9\nOpen",
+   "rows": [
+    [
+     "Station",
+     "Bikes",
+     "Free",
+     "Status"
+    ],
+    [
+     "Kaivopuisto",
+     "8",
+     "14",
+     "Open"
+    ],
+    [
+     "Laivasillankatu",
+     "19",
+     "6",
+     "Closed"
+    ],
+    [
+     "Kapteeninpuistikko",
+     "15",
+     "8",
+     "Open"
+    ],
+    [
+     "Viiskulma",
+     "8",
+     "1",
+     "withIncidence"
+    ],
+    [
+     "Sepänkatu",
+     "20",
+     "10",
+     "Open"
+    ],
+    [
+     "Hietalahdentori",
+     "18",
+     "9",
+     "Open"
+    ]
+   ]
+  }
+ },
+ "jc-k6-load": {
+  "1": {
+   "text": "Requests per second by standard\nngsi-ld\nogc\nmcp\nall",
+   "rows": []
+  },
+  "2": {
+   "text": "p95 by standard, as the client saw it\nngsi-ld\nogc\nmcp",
+   "rows": []
+  },
+  "3": {
+   "text": "Errors by query kind\nentities\ntemporal\ngeo",
+   "rows": []
+  },
+  "4": {
+   "text": "Answers by status\n2xx\n4xx\n5xx",
+   "rows": []
+  },
+  "5": {
+   "text": "p50 / p95 / p99 by query kind\nA Time\nA kind\nA Value #A\n2026-11-08 07:00:00.000\nentities\n61.7 ms\n2026-11-08 07:00:00.000\ntemporal\n50.9 ms\n2026-11-08 07:00:00.000\ngeo\n47.4 ms\nA",
+   "rows": [
+    [
+     "A Time",
+     "A kind",
+     "A Value #A"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "entities",
+     "61.7 ms"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "temporal",
+     "50.9 ms"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "geo",
+     "47.4 ms"
+    ]
+   ]
+  },
+  "6": {
+   "text": "Virtual users and dropped iterations\nVUs\ndropped per second",
+   "rows": []
+  },
+  "7": {
+   "text": "Gateway: service time p95 by route\n/ngsi-ld/v1/entities\n/ngsi-ld/v1/temporal/entities\n/api/v1/projects",
+   "rows": []
+  },
+  "8": {
+   "text": "Broker: service time p95 and Postgres transaction begin p95\nbroker p95\npg begin p95",
+   "rows": []
+  },
+  "9": {
+   "text": "Gateway answers by status\n2xx\n4xx\n5xx",
+   "rows": []
+  }
+ },
+ "parity-hidden-picker": {
+  "1": {
+   "text": "Transactions per second by status class\n2xx\n4xx\n5xx",
+   "rows": []
+  },
+  "2": {
+   "text": "Transactions per second by method\nGET\nPOST\nPATCH",
+   "rows": []
+  },
+  "3": {
+   "text": "Service time, p50 / p95 / p99\np50\np95\np99",
+   "rows": []
+  },
+  "4": {
+   "text": "Notifications delivered and failed\nsent http\nsent https\nfailed http\nfailed https",
+   "rows": []
+  },
+  "5": {
+   "text": "Postgres pool: time to begin a transaction, p95\np95",
+   "rows": []
+  },
+  "6": {
+   "text": "Pool acquire timeouts\ntimeouts",
+   "rows": []
+  },
+  "7": {
+   "text": "Resident memory\nantares-0\nantares-1",
+   "rows": []
+  }
+ },
+ "parity-no-time": {
+  "1": {
+   "text": "Transactions per second by status class\nData outside time range\nZoom to data\n2xx\n4xx\n5xx",
+   "rows": []
+  },
+  "2": {
+   "text": "Transactions per second by method\nData outside time range\nZoom to data\nGET\nPOST\nPATCH",
+   "rows": []
+  },
+  "3": {
+   "text": "Service time, p50 / p95 / p99\nData outside time range\nZoom to data\np50\np95\np99",
+   "rows": []
+  },
+  "4": {
+   "text": "Notifications delivered and failed\nData outside time range\nZoom to data\nsent http\nsent https\nfailed http\nfailed https",
+   "rows": []
+  },
+  "5": {
+   "text": "Postgres pool: time to begin a transaction, p95\nData outside time range\nZoom to data\np95",
+   "rows": []
+  },
+  "6": {
+   "text": "Pool acquire timeouts\nData outside time range\nZoom to data\ntimeouts",
+   "rows": []
+  },
+  "7": {
+   "text": "Resident memory\nData outside time range\nZoom to data\nantares-0\nantares-1",
+   "rows": []
+  }
+ },
+ "parity-time-override": {
+  "1": {
+   "text": "Transactions per second by status class (1h, a day back)\nTimeshift -1d\n2xx\n4xx\n5xx",
+   "rows": []
+  },
+  "2": {
+   "text": "Transactions per second by method (1h, a day back, override hidden)\nGET\nPOST\nPATCH",
+   "rows": []
+  },
+  "3": {
+   "text": "Service time, p50 / p95 / p99 (last 1h)\np50\np95\np99",
+   "rows": []
+  }
+ },
+ "jc-portal": {
+  "1": {
+   "text": "Requests per second by route\n/ngsi-ld/v1/entities\n/ngsi-ld/v1/temporal/entities\n/api/v1/projects",
+   "rows": []
+  },
+  "2": {
+   "text": "Answers by status\n2xx\n4xx\n5xx",
+   "rows": []
+  },
+  "3": {
+   "text": "Service time, p95 by route\n/ngsi-ld/v1/entities\n/ngsi-ld/v1/temporal/entities\n/api/v1/projects",
+   "rows": []
+  },
+  "4": {
+   "text": "Changes proposed per second, by lane\nmanual\nassistant",
+   "rows": []
+  },
+  "5": {
+   "text": "Proposals in the window, by kind\nentities\ntemporal\ngeo",
+   "rows": []
+  },
+  "6": {
+   "text": "At the edge: requests per second by route\n/ngsi-ld/v1/entities\n/ngsi-ld/v1/temporal/entities\n/api/v1/projects",
+   "rows": []
+  }
+ },
+ "jc-slo": {
+  "1": {
+   "text": "Availability over 30 days\nTime\nsurface\ntarget\nValue #A\n2026-11-08 07:00:00.000\nui\nportal\n59.8%\n2026-11-08 07:00:00.000\napi\nportal\n73.6%\n2026-11-08 07:00:00.000\nui\ngateway\n77.1%\n2026-11-08 07:00:00.000\napi\ngateway\n76.9%",
+   "rows": [
+    [
+     "Time",
+     "surface",
+     "target",
+     "Value #A"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "ui",
+     "portal",
+     "59.8%"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "api",
+     "portal",
+     "73.6%"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "ui",
+     "gateway",
+     "77.1%"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "api",
+     "gateway",
+     "76.9%"
+    ]
+   ]
+  },
+  "2": {
+   "text": "p95 latency over 30 days\nTime\nsurface\ntarget\nValue #A\n2026-11-08 07:00:00.000\nui\nportal\n81.3 ms\n2026-11-08 07:00:00.000\napi\nportal\n97.5 ms\n2026-11-08 07:00:00.000\nui\ngateway\n109 ms\n2026-11-08 07:00:00.000\napi\ngateway\n119 ms",
+   "rows": [
+    [
+     "Time",
+     "surface",
+     "target",
+     "Value #A"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "ui",
+     "portal",
+     "81.3 ms"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "api",
+     "portal",
+     "97.5 ms"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "ui",
+     "gateway",
+     "109 ms"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "api",
+     "gateway",
+     "119 ms"
+    ]
+   ]
+  },
+  "3": {
+   "text": "Availability error budget left\nportal ui\nportal api\ngateway ui\ngateway api",
+   "rows": []
+  },
+  "4": {
+   "text": "Availability burn rate, 1 h\nportal ui\nportal api\ngateway ui\ngateway api",
+   "rows": []
+  },
+  "5": {
+   "text": "Latency budget left\nportal ui\nportal api\ngateway ui\ngateway api",
+   "rows": []
+  },
+  "6": {
+   "text": "Days until certificates and domains expire\nA Time\nA host\nA Value #A\n2026-11-08 07:00:00.000\ndev.joinedcontext.com\n7.10 weeks\n2026-11-08 07:00:00.000\napi.dev.joinedcontext.com\n7.59 weeks\nA",
+   "rows": [
+    [
+     "A Time",
+     "A host",
+     "A Value #A"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "dev.joinedcontext.com",
+     "7.10 weeks"
+    ],
+    [
+     "2026-11-08 07:00:00.000",
+     "api.dev.joinedcontext.com",
+     "7.59 weeks"
+    ]
+   ]
+  }
+ }
+}

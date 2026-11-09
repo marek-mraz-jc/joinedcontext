@@ -2,9 +2,9 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Link } from "@tanstack/react-router";
 import { api, reasonOf, unwrap } from "../../api/client";
 import type { components } from "../../api/schema";
+import { DashboardList } from "./DashboardList";
 import {
   Alert,
   Badge,
@@ -412,23 +412,7 @@ export function ProjectDashboards({ project }: { project: string }): JSX.Element
           description={list.data.reason ?? t("grafana.dashboards.empty")}
         />
       ) : (
-        <ul>
-          {list.data.items.map((item) => (
-            <li key={item.uid} className="flex flex-wrap items-center gap-2 border-b border-border py-3 last:border-b-0">
-              <Link
-                data-row-link=""
-                to="/projects/$project/grafana/dashboards/$uid"
-                params={{ project, uid: item.uid }}
-                className="focus-ring min-w-0 flex-1 break-words rounded-sm text-body font-medium text-primary-soft-fg hover:underline"
-              >
-                {item.title}
-              </Link>
-              {item.tags.map((tag) => (
-                <Badge key={tag}>{tag}</Badge>
-              ))}
-            </li>
-          ))}
-        </ul>
+        <DashboardList project={project} items={list.data.items} />
       )}
     </Card>
   );

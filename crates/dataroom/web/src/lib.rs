@@ -3,8 +3,10 @@
 //! `dataroom`, localized in Slovak (`sk`), Czech (`cs`), English (`en`), Hungarian (`hu`) and
 //! German (`de`).
 
+pub mod groups;
 pub mod helpers;
 pub mod i18n;
+pub mod listing;
 
 use askama::Template;
 use chrono::Datelike;
@@ -32,8 +34,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-/// Complete stylesheet from `ours/ckan-theme/public__jc-theme.css` plus dark-mode support (`prefers-color-scheme: dark`, B2).
+/// Complete stylesheet: the base layout CKAN's Bootstrap and main.css gave (`assets/base.css`), then
+/// `ours/ckan-theme/public__jc-theme.css`, plus dark-mode support (`prefers-color-scheme: dark`, B2).
 pub const JC_THEME_CSS: &str = concat!(
+    include_str!("../assets/base.css"),
     include_str!("../assets/public__jc-theme.css"),
     "\n@media (prefers-color-scheme: dark) {\n  :root[data-jc-color-scheme=\"auto\"] {\n    --jc-paper: #0f172a;\n    --jc-ink: #f8fafc;\n  }\n}\n"
 );
@@ -65,7 +69,7 @@ pub const JC_SCRIPTS: &[(&str, &str)] = &[
 ];
 
 /// Default joinedcontext lockup SVG (`/jc-logo.svg`, paths only, no script, no external href).
-pub const JC_LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="171" height="36" viewBox="0 0 171 36" fill="none"><rect width="36" height="36" rx="8" fill="#0000bf"/><text x="18" y="24" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="18" font-weight="700">jc</text><text x="46" y="24" fill="currentColor" font-family="system-ui, sans-serif" font-size="18" font-weight="700">joinedcontext</text></svg>"##;
+pub const JC_LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="171" height="36" viewBox="0 0 171 36" fill="none"><rect width="36" height="36" rx="8" fill="#0000bf"/><text x="18" y="24" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="18" font-weight="700">jc</text><text x="46" y="24" textLength="121" lengthAdjust="spacingAndGlyphs" fill="currentColor" font-family="system-ui, sans-serif" font-size="18" font-weight="700">joinedcontext</text></svg>"##;
 
 ///Localized UI strings struct for templates (C3).
 #[derive(Debug, Clone)]
@@ -115,6 +119,12 @@ pub struct UiLabels {
     pub sort_modified: String,
     pub go: String,
     pub filter_results: String,
+    /// The close button of the phone filter modal.
+    pub close: String,
+    /// The API footnote under a dataset list (CKAN's `api_info`).
+    pub api_access: String,
+    pub api_docs: String,
+    pub api_docs_link: String,
     pub show_more: String,
     pub about: String,
     pub about_site: String,
@@ -261,6 +271,10 @@ impl UiLabels {
             sort_modified: t("sort_modified"),
             go: t("go"),
             filter_results: t("filter_results"),
+            close: t("map_close"),
+            api_access: t("api_access"),
+            api_docs: t("api_docs"),
+            api_docs_link: t("api_docs_link"),
             show_more: t("show_more"),
             about: t("about"),
             about_site: t("about_site"),
@@ -650,8 +664,11 @@ pub struct DatasetListPageTemplate {
     pub datasets: Vec<DatasetRowView>,
     pub dataset_grid_config: String,
     pub page: usize,
-    pub last_page: usize,
-    pub pages: Vec<usize>,
+    pub pager: Vec<listing::PageLinkView>,
+    pub filter_pills: Vec<listing::FilterPillView>,
+    pub remove_label: String,
+    /// The active filters, carried as hidden fields so a new search or sort keeps them.
+    pub hidden_params: Vec<(String, String)>,
 }
 
 /// Dataset detail page Askama template (`templates/dataset.html`, D3).
@@ -701,6 +718,8 @@ pub struct DatasetPageTemplate {
 pub struct ResourcePageTemplate {
     pub chrome: PageChrome,
     pub labels: UiLabels,
+    /// The heading of the resource list card ("Zdroje", CKAN's `package/snippets/resources.html`).
+    pub resources_heading: String,
     pub dataset_name: String,
     pub dataset_title: String,
     pub publisher_slug: String,
@@ -758,6 +777,10 @@ pub struct OrganizationReadPageTemplate {
     pub facet_groups: Vec<FacetGroupView>,
     pub datasets: Vec<DatasetRowView>,
     pub dataset_grid_config: String,
+    pub pager: Vec<listing::PageLinkView>,
+    pub filter_pills: Vec<listing::FilterPillView>,
+    pub remove_label: String,
+    pub hidden_params: Vec<(String, String)>,
 }
 
 /// About page (`/about`, `templates/about.html`, D6).
@@ -1098,8 +1121,15 @@ pub fn render_dataset_list_page(
     let facet_groups =
         build_dataset_facet_groups(facets, total, active_params, &base_path, &chrome.lang);
 
-    let last_page = total.div_ceil(20).max(1);
-    let pages: Vec<usize> = (1..=last_page.min(5)).collect();
+    let filter_pills = dataset_filter_pills(
+        facets,
+        &pub_map,
+        active_params,
+        &base_path,
+        &chrome.lang,
+        &catalogue.default_language,
+    );
+    let pager = listing::pager(&base_path, active_params, total, page);
     let odata_base = format!("{}/odata/v4", chrome.mount_prefix);
     let ds_grid = odata_grid_config(
         &odata_base,
@@ -1112,22 +1142,97 @@ pub fn render_dataset_list_page(
         ],
     );
 
-    let found_heading = jc_t("datasets_found", &chrome.lang).replace("{n}", &total.to_string());
+    let hidden_params = hidden_filter_params(active_params);
     let tpl = DatasetListPageTemplate {
+        found_heading: found_heading(total, query, &chrome.lang),
+        remove_label: jc_t("remove", &chrome.lang),
         chrome,
         labels,
         query: query.to_owned(),
         sort: sort.to_owned(),
         total,
-        found_heading,
         facet_groups,
+        filter_pills,
+        hidden_params,
         datasets: ds_rows,
         dataset_grid_config: ds_grid.to_string(),
         page,
-        last_page,
-        pages,
+        pager,
     };
     tpl.render().unwrap_or_default()
+}
+
+/// The active-filter pills of a dataset list (CKAN's `p.filter-list`): each names its facet and
+/// the value as the facet shows it, with a link that drops only that filter (G5).
+fn dataset_filter_pills(
+    facets: &SearchFacets,
+    publishers: &BTreeMap<String, Publisher>,
+    active_params: &BTreeMap<String, String>,
+    base_path: &str,
+    lang: &str,
+    default_lang: &str,
+) -> Vec<listing::FilterPillView> {
+    let format = jc_t("format", lang);
+    let defs = [
+        ("organization", jc_t("publisher", lang)),
+        ("publisher", jc_t("publisher", lang)),
+        ("vocab_jc_topic", jc_t("topic", lang)),
+        ("theme", jc_t("topic", lang)),
+        ("tags", jc_t("keywords", lang)),
+        ("keyword", jc_t("keywords", lang)),
+        ("vocab_jc_format", format.clone()),
+        ("res_format", format),
+        ("license_id", jc_t("licence", lang)),
+        ("licence", jc_t("licence", lang)),
+        ("spatial", jc_t("coverage", lang)),
+    ];
+    listing::filter_pills(base_path, active_params, &defs, |param, value| {
+        let listed = |list: &[dataroom_search::FacetCount]| {
+            list.iter()
+                .find(|f| f.value == value)
+                .map(|f| f.label.clone())
+        };
+        match param {
+            "organization" | "publisher" => publishers
+                .get(value)
+                .map(|p| publisher_card_info(p, lang, default_lang).0)
+                .or_else(|| listed(&facets.publisher)),
+            "vocab_jc_topic" | "theme" => {
+                Some(dataroom_core::vocab::theme_label(value, lang)).filter(|l| !l.is_empty())
+            }
+            "vocab_jc_format" | "res_format" => Some(helpers::data_format_label(value)),
+            "license_id" | "licence" => listed(&facets.licence),
+            "spatial" => Some(helpers::nuts_label(value, lang)),
+            _ => listed(&facets.keyword),
+        }
+        .unwrap_or_else(|| value.to_owned())
+    })
+}
+
+/// The request's filters a search form carries in hidden fields (CKAN's `form.hidden_from_list`):
+/// everything but the query, the sort and the page.
+fn hidden_filter_params(params: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    params
+        .iter()
+        .filter(|(k, v)| {
+            !v.is_empty()
+                && !matches!(k.as_str(), "q" | "sort" | "page" | "lang")
+                && !k.starts_with('_')
+        })
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
+/// "N datasets found", with the query when there is one (CKAN's `search_result_text`).
+fn found_heading(total: usize, query: &str, lang: &str) -> String {
+    let key = if query.trim().is_empty() {
+        "datasets_found"
+    } else {
+        "datasets_found_query"
+    };
+    jc_t(key, lang)
+        .replace("{n}", &total.to_string())
+        .replace("{q}", query.trim())
 }
 
 fn build_dataset_facet_groups(
@@ -1156,12 +1261,16 @@ fn build_dataset_facet_groups(
             if param == "vocab_jc_topic" && fc.count == total && total > 0 && !is_active {
                 continue;
             }
-            let enc: String = url::form_urlencoded::byte_serialize(fc.value.as_bytes()).collect();
-            let href = if is_active {
-                base_path.to_owned()
-            } else {
-                format!("{base_path}?{param}={enc}")
-            };
+            // A publisher filter narrows the publisher facet to the chosen one, as CKAN's
+            // facets come from the result set (the search keeps every publisher, A3).
+            if param == "organization" && active_val.is_some() && !is_active {
+                continue;
+            }
+            let href = listing::link_with(
+                base_path,
+                active_params,
+                &[(param, (!is_active).then_some(fc.value.as_str()))],
+            );
             let display = if param == "vocab_jc_format" {
                 helpers::data_format_label(&fc.value)
             } else {
@@ -1176,7 +1285,14 @@ fn build_dataset_facet_groups(
             });
         }
         if !items.is_empty() {
-            let more_href = (list.len() > 10).then(|| format!("{base_path}?_{param}_limit=0"));
+            let more_href = (list.len() > 10).then(|| {
+                let switch = format!("_{param}_limit");
+                let mut url = listing::link_with(base_path, active_params, &[]);
+                url.push(if url.contains('?') { '&' } else { '?' });
+                url.push_str(&switch);
+                url.push_str("=0");
+                url
+            });
             groups.push(FacetGroupView {
                 param: param.to_owned(),
                 title,
@@ -1195,17 +1311,15 @@ fn build_dataset_facet_groups(
             .take(10)
             .map(|fc| {
                 let is_active = active_val == Some(fc.value.as_str());
-                let enc: String =
-                    url::form_urlencoded::byte_serialize(fc.value.as_bytes()).collect();
                 FacetItemView {
                     name: fc.value.clone(),
                     label: helpers::nuts_label(&fc.value, lang),
                     count: fc.count,
-                    href: if is_active {
-                        base_path.to_owned()
-                    } else {
-                        format!("{base_path}?{param}={enc}")
-                    },
+                    href: listing::link_with(
+                        base_path,
+                        active_params,
+                        &[(param, (!is_active).then_some(fc.value.as_str()))],
+                    ),
                     active: is_active,
                 }
             })
@@ -1596,6 +1710,7 @@ pub fn render_resource_page(
     );
 
     let tpl = ResourcePageTemplate {
+        resources_heading: jc_t("resources_nav", &chrome.lang),
         chrome,
         labels,
         dataset_name: dataset.name.clone(),
@@ -1739,8 +1854,10 @@ pub fn render_organization_read_page(
     datasets: &[Dataset],
     facets: &SearchFacets,
     total: usize,
+    page: usize,
     query: &str,
     sort: &str,
+    active_params: &BTreeMap<String, String>,
     lang: &str,
     had_url_prefix: bool,
     mount_prefix: &str,
@@ -1813,22 +1930,43 @@ pub fn render_organization_read_page(
         if list.is_empty() {
             continue;
         }
+        let active_val = active_params.get(param).map(String::as_str);
         let items: Vec<FacetItemView> = list
             .iter()
+            // The page is one publisher's: its publisher facet names only that publisher (G4).
+            .filter(|fc| {
+                param != "organization" || fc.value == publisher.name || fc.value == publisher.id
+            })
             .take(10)
             .map(|fc| {
-                let enc: String =
-                    url::form_urlencoded::byte_serialize(fc.value.as_bytes()).collect();
+                let active = active_val == Some(fc.value.as_str());
+                let href = if param == "organization" {
+                    base_path.clone()
+                } else {
+                    listing::link_with(
+                        &base_path,
+                        active_params,
+                        &[(param, (!active).then_some(fc.value.as_str()))],
+                    )
+                };
                 FacetItemView {
                     name: fc.value.clone(),
                     label: fc.label.clone(),
                     count: fc.count,
-                    href: format!("{base_path}?{param}={enc}"),
-                    active: false,
+                    href,
+                    active,
                 }
             })
             .collect();
-        let more_href = (!more_q.is_empty()).then(|| format!("{base_path}?{more_q}"));
+        if items.is_empty() {
+            continue;
+        }
+        let more_href = (!more_q.is_empty()).then(|| {
+            let mut url = listing::link_with(&base_path, active_params, &[]);
+            url.push(if url.contains('?') { '&' } else { '?' });
+            url.push_str(more_q);
+            url
+        });
         facet_groups.push(FacetGroupView {
             param: param.to_owned(),
             title: gtitle,
@@ -1848,16 +1986,30 @@ pub fn render_organization_read_page(
             ("modified", &labels.col_modified, "date"),
         ],
     );
-    let found_heading = jc_t("datasets_found", &chrome.lang).replace("{n}", &total.to_string());
+    let mut pill_params = active_params.clone();
+    pill_params.remove("organization");
+    let filter_pills = dataset_filter_pills(
+        facets,
+        &pub_map,
+        &pill_params,
+        &base_path,
+        &chrome.lang,
+        &catalogue.default_language,
+    );
+    let pager = listing::pager(&base_path, active_params, total, page);
 
     let tpl = OrganizationReadPageTemplate {
+        found_heading: found_heading(total, query, &chrome.lang),
+        remove_label: jc_t("remove", &chrome.lang),
+        hidden_params: hidden_filter_params(&pill_params),
+        filter_pills,
+        pager,
         chrome,
         labels,
         publisher: pub_view,
         query: query.to_owned(),
         sort: sort.to_owned(),
         total,
-        found_heading,
         facet_groups,
         datasets: ds_rows,
         dataset_grid_config: ds_grid.to_string(),

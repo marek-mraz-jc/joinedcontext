@@ -414,8 +414,8 @@ fn calculate_field_binary_operations_follow_grafana_operators() {
     );
     assert_eq!(
         last(&bin(json!("a"), "/", json!("0")))[0],
-        None,
-        "x / 0 is not a finite number"
+        Some(f64::INFINITY),
+        "x / 0 is Infinity, as Grafana's calculateField gives it, and stays apart from a null"
     );
 
     // Grafana 11.4+ operand objects: a field matcher or a fixed value.

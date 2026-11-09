@@ -11,7 +11,8 @@ use crate::setup::{DASHBOARDS_USER, Secret, Setup};
 use axum::Router;
 use daiya_model::OrgId;
 use daiya_server::config::{
-    MigrateConfig, StoreConfig, open_store, provision, provisioning_vars_from,
+    MigrateConfig, StoreConfig, declare_organizations, open_store, provision,
+    provisioning_vars_from,
 };
 use daiya_server::{DaiyaState, router};
 use jc_router::Mount;
@@ -41,8 +42,11 @@ pub(crate) async fn state(cfg: &DaiyaSection, setup: &Setup) -> Result<DaiyaStat
     let Some(password) = setup.value(Secret::DashboardsPassword) else {
         return Ok(DaiyaState::for_standalone(store, org));
     };
+    // The Portal reads members-only Endpoints with the person's token, exchanged for the one
+    // Endpoint a panel reads and handed over beside its credential.
     DaiyaState::for_standalone(store, org)
         .with_server_admin(DASHBOARDS_USER, password)
+        .map(DaiyaState::with_person_tokens)
         .map_err(|e| e.to_string())
 }
 
@@ -56,6 +60,7 @@ pub async fn build(
     mount: Mount,
 ) -> Result<Router, String> {
     let mut state = state(cfg, setup).await?;
+    declare_organizations(&state, &cfg.organizations).map_err(|e| e.to_string())?;
     if let Some(dir) = &cfg.provisioning_dir {
         state.own_addresses = vec![own];
         let vars = provisioning_vars_from(crate::config::process_env());

@@ -125,7 +125,10 @@ describe("Administration and the chosen Organization (T-5248)", () => {
 
   it("tells an Organization's own administrator that a section of the installation is not theirs", async () => {
     start("/organization/brokers", OWN_ADMIN);
-    expect(await screen.findByText(/administrators/i, {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(
+      await screen.findByText(/only its administrators open it/i, {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/ask the installation's administrators/i)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Brokers" })).not.toBeInTheDocument();
   });
 });

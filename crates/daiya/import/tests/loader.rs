@@ -2,7 +2,7 @@
 #![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! Loading a Grafana provisioning directory (R2, §7.1, §7.3, `pkg/services/provisioning`):
 //! datasources with `deleteDatasources`, dashboard providers with `folder`, `folderUid` and
-//! `foldersFromFilesStructure`, organization 1 only, raw `secureJsonData` refused, paths and
+//! `foldersFromFilesStructure`, each into the organization its `orgId` names, raw `secureJsonData` refused, paths and
 //! files confined to the root, and a refused file failing the run before anything of its kind
 //! is written.
 
@@ -17,12 +17,16 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 const ORG: OrgId = OrgId::from_u128(42);
+/// jc-migrate's dev import holds bbsk as organization 4 and helsinki as 6.
+const BBSK: OrgId = OrgId::from_u128(4004);
+const HELSINKI: OrgId = OrgId::from_u128(6006);
 
 fn target() -> ProvisioningTarget {
     ProvisioningTarget {
         installation_id: InstallationId::from_u128(1),
         org_id: ORG,
         instance_id: InstanceId::from_u128(1),
+        organizations: BTreeMap::from([(4, BBSK), (6, HELSINKI)]),
     }
 }
 
@@ -240,7 +244,7 @@ async fn an_empty_or_absent_directory_loads_nothing() {
 }
 
 #[tokio::test]
-async fn only_organization_1_is_provisioned() {
+async fn an_organization_the_daiya_does_not_hold_is_refused() {
     let store = FailingStore::new();
     let root = Root::new();
     root.write(
@@ -293,6 +297,144 @@ async fn only_organization_1_is_provisioned() {
         "{err}"
     );
     assert!(store.get_dashboard(ORG, "x").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn each_entry_lands_in_the_organization_its_org_id_names_and_no_other() {
+    let store = FailingStore::new();
+    let root = Root::new();
+    root.write(
+        "datasources/projects.yaml",
+        "apiVersion: 1\ndatasources:\n  - name: BBSK broker\n    uid: bbsk-broker\n    type: prometheus\n    url: http://bbsk:9090\n    orgId: 4\n  - name: Helsinki broker\n    uid: helsinki-broker\n    type: prometheus\n    url: http://helsinki:9090\n    orgId: 6\n  - name: Main\n    uid: main\n    type: prometheus\n    url: http://main:9090\n",
+    );
+    root.write(
+        "dashboards/projects.yaml",
+        "providers:\n  - name: bbsk\n    orgId: 4\n    options:\n      path: bbsk\n  - name: helsinki\n    orgId: 6\n    options:\n      path: helsinki\n",
+    );
+    let on = |uid: &str, ds: &str| {
+        let mut board = dashboard(uid);
+        board["panels"][0]["datasource"]["uid"] = json!(ds);
+        board["panels"][0]["targets"][0]["datasource"] = json!({ "type": "prometheus", "uid": ds });
+        board.to_string()
+    };
+    // A helsinki board cannot read bbsk's datasource: the run is refused with nothing written.
+    root.write("bbsk/b.json", &on("bbsk-board", "bbsk-broker"));
+    root.write("helsinki/h.json", &on("helsinki-board", "bbsk-broker"));
+    let err = load(&store, &root.0).await.unwrap_err();
+    assert!(err.to_string().contains("helsinki"), "{err}");
+    assert!(
+        store
+            .get_dashboard(BBSK, "bbsk-board")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    root.write("helsinki/h.json", &on("helsinki-board", "helsinki-broker"));
+    let report = load(&store, &root.0).await.unwrap();
+    assert_eq!((report.datasources_upserted, report.dashboards), (3, 2));
+    // A datasource provisioned for organization 4 is not visible from organization 6, nor 1.
+    assert!(
+        store
+            .get_datasource(BBSK, "bbsk-broker")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .get_datasource(HELSINKI, "bbsk-broker")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_datasource(ORG, "bbsk-broker")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let helsinki: Vec<String> = store
+        .list_datasources(HELSINKI)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|d| d.uid)
+        .collect();
+    assert_eq!(helsinki, ["helsinki-broker"]);
+    assert!(store.get_datasource(ORG, "main").await.unwrap().is_some());
+    assert!(store.get_datasource(BBSK, "main").await.unwrap().is_none());
+    assert!(
+        store
+            .get_dashboard(BBSK, "bbsk-board")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .get_dashboard(HELSINKI, "bbsk-board")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_dashboard(HELSINKI, "helsinki-board")
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    // A delete for organization 6 leaves organization 4's datasource of that name; one for 4 removes it.
+    root.write(
+        "datasources/projects.yaml",
+        "apiVersion: 1\ndeleteDatasources:\n  - name: BBSK broker\n    orgId: 6\n",
+    );
+    assert_eq!(load(&store, &root.0).await.unwrap().datasources_deleted, 0);
+    assert!(
+        store
+            .get_datasource(BBSK, "bbsk-broker")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    root.write(
+        "datasources/projects.yaml",
+        "apiVersion: 1\ndeleteDatasources:\n  - name: BBSK broker\n    orgId: 4\n",
+    );
+    assert_eq!(load(&store, &root.0).await.unwrap().datasources_deleted, 1);
+    assert!(
+        store
+            .get_datasource(BBSK, "bbsk-broker")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // A file gone from helsinki's provider prunes helsinki's board only.
+    std::fs::remove_file(root.0.join("helsinki/h.json")).unwrap();
+    root.write(
+        "helsinki/other.json",
+        &json!({ "uid": "helsinki-other", "title": "O", "schemaVersion": 39, "panels": [] })
+            .to_string(),
+    );
+    let report = load(&store, &root.0).await.unwrap();
+    assert_eq!(report.dashboards_deleted, 1);
+    assert!(
+        store
+            .get_dashboard(HELSINKI, "helsinki-board")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_dashboard(BBSK, "bbsk-board")
+            .await
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[tokio::test]
