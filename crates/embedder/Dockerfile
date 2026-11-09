@@ -6,7 +6,7 @@
 
 FROM rust:1.97-slim-trixie@sha256:8e8cf8f7fd54a2d23d5a743b3a03f56e26b6c774276c33fa0595111704ebb15c AS build
 RUN apt-get update && apt-get install -y --no-install-recommends make cmake && rm -rf /var/lib/apt/lists/*
-ARG CARGO_BUILD_JOBS=
+ARG CARGO_BUILD_JOBS=default
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 WORKDIR /src
 COPY . .
