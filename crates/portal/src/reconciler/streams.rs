@@ -1411,10 +1411,7 @@ impl StreamDeployer {
             Ok(StreamOutcome::Live)
         } else {
             let body = response.text().await.unwrap_or_default();
-            let truncated = truncate_body(&body, 500);
-            Ok(StreamOutcome::Error(format!(
-                "runner answered {status}: {truncated}"
-            )))
+            Ok(StreamOutcome::Error(runner_refusal(status, &body)))
         }
     }
 }
@@ -1621,6 +1618,29 @@ pub fn make_condition(
     }
 }
 
+/// The runner's refusal in words: its lint errors when it sent them (the row said "Why: ... 400
+/// Bad Request: {\"lint_errors\":[...]}", raw JSON, UI judge 2026-11-09), else its body cut short.
+fn runner_refusal(status: reqwest::StatusCode, body: &str) -> String {
+    let lints: Vec<String> = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| v.get("lint_errors").and_then(Value::as_array).cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|e| e.as_str().map(str::to_owned))
+        .collect();
+    if lints.is_empty() {
+        format!("runner answered {status}: {}", truncate_body(body, 500))
+    } else {
+        truncate_body(
+            &format!(
+                "the runner found errors in the pipeline: {}",
+                lints.join("; ")
+            ),
+            500,
+        )
+    }
+}
+
 fn truncate_body(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
@@ -1636,6 +1656,19 @@ fn truncate_body(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_runner_refusal_reads_as_its_lint_errors_not_as_json() {
+        let body = r#"{"lint_errors":["environment variable 'JC_MQTT_NAMESPACE' was not defined"],"linting_errors":["environment variable 'JC_MQTT_NAMESPACE' was not defined"]}"#;
+        assert_eq!(
+            runner_refusal(reqwest::StatusCode::BAD_REQUEST, body),
+            "the runner found errors in the pipeline: environment variable 'JC_MQTT_NAMESPACE' was not defined"
+        );
+        assert_eq!(
+            runner_refusal(reqwest::StatusCode::BAD_GATEWAY, "upstream down"),
+            "runner answered 502 Bad Gateway: upstream down"
+        );
+    }
 
     impl StreamDeployer {
         /// The same deployer with other timeouts, so a test need not wait out the real ones.
