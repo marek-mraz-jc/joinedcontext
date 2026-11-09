@@ -797,7 +797,38 @@ pub struct HarvestSource {
     pub schedule: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// The items whose rows the platform converted to NGSI-LD, by dataset name (prod's
+    /// `od-datasets.json`, `OD_DATASETS`). Non-empty: only these are listed, each with its
+    /// Endpoint's distributions in place of the source's links (EP-118); empty: every kept item
+    /// with the source's own links.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub converted: BTreeMap<String, ConvertedDataset>,
+    /// The public base the converted datasets' Endpoints answer under (`OD_GATEWAY`), such as
+    /// `https://api.city.example`; its host must be in `allowed_hosts`, since each Endpoint's
+    /// `schema/index.json` is read from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<String>,
     pub modified: DateTime<Utc>,
+}
+
+/// One converted dataset of `od-datasets.json`: its open-data Endpoint, the entity type its
+/// rows became, the catalogue dataset its rows name in `isPartOf`, whether they carry a
+/// location or a series of measured numbers, whether its rows name their dataset (`filtered`)
+/// and whether its type holds only its rows on that Endpoint (`sole`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ConvertedDataset {
+    pub endpoint: String,
+    #[serde(rename = "type")]
+    pub entity_type: String,
+    pub dataset: String,
+    #[serde(default)]
+    pub location: bool,
+    #[serde(default)]
+    pub series: bool,
+    #[serde(default = "default_true")]
+    pub filtered: bool,
+    #[serde(default)]
+    pub sole: bool,
 }
 
 fn default_schedule() -> String {
@@ -821,6 +852,20 @@ impl HarvestRunState {
             Self::Failed => "failed",
         }
     }
+}
+
+/// Marks a Running run a stopped process left behind as failed (the stores' harvest lock).
+pub fn abandon_run(run: &mut HarvestRun) {
+    let now = Utc::now();
+    run.state = HarvestRunState::Failed;
+    run.finished_at = Some(now);
+    run.error = Some("abandoned: still running after the harvest deadline".into());
+    run.logs.push(HarvestLogLine {
+        at: now,
+        level: "error".into(),
+        fingerprint: "harvest.abandoned".into(),
+        message: "the run passed its deadline without finishing; the source is free again".into(),
+    });
 }
 
 /// One item skipped during a harvest run, with its reason.

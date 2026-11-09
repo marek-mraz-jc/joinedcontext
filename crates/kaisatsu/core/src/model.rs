@@ -965,6 +965,91 @@ pub struct ParRequestRecord {
     pub expires_at: DateTime<Utc>,
 }
 
+/// Where a device authorization (RFC 8628) stands: the person's answer at the verification page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceStatus {
+    Pending,
+    Approved,
+    Denied,
+}
+
+/// One device authorization (`device_code`, RFC 8628, D1): the device polls by the device code, a
+/// signed-in person answers by the user code. Both are stored as SHA-256 only; single use.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceCodeRecord {
+    pub device_code_hash: String,
+    pub user_code_hash: String,
+    pub realm_id: String,
+    pub client_id: String,
+    pub scope: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mapper_scopes: Vec<String>,
+    pub status: DeviceStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sso_session_id: Option<String>,
+    #[serde(default)]
+    pub acr: String,
+    #[serde(default)]
+    pub amr: Vec<String>,
+    #[serde(default)]
+    pub auth_time: i64,
+    /// Seconds the device waits between polls; each `slow_down` adds 5 (RFC 8628 §3.5).
+    pub interval_secs: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_poll_at: Option<DateTime<Utc>>,
+    pub consumed: bool,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// The token endpoint's answer to one poll of a device code (RFC 8628 §3.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DevicePoll {
+    Pending,
+    SlowDown,
+    Approved,
+    Denied,
+    Expired,
+    Used,
+}
+
+impl DeviceCodeRecord {
+    /// The record after a poll at `now` and what the poll answers: a poll sooner than the
+    /// interval is `SlowDown` (the interval grows by 5 s), an approved code is used up by the
+    /// poll that takes its tokens, and a used or expired code stays so.
+    #[must_use]
+    pub fn polled(&self, now: DateTime<Utc>) -> (Self, DevicePoll) {
+        let mut next = self.clone();
+        if self.consumed {
+            return (next, DevicePoll::Used);
+        }
+        if self.expires_at <= now {
+            return (next, DevicePoll::Expired);
+        }
+        next.last_poll_at = Some(now);
+        if self
+            .last_poll_at
+            .is_some_and(|last| (now - last).num_milliseconds() < self.interval_secs * 1000)
+        {
+            next.interval_secs += 5;
+            return (next, DevicePoll::SlowDown);
+        }
+        let verdict = match self.status {
+            DeviceStatus::Pending => DevicePoll::Pending,
+            DeviceStatus::Denied => DevicePoll::Denied,
+            DeviceStatus::Approved => {
+                next.consumed = true;
+                DevicePoll::Approved
+            }
+        };
+        (next, verdict)
+    }
+}
+
 /// Persistent SSO session (`sso_session`, `UserSessionRepresentation`, W1, W2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

@@ -35,6 +35,7 @@ dataroom = [
   "dep:dataroom-server",
   "dep:dataroom-api",
   "dep:dataroom-core",
+  "dep:dataroom-harvest",
   "dep:dataroom-store-memory",
   "dep:dataroom-store-pg",
   "dep:chrono",
@@ -100,6 +101,7 @@ kaisatsu-import = { path = "../../crates/kaisatsu/import", optional = true }
 dataroom-server = { path = "../../crates/dataroom/server", optional = true }
 dataroom-api = { path = "../../crates/dataroom/api", optional = true }
 dataroom-core = { path = "../../crates/dataroom/core", optional = true }
+dataroom-harvest = { path = "../../crates/dataroom/harvest", optional = true }
 dataroom-store-memory = { path = "../../crates/dataroom/store-memory", optional = true }
 dataroom-store-pg = { path = "../../crates/dataroom/store-pg", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }

@@ -535,7 +535,7 @@ async fn migrations_are_versioned_and_run_once() {
     .fetch_all(&db.migrate_pool)
     .await
     .expect("version table");
-    assert_eq!(versions, [1, 2]);
+    assert_eq!(versions, [1, 2, 3]);
     let app = db.app_pool().await;
     assert!(
         sqlx::query("SELECT 1 FROM kaisatsu_migrations._sqlx_migrations")

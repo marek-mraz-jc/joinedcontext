@@ -34,4 +34,12 @@ macro_rules! both_stores {
     };
 }
 
-both_stores!(catalogues, publishers, datasets, records, odata, isolation);
+both_stores!(
+    catalogues,
+    publishers,
+    datasets,
+    records,
+    harvest_lock,
+    odata,
+    isolation
+);

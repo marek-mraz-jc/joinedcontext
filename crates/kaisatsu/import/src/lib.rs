@@ -862,6 +862,79 @@ pub async fn compute_realm_state_checksum(
     Ok(sha256_json(&exported))
 }
 
+/// D5: the domains a Keycloak realm file lets CIMD clients come from, as Keycloak decides it: an
+/// enabled client policy whose `client-id-uri` condition (scheme `https`) names the client
+/// domains, and whose profile's `client-id-metadata-document` executor names the redirect
+/// domains. No such policy (prod's smartcity): both empty, and every https client_id is unknown.
+#[must_use]
+pub fn cimd_policy(realm: &Value) -> (Vec<String>, Vec<String>) {
+    let strings = |v: Option<&Value>| -> Vec<String> {
+        v.and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let profiles = realm
+        .pointer("/clientProfiles/profiles")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut clients = Vec::new();
+    let mut redirects = Vec::new();
+    let policies = realm
+        .pointer("/clientPolicies/policies")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for policy in policies {
+        if policy.get("enabled").and_then(Value::as_bool) == Some(false) {
+            continue;
+        }
+        let Some(cond) = policy
+            .get("conditions")
+            .and_then(Value::as_array)
+            .and_then(|c| {
+                c.iter()
+                    .find(|c| c.get("condition").and_then(Value::as_str) == Some("client-id-uri"))
+            })
+            .and_then(|c| c.get("configuration"))
+        else {
+            continue;
+        };
+        if !strings(cond.get("client-id-uri-scheme"))
+            .iter()
+            .all(|s| s == "https")
+        {
+            continue;
+        }
+        for name in strings(policy.get("profiles")) {
+            let executor = profiles
+                .iter()
+                .filter(|p| p.get("name").and_then(Value::as_str) == Some(name.as_str()))
+                .filter_map(|p| p.get("executors").and_then(Value::as_array))
+                .flatten()
+                .find(|e| {
+                    e.get("executor").and_then(Value::as_str) == Some("client-id-metadata-document")
+                });
+            if let Some(executor) = executor {
+                clients.extend(strings(cond.get("client-id-uri-allow-permitted-domains")));
+                redirects.extend(strings(
+                    executor.pointer("/configuration/cimd-allow-permitted-domains"),
+                ));
+            }
+        }
+    }
+    clients.sort();
+    clients.dedup();
+    redirects.sort();
+    redirects.dedup();
+    (clients, redirects)
+}
+
 /// Before a real apply writes anything: every secret variable the documents name is set, except
 /// where an existing client or SMTP configuration keeps its current secret (all or nothing).
 async fn refuse_unset_secret_variables(
@@ -986,6 +1059,11 @@ pub async fn apply_realm_files(
 
     // 1. RealmConfig
     let mut realm_cfg: RealmConfig = serde_json::from_value(merged.clone()).unwrap_or_default();
+    if merged.get("cimdAllowedClientDomains").is_none() {
+        let (clients, redirects) = cimd_policy(&merged);
+        realm_cfg.cimd_allowed_client_domains = clients;
+        realm_cfg.cimd_allowed_redirect_domains = redirects;
+    }
     realm_cfg.id = realm_id.clone();
     realm_cfg.realm = realm_name.clone();
     realm_cfg.apply_checksum = Some(file_checksum.clone());

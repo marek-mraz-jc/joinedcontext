@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { configure } from "@testing-library/react";
+import { File as NodeFile } from "node:buffer";
 import { beforeEach, vi } from "vitest";
 import { EXACT_PROJECTS } from "./exactProjects";
 import { settlePrefill } from "../src/assistant/state";
@@ -42,6 +43,47 @@ if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.sho
   HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
     this.removeAttribute("open");
   };
+}
+
+// Node 24's fetch (undici 7) builds the File of a multipart part with the global File, which
+// jsdom replaced, and then refuses its own result: a FormData upload went out with an empty file
+// and the stub's formData() threw (16 red import tests on ci, Node 22 duck-typed it). undici gets
+// Node's File while it builds a part (vitest hands it a Blob per jsdom file) or parses a body.
+if (typeof window !== "undefined") {
+  const nodeFile = NodeFile as unknown as typeof File;
+  const lendNodeFile = (): (() => void) => {
+    const jsdomFile = globalThis.File;
+    globalThis.File = nodeFile;
+    return () => {
+      globalThis.File = jsdomFile;
+    };
+  };
+  const form = await new Response("", { headers: { "Content-Type": "application/x-www-form-urlencoded" } }).formData();
+  const NodeFormData = form.constructor as typeof FormData;
+  for (const name of ["append", "set"] as const) {
+    const own = NodeFormData.prototype[name] as (...args: unknown[]) => void;
+    NodeFormData.prototype[name] = function (this: FormData, ...args: unknown[]) {
+      const giveBack = lendNodeFile();
+      try {
+        own.apply(this, args);
+      } finally {
+        giveBack();
+      }
+    };
+  }
+  // vitest's Request extends Node's, which owns formData.
+  const nodeRequest = Object.hasOwn(Request.prototype, "formData") ? Request.prototype : Object.getPrototypeOf(Request.prototype);
+  for (const body of [nodeRequest, Response.prototype] as Body[]) {
+    const own = body.formData;
+    body.formData = async function (this: Body) {
+      const giveBack = lendNodeFile();
+      try {
+        return await own.call(this);
+      } finally {
+        giveBack();
+      }
+    };
+  }
 }
 
 // A project page lives in a project the person reads, and the Shell draws the not-found refusal
