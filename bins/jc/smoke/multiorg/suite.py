@@ -873,10 +873,35 @@ class Suite:
         out.mkdir(parents=True, exist_ok=True)
         everything = {p for o in self.exp.values() for p in o["projects"]}
         shots = []
+        scheme = urllib.parse.urlparse(self.base).scheme
+        # Host mode: every Organization host is this loopback jc (the port stays the address's).
+        args = ["--disable-dev-shm-usage", "--disable-gpu"]
+        if self.hosts:
+            loop = urllib.parse.urlparse(self.base).hostname
+            names = sorted({h.split(":")[0] for o in self.hosts.values() for h in o.values()})
+            args.append("--host-resolver-rules=" + ",".join(f"MAP {n} {loop}" for n in names))
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(args=["--disable-dev-shm-usage", "--disable-gpu"])
+            browser = pw.chromium.launch(args=args)
+            for org, h in self.hosts.items():
+                for width, height in ((1440, 900), (400, 860)):
+                    ctx = browser.new_context(viewport={"width": width, "height": height})
+                    page = ctx.new_page()
+                    url = f"{scheme}://{h['opendata']}/"
+                    page.goto(url, wait_until="networkidle", timeout=60000)
+                    page.wait_for_timeout(1500)
+                    file = out / f"{org}-opendata-home-{width}.png"
+                    page.screenshot(path=str(file), full_page=False)
+                    text = page.locator("body").inner_text(timeout=5000).lower()
+                    shots.append({"persona": "anonymous", "page": "opendata-home", "path": url,
+                                  "width": width, "file": file.name})
+                    leaked = sorted(o for o in self.hosts if o != org and self.hosts[o]["opendata"] in text)
+                    self.row(f"ui.{org}.opendata-home.{width}", org, f"GET {url} (browser)",
+                             "the Organization's open data home names no other's host",
+                             f"leaked {leaked}", not leaked)
+                    ctx.close()
             for key, p in self.people.items():
                 org = key.rsplit("-", 1)[0] if key != "platform" else None
+                base = f"{scheme}://{self.hosts[self.home(key)]['portal']}" if self.hosts else self.base
                 own = sorted(self.exp[org]["projects"])[0] if org else "helsinki"
                 foreign = sorted(sorted(o["projects"])[0] for k, o in self.exp.items() if k != org)[0] if org else None
                 pages = [("own-project", f"/projects/{own}"), ("projects", "/"), ("organization", "/organization")]
@@ -885,13 +910,13 @@ class Suite:
                 for width, height in ((1440, 900), (400, 860)):
                     ctx = browser.new_context(viewport={"width": width, "height": height})
                     page = ctx.new_page()
-                    page.goto(self.base + "/api/v1/auth/login")
+                    page.goto(base + "/api/v1/auth/login")
                     page.fill("input[name=username]", p["username"])
                     page.fill("input[name=password]", p["password"])
                     page.locator("input[name=password]").press("Enter")
-                    page.wait_for_url(re.compile(re.escape(self.base) + r"/(?!id/).*"), timeout=30000)
+                    page.wait_for_url(re.compile(re.escape(base) + r"/(?!id/).*"), timeout=30000)
                     for name, path in pages:
-                        page.goto(self.base + path, wait_until="networkidle", timeout=60000)
+                        page.goto(base + path, wait_until="networkidle", timeout=60000)
                         page.wait_for_timeout(1500)
                         file = out / f"{key}-{name}-{width}.png"
                         page.screenshot(path=str(file), full_page=False)
