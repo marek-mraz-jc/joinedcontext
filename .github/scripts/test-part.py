@@ -2,7 +2,7 @@
 """The cargo test arguments of partition K of N for the workspace in the current directory.
 
 Splits the integration test targets (every workspace member's tests/*.rs, as `cargo metadata`
-lists them) round robin by (package, name); partition 1 also takes every lib and bin target. A
+lists them) round robin by name; partition 1 also takes every lib and bin target. A
 workspace with an example, a bench or a `test = false` target is refused: `cargo test`'s default
 treats those differently from an explicit target flag. The doc tests run as their own command
 (`cargo test --doc` refuses other target flags). The union of the N partitions is every target
@@ -17,9 +17,10 @@ import sys
 
 def split(tests, k, n):
     """Partition k (1-based) of n: the libs and bins in 1, tests round robin."""
-    own = [t for i, t in enumerate(sorted(tests)) if i % n == k - 1]
+    # by name: `--test x` selects every member's tests/x.rs, so one name goes to one partition
+    names = sorted({name for _, name in tests})
     args = ["--lib", "--bins"] if k == 1 else []
-    for _, name in own:
+    for name in names[k - 1::n]:
         args += ["--test", name]
     return args
 
@@ -28,7 +29,7 @@ def selftest():
     tests = [("a", "t%d" % i) for i in range(7)] + [("b", "t0")]
     parts = [split(tests, k, 3) for k in (1, 2, 3)]
     named = [a for p in parts for a in p if a not in ("--test", "--lib", "--bins")]
-    assert sorted(named) == sorted(n for _, n in tests), named
+    assert sorted(named) == sorted({n for _, n in tests}), named
     assert parts[0][:2] == ["--lib", "--bins"] and "--lib" not in parts[1] + parts[2]
     print("test-part.py selftest ok")
 
