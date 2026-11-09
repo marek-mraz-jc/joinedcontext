@@ -27,7 +27,8 @@ pub const GENERATOR: &str = "jcctl/ckan-publisher";
 /// Where the endpoints answer, so a resource URL a citizen clicks resolves (EP-64).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
-    /// Public host of the Context Gateway, without a scheme.
+    /// Public host of the Context Gateway, without a scheme; or a whole origin
+    /// (`http://localhost:8080`) where the gateway is not `https` on its default port.
     pub host: String,
     /// Title the CKAN organization is created with; the slug itself when absent.
     pub organization_title: Option<String>,
@@ -83,6 +84,9 @@ impl Settings {
 
     /// The public base URL of one Endpoint.
     pub fn endpoint_url(&self, slug: &str) -> String {
+        if self.host.starts_with("https://") || self.host.starts_with("http://") {
+            return format!("{}/api/endpoint/{slug}", self.host.trim_end_matches('/'));
+        }
         format!("https://{}/api/endpoint/{slug}", self.host)
     }
 }
@@ -2083,6 +2087,18 @@ impl InMemoryCkan {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_endpoint_url_keeps_a_whole_origin_and_otherwise_is_https() {
+        assert_eq!(
+            Settings::new("api.example.org").endpoint_url("s"),
+            "https://api.example.org/api/endpoint/s"
+        );
+        assert_eq!(
+            Settings::new("http://localhost:8080/").endpoint_url("s"),
+            "http://localhost:8080/api/endpoint/s"
+        );
+    }
+
     use super::*;
 
     /// API/11 EP-159: one resource per calendar output, titled in the catalogue's language.

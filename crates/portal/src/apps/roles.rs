@@ -186,7 +186,9 @@ fn standing(state: &AppState, project: &str, name: &str, identity: &Identity) ->
         owner: owner.as_deref() == Some(identity.subject.as_str()),
         admin: owner.is_none() && rights.may("App", jc_core::kinds::Verb::Approve),
         project_member: rights.may_read_project(),
-        organization_member: crate::permissions::is_organization_member(state, identity),
+        organization_member: crate::permissions::is_member_of_organization_of(
+            state, identity, project,
+        ),
     }
 }
 
