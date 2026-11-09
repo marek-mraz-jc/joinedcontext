@@ -792,7 +792,7 @@ impl WorkloadClientSync {
             else {
                 continue;
             };
-            if !managed(client) || wanted.contains(account) {
+            if !managed(client) || wanted.contains(account) || !self.derives(account) {
                 continue;
             }
             let mut outcome = ClientOutcome::of(account);
@@ -822,6 +822,21 @@ impl WorkloadClientSync {
             outcomes.push(outcome);
         }
         outcomes
+    }
+
+    /// Whether this sync derives the account `{project}/{name}` when it is wanted: a Pipeline's
+    /// (`pl-`) or an App job's (`appjob-`) only with that namespace set. A Portal without it (jc,
+    /// whose runner holds no Kubernetes identity) cannot tell a stale one from a live one, so it
+    /// leaves the realm's clients of that kind as they came (an imported realm keeps them all).
+    fn derives(&self, account: &str) -> bool {
+        let name = account.rsplit('/').next().unwrap_or(account);
+        if jc_core::kinds::pipeline_identity::is_derived(name) {
+            self.pipelines.is_some()
+        } else if jc_core::kinds::app_identity::is_derived(name) {
+            self.app_jobs.is_some()
+        } else {
+            true
+        }
     }
 
     /// Revokes the service-account user of the client `uuid` before the client goes: Keycloak

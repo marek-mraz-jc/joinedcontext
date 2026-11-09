@@ -1245,6 +1245,28 @@ async fn an_app_that_loses_its_jobs_loses_its_principals_client() {
     }
 }
 
+/// A Portal that derives no Pipeline or App job account (jc: no runner namespace) leaves the
+/// realm's `pl-` and `appjob-` clients alone: an imported prod realm keeps its 835 workload
+/// clients. A hand-written account's client still goes when its account goes.
+#[tokio::test]
+async fn a_portal_without_the_namespaces_keeps_the_pipeline_and_app_job_clients() {
+    let keycloak = realm(json!([
+        managed_client("uuid-pl", "zilina", "pl-drepo", PIPELINES, "pl-zilina-drepo"),
+        managed_client("uuid-aj", "zilina", "appjob-kpi", IDENTITIES, "appjob-zilina-kpi"),
+        managed_client("uuid-air", "helsinki", "air-adapter", "env-dept", "adapter"),
+    ]))
+    .await;
+    let outcomes = sync(&keycloak)
+        .converge(&mirror_with(vec![]), &Bentos::new())
+        .await;
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    assert_eq!(outcomes[0].app, "helsinki/air-adapter");
+    assert_eq!(
+        wrote(&keycloak).await,
+        vec![format!("DELETE {REALM}/clients/uuid-air")]
+    );
+}
+
 /// One run of the Apps' ServiceAccount convergence against a cluster that lists `held` with the
 /// label: what it applied and what it deleted.
 async fn app_job_accounts_run(mirror: &Mirror, held: &[&str]) -> (Vec<Value>, Vec<String>) {
