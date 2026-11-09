@@ -150,7 +150,7 @@ pub fn portal_vars(
         let mut values = vec![
             (
                 "JC_OIDC_ISSUER",
-                Some(format!("{}/realms/{}", id.public, setup::PORTAL_REALM)),
+                Some(format!("{}/realms/{}", id.public, setup.realm)),
             ),
             ("JC_OIDC_CLIENT_ID", Some(setup::PORTAL_CLIENT.to_owned())),
             ("JC_OIDC_CLIENT_SECRET", secret(Secret::PortalClientSecret)),

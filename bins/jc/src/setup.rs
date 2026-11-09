@@ -14,8 +14,53 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// The realm the Portal signs in through when kaisatsu runs beside it.
-pub const PORTAL_REALM: &str = "jc";
+/// The realm the Portal signs in through when kaisatsu runs beside it, unless `[identity] realm`
+/// names another.
+pub const DEFAULT_REALM: &str = "jc";
+
+/// The one realm a deployment's Portal, gateway and linker use (`[identity] realm`,
+/// `JCBIN_IDENTITY_REALM`): [`DEFAULT_REALM`] unless set, so a migrated deployment keeps its
+/// issuer `.../realms/<name>`. It goes into URL paths, so only `[A-Za-z0-9._-]` is taken; never
+/// empty, never a dot name, never `master` (Keycloak's administration realm).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Realm(String);
+
+impl Realm {
+    pub fn parse(name: &str) -> Result<Self, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("the realm name is empty".into());
+        }
+        if name.eq_ignore_ascii_case("master") {
+            return Err("the realm may not be `master`".into());
+        }
+        let safe = !name.starts_with('.')
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        if !safe {
+            return Err(format!("`{name}` is not a realm name ([A-Za-z0-9._-])"));
+        }
+        Ok(Self(name.to_owned()))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for Realm {
+    fn default() -> Self {
+        Self(DEFAULT_REALM.to_owned())
+    }
+}
+
+impl std::fmt::Display for Realm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 /// The Portal's sign-in client in kaisatsu's shipped realm file (confidential, code + PKCE).
 pub const PORTAL_CLIENT: &str = "portal-api";
 /// The Portal's people-administration client (service account only).
@@ -232,6 +277,8 @@ pub struct Setup {
     /// The age identity that decrypts the projects' SOPS secrets, checked at start: the Portal
     /// reads it per sync to resolve each project's `secretRef`s.
     pub age_key_file: Option<PathBuf>,
+    /// The realm the Portal signs in through (`[identity] realm`).
+    pub realm: Realm,
 }
 
 fn err(e: impl std::fmt::Display) -> StartError {
@@ -363,6 +410,7 @@ impl Setup {
             dir: dir.to_path_buf(),
             held,
             age_key_file: None,
+            realm: Realm::default(),
         })
     }
 
@@ -416,11 +464,18 @@ const SHIPPED_HOST: &str = "https://portal.jc.localhost";
 /// placeholder host turned into `portal_base` (the Portal's public base with a trailing slash),
 /// and the first administrator, a member of the bootstrap group. The shipped file holds the least
 /// privilege the Portal needs: `portal-reconciler` has `manage-users` and `query-groups`,
-/// `portal-api` `view-clients`, `query-users` and `query-groups`, no realm-admin.
-pub fn portal_realm_files(portal_base: &str) -> Result<Vec<(String, Value)>, serde_json::Error> {
+/// `portal-api` `view-clients`, `query-users` and `query-groups`, no realm-admin. Both files name
+/// `realm` (the shipped file's `id` and `realm` included).
+pub fn portal_realm_files(
+    portal_base: &str,
+    realm: &Realm,
+) -> Result<Vec<(String, Value)>, serde_json::Error> {
     let shipped = SHIPPED_REALM.replace(SHIPPED_HOST, portal_base.trim_end_matches('/'));
+    let mut shipped: Value = serde_json::from_str(&shipped)?;
+    shipped["id"] = json!(realm.as_str());
+    shipped["realm"] = json!(realm.as_str());
     let first_admin = json!({
-        "realm": PORTAL_REALM,
+        "realm": realm.as_str(),
         "users": [{
             "username": FIRST_ADMIN,
             "enabled": true,
@@ -437,10 +492,7 @@ pub fn portal_realm_files(portal_base: &str) -> Result<Vec<(String, Value)>, ser
         }]
     });
     Ok(vec![
-        (
-            "10-jc-portal.json".to_owned(),
-            serde_json::from_str(&shipped)?,
-        ),
+        ("10-jc-portal.json".to_owned(), shipped),
         ("20-jc-first-admin.json".to_owned(), first_admin),
     ])
 }
@@ -449,9 +501,9 @@ pub fn portal_realm_files(portal_base: &str) -> Result<Vec<(String, Value)>, ser
 /// internal listener (audience `portal-internal`, where it reads revocations, connectors and
 /// usage), no realm role and no person's scope.
 #[must_use]
-pub fn gateway_realm_file() -> (String, Value) {
+pub fn gateway_realm_file(realm: &Realm) -> (String, Value) {
     let client = json!({
-        "realm": PORTAL_REALM,
+        "realm": realm.as_str(),
         "clients": [{
             "clientId": GATEWAY_CLIENT,
             "name": "Context Gateway",
@@ -680,7 +732,7 @@ mod tests {
 
     #[test]
     fn the_realm_holds_no_literal_secret_and_least_privilege_roles() {
-        let files = portal_realm_files("https://city.example/").unwrap();
+        let files = portal_realm_files("https://city.example/", &Realm::default()).unwrap();
         let text = serde_json::to_string(&files).unwrap();
         assert!(!text.contains("realm-admin"), "no realm-admin");
         assert!(
@@ -714,6 +766,32 @@ mod tests {
                 text.contains(&format!("$({name})")) || text.contains(&format!("$(env:{name})")),
                 "{name}"
             );
+        }
+    }
+
+    #[test]
+    fn a_realm_name_is_a_safe_path_segment_and_never_master() {
+        assert_eq!(Realm::default().as_str(), "jc");
+        assert_eq!(Realm::parse(" dev ").unwrap().as_str(), "dev");
+        for good in ["dev", "smart-city", "bb_2", "a.b", "Hel"] {
+            assert!(Realm::parse(good).is_ok(), "{good}");
+        }
+        for bad in [
+            "", " ", "master", "Master", "../x", "a/b", ".hidden", "a b", "a?b", "dé", "a%2f",
+        ] {
+            assert!(Realm::parse(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn every_first_start_file_names_the_configured_realm() {
+        let dev = Realm::parse("dev").unwrap();
+        let files = portal_realm_files("https://city.example/", &dev).unwrap();
+        for (name, file) in files.iter().chain([&gateway_realm_file(&dev)]) {
+            assert_eq!(file["realm"], "dev", "{name}");
+            if let Some(id) = file.get("id") {
+                assert_eq!(id, "dev", "{name}");
+            }
         }
     }
 

@@ -606,6 +606,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         &split_credentials(cfg),
     )?;
     setup.age_key_file = portal_age_key(cfg, &secrets)?;
+    setup.realm = cfg.realm.clone();
     report_secrets(cfg, &secrets, &setup);
     // Bound before the modules are built: the Portal's sibling addresses name this listener.
     let listener = bind(cfg.listen).await?;
