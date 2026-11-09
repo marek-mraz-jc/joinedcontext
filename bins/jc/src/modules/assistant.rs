@@ -681,8 +681,7 @@ mod tests {
         let none = |_: &str| None;
         let remote = lookup(&none, &filled);
         assert_eq!(missing(&cfg, &siblings, &setup, &remote), None);
-        let embedder = embedder(&remote).await.unwrap();
-        assert!(embedder.is_remote());
+        assert!(embedder(&remote).await.unwrap().is_remote());
         // Without the service the in-process model stays the one asked for.
         let local = vars(&siblings, &setup, None, None);
         let why = missing(&cfg, &siblings, &setup, &lookup(&none, &local)).unwrap();
@@ -690,7 +689,9 @@ mod tests {
         // A service named without its secret file does not start.
         let mut broken = filled.clone();
         broken.remove("JC_ASSISTANT_EMBEDDER_CLIENT_SECRET_FILE");
-        let why = embedder(&lookup(&none, &broken)).await.unwrap_err();
+        let Err(why) = embedder(&lookup(&none, &broken)).await else {
+            panic!("a service without its secret file started");
+        };
         assert!(why.contains("CLIENT_SECRET_FILE"), "{why}");
     }
 
