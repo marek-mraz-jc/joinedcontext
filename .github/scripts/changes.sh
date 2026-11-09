@@ -5,7 +5,7 @@
 #   EVENT=push BEFORE=<sha> sh changes.sh      # in ci.yml
 #   sh changes.sh --selftest
 set -eu
-JOBS="root antares ekiben portal ui supply workflows image"
+JOBS="root antares ekiben portal ui supply workflows image dockerfiles"
 
 # map: changed paths on stdin -> the job lines
 map() {
@@ -17,6 +17,8 @@ map() {
     /^\.github\/workflows\/ci\.yml$/ || /^\.github\/scripts\// { for (k in on) on[k] = "true"; next }
     /^\.github\// { next }
     /^bins\/jc\/Dockerfile$/ || /^\.dockerignore$/ { on["image"] = "true" }
+    # the App bundles both images ship in /srv/apps: their lists must stay equal
+    /^bins\/jc\/Dockerfile$/ || /^crates\/portal\/Dockerfile$/ || /^crates\/portal\/apps\// || /^crates\/portal\/scripts\/(app-integrity\.mjs|ci\/check-dockerfile-members\.py)$/ { on["dockerfiles"] = "true" }
     /(^|\/)Cargo\.lock$/ || /(^|\/)deny\.toml$/ || /(^|\/)\.cargo\/audit\.toml$/ { on["supply"] = "true" }
     /^crates\/antares\// { on["antares"] = "true" }
     /^crates\/ekiben\// { on["ekiben"] = "true" }
@@ -41,8 +43,10 @@ if [ "${1:-}" = --selftest ]; then
   check 'crates/ekiben/Cargo.lock' 'root ekiben supply'
   check 'crates/portal/ui/src/App.tsx' 'ui'
   check 'crates/portal/sdk/src/sdk/index.ts' 'root portal ui'
+  check 'crates/portal/apps/bbsk-mapa/ui/src/App.tsx' 'root portal dockerfiles'
+  check 'crates/portal/Dockerfile' 'root portal dockerfiles'
   check 'vendor/ngsild/x.rs' 'root portal'
-  check 'bins/jc/Dockerfile' 'root image'
+  check 'bins/jc/Dockerfile' 'root image dockerfiles'
   check 'Cargo.lock' 'root supply'
   check '.github/workflows/image.yml' 'workflows'
   check '.github/scripts/changes.sh' "$JOBS"

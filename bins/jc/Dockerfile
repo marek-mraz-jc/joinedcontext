@@ -24,6 +24,159 @@ ARG JC_COMMIT=
 RUN printf '{"commit":"%s","openapi":"%s"}\n' "$JC_COMMIT" "$(sha256sum ui/openapi.json | cut -d' ' -f1)" \
     > ui/dist/version.json
 
+# The App bundles the Portal serves under /apps/{name}/: the `apps` stage of
+# crates/portal/Dockerfile with crates/portal/ paths (the build contexts differ, so the two cannot
+# share a stage; crates/portal/scripts/ci/check-dockerfile-members.py --apps keeps the lists equal).
+# The static apps the Portal serves under /apps/{name}/ (AP-14): each built bundle with the
+# `integrity.json` the host checks every file against before it serves it (AP-12). An app without
+# that map serves nothing, so the stage fails rather than ship one without it (T-2457).
+FROM node:24-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS apps
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+WORKDIR /work
+COPY crates/portal/sdk/package.json crates/portal/sdk/pnpm-lock.yaml ./sdk/
+COPY crates/portal/apps/bbsk-ukazovatele/ui/package.json crates/portal/apps/bbsk-ukazovatele/ui/pnpm-lock.yaml ./apps/bbsk-ukazovatele/ui/
+COPY crates/portal/apps/banskabystrica-zaznamy/ui/package.json crates/portal/apps/banskabystrica-zaznamy/ui/pnpm-lock.yaml ./apps/banskabystrica-zaznamy/ui/
+COPY crates/portal/apps/bbsk-zaznamy/ui/package.json crates/portal/apps/bbsk-zaznamy/ui/pnpm-lock.yaml ./apps/bbsk-zaznamy/ui/
+COPY crates/portal/apps/banskabystrica-ovzdusie/ui/package.json crates/portal/apps/banskabystrica-ovzdusie/ui/pnpm-lock.yaml ./apps/banskabystrica-ovzdusie/ui/
+COPY crates/portal/apps/banskabystrica-mapa/ui/package.json crates/portal/apps/banskabystrica-mapa/ui/pnpm-lock.yaml ./apps/banskabystrica-mapa/ui/
+COPY crates/portal/apps/banskabystrica-data/ui/package.json crates/portal/apps/banskabystrica-data/ui/pnpm-lock.yaml ./apps/banskabystrica-data/ui/
+COPY crates/portal/apps/banskabystrica-skoly/ui/package.json crates/portal/apps/banskabystrica-skoly/ui/pnpm-lock.yaml ./apps/banskabystrica-skoly/ui/
+COPY crates/portal/apps/bbsk-mapa/ui/package.json crates/portal/apps/bbsk-mapa/ui/pnpm-lock.yaml ./apps/bbsk-mapa/ui/
+COPY crates/portal/apps/bbsk-podujatia/ui/package.json crates/portal/apps/bbsk-podujatia/ui/pnpm-lock.yaml ./apps/bbsk-podujatia/ui/
+COPY crates/portal/apps/bbsk-data/ui/package.json crates/portal/apps/bbsk-data/ui/pnpm-lock.yaml ./apps/bbsk-data/ui/
+COPY crates/portal/apps/bbsk-mosty/ui/package.json crates/portal/apps/bbsk-mosty/ui/pnpm-lock.yaml ./apps/bbsk-mosty/ui/
+COPY crates/portal/apps/praha-mapa/ui/package.json crates/portal/apps/praha-mapa/ui/pnpm-lock.yaml ./apps/praha-mapa/ui/
+COPY crates/portal/apps/praha-data/ui/package.json crates/portal/apps/praha-data/ui/pnpm-lock.yaml ./apps/praha-data/ui/
+COPY crates/portal/apps/praha-odpad/ui/package.json crates/portal/apps/praha-odpad/ui/pnpm-lock.yaml ./apps/praha-odpad/ui/
+COPY crates/portal/apps/helsinki-kartta/ui/package.json crates/portal/apps/helsinki-kartta/ui/pnpm-lock.yaml ./apps/helsinki-kartta/ui/
+COPY crates/portal/apps/helsinki-data/ui/package.json crates/portal/apps/helsinki-data/ui/pnpm-lock.yaml ./apps/helsinki-data/ui/
+COPY crates/portal/apps/bike-stations/ui/package.json crates/portal/apps/bike-stations/ui/pnpm-lock.yaml ./apps/bike-stations/ui/
+COPY crates/portal/apps/praha-mesto/ui/package.json crates/portal/apps/praha-mesto/ui/pnpm-lock.yaml ./apps/praha-mesto/ui/
+COPY crates/portal/apps/zilina-mapa/ui/package.json crates/portal/apps/zilina-mapa/ui/pnpm-lock.yaml ./apps/zilina-mapa/ui/
+COPY crates/portal/apps/zilina-ukazovatele/ui/package.json crates/portal/apps/zilina-ukazovatele/ui/pnpm-lock.yaml ./apps/zilina-ukazovatele/ui/
+COPY crates/portal/apps/zilina-zaznamy/ui/package.json crates/portal/apps/zilina-zaznamy/ui/pnpm-lock.yaml ./apps/zilina-zaznamy/ui/
+COPY crates/portal/apps/zilina-vyskum/ui/package.json crates/portal/apps/zilina-vyskum/ui/pnpm-lock.yaml ./apps/zilina-vyskum/ui/
+RUN corepack enable && cd sdk && pnpm install --frozen-lockfile \
+    && cd ../apps/bbsk-ukazovatele/ui && pnpm install --frozen-lockfile \
+    && cd ../../banskabystrica-zaznamy/ui && pnpm install --frozen-lockfile \
+    && cd ../../bbsk-zaznamy/ui && pnpm install --frozen-lockfile \
+    && cd ../../banskabystrica-ovzdusie/ui && pnpm install --frozen-lockfile \
+    && cd ../../banskabystrica-mapa/ui && pnpm install --frozen-lockfile \
+    && cd ../../banskabystrica-data/ui && pnpm install --frozen-lockfile \
+    && cd ../../banskabystrica-skoly/ui && pnpm install --frozen-lockfile \
+    && cd ../../bbsk-mapa/ui && pnpm install --frozen-lockfile \
+    && cd ../../bbsk-podujatia/ui && pnpm install --frozen-lockfile \
+    && cd ../../bbsk-data/ui && pnpm install --frozen-lockfile \
+    && cd ../../bbsk-mosty/ui && pnpm install --frozen-lockfile \
+    && cd ../../praha-mapa/ui && pnpm install --frozen-lockfile \
+    && cd ../../praha-data/ui && pnpm install --frozen-lockfile \
+    && cd ../../praha-odpad/ui && pnpm install --frozen-lockfile \
+    && cd ../../helsinki-kartta/ui && pnpm install --frozen-lockfile \
+    && cd ../../helsinki-data/ui && pnpm install --frozen-lockfile \
+    && cd ../../bike-stations/ui && pnpm install --frozen-lockfile \
+    && cd ../../praha-mesto/ui && pnpm install --frozen-lockfile \
+    && cd ../../zilina-mapa/ui && pnpm install --frozen-lockfile \
+    && cd ../../zilina-ukazovatele/ui && pnpm install --frozen-lockfile \
+    && cd ../../zilina-zaznamy/ui && pnpm install --frozen-lockfile \
+    && cd ../../zilina-vyskum/ui && pnpm install --frozen-lockfile
+COPY crates/portal/sdk/ ./sdk/
+COPY crates/portal/apps/bbsk-ukazovatele/ui/ ./apps/bbsk-ukazovatele/ui/
+COPY crates/portal/apps/banskabystrica-zaznamy/ui/ ./apps/banskabystrica-zaznamy/ui/
+COPY crates/portal/apps/bbsk-zaznamy/ui/ ./apps/bbsk-zaznamy/ui/
+COPY crates/portal/apps/banskabystrica-ovzdusie/ui/ ./apps/banskabystrica-ovzdusie/ui/
+COPY crates/portal/apps/banskabystrica-mapa/ui/ ./apps/banskabystrica-mapa/ui/
+COPY crates/portal/apps/banskabystrica-data/ui/ ./apps/banskabystrica-data/ui/
+COPY crates/portal/apps/banskabystrica-skoly/ui/ ./apps/banskabystrica-skoly/ui/
+COPY crates/portal/apps/bbsk-mapa/ui/ ./apps/bbsk-mapa/ui/
+COPY crates/portal/apps/bbsk-podujatia/ui/ ./apps/bbsk-podujatia/ui/
+COPY crates/portal/apps/bbsk-data/ui/ ./apps/bbsk-data/ui/
+COPY crates/portal/apps/bbsk-mosty/ui/ ./apps/bbsk-mosty/ui/
+COPY crates/portal/apps/praha-mapa/ui/ ./apps/praha-mapa/ui/
+COPY crates/portal/apps/praha-data/ui/ ./apps/praha-data/ui/
+COPY crates/portal/apps/praha-odpad/ui/ ./apps/praha-odpad/ui/
+COPY crates/portal/apps/helsinki-kartta/ui/ ./apps/helsinki-kartta/ui/
+COPY crates/portal/apps/helsinki-data/ui/ ./apps/helsinki-data/ui/
+COPY crates/portal/apps/bike-stations/ui/ ./apps/bike-stations/ui/
+COPY crates/portal/apps/praha-mesto/ui/ ./apps/praha-mesto/ui/
+COPY crates/portal/apps/zilina-mapa/ui/ ./apps/zilina-mapa/ui/
+COPY crates/portal/apps/zilina-ukazovatele/ui/ ./apps/zilina-ukazovatele/ui/
+COPY crates/portal/apps/zilina-zaznamy/ui/ ./apps/zilina-zaznamy/ui/
+COPY crates/portal/apps/zilina-vyskum/ui/ ./apps/zilina-vyskum/ui/
+COPY crates/portal/apps/sharing-probe/bundle/ ./apps/sharing-probe/bundle/
+COPY crates/portal/scripts/app-integrity.mjs ./scripts/
+RUN cd apps/bbsk-ukazovatele/ui && pnpm build \
+    && mkdir -p /srv/apps && cp -r dist /srv/apps/bbsk-ukazovatele \
+    && node /work/scripts/app-integrity.mjs /srv/apps/bbsk-ukazovatele
+RUN cd apps/banskabystrica-zaznamy/ui && pnpm build \
+    && cp -r dist /srv/apps/banskabystrica-zaznamy \
+    && node /work/scripts/app-integrity.mjs /srv/apps/banskabystrica-zaznamy
+RUN cd apps/bbsk-zaznamy/ui && pnpm build \
+    && cp -r dist /srv/apps/bbsk-zaznamy \
+    && node /work/scripts/app-integrity.mjs /srv/apps/bbsk-zaznamy
+RUN cd apps/banskabystrica-ovzdusie/ui && pnpm build \
+    && cp -r dist /srv/apps/banskabystrica-ovzdusie \
+    && node /work/scripts/app-integrity.mjs /srv/apps/banskabystrica-ovzdusie
+RUN cd apps/banskabystrica-mapa/ui && pnpm build \
+    && cp -r dist /srv/apps/banskabystrica-mapa \
+    && node /work/scripts/app-integrity.mjs /srv/apps/banskabystrica-mapa
+RUN cd apps/banskabystrica-data/ui && pnpm build \
+    && cp -r dist /srv/apps/banskabystrica-data \
+    && node /work/scripts/app-integrity.mjs /srv/apps/banskabystrica-data
+RUN cd apps/banskabystrica-skoly/ui && pnpm build \
+    && cp -r dist /srv/apps/banskabystrica-skoly \
+    && node /work/scripts/app-integrity.mjs /srv/apps/banskabystrica-skoly
+RUN cd apps/bbsk-mapa/ui && pnpm build \
+    && cp -r dist /srv/apps/bbsk-mapa \
+    && node /work/scripts/app-integrity.mjs /srv/apps/bbsk-mapa
+RUN cd apps/bbsk-podujatia/ui && pnpm build \
+    && cp -r dist /srv/apps/bbsk-podujatia \
+    && node /work/scripts/app-integrity.mjs /srv/apps/bbsk-podujatia
+RUN cd apps/bbsk-data/ui && pnpm build \
+    && cp -r dist /srv/apps/bbsk-data \
+    && node /work/scripts/app-integrity.mjs /srv/apps/bbsk-data
+RUN cd apps/bbsk-mosty/ui && pnpm build \
+    && cp -r dist /srv/apps/bbsk-mosty \
+    && node /work/scripts/app-integrity.mjs /srv/apps/bbsk-mosty
+RUN cd apps/praha-mapa/ui && pnpm build \
+    && cp -r dist /srv/apps/praha-mapa \
+    && node /work/scripts/app-integrity.mjs /srv/apps/praha-mapa
+RUN cd apps/praha-data/ui && pnpm build \
+    && cp -r dist /srv/apps/praha-data \
+    && node /work/scripts/app-integrity.mjs /srv/apps/praha-data
+RUN cd apps/praha-odpad/ui && pnpm build \
+    && cp -r dist /srv/apps/praha-odpad \
+    && node /work/scripts/app-integrity.mjs /srv/apps/praha-odpad
+RUN cd apps/helsinki-kartta/ui && pnpm build \
+    && cp -r dist /srv/apps/helsinki-kartta \
+    && node /work/scripts/app-integrity.mjs /srv/apps/helsinki-kartta
+RUN cd apps/helsinki-data/ui && pnpm build \
+    && cp -r dist /srv/apps/helsinki-data \
+    && node /work/scripts/app-integrity.mjs /srv/apps/helsinki-data
+RUN cd apps/bike-stations/ui && pnpm build \
+    && cp -r dist /srv/apps/bike-stations \
+    && node /work/scripts/app-integrity.mjs /srv/apps/bike-stations
+RUN cd apps/praha-mesto/ui && pnpm build \
+    && cp -r dist /srv/apps/praha-mesto \
+    && node /work/scripts/app-integrity.mjs /srv/apps/praha-mesto
+RUN cd apps/zilina-mapa/ui && pnpm build \
+    && cp -r dist /srv/apps/zilina-mapa \
+    && node /work/scripts/app-integrity.mjs /srv/apps/zilina-mapa
+RUN cd apps/zilina-ukazovatele/ui && pnpm build \
+    && cp -r dist /srv/apps/zilina-ukazovatele \
+    && node /work/scripts/app-integrity.mjs /srv/apps/zilina-ukazovatele
+RUN cd apps/zilina-zaznamy/ui && pnpm build \
+    && cp -r dist /srv/apps/zilina-zaznamy \
+    && node /work/scripts/app-integrity.mjs /srv/apps/zilina-zaznamy
+RUN cd apps/zilina-vyskum/ui && pnpm build \
+    && cp -r dist /srv/apps/zilina-vyskum \
+    && node /work/scripts/app-integrity.mjs /srv/apps/zilina-vyskum
+# The App sharing matrix's test page (T-4911): one plain-HTML bundle, no build, shipped under the
+# five names whose manifests differ only in visibility (deployment seed/sharing, dev only).
+RUN for name in sharing-private sharing-project sharing-organization sharing-roles sharing-public; do \
+      cp -r apps/sharing-probe/bundle "/srv/apps/$name" \
+      && node /work/scripts/app-integrity.mjs "/srv/apps/$name" || exit 1; \
+    done
+
 # The build stage's base: the Rust toolchain on the runtime's Debian (same glibc). make for
 # tikv-jemalloc-sys, cmake for aws-lc-sys' fallback build, g++ for the assistant's tokenizer
 # (esaxx, oniguruma), curl for the pinned downloads below.
@@ -38,8 +191,11 @@ ENV KREUZBERG_PDFIUM_PREBUILT=/opt/pdfium
 ARG CARGO_BUILD_JOBS=
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 
-# The dependency layer's input: every manifest and lockfile, and an empty file for each target of
+# The dependency layer's input: every manifest and lockfile, and a stub file for each target of
 # every path package (`cargo metadata` names them, explicit `[[bin]]`/`path =` targets included).
+# Each stub has a crate doc line: the Antares crates deny missing_docs in their [lints]. A crate
+# [patch.crates-io] replaces keeps its real sources: registry crates compile against it here
+# (biblatex uses the patched paste).
 # This stage reruns on any change, but its output only changes with a manifest, so the
 # `COPY --from=plan` below and the dependency build after it stay cached across source changes.
 FROM rust AS plan
@@ -52,9 +208,11 @@ RUN set -eu; mkdir /stub; \
       | jq -r '.packages[] | select(.source == null) | .targets[] | "\(.kind[0]) \(.src_path)"' \
       | while read -r kind path; do \
           rel="${path#/src/}"; mkdir -p "/stub/$(dirname "$rel")"; \
-          case "$kind" in lib|rlib|cdylib|staticlib|dylib|proc-macro) : > "/stub/$rel" ;; \
-            *) echo 'fn main() {}' > "/stub/$rel" ;; esac; \
-        done
+          case "$kind" in lib|rlib|cdylib|staticlib|dylib|proc-macro) echo '//! stub' > "/stub/$rel" ;; \
+            *) printf '//! stub\nfn main() {}\n' > "/stub/$rel" ;; esac; \
+        done; \
+    awk '/^\[patch\.crates-io\]/{p=1;next} /^\[/{p=0} p && /path *=/' Cargo.toml \
+      | sed -E 's/.*path *= *"([^"]+)".*/\1/' | while read -r dir; do cp -r --parents "$dir" /stub; done
 
 FROM rust AS build
 WORKDIR /src
@@ -80,6 +238,7 @@ COPY --from=build /jc /usr/local/bin/jc
 # kaisatsu's own CLI, for the one step jc has no equivalent of: `kaisatsu migrate` as the
 # kaisatsu_migrate role, before jc connects as kaisatsu_app (an init container in components/jc).
 COPY --from=build /kaisatsu /usr/local/bin/kaisatsu
+COPY --from=apps /srv/apps /srv/apps
 # The assistant's embedding model and ONNX Runtime; without them the module stays off.
 COPY --from=build /opt/e5-small /opt/e5-small
 COPY --from=build /opt/onnxruntime/libonnxruntime.so /usr/local/lib/libonnxruntime.so
@@ -92,6 +251,9 @@ EXPOSE 8080
 ENV JCBIN_LISTEN=0.0.0.0:8080 \
     JCBIN_STATE_DIR=/var/lib/jc \
     TMPDIR=/tmp
+# The bundles above, read from disk per request (the Portal's static host); a deployment that
+# mounts its own artifact root sets it elsewhere.
+ENV JC_PORTAL_APPS_DIR=/srv/apps
 # jemalloc as the Portal and the gateway run it (crates/portal/Dockerfile): freed pages purged after a
 # second, four arenas whatever the node's core count.
 ENV _RJEM_MALLOC_CONF=background_thread:true,narenas:4,dirty_decay_ms:1000,muzzy_decay_ms:0
