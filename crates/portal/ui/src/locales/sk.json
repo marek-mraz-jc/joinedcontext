@@ -2913,6 +2913,7 @@
         "fileHint": "Procesory, ktoré táto pipeline spúšťa, tak ako ich repozitár drží vedľa jej manifestu. Prihlasovacie údaje sú odkazy, ktoré doplní runner, nikdy nie hodnoty.",
         "fileEdit": "Upraviť súbor mapovania; Navrhnúť ho pošle s manifestom",
         "fileEditDisabled": "Súbor mapovania môžete upraviť, keď sa načíta.",
+        "fileEditHint": "Zaškrtnuté: súbor vyššie upravujete vy; nezaškrtnuté: zapíše ho mapovanie z formulára.",
         "type": "Typ, ktorý mapovanie zapisuje",
         "typeHint": "Model má niekoľko tried: vyberte tú, ktorou sa stane každý záznam, napríklad meranie kvality ovzdušia. Zoznam nižšie ukazuje, čo prijíma."
       },

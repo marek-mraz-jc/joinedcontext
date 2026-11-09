@@ -2913,6 +2913,7 @@
         "fileHint": "The processors this pipeline runs, as the repository holds them beside its manifest. Credentials appear as references the runner fills, never as values.",
         "fileEdit": "Edit the mapping file; Propose sends it with the manifest",
         "fileEditDisabled": "You can edit the mapping file once it has loaded.",
+        "fileEditHint": "Ticked, the file above is yours to change; unticked, the form's mapping writes it.",
         "type": "Type the mapping writes",
         "typeHint": "The model has several classes: pick the one each record becomes, for example an air quality reading. The list below shows what it takes."
       },
