@@ -982,9 +982,22 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
     report["shako"] = rows
 
 
+# Types whose whole history is kept (supervisor 2026-11-09 20:1xZ, GOAL-prod-decommission.md): a
+# KPI instance carries the observedAt of its period (from 2023/2025), so a 24 h cut would empty every
+# KPI chart and dashboard.
+WHOLE_HISTORY = ("KeyPerformanceIndicator",)
+# The same types as Antares stores them (expanded IRIs, any context): the last segment matches.
+_WHOLE_IRI = "(^|[/#:])(" + "|".join(WHOLE_HISTORY) + ")$"
+
+
+def whole_history(t: dict) -> bool:
+    types = t.get("type")
+    return any(x in WHOLE_HISTORY for x in (types if isinstance(types, list) else [types]))
+
+
 def split_by_cutoff(lines, cutoff: dt.datetime):
-    """Temporal instances observed at or after `cutoff` are taken; older ones and ones without an
-    observedAt are refused, each with its reason."""
+    """Temporal instances observed at or after `cutoff` are taken, and every instance of a
+    WHOLE_HISTORY type; older ones and ones without an observedAt are refused, each with its reason."""
     kept, refused = [], []
     for t in lines:
         at = t.get("instance", {}).get("observedAt")
@@ -996,7 +1009,7 @@ def split_by_cutoff(lines, cutoff: dt.datetime):
         except ValueError:
             refused.append({**_key(t), "kind": "bad-observedAt", "reason": f"bad observedAt {at!r}"})
             continue
-        if when < cutoff:
+        if when < cutoff and not whole_history(t):
             refused.append({**_key(t), "kind": "cut-off", "observedAt": at,
                             "reason": f"older than the cut-off {iso(cutoff)}"})
         else:
@@ -1410,6 +1423,21 @@ def _count(rows, key):
 # rows kept, service mode for the forced row-level security. Current state (entities) is never
 # touched: it lives in other tables.
 HISTORY_TABLES = ("attr_instances", "attr_rows")
+# A history row of a WHOLE_HISTORY type stays: attr_instances names its Entity by id, attr_rows by
+# number (iri_ids); temporal_entities holds each Entity's types.
+_KEEP = {
+    "attr_instances": "SELECT 1 FROM public.temporal_entities te WHERE te.tenant_id = h.tenant_id AND te.id = h.entity_id",
+    "attr_rows": "SELECT 1 FROM public.iri_ids i JOIN public.temporal_entities te ON te.tenant_id = i.tenant_id "
+                 "AND te.id = i.iri WHERE i.tenant_id = h.tenant_id AND i.id = h.entity_no",
+}
+
+
+def _old_rows(table: str, at: str) -> str:
+    """The WHERE of the rows retain deletes from `table`: older than `at`, no audit row, no row of
+    a WHOLE_HISTORY type."""
+    return (f"h.observed_at < {at} AND NOT coalesce(h.provenance @> '{{\"audit\": true}}', false) "
+            f"AND NOT EXISTS ({_KEEP[table]} AND EXISTS (SELECT 1 FROM unnest(te.types) t "
+            f"WHERE t ~ '{_WHOLE_IRI}'))")
 
 
 def retain_sql(cutoff: dt.datetime) -> str:
@@ -1418,8 +1446,7 @@ def retain_sql(cutoff: dt.datetime) -> str:
         stmts.append(
             f"SELECT to_regclass('public.{table}') IS NOT NULL AS has \\gset\n"
             f"\\if :has\n"
-            f"PREPARE d_{table}(timestamptz) AS DELETE FROM public.{table} WHERE observed_at < $1 "
-            f"AND NOT coalesce(provenance @> '{{\"audit\": true}}', false);\n"
+            f"PREPARE d_{table}(timestamptz) AS DELETE FROM public.{table} h WHERE {_old_rows(table, '$1')};\n"
             f"EXECUTE d_{table}('{iso(cutoff)}');\n"
             f"\\endif")
     stmts.append("COMMIT;")
@@ -1443,8 +1470,7 @@ def old_history_sql(cutoff: dt.datetime) -> str:
         stmts.append(
             f"SELECT to_regclass('public.{table}') IS NOT NULL AS has \\gset\n"
             f"\\if :has\n"
-            f"SELECT 'old {table} ' || count(*) FROM public.{table} WHERE observed_at < '{iso(cutoff)}' "
-            f"AND NOT coalesce(provenance @> '{{\"audit\": true}}', false);\n"
+            f"SELECT 'old {table} ' || count(*) FROM public.{table} h WHERE {_old_rows(table, repr(iso(cutoff)))};\n"
             f"\\endif")
     stmts.append("COMMIT;")
     return "\n".join(stmts) + "\n"

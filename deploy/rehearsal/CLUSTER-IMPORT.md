@@ -9,7 +9,7 @@ The owner's order of 2026-11-09 16:1xZ is in tasks/GOAL-jc-dev.md, section "Two 
 | export | dev's databases, read only (deployer) | `/workspace/evidence/jc-rehearsal/export/prod-<UTC>` (prod-deployer, read only) |
 | realm | dev's live realm (dev already runs deployment main) | prod's live realm plus main's realm lines (step 3) |
 | people | allow-list only (`REHEARSAL_PEOPLE`, 0700), no credential; personas keep e-mail | none |
-| temporal | the last 24 h (import cut-off, then the hourly `retain`) | the same |
+| temporal | the last 24 h (import cut-off, then the hourly `retain`); KeyPerformanceIndicator whole (`WHOLE_HISTORY`, supervisor 20:1xZ) | the same; the bundle must hold the KPI history |
 | secrets | every one fresh | every one fresh; no prod credential (supervisor) |
 
 ## 2. Inputs on the deployer's host

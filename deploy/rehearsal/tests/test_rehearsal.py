@@ -7,6 +7,7 @@ built jc (JC_BIN or $CARGO_TARGET_DIR/debug/jc).
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import http.server
 import json
@@ -412,6 +413,75 @@ def test_the_old_history_check_fails_when_it_cannot_read(tmp_path):
     with pytest.raises(RuntimeError):
         rh.old_history("127.0.0.1", 1, "antares", "antares", str(pw), dt.datetime(2026, 11, 7, tzinfo=dt.UTC))
 
+
+
+def test_the_import_keeps_a_kpis_whole_history_and_cuts_every_other_type():
+    cutoff = dt.datetime(2026, 11, 8, 18, tzinfo=dt.UTC)
+    line = lambda t, at: {"tenant": "a", "id": f"urn:ngsi-ld:{t}:1", "type": t, "attr": "v",
+                          "instance": {"type": "Property", "value": 1, "observedAt": at}}
+    kept, refused = rh.split_by_cutoff([line("KeyPerformanceIndicator", "2023-12-31T00:00:00Z"),
+                                        line("BikeHireDockingStation", "2026-11-07T00:00:00Z"),
+                                        line("BikeHireDockingStation", "2026-11-09T00:00:00Z"),
+                                        {**line("X", "2025-01-01T00:00:00Z"), "type": ["X", "KeyPerformanceIndicator"]}],
+                                       cutoff)
+    assert [(k["type"], k["instance"]["observedAt"]) for k in kept] == [
+        ("KeyPerformanceIndicator", "2023-12-31T00:00:00Z"), ("BikeHireDockingStation", "2026-11-09T00:00:00Z"),
+        (["X", "KeyPerformanceIndicator"], "2025-01-01T00:00:00Z")]
+    assert [r["kind"] for r in refused] == ["cut-off"]
+
+
+PG_IMAGE = "postgis/postgis:17-3.5"
+
+
+@pytest.mark.skipif(subprocess.run(["docker", "image", "inspect", PG_IMAGE], capture_output=True).returncode != 0,
+                    reason=f"no docker or no {PG_IMAGE} on this host")
+def test_retain_keeps_a_kpis_whole_history_in_real_postgres(tmp_path):
+    """retain against a real PostgreSQL with Antares' history tables: an old KPI row stays in both
+    tables, an old sensor row goes, an audit row stays, a fresh row stays."""
+    name, port = "rh-pg-retain-test", 55449
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+    subprocess.run(["docker", "run", "-d", "--name", name, "-p", f"127.0.0.1:{port}:5432",
+                    "-e", "POSTGRES_PASSWORD=retain-test", "-e", "POSTGRES_USER=antares", PG_IMAGE],
+                   check=True, capture_output=True)
+    pw = tmp_path / "pw"
+    pw.write_text("retain-test")
+    try:
+        schema = """
+        CREATE TABLE temporal_entities (tenant_id text, id text, types text[]);
+        CREATE TABLE iri_ids (tenant_id text, id bigint, iri text);
+        CREATE TABLE attr_instances (tenant_id text, entity_id text, observed_at timestamptz, provenance jsonb);
+        CREATE TABLE attr_rows (tenant_id text, entity_no bigint, observed_at timestamptz, provenance jsonb);
+        INSERT INTO temporal_entities VALUES
+          ('a', 'urn:k', ARRAY['https://uri.etsi.org/ngsi-ld/default-context/KeyPerformanceIndicator']),
+          ('a', 'urn:s', ARRAY['https://smartdatamodels.org/dataModel.Transportation/BikeHireDockingStation']),
+          ('b', 'urn:k', ARRAY['https://uri.etsi.org/ngsi-ld/default-context/NotAKeyPerformanceIndicatorX']);
+        INSERT INTO iri_ids VALUES ('a', 1, 'urn:k'), ('a', 2, 'urn:s');
+        INSERT INTO attr_instances VALUES ('a', 'urn:k', '2023-12-31', NULL), ('a', 'urn:s', '2026-11-01', NULL),
+          ('a', 'urn:s', '2026-11-01', '{"audit": true}'), ('a', 'urn:s', '2026-11-09T12:00:00Z', NULL),
+          ('b', 'urn:k', '2026-11-01', NULL);
+        INSERT INTO attr_rows VALUES ('a', 1, '2025-01-01', NULL), ('a', 2, '2026-11-01', NULL);
+        """
+        for _ in range(60):
+            if rh_psql(port, pw, "SELECT 1").returncode == 0:
+                break
+            time.sleep(1)
+        assert rh_psql(port, pw, schema).returncode == 0
+        now = dt.datetime(2026, 11, 9, 13, tzinfo=dt.UTC)
+        cutoff = rh.cutoff_for(now)
+        assert rh.old_history("127.0.0.1", port, "antares", "antares", str(pw), cutoff) == 3
+        args = argparse.Namespace(host="127.0.0.1", port=port, user="antares", db="antares", password_file=str(pw))
+        assert rh.retain_once(args, now)["deleted"] == 3
+        left = rh_psql(port, pw, "SELECT tenant_id, entity_id, observed_at::date FROM attr_instances ORDER BY 1, 3;"
+                                 "SELECT entity_no FROM attr_rows").stdout.split()
+        assert left == ["a|urn:k|2023-12-31", "a|urn:s|2026-11-01", "a|urn:s|2026-11-09", "1"]
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+
+def rh_psql(port, pw, sql):
+    env = dict(os.environ, PGPASSWORD=pw.read_text())
+    return subprocess.run(["psql", "-AXt", "-v", "ON_ERROR_STOP=1", "-h", "127.0.0.1", "-p", str(port), "-U", "antares",
+                           "-d", "antares"], input=sql, env=env, capture_output=True, text=True)
 
 def test_a_datasource_reads_the_same_endpoint_on_the_rehearsal():
     gw = "http://context-gateway.smartcity.svc.cluster.local:8080/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
