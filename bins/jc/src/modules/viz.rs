@@ -152,9 +152,10 @@ fn join(sources: &[&str]) -> String {
 }
 
 impl Site {
-    /// `own` is this mount's origin; the addresses are bases ("" for one jc does not know).
-    fn new(own: &str, live: &LiveAddresses) -> Self {
+    /// `base` is this mount's public base; the addresses are bases ("" for one jc does not know).
+    fn new(base: &str, live: &LiveAddresses) -> Self {
         let origin = |base: &str| crate::siblings::origin(base);
+        let own = &origin(base);
         let (api, tiles, cat) = (
             origin(&live.api),
             origin(&live.tiles),
@@ -167,6 +168,12 @@ impl Site {
             format!("base-uri 'none'; form-action 'none'; {SANDBOX}")
         } else {
             "base-uri 'none'; form-action 'none'".to_owned()
+        };
+        // Sandboxed, the explorer reads MapLibre's worker as text to start it from a blob.
+        let releases = if shared {
+            format!("{base}/vendor/")
+        } else {
+            String::new()
         };
         let page = |img: &str, connect: &str, ancestors: &str| {
             format!(
@@ -198,10 +205,10 @@ impl Site {
             map: page(&tiles_img, &join(&[&tiles]), "*"),
             explore: page(
                 &tiles_img,
-                &join(&[&api, &tiles]),
+                &join(&[&api, &tiles, &releases]),
                 if cat.is_empty() { "'none'" } else { &cat },
             ),
-            embed: page(&tiles_img, &join(&[&api, &tiles, &cat]), "*"),
+            embed: page(&tiles_img, &join(&[&api, &tiles, &cat, &releases]), "*"),
         }
     }
 }
@@ -349,8 +356,7 @@ fn serve(site: &Site, method: &Method, path: &str) -> Response {
 
 /// viz's router at `mount`, reading the gateway, tiles and catalogue at `live`.
 pub fn build(live: &LiveAddresses, mount: &Mount) -> Router {
-    let own = crate::siblings::origin(&mount.public_base());
-    let site = Arc::new(Site::new(&own, live));
+    let site = Arc::new(Site::new(&mount.public_base(), live));
     Router::new().fallback(move |method: Method, uri: axum::http::Uri| {
         let site = site.clone();
         async move { serve(&site, &method, uri.path()) }
@@ -456,7 +462,9 @@ mod tests {
         assert_eq!(res.status(), StatusCode::OK);
         let csp = header(&res, "content-security-policy").to_owned();
         assert!(
-            csp.contains("connect-src https://api.city.test https://tiles.city.test;"),
+            csp.contains(
+                "connect-src https://api.city.test https://tiles.city.test http://city.test:8080/vendor/;"
+            ),
             "{csp}"
         );
         assert!(
@@ -472,7 +480,7 @@ mod tests {
         let csp = header(&embed, "content-security-policy").to_owned();
         assert!(
             csp.contains(
-                "connect-src https://api.city.test https://tiles.city.test http://city.test:8080;"
+                "connect-src https://api.city.test https://tiles.city.test http://city.test:8080 http://city.test:8080/vendor/;"
             ),
             "{csp}"
         );
@@ -512,6 +520,12 @@ mod tests {
                 let res = serve(&site, &Method::GET, path);
                 let csp = header(&res, "content-security-policy");
                 assert!(csp.contains(sandbox), "{path}: {csp}");
+                if path.ends_with("e.html") {
+                    assert!(
+                        csp.contains(" http://localhost:42102/vendor/;"),
+                        "{path}: {csp}"
+                    );
+                }
                 assert!(!csp.contains("allow-same-origin"), "{path}: {csp}");
             }
         }

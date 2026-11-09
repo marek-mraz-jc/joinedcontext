@@ -1,6 +1,6 @@
 diff -ru a/site/embed.js site/embed.js
 --- a/site/embed.js	2026-11-09 06:37:01.194717034 +0000
-+++ site/embed.js	2026-11-09 06:37:01.197034158 +0000
++++ site/embed.js	2026-11-09 07:01:27.532420511 +0000
 @@ -13,6 +13,11 @@
    var VIEWS = ["both", "table"];
    var HEIGHT = { min: 240, max: 2000, fallback: 640 };
@@ -61,28 +61,46 @@ diff -ru a/site/embed.js site/embed.js
  })(typeof self !== "undefined" ? self : globalThis);
 diff -ru a/site/explore.js site/explore.js
 --- a/site/explore.js	2026-11-09 06:37:01.194901061 +0000
-+++ site/explore.js	2026-11-09 06:37:01.197892796 +0000
-@@ -7,8 +7,17 @@
++++ site/explore.js	2026-11-09 07:01:27.533274692 +0000
+@@ -7,8 +7,35 @@
  (function (root) {
    "use strict";
  
 -  var MAPLIBRE = "/vendor/maplibre-gl-6.14.0.mjs";
 -  var WORKER = "/vendor/maplibre-gl-worker-6.14.0.mjs";
-+  // Beside this page, so the explorer works under a path prefix too (jc serves it at /viz).
-+  var MAPLIBRE = "./vendor/maplibre-gl-6.14.0.mjs";
++  // Beside this page, so the explorer works under a path prefix too (jc serves it at /viz). Absolute:
++  // in a sandboxed page this script is cross-origin, so a relative import() resolves against about:blank.
++  var MAPLIBRE = typeof location !== "undefined" ? new URL("vendor/maplibre-gl-6.14.0.mjs", location.href).href : "/vendor/maplibre-gl-6.14.0.mjs";
 +  var WORKER = typeof location !== "undefined" ? new URL("vendor/maplibre-gl-worker-6.14.0.mjs", location.href).href : "/vendor/maplibre-gl-worker-6.14.0.mjs";
-+  var workerBlob = null;
-+  // MapLibre's worker. A sandboxed page (an opaque origin: jc serves the explorer beside the Portal)
-+  // may start no worker from a URL, so it starts a blob module that imports the file (CORS there).
-+  function workerUrl() {
-+    if (typeof self === "undefined" || self.origin !== "null" || typeof Blob !== "function") return WORKER;
-+    if (!workerBlob) workerBlob = URL.createObjectURL(new Blob(["import " + JSON.stringify(WORKER) + ";\n"], { type: "text/javascript" }));
-+    return workerBlob;
++  var workerReady = null;
++  // MapLibre with its worker. A sandboxed page (an opaque origin: jc serves the explorer beside the
++  // Portal) may start no worker from a URL, and Chromium starts no module worker from a blob there:
++  // the worker runs as a classic blob script, the module's text without its one trailing export.
++  // MapLibre asks for a module worker (wrapping the URL in a blob of its own), and it is the only
++  // worker this page starts, so every module worker here becomes that classic one.
++  function maplibreReady() {
++    return import(MAPLIBRE).then(function (maplibre) {
++      if (typeof self === "undefined" || self.origin !== "null") {
++        maplibre.setWorkerUrl(WORKER);
++        return maplibre;
++      }
++      if (!workerReady) workerReady = fetch(WORKER, { credentials: "omit" }).then(function (r) {
++        if (!r.ok) throw new Error("HTTP " + r.status);
++        return r.text();
++      }).then(function (code) {
++        var url = URL.createObjectURL(new Blob([code.replace(/export\s*\{[^}]*\};?\s*(\/\/#[^\n]*\s*)?$/, "")], { type: "text/javascript" }));
++        var Native = self.Worker;
++        self.Worker = function (u, o) { return o && o.type === "module" ? new Native(url) : new Native(u, o); };
++        self.Worker.prototype = Native.prototype;
++        return url;
++      });
++      return workerReady.then(function () { maplibre.setWorkerUrl(WORKER); return maplibre; });
++    });
 +  }
    var MAP_DWELL = 500;
    var SLUG = /^[a-z0-9]{16,64}$/;
    var NAME = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
-@@ -123,6 +132,29 @@
+@@ -123,6 +150,29 @@
      return "https://api." + String(hostname).replace(/^viz\./, "") + "/api/endpoint/" + slug + "/";
    }
  
@@ -112,7 +130,7 @@ diff -ru a/site/explore.js site/explore.js
    function params(map) {
      return Object.keys(map)
        .filter(function (k) { return map[k] !== undefined && map[k] !== null && map[k] !== ""; })
-@@ -471,7 +503,9 @@
+@@ -471,7 +521,9 @@
        $("app").hidden = true;
        return tell(t.noAddress, "error");
      }
@@ -123,28 +141,31 @@ diff -ru a/site/explore.js site/explore.js
      var state = { types: [], type: where.type, q: where.q || "", sort: where.sort, all: where.all, card: null, map: null, mapData: null, mapAsk: 0, tiled: null, tilesets: {},
        infos: {}, mapping: null, mapRaw: {}, countKey: null, total: null, none: null, inView: null };
      ["geo", "color", "pop", "cluster"].forEach(function (k) { if (where[k] !== null) state.mapRaw[k] = where[k]; });
-@@ -553,9 +587,8 @@
+@@ -551,11 +603,9 @@
+         else state.mapAt = [at[0], at[1]];
+       } : null;
        if (!ok) return;
-       import(MAPLIBRE).then(function (maplibre) {
+-      import(MAPLIBRE).then(function (maplibre) {
++      maplibreReady().then(function (maplibre) {
          if (box.hidden || !$("detail").open) return;
 -        maplibre.setWorkerUrl(WORKER);
 -        var domain = location.hostname.replace(/^viz\./, "");
 -        var m = new maplibre.Map({ container: box, style: "https://tiles." + domain + "/styles/light-" + (lang === "sk" ? "sk" : "en") + ".json", center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false });
-+        maplibre.setWorkerUrl(workerUrl());
 +        var m = new maplibre.Map({ container: box, style: styleOf(H.tiles, lang), center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false });
          m.addControl(new maplibre.AttributionControl({ compact: true }));
          new maplibre.Marker({ color: COLOUR }).setLngLat([at[0], at[1]]).addTo(m);
          state.cardMap = m;
-@@ -642,7 +675,7 @@
+@@ -641,8 +691,7 @@
+     }
  
      function loadMap() {
-       import(MAPLIBRE).then(function (maplibre) {
+-      import(MAPLIBRE).then(function (maplibre) {
 -        maplibre.setWorkerUrl(WORKER);
-+        maplibre.setWorkerUrl(workerUrl());
++      maplibreReady().then(function (maplibre) {
          if (root.pmtiles) maplibre.addProtocol("pmtiles", new root.pmtiles.Protocol().tile);
          // The Endpoint's vector tiles, read like every other request here: anonymous, no referrer.
          maplibre.addProtocol("jc-tile", function (request, controller) {
-@@ -653,8 +686,7 @@
+@@ -653,8 +702,7 @@
                return r.arrayBuffer().then(function (data) { return { data: data }; });
              });
          });
@@ -154,7 +175,7 @@ diff -ru a/site/explore.js site/explore.js
          state.map = map;
          root.jcExploreMap = map; // for the browser journey
          state.maplibre = maplibre;
-@@ -955,7 +987,7 @@
+@@ -955,7 +1003,7 @@
      // The source line of an embed: the dataset's title, publisher and licence from the catalogue,
      // shown only when that dataset names this very Endpoint; else the catalogue itself.
      function attribute() {
@@ -163,7 +184,7 @@ diff -ru a/site/explore.js site/explore.js
        var line = $("attribution");
        var draw = function (title, href, publisher, licence, licenceHref) {
          line.textContent = "";
-@@ -992,8 +1024,9 @@
+@@ -992,8 +1040,9 @@
        $("embed-keep-hint").textContent = words.length ? say(t.keepHint, { view: words.join("; ") }) : t.keepNone;
        $("embed-copied").textContent = "";
        try {
@@ -175,7 +196,7 @@ diff -ru a/site/explore.js site/explore.js
          $("embed-error").hidden = true;
          $("embed-height").removeAttribute("aria-invalid");
          $("embed-copy").disabled = false;
-@@ -1058,7 +1091,7 @@
+@@ -1058,7 +1107,7 @@
      if (!root.jcExplorer || typeof root.jcExplorer.mount !== "function") return tell(t.noWidget, "error");
      try {
        root.jcExplorer.mount($("grid"), {
@@ -184,7 +205,7 @@ diff -ru a/site/explore.js site/explore.js
          slug: where.slug,
          lang: lang,
          link: { type: where.type || undefined, q: where.q || undefined, sort: where.sort || undefined, noDefault: where.all || undefined },
-@@ -1071,12 +1104,14 @@
+@@ -1071,12 +1120,14 @@
          csv: true
        });
      } catch (e) {
@@ -202,7 +223,7 @@ diff -ru a/site/explore.js site/explore.js
  })(typeof self !== "undefined" ? self : this);
 diff -ru a/site/map.html site/map.html
 --- a/site/map.html	2026-11-09 06:37:01.195175502 +0000
-+++ site/map.html	2026-11-09 06:37:01.197536491 +0000
++++ site/map.html	2026-11-09 07:01:27.532882113 +0000
 @@ -8,8 +8,8 @@
  <link rel="stylesheet" href="vendor/maplibre-gl-6.14.0.css">
  <link rel="stylesheet" href="map.css">
