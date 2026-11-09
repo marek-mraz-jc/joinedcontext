@@ -790,13 +790,25 @@ CKAN_URL = re.compile(rb"^(\s+url:\s*)\S+", re.M)
 REHEARSAL_CATALOGUE = b"https://catalogue.rehearsal.invalid"
 
 
-def fence_writes(data: bytes) -> bytes:
+_CATALOGUE_URL = re.compile(r"https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+")
+
+
+def catalogue_url(value: str) -> bytes:
+    """--catalogue-url: the instance's own catalogue (a cluster import), an https origin and
+    nothing else, since it lands verbatim in every CkanInstance's YAML."""
+    if not _CATALOGUE_URL.fullmatch(value):
+        raise SystemExit(f"--catalogue-url {value!r}: give https://<host> only, no port, path or user")
+    return value.encode()
+
+
+def fence_writes(data: bytes, catalogue: bytes = REHEARSAL_CATALOGUE) -> bytes:
     """A CkanInstance is the one manifest the Portal writes to an outside host with (its API
-    token publishes datasets there): its `spec.url` is turned to the rehearsal's catalogue name,
-    so a rehearsal never publishes into the catalogue of the environment it was copied from."""
+    token publishes datasets there): its `spec.url` is turned to the rehearsal's catalogue name
+    (on the cluster, the instance's own --catalogue-url), so an import never publishes into the
+    catalogue of the environment it was copied from."""
     if not re.search(rb"^kind:\s*CkanInstance\s*$", data, re.M):
         return data
-    return CKAN_URL.sub(lambda m: m.group(1) + REHEARSAL_CATALOGUE, data)
+    return CKAN_URL.sub(lambda m: m.group(1) + catalogue, data)
 
 
 # The one rename of evidence/jc-dev/RENAMES.md: prod's three catalog Endpoints publish one CKAN
@@ -863,7 +875,7 @@ def cmd_aliases(a):
     return 0
 
 
-def import_shako(h: Http, token: str, export: Path, report: dict):
+def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: bytes = REHEARSAL_CATALOGUE):
     auth = {"Authorization": f"token {token}"}
     listing = json.loads((export / "gitea" / "repos.json").read_text())
     rows = []
@@ -875,7 +887,7 @@ def import_shako(h: Http, token: str, export: Path, report: dict):
             if p.is_file() and not p.is_symlink():
                 data = p.read_bytes()
                 rel = p.relative_to(root).as_posix()
-                fenced = fence_writes(data)
+                fenced = fence_writes(data, catalogue)
                 files[rel] = named = name_datasets(fenced)
                 if fenced != data:
                     report.setdefault("fenced", []).append(f"{owner}/{name}/{rel}")
@@ -1332,7 +1344,8 @@ def cmd_import(a):
     h = Http(a.base)
     steps = a.only.split(",") if a.only else ["shako", "antares", "daiya"]
     if "shako" in steps:
-        import_shako(h, read_secret(state, "shako-token"), export, report)
+        import_shako(h, read_secret(state, "shako-token"), export, report,
+                     catalogue_url(a.catalogue_url) if a.catalogue_url else REHEARSAL_CATALOGUE)
     if "antares" in steps:
         import_antares(h, export, cutoff, report, read_secret(state, "antares-admin-token"))
     if "daiya" in steps:
@@ -1952,6 +1965,7 @@ def main(argv=None):
     s.add_argument("--state", required=True); s.add_argument("--report", required=True)
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin")
     s.add_argument("--dashboards", help="Grafana provisioning files (rehearsal.py dashboards) instead of the bundle's")
+    s.add_argument("--catalogue-url", help="the instance's own catalogue (cluster import): every CkanInstance names it")
     s = sub.add_parser("dashboards"); s.add_argument("--render", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("retain"); s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", required=True)
     s.add_argument("--user", default="antares"); s.add_argument("--db", default="antares")
