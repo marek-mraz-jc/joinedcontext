@@ -522,7 +522,13 @@ mod tests {
             ] {
                 let res = serve(&site, &Method::GET, path);
                 let csp = header(&res, "content-security-policy");
-                assert!(csp.contains(sandbox), "{path}: {csp}");
+                // The renderer ends on its sandbox: it names no `frame-ancestors` (below).
+                let held = if path == "/render.html" {
+                    csp.ends_with(sandbox.trim_end_matches(';'))
+                } else {
+                    csp.contains(sandbox)
+                };
+                assert!(held, "{path}: {csp}");
                 if path.ends_with("e.html") {
                     assert!(
                         csp.contains(" http://localhost:42102/vendor/;"),
