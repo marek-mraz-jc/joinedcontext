@@ -568,7 +568,7 @@ describe("the pipeline workbench", () => {
   // generate source on load and met the server's 400. The manifest says a test reads nothing there.
   it.each([
     ["kataster-inspire", "makes its records when the pipeline runs"],
-    ["golemio", "signs in with a credential"],
+    ["golemio", "signs in with a stored credential"],
   ])("a_source_with_nothing_a_test_reads_says_why_and_asks_nothing (%s)", async (name, why) => {
     const seen: Seen = { ops: [] };
     stub({ sample: problem(400, "refused") }, seen);
