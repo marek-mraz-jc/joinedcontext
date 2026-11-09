@@ -50,6 +50,11 @@ args=(--base-url "http://localhost:$port" --out "$out" --export "$export_dir" --
 [ "${SMOKE_E2E:-0}" = 1 ] && args+=(--e2e)
 # The logs suite also looks for every secret value of the rehearsal in the log.
 args+=(--with "logs=--secrets-dir $home/secrets")
+# The subscriptions probe is written by the project's ServiceAccount: its client secret is here.
+args+=(--with "subscriptions=--realm-secrets-dir $home/secrets/realm")
+# The assistant is a kept component on dev beside jc (tasks/GOAL-jc-dev.md): rows the rehearsal's
+# assistant module being off prevents are named skips, never known failures.
+args+=(--with "assistant=--kept-component")
 # restore backs this environment up, restores it beside it (its own Postgres and ports) and compares.
 args+=(--with "restore=--home $home")
 # Bounded: each run is polled until it ends, so ten runs of five minutes outlast the job.

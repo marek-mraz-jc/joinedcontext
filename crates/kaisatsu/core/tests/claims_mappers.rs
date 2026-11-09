@@ -418,7 +418,9 @@ fn every_mapper_kind_writes_its_claim() {
         .collect();
     assert_eq!(aud[0], "custom-aud");
     assert_eq!(aud[1], "portal-api");
-    assert!(aud.contains(&"empty") && aud.len() == 3, "{aud:?}");
+    // Audience resolve adds a client only for roles the token holds (Keycloak skips an empty
+    // list): `portal-api` is already there, `empty` stays out.
+    assert_eq!(aud.len(), 2, "{aud:?}");
     assert_eq!(at["groups"], json!(["/hel/team", "/ops", "/top"]));
     assert_eq!(at["jc"]["short_groups"], json!(["ops", "team", "top"]));
     // jc_org comes from groups (the user's own value is ignored), plus the pinned organization.
@@ -642,4 +644,42 @@ fn composite_roles_resolve_once_and_ignore_client_roles() {
         vec!["auditor-client", "unknown"]
     );
     assert!(resolve_effective_realm_roles(&[], &[], &all).is_empty());
+}
+
+/// Audience resolve names every other client of the token's `resource_access`, as Keycloak's
+/// AudienceResolveProtocolMapper: realm role composites count, the client itself does not, and a
+/// client without full scope shows no client role, so it gets no audience from one.
+#[test]
+fn audience_resolve_follows_the_tokens_client_roles() {
+    let mut f = Fixture::new(vec![mapper("oidc-audience-resolve-mapper", &[])]);
+    f.user.client_roles = HashMap::from([
+        ("edge".into(), vec!["self".into()]),
+        ("app".into(), vec!["reader".into()]),
+    ]);
+    f.roles.push(RoleRepresentation {
+        name: "default-roles-dev".into(),
+        composites: RoleComposites {
+            client: HashMap::from([("account".into(), vec!["view-profile".into()])]),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    f.user.realm_roles.push("default-roles-dev".into());
+    let at = f.eval(TokenKind::AccessToken);
+    let mut aud: Vec<&str> = at["aud"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    aud.sort_unstable();
+    assert_eq!(aud, ["account", "app"]);
+    assert_eq!(
+        at["resource_access"]["account"]["roles"],
+        json!(["view-profile"])
+    );
+    f.client.full_scope_allowed = false;
+    let at = f.eval(TokenKind::AccessToken);
+    assert!(at.get("aud").is_none(), "{at:?}");
+    assert!(at.get("resource_access").is_none(), "{at:?}");
 }

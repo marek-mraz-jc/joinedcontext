@@ -27,6 +27,7 @@ const SPACE: &str = "podnety";
 const DOMAIN: &str = "zilina.sk";
 const CORE: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld";
 const EDITOR: &str = "jana@zilina.sk";
+const EDITOR_ID: &str = "f:1:jana";
 
 type Hops = Arc<Mutex<Vec<String>>>;
 
@@ -127,8 +128,11 @@ async fn world() -> World {
             endpoint(
                 STAFF,
                 Audience::Organization,
+                // The editor by the Keycloak id the token's `sub` carries: a user assignee never
+                // matches the username (PF-126), so the e-mail granted nothing and the gateway
+                // now refuses the ungranted create (403), as prod's would.
                 vec![policy(
-                    &format!("{{ kind: user, id: \"{EDITOR}\" }}"),
+                    &format!("{{ kind: user, id: \"{EDITOR_ID}\" }}"),
                     "[createEntity]",
                 )],
             ),
@@ -136,7 +140,7 @@ async fn world() -> World {
         .authenticate(Arc::new(realm.verifier()), ServiceAccounts::new(), None);
     let token = realm.mint(&json!({
         "iss": common::ISSUER,
-        "sub": "f:1:jana",
+        "sub": EDITOR_ID,
         "aud": "context-gateway",
         "preferred_username": EDITOR,
         "email": EDITOR,
