@@ -221,12 +221,11 @@ mod tests {
         let text = include_str!("../../tests/fixtures/two-orgs.toml");
         let file = crate::config::Config::parse_file(std::path::Path::new("jc.toml"), text)
             .expect("parses");
-        let cli = |roles: &str| {
-            crate::config::Cli::try_parse_from(["jc", "--role", roles]).expect("cli")
-        };
+        let cli =
+            |roles: &str| crate::config::Cli::try_parse_from(["jc", "--role", roles]).expect("cli");
         let listener: std::net::SocketAddr = "0.0.0.0:42301".parse().unwrap();
-        let mut cfg = crate::config::Config::merge(cli("portal,dataroom"), file.clone())
-            .expect("config");
+        let mut cfg =
+            crate::config::Config::merge(cli("portal,dataroom"), file.clone()).expect("config");
         cfg.organizations[0].portal_token_file = Some("/run/alpha-token".into());
         let vars = organization_vars(&cfg, listener);
         assert_eq!(
@@ -244,9 +243,15 @@ mod tests {
         .expect("the Portal reads it");
         assert_eq!(parsed.len(), 1, "beta has no token: {catalogues}");
         assert_eq!(parsed[0].organization, "alpha");
-        assert_eq!(parsed[0].api.as_ref().map(url::Url::as_str), Some("http://opendata.alpha.test/"));
+        assert_eq!(
+            parsed[0].api.as_ref().map(url::Url::as_str),
+            Some("http://opendata.alpha.test/")
+        );
         assert!(parsed[0].reach.is_some_and(|r| r.ip().is_loopback()));
-        assert_eq!(parsed[0].token_file, std::path::PathBuf::from("/run/alpha-token"));
+        assert_eq!(
+            parsed[0].token_file,
+            std::path::PathBuf::from("/run/alpha-token")
+        );
         assert!(!vars["JC_PORTAL_ORGANIZATION_CATALOGUES"].contains("beta"));
         // Without dataroom here, the hosts alone; without Organizations, nothing.
         let mut portal_only = crate::config::Config::merge(cli("portal"), file).expect("config");

@@ -711,7 +711,14 @@ class Suite:
                                ("dcat", "/catalog.jsonld"), ("sitemap", "/sitemap.xml"), ("home", "/")):
                 st, _, raw = h.call("GET", path)
                 text = raw.decode(errors="replace")
-                leaked = sorted(n for n in other_names if n and re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", text))
+                # A dataset by its identity: a name the API lists, or its page's link. A bare word
+                # is no dataset (a barcelona dataset named `weather` beside hel's tag `weather`).
+                if kind in ("search", "list"):
+                    result = (json.loads(text or "{}") if st == 200 else {}).get("result", [])
+                    listed = {r.get("name") for r in result.get("results", [])} if kind == "search" else set(result)
+                    leaked = sorted(n for n in other_names if n in listed)
+                else:
+                    leaked = sorted(n for n in other_names if n and re.search(rf"/dataset/{re.escape(n)}(?![\w-])", text))
                 hosts = sorted({hh for o, hs in self.hosts.items() if o != org for hh in hs.values() if hh in text})
                 self.row(f"catalogue.{org}.{kind}.no-foreign", org, f"GET {{opendata}}{path}",
                          "200, no dataset or host of another org", f"{st}, leaked {leaked[:3]}, hosts {hosts}",
@@ -768,6 +775,8 @@ class Suite:
             api = self.client(org, "api")
             for path in ("/api/endpoints", "/catalog.jsonld", "/cs"):
                 st, _, raw = api.call("GET", path)
+                if st == 503:  # a cold feed past the gateway's 10 s read limit: once more, warm
+                    st, _, raw = api.call("GET", path)
                 text = raw.decode(errors="replace")
                 links = set(re.findall(r"https?://([a-z0-9.-]+(?::\d+)?)", text))
                 theirs = sorted(l for l in links if l in {h for o, hs in self.hosts.items() if o != org for h in hs.values()}
@@ -777,8 +786,11 @@ class Suite:
                          "200, links only its own hosts, names no foreign project",
                          f"{st}, foreign links {theirs[:3]}, foreign projects {names[:3]}",
                          st == 200 and not theirs and not names)
+        # Host mode answers the router's 404; a Portal mounted at path "" (the rehearsal) catches
+        # every host as the deployment's own, unpinned Portal: no session there, 401.
         st, _, _ = HostHttp(self.base, "nobody.localhost", ["nobody.localhost"]).call("GET", "/api/v1/projects")
-        self.row("hosts.unknown", "-", "GET /api/v1/projects on a host nobody serves", "404", st, st == 404)
+        self.row("hosts.unknown", "-", "GET /api/v1/projects on a host nobody serves",
+                 "404, or 401 from the unpinned Portal of a path mount", st, st in (401, 404))
 
     GLOBAL_READS = ["/api/v1/endpoints", "/api/v1/shared-apps", "/api/v1/connectors", "/api/v1/connectors/pending",
                     "/api/v1/blueprints", "/api/v1/alerts", "/api/v1/alerts/notices", "/api/v1/notifications",
@@ -802,10 +814,15 @@ class Suite:
                 st, body = self.session("platform", org).json("GET", "/api/v1/endpoints")
                 text = json.dumps(body, ensure_ascii=False)
                 orgs_seen = sorted(o for o in self.exp if any(m in text for m in names_of(o)))
+                # The organization-level Endpoints page is the installation's administration
+                # (PF-61, ADR-N-058 2.2): on another Organization's host it is 404, as for that
+                # Organization's own admin; where it answers, it names that Organization alone.
+                home = org == self.installation
                 self.row(f"global.platform.{org}./api/v1/endpoints", org,
                          f"GET /api/v1/endpoints as the platform admin on {org}'s host",
-                         f"200 naming Endpoints of {org} alone", f"{st}, orgs {orgs_seen}",
-                         st == 200 and orgs_seen == [org])
+                         f"200 naming Endpoints of {org} alone" + ("" if home else ", or 404"),
+                         f"{st}, orgs {orgs_seen}",
+                         (st == 200 and orgs_seen == [org]) or (not home and st == 404))
         else:
             st, body = self.session("platform").json("GET", "/api/v1/endpoints")
             text = json.dumps(body, ensure_ascii=False)
