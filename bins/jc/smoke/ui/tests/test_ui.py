@@ -107,3 +107,13 @@ def test_the_judge_passes_only_scores_of_four_and_up_without_a_high_finding(tmp_
     suite.fold_judge(res, shots, str(tmp_path / "j.json"))
     got = {r["id"].rsplit("/", 1)[1]: r["result"] for r in res.rows}
     assert got == {"a": "pass", "b": "fail", "c": "fail", "d": "skip"}
+
+
+def test_the_shako_check_ids_carry_no_credential_shape():
+    # The logs suite scans every results file; a check id reading `...-token:/git/...` was
+    # flagged as a password field in the 2026-11-09 gate.
+    sys.path.insert(0, str(HERE.parent.parent / "logs"))
+    import logscan
+    for rid in (f"judge:1440:shako:{suite.SHAKO_PERSONA}:/git/jc/config",
+                f"shako.page:{suite.SHAKO_PERSONA}:1440:/git/"):
+        assert logscan.credential_shapes(rid) == [], rid

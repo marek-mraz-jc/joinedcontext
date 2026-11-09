@@ -361,18 +361,23 @@ def viz_sandbox(w: Walker, ctx, page, dataset: str):
                 f"{rows} rows" if rows else why, rows > 0)
 
 
+# The browser person of shako's own web pages: a bearer token of audience shako. Its name is in
+# every check id, so it must not read as `token:<value>` to the logs suite's scan.
+SHAKO_PERSONA = "shako-bearer"
+
+
 def shako(w: Walker):
     token = read_token(w.a.shako_token_file)
     if not token:
         w.res.skip("shako.web", "shako", "GET /git/ with a bearer token", "repository list",
                    "no --shako-token-file (a token of audience shako)")
         return
-    ctx, page = w.context("shako-token", {"Authorization": f"Bearer {token}"})
+    ctx, page = w.context(SHAKO_PERSONA, {"Authorization": f"Bearer {token}"})
     try:
-        w.judge(page, "shako-token", "shako", "/git/", "/git/", portal=False, viewer=False)
+        w.judge(page, SHAKO_PERSONA, "shako", "/git/", "/git/", portal=False, viewer=False)
         repo = walk.first_link(page, w.base, "/git/", re.compile(r"^/git/[^/]+/[^/?#]+$"), main_only=False)
         if repo:
-            w.judge(page, "shako-token", "shako", "/git/$owner/$repo", repo, portal=False, viewer=False)
+            w.judge(page, SHAKO_PERSONA, "shako", "/git/$owner/$repo", repo, portal=False, viewer=False)
         else:
             w.res.add("shako.repo", "shako", "GET /git/ (first repository link)", "a repository", "none",
                       FAIL if w.a.export else SKIP, "the list showed no repository")
