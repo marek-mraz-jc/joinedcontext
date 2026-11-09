@@ -214,6 +214,12 @@ pub async fn resolve_or_fetch_client(
     realm: &RealmConfig,
     client_id: &str,
 ) -> Result<ClientRepresentation> {
+    // A realm whose config allows no CIMD (no `client-id-uri` client policy, as prod's smartcity)
+    // knows no https client_id, fetched or stored earlier: the unknown client's answer, as
+    // Keycloak's "Client not found.".
+    if client_id.starts_with("https://") && realm.cimd_allowed_client_domains.is_empty() {
+        return Err(KaisatsuError::invalid_client("unknown client_id"));
+    }
     if let Some(existing) = state
         .store
         .get_client_by_client_id(&realm.id, client_id)

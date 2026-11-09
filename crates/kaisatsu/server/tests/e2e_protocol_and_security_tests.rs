@@ -344,6 +344,63 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
     assert_eq!(st_after_reuse, StatusCode::BAD_REQUEST);
 }
 
+/// A realm whose config allows no CIMD (prod's smartcity has no `client-id-uri` client policy)
+/// refuses an https client_id, fetched or stored when the realm still allowed it.
+#[tokio::test]
+async fn a_realm_without_the_cimd_policy_refuses_an_https_client_id() {
+    let (state, store, _kek) = setup_dev_realm_state().await;
+    let cimd_url = "https://claude.ai/oauth/mcp-oauth-client-metadata";
+    state.guard().insert_mock(
+        cimd_url,
+        200,
+        serde_json::to_vec(&json!({
+            "client_id": cimd_url,
+            "client_name": "Claude",
+            "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none"
+        }))
+        .unwrap(),
+    );
+    let mount = Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap();
+    let app = router(state, mount);
+    let challenge = sha256_base64url("pkce-verifier-string-with-at-least-43-characters-long-777777");
+    let auth_uri = format!(
+        "/realms/dev/protocol/openid-connect/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid&state=c1&code_challenge={challenge}&code_challenge_method=S256",
+        url::form_urlencoded::byte_serialize(cimd_url.as_bytes()).collect::<String>(),
+        url::form_urlencoded::byte_serialize(b"https://claude.ai/api/mcp/auth_callback")
+            .collect::<String>(),
+    );
+    let authorize = || async {
+        app.clone()
+            .oneshot(Request::builder().uri(&auth_uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+    };
+
+    // dev's policy allows claude.ai: the client is fetched, stored and sent to the login.
+    assert_eq!(authorize().await.status(), StatusCode::SEE_OTHER);
+    assert!(
+        store
+            .get_client_by_client_id("dev", cimd_url)
+            .await
+            .unwrap()
+            .is_some_and(|c| c.is_cimd)
+    );
+
+    // The realm loses the policy: the stored client is refused like an unknown one.
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm.cimd_allowed_client_domains.clear();
+    realm.cimd_allowed_redirect_domains.clear();
+    store.upsert_realm(realm).await.unwrap();
+    let refused = authorize().await;
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    assert!(refused.headers().get(header::LOCATION).is_none());
+    let body = refused.into_body().collect().await.unwrap().to_bytes();
+    assert!(String::from_utf8_lossy(&body).contains("unknown client_id"));
+}
+
 #[tokio::test]
 async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
     let (state, _store, _kek) = setup_dev_realm_state().await;
