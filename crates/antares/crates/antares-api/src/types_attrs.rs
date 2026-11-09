@@ -628,7 +628,7 @@ type Until = Option<()>;
 /// The deadline `wait` from now.
 fn until(wait: std::time::Duration) -> Until {
     #[cfg(not(target_arch = "wasm32"))]
-    return Some(tokio::time::Instant::now() + wait);
+    return tokio::time::Instant::now().checked_add(wait);
     #[cfg(target_arch = "wasm32")]
     {
         let _ = wait;
