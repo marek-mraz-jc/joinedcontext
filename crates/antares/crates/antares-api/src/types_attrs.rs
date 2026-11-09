@@ -412,8 +412,23 @@ async fn type_info(
     let Some(pairs) = st.store.entity_attr_pairs(tenant).await? else {
         return Ok(None);
     };
-    let count = count_of(st, tenant, iri, view).await?;
     let mut attrs = BTreeMap::new();
+    // `omit` hides every Entity carrying a type it names (hides_a_type),
+    // which the count through a query does not judge
+    if let Some(omit) = view.and_then(|(r, _)| r.policy_omit.as_ref()) {
+        let named = |t: &str| omit.iter().any(|n| n.iri == t || n.raw == t);
+        if named(iri) {
+            return Ok(Some(((0, attrs), false)));
+        }
+        let beside = st
+            .store
+            .entity_types_beside(tenant, std::slice::from_ref(&iri.to_owned()))
+            .await?;
+        if beside.is_none_or(|b| b.iter().any(|t| named(t))) {
+            return Ok(None);
+        }
+    }
+    let count = count_of(st, tenant, iri, view).await?;
     if count == 0 {
         return Ok(Some(((0, attrs), false)));
     }
@@ -485,11 +500,21 @@ async fn count_of(
     iri: &str,
     view: View<'_>,
 ) -> ApiResult<usize> {
-    let params = std::collections::HashMap::from([
+    let mut params = std::collections::HashMap::from([
         ("type".to_owned(), iri.to_owned()),
         ("count".to_owned(), "true".to_owned()),
         ("limit".to_owned(), "0".to_owned()),
     ]);
+    // the engine's q and scopeQ ride in the parameters, as
+    // Filter::narrow_params puts them on a query
+    if let Some(reach) = view.and_then(|(r, _)| r.policy_reach.as_deref()) {
+        if let Some(q) = &reach.q {
+            params.insert("q".to_owned(), q.to_string());
+        }
+        if let Some(scope) = &reach.scope_q {
+            params.insert("scopeQ".to_owned(), scope.clone());
+        }
+    }
     let push = crate::entities::Pushdown {
         page: Some((0, 0)),
         ..Default::default()
@@ -1429,6 +1454,13 @@ mod discovery_folds {
             json!({"id": "urn:ngsi-ld:S:1", "type": [SENSOR], V: [{"type": "Property", "value": 1}]}),
         )
         .await;
+        seed(
+            &st,
+            "ti",
+            "urn:ngsi-ld:BS:1",
+            json!({"id": "urn:ngsi-ld:BS:1", "type": [BUILDING, SENSOR], V: [{"type": "Property", "value": 1}]}),
+        )
+        .await;
         let rule = |q: Option<&str>, attrs: &[&str], pattern: Option<&str>| Rule {
             types: vec![BUILDING.to_owned()],
             q: q.map(|q| Box::new(antares_ql::parse_q(q).expect("q"))),
@@ -1436,6 +1468,12 @@ mod discovery_folds {
             every_attribute: attrs.is_empty(),
             id_patterns: pattern.into_iter().map(str::to_owned).collect(),
             ..Rule::default()
+        };
+        let omit = |t: &str| {
+            Some(Filter {
+                omit: vec![t.to_owned()],
+                ..Filter::default()
+            })
         };
         let one = |r: Rule| {
             Some(Filter {
@@ -1452,6 +1490,22 @@ mod discovery_folds {
                 one(rule(None, &[], Some("urn:ngsi-ld:B:05[0-9]"))),
             ),
             ("nothing shown", one(rule(Some("v>500"), &[], None))),
+            (
+                "an engine q",
+                Some(Filter {
+                    q: Some(Box::new(antares_ql::parse_q("v>50").expect("q"))),
+                    ..Filter::default()
+                }),
+            ),
+            (
+                "an engine scopeQ",
+                Some(Filter {
+                    scope_q: Some("/nowhere".to_owned()),
+                    ..Filter::default()
+                }),
+            ),
+            ("an omitted type", omit(BUILDING)),
+            ("a type omitted beside it", omit(SENSOR)),
         ];
         let ctx = antares_jsonld::pinned::core_context();
         let t = tid("ti");
@@ -1462,10 +1516,16 @@ mod discovery_folds {
                 .await
                 .expect("fold");
             let fold = fold.get(BUILDING).cloned().unwrap_or_default();
-            let (got, partial) = type_info(&st, &t, BUILDING, ALL, view)
-                .await
-                .expect("info")
-                .expect("the memory store keeps a catalogue");
+            let Some((got, partial)) = type_info(&st, &t, BUILDING, ALL, view).await.expect("info")
+            else {
+                // only the fold judges each Entity's other types
+                assert_eq!(shape, "a type omitted beside it");
+                let (stats, _) = type_details(&st, &t, BUILDING, ALL, view)
+                    .await
+                    .expect("details");
+                assert_eq!(stats.get(BUILDING), Some(&fold), "{shape}");
+                continue;
+            };
             assert!(!cut && !partial, "{shape}");
             assert_eq!(got, fold, "{shape}");
             // the fold stops at a ceiling of 5 Entities read; the count does not
@@ -1479,13 +1539,16 @@ mod discovery_folds {
                 .await
                 .expect("details");
             let got = stats.get(BUILDING).map_or(0, |s| s.0);
-            assert_eq!((got, partial), (fold.0, false), "{shape}: /types/Building");
+            // a probe judging the engine's q walks the 49 hidden Buildings
+            // before a shown one: past the ceiling of 5 it says so
+            let cut = shape == "an engine q";
+            assert_eq!((got, partial), (fold.0, cut), "{shape}: /types/Building");
         }
         let (all, _) = type_info(&st, &t, BUILDING, ALL, None)
             .await
             .expect("info")
             .expect("catalogue");
-        assert_eq!(all.0, 60);
+        assert_eq!(all.0, 61);
         assert!(
             all.1[&a1].contains("GeoProperty"),
             "a rare attribute and its type"
