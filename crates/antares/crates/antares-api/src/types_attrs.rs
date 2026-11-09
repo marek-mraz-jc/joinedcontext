@@ -408,7 +408,9 @@ async fn type_info(
     iri: &str,
     max: usize,
     view: View<'_>,
+    wait: std::time::Duration,
 ) -> ApiResult<Option<((usize, BTreeMap<String, BTreeSet<String>>), bool)>> {
+    let until = until(wait);
     let Some(pairs) = st.store.entity_attr_pairs(tenant).await? else {
         return Ok(None);
     };
@@ -438,6 +440,7 @@ async fn type_info(
         max,
         view,
         beside: besides(st, tenant, view).await?,
+        until,
     };
     let mut partial = matches!(noting(&w, iri, None, &mut attrs).await?, Probe::Cut);
     let wanted: Vec<String> = pairs
@@ -487,10 +490,12 @@ async fn type_details(
     max: usize,
     view: View<'_>,
 ) -> ApiResult<(TypeStats, bool)> {
-    Ok(match type_info(st, tenant, iri, max, view).await? {
-        Some((info, partial)) => (TypeStats::from([(iri.to_owned(), info)]), partial),
-        None => type_stats(st, tenant, max, Narrow::Type(iri), view).await?,
-    })
+    Ok(
+        match type_info(st, tenant, iri, max, view, crate::bounds::DISCOVERY_WAIT).await? {
+            Some((info, partial)) => (TypeStats::from([(iri.to_owned(), info)]), partial),
+            None => type_stats(st, tenant, max, Narrow::Type(iri), view).await?,
+        },
+    )
 }
 
 /// How many Entities of type `iri` a query through the narrowing counts.
@@ -605,6 +610,45 @@ struct Walk<'a> {
     max: usize,
     view: View<'a>,
     beside: Vec<Option<BTreeSet<String>>>,
+    until: Until,
+}
+
+/// When the probes of one answer stop ([`crate::bounds::DISCOVERY_WAIT`]);
+/// the wasm build has no tokio timer and never stops them.
+#[cfg(not(target_arch = "wasm32"))]
+type Until = Option<tokio::time::Instant>;
+#[cfg(target_arch = "wasm32")]
+type Until = Option<()>;
+
+/// The deadline `wait` from now.
+fn until(wait: std::time::Duration) -> Until {
+    #[cfg(not(target_arch = "wasm32"))]
+    return Some(tokio::time::Instant::now() + wait);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = wait;
+        None
+    }
+}
+
+/// `probe` within the walk's deadline: one past it is cut, as one stopped
+/// at the ceiling is.
+async fn within(
+    w: &Walk<'_>,
+    probe: impl std::future::Future<Output = Result<Probe, NgsiError>>,
+) -> Result<Probe, NgsiError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(at) = w.until {
+        if tokio::time::Instant::now() >= at {
+            return Ok(Probe::Cut);
+        }
+        return tokio::time::timeout_at(at, probe)
+            .await
+            .unwrap_or(Ok(Probe::Cut));
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = w;
+    probe.await
 }
 
 impl<'a> Walk<'a> {
@@ -616,6 +660,7 @@ impl<'a> Walk<'a> {
         max: usize,
         view: View<'a>,
     ) -> Result<Option<(Self, Vec<String>)>, NgsiError> {
+        let until = until(crate::bounds::DISCOVERY_WAIT);
         let beside = besides(st, tenant, view).await?;
         let Some(names) = probe_names(st, tenant, view, &beside).await? else {
             return Ok(None);
@@ -626,6 +671,7 @@ impl<'a> Walk<'a> {
             max,
             view,
             beside,
+            until,
         };
         Ok(Some((walk, names)))
     }
@@ -679,7 +725,7 @@ async fn first_visible(
             rule: *rule,
             attr,
         };
-        match probe(w.st, w.tenant, w.max, &one, view, each).await? {
+        match within(w, probe(w.st, w.tenant, w.max, &one, view, each)).await? {
             Probe::Seen => return Ok(Probe::Seen),
             Probe::Cut => cut = true,
             Probe::None => {}
@@ -1242,6 +1288,9 @@ mod discovery_folds {
     /// A ceiling no test fixture reaches, so the fold sees every entity.
     const ALL: usize = 1_000;
 
+    /// A probe deadline no test fixture reaches.
+    const WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
     fn tid(t: &str) -> TenantId {
         TenantId::new(t).expect("tenant")
     }
@@ -1516,7 +1565,9 @@ mod discovery_folds {
                 .await
                 .expect("fold");
             let fold = fold.get(BUILDING).cloned().unwrap_or_default();
-            let Some((got, partial)) = type_info(&st, &t, BUILDING, ALL, view).await.expect("info")
+            let Some((got, partial)) = type_info(&st, &t, BUILDING, ALL, view, WAIT)
+                .await
+                .expect("info")
             else {
                 // only the fold judges each Entity's other types
                 assert_eq!(shape, "a type omitted beside it");
@@ -1529,7 +1580,7 @@ mod discovery_folds {
             assert!(!cut && !partial, "{shape}");
             assert_eq!(got, fold, "{shape}");
             // the fold stops at a ceiling of 5 Entities read; the count does not
-            let (low, _) = type_info(&st, &t, BUILDING, 5, view)
+            let (low, _) = type_info(&st, &t, BUILDING, 5, view, WAIT)
                 .await
                 .expect("info")
                 .expect("catalogue");
@@ -1544,10 +1595,17 @@ mod discovery_folds {
             let cut = shape == "an engine q";
             assert_eq!((got, partial), (fold.0, cut), "{shape}: /types/Building");
         }
-        let (all, _) = type_info(&st, &t, BUILDING, ALL, None)
+        let (all, _) = type_info(&st, &t, BUILDING, ALL, None, WAIT)
             .await
             .expect("info")
             .expect("catalogue");
+        // probes past their deadline: the count stays exact, the answer says
+        // it is incomplete
+        let (cut, partial) = type_info(&st, &t, BUILDING, ALL, None, std::time::Duration::ZERO)
+            .await
+            .expect("info")
+            .expect("catalogue");
+        assert_eq!((cut.0, partial), (61, true));
         assert_eq!(all.0, 61);
         assert!(
             all.1[&a1].contains("GeoProperty"),

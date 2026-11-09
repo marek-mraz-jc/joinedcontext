@@ -594,6 +594,14 @@ pub use antares_ql::regex::{MAX_REGEX_CACHE, MAX_REGEX_PROGRAM_BYTES};
 /// enforces it (`antares_ql::parse_q`).
 pub use antares_ql::MAX_Q_NODES;
 
+/// How long the probes of one discovery answer (`/types`, `/types/{type}`,
+/// `/attributes`) may run before the answer is given with what they found
+/// and the 199 warning of an incomplete result. A probe for an Attribute few
+/// Entities carry reads the type until it meets one: on the prod rehearsal
+/// `name` sits on 1 076 of 255 283 Gardens, and its probe ran past the
+/// gateway's 10 s cut, which answers 503 and nothing at all.
+pub const DISCOVERY_WAIT: std::time::Duration = std::time::Duration::from_secs(6);
+
 /// → 403 TooManyResults (5.5.6). Deployment knob
 /// (ANTARES_DISCOVERY_SCAN_MAX): documents ONE unpaginated whole-tenant fold
 /// may read or hold. The folds that carry it are the ones the spec gives no
