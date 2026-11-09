@@ -11899,7 +11899,17 @@
       "quick": "Rychlé rozsahy"
     },
     "refreshAuto": "Automaticky",
-    "none": "Žádná"
+    "none": "Žádná",
+    "geomap": {
+      "label": "Mapa {title}: {n} značek",
+      "noneTitle": "Žádný řádek nemá polohu",
+      "none": "Žádný z {rows} načtených řádků nemá bod k vykreslení.",
+      "mode": "Tato mapa čte polohu z bodu GeoJSON nebo z polí zeměpisné šířky a délky, ne způsobem „{mode}“.",
+      "missing": "{n} z {rows} řádků nemá polohu a není vykresleno.",
+      "basemap": "Podklad „{type}“ se zde nekreslí.",
+      "view": "Uložený pohled se nezachová; mapa se přizpůsobí značkám.",
+      "layers": "Kreslí se jen první z {n} vrstev."
+    }
   },
   "repositories": {
     "title": "Repozitáře",

@@ -97,6 +97,7 @@ function LivePanel({ project, uid, panel, asked, tick, locale, at, words, onWide
       onZoom={onZoom}
       quiet={quiet && failed}
       timeInfo={panel.hideTimeOverride ? undefined : overrideWords(range, t)}
+      project={project}
     />
   );
 }

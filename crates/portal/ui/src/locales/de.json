@@ -11899,7 +11899,17 @@
       "quick": "Schnellauswahl"
     },
     "refreshAuto": "Automatisch",
-    "none": "Keiner"
+    "none": "Keiner",
+    "geomap": {
+      "label": "Karte von {title}: {n} Markierungen",
+      "noneTitle": "Keine Zeile hat einen Ort",
+      "none": "Keine der {rows} gelesenen Zeilen enthält einen Punkt zum Zeichnen.",
+      "mode": "Diese Karte liest Orte aus einem GeoJSON-Punkt oder aus Breiten- und Längenfeldern, nicht über „{mode}“.",
+      "missing": "{n} von {rows} Zeilen haben keinen Ort und werden nicht gezeichnet.",
+      "basemap": "Die Grundkarte „{type}“ wird hier nicht gezeichnet.",
+      "view": "Die gespeicherte Ansicht bleibt nicht erhalten; die Karte passt sich den Markierungen an.",
+      "layers": "Nur die erste von {n} Ebenen wird gezeichnet."
+    }
   },
   "repositories": {
     "title": "Repositories",

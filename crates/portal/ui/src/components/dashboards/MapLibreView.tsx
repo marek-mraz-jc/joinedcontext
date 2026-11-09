@@ -32,6 +32,13 @@ export interface MapLayer {
    * holds. Only for a point layer; MapLibre clusters points alone.
    */
   cluster?: boolean;
+  /**
+   * One fixed look for every circle: a colour MapLibre parses, the radius in px and the opacity,
+   * as a Grafana geomap markers layer sets them. It wins over `colorBy` and `sizeBy`.
+   */
+  marker?: { color: string; size: number; opacity: number };
+  /** `false` opens no popup on a click (a geomap layer with its tooltip off). */
+  popup?: boolean;
   /** The popup's own button, opening the feature's entity by its `id` property (T-3256). */
   open?: { label: string; onOpen: (id: string) => void };
 }
@@ -123,6 +130,16 @@ function paintFor(layer: MapLayer): Record<string, unknown> {
     return { "fill-color": color, "fill-opacity": 0.5, "fill-outline-color": outlineColour() };
   }
 
+  if (layer.marker) {
+    return {
+      "circle-color": layer.marker.color,
+      "circle-radius": layer.marker.size,
+      "circle-opacity": layer.marker.opacity,
+      "circle-stroke-width": 1,
+      "circle-stroke-color": outlineColour(),
+      "circle-stroke-opacity": layer.marker.opacity,
+    };
+  }
   const [minRadius, maxRadius] = layer.sizeBy?.range ?? [5, 5];
   const [low, high] = layer.colorBy?.domain ?? [0, 100];
   const radius =
@@ -361,7 +378,7 @@ export function MapLibreView({
       }
       listen(layer.name, "click", (event) => {
         const feature = event.features?.[0];
-        if (!feature) {
+        if (!feature || layer.popup === false) {
           return;
         }
         new Popup()

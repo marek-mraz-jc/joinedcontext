@@ -13,6 +13,7 @@ import type { Frame } from "./frames";
 import { hasData, outsideRange } from "./frames";
 import type { FieldConfigSource } from "./fieldConfig";
 import { BarChartPanel, HeatmapPanel, HistogramPanel, PieChartPanel, StateTimelinePanel } from "./ChartPanels";
+import { GeomapPanel } from "./GeomapPanel";
 import { TablePanel } from "./TablePanel";
 import { TimeSeriesPanel } from "./TimeSeriesPanel";
 import { BarGaugePanel, GaugePanel, StatPanel } from "./ValuePanels";
@@ -45,7 +46,7 @@ export interface PanelData {
 }
 
 /** The panel types drawn here; others fall back to a table. */
-export const DRAWN = ["timeseries", "table", "stat", "gauge", "bargauge", "barchart", "piechart", "heatmap", "histogram", "state-timeline", "text"] as const;
+export const DRAWN = ["timeseries", "table", "stat", "gauge", "bargauge", "barchart", "piechart", "heatmap", "histogram", "state-timeline", "text", "geomap"] as const;
 
 export interface PanelViewProps {
   panel: PanelDefinition;
@@ -70,9 +71,11 @@ export interface PanelViewProps {
   quiet?: boolean;
   /** The panel's own range in Grafana's words (`Last 1 hour + timeshift -1d`), beside its title. */
   timeInfo?: string;
+  /** The project, whose basemap route a geomap panel draws on. */
+  project?: string;
 }
 
-function Body({ panel, data, from, to, locale, height }: Required<Pick<PanelViewProps, "panel" | "from" | "to" | "locale" | "height">> & { data: PanelData }): ReactNode {
+function Body({ panel, data, from, to, locale, height, project }: Required<Pick<PanelViewProps, "panel" | "from" | "to" | "locale" | "height">> & { data: PanelData; project?: string }): ReactNode {
   const title = panel.title ?? "";
   const common = { title, frames: data.frames, fieldConfig: panel.fieldConfig, options: panel.options, height, locale };
   switch (panel.type) {
@@ -94,6 +97,8 @@ function Body({ panel, data, from, to, locale, height }: Required<Pick<PanelView
       return <HistogramPanel {...common} from={from} to={to} />;
     case "state-timeline":
       return <StateTimelinePanel {...common} from={from} to={to} />;
+    case "geomap":
+      return <GeomapPanel {...common} project={project} empty={(text, description) => <PanelState icon="globe" title={text} description={description} />} />;
     default:
       return <TablePanel title={title} frames={data.frames} fieldConfig={panel.fieldConfig} options={panel.options} locale={locale} />;
   }
@@ -137,7 +142,7 @@ function sentence(text: string): string {
   return /[.!?…]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
-export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2", asked, onWiden, onZoom, quiet, timeInfo }: PanelViewProps): JSX.Element {
+export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2", asked, onWiden, onZoom, quiet, timeInfo, project }: PanelViewProps): JSX.Element {
   const { t } = useTranslation();
   const Heading = headingLevel;
   const title = panel.title || t("dashboardView.untitled");
@@ -193,7 +198,7 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
       </PanelState>
     );
   } else {
-    body = <Body panel={panel} data={data} from={from} to={to} locale={locale} height={height} />;
+    body = <Body panel={panel} data={data} from={from} to={to} locale={locale} height={height} project={project} />;
   }
   return (
     <Card as="section" padding="sm" aria-label={title} className="flex h-full min-w-0 flex-col gap-2" data-panel-type={panel.type}>
