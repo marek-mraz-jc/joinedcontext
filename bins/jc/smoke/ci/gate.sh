@@ -26,6 +26,15 @@ if [ -n "${SMOKE_STOP:-}" ]; then
   roles=$(printf '%s\n' kaisatsu dataroom daiya ekiben antares gateway portal shako | grep -vx "$SMOKE_STOP" | paste -sd,)
   REHEARSAL_ROLE=$roles "$repo/deploy/rehearsal/up.sh" gate "$port" "$pg_port"
 fi
+# The suites read what the reconciler made of the import (views, schemas, policies): wait for the
+# second leader pass logged from here, since the first may have started before the import ended.
+# Without a Portal (SMOKE_STOP=portal) no pass comes, so the wait is bounded and only logs.
+mark=$(wc -l < "$home/jc.log")
+for _ in $(seq "${SMOKE_CONVERGE_SECS:-300}"); do
+  [ "$(tail -n +"$((mark + 1))" "$home/jc.log" | grep -c 'sync run finished.*leader=true')" -ge 2 ] && break
+  sleep 1
+done
+echo "gate: $(tail -n +"$((mark + 1))" "$home/jc.log" | grep -c 'sync run finished.*leader=true') reconciler passes since the import"
 
 # jc names itself localhost:<port> (up.sh --base-host): tokens carry that issuer.
 # The suites read their credentials from one state dir: jc's own, plus the service tokens
