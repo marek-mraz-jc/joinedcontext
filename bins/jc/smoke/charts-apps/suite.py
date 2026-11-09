@@ -382,7 +382,7 @@ def main(argv=None) -> int:
                 browser = Browser(a.base_url, s.jar)
             if token:  # a fresh one: the App's tokens live 60 s
                 token = app_token(a.base_url, app_realm, f"app-{app.name}", HOLDER, a.timeout)
-            for row in browser.app(f"/apps/{urllib.parse.quote(app.name)}/", app.name, shots_dir, token):
+            for row in browser.app(app.name, shots_dir, token):
                 ok = row.get("status") == 200 and row.get("dataCount", 0) > 0 and not row.get("bad") and not row.get("error")
                 res.check(f"app.page.{row['width']}", tgt, f"browser {row['url']} at {row['width']} px",
                           "200, at least one /api/ read 2xx, none failed",
