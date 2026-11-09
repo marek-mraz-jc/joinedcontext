@@ -369,12 +369,14 @@ fn resolve_secret_value(raw: &str, field_path: &str, opts: &ApplyOptions) -> Res
     let trimmed = raw.trim();
     if let Some(inner) = trimmed.strip_prefix("$(").and_then(|s| s.strip_suffix(')')) {
         if let Some(file_path) = inner.strip_prefix("file:") {
-            let candidate = Path::new(file_path.trim());
             let base_dir = opts.secrets_dir.as_deref().ok_or_else(|| {
                 KaisatsuError::BadRequest(format!(
                     "{field_path}: $(file:...) requires a configured secrets directory"
                 ))
             })?;
+            // A relative name is read under the secrets directory, so a realm file and its
+            // secrets copied to another path together still apply.
+            let candidate = base_dir.join(file_path.trim());
             let canonical_base = base_dir
                 .canonicalize()
                 .unwrap_or_else(|_| base_dir.to_path_buf());
