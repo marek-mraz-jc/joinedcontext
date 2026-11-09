@@ -1,3 +1,4 @@
+import pytest
 """Unit tests of the pipelines suite and bench (no jc needed):
 python3 -m pytest bins/jc/smoke/pipelines/tests"""
 
@@ -156,3 +157,15 @@ def test_the_runner_check_sends_the_ekiben_token_jc_was_given_as_a_file(tmp_path
     finally:
         srv.shutdown()
     assert suite.ekiben_token(tmp_path / "nothing" / "state") is None
+
+
+def test_the_admin_signs_in_at_the_realm_the_state_names(tmp_path, monkeypatch):
+    import common
+    import people
+    seen = []
+    monkeypatch.setattr(common.Http, "call", lambda self, m, path, *a, **k: seen.append(path) or (401, {}, b""))
+    (tmp_path / "portal-admin-client-secret").write_text("x")
+    (tmp_path / "realm-name.txt").write_text("smartcity")
+    with pytest.raises(RuntimeError, match="401"):
+        people.Admin("http://127.0.0.1:9", tmp_path)
+    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]

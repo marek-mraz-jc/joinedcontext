@@ -1,3 +1,4 @@
+import pytest
 """Unit tests of the mcp suite's reading of MCP answers (the live proof is a rehearsal run).
 
     python3 -m pytest bins/jc/smoke/mcp/tests -q
@@ -59,3 +60,16 @@ def test_totals_are_found_at_the_top_or_one_level_down():
     assert client.total_of({"entities": [], "total": 7}) == 7
     assert client.total_of({"result": {"total": 3}}) == 3
     assert client.total_of({"entities": []}) is None
+
+
+def test_the_persona_fixture_signs_in_at_the_realm_the_state_names(tmp_path, monkeypatch):
+    import common
+    import personas
+    seen = []
+    monkeypatch.setattr(common.Http, "call", lambda self, m, path, *a, **k: seen.append(path) or (401, {}, b""))
+    (tmp_path / "portal-admin-client-secret").write_text("x")
+    (tmp_path / "realm-name.txt").write_text("smartcity")
+    f = personas.Fixture("http://127.0.0.1:9", tmp_path, "o/r")
+    with pytest.raises(RuntimeError, match="401"):
+        f.admin_token()
+    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]

@@ -24,6 +24,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "deploy" / "rehearsal"))
 import rehearsal as R  # noqa: E402  (Http, sign-in, person helpers of the rehearsal kit)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common import realm_of  # noqa: E402
 
 CONFIG = ("joinedcontext", "configuration")
 DENIED = (403, 404)
@@ -46,6 +48,8 @@ class Suite:
         self.rows = []
         self.base = a.base_url.rstrip("/")
         self.state = Path(a.state) if a.state else None
+        self.realm = realm_of(self.state)
+        self.exp: dict = {}
         self.export = Path(a.export)
         self.people: dict[str, dict] = {}
         self.dashboards: dict[str, tuple[str, str]] = {}
@@ -107,7 +111,7 @@ class Suite:
             names[f"{org}-admin"] = []
             names[f"{org}-member"] = []
         for key, groups in names.items():
-            uid, pw = R.make_person(h, tok, "jc", f"mo-{key}", groups=groups)
+            uid, pw = R.make_person(h, tok, self.realm, f"mo-{key}", groups=groups)
             self.people[key] = {"username": f"mo-{key}", "id": uid, "password": pw}
         # Their RoleBindings, in the installation's configuration repository (a forge commit the
         # Portal syncs, as a person's change would be once approved).
@@ -170,11 +174,11 @@ class Suite:
         """Usernames in the reconciler's group `{org}_bound` (jc_org of org-scoped bindings)."""
         h = self.client()
         auth = {"Authorization": f"Bearer {R.admin_token(h, self.state)}"}
-        st, groups = h.json("GET", f"/id/admin/realms/jc/groups?search={org}_bound", headers=auth)
+        st, groups = h.json("GET", f"/id/admin/realms/{self.realm}/groups?search={org}_bound", headers=auth)
         g = next((g for g in groups or [] if isinstance(g, dict) and g.get("name") == f"{org}_bound"), None)
         if st != 200 or not g:
             return set()
-        st, members = h.json("GET", f"/id/admin/realms/jc/groups/{g['id']}/members", headers=auth)
+        st, members = h.json("GET", f"/id/admin/realms/{self.realm}/groups/{g['id']}/members", headers=auth)
         return {m["username"] for m in members} if st == 200 and isinstance(members, list) else set()
 
     def commit(self, files, message, repo=CONFIG):
@@ -224,7 +228,7 @@ class Suite:
         q = urllib.parse.urlencode({"client_id": client_id, "redirect_uri": redirect, "response_type": "code",
                                     "scope": f"openid {scope}", "state": "mo", "code_challenge": challenge,
                                     "code_challenge_method": "S256"})
-        login_url, st, page = R.follow(h, f"/id/realms/jc/protocol/openid-connect/auth?{q}")
+        login_url, st, page = R.follow(h, f"/id/realms/{self.realm}/protocol/openid-connect/auth?{q}")
         held[scope] = None
         if st != 200:
             return None
@@ -236,7 +240,7 @@ class Suite:
         if "code=" not in loc:
             return None
         code = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)["code"][0]
-        st, tok = h.json("POST", "/id/realms/jc/protocol/openid-connect/token", form={
+        st, tok = h.json("POST", f"/id/realms/{self.realm}/protocol/openid-connect/token", form={
             "grant_type": "authorization_code", "client_id": client_id, "code": code,
             "redirect_uri": redirect, "code_verifier": verifier,
             **({"client_secret": R.read_secret(self.state, secret_file)} if secret_file else {})})
@@ -571,7 +575,7 @@ class Suite:
         subject = self.bearer(key)
         if not subject:
             return None, None
-        st, tok = self.client().json("POST", "/id/realms/jc/protocol/openid-connect/token", form={
+        st, tok = self.client().json("POST", f"/id/realms/{self.realm}/protocol/openid-connect/token", form={
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
             "client_id": "portal-api", "client_secret": R.read_secret(self.state, "portal-client-secret"),
             "subject_token": subject, "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
@@ -757,6 +761,11 @@ class Suite:
         (out / "shots.json").write_text(json.dumps(shots, indent=1))
 
     def run(self):
+        manifest = json.loads((self.export / "manifest.json").read_text())
+        if "multiorg" not in manifest:
+            self.row("setup", "all", "read manifest.json", "a multiorg block (compose.py)", "none", None,
+                     "not applicable: the export is one installation, not a composed multi-organization bundle")
+            return
         self.expectations()
         if not self.state:
             self.row("setup", "all", "-", "--state", "none", None, "no --state: persons cannot be made")
@@ -780,7 +789,8 @@ class Suite:
 
     def write(self, out: Path):
         out.mkdir(parents=True, exist_ok=True)
-        (out / "results.json").write_text(json.dumps(self.rows, indent=1))
+        (out / "results.json").write_text(json.dumps({"suite": "multiorg", "base": self.base, "checks": self.rows},
+                                                     indent=1))
         tools = {k: {"portal": v.get("tools"), "connector": v.get("connectorTools")}
                  for k, v in self.people.items() if v.get("tools") is not None or v.get("connectorTools")}
         (out / "mcp-tools.json").write_text(json.dumps(tools, indent=1))

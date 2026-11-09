@@ -52,7 +52,7 @@ sys.path.insert(0, str(HERE.parent))
 import checks  # noqa: E402
 import personas as ps  # noqa: E402
 import walk  # noqa: E402
-from common import FAIL, SKIP, Http, Results, loopback_only, read_token  # noqa: E402
+from common import FAIL, SKIP, Http, Results, loopback_only, read_token, realm_of  # noqa: E402
 
 LOGIN = "/api/v1/auth/login"
 HEIGHT = {400: 860, 1440: 900}
@@ -409,6 +409,7 @@ def main(argv=None) -> int:
     p.add_argument("--person-token-file", help="unused: the walk signs in through the browser")
     p.add_argument("--shako-token-file")
     p.add_argument("--export", type=Path)
+    p.add_argument("--state", help="the rehearsal's state dir: realm-name.txt names the realm the personas are made in")
     p.add_argument("--project")
     p.add_argument("--personas", default="admin,viewer,outsider")
     p.add_argument("--widths", default="1440,400")
@@ -424,7 +425,7 @@ def main(argv=None) -> int:
     plan = [x for x in ps.plan(a.export, a.project) if x["name"] in a.personas.split(",")]
     passwords: dict[str, str | None] = {}
     token = read_token(a.admin_token_file)
-    admin = ps.Admin(h, token) if token else None
+    admin = ps.Admin(h, token, realm_of(a.state)) if token else None
     for x in plan:
         if not admin:
             x["skip"] = "no --admin-token-file: no test person can be made"

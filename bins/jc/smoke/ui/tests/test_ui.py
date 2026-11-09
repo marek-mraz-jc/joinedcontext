@@ -107,3 +107,18 @@ def test_the_judge_passes_only_scores_of_four_and_up_without_a_high_finding(tmp_
     suite.fold_judge(res, shots, str(tmp_path / "j.json"))
     got = {r["id"].rsplit("/", 1)[1]: r["result"] for r in res.rows}
     assert got == {"a": "pass", "b": "fail", "c": "fail", "d": "skip"}
+
+
+def test_the_persona_admin_calls_the_realm_it_is_given():
+    import personas
+
+    class H:
+        seen = []
+
+        def call(self, m, path, *a, **k):
+            self.seen.append(path)
+            return 200, {}, b"[]"
+
+    h = H()
+    personas.Admin(h, "t", "smartcity").groups()
+    assert h.seen == ["/id/admin/realms/smartcity/groups?briefRepresentation=false&max=1000"]
