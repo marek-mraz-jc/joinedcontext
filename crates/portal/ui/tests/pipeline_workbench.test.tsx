@@ -62,6 +62,9 @@ const LINKML = [
 const DATASOURCES = [
   manifest("DataSource", "shmu-csv", { type: "http", http: { url: "https://feeds.example/air.csv", format: "csv" } }),
   manifest("DataSource", "hsl-hfp", { type: "mqtt", mqtt: { urls: ["tcp://mqtt.hsl.fi:1883"], topics: ["/hfp/v2/journey/ongoing/vp/#"] } }),
+  // prod's banskabystrica/kataster-inspire: one empty start message, the steps fetch the records.
+  manifest("DataSource", "kataster-inspire", { type: "generate", input: { mapping: 'root = ""', count: 1, interval: "" } }),
+  manifest("DataSource", "golemio", { type: "http", http: { url: "https://api.golemio.cz/v2/x", authorization: { secretRef: "golemio" } } }),
 ];
 const ENDPOINTS = [manifest("Endpoint", "air-write", { contextSpaceRef: "ovzdusie", slug: "ep-air" })];
 /** A page of the endpoint, as the gateway answers the person's session. */
@@ -557,6 +560,23 @@ describe("the pipeline workbench", () => {
     expect(alert).toHaveTextContent("give the sample as text");
     expect(screen.getByText(en.pipelines.workbench.output.waiting)).toBeInTheDocument();
     expect(seen.ops.map((op) => op.name)).toEqual(["jc_pipeline_sample_source"]);
+  });
+
+  // Gate 2026-11-09T192034Z: the edit page of banskabystrica/kataster asked the sample of its
+  // generate source on load and met the server's 400. The manifest says a test reads nothing there.
+  it.each([
+    ["kataster-inspire", "makes the pipeline's start message itself"],
+    ["golemio", "signs in with a credential"],
+  ])("a_source_with_nothing_a_test_reads_says_why_and_asks_nothing (%s)", async (name, why) => {
+    const seen: Seen = { ops: [] };
+    stub({ sample: problem(400, "refused") }, seen);
+    show({ source: { dataSourceRef: name }, compute: { kind: "bloblang", bloblang: MAPPING }, targetEndpoint: URN } as PipelineForm);
+    const sample = step(en.pipelines.workbench.sample.title);
+    expect(await within(sample).findByText(new RegExp(`^${name} ${why}`))).toBeInTheDocument();
+    expect(within(sample).queryByRole("alert")).toBeNull();
+    await new Promise((done) => setTimeout(done, 50));
+    expect(seen.ops.map((op) => op.name)).not.toContain("jc_pipeline_sample_source");
+    expect(seen.ops.map((op) => op.name)).not.toContain("jc_pipeline_try_mapping");
   });
 
   it("a_dropped_file_is_the_sample_and_drafts_an_empty_mapping", async () => {

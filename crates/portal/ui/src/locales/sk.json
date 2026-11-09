@@ -2880,6 +2880,8 @@
         "title": "Vzorka",
         "hint": "Prvé záznamy, ktoré zdroj vráti, tak ako ich pipeline prečíta.",
         "waiting": "Vyberte zdroj alebo dajte súbor a uvidíte jeho záznamy.",
+        "generated": "{source} si úvodnú správu pipeline vytvára sám: záznamy prichádzajú z vlastných požiadaviek mapovania, takže pred spustením nie je čo čítať. Mapovanie vyskúšate na súbore so záznamami.",
+        "credential": "{source} sa prihlasuje prístupovým údajom, ktorý test nikdy nepoužije. Mapovanie vyskúšate na súbore s jeho záznamami.",
         "empty": "Zdroj nevrátil žiadny záznam.",
         "count": "{count, plural, one {# záznam} few {# záznamy} other {# záznamov}} s {fields, plural, one {# poľom} other {# poľami}}",
         "countFirst": "Prvé {count, plural, one {# záznam} few {# záznamy} other {# záznamov}} s {fields, plural, one {# poľom} other {# poľami}}; zdroj má viac",

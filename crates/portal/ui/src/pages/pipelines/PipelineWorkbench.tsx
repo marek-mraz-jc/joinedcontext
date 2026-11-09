@@ -238,6 +238,19 @@ export function readSample(output: unknown): SampleAnswer {
   };
 }
 
+/**
+ * Why the DataSource named has nothing a test reads, as its manifest says: a `generate` source
+ * makes the start message itself (the records come from the steps), and an `http` source with a
+ * credential is one a test never signs in to (pipeline_test.rs probe_plan, MF-38). The server
+ * refuses both with 400; the page names the reason and asks nothing.
+ */
+export function unsampledSource(dataSources: Manifest[], name: string | undefined): "generated" | "credential" | null {
+  const spec = dataSources.find((source) => source.metadata.name === name)?.spec as Record<string, unknown> | undefined;
+  if (spec?.type === "generate") return "generated";
+  const http = spec?.type === "http" ? (spec.http as Record<string, unknown> | undefined) : undefined;
+  return http?.authorization != null ? "credential" : null;
+}
+
 /** Whether the DataSource named streams (an MQTT topic, a queue) rather than answers a request. */
 export function streamsSource(dataSources: Manifest[], name: string | undefined): boolean {
   const spec = dataSources.find((source) => source.metadata.name === name)?.spec as Record<string, unknown> | undefined;
@@ -604,12 +617,13 @@ export function PipelineWorkbench({
 
   // Step 2: the sample.
   const sample = sampleFor(draft, file, dataSources, endpoints);
-  const source = sourceFor(draft, file, sample);
+  const unsampled = file ? null : unsampledSource(dataSources, draft?.source?.dataSourceRef);
+  const source = unsampled ? undefined : sourceFor(draft, file, sample);
   // A page of one of this platform's endpoints is read here, once, with the person's session
   // (T-3088): the runner fetches with no credential and the endpoint answered it 401.
   const inlined = useQuery({
     queryKey: ["pipeline-workbench", project, "inline", sample],
-    enabled: sample !== undefined && !file,
+    enabled: sample !== undefined && !file && !unsampled,
     retry: false,
     refetchOnWindowFocus: false,
     queryFn: async () => {
@@ -842,7 +856,13 @@ export function PipelineWorkbench({
       </Step>
 
       <Step number={2} id="workbench-sample" title={t("pipelines.workbench.sample.title")} hint={t("pipelines.workbench.sample.hint")}>
-        {source === undefined ? (
+        {unsampled ? (
+          <Alert tone="info">
+            {unsampled === "generated"
+              ? t("pipelines.workbench.sample.generated", { source: draft?.source?.dataSourceRef ?? "" })
+              : t("pipelines.workbench.sample.credential", { source: draft?.source?.dataSourceRef ?? "" })}
+          </Alert>
+        ) : source === undefined ? (
           <p className="text-caption text-fg-subtle">{t("pipelines.workbench.sample.waiting")}</p>
         ) : inlined.isError ? (
           <Alert role="alert" tone="danger">
