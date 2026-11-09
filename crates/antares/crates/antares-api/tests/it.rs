@@ -87,6 +87,7 @@ mod policy_gate_seam;
 mod policy_operation_members;
 mod policy_pre_image;
 mod policy_pre_image_fail_closed;
+mod policy_timeout_fail_closed;
 mod policy_temporal_upsert_5_6_11;
 mod policy_temporal_window_g6;
 mod pool_overload_6_3_2;

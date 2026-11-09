@@ -365,6 +365,42 @@ mod tests {
         Ok(())
     }
 
+    /// The view is a key (the `@view` pair among the headers): the same caller
+    /// through a view whose policies do not grant it is refused, although its
+    /// read through the granting view is kept. So is one header alone.
+    #[test]
+    fn a_read_through_another_view_or_header_is_decided_afresh() -> Result<(), String> {
+        let mut doc = json!({ "policies": [grant("city"), grant("other")] });
+        if let Some(o) = doc.as_object_mut() {
+            o.insert("views".into(), json!({"a": ["g-city"], "b": ["g-other"]}));
+        }
+        let t = compile(&doc).map(Arc::new)?;
+        let through = |view: &str| -> Result<Subject, String> {
+            let mut s = subject("t6618-view", "city")?;
+            s.headers.push((antares_api::policy::VIEW_PAIR.into(), view.into()));
+            Ok(s)
+        };
+        let types = [CAR.to_owned()];
+        let op = Operation {
+            types: &types,
+            ..Operation::new("5.7.2")
+        };
+        let (now, runs) = (Utc::now(), Cell::new(0));
+        let (a, b) = (through("a")?, through("b")?);
+        filter(&ask(&t, &a, &op, now, &runs))?;
+        assert!(matches!(ask(&t, &b, &op, now, &runs), Decision::Deny(_)));
+        filter(&ask(&t, &a, &op, now, &runs))?;
+        assert_eq!(runs.get(), 2);
+        // the same subject and groups, one more header: decided afresh
+        let mut restricted = a.clone();
+        restricted
+            .headers
+            .push(("x-jc-restricted".into(), "true".into()));
+        ask(&t, &restricted, &op, now, &runs);
+        assert_eq!(runs.get(), 3);
+        Ok(())
+    }
+
     /// A grant whose validity ends refuses from that instant, kept answer or not.
     #[test]
     fn a_grant_that_expires_is_decided_afresh() -> Result<(), String> {

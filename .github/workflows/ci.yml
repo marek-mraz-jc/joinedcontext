@@ -172,6 +172,10 @@ jobs:
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: cargo-nextest }
       - run: cargo nextest run --workspace --locked --profile ci
+      # The view and policy matrix compiles only with `full,jc-policy` (no member turns them on):
+      # jc's own feature set (bins/jc/Cargo.toml antares-broker), so each view sees only its own
+      # data through the shared Router and an unvouched subject is refused (T-6677, F-01).
+      - run: cargo nextest run --locked --profile ci -p antares-broker --features full,jc-policy,linkml,ical,feed --test views_matrix
       - run: cargo test --workspace --locked --no-fail-fast --doc
   ekiben:
     needs: changes
