@@ -805,3 +805,13 @@ def test_a_service_token_jc_holds_in_memory_is_read_from_the_kit_secrets(tmp_pat
     (tmp_path / "state" / "antares-admin-token").write_text("on-disk\n")
     assert rh.read_secret(tmp_path / "state", "shako-token") == "given"
     assert rh.read_secret(tmp_path / "state", "antares-admin-token") == "on-disk"
+
+
+def test_every_secret_up_sh_makes_is_long_enough_for_a_jc_token(tmp_path):
+    # dataroom refuses a Portal publisher token under 32 printable characters; up.sh's secret()
+    # makes every token, so each one it makes has 64.
+    fn = subprocess.run(["sed", "-n", "/^secret()/,/^}/p", str(HERE / "up.sh")], capture_output=True, text=True).stdout
+    (tmp_path / "secrets").mkdir()
+    script = f'home={tmp_path}\n{fn}\nfor i in $(seq 30); do cat "$(secret t$i)"; echo; done'
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout.split()
+    assert len(out) == 30 and all(len(t) == 64 and t.isalnum() for t in out)
