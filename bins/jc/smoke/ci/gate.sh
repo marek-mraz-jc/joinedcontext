@@ -22,7 +22,8 @@ tar -xzf "$here/synth-export.tgz" -C "$export_dir"
 python3 -I "$here/redate.py" "$export_dir"
 "$repo/deploy/rehearsal/import.sh" gate "$port" "$pg_port" "$export_dir"
 
-args=(--base-url "http://127.0.0.1:$port" --out "$out" --export "$export_dir" --state "$home/state"
+# jc names itself localhost:<port> (up.sh --base-host): tokens carry that issuer.
+args=(--base-url "http://localhost:$port" --out "$out" --export "$export_dir" --state "$home/state"
       --log-file "$home/jc.log" --admin-url "http://127.0.0.1:$((pg_port + 200))"
       --admin-token-file "$home/secrets/metrics-token")
 [ "${SMOKE_E2E:-0}" = 1 ] && args+=(--e2e)
