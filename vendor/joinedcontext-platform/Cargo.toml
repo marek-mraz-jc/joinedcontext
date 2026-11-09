@@ -1,8 +1,10 @@
-# Vendored into the jc monorepo (vendor/SOURCES.md): only the crates the Portal links; the kreuzberg
-# patch belongs to crates not copied here.
+# Vendored into the jc monorepo (vendor/SOURCES.md): the crates the Portal links and agent-proxy.
+# crates/assistant is a member of the jc root workspace instead, which carries the kreuzberg patch
+# (vendor/kreuzberg) in its [patch.crates-io].
 [workspace]
 resolver = "2"
-members = ["crates/jc-core", "crates/jc-dcat", "crates/jc-manifest", "crates/jc-ngsi-input", "crates/jc-relationships", "crates/jc-tabular", "crates/context-gateway", "crates/jcctl"]
+members = ["crates/jc-core", "crates/jc-dcat", "crates/jc-manifest", "crates/jc-ngsi-input", "crates/jc-relationships", "crates/jc-tabular", "crates/context-gateway", "crates/jcctl", "crates/agent-proxy"]
+exclude = ["crates/assistant", "vendor/kreuzberg"]
 
 [workspace.package]
 edition = "2021"

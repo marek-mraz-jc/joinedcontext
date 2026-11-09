@@ -1,0 +1,888 @@
+//! Charts and maps of a data answer (T-4657, ADR-N-053 §2.9, API/05 §1.3 and §1.4). Code builds
+//! every spec from the rows the answer read: the model only names a table and its columns with
+//! [`TOOL`], and a table whose rows carry a location gets a map without being asked. The specs
+//! are drawn by the renderer on `viz.{domain}`, which checks them again.
+
+use serde::Deserialize;
+use serde_json::{json, Map, Value};
+
+use super::agent::Table;
+
+/// The tool the data loop offers when the deployment has a `viz.{domain}`.
+pub const TOOL: &str = "show_visualization";
+/// The map spec's `$schema` (ADR-N-053 §2.9).
+pub const MAP_SCHEMA: &str = "urn:joinedcontext:map:v1";
+const VEGA_LITE: &str = "https://vega.github.io/schema/vega-lite/v5.json";
+/// The values a default map's popup shows beside the label and the time.
+const POPUP: usize = 4;
+const TITLE_CHARS: usize = 80;
+/// The fewest values a chart is drawn of (T-4682).
+const MIN_POINTS: usize = 3;
+/// The widget's type, sizes from its tokens (T-4682): an axis reads at 12 px, never a heading's size.
+const FONT: &str = "system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif";
+
+/// The domain a viz origin serves: `https://viz.dev.example.org` → `dev.example.org`.
+pub fn domain(viz: &url::Url) -> Option<&str> {
+    viz.host_str()?.strip_prefix("viz.")
+}
+
+/// A GeoJSON geometry the map draws, every position in range and rounded to 6 decimals;
+/// `None` for any other value.
+pub fn geometry(value: &Value) -> Option<Value> {
+    let kind = value.get("type")?.as_str()?;
+    let depth = match kind {
+        "Point" => 0,
+        "MultiPoint" | "LineString" => 1,
+        "MultiLineString" | "Polygon" => 2,
+        "MultiPolygon" => 3,
+        _ => return None,
+    };
+    Some(json!({"type": kind, "coordinates": positions(value.get("coordinates")?, depth)?}))
+}
+
+fn positions(value: &Value, depth: u8) -> Option<Value> {
+    let list = value.as_array()?;
+    if depth == 0 {
+        // An altitude, when there is one, is left out.
+        let (lon, lat) = (list.first()?.as_f64()?, list.get(1)?.as_f64()?);
+        let ok =
+            list.len() <= 3 && (-180.0..=180.0).contains(&lon) && (-90.0..=90.0).contains(&lat);
+        return ok.then(|| json!([round(lon), round(lat)]));
+    }
+    if list.is_empty() {
+        return None;
+    }
+    list.iter()
+        .map(|item| positions(item, depth - 1))
+        .collect::<Option<Vec<_>>>()
+        .map(Value::Array)
+}
+
+fn round(x: f64) -> f64 {
+    (x * 1e6).round() / 1e6
+}
+
+/// Each shown entity's location as [`geometry`] makes it, in the order of the table's rows
+/// (`routed::table_of` reads the same first `most` entities).
+pub fn geometries(text: &str, most: usize) -> Vec<Option<Value>> {
+    let Ok(value) = serde_json::from_str::<Value>(text) else {
+        return Vec::new();
+    };
+    let Some(entities) = value.get("entities").unwrap_or(&value).as_array() else {
+        return Vec::new();
+    };
+    entities
+        .iter()
+        .take(most)
+        .map(|entity| {
+            let location = entity.get("location")?;
+            geometry(location.get("value").unwrap_or(location))
+        })
+        .collect()
+}
+
+/// A cell as the map carries it: a structured value becomes its JSON text.
+fn plain(value: &Value) -> Value {
+    match value {
+        Value::Array(_) | Value::Object(_) => Value::String(value.to_string()),
+        other => other.clone(),
+    }
+}
+
+/// A row's name on a chart's axis: a URN reads as its last segment, never whole (T-4682).
+fn named(value: &Value) -> Value {
+    match value.as_str() {
+        Some(urn) if urn.starts_with("urn:") => {
+            Value::String(urn.rsplit(':').next().unwrap_or(urn).to_owned())
+        }
+        _ => plain(value),
+    }
+}
+
+/// The dataset's page when it is on our own hosts; the renderer refuses any other link.
+fn link<'a>(table: &'a Table, domain: &str) -> Option<&'a str> {
+    let page = table.dataset.as_deref()?;
+    let host = url::Url::parse(page)
+        .ok()
+        .filter(|u| u.scheme() == "https")?;
+    let host = host.host_str()?;
+    (host == domain || host.ends_with(&format!(".{domain}"))).then_some(page)
+}
+
+/// The map spec of `table`'s located rows: the `label` column, the `popup` columns with their
+/// units and the `time` column, nothing else of a row. `None` when no row has a location.
+fn map_of(
+    table: &Table,
+    label: usize,
+    popup: &[usize],
+    time: Option<usize>,
+    title: Option<&str>,
+    domain: &str,
+) -> Option<Value> {
+    let shown: Vec<usize> = std::iter::once(label)
+        .chain(popup.iter().copied())
+        .chain(time)
+        .collect();
+    let features: Vec<Value> = table
+        .rows
+        .iter()
+        .zip(&table.geometries)
+        .filter_map(|(row, geometry)| {
+            let properties: Map<String, Value> = shown
+                .iter()
+                .map(|&i| {
+                    let cell = row.get(i).map_or(Value::Null, plain);
+                    (table.columns[i].clone(), cell)
+                })
+                .collect();
+            Some(json!({"type": "Feature", "geometry": geometry.as_ref()?, "properties": properties}))
+        })
+        .collect();
+    if features.is_empty() {
+        return None;
+    }
+    let popup: Vec<Value> = popup
+        .iter()
+        .map(|&i| {
+            let mut field = json!({"field": table.columns[i], "label": table.columns[i]});
+            if let Some(unit) = table.units.get(i).cloned().flatten() {
+                field["unit"] = json!(unit);
+            }
+            field
+        })
+        .collect();
+    let mut spec = json!({
+        "$schema": MAP_SCHEMA,
+        "label": table.columns[label],
+        "popup": popup,
+        "data": {"type": "FeatureCollection", "features": features},
+    });
+    if let Some(time) = time {
+        spec["time"] = json!(table.columns[time]);
+    }
+    if let Some(title) = title {
+        spec["title"] = json!(title);
+    }
+    if let Some(page) = link(table, domain) {
+        spec["link"] = json!(page);
+    }
+    Some(spec)
+}
+
+/// Whether a column only points elsewhere (a relationship, a URN, a URL): no value for a popup.
+fn points_elsewhere(table: &Table, column: usize) -> bool {
+    table.columns[column].starts_with("ref")
+        || table.rows.iter().all(|row| match row.get(column) {
+            Some(Value::String(s)) => s.starts_with("urn:") || s.starts_with("http"),
+            Some(Value::Null) | None => true,
+            Some(_) => false,
+        })
+}
+
+/// The map a table with located rows gets unasked (API/05 §1.3): its label, the first values
+/// the table leads with and `observedAt`.
+pub fn default_map(table: &Table, domain: &str) -> Option<Value> {
+    let time = table.columns.iter().position(|c| c == "observedAt");
+    // The model's key attributes where it marks them (DM-99, T-4672), else the first columns.
+    let key = |i: usize| table.summary.get(i).copied().unwrap_or(false);
+    let keyed = table.summary.iter().skip(1).any(|k| *k);
+    let popup: Vec<usize> = (1..table.columns.len())
+        .filter(|&i| Some(i) != time && !points_elsewhere(table, i) && (!keyed || key(i)))
+        .take(POPUP)
+        .collect();
+    map_of(table, 0, &popup, time, None, domain)
+}
+
+/// The tool the model may call, as the loop offers it.
+pub fn tool() -> Value {
+    json!({"type": "function", "function": {
+        "name": TOOL,
+        "description": "Show the person one table of this answer as a map, a line chart or a bar chart, drawn by code from that table's own rows. At most once per answer, and only when a picture says more than the table; then answer in text as usual, naming the few values that matter.",
+        "parameters": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "data", "label", "value", "title"],
+            "properties": {
+                "kind": {"type": "string", "enum": ["map", "line", "bar"], "description": "map needs a table whose rows have a location; line needs a time column"},
+                "data": {"type": "integer", "description": "the number n of a table you were given"},
+                "label": {"type": "string", "description": "the column that names each row, such as name"},
+                "value": {"type": "string", "description": "a numeric column of that table"},
+                "time": {"type": "string", "description": "a time column of that table, such as observedAt"},
+                "title": {"type": "string", "maxLength": TITLE_CHARS, "description": "a heading in the person's language naming what is shown, such as Denné odchody podľa zastávky; never an attribute name or a value"},
+            },
+        },
+    }})
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Kind {
+    Map,
+    Line,
+    Bar,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Request {
+    kind: Kind,
+    data: usize,
+    label: String,
+    value: String,
+    #[serde(default)]
+    time: Option<String>,
+    title: String,
+}
+
+/// The `visualization` event of one [`TOOL`] call: `{"spec"}` for a map, `{"spec", "rows"}` for
+/// a chart. `tables` are the answer's tables by their number; the error is told to the model.
+pub fn build(arguments: &str, tables: &[(usize, Table)], domain: &str) -> Result<Value, String> {
+    let request: Request = serde_json::from_str(arguments).map_err(|why| {
+        format!("The call was not made: {why}. Correct the arguments, or answer without a chart.")
+    })?;
+    let numbers = || {
+        tables
+            .iter()
+            .map(|(n, _)| n.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let Some((_, table)) = tables.iter().find(|(n, _)| *n == request.data) else {
+        return Err(format!(
+            "There is no table {}; the tables of this answer are: {}.",
+            request.data,
+            numbers()
+        ));
+    };
+    let column = |name: &str| {
+        table.columns.iter().position(|c| c == name).ok_or_else(|| {
+            format!(
+                "Table {} has no column `{name}`; its columns are: {}.",
+                request.data,
+                table.columns.join(", ")
+            )
+        })
+    };
+    let label = column(&request.label)?;
+    let value = column(&request.value)?;
+    let time = request.time.as_deref().map(column).transpose()?;
+    let numeric = table
+        .rows
+        .iter()
+        .filter_map(|row| row.get(value))
+        .filter(|v| !v.is_null())
+        .all(Value::is_number)
+        && table
+            .rows
+            .iter()
+            .any(|row| row.get(value).is_some_and(Value::is_number));
+    if !numeric {
+        return Err(format!(
+            "Column `{}` holds no numbers; a chart needs a numeric value.",
+            request.value
+        ));
+    }
+    // What a chart can tell apart, not how many rows it has: a line its distinct times, a bar its
+    // distinct labels. The same KPI read twice at one observedAt is one point (T-4727).
+    let apart = match (request.kind, time) {
+        (Kind::Line, Some(t)) => t,
+        _ => label,
+    };
+    let points = table
+        .rows
+        .iter()
+        .filter(|row| row.get(value).is_some_and(Value::is_number))
+        .filter_map(|row| {
+            row.get(apart)
+                .filter(|v| !v.is_null())
+                .map(Value::to_string)
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    if request.kind != Kind::Map && points < MIN_POINTS {
+        return Err(format!(
+            "Column `{}` has {points} values; a chart of fewer than {MIN_POINTS} says nothing a sentence does not. Answer in text.",
+            request.value
+        ));
+    }
+    if request.title.chars().count() > TITLE_CHARS {
+        return Err(format!(
+            "The title is longer than {TITLE_CHARS} characters."
+        ));
+    }
+    if request.kind != Kind::Map {
+        if let Some(why) = refusal(table, request.kind, label, value) {
+            return Err(format!(
+                "{why} Answer with the text and the table, without a chart."
+            ));
+        }
+    }
+    let title = request.title.trim();
+    match request.kind {
+        Kind::Map => map_of(table, label, &[value], time, Some(title), domain)
+            .map(|spec| json!({"spec": spec}))
+            .ok_or_else(|| {
+                format!(
+                    "Table {} has no location; show it as a bar or a line chart.",
+                    request.data
+                )
+            }),
+        Kind::Line if time.is_none() => {
+            Err("A line chart needs `time`, a time column of the table.".into())
+        }
+        kind => Ok(chart(table, kind, label, value, time, title)),
+    }
+}
+
+/// Why a bar or line chart of these columns would mislead (T-4711, owner 2026-10-19 04:46Z: no
+/// chart unless every check passes), `None` when it may be drawn. The answer then keeps its text
+/// and table, and the refusal stays in the stored turn as the tool's result.
+fn refusal(table: &Table, kind: Kind, label: usize, value: usize) -> Option<String> {
+    let rows: Vec<&Vec<Value>> = table
+        .rows
+        .iter()
+        .filter(|row| row.get(value).is_some_and(Value::is_number))
+        .collect();
+    if table
+        .total
+        .is_some_and(|total| total > table.rows.len() as u64)
+    {
+        return Some(format!(
+            "The table holds the first {} of {} rows; a chart of part of them misleads.",
+            table.rows.len(),
+            table.total.unwrap_or_default()
+        ));
+    }
+    if kind == Kind::Line {
+        // Its distinct times are counted before this (T-4727).
+        return None;
+    }
+    let names: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.get(label)
+                .map(named)
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default()
+        })
+        .collect();
+    let slug = |name: &str| {
+        name.matches('-').count() >= 2
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    };
+    if names.iter().any(|n| n.trim().is_empty() || slug(n)) {
+        return Some(format!(
+            "Column `{}` holds ids, not names a person reads.",
+            table.columns[label]
+        ));
+    }
+    if names
+        .iter()
+        .enumerate()
+        .any(|(i, n)| names[..i].contains(n))
+    {
+        return Some(format!(
+            "Column `{}` names a category twice.",
+            table.columns[label]
+        ));
+    }
+    let values: Vec<f64> = rows
+        .iter()
+        .filter_map(|row| row.get(value).and_then(Value::as_f64))
+        .collect();
+    let sum: f64 = values.iter().sum();
+    if values.len() > 2
+        && values
+            .iter()
+            .any(|v| (v * 2.0 - sum).abs() <= v.abs() * 0.005)
+    {
+        return Some(
+            "One row is the total of the others; a total is never a bar beside its parts.".into(),
+        );
+    }
+    None
+}
+
+/// A Vega-Lite bar or line chart over the table's rows, fields named `label`, `value` and
+/// `time` whatever the columns are called (a dot in a column name would read as a path).
+fn chart(
+    table: &Table,
+    kind: Kind,
+    label: usize,
+    value: usize,
+    time: Option<usize>,
+    title: &str,
+) -> Value {
+    let rows: Vec<Value> = table
+        .rows
+        .iter()
+        .map(|row| {
+            let mut out = json!({"label": row.get(label).map_or(Value::Null, named), "value": row.get(value).cloned().unwrap_or(Value::Null)});
+            if let Some(time) = time {
+                out["time"] = row.get(time).cloned().unwrap_or(Value::Null);
+            }
+            out
+        })
+        .collect();
+    let value_title = match table.units.get(value).cloned().flatten() {
+        Some(unit) => format!("{} ({unit})", table.columns[value]),
+        None => table.columns[value].clone(),
+    };
+    let encoding = if kind == Kind::Line {
+        json!({
+            "x": {"field": "time", "type": "temporal", "title": null},
+            "y": {"field": "value", "type": "quantitative", "title": value_title, "scale": {"zero": false}},
+            "color": {"field": "label", "type": "nominal", "title": null},
+        })
+    } else {
+        json!({
+            "y": {"field": "label", "type": "nominal", "sort": "-x", "title": null},
+            "x": {"field": "value", "type": "quantitative", "title": value_title},
+        })
+    };
+    let config = json!({
+        "font": FONT,
+        "axis": {"labelFontSize": 12, "titleFontSize": 13, "labelLimit": 160},
+        "legend": {"labelFontSize": 12, "titleFontSize": 13},
+        "title": {"fontSize": 14, "anchor": "start"},
+    });
+    let mut spec = json!({"$schema": VEGA_LITE, "data": {"name": "source"}, "encoding": encoding,
+        "width": "container", "autosize": {"type": "fit", "contains": "padding"}, "config": config});
+    if kind == Kind::Line {
+        spec["mark"] = json!({"type": "line", "point": true, "tooltip": true});
+    } else {
+        // Each bar says its value at its end, so no one reads it off the axis (T-4682).
+        spec["layer"] = json!([
+            {"mark": {"type": "bar", "tooltip": true}},
+            {"mark": {"type": "text", "align": "left", "baseline": "middle", "dx": 3, "fontSize": 12},
+             "encoding": {"text": {"field": "value", "type": "quantitative", "format": ",.4~g"}}},
+        ]);
+    }
+    // A title the renderer's refusal list would refuse is left out, so the chart still draws.
+    let lower = title.to_lowercase();
+    if !title.is_empty()
+        && !["__proto__", "constructor", "prototype", "javascript:"]
+            .iter()
+            .any(|w| lower.contains(w))
+    {
+        spec["title"] = json!(title);
+    }
+    let mut event = json!({"spec": spec, "rows": rows});
+    // The value column's words per language from the model, for the widget to title the axis.
+    if let Some(Some(labels)) = table.labels.get(value) {
+        event["labels"] = json!({table.columns[value].clone(): labels});
+    }
+    event
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn air() -> Table {
+        Table {
+            endpoint: "ovzdusie".into(),
+            entity_type: "AirQualityObserved".into(),
+            columns: vec![
+                "name".into(),
+                "no2".into(),
+                "pm10".into(),
+                "refPointOfInterest".into(),
+                "observedAt".into(),
+            ],
+            rows: vec![
+                vec![
+                    json!("SK0214A <img src=x onerror=alert(1)>"),
+                    json!(14.2),
+                    json!(21.5),
+                    json!("urn:ngsi-ld:PointOfInterest:1"),
+                    json!("2026-10-18T15:00:00Z"),
+                ],
+                vec![
+                    json!("Zvolen"),
+                    json!(9.25),
+                    Value::Null,
+                    json!("urn:ngsi-ld:PointOfInterest:2"),
+                    json!("2026-10-18T14:00:00Z"),
+                ],
+                vec![
+                    json!("Bez polohy"),
+                    json!(3),
+                    json!(4),
+                    Value::Null,
+                    Value::Null,
+                ],
+            ],
+            units: vec![None, Some("µg/m³".into()), Some("µg/m³".into()), None, None],
+            labels: Vec::new(),
+            enums: Vec::new(),
+            summary: Vec::new(),
+            total: None,
+            dataset: Some("https://data.dev.example.org/dataset/ovzdusie".into()),
+            download: None,
+            geojson: None,
+            map: None,
+            geometries: vec![
+                Some(json!({"type": "Point", "coordinates": [19.146234, 48.736318]})),
+                Some(json!({"type": "Point", "coordinates": [19.12, 48.57]})),
+                None,
+            ],
+            profile: None,
+            filter: None,
+        }
+    }
+
+    #[test]
+    fn a_geometry_is_kept_only_when_valid_and_in_range_and_rounded() {
+        let point = geometry(
+            &json!({"type": "Point", "coordinates": [19.1462345678, 48.7363181234, 350.0]}),
+        );
+        assert_eq!(
+            point,
+            Some(json!({"type": "Point", "coordinates": [19.146235, 48.736318]}))
+        );
+        let polygon = json!({"type": "Polygon", "coordinates": [[[14.4, 50.0], [14.5, 50.0], [14.5, 50.1], [14.4, 50.0]]]});
+        assert!(geometry(&polygon).is_some());
+        for bad in [
+            json!({"type": "Point", "coordinates": [190.0, 48.0]}),
+            json!({"type": "Point", "coordinates": [19.0, -91.0]}),
+            json!({"type": "Point", "coordinates": ["19", "48"]}),
+            json!({"type": "Point", "coordinates": [19.0]}),
+            json!({"type": "LineString", "coordinates": []}),
+            json!({"type": "Polygon", "coordinates": [[19.0, 48.0]]}),
+            json!({"type": "GeometryCollection", "geometries": []}),
+            json!({"type": "Feature", "geometry": {"type": "Point", "coordinates": [19.0, 48.0]}}),
+        ] {
+            assert_eq!(geometry(&bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_locations_follow_the_rows_normalized_or_plain() {
+        let text = json!([
+            {"id": "a", "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [19.1, 48.7]}}},
+            {"id": "b", "location": {"type": "Point", "coordinates": [500, 48.7]}},
+            {"id": "c"},
+            {"id": "d", "location": {"type": "Point", "coordinates": [17.1, 48.1]}},
+        ])
+        .to_string();
+        let found = geometries(&text, 3);
+        assert_eq!(found.len(), 3);
+        assert!(found[0].is_some() && found[1].is_none() && found[2].is_none());
+        assert!(geometries("not json", 3).is_empty());
+    }
+
+    #[test]
+    fn the_default_map_holds_the_label_the_values_and_the_time_and_nothing_else() {
+        let spec = default_map(&air(), "dev.example.org").expect("a map");
+        assert_eq!(spec["$schema"], MAP_SCHEMA);
+        let features = spec["data"]["features"].as_array().expect("features");
+        assert_eq!(features.len(), 2, "the row without a location is left out");
+        let properties = features[0]["properties"].as_object().expect("properties");
+        let mut keys: Vec<_> = properties.keys().cloned().collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            ["name", "no2", "observedAt", "pm10"],
+            "no reference, no id"
+        );
+        assert_eq!(
+            properties["name"], "SK0214A <img src=x onerror=alert(1)>",
+            "markup stays text for the renderer"
+        );
+        assert_eq!(
+            spec["popup"][0],
+            json!({"field": "no2", "label": "no2", "unit": "µg/m³"})
+        );
+        assert_eq!(spec["time"], "observedAt");
+        assert_eq!(
+            spec["link"],
+            "https://data.dev.example.org/dataset/ovzdusie"
+        );
+        let mut elsewhere = air();
+        elsewhere.dataset = Some("https://data.gov.sk/dataset/x".into());
+        assert!(default_map(&elsewhere, "dev.example.org")
+            .expect("a map")
+            .get("link")
+            .is_none());
+        let mut nowhere = air();
+        nowhere.geometries = vec![None, None, None];
+        assert_eq!(default_map(&nowhere, "dev.example.org"), None);
+    }
+
+    /// T-4672 (DM-99): a model that marks key attributes puts only those in the popup.
+    #[test]
+    fn the_default_maps_popup_shows_the_models_key_attributes() {
+        let mut keyed = air();
+        keyed.summary = vec![true, false, true, false, false];
+        let spec = default_map(&keyed, "dev.example.org").expect("a map");
+        let fields: Vec<&Value> = spec["popup"]
+            .as_array()
+            .expect("a popup")
+            .iter()
+            .map(|f| &f["field"])
+            .collect();
+        assert_eq!(fields, [&json!("pm10")]);
+        let spec = default_map(&air(), "dev.example.org").expect("a map");
+        assert_eq!(
+            spec["popup"].as_array().map(Vec::len),
+            Some(2),
+            "no key attributes: the first columns"
+        );
+    }
+
+    #[test]
+    fn a_valid_call_builds_its_spec_from_exactly_that_tables_rows() {
+        let tables = [(3, air())];
+        let map = build(r#"{"kind":"map","data":3,"label":"name","value":"pm10","time":"observedAt","title":"PM10 v kraji"}"#, &tables, "dev.example.org")
+            .expect("a map");
+        assert_eq!(map["spec"]["title"], "PM10 v kraji");
+        assert_eq!(
+            map["spec"]["popup"],
+            json!([{"field": "pm10", "label": "pm10", "unit": "µg/m³"}])
+        );
+        assert_eq!(
+            map["spec"]["data"]["features"].as_array().map(Vec::len),
+            Some(2)
+        );
+        assert!(map.get("rows").is_none());
+        let bar = build(
+            r#"{"kind":"bar","data":3,"label":"name","value":"no2","title":"NO2"}"#,
+            &tables,
+            "dev.example.org",
+        )
+        .expect("a bar");
+        assert_eq!(bar["rows"].as_array().map(Vec::len), Some(3));
+        assert_eq!(bar["rows"][1], json!({"label": "Zvolen", "value": 9.25}));
+        assert_eq!(bar["spec"]["encoding"]["x"]["title"], "no2 (µg/m³)");
+        assert_eq!(bar["spec"]["$schema"], VEGA_LITE);
+        // T-4682: the axis reads at the widget's 12 px, each bar says its value, and the chart
+        // fills the panel's width.
+        assert_eq!(bar["spec"]["config"]["axis"]["labelFontSize"], 12);
+        assert_eq!(bar["spec"]["layer"][1]["mark"]["type"], "text");
+        assert_eq!(bar["spec"]["width"], "container");
+        // A line needs three distinct times (T-4727): the row without a location gets one.
+        let mut timed = air();
+        timed.rows[2][4] = json!("2026-10-18T13:00:00Z");
+        let line = build(r#"{"kind":"line","data":3,"label":"name","value":"no2","time":"observedAt","title":"constructor"}"#, &[(3, timed)], "dev.example.org")
+            .expect("a line");
+        assert_eq!(line["rows"][0]["time"], "2026-10-18T15:00:00Z");
+        assert!(
+            line["spec"].get("title").is_none(),
+            "a title the renderer would refuse is dropped"
+        );
+    }
+
+    /// T-4682: a chart names its rows by their labels, a URN by its last segment; the value
+    /// column's model labels go along for the axis title; under three values it is not drawn.
+    #[test]
+    fn a_chart_reads_in_words_and_needs_three_values() {
+        let mut stops = air();
+        for (row, urn) in stops.rows.iter_mut().zip([
+            "urn:ngsi-ld:GtfsStop:hel.fi:zilina:1001",
+            "urn:ngsi-ld:GtfsStop:x:1002",
+            "urn:ngsi-ld:GtfsStop:x:1003",
+        ]) {
+            row[0] = json!(urn);
+        }
+        stops.labels = vec![
+            None,
+            Some([("sk".to_owned(), "NO₂".to_owned())].into()),
+            None,
+            None,
+            None,
+        ];
+        let tables = [(1, stops)];
+        let bar = build(
+            r#"{"kind":"bar","data":1,"label":"name","value":"no2","title":"Odchody"}"#,
+            &tables,
+            "dev.example.org",
+        )
+        .expect("a bar");
+        assert_eq!(bar["rows"][0]["label"], "1001");
+        assert!(!bar.to_string().contains("urn:"), "{bar}");
+        assert_eq!(bar["labels"]["no2"]["sk"], "NO₂");
+        let refused = build(
+            r#"{"kind":"bar","data":1,"label":"name","value":"pm10","title":"x"}"#,
+            &tables,
+            "dev.example.org",
+        )
+        .expect_err("two values are no chart");
+        assert!(refused.contains("fewer than 3"), "{refused}");
+    }
+
+    /// T-4711, owner 04:46Z: no chart unless every check passes; each failed check is refused to
+    /// the model with its reason, so the answer keeps its text and table.
+    #[test]
+    fn a_chart_that_would_mislead_is_refused_check_by_check() {
+        let call = |kind: &str, table: Table| {
+            let time = if kind == "line" {
+                r#","time":"observedAt""#
+            } else {
+                ""
+            };
+            build(
+                &format!(
+                    r#"{{"kind":"{kind}","data":1,"label":"name","value":"no2"{time},"title":"x"}}"#
+                ),
+                &[(1, table)],
+                "dev.example.org",
+            )
+        };
+        let named = |names: [&str; 3], values: [f64; 3]| {
+            let mut table = air();
+            for (row, (name, value)) in table.rows.iter_mut().zip(names.into_iter().zip(values)) {
+                row[0] = json!(name);
+                row[1] = json!(value);
+            }
+            table
+        };
+        // Two moments are no line (the owner's "kpiValue over one load date" had one; T-4727 counts them).
+        assert!(call("line", air()).is_err(), "two moments");
+        // Slugs, a name twice, or the total beside its own parts are no bars.
+        let slugs = named(
+            [
+                "obyvatelstvo-stav-okres-bb",
+                "obyvatelstvo-stav-okres-zv",
+                "Detva",
+            ],
+            [1.0, 2.0, 3.0],
+        );
+        assert!(call("bar", slugs).expect_err("slugs").contains("holds ids"));
+        let mut twice = named(["Brezno", "Brezno", "Detva"], [1.0, 2.0, 3.0]);
+        let mut fourth = twice.rows[2].clone();
+        fourth[0] = json!("Zvolen");
+        twice.rows.push(fourth);
+        twice.geometries.push(None);
+        assert!(call("bar", twice).expect_err("twice").contains("twice"));
+        let total = named(
+            ["Banskobystrický kraj", "Okres Brezno", "Okres Detva"],
+            [90.0, 60.0, 30.0],
+        );
+        assert!(call("bar", total).expect_err("total").contains("total"));
+        // The first rows of more.
+        let mut part = named(["A", "B", "C"], [1.0, 2.0, 3.0]);
+        part.total = Some(7742);
+        assert!(call("bar", part)
+            .expect_err("truncated")
+            .contains("first 3 of 7742"));
+        // Every check passing: the bars are drawn.
+        assert!(call(
+            "bar",
+            named(
+                ["Okres Brezno", "Okres Detva", "Okres Zvolen"],
+                [60.0, 30.0, 40.0]
+            )
+        )
+        .is_ok());
+    }
+
+    /// T-4727: od-10 drew a line of one point, the same KPI read twice at one observedAt, and a
+    /// bar of the same name three times says one value too. A chart counts what it can tell apart.
+    #[test]
+    fn a_chart_counts_distinct_times_and_labels_not_rows() {
+        let mut once = air();
+        for row in &mut once.rows {
+            row[0] = json!("obyvatelstvo-stav-mesto");
+            row[1] = json!(79617);
+            row[4] = json!("2026-08-31T00:00:00Z");
+        }
+        let tables = [(1, once)];
+        for args in [
+            r#"{"kind":"line","data":1,"label":"name","value":"no2","time":"observedAt","title":"Obyvatelia"}"#,
+            r#"{"kind":"bar","data":1,"label":"name","value":"no2","title":"Obyvatelia"}"#,
+        ] {
+            let refused =
+                build(args, &tables, "dev.example.org").expect_err("one point is no chart");
+            assert!(refused.contains("Answer in text"), "{refused}");
+        }
+        // Three stations at one hour are still a bar; three hours of one station still a line.
+        let mut hours = air();
+        for (row, hour) in hours.rows.iter_mut().zip(["13", "14", "15"]) {
+            row[0] = json!("Zvolen");
+            row[1] = json!(9.0);
+            row[4] = json!(format!("2026-10-18T{hour}:00:00Z"));
+        }
+        let tables = [(1, hours)];
+        build(
+            r#"{"kind":"line","data":1,"label":"name","value":"no2","time":"observedAt","title":"NO2"}"#,
+            &tables,
+            "dev.example.org",
+        )
+        .expect("three hours are a line");
+    }
+
+    #[test]
+    fn a_call_naming_what_the_table_lacks_is_refused_to_the_model() {
+        let tables = [(3, air())];
+        let refused = |args: &str| build(args, &tables, "dev.example.org").expect_err("refused");
+        assert!(
+            refused(r#"{"kind":"bar","data":4,"label":"name","value":"no2","title":"x"}"#)
+                .contains("tables of this answer are: 3")
+        );
+        assert!(
+            refused(r#"{"kind":"bar","data":3,"label":"name","value":"so2","title":"x"}"#)
+                .contains("no column `so2`")
+        );
+        assert!(
+            refused(r#"{"kind":"bar","data":3,"label":"name","value":"name","title":"x"}"#)
+                .contains("holds no numbers")
+        );
+        assert!(
+            refused(r#"{"kind":"line","data":3,"label":"name","value":"no2","title":"x"}"#)
+                .contains("needs `time`")
+        );
+        assert!(
+            refused(r#"{"kind":"pie","data":3,"label":"name","value":"no2","title":"x"}"#)
+                .contains("unknown variant")
+        );
+        assert!(refused(
+            r#"{"kind":"bar","data":3,"label":"name","value":"no2","title":"x","spec":{}}"#
+        )
+        .contains("unknown field"));
+        assert!(refused(&format!(
+            r#"{{"kind":"bar","data":3,"label":"name","value":"no2","title":"{}"}}"#,
+            "x".repeat(81)
+        ))
+        .contains("80"));
+        let mut flat = air();
+        flat.geometries = vec![None, None, None];
+        let refused = build(
+            r#"{"kind":"map","data":3,"label":"name","value":"no2","title":"x"}"#,
+            &[(3, flat)],
+            "dev.example.org",
+        )
+        .expect_err("refused");
+        assert!(refused.contains("no location"));
+    }
+
+    #[test]
+    fn the_tool_offers_three_kinds_and_admits_no_other_member() {
+        let offered = tool();
+        assert_eq!(offered["function"]["name"], TOOL);
+        let parameters = &offered["function"]["parameters"];
+        assert_eq!(
+            parameters["properties"]["kind"]["enum"],
+            json!(["map", "line", "bar"])
+        );
+        assert_eq!(parameters["additionalProperties"], json!(false));
+        assert_eq!(
+            parameters["properties"]["title"]["maxLength"],
+            json!(TITLE_CHARS)
+        );
+        assert_eq!(
+            parameters["required"],
+            json!(["kind", "data", "label", "value", "title"])
+        );
+    }
+
+    #[test]
+    fn the_domain_is_the_viz_hosts_parent() {
+        let viz = url::Url::parse("https://viz.dev.example.org").expect("url");
+        assert_eq!(domain(&viz), Some("dev.example.org"));
+        let other = url::Url::parse("https://charts.dev.example.org").expect("url");
+        assert_eq!(domain(&other), None);
+    }
+}

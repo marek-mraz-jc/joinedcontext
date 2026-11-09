@@ -1,0 +1,744 @@
+//! Text out of what the crawler fetched, cut into passages and stored as chunks (T-3052,
+//! ADR-N-040 §3.2).
+//!
+//! `kreuzberg` turns HTML and PDF into Markdown with page markers, detects the language and
+//! chunks with overlap. [`Indexer`](crate::extract::Indexer) is the crawl's [`Sink`](crate::crawl::Sink): each included page or document that
+//! changed replaces its own chunks, without an embedding yet (T-3053 adds those).
+
+use kreuzberg::{
+    ChunkerType, ChunkingConfig, ExtractionConfig, LanguageDetectionConfig, PageConfig,
+};
+use sqlx::PgPool;
+
+use crate::crawl::links::is_document_type;
+use crate::crawl::Sink;
+use crate::Error;
+
+/// The longest passage, in characters: about 300 tokens, the size the embedding model reads
+/// whole (`multilingual-e5-small` truncates at 512 tokens).
+pub const CHUNK_CHARS: usize = 1_200;
+
+/// How much consecutive passages share, so a sentence cut at a boundary is whole in one of them.
+pub const CHUNK_OVERLAP: usize = 200;
+
+/// The most passages one page or document may become: a cap on what one source can cost.
+pub const MAX_PASSAGES: usize = 2_000;
+
+/// The most chunks one source's documents hold, and the most of the whole source (T-5773). On
+/// 2026-10-25 the banskabystrica crawl stored 84,815 chunks of 3,359 linked PDFs in a day (the
+/// project had grown under 300 a day), and every search of every deployment sharing the store
+/// slowed with it. Pages are what most questions are answered from, so documents stop first and
+/// pages keep their room; a document past the cap keeps its first passages, counted as cut.
+pub const MAX_SITE_DOCUMENT_CHUNKS: i64 = 20_000;
+pub const MAX_SITE_CHUNKS: i64 = 50_000;
+
+/// One passage of a page or a document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Passage {
+    /// Its text, Markdown.
+    pub text: String,
+    /// The PDF page it starts on, 1-based; `None` for HTML.
+    pub first_page: Option<u32>,
+}
+
+/// What one page or document became.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Extracted {
+    /// ISO 639-1 code of its language: the page's own `lang` when it declares one, else the
+    /// detected one when it is a language the store has a configuration for, else `None`.
+    pub language: Option<String>,
+    /// The passages, in reading order.
+    pub passages: Vec<Passage>,
+    /// Whether passages beyond `pdf.maxPages` or [`MAX_PASSAGES`] were dropped.
+    pub truncated: bool,
+}
+
+fn config() -> ExtractionConfig {
+    ExtractionConfig {
+        use_cache: false,
+        // A scanned PDF yields no text; OCR would bring ONNX Runtime and its memory.
+        disable_ocr: true,
+        chunking: Some(ChunkingConfig {
+            max_characters: CHUNK_CHARS,
+            overlap: CHUNK_OVERLAP,
+            trim: true,
+            chunker_type: ChunkerType::Markdown,
+            // Each passage carries the headings above it ("# Cyklotrasy > ## Trasy"), so it
+            // reads on its own when it is retrieved alone.
+            prepend_heading_context: true,
+            ..ChunkingConfig::default()
+        }),
+        language_detection: Some(LanguageDetectionConfig {
+            enabled: true,
+            min_confidence: 0.5,
+            detect_multiple: false,
+        }),
+        pages: Some(PageConfig {
+            extract_pages: false,
+            insert_page_markers: false,
+            ..PageConfig::default()
+        }),
+        ..ExtractionConfig::default()
+    }
+}
+
+/// The ISO 639-1 code of an ISO 639-3 one, for the languages the store indexes by name.
+fn iso639_1(code: &str) -> Option<&'static str> {
+    match code {
+        "slk" => Some("sk"),
+        "ces" => Some("cs"),
+        "fin" => Some("fi"),
+        "eng" => Some("en"),
+        "deu" => Some("de"),
+        "swe" => Some("sv"),
+        _ => None,
+    }
+}
+
+/// A heading with no text, only spaces, `&nbsp;` or tags, and a paragraph of only spaces in inline
+/// markup (`<p><strong>&nbsp;<br></strong></p>`): html-to-markdown-rs 3.17 panics on such a block
+/// before a heading and the whole page fails (www.bbsk.sk/uradne-hodiny, T-4688), so it goes before
+/// conversion. It says nothing a reader could find; a paragraph holding an image is kept.
+// ponytail: a regex over the HTML, not a parse; drop it when the converter trims such a block.
+static EMPTY_BLOCK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(concat!(
+        r"(?is)<h[1-6]\b[^>]*>(?:\s|&nbsp;|&#160;|&#xa0;|<[^>]*>)*</h[1-6]\s*>",
+        r"|<p\b[^>]*>(?:\s|&nbsp;|&#160;|&#xa0;|</?(?:strong|b|em|i|u|span|br|a)\b[^>]*>)*</p\s*>",
+    ))
+    .unwrap_or_else(|err| unreachable!("the pattern is fixed: {err}"))
+});
+
+/// A page's navigation and footer: menus, share bars and the address block repeated on every
+/// page, which matched questions by their words and icon names (praha.eu's "Ikona hodiny" clock
+/// answered "otváracie hodiny", T-5368). Gone before conversion; the body keeps what it says.
+// ponytail: a regex over the HTML, not a parse; a nested `<nav>` leaves its outer tail behind.
+static CHROME: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?is)<nav\b.*?</nav\s*>|<footer\b.*?</footer\s*>")
+        .unwrap_or_else(|err| unreachable!("the pattern is fixed: {err}"))
+});
+
+/// A Markdown image, `![alt](src)`: its alt text is an icon's name more often than content.
+static IMAGE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"!\[[^\]]*\]\([^)]*\)")
+        .unwrap_or_else(|err| unreachable!("the pattern is fixed: {err}"))
+});
+
+/// A Markdown link, `[text](href)`, read as its text.
+static LINK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"\[([^\]]*)\]\([^)]*\)")
+        .unwrap_or_else(|err| unreachable!("the pattern is fixed: {err}"))
+});
+
+/// The fewest characters of prose a passage of a page keeps to be stored when the page has a
+/// longer one: below it, a passage is a menu, a share bar or a caption (T-5368). A page whose
+/// every passage is shorter keeps them: a short page of office hours is an answer.
+pub const MIN_PROSE: usize = 200;
+
+/// The fewest characters of its own prose, outside images and links, a passage has to say
+/// anything: under it, it is chrome alone, icons and a menu (T-5368).
+pub const MIN_OWN_PROSE: usize = 40;
+
+/// The prose of a passage: images out, links as their text, heading lines and table and emphasis
+/// marks out, whitespace collapsed.
+pub fn prose(text: &str) -> String {
+    let text = IMAGE.replace_all(text, " ");
+    let text = LINK.replace_all(&text, "$1");
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .flat_map(|line| line.split(|c: char| c.is_whitespace() || c == '*' || c == '|'))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Whether a passage is chrome alone: images or links, and under [`MIN_OWN_PROSE`] characters
+/// once they are out, text and all (praha.eu's "![Ikona hodiny](clock.svg) Share ..."). A short
+/// sentence without either is content: an uploaded "Zber odpadu je v utorok."
+pub fn chrome_only(text: &str) -> bool {
+    let own = LINK
+        .replace_all(&IMAGE.replace_all(text, " "), " ")
+        .into_owned();
+    own != text && prose(&own).chars().count() < MIN_OWN_PROSE
+}
+
+/// The language of a passage, detected from its prose when the detector is sure; `None` lets
+/// the page's own language stand. A page's `lang` or its URL says what its template is in, not
+/// each passage (praha.eu's English section carries Czech passages, T-5368).
+pub fn language_of(text: &str) -> Option<&'static str> {
+    let info = whatlang::detect(&prose(text))?;
+    // The page detection's threshold: whatlang's own "reliable" refuses Czech beside Slovak.
+    if info.confidence() < 0.5 {
+        return None;
+    }
+    iso639_1(info.lang().code())
+}
+
+/// Extracts `bytes` of `mime`, keeping passages that start on a page up to `max_pages`.
+pub async fn extract(
+    bytes: &[u8],
+    mime: &str,
+    declared_language: Option<&str>,
+    max_pages: u32,
+) -> Result<Extracted, Error> {
+    let mut cut = false;
+    let shortened;
+    let cleaned;
+    let bytes = if mime.starts_with("application/pdf") {
+        if max_pages == 0 {
+            // No page is kept: nothing is read at all.
+            return Ok(Extracted {
+                language: None,
+                passages: Vec::new(),
+                truncated: true,
+            });
+        }
+        match first_pages(bytes, max_pages) {
+            Some(fewer) => {
+                cut = true;
+                shortened = fewer;
+                &shortened[..]
+            }
+            None => bytes,
+        }
+    } else if mime.starts_with("text/html") {
+        match std::str::from_utf8(bytes) {
+            Ok(html) => {
+                cleaned = EMPTY_BLOCK
+                    .replace_all(&CHROME.replace_all(html, ""), "")
+                    .into_owned();
+                cleaned.as_bytes()
+            }
+            Err(_) => bytes,
+        }
+    } else {
+        bytes
+    };
+    let result = kreuzberg::extract_bytes(bytes, mime, &config())
+        .await
+        .map_err(|err| Error::Extract(format!("{mime}: {err}")))?;
+    let detected = result
+        .detected_languages
+        .as_ref()
+        .and_then(|found| found.first())
+        .and_then(|code| iso639_1(code));
+    let language = declared_language
+        .filter(|code| code.len() == 2 && code.bytes().all(|b| b.is_ascii_lowercase()))
+        .map(str::to_owned)
+        .or_else(|| detected.map(str::to_owned));
+
+    let mut truncated = cut;
+    let mut passages = Vec::new();
+    for chunk in result.chunks.unwrap_or_default() {
+        let first_page = chunk
+            .metadata
+            .first_page
+            .and_then(|page| u32::try_from(page).ok());
+        if first_page.is_some_and(|page| page > max_pages) || passages.len() == MAX_PASSAGES {
+            truncated = true;
+            break;
+        }
+        let text = IMAGE.replace_all(chunk.content.trim(), "");
+        let text = text.trim();
+        if !only_headings(text) && !chrome_only(text) {
+            passages.push(Passage {
+                text: text.to_owned(),
+                first_page,
+            });
+        }
+    }
+    // A page with a passage of prose loses its menus and captions; a short page keeps all.
+    let short = |p: &Passage| prose(&p.text).chars().count() < MIN_PROSE;
+    if passages.iter().any(|p| !short(p)) {
+        passages.retain(|p| !short(p));
+    }
+    Ok(Extracted {
+        language,
+        passages,
+        truncated,
+    })
+}
+
+/// `bytes`, a PDF, cut to its first `max_pages` pages before PDFium reads it (T-3314), so a
+/// long PDF costs the pages kept and not the whole document. `None` when nothing is beyond the
+/// limit or the file is one this cannot rewrite (encrypted, unreadable): PDFium reads it whole,
+/// and the passages past the limit are still dropped.
+pub(crate) fn first_pages(bytes: &[u8], max_pages: u32) -> Option<Vec<u8>> {
+    let mut document = lopdf::Document::load_mem(bytes).ok()?;
+    if document.is_encrypted() {
+        return None;
+    }
+    let beyond: Vec<u32> = document
+        .get_pages()
+        .into_keys()
+        .filter(|page| *page > max_pages)
+        .collect();
+    if beyond.is_empty() {
+        return None;
+    }
+    document.delete_pages(&beyond);
+    document.prune_objects();
+    let mut cut = Vec::new();
+    document.save_to(&mut cut).ok()?;
+    Some(cut)
+}
+
+/// Whether a passage is headings and nothing else: its body lines empty or repeating a heading.
+/// Such a passage is no answer to anything; its words travel on in the heading context of the
+/// passages below it.
+fn only_headings(text: &str) -> bool {
+    // A heading line is one heading or a path of them, `# Mesto > ## Doprava`.
+    let headings: Vec<&str> = text
+        .lines()
+        .filter(|line| line.trim_start().starts_with('#'))
+        .flat_map(|line| line.split(" > "))
+        .map(|heading| heading.trim().trim_start_matches('#').trim())
+        .collect();
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .all(|line| headings.contains(&line))
+}
+
+/// Which row the passages belong to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Owner {
+    /// A page of the site.
+    Page(i64),
+    /// A document a page links.
+    Document(i64),
+}
+
+/// Replaces the chunks of `owner` with `extracted`'s passages, in one project-scoped
+/// transaction, so a reader never sees half of an old and half of a new version. The site's
+/// caps ([`MAX_SITE_CHUNKS`], [`MAX_SITE_DOCUMENT_CHUNKS`]) keep the first passages that fit;
+/// the count stored is returned.
+pub async fn store(
+    pool: &PgPool,
+    project: &str,
+    site_id: i64,
+    owner: Owner,
+    url: &str,
+    visibility: &str,
+    extracted: &Extracted,
+) -> Result<usize, Error> {
+    let (page_id, document_id) = match owner {
+        Owner::Page(id) => (Some(id), None),
+        Owner::Document(id) => (None, Some(id)),
+    };
+    let mut tx = crate::project_scope(pool, project).await?;
+    sqlx::query("DELETE FROM chunks WHERE page_id IS NOT DISTINCT FROM $1 AND document_id IS NOT DISTINCT FROM $2")
+        .bind(page_id)
+        .bind(document_id)
+        .execute(&mut *tx)
+        .await?;
+    let (held, held_by_documents): (i64, i64) = sqlx::query_as(
+        "SELECT count(*), count(document_id) FROM chunks WHERE project = $1 AND site_id = $2",
+    )
+    .bind(project)
+    .bind(site_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let mut room = MAX_SITE_CHUNKS - held;
+    if document_id.is_some() {
+        room = room.min(MAX_SITE_DOCUMENT_CHUNKS - held_by_documents);
+    }
+    let room = usize::try_from(room).unwrap_or(0);
+    if room < extracted.passages.len() {
+        tracing::warn!(%project, site_id, %url, held, room, passages = extracted.passages.len(), "the source reached its chunk cap; the passages past it are left out");
+    }
+    for (ordinal, passage) in extracted.passages.iter().take(room).enumerate() {
+        // A PDF passage cites its page, so a reader lands where the text is.
+        let cited = match passage.first_page {
+            Some(page) => format!("{url}#page={page}"),
+            None => url.to_owned(),
+        };
+        sqlx::query(
+            "INSERT INTO chunks (site_id, project, page_id, document_id, ordinal, url, text, lang, visibility) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind(site_id)
+        .bind(project)
+        .bind(page_id)
+        .bind(document_id)
+        .bind(i32::try_from(ordinal).unwrap_or(i32::MAX))
+        .bind(cited)
+        .bind(&passage.text)
+        .bind(language_of(&passage.text).or(extracted.language.as_deref()))
+        .bind(visibility)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(extracted.passages.len().min(room))
+}
+
+/// The crawl's [`Sink`]: extracts each changed, included page or document and replaces its
+/// chunks. A failure is kept in [`Indexer::failures`] with the URL, and the crawl goes on.
+pub struct Indexer {
+    pool: PgPool,
+    project: String,
+    site_id: i64,
+    visibility: String,
+    max_pdf_pages: u32,
+    /// Passages stored in this crawl.
+    pub passages: usize,
+    /// Pages and documents whose passages were cut at a cap.
+    pub truncated: usize,
+    /// What could not be extracted or stored, `url: reason`.
+    pub failures: Vec<String>,
+}
+
+impl Indexer {
+    /// An indexer for one site of one project; `visibility` is the source's (`public` or
+    /// `internal`) and `max_pdf_pages` its `pdf.maxPages`.
+    pub fn new(
+        pool: PgPool,
+        project: &str,
+        site_id: i64,
+        visibility: &str,
+        max_pdf_pages: u32,
+    ) -> Self {
+        Self {
+            pool,
+            project: project.to_owned(),
+            site_id,
+            visibility: visibility.to_owned(),
+            max_pdf_pages,
+            passages: 0,
+            truncated: 0,
+            failures: Vec::new(),
+        }
+    }
+
+    /// Whether an administrator excluded the page or document (T-3057): it is fetched and kept
+    /// in the tree, and never indexed.
+    async fn excluded(&self, owner: Owner) -> Result<bool, Error> {
+        let (sql, id) = match owner {
+            Owner::Page(id) => ("SELECT excluded_by_admin FROM pages WHERE id = $1", id),
+            Owner::Document(id) => ("SELECT excluded_by_admin FROM documents WHERE id = $1", id),
+        };
+        let mut tx = crate::project_scope(&self.pool, &self.project).await?;
+        let excluded: Option<bool> = sqlx::query_scalar(sql)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        tx.rollback().await?;
+        Ok(excluded.unwrap_or(false))
+    }
+
+    async fn index(
+        &mut self,
+        owner: Owner,
+        url: &str,
+        mime: &str,
+        language: Option<&str>,
+        bytes: &[u8],
+    ) {
+        match self.excluded(owner).await {
+            Ok(false) => {}
+            Ok(true) => return,
+            Err(err) => {
+                self.failures.push(format!("{url}: {err}"));
+                return;
+            }
+        }
+        let outcome = match extract(bytes, mime, language, self.max_pdf_pages).await {
+            Ok(extracted) => {
+                let stored = store(
+                    &self.pool,
+                    &self.project,
+                    self.site_id,
+                    owner,
+                    url,
+                    &self.visibility,
+                    &extracted,
+                )
+                .await;
+                let capped = stored
+                    .as_ref()
+                    .is_ok_and(|stored| *stored < extracted.passages.len());
+                if extracted.truncated || capped {
+                    self.truncated += 1;
+                }
+                stored
+            }
+            Err(err) => Err(err),
+        };
+        match outcome {
+            Ok(stored) => self.passages += stored,
+            Err(err) => self.failures.push(format!("{url}: {err}")),
+        }
+    }
+}
+
+impl Sink for Indexer {
+    async fn page(&mut self, page_id: i64, url: &str, language: Option<&str>, html: &str) {
+        self.index(
+            Owner::Page(page_id),
+            url,
+            "text/html",
+            language,
+            html.as_bytes(),
+        )
+        .await;
+    }
+
+    async fn document(&mut self, document_id: i64, url: &str, mime: Option<&str>, bytes: &[u8]) {
+        match document_type(url, mime) {
+            Ok(mime) => {
+                self.index(Owner::Document(document_id), url, &mime, None, bytes)
+                    .await
+            }
+            Err(reason) => self.failures.push(format!("{url}: {reason}")),
+        }
+    }
+}
+
+/// The type a fetched document is read as: the server's, without parameters, when it is one of
+/// the document types the crawl follows ([`is_document_type`]); a PDF when the server names none
+/// and the address ends in `.pdf`; refused otherwise rather than guessed. The crawl picks a
+/// document by its address, so the type is the remote server's word: anything else would let a
+/// site steer kreuzberg into a parser the assistant never reads with, YAML through the
+/// unmaintained `unsafe-libyaml` among them (RUSTSEC-2024-0449, T-4070).
+fn document_type(url: &str, mime: Option<&str>) -> Result<String, String> {
+    let named = mime
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match named {
+        Some(mime) if is_document_type(mime) => Ok(mime.to_ascii_lowercase()),
+        Some(mime) => Err(format!(
+            "the server named {mime:?}, which is not a document type the assistant reads"
+        )),
+        None if url.to_ascii_lowercase().ends_with(".pdf") => Ok("application/pdf".to_owned()),
+        None => Err("the server named no content type".to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn prose_leaves_out_images_link_targets_headings_and_marks() {
+        let text = "# Doprava > ## MHD\n![Ikona hodiny](https://praha.eu/clock.svg) **Jízdné** | [ceník](/cenik) |";
+        assert_eq!(prose(text), "Jízdné ceník");
+        assert!(
+            prose("![Ikona Facebook](f.svg)  Share  ![Ikona X](x.svg)")
+                .chars()
+                .count()
+                < MIN_PROSE
+        );
+    }
+
+    #[test]
+    fn a_passage_of_icons_and_links_alone_is_chrome() {
+        assert!(chrome_only(
+            "![Ikona hodiny](https://praha.eu/o/praha-theme/images/clock.svg)  Share  \
+             ![Ikona Facebook](f.svg) [Transport](/t) [Recommendation](/r) [Prague House](/h)"
+        ));
+        assert!(!chrome_only(
+            "# Úradné hodiny\nPodateľňa je otvorená v pondelok od 7.30 do 15.30. [Kontakt](/k)"
+        ));
+        assert!(!chrome_only("Zber odpadu je v utorok."));
+    }
+
+    #[test]
+    fn a_passage_is_in_the_language_of_its_own_text() {
+        let czech = "Technická správa komunikací hlavního města Prahy zajišťuje údržbu a opravy \
+                     komunikací, mostů a tunelů. Informace o uzavírkách najdete na webu.";
+        let english = "The City of Helsinki libraries are open every day of the week, and the \
+                       central library Oodi stays open late on weekdays for everyone.";
+        assert_eq!(language_of(czech), Some("cs"));
+        assert_eq!(language_of(english), Some("en"));
+        // The icons of a share bar say nothing the detector can be sure of.
+        assert_eq!(language_of("![Ikona](a.svg) Share"), None);
+    }
+
+    use super::{
+        chrome_only, document_type, extract, first_pages, language_of, only_headings, prose,
+        MIN_PROSE,
+    };
+
+    /// A PDF of `pages` pages, page n showing "Strana n", with a correct cross-reference table.
+    fn pdf(pages: usize) -> Vec<u8> {
+        let kids: Vec<String> = (0..pages).map(|n| format!("{} 0 R", 4 + 2 * n)).collect();
+        let mut objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            format!(
+                "<< /Type /Pages /Kids [{}] /Count {pages} >>",
+                kids.join(" ")
+            ),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        ];
+        for n in 0..pages {
+            let stream = format!("BT /F1 18 Tf 72 720 Td (Strana {}) Tj ET", n + 1);
+            objects.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {} 0 R /Resources << /Font << /F1 3 0 R >> >> >>", 5 + 2 * n));
+            objects.push(format!(
+                "<< /Length {} >>\nstream\n{stream}\nendstream",
+                stream.len()
+            ));
+        }
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", i + 1).as_bytes());
+        }
+        let xref = out.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        out
+    }
+
+    /// T-3314: PDFium is handed the pages within `pdf.maxPages` and no more.
+    #[test]
+    fn a_pdf_is_cut_to_its_page_limit_before_it_is_read() {
+        let cut = first_pages(&pdf(5), 2).expect("cut");
+        let document = lopdf::Document::load_mem(&cut).expect("still a PDF");
+        assert_eq!(document.get_pages().len(), 2);
+        assert!(cut.len() < pdf(5).len());
+        assert!(
+            first_pages(&pdf(2), 2).is_none(),
+            "nothing beyond the limit"
+        );
+        assert!(
+            first_pages(b"not a pdf", 2).is_none(),
+            "read whole, as before"
+        );
+    }
+
+    /// T-4070: a document is read only as a type the crawl follows, whatever its server says.
+    #[test]
+    fn a_document_is_read_only_as_a_document_type() {
+        let pdf = "https://bb.example/plan.pdf";
+        assert_eq!(
+            document_type(pdf, Some("Application/PDF; charset=binary")),
+            Ok("application/pdf".to_owned())
+        );
+        assert_eq!(document_type(pdf, None), Ok("application/pdf".to_owned()));
+        assert_eq!(
+            document_type(pdf, Some(" ;x")),
+            Ok("application/pdf".to_owned())
+        );
+        let docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        assert_eq!(
+            document_type("https://bb.example/a.docx", Some(docx)),
+            Ok(docx.to_owned())
+        );
+        for steered in [
+            "application/yaml",
+            "application/x-yaml",
+            "text/yaml",
+            "application/zip",
+            "application/x-7z-compressed",
+            "application/octet-stream",
+            "text/html",
+        ] {
+            let refused = document_type(pdf, Some(steered)).expect_err(steered);
+            assert!(refused.contains(steered), "{refused}");
+        }
+        assert_eq!(
+            document_type("https://bb.example/download?id=7", None),
+            Err("the server named no content type".to_owned())
+        );
+    }
+
+    fn office(entries: &[(&str, &str)]) -> Vec<u8> {
+        use std::io::Write;
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (name, body) in entries {
+            assert!(writer.start_file(*name, options).is_ok());
+            assert!(writer.write_all(body.as_bytes()).is_ok());
+        }
+        writer
+            .finish()
+            .map(std::io::Cursor::into_inner)
+            .unwrap_or_default()
+    }
+
+    /// T-6053: kreuzberg reads DOCX and XLSX through zip 9 and calamine 0.37 (the patched copy
+    /// in vendor/kreuzberg), the versions without CVE-2026-115905.
+    #[tokio::test]
+    async fn a_docx_and_an_xlsx_are_read_through_zip_9() {
+        const RELS: &str = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#;
+        let docx = office(&[
+            (
+                "[Content_Types].xml",
+                r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#,
+            ),
+            (
+                "_rels/.rels",
+                &format!(
+                    r#"{RELS}<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#
+                ),
+            ),
+            (
+                "word/document.xml",
+                r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Zber odpadu je v utorok.</w:t></w:r></w:p></w:body></w:document>"#,
+            ),
+        ]);
+        let read = extract(&docx, crate::upload::DOCX, None, 10)
+            .await
+            .expect("docx");
+        assert!(
+            read.passages
+                .iter()
+                .any(|p| p.text.contains("Zber odpadu je v utorok.")),
+            "{read:?}"
+        );
+
+        let xlsx = office(&[
+            (
+                "[Content_Types].xml",
+                r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#,
+            ),
+            (
+                "_rels/.rels",
+                &format!(
+                    r#"{RELS}<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+                ),
+            ),
+            (
+                "xl/workbook.xml",
+                r#"<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Zber" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+            ),
+            (
+                "xl/_rels/workbook.xml.rels",
+                &format!(
+                    r#"{RELS}<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#
+                ),
+            ),
+            (
+                "xl/worksheets/sheet1.xml",
+                r#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Podhorie</t></is></c><c r="B1"><v>42</v></c></row></sheetData></worksheet>"#,
+            ),
+        ]);
+        let read = extract(&xlsx, crate::upload::XLSX, None, 10)
+            .await
+            .expect("xlsx");
+        let text: String = read.passages.iter().map(|p| p.text.as_str()).collect();
+        assert!(text.contains("Podhorie") && text.contains("42"), "{read:?}");
+    }
+
+    #[test]
+    fn a_passage_of_headings_alone_is_recognised() {
+        assert!(only_headings("# Cyklotrasy"));
+        assert!(only_headings("# Cyklotrasy\n\nCyklotrasy"));
+        assert!(only_headings("# Mesto > ## Doprava\n\nDoprava"));
+        assert!(!only_headings("# Cyklotrasy\n\nTrasa vedie popri Hrone."));
+        assert!(!only_headings("Telefón: 048 433 0111"));
+    }
+}

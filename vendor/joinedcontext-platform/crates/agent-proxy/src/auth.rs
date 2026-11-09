@@ -1,0 +1,312 @@
+//! Run ticket authentication and service mesh identity verification.
+
+use crate::config::Config;
+use crate::data_credential::DataCredentials;
+use crate::runs::{RunContext, RunError, RunResolver};
+use axum::http::HeaderMap;
+use std::sync::Arc;
+
+pub const RUN_HEADER: &str = "x-jc-run";
+pub const TICKET_HEADER: &str = "x-jc-ticket";
+/// The bearer form of the same credential, for a client that cannot set headers of its own.
+///
+/// An OpenAI-compatible model client sends one thing and one thing only: `Authorization: Bearer
+/// <api key>`. The workspace has no key, it has a ticket, so the ticket travels in that slot as
+/// `jcr_<run id>.<ticket>` and is verified exactly as the two headers are (AG-52, ADR-N-020).
+pub const TICKET_BEARER_PREFIX: &str = "jcr_";
+
+/// The one sentence every refused credential is answered with, so no pair of answers tells a caller
+/// which run ids exist (T-2285, EP-26, R20).
+const REFUSED: &str = "invalid run credentials";
+
+/// What a caller is told when this platform could not judge their credential at all (AG-52).
+///
+/// It is not `REFUSED`: the person on the other side of an assistant run reads this sentence, and
+/// telling them their credentials are wrong for a fault they have no part in sends them looking
+/// for something they cannot find. Saying it costs nothing either — a failure to reach the Portal
+/// is answered whether the run id exists or not, so it tells a prober nothing about which ids are
+/// live, which is what T-2285's one wording protects.
+const UNREADABLE: &str =
+    "the run's context could not be read; this is a fault of the platform, not of your credentials";
+
+/// `503` with the sentence above, and no detail of the cause: the cause is in the operator's log.
+fn unreadable() -> Box<jc_core::ProblemDetails> {
+    Box::new(
+        jc_core::ProblemDetails::new(503, "service-unavailable", "Service Unavailable")
+            .with_detail(UNREADABLE),
+    )
+}
+
+/// The longest run id this proxy will carry. A minted one is a 36-character UUID; the room above
+/// that is for a longer identifier the Portal may mint one day, not for a payload.
+const RUN_ID_MAX: usize = 64;
+
+/// Whether a string is shaped like a run id: ASCII letters, digits and hyphens, and at most
+/// `RUN_ID_MAX` (64) of them.
+///
+/// The bound is named here rather than linked: `RUN_ID_MAX` is private, and a public item's
+/// documentation may not link to one (`cargo doc -D warnings`). The ceiling is an internal
+/// limit, not part of what this crate offers, so it stays private.
+///
+/// The id arrives in a header the workspace writes and is spent in three places that all read a
+/// name: the Portal lookup path, the `agent-run-<id>` mesh identity, and the audit line. A
+/// separator, a percent sign or a space in it belongs to none of those, so it is refused at the
+/// door rather than encoded at each use — the Portal is then never asked about a string that
+/// cannot be a run, and no shape of one can be read as a path, a second header or a log line
+/// (T-1695, AG-52).
+pub fn run_id_is_well_formed(run_id: &str) -> bool {
+    !run_id.is_empty()
+        && run_id.len() <= RUN_ID_MAX
+        && run_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+/// The run and ticket a request presents, in either of the two forms.
+fn credentials(headers: &HeaderMap) -> Option<(String, String)> {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    if let (Some(run), Some(ticket)) = (header(RUN_HEADER), header(TICKET_HEADER)) {
+        return Some((run, ticket));
+    }
+    let bearer = header("authorization")?;
+    let token = jc_core::http::bearer(Some(&bearer))?;
+    let (run, ticket) = token.strip_prefix(TICKET_BEARER_PREFIX)?.split_once('.')?;
+    if run.is_empty() || ticket.is_empty() {
+        return None;
+    }
+    Some((run.to_owned(), ticket.to_owned()))
+}
+
+pub async fn authenticate(
+    headers: &HeaderMap,
+    resolver: &RunResolver,
+    config: &Config,
+) -> Result<Arc<RunContext>, Box<jc_core::ProblemDetails>> {
+    let (run_id, ticket) = credentials(headers).ok_or_else(|| {
+        Box::new(jc_core::ProblemDetails::unauthorized().with_detail(
+            "missing run credentials: X-JC-Run with X-JC-Ticket, or Authorization: Bearer jcr_<run>.<ticket>",
+        ))
+    })?;
+    let (run_id, ticket) = (run_id.as_str(), ticket.as_str());
+
+    // A run id that is not a name is refused before anybody is asked about it, and answered with
+    // the same sentence as every other bad credential (T-1695).
+    if !run_id_is_well_formed(run_id) {
+        tracing::warn!(
+            length = run_id.len(),
+            "a presented run id is not shaped like a run id"
+        );
+        return Err(Box::new(
+            jc_core::ProblemDetails::unauthorized().with_detail(REFUSED),
+        ));
+    }
+
+    // One sentence for every way a presented credential can be wrong. An id the resolver does not
+    // know and a ticket that does not verify used to answer differently ("invalid or inactive run"
+    // against "invalid run credentials"), which made this route an oracle for run ids: a caller with
+    // no ticket at all could read from the wording which ids are live, and a run id is a workspace's
+    // branch name and its mesh identity (T-2285, EP-26, R20). Which of the two it was belongs in the
+    // log, where an operator reads it and a caller cannot.
+    let run = resolver
+        .resolve(run_id)
+        .await
+        .map_err(|err| refusal(run_id, err))?;
+
+    let verified = resolver.tickets.verify(&run, ticket).await.map_err(|_| {
+        // The stored hash is unusable, so no ticket can be verified against it. That is this
+        // platform's fault and the caller is told so (T-2418); which run's hash it was stays in
+        // the log, where an operator reads it and a caller cannot.
+        tracing::error!(run = %run_id, "the stored ticket hash is not a PHC string");
+        unreadable()
+    })?;
+    if !verified {
+        tracing::warn!(run = %run_id, "the ticket presented for this run does not verify");
+        return Err(Box::new(
+            jc_core::ProblemDetails::unauthorized().with_detail(REFUSED),
+        ));
+    }
+
+    if config.require_mesh_identity {
+        let client_id = headers
+            .get("l5d-client-id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        // The run's own workspace, or the Portal that drives conversations and `ui`/`wasm` builds
+        // in-process with the ticket it minted (AP-56). A ticket replayed from any other pod is
+        // refused, whoever copied it (F-PLT1-008).
+        if !is_runs_own_workload(client_id, &run.id)
+            && !is_workload(client_id, &config.portal_identity)
+        {
+            tracing::warn!(run = %run_id, %client_id, "a run's ticket was presented from another workload");
+            return Err(Box::new(
+                jc_core::ProblemDetails::forbidden().with_detail("mesh workload identity mismatch"),
+            ));
+        }
+    }
+
+    Ok(run)
+}
+
+/// What a run that could not be resolved is answered with.
+fn refusal(run_id: &str, err: RunError) -> Box<jc_core::ProblemDetails> {
+    match err {
+        // The Portal was not reached, refused this proxy's own token, or answered something this
+        // proxy could not read. Nothing about the presented credential was judged, so answering
+        // `401` blamed the caller for a failure of ours (T-2418). `reason` is the transport or
+        // status message: it never carries a token, because the credential manager reports the
+        // status of the grant and not the grant.
+        RunError::Transport(reason) => {
+            tracing::error!(run = %run_id, %reason, "the run's context could not be read from the Portal");
+            unreadable()
+        }
+        // Both of these are facts about the caller's own credential: an id no run holds, and a run
+        // of theirs that has finished. They answer alike, because telling them apart is the oracle
+        // for live run ids that T-2285 closed.
+        RunError::NotFound(_) | RunError::NotActive(_) => {
+            tracing::warn!(run = %run_id, "no active run holds this id");
+            Box::new(jc_core::ProblemDetails::unauthorized().with_detail(REFUSED))
+        }
+    }
+}
+
+/// The caller of a data route: a run's own ticket, or a run's short-lived data credential that the
+/// Portal asked for to test an App function (ADR-N-038 decision 6). Only the data routes call
+/// this; every other route takes the ticket alone.
+pub async fn authenticate_data(
+    headers: &HeaderMap,
+    resolver: &RunResolver,
+    config: &Config,
+    data: &DataCredentials,
+) -> Result<Arc<RunContext>, Box<jc_core::ProblemDetails>> {
+    let Some((run_id, secret)) = crate::data_credential::presented(headers) else {
+        return authenticate(headers, resolver, config).await;
+    };
+    if !run_id_is_well_formed(&run_id) || !data.verify(&run_id, &secret) {
+        tracing::warn!("a data credential that is not a live one was presented");
+        return Err(Box::new(
+            jc_core::ProblemDetails::unauthorized().with_detail(REFUSED),
+        ));
+    }
+    // The run must still be active: a credential outlives no run.
+    let run = resolver
+        .resolve(&run_id)
+        .await
+        .map_err(|err| refusal(&run_id, err))?;
+    if config.require_mesh_identity {
+        let client_id = headers
+            .get("l5d-client-id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        if !is_workload(client_id, &config.functions_identity) {
+            return Err(Box::new(
+                jc_core::ProblemDetails::forbidden().with_detail("mesh workload identity mismatch"),
+            ));
+        }
+    }
+    Ok(run)
+}
+
+/// Whether a Linkerd client identity is the workload `expected`, `<serviceaccount>.<namespace>`:
+/// the identity is `<serviceaccount>.<namespace>.serviceaccount.identity.linkerd.<trust domain>`
+/// with both labels equal and whole (F-17). An `expected` without its namespace matches nothing:
+/// any namespace may hold an account of that name.
+pub(crate) fn is_workload(client_id: &str, expected: &str) -> bool {
+    let Some((account, namespace)) = expected.split_once('.') else {
+        return false;
+    };
+    let labels: Vec<&str> = client_id.split('.').collect();
+    match labels.as_slice() {
+        [a, n, "serviceaccount", "identity", "linkerd", domain @ ..] => {
+            !account.is_empty()
+                && *a == account
+                && *n == namespace
+                && !domain.is_empty()
+                && domain.iter().all(|label| !label.is_empty())
+        }
+        _ => false,
+    }
+}
+
+/// Whether a Linkerd client identity is this run's own workload (AG-52).
+///
+/// A mesh identity is `<serviceaccount>.<namespace>.serviceaccount.identity.linkerd.cluster.local`
+/// and the ServiceAccount is the workload, so the first label is compared whole. `contains` used to
+/// admit any identity that merely held the string: a run whose id extends this one
+/// (`agent-run-abc1…` for run `abc`) and any account or namespace named to hold it
+/// (`x-agent-run-abc…`) passed as the second factor (T-1477).
+fn is_runs_own_workload(client_id: &str, run_id: &str) -> bool {
+    !run_id.is_empty()
+        && client_id
+            .split('.')
+            .next()
+            .is_some_and(|account| account == format!("agent-run-{run_id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_workload, run_id_is_well_formed};
+
+    /// ADR-N-038 decision 6: with mesh identity required, a data credential is honoured from the
+    /// functions workload alone, its account compared whole.
+    #[test]
+    fn only_the_functions_workload_is_the_functions_workload() {
+        let functions = "jc-functions.helsinki.serviceaccount.identity.linkerd.cluster.local";
+        assert!(is_workload(functions, "jc-functions.helsinki"));
+        for other in [
+            "jc-functions-evil.helsinki.serviceaccount.identity.linkerd.cluster.local",
+            "agent-run-1.helsinki.serviceaccount.identity.linkerd.cluster.local",
+            "x-jc-functions.helsinki.serviceaccount.identity.linkerd.cluster.local",
+            // F-17: an account of the same name in another namespace is another workload.
+            "jc-functions.evil.serviceaccount.identity.linkerd.cluster.local",
+            "jc-functions.helsinki.evil.serviceaccount.identity.linkerd.cluster.local",
+            "jc-functions.helsinki",
+            "jc-functions.helsinki.serviceaccount.identity.linkerd.",
+            "",
+        ] {
+            assert!(!is_workload(other, "jc-functions.helsinki"), "{other}");
+        }
+        assert!(
+            !is_workload(functions, "jc-functions"),
+            "an account without its namespace names no workload"
+        );
+        assert!(
+            !is_workload("", ""),
+            "no configured account matches nothing"
+        );
+    }
+
+    /// T-1695: a run id is a name, so nothing that is a path, a second header or a query gets in.
+    #[test]
+    fn only_a_name_is_a_run_id() {
+        for id in ["e3b0c442-98fc-1c14-9afb-4c7b2756a120", "r", "AGENT-RUN-1"] {
+            assert!(run_id_is_well_formed(id), "{id:?} is a run id");
+        }
+        for id in [
+            "",
+            "..",
+            "../../admin",
+            "..%2f..%2fadmin",
+            "%2e%2e/admin",
+            "a/b",
+            "a\\b",
+            "a b",
+            "a?b=1",
+            "a#b",
+            "a:b",
+            "a.b",
+            "a_b",
+            "héllo",
+            &"a".repeat(65),
+        ] {
+            assert!(!run_id_is_well_formed(id), "{id:?} passed as a run id");
+        }
+        assert!(run_id_is_well_formed(&"a".repeat(64)), "64 is the ceiling");
+    }
+}
