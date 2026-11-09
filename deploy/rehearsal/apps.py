@@ -65,6 +65,14 @@ def role_groups(files: Path) -> list[str]:
     return sorted(out)
 
 
+def app_projects(files: Path) -> list[str]:
+    """The projects of every published App that is not public: their endpoints admit a person by
+    the project's own group (PF-87), which a role holder on prod is in."""
+    return sorted({project for project, d in app_manifests(files)
+                   if (d.get("spec") or {}).get("lifecycle") == "published"
+                   and (d.get("spec") or {}).get("visibility") != "public"})
+
+
 def viewer_groups(files: Path) -> list[str]:
     """The groups the `viewer` RoleBindings of the export's repositories name."""
     import yaml
@@ -109,7 +117,7 @@ def with_person(realm: dict, groups: list[str], password_file: Path) -> tuple[di
 def cmd_person(a) -> int:
     path = Path(a.realm_file)
     realm = json.loads(path.read_text())
-    groups = viewer_groups(Path(a.files))
+    groups = sorted({*viewer_groups(Path(a.files)), *app_projects(Path(a.files))})
     realm, missing = with_person(realm, groups, Path(a.password_file))
     fd = os.open(path, os.O_WRONLY | os.O_TRUNC)  # the file keeps its 0600
     with os.fdopen(fd, "w") as f:

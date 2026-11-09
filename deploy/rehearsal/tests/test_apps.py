@@ -32,7 +32,7 @@ status:
   build: {digest: "sha256:%s", commit: c0ffee}
 """
 DRAFT_APP = ROLES_APP.replace("name: alerts", "name: draft").replace("published", "draft") \
-    .replace("alerts-viewer", "draft-viewer")
+    .replace("alerts-viewer", "draft-viewer").replace("namespace: helsinki", "namespace: drafts")
 
 
 def export_with(tmp: Path, bundle: bytes | None, digest_of: bytes) -> Path:
@@ -60,6 +60,8 @@ def test_the_holder_gets_the_published_roles_apps_groups_and_no_credential_value
     (users / "rb.yaml").write_text("kind: RoleBinding\nspec: {role: viewer, subjects: [{group: readers}]}\n---\n"
                                    "kind: RoleBinding\nspec: {role: editor, subjects: [{group: editors}]}\n")
     assert apps.viewer_groups(exp / "gitea" / "files") == ["readers"]
+    # an App reads its project's endpoints, which admit a person by the project's group (PF-87)
+    assert apps.app_projects(exp / "gitea" / "files") == ["helsinki"]  # the draft's project left out
     out, missing = apps.with_person(realm, ["alerts-steward", "alerts-viewer", "gone"], Path("/s/pw"))
     holders = [u for u in out["users"] if u["username"] == apps.PERSON]
     assert len(holders) == 1, "made again, never twice"
