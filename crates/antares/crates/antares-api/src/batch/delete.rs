@@ -41,7 +41,7 @@ async fn batch_delete_inner(
     let mut conds = Conditions::default();
     #[cfg(feature = "views")]
     crate::views::with_view(
-        st.view.as_deref(),
+        st.view().as_deref(),
         "5.6.10",
         Ok(crate::policy::unnarrowed()),
     )?;

@@ -384,25 +384,35 @@ pub async fn wire_nats(
                     // what it references. Kept, not deleted, and taken out of
                     // the next page by the same stamp.
                     let mut retained: Vec<(TenantId, i64)> = Vec::new();
+                    let mut events: Vec<ChangeEvent> = Vec::with_capacity(rows.len());
                     for (seq, _tenant, event) in rows {
                         match serde_json::from_value::<ChangeEvent>(event) {
                             Ok(mut ev) => {
                                 ev.seq = seq;
-                                let checked = ev.claim_checked_at(antares_bus::CLAIM_CHECK_BYTES);
-                                match bus_for_drain.publish(&ev).await {
-                                    Ok(()) if checked => retained.push((ev.tenant, seq)),
-                                    Ok(()) => acked.push(seq),
-                                    Err(e) => {
-                                        tracing::warn!("outbox publish of seq {seq} failed: {e}");
-                                        break; // retry from here next round
-                                    }
-                                }
+                                events.push(ev);
                             }
                             Err(e) => {
                                 // an undecodable row would wedge the drain forever
                                 tracing::error!("outbox row {seq} undecodable ({e}) — skipped");
                                 acked.push(seq);
                             }
+                        }
+                    }
+                    // The whole page is written before its acks are awaited
+                    // (T-6608); what the stream did not acknowledge stays in
+                    // the outbox and is retried from there next round.
+                    let (published, failed) = bus_for_drain.publish_all(&events).await;
+                    if let Some(e) = failed {
+                        tracing::warn!(
+                            "outbox publish failed after {published} of {}: {e}",
+                            events.len()
+                        );
+                    }
+                    for ev in events.into_iter().take(published) {
+                        if ev.claim_checked_at(antares_bus::CLAIM_CHECK_BYTES) {
+                            retained.push((ev.tenant, ev.seq));
+                        } else {
+                            acked.push(ev.seq);
                         }
                     }
                     // Retain BEFORE ack: both statements are separate
@@ -473,7 +483,7 @@ pub async fn wire_nats(
             }
         });
 
-        // The balanced matcher durable: decode → process_change → ack AFTER.
+        // The balanced matcher durable: decode → process_changes → ack AFTER.
         durables.push("matcher");
         let consumer = bus.consume_balanced("matcher").await?;
         let st = state.clone();
@@ -487,24 +497,49 @@ pub async fn wire_nats(
                         continue;
                     }
                 };
-                while let Some(Ok(msg)) = msgs.next().await {
-                    // Change lag = stream-publish → matcher-processing
-                    // age, from the JetStream metadata timestamp.
-                    if let Ok(info) = msg.info() {
-                        // OffsetDateTime → SystemTime (impl in `time`/std),
-                        // so no direct `time` dependency here.
-                        let published: std::time::SystemTime = info.published.into();
-                        if let Ok(age) = published.elapsed() {
-                            metrics::histogram!("antares_change_lag_seconds")
-                                .record(age.as_secs_f64());
+                while let Some(Ok(first)) = msgs.next().await {
+                    // What the consumer already holds rides the same pass, as
+                    // on the local bus (T-6608): one pass matches up to
+                    // MATCH_WIDTH changes at once and folds a subscription's
+                    // matches into one notification, where one message at a
+                    // time matched serially on this task.
+                    let mut batch = vec![first];
+                    let mut ended = false;
+                    while batch.len() < antares_api::notify::CHANGE_BATCH {
+                        match futures_util::FutureExt::now_or_never(msgs.next()) {
+                            Some(Some(Ok(m))) => batch.push(m),
+                            Some(Some(Err(_)) | None) => {
+                                ended = true;
+                                break;
+                            }
+                            None => break,
                         }
                     }
-                    if let Some(ev) = nats::decode(&msg) {
-                        let (before, after) = resolve_payloads(&st, &ev).await;
-                        antares_api::notify::process_change(&st, ev.tenant.as_str(), before, after)
-                            .await;
+                    let mut changes = Vec::with_capacity(batch.len());
+                    for msg in &batch {
+                        // Change lag = stream-publish → matcher-processing
+                        // age, from the JetStream metadata timestamp.
+                        if let Ok(info) = msg.info() {
+                            // OffsetDateTime → SystemTime (impl in `time`/std),
+                            // so no direct `time` dependency here.
+                            let published: std::time::SystemTime = info.published.into();
+                            if let Ok(age) = published.elapsed() {
+                                metrics::histogram!("antares_change_lag_seconds")
+                                    .record(age.as_secs_f64());
+                            }
+                        }
+                        if let Some(ev) = nats::decode(msg) {
+                            let (before, after) = resolve_payloads(&st, &ev).await;
+                            changes.push((ev.tenant.as_str().to_owned(), before, after));
+                        }
                     }
-                    let _ = msg.ack().await;
+                    antares_api::notify::process_changes(&st, changes).await;
+                    for msg in batch {
+                        let _ = msg.ack().await;
+                    }
+                    if ended {
+                        break;
+                    }
                 }
             }
         });

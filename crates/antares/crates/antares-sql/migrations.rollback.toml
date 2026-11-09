@@ -132,3 +132,7 @@ note = "an older release never reads bare and does not clear it on a write: afte
 [0031]
 rollback = "compatible"
 note = "drops the unused tenant_update policy on attr_versions; an older release never updates a version row, so it runs unchanged without it"
+
+[0032]
+rollback = "compatible"
+note = "entity_value_rows also gives each Entity's scopes as attr scope rows; an older release never probes attr scope, refuses attrs= naming scope before it reads entity_values, and its triggers keep the rows through the same function"

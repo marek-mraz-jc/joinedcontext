@@ -247,13 +247,36 @@ impl Default for TemporalFilter<'_> {
 /// always fell into the byte fallback, where ',' (0x2C) sorts before both '.'
 /// and 'Z' and a live instance reads as expired.
 pub fn expired_at(v: &Value, now: &str) -> bool {
+    expired_by(v, &Now::of(now))
+}
+
+/// `now` and its instant, parsed once for every stamp a pass compares with
+/// it rather than once per instance (R1-021).
+struct Now<'a> {
+    text: &'a str,
+    at: Option<chrono::DateTime<chrono::FixedOffset>>,
+}
+
+impl<'a> Now<'a> {
+    fn of(text: &'a str) -> Self {
+        Self {
+            text,
+            at: instant(text),
+        }
+    }
+}
+
+fn instant(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    chrono::DateTime::parse_from_rfc3339(&canonical_datetime(s)).ok()
+}
+
+fn expired_by(v: &Value, now: &Now<'_>) -> bool {
     let Some(e) = v.get("expiresAt").and_then(Value::as_str) else {
         return false;
     };
-    let instant = |s: &str| chrono::DateTime::parse_from_rfc3339(&canonical_datetime(s)).ok();
-    match (instant(e), instant(now)) {
+    match (instant(e), now.at) {
         (Some(exp), Some(n)) => exp < n,
-        _ => e < now,
+        _ => e < now.text,
     }
 }
 
@@ -282,10 +305,11 @@ pub fn canonical_datetime(s: &str) -> std::borrow::Cow<'_, str> {
 /// reserved instance member or Entity metadata, and user JSON under `value`
 /// or `json` — which may spell `expiresAt` itself — is never entered.
 pub fn strip_expired(doc: &mut Value, now: &str) -> bool {
-    if expired_at(doc, now) {
+    let now = Now::of(now);
+    if expired_by(doc, &now) {
         return true;
     }
-    prune_expired(doc, now);
+    prune_by(doc, &now);
     false
 }
 
@@ -295,6 +319,10 @@ pub fn strip_expired(doc: &mut Value, now: &str) -> bool {
 /// Whether `doc` changed. Both store arms sweep with it (4.22 "should be
 /// deleted"), so a sweep removes what a read hides.
 pub fn prune_expired(doc: &mut Value, now: &str) -> bool {
+    prune_by(doc, &Now::of(now))
+}
+
+fn prune_by(doc: &mut Value, now: &Now<'_>) -> bool {
     let Some(obj) = doc.as_object_mut() else {
         return false;
     };
@@ -306,10 +334,10 @@ pub fn prune_expired(doc: &mut Value, now: &str) -> bool {
         };
         let before = arr.len();
         arr.retain_mut(|inst| {
-            if expired_at(inst, now) {
+            if expired_by(inst, now) {
                 return false;
             }
-            changed |= prune_expired(inst, now);
+            changed |= prune_by(inst, now);
             true
         });
         if arr.len() != before {

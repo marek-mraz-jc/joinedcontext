@@ -19,6 +19,7 @@ members = [
     "crates/odata-json",
     "crates/odata-batch",
     "crates/odata-axum",
+    "crates/odata-table",
     "crates/ogc-cql2",
     "crates/antares-residual",
     "crates/antares-views",

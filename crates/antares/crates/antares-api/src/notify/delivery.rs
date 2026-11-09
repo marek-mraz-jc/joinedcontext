@@ -161,8 +161,7 @@ pub(super) async fn deliver_as(
     // A binding that opens no socket has no destination for the policy or
     // the breaker to judge, nor has a delivery the forward transport makes
     // in process; every other network binding is policed below.
-    let policed =
-        in_process(st, uri).is_none() && st.sinks.sink_for_uri(uri).is_some_and(|s| s.network());
+    let policed = network_policed(st, uri);
     if policed && st.egress.is_open(tenant.as_str(), uri) {
         tracing::debug!(
             "notification to {} short-circuited (breaker open)",
@@ -514,42 +513,16 @@ pub(super) async fn record_failure(
     tenant: &TenantId,
     kind: Kind,
     sub_id: &str,
-    mut prev_success: Option<Value>,
+    prev_success: Option<Value>,
     ts: &str,
 ) -> Option<Value> {
-    let mut failed_doc: Option<Value> = None;
     st.store
-        .mutate(tenant, kind, sub_id, |doc| {
-            if let Some(o) = doc.as_object_mut() {
-                o.insert("status".into(), Value::String("failed".into()));
-            }
-            if let Some(n) = doc
-                .as_object_mut()
-                .and_then(|o| o.get_mut("notification"))
-                .and_then(Value::as_object_mut)
-            {
-                match prev_success.take() {
-                    Some(v) => n.insert("lastSuccess".into(), v),
-                    None => n.remove("lastSuccess"),
-                };
-                n.insert("lastFailure".into(), Value::String(ts.to_owned()));
-                // Table 5.2.14.2-1 timesFailed: "Number of times an
-                // unsuccessful response (or timeout) has been received
-                // when delivering the notification" — an output-only
-                // member implementations shall generate.
-                let failed = n.get("timesFailed").and_then(Value::as_i64).unwrap_or(0);
-                n.insert("timesFailed".into(), json!(failed.saturating_add(1)));
-                n.insert("status".into(), Value::String("failed".into()));
-            }
-            failed_doc = Some(doc.clone());
-            Ok::<(), antares_model::NgsiError>(())
-        })
+        .record_failure(tenant, kind, sub_id, prev_success, ts)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("failure-status writeback failed: {e}");
             None
-        });
-    failed_doc
+        })
 }
 
 /// A `KeyValuePair[]` member of `endpoint` (Table 5.2.15-1) as owned pairs.
@@ -597,6 +570,13 @@ pub(super) fn in_process<'a>(
 /// takes the endpoint (ADR-0025 rule 7), on every attempt, retries and
 /// replays included. `Err((timed_out, why))`: only a timeout-class failure
 /// feeds the breaker — an endpoint that answers is alive.
+/// Whether a delivery to `uri` opens a socket the egress policy and the
+/// breaker judge: not one the forward transport makes in process, nor a
+/// binding that opens none.
+pub(super) fn network_policed(st: &AppState, uri: &str) -> bool {
+    in_process(st, uri).is_none() && st.sinks.sink_for_uri(uri).is_some_and(|s| s.network())
+}
+
 pub(super) async fn send_outbound(
     st: &AppState,
     tenant: &TenantId,

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! A byte cursor over the relative URL that remembers the furthest byte any match reached: the
 //! offset of a syntax error, as the OASIS test tool reports it (`maxMatched` of `apg-js`).
 

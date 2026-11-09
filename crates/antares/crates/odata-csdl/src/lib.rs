@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! OData 4.01 EDM model with CSDL XML and CSDL JSON writers (ADR-0024 decision 1, row
 //! `odata-csdl`).
 //!
@@ -8,8 +8,9 @@
 //! base), complex types, structural and navigation properties, terms, one entity container with
 //! entity sets and navigation property bindings, and annotations whose values are constants,
 //! paths, collections and records. Derived types beyond one abstract base, `Edm.Stream` and
-//! CSDL JSON for a 4.0 model answer [`CsdlError::NotImplemented`]; actions, functions,
-//! singletons, enum and type definitions have no field in the model at all.
+//! CSDL JSON for a 4.0 model answer [`CsdlError::NotImplemented`]. Unbound actions and functions
+//! with their container imports are written (T-6657); bound operations, overloads, singletons,
+//! enum and type definitions have no field in the model at all.
 //!
 //! The crate knows nothing about its host (surfaces-threat-model 9.3, rule M1). It writes no
 //! reader: no request path reads CSDL (Decided in T-3445, owner may override).
@@ -57,8 +58,9 @@ pub use error::{CsdlError, Feature, LimitKind, Problem, ValidationError};
 pub use json::write_json;
 pub use model::{
     Annotation, ComplexType, CsdlVersion, EntityContainer, EntitySet, EntityType, Expr, Include,
-    Model, NavigationProperty, NavigationPropertyBinding, Property, Reference,
-    ReferentialConstraint, Scale, Schema, Srid, Term, TypeRef,
+    Model, NavigationProperty, NavigationPropertyBinding, Operation, OperationImport,
+    OperationKind, Parameter, Property, Reference, ReferentialConstraint, Scale, Schema, Srid,
+    Term, TypeRef,
 };
 pub use names::{is_namespace, is_simple_identifier};
 pub use validate::{validate, Limits};

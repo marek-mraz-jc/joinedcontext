@@ -30,7 +30,7 @@ impl PolicyEngine for NoneAdmitted {
 
     fn decide<'a>(&'a self, _s: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
         let answer = if antares_api::policy::FILTERABLE.contains(&op.clause) {
-            Decision::Filter(Filter {
+            Decision::Filter(std::sync::Arc::new(Filter {
                 rules: vec![Rule {
                     types: vec!["https://uri.etsi.org/ngsi-ld/default-context/Car".into()],
                     q: Some(Box::new(antares_ql::parse_q("speed>1000").unwrap())),
@@ -38,7 +38,7 @@ impl PolicyEngine for NoneAdmitted {
                     ..Rule::default()
                 }],
                 ..Filter::default()
-            })
+            }))
         } else {
             Decision::Allow
         };

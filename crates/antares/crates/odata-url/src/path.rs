@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! `resourcePath` (ABNF section 1) for the resource paths of T-3441 Q29 to Q35.
 
 use crate::cursor::{count, Cursor};

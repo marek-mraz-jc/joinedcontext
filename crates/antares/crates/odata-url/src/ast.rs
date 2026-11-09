@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The typed result of a parse. Names stay strings: the [`Model`](crate::Model) placed each one,
 //! the caller decides what it means.
 
@@ -583,6 +583,8 @@ pub enum Method {
     EndsWith,
     /// `geo.intersects`.
     GeoIntersects,
+    /// `geo.distance` (URL 5.1.1.11.1).
+    GeoDistance,
     /// `concat`.
     Concat,
     /// `indexof`.
@@ -634,11 +636,12 @@ pub enum Method {
 }
 
 /// Each method's canonical name and how many arguments it takes, at least and at most.
-const METHODS: [(Method, &str, usize, usize); 28] = [
+const METHODS: [(Method, &str, usize, usize); 29] = [
     (Method::Contains, "contains", 2, 2),
     (Method::StartsWith, "startswith", 2, 2),
     (Method::EndsWith, "endswith", 2, 2),
     (Method::GeoIntersects, "geo.intersects", 2, 2),
+    (Method::GeoDistance, "geo.distance", 2, 2),
     (Method::Concat, "concat", 2, 2),
     (Method::IndexOf, "indexof", 2, 2),
     (Method::Length, "length", 1, 1),
@@ -719,6 +722,9 @@ pub enum Literal {
     Guid(String),
     /// `geography'SRID=n;Point(...)'` or `...;Polygon(...)'`.
     Geography(Geography),
+    /// `geometry'SRID=n;Point(...)'` or `...;Polygon(...)'`: the same shapes on a flat plane
+    /// (URL 5.1.1.14, F27).
+    Geometry(Geography),
     /// `duration'[-]PnDTnHnMn.nS'`, its `durationValue` as written (T-5905).
     Duration(String),
     /// `binary'...'`, its base64url text as written, padded or not (T-5905).

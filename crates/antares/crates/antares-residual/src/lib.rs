@@ -99,6 +99,8 @@ pub enum Path {
     Id,
     /// The Entity type: a string, or a list for an Entity of several types.
     Type,
+    /// The Entity's `scope`: a string or a list, read by `any`/`all` as a list (F23).
+    Scope,
     /// The Entity's `createdAt` (present when the request asked for `sysAttrs`).
     CreatedAt,
     /// The Entity's `modifiedAt`.

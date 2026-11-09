@@ -968,7 +968,7 @@ async fn clause_5_5_6_a_page_is_served_where_the_whole_list_is_refused() {
 /// ADR-0001: "every implicit tenant creation inserts its row in the same
 /// transaction as the document". The claim is not bookkeeping — it is what
 /// makes the purge and a first write agree on an order. The purge takes the
-/// tenant row with `SELECT … FOR UPDATE` before it deletes anything, so a
+/// tenant fence exclusively (`PURGE_FENCE_SQL`) before it deletes anything, so a
 /// write that claims its tenant inside its own transaction WAITS there; one
 /// that claimed it beforehand, in a transaction of its own, walks past the
 /// lock and commits rows into a tenant the purge has just removed from the
@@ -986,11 +986,11 @@ async fn a_first_write_waits_for_the_tenant_row_lock() {
 
     // the purge's own first statement, held open
     let mut holder = pool.begin().await.expect("begin");
-    sqlx::query("SELECT 1 FROM tenants WHERE tenant_id = $1 FOR UPDATE")
+    sqlx::query(pg::PURGE_FENCE_SQL)
         .bind(t.as_str())
-        .fetch_optional(&mut *holder)
+        .execute(&mut *holder)
         .await
-        .expect("lock the tenant row");
+        .expect("take the tenant fence");
 
     let (s2, t2) = (s.clone(), t.clone());
     let doc = json!({"id": id, "type": "Vehicle",

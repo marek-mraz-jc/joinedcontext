@@ -71,10 +71,10 @@ impl PolicyEngine for SlowOnly {
     fn decide<'a>(&'a self, _s: &'a Subject, _op: &'a Operation<'a>) -> DecisionFuture<'a> {
         let d = match self.0 {
             Some(b) => match antares_ql::parse_q(&format!("speed<{b}")) {
-                Ok(q) => Decision::Filter(Filter {
+                Ok(q) => Decision::Filter(std::sync::Arc::new(Filter {
                     q: Some(Box::new(q)),
                     ..Filter::default()
-                }),
+                })),
                 Err(e) => Decision::Deny(e.to_string()),
             },
             None => Decision::Allow,

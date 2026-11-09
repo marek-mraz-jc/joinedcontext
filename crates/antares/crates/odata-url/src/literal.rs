@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! `primitiveLiteral` (ABNF section 7): the subset of T-3441 F26 and F29 as values, the other
 //! literal kinds recognised and answered as not implemented.
 
@@ -51,8 +51,7 @@ fn any_literal(c: &mut Cursor<'_>) -> Result<Option<Literal>, UrlError> {
         return geography(c).map(|g| Some(Literal::Geography(g)));
     }
     if prefixed(c, "geometry") {
-        c.reset(start);
-        return Err(c.not_implemented(Feature::Literal));
+        return geography(c).map(|g| Some(Literal::Geometry(g)));
     }
     if prefixed(c, "duration") {
         // `SIGN` before the body: `+` writes itself `%2B`, which the body scan stops at (T-6100)
@@ -811,10 +810,33 @@ mod tests {
     }
 
     #[test]
+    fn geometry_takes_the_geography_shapes() {
+        // geometryPoint and geometryPolygon (OData ABNF), the shape names case-insensitive
+        assert_eq!(
+            ok("geometry'SRID=0;point(1 1)'"),
+            Literal::Geometry(Geography {
+                srid: 0,
+                shape: Shape::Point(Position(vec!["1".into(), "1".into()])),
+            })
+        );
+        let area = ok("Geometry'SRID=0;Polygon((0 0,1 0,1 1,0 0))'");
+        assert!(
+            matches!(&area, Literal::Geometry(Geography { shape: Shape::Polygon(r), .. }) if r.len() == 1)
+        );
+        assert_eq!(
+            area.to_string(),
+            "geometry'SRID=0;Polygon((0%200,1%200,1%201,0%200))'"
+        );
+        for bad in ["geometry'Point(1 2)'", "geometry'SRID=1;Point(1 2)"] {
+            assert!(read(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
     fn kinds_outside_the_subset() {
         for other in [
             "geography'SRID=0;LineString(1 1,2 2)'",
-            "geometry'SRID=0;Point(1 1)'",
+            "geometry'SRID=0;MultiPoint((1 1))'",
             "Namespace.Pattern'Yellow'",
         ] {
             assert_eq!(

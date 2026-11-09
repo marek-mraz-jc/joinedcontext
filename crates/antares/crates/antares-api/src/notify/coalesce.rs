@@ -195,11 +195,33 @@ static WINDOWS: std::sync::LazyLock<std::sync::Mutex<HashMap<Key, Window>>> =
     std::sync::LazyLock::new(Default::default);
 
 /// Taken around a window's statement, so a reader waits for the stamps that
-/// already left the window as well as for those still in it. ponytail: one
-/// turn for the process; a turn per tenant when one tenant's window is seen
-/// holding up another's reads.
+/// already left the window as well as for those still in it. One turn per
+/// stripe of (store, tenant) keys (T-6611): a GET of one tenant's
+/// Subscription no longer queues behind another tenant's statement. Two
+/// keys on one stripe share a turn, which only serialises them as the one
+/// process-wide turn did before.
 #[cfg(not(target_arch = "wasm32"))]
-static SETTLING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static SETTLING: [tokio::sync::Mutex<()>; SETTLING_STRIPES] =
+    [const { tokio::sync::Mutex::const_new(()) }; SETTLING_STRIPES];
+
+/// Stripes of [`SETTLING`]: a fixed table, so no key ever allocates a lock.
+#[cfg(not(target_arch = "wasm32"))]
+const SETTLING_STRIPES: usize = 64;
+
+/// The settling turn of `key`.
+#[cfg(not(target_arch = "wasm32"))]
+fn turn(key: &Key) -> &'static tokio::sync::Mutex<()> {
+    use std::hash::BuildHasher as _;
+    let hash =
+        std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
+            .hash_one(key);
+    let stripe = hash
+        .checked_rem(SETTLING_STRIPES as u64)
+        .and_then(|i| usize::try_from(i).ok())
+        .unwrap_or_default();
+    let [first, ..] = &SETTLING;
+    SETTLING.get(stripe).unwrap_or(first)
+}
 
 /// Whether this delivery may leave before its stamp is written. The mirror
 /// answers "does the Subscription still exist" (5.8.6: a deleted one is not
@@ -259,7 +281,7 @@ pub(crate) async fn settle_bookings(st: &AppState, tenant: &TenantId) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let key = key(st, tenant);
-        let _turn = SETTLING.lock().await;
+        let _turn = turn(&key).lock().await;
         let window = WINDOWS
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -481,6 +503,30 @@ async fn read<'a>(
 #[cfg(test)]
 mod tests {
     use super::read_batches;
+
+    /// One tenant's settling turn held (its window's statement in flight)
+    /// leaves another tenant's settle free to run (T-6611, R2-014): on dev
+    /// b683bfc3 one process-wide turn made every GET of a Subscription wait.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn a_settle_does_not_wait_for_another_tenants_turn() {
+        use crate::AppState;
+        use antares_model::TenantId;
+        let st = AppState::new("antares-settle-stripes".into());
+        let held = TenantId::try_from("t6611-held".to_owned()).unwrap();
+        let key = super::key(&st, &held);
+        let _turn = super::turn(&key).lock().await;
+        let other = (0..1000)
+            .map(|i| TenantId::try_from(format!("t6611-other-{i}")).unwrap())
+            .find(|t| !std::ptr::eq(super::turn(&super::key(&st, t)), super::turn(&key)))
+            .unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            super::settle_bookings(&st, &other),
+        )
+        .await
+        .expect("another tenant's settle ran while the first turn was held");
+    }
 
     /// 1000 asks of 256 ids each, overlapping, read as their union in
     /// batches no larger than the chunk.

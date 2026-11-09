@@ -4,6 +4,7 @@
 
 use crate::model::Collection;
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 
 /// The terms one collection's requests use: core-context names as they are, every other
 /// Attribute by its property name in the request's own `@context` (so an `ngsild.` option
@@ -11,14 +12,16 @@ use serde_json::{Map, Value};
 /// context already defines it; the answer's keys are then known.
 pub(crate) struct Terms {
     pub(crate) context: Map<String, Value>,
-    pub(crate) by_iri: Vec<(String, String)>,
+    /// Each Attribute's term by IRI: looked up per property per Feature, so a map, not a
+    /// scan of every term (T-6619 R3-018).
+    pub(crate) by_iri: HashMap<String, String>,
 }
 
 impl Terms {
     pub(crate) fn of(c: &Collection) -> Self {
         let mut t = Self {
             context: Map::new(),
-            by_iri: Vec::new(),
+            by_iri: HashMap::with_capacity(c.properties.len().saturating_add(1)),
         };
         let span = c.properties.len().saturating_add(1);
         let named = c
@@ -48,17 +51,15 @@ impl Terms {
             } else {
                 core
             };
-            t.by_iri.push((iri.clone(), term));
+            // The first name an IRI takes stays, as a scan finds it first.
+            t.by_iri.entry(iri.clone()).or_insert(term);
         }
         t
     }
 
     /// The term of an Attribute of the collection.
     pub(crate) fn term<'a>(&'a self, iri: &'a str) -> &'a str {
-        self.by_iri
-            .iter()
-            .find(|(i, _)| i == iri)
-            .map_or(iri, |(_, t)| t.as_str())
+        self.by_iri.get(iri).map_or(iri, String::as_str)
     }
 
     /// The request's own `@context`, none when every term is the core context's.

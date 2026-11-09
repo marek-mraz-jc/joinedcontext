@@ -4,13 +4,14 @@
 
 use crate::document::{context, covers, scope_paths, Policy, Table};
 use crate::subject::{Caller, Platform};
-use antares_api::policy::metadata::Metadata;
+use antares_api::policy::metadata::{Metadata, MEMBERS};
 use antares_api::policy::{
     Decision, Filter, Operation, Rule, Warning, FILTERABLE, NAME_READS, WHOLE_TENANT, WRITE_BY_ID,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// Writes judged on the Entity they create, so a conditional policy is
 /// judged on the request body.
@@ -122,11 +123,14 @@ pub fn decide(
     }
     if read {
         match read_filter(&grants, op, (&types, &refused), withheld, platform) {
-            Decision::Allow if metadata.is_some() => Decision::Filter(Filter {
+            Decision::Allow if metadata.is_some() => Decision::Filter(Arc::new(Filter {
                 metadata,
                 ..Filter::default()
-            }),
-            Decision::Filter(f) => Decision::Filter(Filter { metadata, ..f }),
+            })),
+            Decision::Filter(f) => Decision::Filter(Arc::new(Filter {
+                metadata,
+                ..Arc::unwrap_or_clone(f)
+            })),
             other => other,
         }
     } else if WHOLE_TENANT.contains(&op.clause) {
@@ -156,7 +160,6 @@ const METADATA_READS: [&str; 6] = ["5.7.1", "5.7.2", "5.7.3", "5.7.4", "5.14.4",
 /// `JC-Read-Versions`, and the gateway strips its `modifiedBy` and
 /// `provenance` (DM-140, DM-151).
 fn passed(applying: &[&Policy], clause: &str) -> Option<Box<Metadata>> {
-    const PLAIN: [&str; 4] = ["observedAt", "unitCode", "createdAt", "modifiedAt"];
     if !METADATA_READS.contains(&clause) {
         return None;
     }
@@ -190,7 +193,7 @@ fn passed(applying: &[&Policy], clause: &str) -> Option<Box<Metadata>> {
         .named
         .values()
         .chain([&out.rest])
-        .any(|m| PLAIN.iter().any(|p| !m.contains(*p)));
+        .any(|m| MEMBERS.iter().any(|p| !m.contains(*p)));
     narrows.then(|| Box::new(out))
 }
 
@@ -388,11 +391,11 @@ fn names(table: &Table, caller: &Platform, now: DateTime<Utc>) -> Decision {
     if !query().any(|p| p.prohibit) && query().any(|p| !p.prohibit && unconditional_whole(p)) {
         return Decision::Allow;
     }
-    Decision::Filter(Filter {
+    Decision::Filter(Arc::new(Filter {
         rules: vec![Rule::default()],
         restricted: caller.restricted,
         ..Filter::default()
-    })
+    }))
 }
 
 /// A read: one rule per selector of every grant (ADR-0023 rule 11), none of which shows a type
@@ -411,12 +414,12 @@ fn read_filter(
         if withheld.is_empty() {
             return Decision::Allow;
         }
-        return Decision::Filter(Filter {
+        return Decision::Filter(Arc::new(Filter {
             warning: left_out(&[], op, types, &withheld),
             omit_by_type: withheld,
             restricted: caller.restricted,
             ..Filter::default()
-        });
+        }));
     }
     let mut rules: Vec<Rule> = Vec::new();
     for p in grants {
@@ -454,13 +457,13 @@ fn read_filter(
             rules.push(Rule::default());
         }
     }
-    Decision::Filter(Filter {
+    Decision::Filter(Arc::new(Filter {
         warning: left_out(&rules, op, types, &withheld),
         omit_by_type: withheld,
         rules,
         restricted: caller.restricted,
         ..Filter::default()
-    })
+    }))
 }
 
 /// The advisory naming the types the request's filter leaves out (map K18, MP-02), as the
@@ -641,6 +644,7 @@ fn admits(p: &Policy, op: &Operation<'_>, types: &[String]) -> Vec<Admit> {
         .filter(|s| s.types.iter().any(|t| types.contains(t)))
         .filter(|s| op.ids.iter().all(|id| s.selects_id(id)))
         .filter(|s| s.attributes.is_empty() || op.attrs.iter().all(|a| s.attributes.contains(a)))
+        .filter(|s| removes_only_granted(s, op))
         .filter(|s| inside_scope(s, op.body))
         .filter(|s| inside_area(s, op.body))
         .filter_map(|s| {
@@ -662,6 +666,24 @@ fn admits(p: &Policy, op: &Operation<'_>, types: &[String]) -> Vec<Admit> {
             }
         })
         .collect()
+}
+
+/// The writes that remove what the stored Entity holds: a delete of the Entity (5.6.6, 5.6.10)
+/// and a replace (5.6.18, and an upsert, 5.6.8, whose mode the operation does not tell).
+const REMOVES_STORED: [&str; 4] = ["5.6.6", "5.6.8", "5.6.10", "5.6.18"];
+
+/// A grant listing Attributes admits a write that removes stored Attributes only when it lists
+/// every one the stored Entity holds (F-08): a replace naming one granted Attribute wipes the
+/// others, and a delete removes them all.
+fn removes_only_granted(s: &Rule, op: &Operation<'_>) -> bool {
+    s.attributes.is_empty()
+        || !REMOVES_STORED.contains(&op.clause)
+        || op.stored.is_none_or(|stored| {
+            stored
+                .attribute_names
+                .iter()
+                .all(|a| s.attributes.contains(a))
+        })
 }
 
 /// The body's `scope` lies inside the policy's scope tree (R29, R30).
@@ -1150,7 +1172,7 @@ mod tests {
         let Decision::Filter(f) = decide(Some(&t), &caller(), &op, Utc::now()) else {
             return Err("a read by selector is a filter".into());
         };
-        Ok(f.warning.map(|w| w.texts().join("; ")))
+        Ok(f.warning.as_ref().map(|w| w.texts().join("; ")))
     }
 
     const WAS: &str = "was not queried: this request selects or orders on an attribute they do \
@@ -1348,7 +1370,7 @@ mod tests {
     #[test]
     fn a_capability_block_passes_metadata_members_per_attribute() -> Result<(), String> {
         let members = |d: Decision| match d {
-            Decision::Filter(f) => Ok(f.metadata),
+            Decision::Filter(f) => Ok(f.metadata.clone()),
             other => Err(format!("{other:?}")),
         };
         let blockless = table(&json!({"operations": ["5.7.2"]}))?;
@@ -1371,10 +1393,11 @@ mod tests {
             ])
         );
         // a type list carries no data, so it strips nothing
-        assert!(matches!(
-            on(&t, "5.7.6", None),
-            Decision::Allow | Decision::Filter(Filter { metadata: None, .. })
-        ));
+        assert!(match on(&t, "5.7.6", None) {
+            Decision::Allow => true,
+            Decision::Filter(f) => f.metadata.is_none(),
+            _ => false,
+        });
         let with_prohibition = compile(&json!({"policies": [
             {"id": "p", "assignee": {"kind": "role", "id": "r"}, "operations": ["5.7.2"],
              "information": [{"entities": [{"type": "Car"}]}]},

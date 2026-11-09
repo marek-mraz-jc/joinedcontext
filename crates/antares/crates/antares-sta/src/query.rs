@@ -575,7 +575,7 @@ pub fn fit(groups: Vec<Vec<Value>>) -> (Vec<Value>, usize) {
     for group in groups {
         let size = group
             .iter()
-            .map(|v| v.to_string().len().saturating_add(1))
+            .map(|v| antares_ops::json_len(v).saturating_add(1))
             .fold(0usize, usize::saturating_add);
         bytes = bytes.saturating_add(size);
         if bytes > PAGE_BYTES && served > 0 {

@@ -106,7 +106,7 @@ async fn batch_write(
     // refuses it whole, as `gate!` refuses a narrowed write.
     #[cfg(feature = "views")]
     crate::views::with_view(
-        st.view.as_deref(),
+        st.view().as_deref(),
         mode.clause(),
         Ok(crate::policy::unnarrowed()),
     )?;
@@ -246,7 +246,7 @@ impl BatchRun<'_> {
     ) -> Result<Vec<Shown>, NgsiError> {
         let mut wanted: Vec<&str> = members.iter().filter_map(|(id, _)| id.as_deref()).collect();
         #[cfg(feature = "views")]
-        if self.st.view.is_some() {
+        if self.st.view().is_some() {
             wanted.extend(
                 members
                     .iter()
@@ -396,7 +396,7 @@ impl BatchRun<'_> {
 
     async fn upsert(&mut self, round: Vec<Member>, ts: &str) -> Result<(), NgsiError> {
         #[cfg(feature = "views")]
-        if self.st.view.is_some() {
+        if self.st.view().is_some() {
             let created = upsert_in_view(
                 self.st,
                 &self.tenant,
@@ -614,7 +614,7 @@ impl BatchRun<'_> {
     async fn create(&mut self, creates: Vec<Member>) -> Result<(), NgsiError> {
         // ADR-0023 rule 7 per member: a create through a view lands in it.
         #[cfg(feature = "views")]
-        let creates = if self.st.view.is_some() {
+        let creates = if self.st.view().is_some() {
             let mut kept = Vec::with_capacity(creates.len());
             for (id, doc) in creates {
                 match crate::views::admits_new(self.st, &self.tenant, &doc).await {

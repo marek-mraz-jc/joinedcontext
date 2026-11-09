@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! [`Model`] over an [`odata_csdl::Model`]: names resolved the way the `$metadata` document of
 //! the same service declares them.
 

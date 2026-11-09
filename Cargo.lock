@@ -2315,7 +2315,7 @@ dependencies = [
  "indexmap 2.14.2",
  "jc-router",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "parking_lot",
  "percent-encoding",
@@ -2389,7 +2389,7 @@ dependencies = [
  "hex",
  "indexmap 2.14.2",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "regex",
  "schemars 0.8.22",
@@ -2611,7 +2611,7 @@ dependencies = [
  "jc-router",
  "jcctl",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "reqwest 0.12.28",
  "serde",
@@ -2629,7 +2629,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dataroom-store-memory",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -2756,7 +2756,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dataroom-core",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "serde_json",
  "uuid",
 ]
@@ -2768,7 +2768,7 @@ dependencies = [
  "chrono",
  "dataroom-core",
  "dataroom-store-memory",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "serde",
  "serde_json",
  "sqlx",
@@ -6784,7 +6784,7 @@ dependencies = [
  "kaisatsu-oidc",
  "kaisatsu-store-memory",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "parking_lot",
  "serde",
@@ -6806,7 +6806,7 @@ dependencies = [
  "futures-core",
  "http",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "regex",
  "schemars 0.8.22",
@@ -6968,7 +6968,7 @@ dependencies = [
  "kaisatsu-oidc",
  "kaisatsu-store-memory",
  "kaisatsu-store-pg",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "pbkdf2 0.13.0",
  "serde",
  "serde_json",
@@ -6993,7 +6993,7 @@ dependencies = [
  "kaisatsu-core",
  "kaisatsu-crypto",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "parking_lot",
  "serde",
@@ -7011,7 +7011,7 @@ dependencies = [
  "kaisatsu-crypto",
  "kaisatsu-store-memory",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "serde",
  "serde_json",
@@ -8087,6 +8087,7 @@ dependencies = [
  "axum",
  "odata-csdl 0.3.0",
  "odata-json",
+ "odata-table 0.3.0",
  "odata-url 0.3.0",
 ]
 
@@ -8121,6 +8122,15 @@ dependencies = [
  "odata-csdl 0.3.0",
  "odata-url 0.3.0",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "odata-table"
+version = "0.3.0"
+dependencies = [
+ "odata-csdl 0.3.0",
+ "odata-url 0.3.0",
  "serde_json",
 ]
 
@@ -11133,7 +11143,7 @@ dependencies = [
  "http-body-util",
  "jc-router",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "parking_lot",
  "percent-encoding",
@@ -11169,7 +11179,7 @@ dependencies = [
  "ipnet",
  "jsonwebtoken 11.1.0",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "p256 0.14.0",
  "parking_lot",
@@ -11313,7 +11323,7 @@ name = "shako-store-memory"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "parking_lot",
  "serde",
  "serde_json",
@@ -11328,7 +11338,7 @@ version = "0.1.0"
 dependencies = [
  "async-nats 0.51.0",
  "chrono",
- "odata-table",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "parking_lot",
  "serde",
  "serde_json",

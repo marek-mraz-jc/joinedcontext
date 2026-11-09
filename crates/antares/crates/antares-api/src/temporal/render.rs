@@ -44,7 +44,9 @@ pub(super) fn truncate(w: &mut Windowed, timeprop: &str, descending: bool, limit
         .filter(|insts| insts.len() > limit)
         .filter_map(|insts| insts.get(limit.saturating_sub(1)).and_then(key))
         .reduce(|a, b| if (b < a) != descending { b } else { a });
-    let (mut ts_min, mut ts_max) = (None::<String>, None::<String>);
+    // (canonical key, text) of the bounds: the held bound's key is kept,
+    // not worked out again per compared instance (R2-033)
+    let (mut ts_min, mut ts_max) = (None::<(String, String)>, None::<(String, String)>);
     for instances in w.attrs.values_mut() {
         let before = instances.len();
         match &boundary {
@@ -61,16 +63,17 @@ pub(super) fn truncate(w: &mut Windowed, timeprop: &str, descending: bool, limit
         }
         for inst in instances.iter() {
             if let Some(t) = inst.get(timeprop).and_then(Value::as_str) {
-                if ts_min.as_deref().is_none_or(|m| dt_key(t) < dt_key(m)) {
-                    ts_min = Some(t.to_owned());
+                let k = dt_key(t);
+                if ts_min.as_ref().is_none_or(|(m, _)| k < *m) {
+                    ts_min = Some((k.clone(), t.to_owned()));
                 }
-                if ts_max.as_deref().is_none_or(|m| dt_key(t) > dt_key(m)) {
-                    ts_max = Some(t.to_owned());
+                if ts_max.as_ref().is_none_or(|(m, _)| k > *m) {
+                    ts_max = Some((k, t.to_owned()));
                 }
             }
         }
     }
-    (w.ts_min, w.ts_max) = (ts_min, ts_max);
+    (w.ts_min, w.ts_max) = (ts_min.map(|(_, t)| t), ts_max.map(|(_, t)| t));
 }
 
 /// Each instance of `w` replaced by its chain of versions in `chains` (the

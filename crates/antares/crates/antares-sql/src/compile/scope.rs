@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: EUPL-1.2
 //! Scope Query Language (CIM 009 clause 4.19) compiled to SQL over the
-//! extracted `scopes text[]` column (GIN-indexed).
+//! extracted `scopes text[]` column. The predicate is a regex over
+//! `unnest(scopes)` inside `EXISTS`, which no index serves (migration 0001):
+//! a scope filter narrows rows another predicate selected, it does not
+//! select them itself.
 //!
 //! Same one-directional contract as `q` (see `compile::q`): this may only
 //! NARROW. `antares_api::scope_matches` stays the arbiter, so a predicate
@@ -103,6 +106,64 @@ fn pattern_regex(pat: &str) -> Option<String> {
     Some(out)
 }
 
+/// The scope rows (`entity_values` attr `scope`, migration 0032) one OR
+/// group of a `scopeQ` reads: every scope its matches hold, normalised as
+/// the migration does (one `/` before each segment, none after), equals
+/// `exact` or starts with `under`. A superset of the regex's matches, taken
+/// from the first pattern of the group with a literal first segment.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ScopeKey {
+    pub exact: Option<String>,
+    pub under: Option<String>,
+}
+
+/// One key per OR group of `scope_q`, `None` when a group has no pattern
+/// with a literal first segment (`/+/A`, `/#`): nothing narrows it.
+pub fn scope_keys(scope_q: &str) -> Option<Vec<ScopeKey>> {
+    if scope_q.len() > MAX_SCOPE_Q_BYTES || scope_q.contains('\0') {
+        return None;
+    }
+    scope_q
+        .split([',', '|'])
+        .map(|g| {
+            let g = g.trim().trim_start_matches('(').trim_end_matches(')');
+            g.split(';').find_map(|p| pattern_key(p.trim()))
+        })
+        .collect()
+}
+
+fn pattern_key(pat: &str) -> Option<ScopeKey> {
+    let segs: Vec<&str> = pat.split('/').filter(|s| !s.is_empty()).collect();
+    let mut fixed = String::new();
+    for (i, seg) in segs.iter().enumerate() {
+        match *seg {
+            "#" | "+" if fixed.is_empty() => return None,
+            "#" if i.saturating_add(1) == segs.len() => {
+                let under = format!("{fixed}/");
+                return Some(ScopeKey {
+                    exact: Some(fixed),
+                    under: Some(under),
+                });
+            }
+            "#" => return None,
+            "+" => {
+                return Some(ScopeKey {
+                    exact: None,
+                    under: Some(format!("{fixed}/")),
+                })
+            }
+            s => {
+                fixed.push('/');
+                fixed.push_str(s);
+            }
+        }
+    }
+    (!fixed.is_empty()).then_some(ScopeKey {
+        exact: Some(fixed),
+        under: None,
+    })
+}
+
 /// POSIX-ERE escaping. Postgres `~` is ERE, so the metacharacter set is
 /// fixed and small; anything outside it is passed through unchanged.
 fn escape(s: &str) -> String {
@@ -178,6 +239,39 @@ mod tests {
             let b = compile_scope_q(bare, "scopes", 1).expect("bare compiles");
             assert_eq!(p.sql, b.sql, "{parens} vs {bare}");
             assert_eq!(p.binds, b.binds, "{parens} vs {bare}");
+        }
+    }
+
+    /// T-6610: each OR group's probe key, a superset of what its regex
+    /// matches after normalisation (`//A/B/` is `/A/B`).
+    #[test]
+    fn a_group_with_a_literal_first_segment_has_a_probe_key() {
+        let key = |e: Option<&str>, u: Option<&str>| ScopeKey {
+            exact: e.map(str::to_owned),
+            under: u.map(str::to_owned),
+        };
+        assert_eq!(
+            scope_keys("/Madrid/Gardens"),
+            Some(vec![key(Some("/Madrid/Gardens"), None)])
+        );
+        assert_eq!(
+            scope_keys("Madrid//Gardens/"),
+            Some(vec![key(Some("/Madrid/Gardens"), None)])
+        );
+        assert_eq!(
+            scope_keys("/Madrid/#"),
+            Some(vec![key(Some("/Madrid"), Some("/Madrid/"))])
+        );
+        assert_eq!(
+            scope_keys("/Madrid/+/Park"),
+            Some(vec![key(None, Some("/Madrid/"))])
+        );
+        assert_eq!(
+            scope_keys("(/+/X;/A/B),/C/#"),
+            Some(vec![key(Some("/A/B"), None), key(Some("/C"), Some("/C/"))])
+        );
+        for none in ["/#", "#", "/+/A", "/A,/+", "/A/#/B", "x\0"] {
+            assert_eq!(scope_keys(none), None, "{none}");
         }
     }
 

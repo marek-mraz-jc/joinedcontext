@@ -84,7 +84,7 @@ pub(crate) fn keyset_allowed(params: &HashMap<String, String>) -> bool {
 /// API (a view never named still differs from it).
 #[cfg(feature = "views")]
 pub(crate) fn view_of(st: &AppState) -> String {
-    st.view
+    st.view()
         .as_deref()
         .map_or_else(String::new, |v| format!("view:{}", v.id()))
 }
@@ -575,9 +575,28 @@ pub fn order_entities(
             && digits(3..5)
             && digits(6..8)
     }
+    /// An ordering value with what its comparisons need, worked out once
+    /// per document instead of on both sides of every comparison (R1-025):
+    /// its rank, and the text a DateTime, an object or an array compares by.
+    struct Keyed {
+        rank: u8,
+        v: Value,
+        text: Option<String>,
+    }
+    fn keyed(v: Value) -> Keyed {
+        let rank = rank(&v);
+        let text = match (&v, rank) {
+            // DateTime: canonical key so equal instants in different 4.6.3
+            // fraction spellings tie (4.11)
+            (Value::String(s), 7) => Some(antares_model::dt_key(s)),
+            (Value::Object(_) | Value::Array(_), _) => Some(v.to_string()),
+            _ => None,
+        };
+        Keyed { rank, v, text }
+    }
     fn cmp_vals(
-        a: &Option<Value>,
-        b: &Option<Value>,
+        a: &Option<Keyed>,
+        b: &Option<Keyed>,
         coll: Option<&icu_collator::CollatorBorrowed<'static>>,
     ) -> std::cmp::Ordering {
         use std::cmp::Ordering;
@@ -585,11 +604,15 @@ pub fn order_entities(
             (None, None) => Ordering::Equal,
             (None, Some(_)) => Ordering::Greater, // absent sorts last (4.23.2)
             (Some(_), None) => Ordering::Less,
-            (Some(x), Some(y)) => {
-                let (rx, ry) = (rank(x), rank(y));
+            (Some(kx), Some(ky)) => {
+                let (rx, ry) = (kx.rank, ky.rank);
                 if rx != ry {
                     return rx.cmp(&ry);
                 }
+                if let (Some(tx), Some(ty)) = (&kx.text, &ky.text) {
+                    return tx.cmp(ty);
+                }
+                let (x, y) = (&kx.v, &ky.v);
                 match (x, y) {
                     (Value::Number(_), Value::Number(_)) => x
                         .as_f64()
@@ -597,11 +620,7 @@ pub fn order_entities(
                         .total_cmp(&y.as_f64().unwrap_or(f64::NAN)),
                     (Value::Bool(bx), Value::Bool(by)) => bx.cmp(by),
                     (Value::String(sx), Value::String(sy)) => {
-                        if rx == 7 {
-                            // DateTime: canonical key so equal instants in
-                            // different 4.6.3 fraction spellings tie (4.11)
-                            antares_model::dt_key(sx).cmp(&antares_model::dt_key(sy))
-                        } else if let Some(c) = coll {
+                        if let Some(c) = coll {
                             // 4.23.3 EXAMPLES 6/7: the named ICU collation
                             c.compare(sx, sy)
                         } else {
@@ -609,7 +628,8 @@ pub fn order_entities(
                             sx.cmp(sy)
                         }
                     }
-                    _ => x.to_string().cmp(&y.to_string()),
+                    // the one same-rank pair left: Null and Null
+                    _ => Ordering::Equal,
                 }
             }
         }
@@ -623,7 +643,7 @@ pub fn order_entities(
             .and_then(|(g, v)| antares_ql::geo::order_distance_m(g, v))
     };
     // per key: the value it reads and, under a distance key, the distance
-    type Read = Vec<(Option<Value>, Option<f64>)>;
+    type Read = Vec<(Option<Keyed>, Option<f64>)>;
     let mut decorated: Vec<(Read, Value)> = docs
         .iter_mut()
         .map(|doc| {
@@ -635,7 +655,7 @@ pub fn order_entities(
                         Dir::DistAsc | Dir::DistDesc => distance(&v),
                         Dir::Asc | Dir::Desc => None,
                     };
-                    (v, d)
+                    (v.map(keyed), d)
                 })
                 .collect();
             (read, std::mem::take(doc))
@@ -1053,7 +1073,8 @@ pub(crate) fn pct_encode(s: &str, keep: impl Fn(u8) -> bool) -> String {
         if b.is_ascii_alphanumeric() || keep(b) {
             out.push(b as char);
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            // one write into `out`, no String per escaped byte (R1-025)
+            let _ = std::fmt::Write::write_fmt(&mut out, format_args!("%{b:02X}"));
         }
     }
     out
