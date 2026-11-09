@@ -107,7 +107,7 @@
                 </div>
                 <p class="jc-lead">{{ exp.lead }}</p>
                 <iframe class="jc-viz-frame jc-explorer-frame" title="{{ exp.title }}" src="{{ exp.src }}" data-jc-viz="{{ exp.origin }}"
-                        referrerpolicy="no-referrer" allow="clipboard-write" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe>
+                        referrerpolicy="no-referrer" allow="clipboard-write" sandbox="{{ exp.sandbox }}"></iframe>
               </section>
             </div>
             {% endif %}

@@ -142,7 +142,7 @@
                 </div>
                 <p class="jc-lead">{{ exp.lead }}</p>
                 <iframe class="jc-viz-frame jc-explorer-frame" title="{{ exp.title }}" src="{{ exp.src }}" data-jc-viz="{{ exp.origin }}"
-                        referrerpolicy="no-referrer" allow="clipboard-write" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe>
+                        referrerpolicy="no-referrer" allow="clipboard-write" sandbox="{{ exp.sandbox }}"></iframe>
               </section>
               {% endif %}
 
@@ -178,7 +178,7 @@
                     {% if !viz.description.is_empty() %}<p id="jc-viz-{{ viz.id }}-desc">{{ viz.description }}</p>{% endif %}
                   </figcaption>
                   <iframe class="jc-viz-frame" loading="lazy" title="{{ viz.title }}" src="{{ viz.src }}" data-jc-viz="{{ viz.origin }}"
-                          referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-downloads"></iframe>
+                          referrerpolicy="no-referrer" sandbox="{{ viz.sandbox }}"></iframe>
                   <div class="jc-viz-actions">
                     <a href="{{ viz.package_link }}">{{ labels.viz_table }}</a>
                     <details class="jc-viz-embed">

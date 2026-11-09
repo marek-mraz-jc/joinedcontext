@@ -10,6 +10,14 @@
   // Beside this page, so the explorer works under a path prefix too (jc serves it at /viz).
   var MAPLIBRE = "./vendor/maplibre-gl-6.14.0.mjs";
   var WORKER = typeof location !== "undefined" ? new URL("vendor/maplibre-gl-worker-6.14.0.mjs", location.href).href : "/vendor/maplibre-gl-worker-6.14.0.mjs";
+  var workerBlob = null;
+  // MapLibre's worker. A sandboxed page (an opaque origin: jc serves the explorer beside the Portal)
+  // may start no worker from a URL, so it starts a blob module that imports the file (CORS there).
+  function workerUrl() {
+    if (typeof self === "undefined" || self.origin !== "null" || typeof Blob !== "function") return WORKER;
+    if (!workerBlob) workerBlob = URL.createObjectURL(new Blob(["import " + JSON.stringify(WORKER) + ";\n"], { type: "text/javascript" }));
+    return workerBlob;
+  }
   var MAP_DWELL = 500;
   var SLUG = /^[a-z0-9]{16,64}$/;
   var NAME = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
@@ -579,7 +587,7 @@
       if (!ok) return;
       import(MAPLIBRE).then(function (maplibre) {
         if (box.hidden || !$("detail").open) return;
-        maplibre.setWorkerUrl(WORKER);
+        maplibre.setWorkerUrl(workerUrl());
         var m = new maplibre.Map({ container: box, style: styleOf(H.tiles, lang), center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false });
         m.addControl(new maplibre.AttributionControl({ compact: true }));
         new maplibre.Marker({ color: COLOUR }).setLngLat([at[0], at[1]]).addTo(m);
@@ -667,7 +675,7 @@
 
     function loadMap() {
       import(MAPLIBRE).then(function (maplibre) {
-        maplibre.setWorkerUrl(WORKER);
+        maplibre.setWorkerUrl(workerUrl());
         if (root.pmtiles) maplibre.addProtocol("pmtiles", new root.pmtiles.Protocol().tile);
         // The Endpoint's vector tiles, read like every other request here: anonymous, no referrer.
         maplibre.addProtocol("jc-tile", function (request, controller) {
@@ -1017,7 +1025,8 @@
       $("embed-copied").textContent = "";
       try {
         $("embed-code").value = E.snippet($("embed-form").querySelector("input[name=kind]:checked").value, o, new URL(".", location.href).href.replace(/\/$/, ""), t.title + (state.type ? ": " + state.type : ""));
-        $("embed-preview").href = location.origin + "/embed.html" + E.hash(o);
+        // Beside this page: jc serves it under /viz.
+        $("embed-preview").href = new URL("embed.html", location.href).href + E.hash(o);
         $("embed-error").hidden = true;
         $("embed-height").removeAttribute("aria-invalid");
         $("embed-copy").disabled = false;
@@ -1095,6 +1104,8 @@
         csv: true
       });
     } catch (e) {
+      // The text tells the administrators the cause is in the console: put it there.
+      if (typeof console !== "undefined") console.error("jcExplorer:", e);
       tell(t.noWidget, "error");
     }
     height();

@@ -2,10 +2,10 @@
 # vendor/ is joinedcontext-deployment fe826623 images/viz/vendor byte for byte; explorer/ is built
 # from this repository's crates/portal/ui (explorer/SHA256SUMS names the commit); site/ is components/viz/charts/renderer/files/site of that commit with
 # jc.patch applied to explore.js, embed.js and map.html (vendor/SOURCES.md).
-987e5e65b8606946c52a4a0372cc39c59ca30382e22e7782d7aff78eda5b1ce6  embed.js
+1fa68fbfc99c7a5c7715440de8ad6ad8e37d7f4e79192f627e07cd758d27fd87  embed.js
 f9659bc1e1e4236ffc54e59dc4ff977366cf07890c09c44a2fef496132b1dd54  explore.css
 27069139d2c71cef2237ab2cb22aece06991472fa40605f9423d4b0a51f2a5fc  explore.html
-be8d63aed6cca3983856ad7035c929ee35d9b4bd4415865cb76fe3feaf5b8f77  explore.js
+942ccedbe5113a844f8b2aabb2da3db7b2edacb1e6af7ccf40c05de36adacb8f  explore.js
 59b948e2ecad2d9b29bdacea71b402a0e9ee2827ed0bd8e55290ab90b945119e  host.css
 1b0b4c1f6813c2641f990dfa643f8eb9e8b953d0bab210057fc8db5b52ac493f  host.js
 57dd801453cd7a724b95f98e4e4c44fe73a0691bd20aa7d3c873c88c16b3e2f2  index.html
