@@ -134,6 +134,9 @@ pub struct CkanSync {
     /// in-cluster address its API is called at instead (T-5314). `None` calls every instance
     /// at its `spec.url`.
     api_route: Option<(String, String)>,
+    /// The loopback address the API route's host is reached at instead of through DNS: jc's
+    /// own catalogue on a host mount, called on jc's listener under its host name (C1).
+    api_reach: Option<std::net::SocketAddr>,
     /// The installation's own catalogue, where a public Endpoint of a project without a
     /// `CkanInstance` is published (EP-174). `None` publishes such an Endpoint nowhere.
     installation: Option<CkanInstanceSpec>,
@@ -153,6 +156,7 @@ impl CkanSync {
             pacing: Arc::default(),
             last_call: Arc::default(),
             api_route: None,
+            api_reach: None,
             installation: None,
             organizations: Vec::new(),
         }
@@ -207,7 +211,10 @@ impl CkanSync {
         let Some(catalogue) = self.organization_catalogue(&target.instance) else {
             let api_url = self.api_url(&target.instance);
             let token = project_token(target, repository, source)?;
-            let api = HttpCkan::new(&api_url, token).map_err(|err| err.to_string())?;
+            let reach = self
+                .api_reach
+                .filter(|_| api_url != target.instance.base_url());
+            let api = HttpCkan::reaching(&api_url, token, reach).map_err(|err| err.to_string())?;
             let gap = catalogue_gap(&api_url, target.instance.base_url());
             return Ok((api, api_url, settings, gap));
         };
@@ -254,6 +261,12 @@ impl CkanSync {
             public.trim_end_matches('/').to_owned(),
             api.trim_end_matches('/').to_owned(),
         ));
+        self
+    }
+
+    /// Reaches the API route's host at `addr` (a loopback listener) instead of through DNS.
+    pub fn reached_at(mut self, addr: Option<std::net::SocketAddr>) -> Self {
+        self.api_reach = addr;
         self
     }
 
