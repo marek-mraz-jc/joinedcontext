@@ -12363,5 +12363,13 @@
       "pie": "Koláč",
       "donut": "Prstenec"
     }
+  },
+  "personName": {
+    "unknown": "Neznáma osoba",
+    "firstSignIn": "Do skupiny pribudne pri prvom prihlásení; dovtedy netreba nič robiť."
+  },
+  "hiddenSection": {
+    "title": "Dashboardy nie sú súčasťou tejto inštalácie",
+    "body": "Otvorená adresa patrí dashboardom, ktoré tento Portál neponúka, preto ste v kontextových priestoroch projektu."
   }
 }

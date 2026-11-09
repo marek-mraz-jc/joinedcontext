@@ -8,6 +8,7 @@ import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
+import { expectStacked } from "./stacked";
 import type { Effective } from "../src/api/permissions";
 import validator from "../src/components/forms/validator";
 import { OrganizationPage } from "../src/pages/organization/OrganizationPage";
@@ -132,6 +133,10 @@ describe("Organization settings: policies and limits", () => {
     expect(within(helsinki).getByText(en.organization.limits.origin.project)).toBeInTheDocument();
     expect(within(helsinki).getByText("3 of 12")).toBeInTheDocument();
     expect(within(helsinki).getAllByText(en.organization.limits.noLimit).length).toBeGreaterThan(0);
+    // A card per project on a phone, each quota under its own name: ten columns were cut off.
+    const quota = helsinki.closest("table") as HTMLElement;
+    const named = [...quota.querySelectorAll("thead th")].slice(1).map((header) => header.textContent);
+    expectStacked(quota, named as string[]);
   });
 
   // T-4831 (D-settings): a TableRow inside TableHead nested a second <tr>, and the header cells

@@ -497,10 +497,15 @@ export function RoleBindings({
       : scope?.project
         ? t("access.roles.project", { name: scope.project })
         : t("access.roles.organization");
+  // A binding whose subjects are all gone still holds its role: it says nobody, not a blank cell.
   const who = (spec: BindingSpec) =>
     (spec.subjects ?? [])
       .map((subject) => (subject.group ? t("access.roles.group", { name: subject.group }) : personLabel(subject.user ?? "", names)))
-      .join(", ");
+      .join(", ") || t("access.groups.nobody");
+  // The ids behind "Unknown person", on hover for the administrator who has to find them.
+  const whoIds = (spec: BindingSpec) =>
+    (spec.subjects ?? []).flatMap((subject) => (subject.user && !names.has(subject.user) ? [subject.user] : [])).join(", ") ||
+    undefined;
 
   return (
     <section className="space-y-4" aria-labelledby="role-bindings-heading">
@@ -544,6 +549,7 @@ export function RoleBindings({
       ) : (
         <Table
           data-records=""
+          stack
           caption={
             scope === "organization" ? t("organization.members.caption") : t("access.roles.caption", { project })
           }
@@ -590,11 +596,13 @@ export function RoleBindings({
                   return (
                     <TableRow key={binding.metadata.name}>
                       <TableCell primary>
-                        <FormRecordLink name={binding.metadata.name}>{who(spec)}</FormRecordLink>
+                        <FormRecordLink name={binding.metadata.name}>
+                          <span title={whoIds(spec)}>{who(spec)}</span>
+                        </FormRecordLink>
                       </TableCell>
-                      <TableCell>{spec.role}</TableCell>
-                      <TableCell>{where(spec.scope)}</TableCell>
-                      <TableCell>
+                      <TableCell data-label={t("access.roles.role")}>{spec.role}</TableCell>
+                      <TableCell data-label={t("access.roles.where")}>{where(spec.scope)}</TableCell>
+                      <TableCell data-label={t("access.roles.until")}>
                         {until ? new Date(until).toLocaleDateString(locale) : t("access.roles.noEnd")}
                       </TableCell>
                       <TableCell align="right">

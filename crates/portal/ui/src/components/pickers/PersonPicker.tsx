@@ -6,7 +6,7 @@ import { api, queryKeys, unwrap, reasonOf } from "../../api/client";
 import { mayRead, usePermissions } from "../../api/permissions";
 import { ORG_NAMESPACE } from "../../api/manifest";
 import { emailsIn } from "../../pages/apps/members";
-import { isPersonId, personLabel, usePersonNames } from "../../api/personNames";
+import { isPersonId, usePersonNames } from "../../api/personNames";
 import { Combobox } from "./Combobox";
 import type { PickerOption } from "./Combobox";
 import { useDebounced } from "./organizationModels";
@@ -95,7 +95,9 @@ export function PersonPicker(props: PersonPickerProps): JSX.Element {
     ...options,
     ...chosen
       .filter((id) => !options.some((option) => option.value === id))
-      .map((id) => ({ value: id, label: personLabel(id, names), group: t("picker.person.chosen") })),
+      // The id itself while nobody resolved it: it is what the person typed or pasted, and two
+      // chosen strangers would otherwise read the same.
+      .map((id) => ({ value: id, label: names.get(id) ?? id, group: t("picker.person.chosen") })),
   ];
   const choose = (ids: string[]) => (props.multiple ? props.onChange(ids) : props.onChange(ids[0] ?? ""));
   // A pasted id names its person; a pasted list of e-mails adds each person the server finds by

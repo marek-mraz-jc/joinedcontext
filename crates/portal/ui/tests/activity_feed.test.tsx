@@ -146,6 +146,8 @@ describe("the activity feed (UI-31)", () => {
     // Only the sentence's column is there below sm; the other three show from sm up.
     expect(cells.filter((cell) => !cell.className.includes("hidden sm:table-cell"))).toHaveLength(1);
     const sentence = cells.find((cell) => !cell.className.includes("hidden"));
+    // A URL in the sentence breaks instead of widening the table past a phone's edge.
+    expect(within(row).getByTestId("activity-sentence")).toHaveClass("[overflow-wrap:anywhere]");
     const phoneLine = sentence?.querySelector(".sm\\:hidden");
     expect(phoneLine).not.toBeNull();
     expect(phoneLine?.textContent).toContain(within(row).getByTestId("activity-kind").textContent ?? "");

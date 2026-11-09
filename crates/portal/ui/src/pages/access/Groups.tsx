@@ -13,7 +13,8 @@ import { EditResourceAction } from "../../components/EditResourceDialog";
 import { ResourceFormDialog } from "../../components/ResourceFormDialog";
 import { FormFrame, useCreateForm, useFormRoute } from "../../components/forms/FormRoute";
 import { groupSchema } from "../../schemas/kinds";
-import { personLabel, usePersonNames } from "../../api/personNames";
+import { usePersonNames, withPersonNames } from "../../api/personNames";
+import { PersonName } from "../../components/PersonName";
 import {
   Badge,
   Button,
@@ -247,6 +248,7 @@ export function Groups({ project }: { project: string }): JSX.Element {
       ) : (
         <Table
           data-records=""
+          stack
           caption={t("access.groups.caption")}
           status={groups.isPending ? t("app.loading") : undefined}
         >
@@ -282,28 +284,33 @@ export function Groups({ project }: { project: string }): JSX.Element {
                         <div className="mt-0.5 text-caption text-fg-subtle">{row.description}</div>
                       ) : null}
                     </TableCell>
-                    <TableCell>
+                    <TableCell data-label={t("access.groups.members")}>
                       {row.members.length === 0 ? (
                         <span className="text-fg-subtle">{t("access.groups.nobody")}</span>
                       ) : (
                         <ul className="flex flex-col gap-0.5">
                           {row.members.map((member) => (
                             <li key={member} className="text-caption">
-                              {personLabel(member, names)}
+                              <PersonName id={member} names={names} />
                             </li>
                           ))}
                         </ul>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell data-label={t("access.groups.sync")}>
                       {row.sync ? (
                         <div className="flex flex-col gap-1">
-                          <Badge tone={row.sync.ok ? "warning" : "danger"}>
+                          {/* A member who has not signed in yet is a wait, not a fault (reconciler/groups.rs). */}
+                          <Badge tone={row.sync.ok ? "warning" : row.sync.reason === "MemberUnknown" ? "neutral" : "danger"}>
                             {t(`access.groups.reason.${row.sync.reason}`, {
                               defaultValue: row.sync.reason,
                             })}
                           </Badge>
-                          <span className="text-caption text-fg-muted">{row.sync.message}</span>
+                          <span className="text-caption text-fg-muted">
+                            {row.sync.reason === "MemberUnknown"
+                              ? t("personName.firstSignIn")
+                              : withPersonNames(row.sync.message, names)}
+                          </span>
                         </div>
                       ) : (
                         <span className="text-fg-subtle">{t("access.groups.inStep")}</span>

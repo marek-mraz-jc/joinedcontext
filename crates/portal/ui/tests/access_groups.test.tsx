@@ -16,6 +16,7 @@ import { App } from "../src/App";
 import en from "../src/locales/en.json";
 import { answeringChecks, checksSoFar, expectDenied } from "./checks";
 import { findFormPage } from "./formPage";
+import { expectStacked } from "./stacked";
 
 const IDENTITY = {
   subject: "b7c1e0f4",
@@ -26,6 +27,9 @@ const IDENTITY = {
 
 const LIST = "joinedcontext.com/v1alpha1";
 const list = (items: unknown[]) => ({ apiVersion: LIST, kind: "List", items });
+
+/** A member the realm has no user for yet (the prod rehearsal's realm holds no people). */
+const STRANGER = "de300000-0000-4000-8000-000000000001";
 
 const GROUPS = list([
   {
@@ -44,6 +48,23 @@ const GROUPS = list([
           status: "True",
           reason: "DriftCorrected",
           message: "sneaky@hel.fi was in the realm's group and in no manifest; the membership was removed",
+        },
+      ],
+    },
+  },
+  {
+    apiVersion: LIST,
+    kind: "Group",
+    metadata: { name: "air-quality-viewer", namespace: "org" },
+    spec: { members: [{ user: STRANGER }] },
+    status: {
+      phase: "Live",
+      conditions: [
+        {
+          type: "GroupSynced",
+          status: "False",
+          reason: "MemberUnknown",
+          message: `${STRANGER} belongs in the group and the realm has no user with that id`,
         },
       ],
     },
@@ -136,6 +157,18 @@ describe("the groups of the organization on Organization → Groups", () => {
     expect(within(row).getByText("newcomer@hel.fi")).toBeTruthy();
     expect(within(row).getByText("Corrected")).toBeTruthy();
     expect(within(row).getByText(/sneaky@hel.fi/)).toBeTruthy();
+  });
+
+  // UI judge on the prod rehearsal (jc-ui-tables): bare ids in Members and in the Keycloak
+  // sentence, a red badge for a member who has not signed in yet, and columns cut at 400 px.
+  it("names a member nobody resolved in words, says the wait is no fault, and stacks on a phone", async () => {
+    renderAccess(["read", "propose"]);
+    const row = (await screen.findByText("air-quality-viewer")).closest("tr") as HTMLElement;
+    expect(within(row).queryByText(new RegExp(STRANGER))).toBeNull();
+    expect(within(row).getByText(en.personName.unknown)).toHaveAttribute("title", STRANGER);
+    expect(within(row).getByText(en.personName.firstSignIn)).toBeInTheDocument();
+    expect(within(row).getByText(en.access.groups.reason.MemberUnknown)).not.toHaveClass("text-danger");
+    expectStacked(row.closest("table") as HTMLElement, [en.access.groups.members, en.access.groups.sync]);
   });
 
   it("proposes a new group into the organization as one change", async () => {

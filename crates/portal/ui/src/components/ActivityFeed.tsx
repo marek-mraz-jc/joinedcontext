@@ -411,7 +411,11 @@ export function ActivityFeed({
                         })}
                       </span>
                     </div>
-                    <span data-testid="activity-sentence">{sentence}</span>
+                    {/* A URL or an id in the sentence breaks where it must: unbroken, it widened the whole
+                        table past a phone's edge and cut every row's text (judge, 400 px). */}
+                    <span data-testid="activity-sentence" className="[overflow-wrap:anywhere]">
+                      {sentence}
+                    </span>
                     {reason ? (
                       <details className="mt-0.5 text-caption text-fg-muted">
                         <summary className="cursor-pointer">

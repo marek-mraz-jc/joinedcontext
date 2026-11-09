@@ -5,6 +5,7 @@ import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
+import { expectStacked } from "./stacked";
 import { App } from "../src/App";
 import { ConstraintList, Operations, readsOf, sourcesOf, writesOf } from "../src/pages/access/EffectivePermissions";
 
@@ -244,6 +245,14 @@ describe("effective permissions", () => {
     expect(within(district).getByText(/urn:ngsi-ld:District:bb/)).toBeInTheDocument();
     // Read-only: nothing in the write column of a type the caller may only read.
     expect(within(district).getAllByText(en.access.matrix.none).length).toBeGreaterThan(0);
+    // A card per grant on a phone: the constraints and where a grant comes from were cut off.
+    expectStacked(air.closest("table") as HTMLElement, [
+      en.access.matrix.read,
+      en.access.matrix.write,
+      en.access.matrix.attributes,
+      en.access.matrix.residual,
+      en.access.matrix.source,
+    ]);
   });
 
   it("reads the endpoint's own access surface, never a second implementation (EP-60)", async () => {
