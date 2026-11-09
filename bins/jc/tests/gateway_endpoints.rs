@@ -1211,12 +1211,12 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
     let member = token_in(&jc, "dev", "e2e-mcp", PERSON).await;
     let twin_member = token_in(&jc, "jc", "e2e-mcp", PERSON).await;
     for edge in [false, true] {
-        assert_eq!(portal_me(&jc, &member, edge).await, StatusCode::OK, "edge {edge}");
         assert_eq!(
             portal_me(&jc, &twin_member, edge).await,
             StatusCode::UNAUTHORIZED,
             "a realm-jc token at the Portal, edge {edge}"
         );
+        assert_eq!(portal_me(&jc, &member, edge).await, StatusCode::OK, "edge {edge}");
     }
 
     // The linker links the Endpoint's scope to portal-api in dev, and never in jc.
