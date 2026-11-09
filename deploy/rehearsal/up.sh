@@ -114,8 +114,17 @@ if [ -d "$export_dir/keycloak" ]; then
     --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}"
   # Each secret the realm config names gets a fresh value of the rehearsal (never the old one).
   while read -r name; do
-    [ -n "$name" ] && export "$name=$(cat "$(secret "realm-$name")")"
+    [ -n "$name" ] && secret "realm-$name" > /dev/null
   done < "$home/state/realm-vars.txt"
+  # jc's kaisatsu reads no environment for a realm file: each secret it names is a
+  # $(file:...) under the rehearsal's secrets dir (--kaisatsu-import-secrets-dir below).
+  python3 -I - "$home/state/realms" "$home/secrets" <<'PY'
+import pathlib, re, sys
+realms, secrets = pathlib.Path(sys.argv[1]), sys.argv[2]
+for f in realms.glob("*.json"):
+    text = re.sub(r"\$\((?:env:)?([A-Z][A-Z0-9_]*)\)", lambda m: f"$(file:{secrets}/realm-{m[1]})", f.read_text())
+    f.write_text(text)
+PY
 fi
 
 url() { printf 'postgres://%s:%s@127.0.0.1:%s/%s' "$1" "$(cat "$(secret "$1-pw")")" "$pg_port" "$2"; }
@@ -172,7 +181,7 @@ fi
 printf '[mounts.portal]\npath_prefix = ""\n%s\n' "$db_config" > "$home/jc.toml"
 nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
-  --kaisatsu-import-dir "$home/state/realms" \
+  --kaisatsu-import-dir "$home/state/realms" --kaisatsu-import-secrets-dir "$home/secrets" \
   --kaisatsu-database-url-file "$home/secrets/kaisatsu-db-url" \
   --kaisatsu-db-password-file "$(secret kaisatsu-app-pw)" \
   --shako-repo-root "$home/repos" --ekiben-file-root "$home/files" \

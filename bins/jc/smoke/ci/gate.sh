@@ -31,6 +31,8 @@ args=(--base-url "http://localhost:$port" --out "$out" --export "$export_dir" --
 args+=(--with "logs=--secrets-dir $home/secrets")
 # Bounded: each run is polled until it ends, so ten runs of five minutes outlast the job.
 args+=(--with "pipelines=--runs 3 --wait 120")
+# Failures the gate knows, each with where it is filed; only a new one turns the verdict red.
+args+=(--known "$repo/bins/jc/smoke/ci/known.txt")
 # Screenshots need Playwright for Python and its Chromium; without them charts-apps skips the shots.
 python3 -c 'import playwright' 2>/dev/null || args+=(--with "charts-apps=--no-shots")
 # shellcheck disable=SC2206 # SMOKE_ARGS is a flag list by design
