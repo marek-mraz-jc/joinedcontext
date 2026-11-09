@@ -148,6 +148,33 @@ async fn user(store: &MemoryStore, name: &str) -> UserRepresentation {
         .unwrap()
 }
 
+/// jc-multiorg-portal: a client on another host than kaisatsu (an Organization's Portal host).
+/// Browsers apply `form-action` to the redirect after the sign-in POST, so a login page allowing
+/// `'self'` alone left Chromium on the form: its CSP names the flow's own redirect origin, and
+/// only that one; a page that ends no flow keeps `'self'`.
+#[tokio::test]
+async fn the_sign_in_form_may_end_at_its_own_flows_redirect_origin_alone() {
+    let (app, _) = app().await;
+    let a = start(&app, "").await;
+    let (_, h, html) = get_with_cookie(&app, &a.url, None, Some(&a.cookie)).await;
+    assert_eq!(page_id(&html), "login", "{html}");
+    let csp = h[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(
+        csp.ends_with("form-action 'self' https://portal.dev.example.test"),
+        "{csp}"
+    );
+    let (st, h, _) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert!(is_code(st, &h), "the redirect the form-action now allows");
+    let (_, h, _) = get(
+        &app,
+        "/realms/dev/login-actions/authenticate?session_code=nope",
+        None,
+    )
+    .await;
+    let csp = h[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(csp.ends_with("form-action 'self'"), "{csp}");
+}
+
 #[tokio::test]
 async fn expired_foreign_and_forged_sessions() {
     let (app, store) = app().await;

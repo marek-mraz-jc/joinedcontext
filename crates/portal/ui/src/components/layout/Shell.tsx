@@ -39,6 +39,7 @@ import { WorkspaceBar } from "./WorkspaceBar";
 import { withoutCopy } from "./WorkspaceContext";
 import { BrandMark, navLinkClass } from "./BrandMark";
 import { ShellFooter } from "./ShellFooter";
+import { NotFoundState } from "../NotFoundState";
 
 export { BrandMark, navLinkClass };
 
@@ -530,7 +531,40 @@ export function OtherPageCrumb({ project, label, model }: { project: string; lab
   );
 }
 
-export function Shell({
+/**
+ * The frame a page of `project` is drawn in, given the projects the person reads (`known`, still
+ * loading when undefined): that project's own, or, for one they read none of (another
+ * Organization's project on this Organization's Portal host, a mistyped name), the not-found page
+ * in the frame of the first one they do read, never another project's navigation and switcher
+ * (jc-multiorg-portal). `null`: the not-found page with no project frame at all.
+ */
+export function frameFor(project: string, known: string[] | undefined): { project: string; notFound: boolean } | null {
+  if (project === ORG_NAMESPACE || known === undefined || known.includes(project)) {
+    return { project, notFound: false };
+  }
+  return known[0] === undefined ? null : { project: known[0], notFound: true };
+}
+
+export function Shell(props: Parameters<typeof ProjectFrame>[0]): JSX.Element {
+  const known = useProjects().data;
+  const frame = frameFor(props.project, known);
+  if (frame === null) {
+    return (
+      <main id="main" className="mx-auto max-w-3xl px-4 py-10 sm:px-gutter">
+        <NotFoundState />
+      </main>
+    );
+  }
+  return frame.notFound ? (
+    <ProjectFrame project={frame.project}>
+      <NotFoundState />
+    </ProjectFrame>
+  ) : (
+    <ProjectFrame {...props} />
+  );
+}
+
+function ProjectFrame({
   project,
   fill = false,
   sidebar,
