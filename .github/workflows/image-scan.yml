@@ -33,8 +33,11 @@ jobs:
       - id: image
         run: |
           set -eu
+          # ghcr answers a GITHUB_TOKEN read of a just-pushed tag 404 or 403 now and then (main ci
+          # 42702031687): three tries 20 s apart, then the step fails.
+          try() { for n in 1 2 3; do "$@" && return 0; [ "$n" = 3 ] || sleep 20; done; return 1; }
           printf '%s' "$SHA" | grep -qxE '[0-9a-f]{40}' || { echo "::error::'$SHA' is no commit"; exit 1; }
-          digest=$(docker buildx imagetools inspect "$IMAGE:$SHA" --format '{{json .Manifest}}' | jq -r '.digest // empty')
+          digest=$(try docker buildx imagetools inspect "$IMAGE:$SHA" --format '{{json .Manifest}}' | jq -r '.digest // empty')
           [ -n "$digest" ] || { echo "::error::$IMAGE:$SHA is not published"; exit 1; }
           # A caller names the digest it pushed: the tag must still point at it.
           [ -z "$DIGEST" ] || [ "$DIGEST" = "$digest" ] || { echo "::error::$IMAGE:$SHA is $digest, not $DIGEST"; exit 1; }
