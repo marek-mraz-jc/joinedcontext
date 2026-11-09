@@ -2,7 +2,7 @@
 //! Error and edge paths of the OIDC handlers (W1, W8, W12, K2, K4, K5, K6): an unknown realm at
 //! the token, introspection and revocation endpoints; scope refusals (unknown organization, a
 //! broken parameterized-scope pattern); a client that opted out of PKCE on fresh and SSO logins;
-//! signing key selection without a key of the wanted algorithm; a
+//! signing key selection (a pinned algorithm is generated or refused, never replaced); a
 //! refresh after the session ended or the person was disabled; token exchange carrying an
 //! earlier `act`; jwt-bearer without a usable service account; userinfo refusals (no `sub`, an
 //! unknown subject, a pairwise subject that cannot be computed, a DPoP header that is not text);
@@ -245,25 +245,91 @@ async fn scope_refusals_and_client_token_settings() {
     assert!(v["scope"].as_str().unwrap().contains("fam:abc"), "{v}");
 }
 
+fn jwt_alg(jwt: &str) -> Value {
+    let header: Value = serde_json::from_slice(
+        &URL_SAFE_NO_PAD
+            .decode(jwt.split('.').next().unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    header["alg"].clone()
+}
+
 #[tokio::test]
-async fn signing_key_falls_back_to_an_active_key() {
+async fn a_pinned_algorithm_without_a_key_is_refused() {
     let (app, store, _) = app().await;
     client(&store, "ps", |c| {
         c.attributes
             .insert("access.token.signed.response.alg".into(), "PS512".into());
     })
     .await;
-    // No key of the wanted algorithm: the realm's active key signs.
+    // The store took the client as written (no admin check on this path): the token endpoint
+    // refuses to sign with another algorithm and names the client, not a key.
     let (st, body) = cc(&app, "ps", None).await;
+    assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    let v = json_of(&body);
+    assert_eq!(v["error"], "server_error", "{v}");
+    let text = v["error_description"].as_str().unwrap();
+    assert!(text.contains("ps") && text.contains("PS512"), "{text}");
+    assert!(!text.contains("kid"), "{text}");
+    for k in store.list_signing_keys("dev").await.unwrap() {
+        assert!(!text.contains(&k.kid), "{text}");
+    }
+}
+
+#[tokio::test]
+async fn a_pinned_es256_rs256_eddsa_key_is_generated() {
+    for alg in ["ES256", "RS256", "EdDSA"] {
+        let (app, store, _) = app().await;
+        // A realm without any key of the algorithm, EdDSA never made by default.
+        let before = store.list_signing_keys("dev").await.unwrap();
+        for mut k in before.into_iter().filter(|k| k.algorithm == alg) {
+            k.status = "PASSIVE".into();
+            store.upsert_signing_key(k).await.unwrap();
+        }
+        let mut keys = store.list_signing_keys("dev").await.unwrap();
+        // The memory store regenerates ES256 and RS256 on key read, EdDSA only on demand.
+        keys.retain(|k| k.algorithm == "EdDSA");
+        assert!(keys.is_empty(), "{alg}");
+        client(&store, "pinned", |c| {
+            c.attributes
+                .insert("access.token.signed.response.alg".into(), alg.into());
+            c.attributes
+                .insert("id.token.signed.response.alg".into(), alg.into());
+        })
+        .await;
+        let (st, body) = cc(&app, "pinned", Some("openid")).await;
+        assert_eq!(st, StatusCode::OK, "{alg}: {body}");
+        let v = json_of(&body);
+        assert_eq!(jwt_alg(v["access_token"].as_str().unwrap()), alg, "{v}");
+        if let Some(id) = v["id_token"].as_str() {
+            assert_eq!(jwt_alg(id), alg, "{v}");
+        }
+        assert!(
+            store
+                .list_signing_keys("dev")
+                .await
+                .unwrap()
+                .iter()
+                .any(|k| k.algorithm == alg && k.status == "ACTIVE"),
+            "{alg}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_empty_algorithm_attribute_uses_the_realm_default() {
+    let (app, store, _) = app().await;
+    let realm = store.get_realm("dev").await.unwrap().unwrap();
+    client(&store, "blank", |c| {
+        c.attributes
+            .insert("access.token.signed.response.alg".into(), String::new());
+    })
+    .await;
+    let (st, body) = cc(&app, "blank", None).await;
     assert_eq!(st, StatusCode::OK, "{body}");
     let at = json_of(&body)["access_token"].as_str().unwrap().to_owned();
-    let header: Value = serde_json::from_slice(
-        &URL_SAFE_NO_PAD
-            .decode(at.split('.').next().unwrap())
-            .unwrap(),
-    )
-    .unwrap();
-    assert_ne!(header["alg"], "PS512");
+    assert_eq!(jwt_alg(&at), realm.default_signature_algorithm.as_str());
 }
 
 #[tokio::test]

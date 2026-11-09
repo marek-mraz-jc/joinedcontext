@@ -303,6 +303,12 @@ impl PgStore {
 
     /// Ensures a realm has active ES256 and RS256 signing keys (serialized per realm).
     pub async fn ensure_realm_keys(&self, realm_id: &str) -> Result<()> {
+        self.ensure_keys(realm_id, &["ES256", "RS256"]).await
+    }
+
+    /// Ensures a realm has an active key of each of `algorithms`, generating the missing ones
+    /// under the realm's key lock in one transaction.
+    async fn ensure_keys(&self, realm_id: &str, algorithms: &[&str]) -> Result<()> {
         let mut tx = self.begin(realm_id, None).await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('kaisatsu.keys:' || $1, 0))")
             .bind(realm_id)
@@ -318,15 +324,12 @@ impl PgStore {
         .await
         .map_err(storage)?;
         let mut created = false;
-        if !active.iter().any(|a| a == "ES256") {
-            let es = KeyManager::generate_es256(realm_id, &self.kek, 100, "ACTIVE")?;
-            insert_signing_key(&mut tx, &es).await?;
-            created = true;
-        }
-        if !active.iter().any(|a| a == "RS256") {
-            let rs = KeyManager::generate_rs256(realm_id, &self.kek, 50, "ACTIVE")?;
-            insert_signing_key(&mut tx, &rs).await?;
-            created = true;
+        for algorithm in algorithms {
+            if !active.iter().any(|a| a == algorithm) {
+                let key = KeyManager::generate(algorithm, realm_id, &self.kek, "ACTIVE")?;
+                insert_signing_key(&mut tx, &key).await?;
+                created = true;
+            }
         }
         if created {
             notify(&mut tx, realm_id).await?;
@@ -2449,6 +2452,14 @@ impl Store for PgStore {
             tx.commit().await.map_err(storage)?;
             rows.into_iter().map(key_from_row).collect()
         })
+    }
+
+    fn ensure_signing_key<'a>(
+        &'a self,
+        realm_id: &'a str,
+        algorithm: &'a str,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move { self.ensure_keys(realm_id, &[algorithm]).await })
     }
 
     fn put_auth_session<'a>(&'a self, session: AuthSession) -> StoreFuture<'a, ()> {

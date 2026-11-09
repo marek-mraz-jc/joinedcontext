@@ -9,7 +9,10 @@ use crate::modules::BuildCtx;
 use crate::setup;
 use axum::Router;
 use jc_router::Mount;
-use kaisatsu_core::{ClientRepresentation, ClientScopeRepresentation, LocalAuthorizer, Store};
+use kaisatsu_core::{
+    ClientRepresentation, ClientScopeRepresentation, LocalAuthorizer, SIGNATURE_ALG_ATTRIBUTES,
+    SigningKeyRecord, Store,
+};
 use kaisatsu_crypto::Kek;
 use kaisatsu_import::{ApplyOptions, apply_realm_files};
 use kaisatsu_oidc::OutboundGuard;
@@ -295,6 +298,61 @@ async fn apply_portal_realm(
 /// The prefix of the per-Endpoint client scopes the Portal makes (`endpoint:{slug}`, its hub
 /// scope wave).
 const ENDPOINT_SCOPE_PREFIX: &str = "endpoint:";
+/// The client APISIX signs people in through (`openid-connect`), when the realm holds one.
+const EDGE_CLIENT: &str = "edge";
+
+/// lua-resty-openidc verifies RS256 ID tokens only and signs a person in with any other
+/// algorithm's signature unchecked (T-0252): a realm holding the `edge` client must pin RS256 for
+/// both its tokens and hold an ACTIVE RS256 key. A realm without `edge` has no edge to check.
+async fn check_edge_client(store: &Arc<dyn Store>, realm: &setup::Realm) -> Result<(), StartError> {
+    let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
+    let Some(realm) = store.get_realm(realm.as_str()).await.map_err(|e| err(&e))? else {
+        return Ok(());
+    };
+    let Some(edge) = store
+        .get_client_by_client_id(&realm.id, EDGE_CLIENT)
+        .await
+        .map_err(|e| err(&e))?
+    else {
+        return Ok(());
+    };
+    edge_algorithms(&edge, &realm.realm).map_err(|e| err(&e))?;
+    store
+        .ensure_signing_key(&realm.id, "RS256")
+        .await
+        .map_err(|e| err(&e))?;
+    let keys = store.list_signing_keys(&realm.id).await.map_err(|e| err(&e))?;
+    active_rs256(&keys, &realm.realm).map_err(|e| err(&e))
+}
+
+/// Both token algorithm attributes of `edge` name RS256.
+fn edge_algorithms(edge: &ClientRepresentation, realm: &str) -> Result<(), String> {
+    for attribute in SIGNATURE_ALG_ATTRIBUTES {
+        let alg = edge.attributes.get(attribute).map_or("", String::as_str);
+        if alg != "RS256" {
+            return Err(format!(
+                "client {} of realm {realm}: attribute {attribute} is {alg:?}, the edge needs \"RS256\" (lua-resty-openidc verifies RS256 ID tokens only, T-0252)",
+                edge.client_id
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The realm holds an ACTIVE RS256 key for the edge client.
+fn active_rs256(keys: &[SigningKeyRecord], realm: &str) -> Result<(), String> {
+    if keys
+        .iter()
+        .any(|k| k.algorithm == "RS256" && k.status == "ACTIVE")
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "realm {realm} holds client {EDGE_CLIENT} but no ACTIVE RS256 key"
+        ))
+    }
+}
+
 /// The realm's own scope that names every Endpoint: the hub's one default scope, linked nowhere
 /// else (ADR-N-025 4b).
 const EVERY_ENDPOINT_SCOPE: &str = "endpoint:*";
@@ -427,6 +485,7 @@ pub async fn build(
             apply_import_dir(&store, dir, cfg.import_secrets_dir.clone(), realm).await?;
     }
     apply_portal_realm(&store, ctx, existed_before, import_brings_portal).await?;
+    check_edge_client(&store, realm).await?;
     follow_endpoint_scopes(store.clone(), realm.clone(), shutdown, tasks);
     let state = KaisatsuState::new(
         store,
@@ -571,6 +630,47 @@ mod tests {
         assert!(client(setup::PROXY_CLIENT).await.service_accounts_enabled);
         let portal = client(setup::PORTAL_CLIENT).await;
         assert!(audience(&portal).contains(&setup::ASSISTANT_CLIENT.to_owned()));
+    }
+
+    fn edge(attrs: &[(&str, &str)]) -> ClientRepresentation {
+        let mut c = ClientRepresentation {
+            client_id: EDGE_CLIENT.into(),
+            ..ClientRepresentation::default()
+        };
+        for (k, v) in attrs {
+            c.attributes.insert((*k).into(), (*v).into());
+        }
+        c
+    }
+
+    #[test]
+    fn the_edge_client_needs_rs256_for_both_tokens() {
+        let id = "id.token.signed.response.alg";
+        let access = "access.token.signed.response.alg";
+        edge_algorithms(&edge(&[(id, "RS256"), (access, "RS256")]), "dev").unwrap();
+        for attrs in [
+            vec![],
+            vec![(id, "RS256")],
+            vec![(id, "RS256"), (access, "ES256")],
+            vec![(id, ""), (access, "RS256")],
+        ] {
+            let e = edge_algorithms(&edge(&attrs), "dev").unwrap_err();
+            assert!(e.contains("client edge"), "{e}");
+        }
+        let e = edge_algorithms(&edge(&[(access, "RS256")]), "dev").unwrap_err();
+        assert!(e.contains(id), "{e}");
+    }
+
+    #[test]
+    fn a_realm_without_an_active_rs256_key_is_refused() {
+        let kek = Kek::from_raw_bytes(&[7u8; 32]).unwrap();
+        let rs = kaisatsu_crypto::KeyManager::generate("RS256", "dev", &kek, "ACTIVE").unwrap();
+        let es = kaisatsu_crypto::KeyManager::generate("ES256", "dev", &kek, "ACTIVE").unwrap();
+        let mut retired = rs.clone();
+        retired.status = "RETIRED".into();
+        active_rs256(&[es.clone(), rs], "dev").unwrap();
+        let e = active_rs256(&[es, retired], "dev").unwrap_err();
+        assert!(e.contains("no ACTIVE RS256 key"), "{e}");
     }
 
     /// An empty import dir (first start) applies nothing; a realm file in it is applied.

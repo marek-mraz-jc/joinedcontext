@@ -796,3 +796,97 @@ async fn row_35_to_46_clients_secrets_mappers_and_scopes() {
     .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
 }
+
+#[tokio::test]
+async fn a_client_write_pinning_an_algorithm_the_realm_cannot_sign_is_refused() {
+    let (app, store, admin_token, _) = setup_app().await;
+    let ps512 = json!({
+        "clientId": "app-ps",
+        "attributes": { "id.token.signed.response.alg": "PS512" }
+    });
+    let (st, _, body) = send_req(
+        &app,
+        Method::POST,
+        "/admin/realms/dev/clients",
+        &admin_token,
+        Some(ps512.clone()),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    let text = body.to_string();
+    assert!(
+        text.contains("app-ps") && text.contains("id.token.signed.response.alg"),
+        "{text}"
+    );
+    assert!(
+        store
+            .get_client_by_client_id("dev", "app-ps")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // partialImport refuses before writing anything, users included.
+    let (st, _, body) = send_req(
+        &app,
+        Method::POST,
+        "/admin/realms/dev/partialImport",
+        &admin_token,
+        Some(json!({
+            "ifResourceExists": "SKIP",
+            "users": [{ "username": "alg.person", "enabled": true }],
+            "clients": [ps512]
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        store
+            .get_user_by_username_or_email("dev", None, "alg.person")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // An accepted client cannot be moved to PS512 by PUT; EdDSA and "" are fine.
+    let (st, headers, _) = send_req(
+        &app,
+        Method::POST,
+        "/admin/realms/dev/clients",
+        &admin_token,
+        Some(json!({
+            "clientId": "app-ed",
+            "attributes": {
+                "access.token.signed.response.alg": "EdDSA",
+                "id.token.signed.response.alg": ""
+            }
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let uuid = headers["location"]
+        .to_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
+    let (st, _, body) = send_req(
+        &app,
+        Method::PUT,
+        &format!("/admin/realms/dev/clients/{uuid}"),
+        &admin_token,
+        Some(json!({
+            "clientId": "app-ed",
+            "attributes": { "access.token.signed.response.alg": "HS256" }
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    let kept = store
+        .get_client_by_client_id("dev", "app-ed")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.attributes["access.token.signed.response.alg"], "EdDSA");
+}

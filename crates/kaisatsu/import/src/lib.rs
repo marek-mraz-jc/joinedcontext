@@ -673,6 +673,17 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
                     }
                 }
             }
+            for attribute in SIGNATURE_ALG_ATTRIBUTES {
+                if let Some(alg) = c
+                    .get("attributes")
+                    .and_then(|a| a.get(attribute))
+                    .and_then(Value::as_str)
+                {
+                    check_signature_alg(cid, attribute, alg).map_err(|e| {
+                        KaisatsuError::BadRequest(format!("$.clients[{i}]: {e}"))
+                    })?;
+                }
+            }
             if let Some(sec) = c.get("secret").and_then(Value::as_str) {
                 let _ = resolve_secret_value(sec, &format!("$.clients[{i}].secret"), opts)?;
             }

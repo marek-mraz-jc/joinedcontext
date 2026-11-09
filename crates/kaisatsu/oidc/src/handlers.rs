@@ -1210,26 +1210,52 @@ async fn verify_client_assertion(
     Ok(client)
 }
 
-fn select_signing_key<'a>(
-    keys: &'a [SigningKeyRecord],
+/// The key that signs `client`'s ID token (`for_id_token`) or access token. A client attribute
+/// naming an algorithm gets a key of exactly that algorithm: a missing ES256, RS256 or EdDSA key
+/// is generated (as Keycloak creates one), any other algorithm is a `server_error` naming the
+/// client and the attribute, never a key. Only the realm default (attribute absent or empty) may
+/// fall back to another active key.
+async fn select_signing_key(
+    state: &OidcState,
+    keys: &[SigningKeyRecord],
     realm: &RealmConfig,
     client: &ClientRepresentation,
     for_id_token: bool,
-) -> Result<&'a SigningKeyRecord> {
-    let attr_key = if for_id_token {
-        "id.token.signed.response.alg"
-    } else {
-        "access.token.signed.response.alg"
-    };
-    let wanted_alg = client
+) -> Result<SigningKeyRecord> {
+    let attr_key = SIGNATURE_ALG_ATTRIBUTES[usize::from(!for_id_token)];
+    let pinned = client
         .attributes
         .get(attr_key)
         .map(String::as_str)
-        .unwrap_or(&realm.default_signature_algorithm);
-    keys.iter()
-        .find(|k| k.status == "ACTIVE" && k.algorithm == wanted_alg)
-        .or_else(|| keys.iter().find(|k| k.status == "ACTIVE"))
-        .ok_or_else(|| KaisatsuError::Crypto("no active signing key in realm".into()))
+        .filter(|alg| !alg.is_empty());
+    let active = |keys: &[SigningKeyRecord], alg: &str| {
+        keys.iter()
+            .find(|k| k.status == "ACTIVE" && k.algorithm == alg)
+            .cloned()
+    };
+    let Some(alg) = pinned else {
+        let alg = realm.default_signature_algorithm.as_str();
+        return active(keys, alg)
+            .or_else(|| keys.iter().find(|k| k.status == "ACTIVE").cloned())
+            .ok_or_else(|| KaisatsuError::Crypto("no active signing key in realm".into()));
+    };
+    if let Some(key) = active(keys, alg) {
+        return Ok(key);
+    }
+    if !SIGNING_ALGORITHMS.contains(&alg) {
+        return Err(KaisatsuError::oauth(
+            500,
+            "server_error",
+            format!(
+                "client {} asks for {alg} in {attr_key}, which this realm cannot sign",
+                client.client_id
+            ),
+        ));
+    }
+    state.store.ensure_signing_key(&realm.id, alg).await?;
+    let keys = state.store.list_signing_keys(&realm.id).await?;
+    active(&keys, alg)
+        .ok_or_else(|| KaisatsuError::Crypto(format!("no active {alg} key after generating one")))
 }
 
 /// `user` with the roles of every group they are in, the groups' ancestors included (Keycloak
@@ -1364,8 +1390,8 @@ async fn mint_tokens_for_principal(
     };
 
     let access_claims = evaluate_mappers(&mapper_ctx, TokenKind::AccessToken)?;
-    let access_key = select_signing_key(&keys, realm, client, false)?;
-    let access_token = sign_jwt(access_key, &state.kek, Some("JWT"), &access_claims)?;
+    let access_key = select_signing_key(state, &keys, realm, client, false).await?;
+    let access_token = sign_jwt(&access_key, &state.kek, Some("JWT"), &access_claims)?;
 
     let token_type = if dpop_jkt.is_some() { "DPoP" } else { "Bearer" };
     let mut response = json!({
@@ -1386,8 +1412,8 @@ async fn mint_tokens_for_principal(
         let mut id_ctx = mapper_ctx.clone();
         id_ctx.jti = &id_jti;
         let id_claims = evaluate_mappers(&id_ctx, TokenKind::IdToken)?;
-        let id_key = select_signing_key(&keys, realm, client, true)?;
-        let id_token = sign_jwt(id_key, &state.kek, Some("JWT"), &id_claims)?;
+        let id_key = select_signing_key(state, &keys, realm, client, true).await?;
+        let id_token = sign_jwt(&id_key, &state.kek, Some("JWT"), &id_claims)?;
         response["id_token"] = Value::String(id_token);
     }
 
@@ -3012,7 +3038,15 @@ pub async fn dispatch_backchannel_logout(
         ) else {
             continue;
         };
-        let key = select_signing_key(&keys, realm, &client, true)?;
+        // A client whose pinned algorithm this realm cannot sign gets no logout token; the
+        // other clients of the session still get theirs.
+        let key = match select_signing_key(state, &keys, realm, &client, true).await {
+            Ok(key) => key,
+            Err(e) => {
+                tracing::warn!(client = %client.client_id, error = %e, "no back-channel logout token");
+                continue;
+            }
+        };
         let logout_claims = json!({
             "iss": issuer,
             "sub": logout_sub,
@@ -3028,7 +3062,7 @@ pub async fn dispatch_backchannel_logout(
         });
         // The header says `JWT`, as Keycloak's does: the `Logout` type is the claim's. A relying
         // party on `openidconnect` (the Portal) refuses any other header type.
-        let logout_token = sign_jwt(key, &state.kek, Some("JWT"), &logout_claims)?;
+        let logout_token = sign_jwt(&key, &state.kek, Some("JWT"), &logout_claims)?;
         let _ = state
             .guard
             .post_form(logout_url, &[("logout_token", &logout_token)])

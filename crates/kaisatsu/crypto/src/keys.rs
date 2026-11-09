@@ -178,6 +178,8 @@ pub struct PublicJwkSet {
     pub keys: Vec<PublicJwk>,
 }
 
+pub use kaisatsu_core::SIGNING_ALGORITHMS;
+
 pub struct KeyManager;
 
 impl KeyManager {
@@ -336,6 +338,25 @@ impl KeyManager {
         PublicJwkSet { keys }
     }
 
+    /// Generates a key of `algorithm` (one of [`SIGNING_ALGORITHMS`]) at that algorithm's
+    /// priority (ES256 100, EdDSA 80, RS256 50).
+    pub fn generate(
+        algorithm: &str,
+        realm_id: &str,
+        kek: &Kek,
+        status: &str,
+    ) -> Result<SigningKeyRecord> {
+        match algorithm {
+            "RS256" => Self::generate_rs256(realm_id, kek, 50, status),
+            "EdDSA" => Self::generate_eddsa(realm_id, kek, 80, status),
+            "ES256" => Self::generate_es256(realm_id, kek, 100, status),
+            // No HS* (or any other) token keys: an unknown name never falls back silently.
+            other => Err(KaisatsuError::BadRequest(format!(
+                "unsupported signing algorithm {other}; use ES256, RS256 or EdDSA"
+            ))),
+        }
+    }
+
     /// Rotates keys for `algorithm`: existing `ACTIVE` keys become `PASSIVE` with `expires_at`
     /// set to `now + 2 * token_ttl`, and a new key is generated (W10).
     pub fn rotate(
@@ -347,32 +368,12 @@ impl KeyManager {
         immediate: bool,
     ) -> Result<SigningKeyRecord> {
         let now = Utc::now();
-        let mut new_key = match algorithm {
-            "RS256" => Self::generate_rs256(
-                realm_id,
-                kek,
-                50,
-                if immediate { "ACTIVE" } else { "PASSIVE" },
-            )?,
-            "EdDSA" => Self::generate_eddsa(
-                realm_id,
-                kek,
-                80,
-                if immediate { "ACTIVE" } else { "PASSIVE" },
-            )?,
-            "ES256" => Self::generate_es256(
-                realm_id,
-                kek,
-                100,
-                if immediate { "ACTIVE" } else { "PASSIVE" },
-            )?,
-            // No HS* (or any other) token keys: an unknown name never falls back silently.
-            other => {
-                return Err(KaisatsuError::BadRequest(format!(
-                    "unsupported signing algorithm {other}; use ES256, RS256 or EdDSA"
-                )));
-            }
-        };
+        let mut new_key = Self::generate(
+            algorithm,
+            realm_id,
+            kek,
+            if immediate { "ACTIVE" } else { "PASSIVE" },
+        )?;
         if immediate {
             for k in existing
                 .iter_mut()

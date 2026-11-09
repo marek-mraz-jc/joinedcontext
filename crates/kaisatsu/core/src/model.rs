@@ -595,6 +595,38 @@ pub struct ClientRepresentation {
     pub is_cimd: bool,
 }
 
+/// The token signature algorithms kaisatsu generates keys for.
+pub const SIGNING_ALGORITHMS: [&str; 3] = ["ES256", "RS256", "EdDSA"];
+
+/// The client attributes that pin the algorithm of a token kaisatsu signs for the client.
+pub const SIGNATURE_ALG_ATTRIBUTES: [&str; 2] = [
+    "id.token.signed.response.alg",
+    "access.token.signed.response.alg",
+];
+
+/// Refuses a client attribute pinning a signature algorithm this realm cannot sign (anything
+/// outside [`SIGNING_ALGORITHMS`]; empty means the realm default).
+pub fn check_signature_alg(client_id: &str, attribute: &str, value: &str) -> crate::Result<()> {
+    if value.is_empty() || SIGNING_ALGORITHMS.contains(&value) {
+        return Ok(());
+    }
+    Err(crate::KaisatsuError::BadRequest(format!(
+        "client {client_id}: attribute {attribute} asks for {value}, which this realm cannot sign; use ES256, RS256 or EdDSA"
+    )))
+}
+
+impl ClientRepresentation {
+    /// [`check_signature_alg`] over both algorithm attributes.
+    pub fn check_signature_algorithms(&self) -> crate::Result<()> {
+        for attribute in SIGNATURE_ALG_ATTRIBUTES {
+            if let Some(value) = self.attributes.get(attribute) {
+                check_signature_alg(&self.client_id, attribute, value)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Default for ClientRepresentation {
     fn default() -> Self {
         Self {

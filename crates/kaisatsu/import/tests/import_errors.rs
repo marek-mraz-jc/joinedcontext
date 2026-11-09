@@ -105,3 +105,37 @@ fn secret_files_that_cannot_be_read_or_confined_are_refused() {
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[tokio::test]
+async fn a_client_pinning_an_algorithm_the_realm_cannot_sign_is_refused() {
+    let doc = json!({
+        "realm": "algs",
+        "clients": [{
+            "clientId": "edge",
+            "attributes": {"access.token.signed.response.alg": "PS512"}
+        }]
+    });
+    let s = store();
+    let e = apply_realm_files(&s, &[("r.json".into(), doc)], &opts())
+        .await
+        .unwrap_err();
+    assert!(matches!(e, KaisatsuError::BadRequest(_)), "{e:?}");
+    let text = e.to_string();
+    assert!(text.contains("edge"), "{text}");
+    assert!(text.contains("access.token.signed.response.alg"), "{text}");
+    assert!(s.get_client_by_client_id("algs", "edge").await.unwrap().is_none());
+    // EdDSA and an empty attribute (the realm default) are accepted.
+    let doc = json!({
+        "realm": "algs",
+        "clients": [{
+            "clientId": "edge",
+            "attributes": {
+                "access.token.signed.response.alg": "EdDSA",
+                "id.token.signed.response.alg": ""
+            }
+        }]
+    });
+    apply_realm_files(&s, &[("r.json".into(), doc)], &opts())
+        .await
+        .unwrap();
+}
