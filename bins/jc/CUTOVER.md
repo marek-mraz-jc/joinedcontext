@@ -213,6 +213,28 @@ The NetworkPolicies of `components/jc` need the egress halves of the old compone
 before each step. Step 2 needs the outbound hosts dataroom harvests. Step 3 needs Keycloak's
 CIMD egress on 443 to public addresses, which jc already has.
 
+### 4a. Several Organizations on one deployment
+
+`[[organizations]]` (`bins/jc/src/config.rs`, fixture `bins/jc/tests/fixtures/two-orgs.toml`)
+puts each Organization on its own hosts: `name` (the JC Organization's `metadata.name`), `hosts =
+{ portal, opendata, api, mcp }`, `catalogue_id` (a UUID) and an optional `portal_token_file`.
+
+- Each host is the Organization's whole host: the Portal on `portal`, dataroom on `opendata`,
+  the gateway on `api` and `mcp`, and the gateway's `/cs`, `/api/endpoint` and `/api/mcp` on
+  `portal` too. jc adds these entries after each module's own address.
+- jc refuses to start on a name, catalogue or host given twice (hosts compared without the
+  port), and on a host any other mount also names, a mode default included.
+- dataroom gets one catalogue per Organization, named after it on its `opendata` host, and in it
+  the CKAN organisation of the same name. A `portal_token_file` binds a publisher of that
+  catalogue alone (principal `portal-ckan:<catalogue id>`), with Read and Propose under that
+  CKAN organisation only. With Organizations configured a loopback host names no catalogue.
+- dataroom and the gateway read the host and scheme from jc's router (the forwarded host of a
+  trusted proxy), never the raw `Host` header. On an Organization's `api`, `mcp` and `portal`
+  hosts every gateway listing (`/api/endpoints`, the MCP hub, `/catalog.jsonld`, `/catalog.ttl`,
+  `/cs`) holds that Organization's Endpoints alone, and another Organization's Endpoint, space
+  or MCP server answers 404.
+- kaisatsu stays on one host and one issuer for every Organization.
+
 ## 5. Rollback per step
 
 Every step is reversible while its old database is kept:

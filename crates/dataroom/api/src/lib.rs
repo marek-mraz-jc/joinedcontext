@@ -111,6 +111,24 @@ pub fn portal_publisher(
     Ok((binding, grant))
 }
 
+/// The Portal's CKAN publisher on one Organization's catalogue of a deployment with several:
+/// as [`portal_publisher`], under a principal of that catalogue alone (`portal-ckan:{id}`), so
+/// no other catalogue's grant names it, and with the grant scoped to `publisher`, the CKAN
+/// organisation of the JC Organization: the Portal publishes there and creates no other.
+pub fn portal_publisher_on(
+    token: &str,
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    publisher: &str,
+) -> Result<(TokenBinding, GrantRule)> {
+    let (mut binding, mut grant) = portal_publisher(token, org_id, catalogue_id)?;
+    let principal = format!("{PORTAL_PUBLISHER}:{catalogue_id}");
+    binding.subject.actor_id = Some(principal.clone());
+    grant.principal = principal;
+    grant.publisher_id = Some(publisher.to_owned());
+    Ok((binding, grant))
+}
+
 /// [`portal_publisher`] with the token read from `path`, the secret file the host mounts.
 pub fn portal_publisher_from_file(
     path: &std::path::Path,
@@ -147,6 +165,54 @@ pub struct DataroomState {
     pub public_base: Option<String>,
     pub subject_resolver: Option<SubjectResolver>,
     pub assets: Arc<RwLock<BTreeMap<String, SanitisedAsset>>>,
+    /// Whether a request on a loopback name (or with no host) reads the default catalogue. Off
+    /// when the host serves several catalogues by host: then every host must name one.
+    pub loopback_default: bool,
+    /// The installation branding of one catalogue, in place of [`Self::installation_branding`]
+    /// (each Organization's own live addresses).
+    pub catalogue_branding: Arc<BTreeMap<CatalogueId, BrandingBlock>>,
+}
+
+/// Where a request came in, as the host's router resolved it (`jc_router::Mount`: the scheme
+/// and host a trusted proxy forwarded, the mount prefix of the entry): set per request by
+/// [`router`]'s outer layer, so no handler reads a raw `Host` header behind a router.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestOrigin {
+    pub scheme: String,
+    /// The host with its port, lowercased.
+    pub host: String,
+    pub path_prefix: String,
+}
+
+impl RequestOrigin {
+    /// `scheme://host[:port]{prefix}`.
+    pub fn base(&self) -> String {
+        format!("{}://{}{}", self.scheme, self.host, self.path_prefix)
+    }
+}
+
+tokio::task_local! {
+    static ORIGIN: RequestOrigin;
+}
+
+/// This request's origin, when a host router placed it.
+pub fn request_origin() -> Option<RequestOrigin> {
+    ORIGIN.try_with(Clone::clone).ok()
+}
+
+/// Runs the rest of the request inside the origin of its `jc_router::Mount`, when it has one.
+async fn with_origin(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    match req.extensions().get::<jc_router::Mount>() {
+        Some(m) => {
+            let origin = RequestOrigin {
+                scheme: m.scheme.clone(),
+                host: m.host.to_ascii_lowercase(),
+                path_prefix: m.path_prefix.clone(),
+            };
+            ORIGIN.scope(origin, next.run(req)).await
+        }
+        None => next.run(req).await,
+    }
 }
 
 impl DataroomState {
@@ -171,7 +237,33 @@ impl DataroomState {
             public_base: None,
             subject_resolver: None,
             assets: Arc::new(RwLock::new(BTreeMap::new())),
+            loopback_default: true,
+            catalogue_branding: Arc::new(BTreeMap::new()),
         }
+    }
+
+    /// Off: a request on a loopback name reads no catalogue (several catalogues by host).
+    pub fn with_loopback_default(mut self, on: bool) -> Self {
+        self.loopback_default = on;
+        self
+    }
+
+    /// Each catalogue's own installation branding (its live addresses).
+    pub fn with_catalogue_branding(mut self, by: BTreeMap<CatalogueId, BrandingBlock>) -> Self {
+        self.catalogue_branding = Arc::new(by);
+        self
+    }
+
+    /// The installation branding `cat` layers its own over.
+    pub fn branding_of(&self, cat: &Catalogue) -> &BrandingBlock {
+        self.catalogue_branding
+            .get(&cat.id)
+            .unwrap_or(&self.installation_branding)
+    }
+
+    /// The mount prefix links are written under: this request's entry's, else the state's.
+    pub fn mount_prefix(&self) -> String {
+        request_origin().map_or_else(|| self.mount_prefix.clone(), |o| o.path_prefix)
     }
 
     pub fn with_tokens(mut self, tokens: Vec<TokenBinding>) -> Self {
@@ -225,14 +317,22 @@ impl DataroomState {
     /// Resolves the [`RequestCtx`] from the `Host` header (or verified default) and `Authorization`
     /// token (using constant-time token comparison). Never trusts client `x-jc-*` headers.
     pub async fn resolve_context(&self, headers: &HeaderMap) -> Result<(RequestCtx, Catalogue)> {
-        let host = headers
-            .get(header::HOST)
-            .and_then(|v| v.to_str().ok())
+        // Behind a host router the host is the one it resolved (a trusted proxy's), never the
+        // raw header; standalone, the `Host` header.
+        let origin = request_origin();
+        let raw_host = match &origin {
+            Some(o) => Some(o.host.clone()),
+            None => headers
+                .get(header::HOST)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned),
+        };
+        let host = raw_host
+            .as_deref()
             .map(|h| h.split(':').next().unwrap_or(h).trim());
+        let loopback = host.is_none_or(|h| h.is_empty() || h == "localhost" || h == "127.0.0.1");
 
-        let mut cat = if let Some(h) =
-            host.filter(|h| !h.is_empty() && *h != "localhost" && *h != "127.0.0.1")
-        {
+        let mut cat = if let Some(h) = host.filter(|_| !loopback || !self.loopback_default) {
             match self.store.resolve_host(h).await? {
                 Some(c) => c,
                 None => {
@@ -247,7 +347,9 @@ impl DataroomState {
                 .await?
                 .ok_or_else(|| DataroomError::NotFound("default catalogue not found".into()))?
         };
-        if cat.org_id == self.default_org_id && cat.id == self.default_catalogue_id {
+        if let Some(o) = &origin {
+            cat.public_base = Some(o.base());
+        } else if cat.org_id == self.default_org_id && cat.id == self.default_catalogue_id {
             cat.public_base.clone_from(&self.public_base);
         }
 
@@ -480,6 +582,7 @@ pub fn router(state: DataroomState) -> Router {
         // catch-all conflicts with the `/{lang}/...` routes in the router's matcher.
         .fallback(handle_ui_dispatch_fallback)
         .with_state(state)
+        .layer(axum::middleware::from_fn(with_origin))
 }
 
 #[derive(Debug, Deserialize)]
@@ -899,7 +1002,7 @@ async fn handle_get_branding(State(state): State<DataroomState>, headers: Header
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let effective = cat.effective_branding(Some(&state.installation_branding));
+    let effective = cat.effective_branding(Some(state.branding_of(&cat)));
     Json(effective).into_response()
 }
 
@@ -944,7 +1047,7 @@ async fn handle_post_branding(
             },
         )
         .await;
-    let effective = saved.effective_branding(Some(&state.installation_branding));
+    let effective = saved.effective_branding(Some(state.branding_of(&saved)));
     Json(effective).into_response()
 }
 
@@ -983,7 +1086,7 @@ async fn handle_upload_logo(
     if let Err(e) = state.store.upsert_catalogue(cat).await {
         return problem_response(e);
     }
-    let full_url = format!("{}{}", state.mount_prefix, asset.url_path);
+    let full_url = format!("{}{}", state.mount_prefix(), asset.url_path);
     Json(json!({
         "url": full_url,
         "sha256": asset.sha256_hex,
@@ -1100,7 +1203,7 @@ async fn handle_robots_txt(State(state): State<DataroomState>, headers: HeaderMa
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let branding = cat.effective_branding(Some(&state.installation_branding));
+    let branding = cat.effective_branding(Some(state.branding_of(&cat)));
     let txt = jc_robots_txt(&cat, &branding);
     (
         StatusCode::OK,
@@ -1123,13 +1226,13 @@ async fn handle_util_redirect_lang(
 }
 
 fn redirect_from_form(state: &DataroomState, body: &[u8]) -> Response {
-    let mut url_target = format!("{}/", state.mount_prefix);
+    let mut url_target = format!("{}/", state.mount_prefix());
     let mut chosen_lang = None;
     for (k, v) in url::form_urlencoded::parse(body) {
         if k == "url" && is_safe_local_target(&v) {
             url_target = v.into_owned();
             let trimmed = url_target
-                .strip_prefix(&state.mount_prefix)
+                .strip_prefix(&state.mount_prefix())
                 .unwrap_or(&url_target)
                 .trim_start_matches('/');
             if let Some(seg) = trimmed.split('/').next() {
@@ -1139,10 +1242,10 @@ fn redirect_from_form(state: &DataroomState, body: &[u8]) -> Response {
             }
         }
     }
-    let cookie_path = if state.mount_prefix.is_empty() {
+    let cookie_path = if state.mount_prefix().is_empty() {
         "/"
     } else {
-        &state.mount_prefix
+        &state.mount_prefix()
     };
     if let Some(l) = chosen_lang {
         let mut response = safe_redirect(StatusCode::SEE_OTHER, &url_target);
@@ -1184,11 +1287,11 @@ async fn login_redirect(state: &DataroomState, headers: &HeaderMap) -> Response 
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let branding = cat.effective_branding(Some(&state.installation_branding));
+    let branding = cat.effective_branding(Some(state.branding_of(&cat)));
     let target = if let Some(portal) = branding.address(dataroom_core::branding::Address::Portal) {
         format!("{portal}/login")
     } else {
-        format!("{}/", state.mount_prefix)
+        format!("{}/", state.mount_prefix())
     };
     safe_redirect(StatusCode::TEMPORARY_REDIRECT, &target)
 }
@@ -1278,7 +1381,7 @@ async fn dispatch_ui_route(
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let branding = cat.effective_branding(Some(&state.installation_branding));
+    let branding = cat.effective_branding(Some(state.branding_of(&cat)));
     let cookie_hdr = headers.get(header::COOKIE).and_then(|v| v.to_str().ok());
     let accept_lang = headers
         .get(header::ACCEPT_LANGUAGE)
@@ -1333,13 +1436,13 @@ async fn dispatch_ui_route(
             let q = q_params.get("q").map(String::as_str).unwrap_or("");
             let html = render_home_page_mounted(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 &datasets,
                 &publishers,
                 q,
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             );
             html_response_with_csp(html, &nonce, &branding, false)
@@ -1438,7 +1541,7 @@ async fn dispatch_ui_route(
 
             let html = render_dataset_list_page(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 &outcome.datasets,
                 &publishers,
                 &outcome.facets,
@@ -1449,7 +1552,7 @@ async fn dispatch_ui_route(
                 &q_params,
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             );
             html_response_with_csp(html, &nonce, &branding, false)
@@ -1550,7 +1653,7 @@ async fn dispatch_ui_route(
             };
             let html = render_dataset_page_full(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 &ds,
                 pub_rec.as_ref(),
                 &all_views,
@@ -1558,7 +1661,7 @@ async fn dispatch_ui_route(
                 can_edit,
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             );
             html_response_with_csp(html, &nonce, &branding, false)
@@ -1589,13 +1692,13 @@ async fn dispatch_ui_route(
             }
             let html = render_resource_page(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 &ds,
                 dist,
                 pub_rec.as_ref(),
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             );
             html_response_with_csp(html, &nonce, &branding, false)
@@ -1611,14 +1714,14 @@ async fn dispatch_ui_route(
                 .unwrap_or("title asc");
             let html = render_organization_list_page(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 &publishers,
                 &datasets,
                 q,
                 sort,
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             );
             html_response_with_csp(html, &nonce, &branding, false)
@@ -1635,7 +1738,7 @@ async fn dispatch_ui_route(
                     };
                     return safe_redirect(
                         StatusCode::PERMANENT_REDIRECT,
-                        &format!("{}/{prefix_part}/{target_name}", state.mount_prefix),
+                        &format!("{}/{prefix_part}/{target_name}", state.mount_prefix()),
                     );
                 }
             }
@@ -1699,7 +1802,7 @@ async fn dispatch_ui_route(
 
             let html = render_organization_read_page(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 &pub_rec,
                 &outcome.datasets,
                 &outcome.facets,
@@ -1710,7 +1813,7 @@ async fn dispatch_ui_route(
                 &q_params,
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             );
             html_response_with_csp(html, &nonce, &branding, false)
@@ -1725,13 +1828,13 @@ async fn dispatch_ui_route(
                 .unwrap_or("title asc");
             let html = dataroom_web::groups::render_group_list_page(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 &datasets,
                 q,
                 sort,
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             );
             html_response_with_csp(html, &nonce, &branding, false)
@@ -1747,9 +1850,9 @@ async fn dispatch_ui_route(
                 .unwrap_or_default();
             let enc: String = url::form_urlencoded::byte_serialize(decoded.as_bytes()).collect();
             let prefix = if had_url_prefix {
-                format!("{}/{lang}", state.mount_prefix)
+                format!("{}/{lang}", state.mount_prefix())
             } else {
-                state.mount_prefix.clone()
+                state.mount_prefix().clone()
             };
             safe_redirect(
                 StatusCode::FOUND,
@@ -1760,10 +1863,10 @@ async fn dispatch_ui_route(
         ["about"] => {
             let html = render_about_page(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             );
             html_response_with_csp(html, &nonce, &branding, false)
@@ -1777,11 +1880,11 @@ async fn dispatch_ui_route(
         {
             let Some(html) = render_static_page(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 page_name,
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             ) else {
                 return problem_response(DataroomError::NotFound("page not found".into()));
@@ -1792,10 +1895,10 @@ async fn dispatch_ui_route(
         ["assistants"] => {
             let html = render_assistants_page(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             );
             html_response_with_csp(html, &nonce, &branding, false)
@@ -1804,11 +1907,11 @@ async fn dispatch_ui_route(
         ["assistants", guide_id] => {
             let Some(html) = render_assistant_guide_page(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 guide_id,
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             ) else {
                 return problem_response(DataroomError::NotFound(format!(
@@ -1831,12 +1934,12 @@ async fn dispatch_ui_route(
             }
             let Some(html) = render_map_page(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 &ds,
                 None,
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             ) else {
                 return problem_response(DataroomError::NotFound("map not available".into()));
@@ -1856,12 +1959,12 @@ async fn dispatch_ui_route(
             }
             let Some(html) = render_map_page(
                 &cat,
-                Some(&state.installation_branding),
+                Some(state.branding_of(&cat)),
                 &ds,
                 Some(res_id),
                 &lang,
                 had_url_prefix,
-                &state.mount_prefix,
+                &state.mount_prefix(),
                 &nonce,
             ) else {
                 return problem_response(DataroomError::NotFound("map not available".into()));

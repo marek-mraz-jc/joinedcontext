@@ -8,7 +8,7 @@
 //! documents its access and schema surfaces serve (SP-16). Nothing is remembered between calls (SP-19):
 //! the agent names the Endpoint on every call, and the list is rebuilt from the token each time.
 
-use crate::app::{Gateway, MAX_BODY};
+use crate::app::{Gateway, HostOrganization, MAX_BODY};
 use crate::auth::accounts::ServiceAccounts;
 use crate::auth::subject::Subject;
 use crate::auth::subject::{anonymous_on, principal_of, subject_from, HUB_PATH};
@@ -71,9 +71,15 @@ pub(crate) type Reaches = Mutex<HashMap<String, Arc<Kept>>>;
 /// What a reach depends on in a verified token: everything but its lifetime, so a refreshed
 /// token of the same caller finds it. `None` for a data space transfer token, whose reach
 /// follows its agreement and the clock, and is decided every time.
-fn kept_as(claims: Option<&Claims>, serving: Option<Representation>) -> Option<String> {
+fn kept_as(
+    claims: Option<&Claims>,
+    serving: Option<Representation>,
+    host: Option<&HostOrganization>,
+) -> Option<String> {
+    // The host's Organization narrows the reach: a key per Organization (Debug quotes it).
+    let host = host.map(|h| &h.0);
     let Some(claims) = claims else {
-        return Some(format!("{serving:?} anonymous"));
+        return Some(format!("{serving:?} {host:?} anonymous"));
     };
     if claims.agreement_id.is_some() || claims.participant.is_some() {
         return None;
@@ -91,7 +97,7 @@ fn kept_as(claims: Option<&Claims>, serving: Option<Representation>) -> Option<S
     clients.sort_unstable();
     // Debug quotes every string, so no value can pass for the next field.
     Some(format!(
-        "{serving:?} {:?}",
+        "{serving:?} {host:?} {:?}",
         (
             &claims.sub,
             &claims.iss,
@@ -121,7 +127,12 @@ pub async fn message(State(gateway): State<Arc<Gateway>>, mut request: Request) 
         decision,
         anonymous,
         ..
-    } = match reached(&gateway, request.headers(), Some(Representation::Mcp)) {
+    } = match reached(
+        &gateway,
+        request.headers(),
+        Some(Representation::Mcp),
+        request.extensions().get(),
+    ) {
         Ok(reached) => reached,
         Err(refusal) => return challenged(&gateway, *refusal),
     };
@@ -176,6 +187,7 @@ pub(crate) fn reached(
     gateway: &Gateway,
     headers: &HeaderMap,
     serving: Option<Representation>,
+    host: Option<&HostOrganization>,
 ) -> Result<Reached, Box<Response<Body>>> {
     // Without a token the hub answers over the public Endpoints alone, each as its own URL
     // answers an anonymous caller (T-4114, EP-87); a slug outside them is the tool error an
@@ -195,6 +207,7 @@ pub(crate) fn reached(
         .endpoints()
         .into_iter()
         .filter(|endpoint| serving.is_none_or(|wanted| endpoint.serves(wanted)))
+        .filter(|endpoint| gateway.on_host(host, &endpoint.project))
         .collect();
     let claims = match raw {
         None => None,
@@ -237,7 +250,7 @@ pub(crate) fn reached(
     }
 
     // The same caller a moment ago, against the same Endpoints and accounts (T-4528).
-    let key = kept_as(claims.as_ref(), serving);
+    let key = kept_as(claims.as_ref(), serving, host);
     let table = gateway.resolver.table();
     let accounts = gateway.accounts.load_full();
     let kept = key.as_ref().and_then(|key| {
@@ -314,7 +327,12 @@ pub async fn endpoints(
         reach,
         decision,
         ..
-    } = match reached(&gateway, request.headers(), None) {
+    } = match reached(
+        &gateway,
+        request.headers(),
+        None,
+        request.extensions().get(),
+    ) {
         Ok(reached) => reached,
         Err(refusal) => return *refusal,
     };

@@ -336,6 +336,105 @@ impl Default for DataroomSection {
     }
 }
 
+/// One `[[organizations]]` entry: an Organization of the deployment on its own hosts, with its
+/// own dataroom catalogue (ADR-N-058). Every host is unique across the deployment.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrganizationSection {
+    /// The JC Organization's `metadata.name`; also the CKAN organisation of its catalogue.
+    pub name: String,
+    pub hosts: OrganizationHosts,
+    /// The dataroom catalogue (a UUID) holding the Organization's datasets.
+    pub catalogue_id: String,
+    /// The CKAN API token the Portal publishes into this catalogue with; none, no Portal grant.
+    #[serde(default)]
+    pub portal_token_file: Option<PathBuf>,
+}
+
+/// The hosts one Organization answers on: its Portal, its open data portal and its API and
+/// MCP addresses (both the gateway's).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrganizationHosts {
+    pub portal: String,
+    pub opendata: String,
+    pub api: String,
+    pub mcp: String,
+}
+
+impl OrganizationHosts {
+    /// Each host with the module that answers on it.
+    #[must_use]
+    pub fn by_module(&self) -> [(Module, &str); 4] {
+        [
+            (Module::Portal, self.portal.as_str()),
+            (Module::Dataroom, self.opendata.as_str()),
+            (Module::Gateway, self.api.as_str()),
+            (Module::Gateway, self.mcp.as_str()),
+        ]
+    }
+}
+
+/// `[[organizations]]` checked: plain lowercase names and hosts, a catalogue UUID each, and no
+/// name, catalogue or host twice (a host compared without its port).
+fn check_organizations(orgs: &mut [OrganizationSection]) -> Result<(), ConfigError> {
+    let bad = |m: String| Err(ConfigError::Organization(m));
+    let mut names = std::collections::BTreeSet::new();
+    let mut catalogues = std::collections::BTreeSet::new();
+    let mut hosts = BTreeMap::new();
+    for org in orgs.iter_mut() {
+        let name = org.name.as_str();
+        if name.is_empty()
+            || name.len() > 63
+            || name.starts_with('-')
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        {
+            return bad(format!(
+                "name '{name}' is not a lowercase Organization name"
+            ));
+        }
+        if !names.insert(org.name.clone()) {
+            return bad(format!("Organization '{name}' is named twice"));
+        }
+        org.catalogue_id = org.catalogue_id.trim().to_ascii_lowercase();
+        if !is_uuid(&org.catalogue_id) {
+            return bad(format!(
+                "{name}: catalogue_id '{}' is not a UUID",
+                org.catalogue_id
+            ));
+        }
+        if !catalogues.insert(org.catalogue_id.clone()) {
+            return bad(format!(
+                "{name}: catalogue {} belongs to another Organization",
+                org.catalogue_id
+            ));
+        }
+        let h = &mut org.hosts;
+        for host in [&mut h.portal, &mut h.opendata, &mut h.api, &mut h.mcp] {
+            *host = host.trim().to_ascii_lowercase();
+            if !valid_host(host) {
+                return bad(format!("{name}: host '{host}' is not a plain host name"));
+            }
+            let bare = host.split(':').next().unwrap_or_default().to_owned();
+            if let Some(other) = hosts.insert(bare, org.name.clone()) {
+                return bad(format!("{name}: host '{host}' is also a host of {other}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `8-4-4-4-12` hex digits.
+fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.iter().map(|p| p.len()).eq([8, 4, 4, 4, 12])
+        && parts
+            .iter()
+            .all(|p| p.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 /// `[identity]` section: the one realm of the deployment (`crate::setup::Realm`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -461,6 +560,8 @@ pub struct FileConfig {
     pub identity: IdentitySection,
     pub door: Option<DoorSection>,
     pub remote: Option<RemoteSection>,
+    #[serde(default)]
+    pub organizations: Vec<OrganizationSection>,
 }
 
 /// Errors while assembling the configuration.
@@ -507,6 +608,8 @@ pub enum ConfigError {
     Address(&'static str, String),
     #[error("[identity] realm: {0}")]
     Realm(String),
+    #[error("[[organizations]] {0}")]
+    Organization(String),
 }
 
 /// The resolved configuration `jc` runs with.
@@ -540,6 +643,8 @@ pub struct Config {
     pub remote: Option<RemoteSection>,
     /// `[remote.modules]`, parsed: each module and the base it is called at.
     pub remote_modules: BTreeMap<Module, String>,
+    /// `[[organizations]]`, checked: each Organization on its own hosts.
+    pub organizations: Vec<OrganizationSection>,
 }
 
 impl Config {
@@ -708,6 +813,8 @@ impl Config {
             Some(name) => crate::setup::Realm::parse(&name).map_err(ConfigError::Realm)?,
             None => crate::setup::Realm::default(),
         };
+        let mut organizations = file.organizations;
+        check_organizations(&mut organizations)?;
         let remote_modules = match &file.remote {
             Some(remote) => remote_modules(remote, &roles)?,
             None => BTreeMap::new(),
@@ -745,6 +852,7 @@ impl Config {
             door: file.door,
             remote: file.remote,
             remote_modules,
+            organizations,
         })
     }
 }
@@ -871,6 +979,8 @@ pub struct Secrets {
     pub remote_client_secret: Option<Given>,
     /// The model provider's key the assistant's proxy holds (a file only).
     pub model_key: Option<Given>,
+    /// Each `[[organizations]]` entry's Portal publisher token, by Organization name.
+    pub organization_tokens: BTreeMap<String, Given>,
 }
 
 impl Secrets {
@@ -950,6 +1060,12 @@ impl Secrets {
             }
         }
         out.pipeline_client_secrets = pipeline_client_secrets(&cfg.ekiben)?;
+        for org in &cfg.organizations {
+            let name = format!("[[organizations]] {} portal_token_file", org.name);
+            if let Some(g) = given(&name, org.portal_token_file.as_deref())? {
+                out.organization_tokens.insert(org.name.clone(), g);
+            }
+        }
         if env.contains_key("JCBIN_PORTAL_AGE_KEY") {
             return Err(ConfigError::FileOnly("JCBIN_PORTAL_AGE_KEY"));
         }
@@ -1722,6 +1838,62 @@ path_prefix = "/api/endpoint"
             secrets.remote_client_secret.unwrap().source,
             jc_secret::Source::Env
         );
+    }
+
+    const TWO_ORGS: &str = include_str!("../tests/fixtures/two-orgs.toml");
+
+    fn orgs(text: &str) -> Result<Config, ConfigError> {
+        let file = Config::parse_file(Path::new("jc.toml"), text)?;
+        Config::merge(cli(&["--role", "dataroom"]), file)
+    }
+
+    #[test]
+    fn organizations_are_read_and_each_bad_one_is_refused() {
+        let cfg = orgs(TWO_ORGS).unwrap();
+        assert_eq!(cfg.organizations.len(), 2);
+        assert_eq!(cfg.organizations[1].name, "beta");
+        assert_eq!(cfg.organizations[1].hosts.mcp, "mcp.beta.test");
+        // Hosts are compared lowercased: an upper-case spelling is the same host.
+        let upper = TWO_ORGS.replacen("opendata.alpha.test", "OpenData.Alpha.test", 1);
+        assert_eq!(
+            orgs(&upper).unwrap().organizations[0].hosts.opendata,
+            "opendata.alpha.test"
+        );
+        for (from, to, says) in [
+            ("\"beta\"", "\"alpha\"", "named twice"),
+            ("\"beta\"", "\"Beta\"", "not a lowercase Organization name"),
+            ("\"beta\"", "\"-b\"", "not a lowercase Organization name"),
+            (
+                "0000000000b1",
+                "0000000000a1",
+                "belongs to another Organization",
+            ),
+            ("0000000000b1", "b1", "is not a UUID"),
+            ("api.beta.test", "api.alpha.test", "also a host of alpha"),
+            // The same host twice inside one Organization, and with only a port apart.
+            ("mcp.beta.test", "api.beta.test", "also a host of beta"),
+            ("mcp.beta.test", "api.beta.test:8443", "also a host of beta"),
+            ("api.beta.test", "*.beta.test", "not a plain host name"),
+            (
+                "api.beta.test",
+                "https://api.beta.test",
+                "not a plain host name",
+            ),
+        ] {
+            let text = TWO_ORGS.replace(from, to);
+            let err = orgs(&text).expect_err(to).to_string();
+            assert!(err.contains(says), "{to}: {err}");
+        }
+        // An unknown key and a missing host are refused by the parser.
+        let err =
+            orgs(&TWO_ORGS.replace("mcp = \"mcp.beta.test\"", "mcp = \"m.b\", www = \"w.b\""))
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("unknown field `www`"), "{err}");
+        let err = orgs(&TWO_ORGS.replace(", mcp = \"mcp.beta.test\"", ""))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("missing field `mcp`"), "{err}");
     }
 
     #[test]

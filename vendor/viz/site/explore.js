@@ -7,9 +7,35 @@
 (function (root) {
   "use strict";
 
-  // Beside this page, so the explorer works under a path prefix too (jc serves it at /viz).
-  var MAPLIBRE = "./vendor/maplibre-gl-6.14.0.mjs";
+  // Beside this page, so the explorer works under a path prefix too (jc serves it at /viz). Absolute:
+  // in a sandboxed page this script is cross-origin, so a relative import() resolves against about:blank.
+  var MAPLIBRE = typeof location !== "undefined" ? new URL("vendor/maplibre-gl-6.14.0.mjs", location.href).href : "/vendor/maplibre-gl-6.14.0.mjs";
   var WORKER = typeof location !== "undefined" ? new URL("vendor/maplibre-gl-worker-6.14.0.mjs", location.href).href : "/vendor/maplibre-gl-worker-6.14.0.mjs";
+  var workerReady = null;
+  // MapLibre with its worker. A sandboxed page (an opaque origin: jc serves the explorer beside the
+  // Portal) may start no worker from a URL, and Chromium starts no module worker from a blob there:
+  // the worker runs as a classic blob script, the module's text without its one trailing export.
+  // MapLibre asks for a module worker (wrapping the URL in a blob of its own), and it is the only
+  // worker this page starts, so every module worker here becomes that classic one.
+  function maplibreReady() {
+    return import(MAPLIBRE).then(function (maplibre) {
+      if (typeof self === "undefined" || self.origin !== "null") {
+        maplibre.setWorkerUrl(WORKER);
+        return maplibre;
+      }
+      if (!workerReady) workerReady = fetch(WORKER, { credentials: "omit" }).then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      }).then(function (code) {
+        var url = URL.createObjectURL(new Blob([code.replace(/export\s*\{[^}]*\};?\s*(\/\/#[^\n]*\s*)?$/, "")], { type: "text/javascript" }));
+        var Native = self.Worker;
+        self.Worker = function (u, o) { return o && o.type === "module" ? new Native(url) : new Native(u, o); };
+        self.Worker.prototype = Native.prototype;
+        return url;
+      });
+      return workerReady.then(function () { maplibre.setWorkerUrl(WORKER); return maplibre; });
+    });
+  }
   var MAP_DWELL = 500;
   var SLUG = /^[a-z0-9]{16,64}$/;
   var NAME = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
@@ -577,9 +603,8 @@
         else state.mapAt = [at[0], at[1]];
       } : null;
       if (!ok) return;
-      import(MAPLIBRE).then(function (maplibre) {
+      maplibreReady().then(function (maplibre) {
         if (box.hidden || !$("detail").open) return;
-        maplibre.setWorkerUrl(WORKER);
         var m = new maplibre.Map({ container: box, style: styleOf(H.tiles, lang), center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false });
         m.addControl(new maplibre.AttributionControl({ compact: true }));
         new maplibre.Marker({ color: COLOUR }).setLngLat([at[0], at[1]]).addTo(m);
@@ -666,8 +691,7 @@
     }
 
     function loadMap() {
-      import(MAPLIBRE).then(function (maplibre) {
-        maplibre.setWorkerUrl(WORKER);
+      maplibreReady().then(function (maplibre) {
         if (root.pmtiles) maplibre.addProtocol("pmtiles", new root.pmtiles.Protocol().tile);
         // The Endpoint's vector tiles, read like every other request here: anonymous, no referrer.
         maplibre.addProtocol("jc-tile", function (request, controller) {
@@ -1017,7 +1041,8 @@
       $("embed-copied").textContent = "";
       try {
         $("embed-code").value = E.snippet($("embed-form").querySelector("input[name=kind]:checked").value, o, new URL(".", location.href).href.replace(/\/$/, ""), t.title + (state.type ? ": " + state.type : ""));
-        $("embed-preview").href = location.origin + "/embed.html" + E.hash(o);
+        // Beside this page: jc serves it under /viz.
+        $("embed-preview").href = new URL("embed.html", location.href).href + E.hash(o);
         $("embed-error").hidden = true;
         $("embed-height").removeAttribute("aria-invalid");
         $("embed-copy").disabled = false;
@@ -1095,6 +1120,8 @@
         csv: true
       });
     } catch (e) {
+      // The text tells the administrators the cause is in the console: put it there.
+      if (typeof console !== "undefined") console.error("jcExplorer:", e);
       tell(t.noWidget, "error");
     }
     height();

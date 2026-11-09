@@ -303,6 +303,12 @@ impl PgStore {
 
     /// Ensures a realm has active ES256 and RS256 signing keys (serialized per realm).
     pub async fn ensure_realm_keys(&self, realm_id: &str) -> Result<()> {
+        self.ensure_keys(realm_id, &["ES256", "RS256"]).await
+    }
+
+    /// Ensures a realm has an active key of each of `algorithms`, generating the missing ones
+    /// under the realm's key lock in one transaction.
+    async fn ensure_keys(&self, realm_id: &str, algorithms: &[&str]) -> Result<()> {
         let mut tx = self.begin(realm_id, None).await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('kaisatsu.keys:' || $1, 0))")
             .bind(realm_id)
@@ -318,15 +324,12 @@ impl PgStore {
         .await
         .map_err(storage)?;
         let mut created = false;
-        if !active.iter().any(|a| a == "ES256") {
-            let es = KeyManager::generate_es256(realm_id, &self.kek, 100, "ACTIVE")?;
-            insert_signing_key(&mut tx, &es).await?;
-            created = true;
-        }
-        if !active.iter().any(|a| a == "RS256") {
-            let rs = KeyManager::generate_rs256(realm_id, &self.kek, 50, "ACTIVE")?;
-            insert_signing_key(&mut tx, &rs).await?;
-            created = true;
+        for algorithm in algorithms {
+            if !active.iter().any(|a| a == algorithm) {
+                let key = KeyManager::generate(algorithm, realm_id, &self.kek, "ACTIVE")?;
+                insert_signing_key(&mut tx, &key).await?;
+                created = true;
+            }
         }
         if created {
             notify(&mut tx, realm_id).await?;
@@ -726,6 +729,18 @@ fn key_from_row(row: (Value, Vec<u8>)) -> Result<SigningKeyRecord> {
     let mut k: SigningKeyRecord = from_doc(doc)?;
     k.encrypted_private_key = enc;
     Ok(k)
+}
+
+/// Serializes the delete-and-insert upserts of one row (`table`, `realm_id`, `id`) for the rest of
+/// the transaction: two parallel upserts (parallel refresh grants of one session) would otherwise
+/// both delete the old row and the second insert would hit the primary key.
+async fn lock_row(conn: &mut PgConnection, table: &str, realm_id: &str, id: &str) -> Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("kaisatsu.{table}:{realm_id}:{id}"))
+        .execute(&mut *conn)
+        .await
+        .map_err(storage)?;
+    Ok(())
 }
 
 async fn insert_signing_key(conn: &mut PgConnection, key: &SigningKeyRecord) -> Result<()> {
@@ -2451,6 +2466,14 @@ impl Store for PgStore {
         })
     }
 
+    fn ensure_signing_key<'a>(
+        &'a self,
+        realm_id: &'a str,
+        algorithm: &'a str,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move { self.ensure_keys(realm_id, &[algorithm]).await })
+    }
+
     fn put_auth_session<'a>(&'a self, session: AuthSession) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             let mut tx = self.begin(&session.realm_id, None).await?;
@@ -2617,6 +2640,7 @@ impl Store for PgStore {
         Box::pin(async move {
             let realm_id = session.realm_id.clone();
             let mut tx = self.begin(&realm_id, None).await?;
+            lock_row(&mut tx, "sso_session", &realm_id, &session.id).await?;
             sqlx::query("DELETE FROM kaisatsu.sso_session WHERE realm_id = $1 AND id = $2")
                 .bind(&realm_id)
                 .bind(&session.id)
@@ -2862,6 +2886,13 @@ impl Store for PgStore {
     fn upsert_refresh_family<'a>(&'a self, family: RefreshTokenFamily) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             let mut tx = self.begin(&family.realm_id, None).await?;
+            lock_row(
+                &mut tx,
+                "refresh_token_family",
+                &family.realm_id,
+                &family.id,
+            )
+            .await?;
             sqlx::query(
                 "DELETE FROM kaisatsu.refresh_token_family WHERE realm_id = $1 AND id = $2",
             )

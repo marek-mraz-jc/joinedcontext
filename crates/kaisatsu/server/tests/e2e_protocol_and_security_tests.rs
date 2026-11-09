@@ -12,7 +12,7 @@
 //!    `connector:abcdefghij2345672345672345` and `offline_access` (and `fullScopeAllowed: false`).
 //! 5. Back-channel logout (`POST` to `backchannel.logout.url` with `typ: "Logout"` and `events` claim,
 //!    no `nonce`) and RFC 7009 refresh token revocation ending the client's grant.
-//! 6. Refresh token rotation and reuse detection revoking the entire family and session.
+//! 6. Refresh token rotation and reuse detection revoking the entire family.
 //! 7. Mount under a path prefix (`/id` on `city.example`) beside sibling modules on one host vs
 //!    dedicated host (`id.example` at root), verifying issuer strings and `__Secure-wk_*` vs
 //!    `__Host-wk_*` cookies (W9).
@@ -313,7 +313,7 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
     let rotated_refresh = ref1_resp["refresh_token"].as_str().unwrap();
     assert_ne!(rotated_refresh, refresh_token);
 
-    // Replaying the old `refresh_token` revokes the entire family and session!
+    // Replaying the old `refresh_token` revokes the entire family (the SSO session stays).
     let (st_reuse, _, _) = post_form(
         &app,
         "/realms/dev/protocol/openid-connect/token",

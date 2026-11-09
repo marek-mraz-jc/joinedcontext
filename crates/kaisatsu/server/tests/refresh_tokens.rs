@@ -1,7 +1,8 @@
 #![forbid(unsafe_code)]
 //! Refresh tokens are opaque, rotated handles with reuse detection (W1 grants, W2 sessions):
 //! `{family id}.{256-bit random}`, only the SHA-256 stored, one winner per rotation, a
-//! rotated-away handle revokes the family, a forged handle revokes nothing.
+//! rotated-away handle revokes the family (refuse/reuse cases on both stores: refresh_reuse.rs),
+//! a forged handle revokes nothing.
 
 use axum::http::StatusCode;
 use jc_router::Mount;
@@ -111,7 +112,7 @@ async fn refresh_token_is_an_opaque_handle_stored_only_as_its_hash() {
 }
 
 #[tokio::test]
-async fn rotation_and_reuse_detection_revoke_the_family_and_session() {
+async fn rotation_and_reuse_detection_revoke_the_family_and_keep_the_session() {
     let (state, store, _) = setup_dev_realm_state().await;
     let app = router(state, mount());
     let first = password_tokens(&app, "openid").await["refresh_token"]
@@ -138,7 +139,8 @@ async fn rotation_and_reuse_detection_revoke_the_family_and_session() {
     assert_eq!(fam.rotation_counter, 2);
     assert_eq!(fam.previous_hashes, [sha256_hex(&first)]);
 
-    // The rotated-away handle again: reuse, the family and the SSO session end.
+    // The rotated-away handle again: reuse, the family ends and the SSO session stays (Keycloak
+    // keeps the IdP session, the client signs the person in again).
     let (st, body) = refresh(&app, &first).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"], "invalid_grant");
@@ -153,7 +155,7 @@ async fn rotation_and_reuse_detection_revoke_the_family_and_session() {
             .get_sso_session("dev", &fam.sso_session_id)
             .await
             .unwrap()
-            .is_none()
+            .is_some()
     );
     let (st, _) = refresh(&app, &second).await;
     assert_eq!(

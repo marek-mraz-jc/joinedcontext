@@ -927,3 +927,18 @@ def test_client_urls_of_the_source_host_get_a_twin_on_the_rehearsal_and_keep_the
     assert by["other"] == realm["clients"][2]
     assert n == 5
     assert rh.add_rehearsal_origin({"clients": [{"clientId": "x"}]}, "http://localhost:1") == ({"clients": [{"clientId": "x"}]}, 0)
+
+
+def test_every_kit_secret_is_long_enough_for_the_strictest_reader(tmp_path):
+    """up.sh secret(): dataroom refuses a Portal publisher token under 32 printable characters, and
+    a base64 secret with its / + = stripped came out shorter about two times in three."""
+    text = (HERE / "up.sh").read_text()
+    fn = text[text.index("secret() {"):]
+    fn = fn[:fn.index("\n}\n") + 3]
+    script = fn + 'for i in $(seq 1 200); do secret "s$i" > /dev/null; done\n'
+    (tmp_path / "secrets").mkdir()
+    subprocess.run(["bash", "-c", script], check=True, env=dict(os.environ, home=str(tmp_path)))
+    values = [p.read_text() for p in (tmp_path / "secrets").iterdir()]
+    assert len(values) == 200
+    assert all(len(v) >= 32 and v.isascii() and v.isprintable() and " " not in v for v in values)
+    assert all((tmp_path / "secrets" / f"s{i}").stat().st_mode & 0o777 == 0o600 for i in range(1, 201))

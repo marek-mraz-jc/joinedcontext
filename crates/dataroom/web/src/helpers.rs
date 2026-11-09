@@ -1301,13 +1301,30 @@ pub fn jc_live(ds: &Dataset, branding: &BrandingBlock) -> Option<LiveEndpointBox
     })
 }
 
+/// The `sandbox` and the message origin of a frame showing a viz page. On an origin of its own
+/// (dev's `viz.{domain}`) the page keeps it: `allow-same-origin`, messages from that origin. On
+/// the Portal's origin (jc in slug mode) jc serves the page as a CSP sandbox in an opaque origin
+/// (the Portal session's cookies and CSRF token are readable on that origin), so the frame asks
+/// for no origin either and its messages come from `null`.
+fn viz_frame(viz: &str, branding: &BrandingBlock, sandbox: &str) -> (String, String) {
+    let origin = origin_of(viz).to_owned();
+    let portal = branding.address(Address::Portal);
+    if portal.as_deref().map(origin_of) == Some(origin.as_str()) {
+        (sandbox.replace(" allow-same-origin", ""), "null".to_owned())
+    } else {
+        (sandbox.to_owned(), origin)
+    }
+}
+
 /// Live explorer widget (`jc_explorer` in `plugin.py` line 1054 + SDK DataGrid config C15, D3, D4).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExplorerView {
     pub title: String,
     pub lead: String,
     pub src: String,
+    /// The origin the frame's messages come from (`null` when sandboxed, [`viz_frame`]).
     pub origin: String,
+    pub sandbox: String,
     pub grid_config: String,
 }
 
@@ -1321,7 +1338,11 @@ pub fn jc_explorer(
     let live = jc_live(ds, branding)?;
     let slug = api_endpoint_slug(&live.url, branding)?;
     let viz = branding.address(Address::Viz)?;
-    let origin = origin_of(&viz).to_owned();
+    let (sandbox, origin) = viz_frame(
+        &viz,
+        branding,
+        "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox",
+    );
     let code = normalize_lang_code(lang);
     let mut src = format!("{viz}/explore.html#{slug}&inline&lang={code}&theme=light");
     let name_ok = (2..=100).contains(&ds.name.len())
@@ -1351,6 +1372,7 @@ pub fn jc_explorer(
         lead: jc_t("explorer_lead", lang),
         src,
         origin,
+        sandbox,
         grid_config: grid.to_string(),
     })
 }
@@ -1395,7 +1417,9 @@ pub struct ChartView {
     pub id: String,
     pub title: String,
     pub description: String,
+    /// The origin the frame's messages come from (`null` when sandboxed, [`viz_frame`]).
     pub origin: String,
+    pub sandbox: String,
     pub src: String,
     pub code: String,
     pub package_link: String,
@@ -1412,7 +1436,16 @@ pub fn jc_visualizations(
         return Vec::new();
     };
     // The frame's height messages come from the viz origin; its pages may sit under a path.
-    let origin = origin_of(&viz).to_owned();
+    let (sandbox, origin) = viz_frame(
+        &viz,
+        branding,
+        "allow-scripts allow-same-origin allow-downloads",
+    );
+    let (embed_sandbox, _) = viz_frame(
+        &viz,
+        branding,
+        "allow-scripts allow-same-origin allow-downloads allow-popups allow-popups-to-escape-sandbox",
+    );
     let code_lang = normalize_lang_code(lang);
     let mut out = Vec::new();
     for v in views {
@@ -1422,7 +1455,7 @@ pub fn jc_visualizations(
         let src = format!("{viz}/#{}&inline&lang={code_lang}", v.id);
         let embed = format!("{viz}/#{}&lang={code_lang}", v.id);
         let code = format!(
-            "<iframe src=\"{embed}\" title=\"{}\" width=\"100%\" height=\"480\" style=\"border:0\" loading=\"lazy\" referrerpolicy=\"no-referrer\" sandbox=\"allow-scripts allow-same-origin allow-downloads allow-popups allow-popups-to-escape-sandbox\"></iframe>",
+            "<iframe src=\"{embed}\" title=\"{}\" width=\"100%\" height=\"480\" style=\"border:0\" loading=\"lazy\" referrerpolicy=\"no-referrer\" sandbox=\"{embed_sandbox}\"></iframe>",
             html_escape(&v.title)
         );
         out.push(ChartView {
@@ -1430,6 +1463,7 @@ pub fn jc_visualizations(
             title: v.title.clone(),
             description: v.description.clone(),
             origin: origin.clone(),
+            sandbox: sandbox.clone(),
             src,
             code,
             package_link: format!("{lang_prefix}/dataset/{}#jc-preview-title", ds.name),

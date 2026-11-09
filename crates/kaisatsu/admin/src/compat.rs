@@ -727,6 +727,10 @@ async fn compat_partial_import(
             "invalid ifResourceExists: {mode}"
         )));
     }
+    // A client asking for an algorithm the realm cannot sign is refused before anything is written.
+    for c in &payload.clients {
+        c.check_signature_algorithms()?;
+    }
     // FAIL is all or nothing, as in Keycloak: a conflict is found before anything is written.
     if mode == "FAIL" {
         for u in &payload.users {
@@ -2079,6 +2083,7 @@ async fn compat_create_client(
     if client.org_id.is_none() {
         client.org_id = ctx.active_org_id.clone();
     }
+    client.check_signature_algorithms()?;
     let managed = client.attributes.get("managed-by").cloned();
     check_decision(state.authorizer.check(
         &ctx,
@@ -2183,6 +2188,7 @@ async fn compat_update_client(
             managed_by: existing.managed_by.clone(),
         },
     ))?;
+    client.check_signature_algorithms()?;
     client.id = uuid.clone();
     if client.client_id != existing.client_id
         && state
