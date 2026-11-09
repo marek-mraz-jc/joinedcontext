@@ -452,6 +452,29 @@ fn entity(kind: &str, local: &str) -> Value {
 async fn endpoints_answer_inside_jc_as_on_dev() {
     let jc = start().await;
     let started = Instant::now();
+    // jc creates the organization repository in the Portal's background start, after it
+    // listens: write once shako holds it.
+    eventually(
+        "shako holds the organization repository",
+        &jc,
+        120,
+        || async {
+            let resp = Client::new()
+                .get(jc.url(&format!("/git/api/v1/repos/{FORGE_OWNER}/{FORGE_REPO}")))
+                .header(
+                    "authorization",
+                    format!("token {}", jc.secret("shako-token")),
+                )
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            match resp.status() {
+                s if s.is_success() => Ok(()),
+                s => Err(s.to_string()),
+            }
+        },
+    )
+    .await;
     for (path, content) in manifests() {
         put_file(&jc, &path, &content).await;
     }
