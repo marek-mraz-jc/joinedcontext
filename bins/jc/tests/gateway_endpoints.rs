@@ -881,8 +881,9 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     );
     assert!(!body.contains("urn:ngsi-ld:Thing:one"), "{body}");
     // jc links every Endpoint's scope to `portal-api` too (prod does not, T-6063): the Portal's
-    // own service account asking that scope and the hub audience is still nobody's person and
-    // reads nothing, so the link opens no Endpoint beyond the person exchange below.
+    // own service account asking that scope and the hub audience is its own
+    // `service-account-portal-api` user, whom no Policy grants, so it reads nothing and the link
+    // opens no Endpoint beyond the person exchange below.
     let portal = Client::new()
         .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
         .form(&[
@@ -908,7 +909,11 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     );
     assert!(claims["aud"].to_string().contains("mcp-hub"), "{claims}");
     let (status, body) = call(&jc, get.clone(), &read, Some(own), None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN,
+        "portal-api's own token read the closed Endpoint: {status} {body}"
+    );
+    assert!(!body.contains("urn:ngsi-ld:Thing:one"), "{body}");
 
     // `jc_data_query` through the Portal's MCP: the Portal exchanges the person's token for
     // `endpoint:{slug}` (the scope jc's kaisatsu links to portal-api, as the deployment's

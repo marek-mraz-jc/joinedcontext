@@ -382,7 +382,8 @@ project `e2e` (layout 1: project, space `things`, a `public` and a `project-list
   exchanges the person's token for it (`tests/gateway_endpoints.rs`). Per-Endpoint audiences come from client
   mappers, as on prod (1,987 there, all on clients). Prod's release links no Endpoint scope to `portal-api`;
   jc's link opens nothing more: `portal-api`'s own service-account token with the scope and `gateway-hub` is
-  401 (no person), and an exchanged token reads only what the person's grants open.
+  its own `service-account-portal-api` user, whom no Policy grants (403, no data), and an exchanged token reads
+  only what the person's grants open.
 - The gateway's own token comes from the public issuer URL: a jc whose public origin the process cannot reach
   (no hairpin through the TLS proxy) gets no token, and the Portal's internal listener refuses its polls (401).
 - `JC_INTERNAL_BIND` unset (jc-portal-1 `c0a410a7`: the Portal binds a free loopback port and `portal::build`
