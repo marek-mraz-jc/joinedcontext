@@ -618,7 +618,9 @@ export function PipelineWorkbench({
   // Step 2: the sample.
   const sample = sampleFor(draft, file, dataSources, endpoints);
   const unsampled = file ? null : unsampledSource(dataSources, draft?.source?.dataSourceRef);
-  const source = unsampled ? undefined : sourceFor(draft, file, sample);
+  // A named source is judged from its manifest: until the list has it, nothing is asked.
+  const unlisted = !file && draft?.source?.dataSourceRef !== undefined && !dataSources.some((s) => s.metadata.name === draft.source?.dataSourceRef);
+  const source = unsampled || unlisted ? undefined : sourceFor(draft, file, sample);
   // A page of one of this platform's endpoints is read here, once, with the person's session
   // (T-3088): the runner fetches with no credential and the endpoint answered it 401.
   const inlined = useQuery({

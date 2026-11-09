@@ -127,10 +127,12 @@ function Harness({
   start,
   verdicts,
   draftName,
+  sources = DATASOURCES,
 }: {
   start: PipelineForm;
   verdicts: { ok: boolean; bloblang: string }[];
   draftName?: string;
+  sources?: typeof DATASOURCES;
 }): JSX.Element {
   const [draft, setDraft] = useState<PipelineForm>(start);
   return (
@@ -138,7 +140,7 @@ function Harness({
       project="ovzdusie"
       draft={draft}
       onChange={setDraft}
-      dataSources={DATASOURCES}
+      dataSources={sources}
       endpoints={ENDPOINTS}
       targets={TARGETS}
       toManifest={(form) => ({ kind: "Pipeline", metadata: { name: form.name ?? "air" }, spec: form })}
@@ -577,6 +579,28 @@ describe("the pipeline workbench", () => {
     await new Promise((done) => setTimeout(done, 50));
     expect(seen.ops.map((op) => op.name)).not.toContain("jc_pipeline_sample_source");
     expect(seen.ops.map((op) => op.name)).not.toContain("jc_pipeline_try_mapping");
+  });
+
+  // The editor hands the DataSource list over once it is read: a source not in it yet is asked nothing,
+  // so a generate source is never sampled while its manifest is still on the way (at 400 px on the rehearsal).
+  it("a_named_source_is_asked_nothing_until_the_list_holds_it", async () => {
+    const seen: Seen = { ops: [] };
+    stub({ sample: problem(400, "refused") }, seen);
+    const start = { source: { dataSourceRef: "kataster-inspire" }, targetEndpoint: URN } as PipelineForm;
+    const wrap = (sources: typeof DATASOURCES) => (
+      <QueryClientProvider client={client}>
+        <I18nextProvider i18n={i18n}>
+          <Harness start={start} verdicts={[]} sources={sources} />
+        </I18nextProvider>
+      </QueryClientProvider>
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(wrap([]));
+    expect(within(step(en.pipelines.workbench.sample.title)).getByText(en.pipelines.workbench.sample.waiting)).toBeInTheDocument();
+    view.rerender(wrap(DATASOURCES));
+    expect(await within(step(en.pipelines.workbench.sample.title)).findByText(/^kataster-inspire makes/)).toBeInTheDocument();
+    await new Promise((done) => setTimeout(done, 50));
+    expect(seen.ops.map((op) => op.name)).not.toContain("jc_pipeline_sample_source");
   });
 
   it("a_dropped_file_is_the_sample_and_drafts_an_empty_mapping", async () => {
