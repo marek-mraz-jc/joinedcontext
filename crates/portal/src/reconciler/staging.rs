@@ -192,9 +192,13 @@ pub(super) async fn listing(
                     // The project's own tree is what lay under `projects/{slug}/`; the slug
                     // is the registry's, so any one stands in for it here.
                     let p = format!("projects/_/{}", p.trim_start_matches('/'));
-                    is_candidate_manifest(&p) || is_model_schema(&p)
+                    is_candidate_manifest(&p)
+                        || is_model_schema(&p)
+                        || crate::grafana_builder::is_dashboard_file(&p)
                 } else {
-                    is_candidate_manifest(p) || is_model_schema(p)
+                    is_candidate_manifest(p)
+                        || is_model_schema(p)
+                        || crate::grafana_builder::is_dashboard_file(p)
                 }
         })
         .collect();
@@ -247,7 +251,8 @@ pub(super) async fn stage_listed(
         }
         if path.ends_with(".json") {
             // Not a manifest: a DataModel's generated JSON Schema, which the runner's validation
-            // stage compiles beside its DataModel (PL-60). Left out, every forge model held its
+            // stage compiles beside its DataModel (PL-60), or a builder dashboard, which the
+            // dashboards step provisions (`crate::grafana_builder::DashboardSync`). Left out, every forge model held its
             // records to id and type alone (T-5081). `listing` admits a `.json` file only by
             // `is_model_schema`, in a project repository on its `projects/_/` form, so the path
             // here is not tested again: unprefixed, it failed that test and was dropped (T-6429).
