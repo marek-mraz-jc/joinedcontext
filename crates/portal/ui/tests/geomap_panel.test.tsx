@@ -138,20 +138,21 @@ describe("the helsinki air quality geomap", () => {
     expect(terms).not.toContain("name");
     expect(terms).toContain("pm10");
     expect(terms).not.toContain("location");
-    // The text date of the source reads as the time field beside it, one format for both.
-    const values = Object.fromEntries([...calls.popups[0].querySelectorAll("dt")].map((term) => [term.textContent, term.nextElementSibling!.textContent]));
-    expect(values.dateObserved).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
-    expect(values.dateObserved).toBe(values.observedAt);
+    // The heading carries the time; observedAt and the source's text date (`dateObserved`, read in
+    // the same format) would repeat it, so neither is listed.
+    expect(terms).not.toContain("observedAt");
+    expect(terms).not.toContain("dateObserved");
+    expect(terms).toContain("source");
     expect(calls.popups[0].textContent).toMatch(/µg\/m³|μg\/m³/);
   });
 
-  it("lists every stacked marker under a tap, five and a count of the rest", () => {
+  it("lists every stacked marker under a tap, five, and says how many are not listed", () => {
     draw(frames);
     const under = calls.sources[0].source.data.features.slice(0, 7).map((feature) => ({ properties: feature.properties }));
     calls.clicks.get("markers")!({ features: under, lngLat: [0, 0] });
     expect(calls.popups[0].querySelectorAll("dl")).toHaveLength(5);
-    expect(calls.popups[0].textContent).toContain("2 more at this spot: zoom in to tell them apart");
-    expect(calls.popups[0].firstElementChild!.textContent).toBe("7 at this spot");
+    expect(calls.popups[0].textContent).toContain("2 not listed: zoom in to tell them apart");
+    expect(calls.popups[0].firstElementChild!.textContent).toBe("7 at this spot, 5 listed");
   });
 
   it("opens no tooltip when the layer has it off", () => {

@@ -3723,8 +3723,8 @@
     },
     "emptyHint": "Ein Dashboard ist eine Seite aus Karten und Zahlen, gebaut aus Endpunkten, die dieses Projekt lesen kann. Erstellen Sie eines, oder bitten Sie die Assistentin um ein Dashboard aus dem, was Sie schon veröffentlichen.",
     "layerEndpointGone": "Der Endpoint „{name}“ gehört nicht mehr zu diesem Projekt, daher hat diese Ebene weder Typ noch Filter zur Auswahl. Wählen Sie für diese Ebene einen anderen Endpoint.",
-    "moreHere": "Weitere an dieser Stelle: {n}; vergrößern Sie die Karte, um sie zu unterscheiden",
-    "stackedHere": "An dieser Stelle: {n}"
+    "moreHere": "Nicht aufgelistet: {n}; vergrößern Sie die Karte, um sie zu unterscheiden",
+    "stackedHere": "An dieser Stelle: {n}, davon {shown} aufgelistet"
   },
   "access": {
     "title": "Zugriff",

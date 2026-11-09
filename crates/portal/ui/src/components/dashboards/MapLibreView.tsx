@@ -414,9 +414,9 @@ export function MapLibreView({
         const root = document.createElement("div");
         const count = document.createElement("p");
         count.className = "mb-1 pr-6 text-body font-semibold text-fg";
-        count.textContent = t("dashboards.stackedHere", { n: features.length });
-        // The list scrolls under a fade, so a cut reading reads as more below, not as a broken line.
-        root.className = "flex flex-col gap-2 divide-y divide-border overflow-y-auto pb-4 [mask-image:linear-gradient(to_bottom,black_80%,transparent)] [&>*+*]:pt-2";
+        count.textContent = t("dashboards.stackedHere", { n: features.length, shown: Math.min(features.length, STACKED) });
+        // The listed readings scroll inside the popup; the header says how many are listed.
+        root.className = "flex flex-col gap-2 divide-y divide-border overflow-y-auto [&>*+*]:pt-2";
         // A share of the map's own height, so the tapped spot and its neighbours stay in view.
         const mapHeight = container.current?.clientHeight ?? 400;
         root.style.maxHeight = `${Math.round(mapHeight * (mapHeight < 480 ? 0.42 : 0.45))}px`;
@@ -425,14 +425,14 @@ export function MapLibreView({
         }
         const more = document.createElement("p");
         if (features.length > STACKED) {
-          more.className = "mt-1 text-body text-fg-muted";
+          more.className = "mt-2 border-t border-border pt-2 text-body text-fg-muted";
           more.textContent = t("dashboards.moreHere", { n: features.length - STACKED });
         }
         // Above the map's own controls (the scale, the attribution), which MapLibre stacks over a popup.
         const stacked = document.createElement("div");
         stacked.append(count, root);
         if (more.textContent) stacked.append(more);
-        new Popup({ className: "z-10", maxWidth: "18rem" })
+        new Popup({ className: "z-10", maxWidth: "20rem" })
           .setLngLat(event.lngLat)
           .setDOMContent(features.length === 1 ? popupNode(features[0], layer.popupProperties, layer.open, layer.titleProperty) : stacked)
           .addTo(instance);

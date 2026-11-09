@@ -3723,8 +3723,8 @@
     },
     "emptyHint": "A dashboard is a page of maps and numbers built from endpoints this project can read. Make one, or ask the assistant for a dashboard of what you already publish.",
     "layerEndpointGone": "The endpoint “{name}” is not in this project any more, so this layer has no type or filter to choose from. Choose another endpoint for this layer.",
-    "moreHere": "{n} more at this spot: zoom in to tell them apart",
-    "stackedHere": "{n} at this spot"
+    "moreHere": "{n} not listed: zoom in to tell them apart",
+    "stackedHere": "{n} at this spot, {shown} listed"
   },
   "access": {
     "title": "Access",

@@ -136,20 +136,21 @@ export function markersOf(frames: Frame[], options: Record<string, unknown> | un
       const properties: Record<string, string> = {};
       const id = frame.fields.find((field) => field.name === "id")?.values[row];
       if (typeof id === "string") properties.id = id;
+      // Readings of one vehicle stack under one name: the heading carries the row's time beside it,
+      // and a row repeating that time (observedAt, a `dateObserved` kept as text) is left out.
+      const time = name && frame.fields.find((field) => field.type === "time");
+      const when = name && time && time.values[row] != null ? displayValue(settingsFor(fieldConfig, time, frame.refId), time.values[row], locale).text : undefined;
       for (const field of tooltip) {
+        if (when && field === time) continue;
         const label = displayNameOf(field, frame);
-        shown.add(label);
         const value = field.values[row];
         const settings = settingsFor(fieldConfig, field, frame.refId);
         // A date the source keeps as text (`dateObserved`) reads like the time fields beside it.
         const instant = typeof value === "string" && ISO_INSTANT.test(value) ? Date.parse(value) : NaN;
-        properties[label] = Number.isNaN(instant) || settings.unit ? displayValue(settings, value, locale).text : displayValue({ ...settings, unit: "dateTimeAsIso" }, instant, locale).text;
-      }
-      // Readings of one vehicle stack under one name: the heading carries the row's time beside it.
-      const time = name && frame.fields.find((field) => field.type === "time");
-      if (name && time && time.values[row] != null) {
-        const label = displayNameOf(name, frame);
-        properties[label] = `${properties[label]} · ${displayValue(settingsFor(fieldConfig, time, frame.refId), time.values[row], locale).text}`;
+        const text = Number.isNaN(instant) || settings.unit ? displayValue(settings, value, locale).text : displayValue({ ...settings, unit: "dateTimeAsIso" }, instant, locale).text;
+        if (when && field !== name && text === when) continue;
+        shown.add(label);
+        properties[label] = field === name && when ? `${text} · ${when}` : text;
       }
       features.push({ type: "Feature", geometry: { type: "Point", coordinates: at }, properties });
     }
