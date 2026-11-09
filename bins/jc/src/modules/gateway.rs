@@ -366,12 +366,25 @@ pub fn at_root(router: Router) -> Router {
 /// (`context_gateway::app::HostOrganization`), from the host `jc-router` resolved (its
 /// `Mount`), for the `[[organizations]]` API, MCP and Portal hosts: there the gateway lists that
 /// Organization's Endpoints alone.
-pub fn by_organization(router: Router, orgs: &[crate::config::OrganizationSection]) -> Router {
-    let hosts: std::sync::Arc<BTreeMap<String, String>> = std::sync::Arc::new(
+///
+/// Beside it goes the host's link base (`context_gateway::app::HostBase`): an API or MCP host
+/// links itself, the Portal host its Organization's API host, so an answer on one
+/// Organization's host links no address of another's or of the deployment's.
+pub fn by_organization(
+    router: Router,
+    orgs: &[crate::config::OrganizationSection],
+    scheme: &str,
+) -> Router {
+    let hosts: std::sync::Arc<BTreeMap<String, (String, String)>> = std::sync::Arc::new(
         orgs.iter()
             .flat_map(|org| {
-                [&org.hosts.api, &org.hosts.mcp, &org.hosts.portal]
-                    .map(|h| (bare(h).to_owned(), org.name.clone()))
+                let base = |h: &str| format!("{scheme}://{h}");
+                [
+                    (&org.hosts.api, base(&org.hosts.api)),
+                    (&org.hosts.mcp, base(&org.hosts.mcp)),
+                    (&org.hosts.portal, base(&org.hosts.api)),
+                ]
+                .map(|(h, link)| (bare(h).to_owned(), (org.name.clone(), link)))
             })
             .collect(),
     );
@@ -382,13 +395,17 @@ pub fn by_organization(router: Router, orgs: &[crate::config::OrganizationSectio
                 // Only jc places it: whatever a request carried is dropped first.
                 req.extensions_mut()
                     .remove::<context_gateway::app::HostOrganization>();
+                req.extensions_mut()
+                    .remove::<context_gateway::app::HostBase>();
                 let org = req
                     .extensions()
                     .get::<Mount>()
                     .and_then(|m| hosts.get(bare(&m.host)).cloned());
-                if let Some(org) = org {
+                if let Some((org, link)) = org {
                     req.extensions_mut()
                         .insert(context_gateway::app::HostOrganization(org));
+                    req.extensions_mut()
+                        .insert(context_gateway::app::HostBase(link));
                 }
                 next.run(req).await
             }

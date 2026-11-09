@@ -478,7 +478,8 @@ pub async fn build_router(
         if plan.module == Module::Gateway {
             let late = LateRouter::default();
             #[cfg(feature = "gateway")]
-            let router = modules::gateway::by_organization(late.router(), &cfg.organizations);
+            let router =
+                modules::gateway::by_organization(late.router(), &cfg.organizations, &cfg.scheme);
             #[cfg(not(feature = "gateway"))]
             let router = late.router();
             builder = mount_all(builder, &plan, &router);

@@ -10,7 +10,14 @@ there make the test persons (`mo-*`, random passwords kept in memory) and their 
 Personas: `mo-platform` (group platform-admins) and, per Organization O, `mo-O-admin` (RoleBinding
 role org-admin, scope organization O) and `mo-O-member` (role viewer, scope O). Each foreign read is
 paired with a control: the same call by the owner Organization's admin must answer 200, so a 404
-that means "no such route" never passes for isolation."""
+that means "no such route" never passes for isolation.
+
+Host mode (--jc-config <jc.toml> naming [[organizations]]): each Organization's people sign in and
+call on its own Portal host, every request sent to --base-url with the Host header of the address
+(as APISIX passes it); kaisatsu stays on the base host. `check_hosts` adds what only hosts can
+show: a person of A signed in on B's host (SSO) gets 403, A's cookie on B's host is no session,
+the platform admin on a host sees that Organization alone, the gateway and open data hosts of one
+link and list nothing of another."""
 import argparse
 import base64
 import hashlib
@@ -19,6 +26,7 @@ import re
 import secrets
 import sys
 import time
+import tomllib
 import urllib.parse
 from pathlib import Path
 
@@ -32,6 +40,41 @@ MCP_CLIENT = "mcp-local"  # the realm's public client for a local MCP client
 PROJECT_READS = ["", "/spaces", "/endpoints", "/pipelines", "/apps", "/datamodels", "/datasources",
                  "/changes", "/dashboards", "/policies", "/rolebindings", "/ckaninstances",
                  "/serviceaccounts", "/activity", "/syncsources", "/mqttbrokers", "/drafts"]
+
+
+def organization_hosts(jc_toml: Path) -> dict:
+    """org -> {portal, opendata, api, mcp} of a jc.toml's [[organizations]]."""
+    orgs = tomllib.loads(jc_toml.read_text()).get("organizations", [])
+    return {o["name"]: {k: o["hosts"][k].lower() for k in ("portal", "opendata", "api", "mcp")} for o in orgs}
+
+
+class HostHttp(R.Http):
+    """A browser on one jc's Organization hosts: each request goes to the loopback base with the
+    Host header of its address, as APISIX passes it, and each host keeps its own cookie jar (a
+    `__Host-` cookie is the host's alone). A relative path is on `host`; an absolute address on a
+    host this jc does not serve is refused, so nothing leaves loopback."""
+
+    def __init__(self, base: str, host: str | None = None, hosts=()):
+        super().__init__(base)
+        self.origin = urllib.parse.urlparse(self.base)
+        self.host = host or self.origin.netloc
+        self.hosts = {self.origin.netloc, *hosts}
+        self.jars: dict[str, dict] = {}
+
+    def url(self, path: str) -> str:
+        return path if path.startswith("http") else f"{self.origin.scheme}://{self.host}{path}"
+
+    def wire(self, path: str) -> tuple[str, str]:
+        u = urllib.parse.urlparse(self.url(path))
+        if u.netloc not in self.hosts:
+            raise RuntimeError(f"{u.netloc} is not a host of this jc")
+        rest = u.path + (f"?{u.query}" if u.query else "")
+        return u.netloc, f"{self.origin.scheme}://{self.origin.netloc}{rest}"
+
+    def call(self, method, path, body=None, headers=None, form=None, timeout=60):
+        netloc, wire = self.wire(path)
+        self.jar = self.jars.setdefault(netloc, {})
+        return super().call(method, wire, body, {**(headers or {}), "Host": netloc}, form, timeout)
 
 
 def claims(token: str) -> dict:
@@ -50,6 +93,7 @@ class Suite:
         self.people: dict[str, dict] = {}
         self.dashboards: dict[str, tuple[str, str]] = {}
         self.exchange_ok = False  # an own control exchange succeeded: a foreign refusal then counts  # org -> (project, name) the suite committed
+        self.hosts = organization_hosts(Path(a.jc_config)) if a.jc_config else {}
 
     # ---- results
     def row(self, id_, target, call, expected, actual, ok, reason=""):
@@ -96,8 +140,19 @@ class Suite:
         return exp
 
     # ---- personas
-    def client(self) -> R.Http:
-        return R.Http(self.base)
+    def client(self, org: str | None = None, kind: str = "portal") -> R.Http:
+        """Path mode: the base. Host mode: `org`'s `kind` host (the base without an org)."""
+        if not self.hosts:
+            return R.Http(self.base)
+        every = [h for o in self.hosts.values() for h in o.values()]
+        return HostHttp(self.base, self.hosts[org][kind] if org else None, every)
+
+    def home(self, key: str) -> str | None:
+        """The Organization whose Portal host persona `key` works on in host mode: its own; the
+        platform admin the installation's."""
+        if not self.hosts:
+            return None
+        return self.installation if key == "platform" else key.rsplit("-", 1)[0]
 
     def setup(self):
         h = self.client()
@@ -151,7 +206,7 @@ class Suite:
                 st, body = self.session(f"{org}-admin").json("GET", "/api/v1/projects")
                 st_d, _ = self.session("platform").json("GET", f"/api/v1/projects/org/delegationpolicies/multiorg-{org}")
                 dash = self.dashboards.get(org)
-                st_b = self.session("platform").json("GET", f"/api/v1/projects/{dash[0]}/dashboards/{dash[1]}")[0] if dash else 200
+                st_b = self.session("platform", org if self.hosts else None).json("GET", f"/api/v1/projects/{dash[0]}/dashboards/{dash[1]}")[0] if dash else 200
                 if st == 200 and st_d == 200 and st_b == 200 and self.bound(org) >= {f"mo-{org}-admin", f"mo-{org}-member"} and \
                         set(self.exp[org]["projects"]) <= {i["name"] for i in body.get("items", [])}:
                     pending.discard(org)
@@ -197,15 +252,19 @@ class Suite:
             if st not in (200, 201):
                 raise RuntimeError(f"commit {message}: {st} {body}")
 
-    def session(self, key) -> R.Http:
+    def session(self, key, on: str | None = None) -> R.Http:
+        """Persona `key` signed in; in host mode on its own Organization's Portal host, or on
+        `on`'s (the platform admin works on each Organization's host in turn)."""
         p = self.people[key]
-        if "http" not in p:
-            h = self.client()
+        org = on or self.home(key)
+        held = p.setdefault("http", {})
+        if org not in held:
+            h = self.client(org)
             ok, detail = R.sign_in(h, p["username"], p["password"])
             if not ok:
-                raise RuntimeError(f"sign-in of {p['username']}: {detail}")
-            p["http"] = h
-        return p["http"]
+                raise RuntimeError(f"sign-in of {p['username']}{f' on {org}' if org else ''}: {detail}")
+            held[org] = h
+        return held[org]
 
     def bearer(self, key, scope="mcp:portal", client=None) -> str | None:
         """An MCP access token of the person, as a local MCP client gets one: code flow with PKCE
@@ -248,9 +307,16 @@ class Suite:
         everything = {p for o in self.exp.values() for p in o["projects"]}
         st, body = self.session("platform").json("GET", "/api/v1/projects")
         seen = {i["name"] for i in (body or {}).get("items", [])} if st == 200 else set()
-        self.row("projects.platform-sees-all", "platform", "GET /api/v1/projects",
-                 f"{len(everything)} projects of {len(self.exp)} orgs", f"{st}, missing {sorted(everything - seen)}",
-                 st == 200 and everything <= seen)
+        if self.hosts:  # on a host the platform admin works in that Organization alone (check_hosts)
+            mine = set(self.exp[self.installation]["projects"])
+            self.row("projects.platform-on-installation-host", "platform", "GET /api/v1/projects",
+                     f"{len(mine)} projects of {self.installation}, no other",
+                     f"{st}, missing {sorted(mine - seen)}, foreign {sorted(seen & (everything - mine))}",
+                     st == 200 and mine <= seen and not seen & (everything - mine))
+        else:
+            self.row("projects.platform-sees-all", "platform", "GET /api/v1/projects",
+                     f"{len(everything)} projects of {len(self.exp)} orgs", f"{st}, missing {sorted(everything - seen)}",
+                     st == 200 and everything <= seen)
         for org, e in self.exp.items():
             for kind in ("admin", "member"):
                 st, body = self.session(f"{org}-{kind}").json("GET", "/api/v1/projects")
@@ -347,7 +413,7 @@ class Suite:
                     self.row(f"mcp.{key}", org, "POST /api/v1/mcp", "a token", "none", None,
                              "no bearer token for the person (code flow through client mcp-local failed)")
                     continue
-                h = self.client()
+                h = self.client(self.home(key))
                 auth = {"Authorization": f"Bearer {tok}", "Accept": "application/json, text/event-stream"}
                 st, init = h.json("POST", "/api/v1/mcp", headers=auth, body={
                     "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -488,7 +554,7 @@ class Suite:
                              st in DENIED and st_del in DENIED and st_act in DENIED and not listed)
                     tok = self.bearer(f"{other}-{kind}", f"connector:{cid}")
                     if tok:
-                        st, res = self.client().json("POST", f"/c/{cid}", headers={
+                        st, res = self.client(self.home(f"{other}-{kind}")).json("POST", f"/c/{cid}", headers={
                             "Authorization": f"Bearer {tok}", "Accept": "application/json, text/event-stream"},
                             body={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
                         self.row(f"connectors.{other}-{kind}.mcp.{owner}", f"{other}->{owner}",
@@ -501,7 +567,7 @@ class Suite:
                 self.row(f"connectors.{owner}-admin.mcp", owner, f"POST /c/{cid}", "a connector token", "none",
                          None, f"code flow with scope connector:{cid} through mcp-local gave no token")
                 continue
-            h = self.client()
+            h = self.client(self.home(f"{owner}-admin"))
             auth = {"Authorization": f"Bearer {tok}", "Accept": "application/json, text/event-stream"}
             st, init = h.json("POST", f"/c/{cid}", headers=auth, body={
                 "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -546,7 +612,7 @@ class Suite:
                 control = sorted(got)[:1] if own_org else []
                 for slug in control:
                     st, tok = self.exchange(key, slug)
-                    code = self.client().call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types",
+                    code = self.client(self.home(key), "api").call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types",
                                               headers={"Authorization": f"Bearer {tok}"})[0] if tok else st
                     self.exchange_ok = self.exchange_ok or tok is not None
                     self.row(f"data.{key}.read.own", org, f"exchange endpoint:{slug}, GET /api/endpoint/{slug}/ngsi-ld/v1/types",
@@ -555,7 +621,7 @@ class Suite:
                              "portal-api (dev links them by its admin-permissions CronJob; jc has none)")
                 for slug, (p, name, aud) in sorted(foreign.items())[:6]:
                     st, tok = self.exchange(key, slug)
-                    code = self.client().call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types",
+                    code = self.client(self.home(key), "api").call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types",
                                               headers={"Authorization": f"Bearer {tok}"})[0] if tok else None
                     self.row(f"data.{key}.read.{p}/{name}", org,
                              f"exchange endpoint:{slug}, GET /api/endpoint/{slug}/ngsi-ld/v1/types",
@@ -581,6 +647,8 @@ class Suite:
 
     def check_catalogue(self):
         """Each Organization's CKAN organisations hold only its datasets, in search, page and feed."""
+        if self.hosts:
+            return self.check_catalogue_hosts()
         h = self.client()
         st, body = h.json("GET", "/opendata/api/3/action/package_search?rows=1000&include_private=false")
         results = (body or {}).get("result", {}).get("results", []) if st == 200 else []
@@ -617,6 +685,101 @@ class Suite:
                              None if empty else (st == 200 and not leaked),
                              f"no dataset published to {c} yet: dataroom has no such organisation" if empty else "")
 
+    def check_catalogue_hosts(self):
+        """Host mode: each Organization's open data host is its own catalogue, the Portal publishes
+        its Endpoints there under the CKAN organisation of its name, and it lists, searches and
+        feeds nothing of another's."""
+        found = {}
+        for org in self.exp:
+            h = self.client(org, "opendata")
+            st, body = h.json("GET", "/api/3/action/package_search?rows=1000&include_private=false")
+            rs = (body or {}).get("result", {}).get("results", []) if st == 200 else []
+            found[org] = {r.get("name") for r in rs}
+            wrong = sorted({(r.get("organization") or {}).get("name") for r in rs} - {org})
+            publishes = any(p["Endpoint"] for p in self.exp[org]["projects"].values())
+            self.row(f"catalogue.{org}.published", org, "GET {opendata}/api/3/action/package_search",
+                     f"> 0 datasets, every one in CKAN organisation {org}", f"{st}, {len(rs)}, other orgs {wrong}",
+                     st == 200 and not wrong and (bool(rs) or not publishes))
+            st, body = h.json("GET", "/api/3/action/organization_list")
+            names = (body or {}).get("result", []) if st == 200 else []
+            self.row(f"catalogue.{org}.organisations", org, "GET {opendata}/api/3/action/organization_list",
+                     f"[{org}] alone", f"{st}, {names}", st == 200 and set(names) <= {org})
+        for org in self.exp:
+            h = self.client(org, "opendata")
+            other_names = {n for o, ns in found.items() if o != org for n in ns} - found[org]
+            for kind, path in (("search", "/api/3/action/package_search?rows=1000"), ("list", "/api/3/action/package_list"),
+                               ("dcat", "/catalog.jsonld"), ("sitemap", "/sitemap.xml"), ("home", "/")):
+                st, _, raw = h.call("GET", path)
+                text = raw.decode(errors="replace")
+                leaked = sorted(n for n in other_names if n and re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", text))
+                hosts = sorted({hh for o, hs in self.hosts.items() if o != org for hh in hs.values() if hh in text})
+                self.row(f"catalogue.{org}.{kind}.no-foreign", org, f"GET {{opendata}}{path}",
+                         "200, no dataset or host of another org", f"{st}, leaked {leaked[:3]}, hosts {hosts}",
+                         st == 200 and not leaked and not hosts)
+
+    def check_hosts(self):
+        """What only the Organizations' own hosts show (host mode)."""
+        if not self.hosts:
+            return
+        everything = {p for o in self.exp.values() for p in o["projects"]}
+        orgs = sorted(self.exp)
+        for org in orgs:
+            mine = set(self.exp[org]["projects"])
+            # The platform admin on this host: this Organization alone (Decided: scoped).
+            st, body = self.session("platform", org).json("GET", "/api/v1/projects")
+            seen = {i["name"] for i in (body or {}).get("items", [])} if st == 200 else set()
+            self.row(f"hosts.platform.{org}.projects", org, f"GET /api/v1/projects as the platform admin on {org}'s host",
+                     f"all of {sorted(mine)}, nothing else", f"{st}, missing {sorted(mine - seen)}, foreign {sorted(seen - mine)}",
+                     st == 200 and mine <= seen and not seen - mine)
+            for other in orgs:
+                if other == org:
+                    continue
+                foreign = sorted(self.exp[other]["projects"])[0]
+                st, _, _ = self.session("platform", org).call("GET", f"/api/v1/projects/{foreign}")
+                self.row(f"hosts.platform.{org}.foreign.{foreign}", f"{org}->{other}",
+                         f"GET /api/v1/projects/{foreign} on {org}'s host as the platform admin", "403/404", st, st in DENIED)
+                # SSO: other's admin, whose browser holds the realm session from signing in on its
+                # own host, opens this host's sign-in: the realm answers at once, back to this host.
+                st_own, _ = self.session(f"{other}-admin").json("GET", "/api/v1/projects")
+                sso = self.session(f"{other}-admin")
+                there = f"{urllib.parse.urlparse(self.base).scheme}://{self.hosts[org]['portal']}"
+                url, st_l, _ = R.follow(sso, f"{there}/api/v1/auth/login")
+                landed = urllib.parse.urlparse(url).netloc
+                st, body = sso.json("GET", f"{there}/api/v1/projects")
+                self.row(f"hosts.sso.{other}-admin.on.{org}", f"{other}->{org}",
+                         f"GET {there}/api/v1/auth/login with the realm session, then GET /api/v1/projects",
+                         f"back on {self.hosts[org]['portal']} without a sign-in page, then 403",
+                         f"landed {landed} ({st_l}), {st} {str(body)[:100]}",
+                         landed == self.hosts[org]["portal"] and st == 403)
+                # A's cookie on B's host: the session and CSRF cookies of other's own host, replayed.
+                own = self.session(f"{other}-admin")
+                jar = own.jars.get(self.hosts[other]["portal"], {})
+                cookie = "; ".join(f"{n}={v}" for n, (v, _) in jar.items())
+                replay = self.client(org)
+                st_r, _, _ = replay.call("GET", "/api/v1/projects", headers={"Cookie": cookie})
+                st_w, _, _ = replay.call("POST", f"/api/v1/projects/{sorted(self.exp[org]['projects'])[0]}/workspaces",
+                                         headers={"Cookie": cookie, "x-csrf-token": jar.get("__Host-jc_csrf", ("",))[0]},
+                                         body={})
+                self.row(f"hosts.cookie.{other}.on.{org}", f"{other}->{org}",
+                         f"GET /api/v1/projects, POST workspaces on {org}'s host with {other}'s cookies",
+                         "401 / 401-403 (control 200 on its own host)", f"read {st_r}, write {st_w}, control {st_own}",
+                         st_own == 200 and st_r == 401 and st_w in (401, 403))
+            # The gateway on this Organization's API host links its own hosts alone.
+            api = self.client(org, "api")
+            for path in ("/api/endpoints", "/catalog.jsonld", "/cs"):
+                st, _, raw = api.call("GET", path)
+                text = raw.decode(errors="replace")
+                links = set(re.findall(r"https?://([a-z0-9.-]+(?::\d+)?)", text))
+                theirs = sorted(l for l in links if l in {h for o, hs in self.hosts.items() if o != org for h in hs.values()}
+                                or l == urllib.parse.urlparse(self.base).netloc)
+                names = sorted(n for n in everything - mine if f'"{n}"' in text)
+                self.row(f"hosts.gateway.{org}{path}", org, f"GET {{api}}{path}",
+                         "200, links only its own hosts, names no foreign project",
+                         f"{st}, foreign links {theirs[:3]}, foreign projects {names[:3]}",
+                         st == 200 and not theirs and not names)
+        st, _, _ = HostHttp(self.base, "nobody.localhost", ["nobody.localhost"]).call("GET", "/api/v1/projects")
+        self.row("hosts.unknown", "-", "GET /api/v1/projects on a host nobody serves", "404", st, st == 404)
+
     GLOBAL_READS = ["/api/v1/endpoints", "/api/v1/shared-apps", "/api/v1/connectors", "/api/v1/connectors/pending",
                     "/api/v1/blueprints", "/api/v1/alerts", "/api/v1/alerts/notices", "/api/v1/notifications",
                     "/api/v1/organization/agents", "/api/v1/organization/agents/activity",
@@ -631,15 +794,25 @@ class Suite:
         objects): a person of one Organization gets 403/404 or an answer naming nothing of another.
         The installation's administrator holds the realm-wide kinds (ADR-N-058 2.2): a foreign name
         in its answer is a skip naming the owner decision, never a pass."""
-        st, body = self.session("platform").json("GET", "/api/v1/endpoints")
-        text = json.dumps(body, ensure_ascii=False)
         def names_of(o):  # the marks that name Organization o, as another Organization sees them
             other = next(x for x in self.exp if x != o)
             return {m for m, v in self.foreign_marks(other).items() if v == o and not m.startswith("mo-")}
-        orgs_seen = sorted(o for o in self.exp if any(m in text for m in names_of(o)))
-        self.row("global.platform./api/v1/endpoints", "all", "GET /api/v1/endpoints as the platform admin",
-                 "200 naming Endpoints of every Organization (the marks work)", f"{st}, orgs {orgs_seen}",
-                 st == 200 and orgs_seen == sorted(self.exp))
+        if self.hosts:  # on each host the platform admin sees that Organization alone: the marks still work
+            for org in self.exp:
+                st, body = self.session("platform", org).json("GET", "/api/v1/endpoints")
+                text = json.dumps(body, ensure_ascii=False)
+                orgs_seen = sorted(o for o in self.exp if any(m in text for m in names_of(o)))
+                self.row(f"global.platform.{org}./api/v1/endpoints", org,
+                         f"GET /api/v1/endpoints as the platform admin on {org}'s host",
+                         f"200 naming Endpoints of {org} alone", f"{st}, orgs {orgs_seen}",
+                         st == 200 and orgs_seen == [org])
+        else:
+            st, body = self.session("platform").json("GET", "/api/v1/endpoints")
+            text = json.dumps(body, ensure_ascii=False)
+            orgs_seen = sorted(o for o in self.exp if any(m in text for m in names_of(o)))
+            self.row("global.platform./api/v1/endpoints", "all", "GET /api/v1/endpoints as the platform admin",
+                     "200 naming Endpoints of every Organization (the marks work)", f"{st}, orgs {orgs_seen}",
+                     st == 200 and orgs_seen == sorted(self.exp))
         for org in self.exp:
             marks = self.foreign_marks(org)
             for kind in ("admin", "member"):
@@ -678,7 +851,7 @@ class Suite:
                     self.row(f"dashboards.{org}.{p}.{d}.own-{kind}", org, f"GET /api/v1/projects/{p}/dashboards",
                              f"200 listing {d}", f"{st}, listed {d in names}", st == 200 and d in names)
                 path = f"/api/v1/projects/{p}/dashboards/{d}"
-                st, _ = self.session("platform").json("GET", path)
+                st, _ = self.session("platform", org if self.hosts else None).json("GET", path)
                 self.row(f"dashboards.{org}.{p}.{d}.platform", org, f"GET {path}", "200", st, st == 200)
                 for other in self.exp:
                     if other == org:
@@ -766,7 +939,7 @@ class Suite:
         except Exception as ex:  # noqa: BLE001 - a setup failure is a row, the rest is skipped
             self.row("setup", "all", "persons and bindings", "made", str(ex)[:300], False)
             return
-        steps = (self.check_projects, self.check_project_reads, self.check_writes, self.check_people,
+        steps = (self.check_projects, self.check_hosts, self.check_project_reads, self.check_writes, self.check_people,
                  self.check_mcp, self.check_connectors, self.check_data, self.check_catalogue, self.check_dashboards, self.check_global)
         if self.a.shots:
             steps += (self.check_ui,)
@@ -805,9 +978,10 @@ def main(argv):
     ap.add_argument("--state", help="the rehearsal's state dir (realm admin client, forge token)")
     ap.add_argument("--admin-token-file", help="unused: persons are made through --state")
     ap.add_argument("--person-token-file", help="unused: persons are made through --state")
-    ap.add_argument("--only", help="comma list of check groups: projects,project_reads,writes,people,mcp,connectors,data,catalogue,dashboards,global,ui")
+    ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,writes,people,mcp,connectors,data,catalogue,dashboards,global,ui")
     ap.add_argument("--shots", action="store_true", help="browser shots 1440/400 per persona (Playwright)")
     ap.add_argument("--sync-timeout", type=int, default=180)
+    ap.add_argument("--jc-config", help="the jc.toml: its [[organizations]] switch on host mode")
     a = ap.parse_args(argv)
     R.loopback_only(a.base_url)
     s = Suite(a)
