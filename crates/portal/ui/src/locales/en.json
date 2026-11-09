@@ -12372,5 +12372,13 @@
       "pie": "Pie",
       "donut": "Donut"
     }
+  },
+  "personName": {
+    "unknown": "Unknown person",
+    "firstSignIn": "Joins the group at their first sign-in; nothing to do until then."
+  },
+  "hiddenSection": {
+    "title": "Dashboards are not part of this installation",
+    "body": "The address you opened is for dashboards, which this Portal does not offer, so you are on the project's Context Spaces instead."
   }
 }

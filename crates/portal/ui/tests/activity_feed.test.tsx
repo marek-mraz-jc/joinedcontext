@@ -146,6 +146,8 @@ describe("the activity feed (UI-31)", () => {
     // Only the sentence's column is there below sm; the other three show from sm up.
     expect(cells.filter((cell) => !cell.className.includes("hidden sm:table-cell"))).toHaveLength(1);
     const sentence = cells.find((cell) => !cell.className.includes("hidden"));
+    // A URL in the sentence breaks instead of widening the table past a phone's edge.
+    expect(within(row).getByTestId("activity-sentence")).toHaveClass("[overflow-wrap:anywhere]");
     const phoneLine = sentence?.querySelector(".sm\\:hidden");
     expect(phoneLine).not.toBeNull();
     expect(phoneLine?.textContent).toContain(within(row).getByTestId("activity-kind").textContent ?? "");
@@ -340,6 +342,32 @@ describe("the activity feed (UI-31)", () => {
   it("says so when nothing has happened", async () => {
     renderFeed([]);
     expect(await screen.findByText(en.activity.empty)).toBeInTheDocument();
+  });
+});
+
+// UI judge on the prod rehearsal (jc-ui-tables): an outsider read "project 'banskabystrica' not
+// found" beside a Retry that could not help. A project out of reach says so, with no retry.
+describe("a feed of a project out of reach", () => {
+  it("says the project is not open to them and offers no retry", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ type: "https://joinedcontext.com/errors/resource-not-found", title: "Not Found", status: 404, detail: `project '${PROJECT}' not found` }),
+          { status: 404, headers: { "Content-Type": "application/problem+json" } },
+        ),
+      ),
+    );
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <I18nextProvider i18n={i18n}>
+          <ActivityFeed project={PROJECT} />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(en.app.listHidden.replace("{project}", PROJECT))).toBeInTheDocument();
+    expect(screen.queryByText(`project '${PROJECT}' not found`)).toBeNull();
+    expect(screen.queryByRole("button", { name: en.app.error.retry })).toBeNull();
   });
 });
 

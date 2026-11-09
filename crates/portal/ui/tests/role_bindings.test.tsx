@@ -13,6 +13,7 @@ import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
+import { expectStacked } from "./stacked";
 import { App } from "../src/App";
 import { rememberPrefill } from "../src/assistant/state";
 import { answeringChecks, checksSoFar, expectDenied } from "./checks";
@@ -82,7 +83,7 @@ const ADMIN = [
 /** Reads who holds what and changes nothing: the lists are asked for, every change is refused. */
 const READER = [{ rule: { kinds: ["RoleBinding", "Role", "ContextSpace"], verbs: ["read"] } }];
 
-function renderAccess(options: { grants: unknown[]; refusal?: string }) {
+function renderAccess(options: { grants: unknown[]; refusal?: string; bindings?: typeof BINDINGS }) {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const request = input as Request;
     const path = new URL(request.url).pathname;
@@ -104,7 +105,7 @@ function renderAccess(options: { grants: unknown[]; refusal?: string }) {
         : json(CHANGE, 202);
     }
     if (path === "/api/v1/projects/org/rolebindings") {
-      return json(BINDINGS);
+      return json(options.bindings ?? BINDINGS);
     }
     if (path === "/api/v1/projects/org/roles") {
       return json(ROLES);
@@ -142,6 +143,24 @@ describe("people and roles", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     window.history.pushState({}, "", "/");
+  });
+
+  // UI judge on the prod rehearsal (jc-ui-tables): the Who column showed bare Keycloak ids and,
+  // for a binding whose subjects were gone, nothing at all; at 400 px the actions were cut off.
+  it("names nobody in words, never a bare id, and stacks the rows on a phone", async () => {
+    const stranger = "fc3b55df-5fd4-4679-af5e-bb9dca22b0d7";
+    const emptied = { ...binding("editors", { user: "x" }, "editor", { project: PROJECT }) };
+    emptied.spec = { ...emptied.spec, subjects: [] };
+    renderAccess({
+      grants: ADMIN,
+      bindings: { ...BINDINGS, items: [binding("stewards", { user: stranger }, "steward", { project: PROJECT }), emptied] },
+    });
+    const unknown = await screen.findByText(en.personName.unknown);
+    expect(unknown).toHaveAttribute("title", stranger);
+    const table = roles();
+    expect(within(table).queryByText(new RegExp(stranger))).toBeNull();
+    expect(within(table).getByText(en.access.groups.nobody)).toBeInTheDocument();
+    expectStacked(table, [en.access.roles.role, en.access.roles.where, en.access.roles.until]);
   });
 
   // The organization's grants are on Organization → Members (Architecture/09 §14.3, T-2606).
