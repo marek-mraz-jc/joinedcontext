@@ -2351,6 +2351,7 @@ async fn action_token_get(
             created_at: Utc::now(),
             expires_at: Utc::now() + Duration::minutes(15),
         };
+        let ends_at = auth_session.redirect_uri.clone();
         state.store.put_auth_session(auth_session).await?;
 
         let cookie_name = mount.cookie_name("auth");
@@ -2423,7 +2424,7 @@ async fn action_token_get(
         return Ok(render_with_security_headers(
             &tpl,
             Some(set_cookie),
-            Some(&auth_session.redirect_uri),
+            Some(&ends_at),
         ));
     }
 
