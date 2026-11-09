@@ -156,7 +156,16 @@ def load_checks(out: Path) -> dict | None:
     f = out / "results.json"
     if not f.exists():
         return None
-    return {r["id"]: r for r in json.loads(f.read_text()).get("checks", [])}
+    # A check id repeats per target (an Endpoint slug, a kind): the key is target/id, with #n for a
+    # pair that repeats in one run.
+    out: dict = {}
+    for r in json.loads(f.read_text()).get("checks", []):
+        key = f"{r.get('target', '')}/{r['id']}"
+        n = 1
+        while (key if n == 1 else f"{key}#{n}") in out:
+            n += 1
+        out[key if n == 1 else f"{key}#{n}"] = r
+    return out
 
 
 def compare(res: Results, suite: str, before: dict | None, after: dict | None, call: str) -> None:

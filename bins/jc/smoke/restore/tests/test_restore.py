@@ -23,7 +23,7 @@ _spec.loader.exec_module(suite)
 
 
 def checks(*rows):
-    return {"checks": [{"id": i, "result": r, "actual": f"answered {r}"} for i, r in rows]}
+    return {"checks": [{"id": i, "target": "t", "result": r, "actual": f"answered {r}"} for i, r in rows]}
 
 
 def by_id(res):
@@ -185,7 +185,7 @@ def test_a_faithful_copy_passes_every_row_and_times_each_step(tmp_path, monkeypa
                  "restore.antares", "restore.portal", "start", "converge", "after"):
         assert rows[f"step.{step}"]["result"] == "pass" and step in meta["steps"]
     assert {"control.fresh-empty", "control.data.antares", "control.own-process", "control.unknown-slug",
-            "endpoints/two", "names/one"} <= set(rows)
+            "endpoints/t/two", "names/t/one"} <= set(rows)
     # the backup lies under $REHEARSAL_HOME/backups, private, and the copy was torn down
     backup = Path(meta["backup"])
     assert backup.parent == tmp_path / "rh" / "backups" and oct(backup.stat().st_mode & 0o777) == "0o700"
@@ -202,7 +202,7 @@ def test_a_changed_answer_a_lost_row_and_a_fresh_db_that_was_not_empty_fail(tmp_
     res, _, _ = run_fake(tmp_path, monkeypatch, after={"names": checks(("one", "fail"), ("two", "fail"))},
                          restored={"portal": {"public.t": 1}}, held=["portal"])
     bad = {r["id"] for r in res.rows if r["result"] == "fail"}
-    assert bad == {"names/one", "control.data.portal", "control.fresh-empty"}
+    assert bad == {"names/t/one", "control.data.portal", "control.fresh-empty"}
 
 
 def test_without_home_or_with_a_backup_dir_under_evidence_nothing_runs(tmp_path, monkeypatch):
@@ -265,3 +265,18 @@ def test_a_restored_file_naming_the_source_home_fails_the_relocatable_control(tm
     suite.execute(args(tmp_path), res, tmp_path / "out", Pinned)
     bad = [r["id"] for r in res.rows if r["result"] == "fail"]
     assert bad == ["control.relocatable"] and by_id(res)["step.after"]["result"] == "pass"
+
+
+def test_a_check_id_repeated_per_target_is_compared_per_target(tmp_path):
+    rows = [{"id": "anon.types", "target": "a", "result": "pass"}, {"id": "anon.types", "target": "b", "result": "pass"},
+            {"id": "anon.types", "target": "b", "result": "skip"}]
+    (tmp_path / "before").mkdir()
+    (tmp_path / "before" / "results.json").write_text(json.dumps({"checks": rows}))
+    (tmp_path / "after").mkdir()
+    rows[0] = {**rows[0], "result": "fail"}
+    (tmp_path / "after" / "results.json").write_text(json.dumps({"checks": rows}))
+    before, after = suite.load_checks(tmp_path / "before"), suite.load_checks(tmp_path / "after")
+    assert set(before) == {"a/anon.types", "b/anon.types", "b/anon.types#2"}
+    res = Results("restore", "http://localhost:1")
+    suite.compare(res, "endpoints", before, after, "run endpoints")
+    assert [r["id"] for r in res.rows if r["result"] == "fail"] == ["endpoints/a/anon.types"]
