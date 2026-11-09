@@ -57,6 +57,7 @@ jemalloc = ["dep:tikv-jemallocator"]
 [dependencies]
 jc-router = { path = "../../crates/shared/jc-router" }
 jc-secret = { path = "../../crates/shared/jc-secret" }
+jc-door = { path = "../../crates/shared/jc-door" }
 axum = "0.8"
 clap = { version = "4.6", features = ["derive", "env"] }
 ipnet = { version = "2.12", features = ["serde"] }
