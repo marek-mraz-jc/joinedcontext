@@ -128,6 +128,20 @@
         </form>
       </div>
     </div>
+    {% if chrome.has_mcp || !chrome.assistant_widget_url.is_empty() %}
+    <div class="jc-corner">
+      {% if chrome.has_mcp %}
+      <a class="jc-assistants-link" href="{{ chrome.lang_prefix }}/assistants" aria-label="{{ labels.assistants_label }}"><span class="jc-seg jc-seg-claude"></span><span class="jc-seg jc-seg-chatgpt"></span><span class="jc-seg jc-seg-mcp"></span></a>
+      {% endif %}
+      {% if !chrome.assistant_widget_url.is_empty() %}
+      <details class="jc-assistant" id="jc-assistant">
+        <summary><span>{{ labels.assistant }}</span></summary>
+        <iframe src="{{ chrome.assistant_widget_url }}" title="{{ labels.assistant }}" loading="lazy" referrerpolicy="no-referrer"></iframe>
+      </details>
+      {% endif %}
+    </div>
+    {% if !chrome.assistant_widget_url.is_empty() %}<script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-assistant.js"></script>{% endif %}
+    {% endif %}
   </div>
 </footer>
   </body>

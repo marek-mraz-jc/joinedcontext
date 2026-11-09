@@ -623,6 +623,40 @@ no `JC_PORTAL_CKAN_URL` unless `JC_PORTAL_CKAN_ALLOW_HTTP=true`, so the Portal's
 `CKAN_*` variable. Next step: one smoke run with `JC_PORTAL_CKAN_ALLOW_HTTP=true` and the CkanInstance pointed at
 jc's dataroom, reading the wave's report.
 
+## Stage 10: the knowledge assistant inside jc (jc-assistant-module, G2, G7, G18)
+
+- Module `src/modules/assistant.rs` (feature `assistant`, default on; it needs `gateway`). The library half moved
+  out of the `jc-assistant` binary into `assistant::host` (settings through one lookup, pool options, probe, the
+  minute's worker); the binary keeps reading its environment.
+- Public paths: `/d/...` and `/api/v1/d/...` only, as dev's edge routes (slug mode at the root, host mode on
+  `assistant.{base_host}`). Everything else (the Portal's `/internal/v1/projects/...` administration paths, the
+  gateway's `/internal/v1/search`) answers only on the module's own loopback listener, the sibling's internal
+  address. `public_only` refuses the rest with 404.
+- Settings: `JC_ASSISTANT_*`, `JC_MODEL_BASE`, `JC_MODEL_PROVIDER`, `ORT_DYLIB_PATH` from the environment first
+  (`config::assistant_env`), then `modules::assistant::vars` from the siblings (gateway, kaisatsu client
+  `jc-assistant`, the Portal, the gateway's shako checkout for `JC_ASSISTANT_REPO_DIR`). Database:
+  `[assistant.database]` (request role; it migrates as that role so forced RLS holds; `migrate_url` is refused).
+- The model proxy (`jc-agent-proxy`) runs on a loopback port with the key from `JCBIN_MODEL_KEY_FILE` /
+  `[assistant] model_key_file`, read by `jc_secret::read_file` and set on the proxy's config field: no lookup, no
+  environment, no log line carries it. `JCBIN_MODEL_KEY` and `JC_MODEL_KEY` as values refuse the start
+  (`config::tests::the_model_key_is_a_file_only_and_its_value_never_shows`). An explicit `JC_ASSISTANT_PROXY_URL`
+  uses that proxy instead. Client secrets `assistant-client-secret` and `proxy-client-secret` come from setup;
+  the realm gains both clients and portal-api's `jc-assistant` audience (`setup::add_assistant_audience`).
+- Off: no model dir, no ONNX Runtime, no key file and no proxy URL, no `[assistant.database]`, a missing
+  sibling or secret, or any build failure (DB, migrations, model load) logs one `assistant: off` warning with the
+  reason; the mount answers 404 and the module leaves the sibling table, so the Portal gets no
+  `JC_PORTAL_KNOWLEDGE_URL` and dataroom no launcher. jc keeps running.
+- Portal: `siblings::portal_vars` fills `JC_PORTAL_KNOWLEDGE_URL` with the module's loopback listener (G18).
+- dataroom: `BrandingBlock::assistant_widget` (serde-skipped, set only by the host) names the widget page
+  `{assistant}/d/{catalogue_deployment}/widget` or `""` (off); the CSP's frame-src gains that origin when it is
+  cross-origin. The launcher corner is on every page with a footer (about and resource pages added).
+- `[assistant] catalogue_deployment` (default `data`): this jc's https dataroom origin joins that deployment's
+  `allowedOrigins` at run time (`Minute::extra_origins`).
+- kaisatsu introspection answers `username` as Keycloak does: agent-proxy and the assistant admit service
+  accounts by it (`token_endpoint::client_credentials_refusals_and_introspection_and_revocation`).
+- Image: `bins/jc/Dockerfile` fetches PDFium, e5-small and ONNX Runtime with the platform's pinned scripts and sets
+  `JC_ASSISTANT_MODEL_DIR` and `ORT_DYLIB_PATH`.
+
 ## Release binary
 
 `cargo build --release -p jc` (default release profile, no LTO, all default features incl. the Portal's embedded UI):

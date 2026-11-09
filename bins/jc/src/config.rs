@@ -129,6 +129,11 @@ pub struct Cli {
     /// (`projects/{project}/secrets/*.sops.yaml`), so a `secretRef` resolves inside `jc`.
     #[arg(long, env = "JCBIN_PORTAL_AGE_KEY_FILE")]
     pub portal_age_key_file: Option<PathBuf>,
+    /// assistant: file holding the model provider's API key its proxy calls the model with (a
+    /// file only: `JCBIN_MODEL_KEY` and `JC_MODEL_KEY` are refused). Without it the assistant
+    /// stays off unless `JC_ASSISTANT_PROXY_URL` names a proxy outside `jc`.
+    #[arg(long, env = "JCBIN_MODEL_KEY_FILE")]
+    pub model_key_file: Option<PathBuf>,
     /// `production` warns about every secret given as an environment value (it shows in
     /// `docker inspect` and the pod spec); `development` (default) does not.
     #[arg(long, env = "JCBIN_PROFILE", value_enum)]
@@ -246,6 +251,32 @@ pub struct PortalSection {
     pub age_key_file: Option<PathBuf>,
 }
 
+/// `[assistant]` section: the knowledge assistant beside its siblings. Its other settings are
+/// its own `JC_ASSISTANT_*` keys (an environment value wins over what `jc` fills from siblings),
+/// `ORT_DYLIB_PATH`, and `JC_MODEL_BASE`/`JC_MODEL_PROVIDER` for its proxy.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AssistantSection {
+    /// The model key's file (or `JCBIN_MODEL_KEY_FILE`).
+    pub model_key_file: Option<PathBuf>,
+    /// The `publicId` of the deployment this `jc`'s catalogue frames: its dataroom origin joins
+    /// that deployment's `allowedOrigins` (https only).
+    pub catalogue_deployment: String,
+    /// Postgres with pgvector, as the assistant's own role (it migrates itself, as standalone,
+    /// under forced row-level security). Without it the assistant stays off.
+    pub database: Option<DatabaseSection>,
+}
+
+impl Default for AssistantSection {
+    fn default() -> Self {
+        Self {
+            model_key_file: None,
+            catalogue_deployment: "data".into(),
+            database: None,
+        }
+    }
+}
+
 /// `[door]`: this `jc` serves its modules to callers in other containers (role split). A request
 /// carrying a token kaisatsu signed for one of these clients, with audience the module's name
 /// (`shako`, `ekiben`, `daiya`, `dataroom`, `antares`), is let in as the module's service
@@ -321,6 +352,8 @@ pub struct FileConfig {
     pub daiya: DaiyaSection,
     #[serde(default)]
     pub portal: PortalSection,
+    #[serde(default)]
+    pub assistant: AssistantSection,
     pub door: Option<DoorSection>,
     pub remote: Option<RemoteSection>,
 }
@@ -351,6 +384,10 @@ pub enum ConfigError {
     Secret(#[from] jc_secret::ReadError),
     #[error("{0} is a file only: set {0}_FILE (or the config file's key) to its path")]
     FileOnly(&'static str),
+    #[error(
+        "{0} is refused inside jc: give the model key as a file (JCBIN_MODEL_KEY_FILE or [assistant] model_key_file)"
+    )]
+    ModelKeyValue(&'static str),
     #[error("[remote]: {0}")]
     Remote(String),
     #[error("[{module}.database]: {message}")]
@@ -380,6 +417,7 @@ pub struct Config {
     pub shako: ShakoSection,
     pub daiya: DaiyaSection,
     pub portal: PortalSection,
+    pub assistant: AssistantSection,
     pub door: Option<DoorSection>,
     pub remote: Option<RemoteSection>,
     /// `[remote.modules]`, parsed: each module and the base it is called at.
@@ -499,6 +537,8 @@ impl Config {
             database: file.daiya.database,
             provisioning_dir: file.daiya.provisioning_dir,
         };
+        let mut assistant = file.assistant;
+        assistant.model_key_file = cli.model_key_file.or(assistant.model_key_file);
         let mut dataroom = file.dataroom.unwrap_or_default();
         dataroom.portal_token_file = cli
             .dataroom_portal_token_file
@@ -510,14 +550,20 @@ impl Config {
             (Module::Shako, &shako.database),
             (Module::Daiya, &daiya.database),
             (Module::Dataroom, &dataroom.database),
+            (Module::Assistant, &assistant.database),
         ] {
             let Some(db) = db else { continue };
             db.validate()
                 .map_err(|message| ConfigError::Database { module, message })?;
-            if module == Module::Antares && db.migrate_url.is_some() {
+            let own = match module {
+                Module::Antares => Some("Antares"),
+                Module::Assistant => Some("The assistant"),
+                _ => None,
+            };
+            if let (Some(own), Some(_)) = (own, &db.migrate_url) {
                 return Err(ConfigError::Database {
                     module,
-                    message: "Antares migrates as its own role at start; set no migrate_url".into(),
+                    message: format!("{own} migrates as its own role at start; set no migrate_url"),
                 });
             }
         }
@@ -558,6 +604,7 @@ impl Config {
             shako,
             daiya,
             portal,
+            assistant,
             door: file.door,
             remote: file.remote,
             remote_modules,
@@ -608,8 +655,38 @@ pub fn process_env() -> BTreeMap<String, String> {
             k.starts_with("JCBIN_")
                 || k.starts_with(EKIBEN_VAR_PREFIX)
                 || k.starts_with("DAIYA_VAR_")
+                || k == REFUSED_MODEL_KEY
+        })
+        // The proxy's own name for the model key is read only to refuse it: its value is dropped.
+        .map(|(k, v)| {
+            if k == REFUSED_MODEL_KEY {
+                (k, String::new())
+            } else {
+                (k, v)
+            }
         })
         .collect()
+}
+
+/// agent-proxy's environment name for the model key as a value, refused inside `jc`.
+const REFUSED_MODEL_KEY: &str = "JC_MODEL_KEY";
+
+/// One key of the assistant's or its proxy's own configuration, as they read it standalone:
+/// `JC_ASSISTANT_*`, `JC_MODEL_BASE`, `JC_MODEL_PROVIDER`, `JC_DAILY_TOKENS_*` and
+/// `ORT_DYLIB_PATH`. Never the model key, which comes from its file alone ([`Secrets`]).
+#[must_use]
+#[allow(clippy::disallowed_methods)] // The one reader, for the assistant's keys.
+pub fn assistant_env(key: &str) -> Option<String> {
+    let allowed = key.starts_with("JC_ASSISTANT_")
+        || key.starts_with("JC_DAILY_TOKENS_")
+        || matches!(
+            key,
+            "JC_MODEL_BASE" | "JC_MODEL_PROVIDER" | "ORT_DYLIB_PATH"
+        );
+    if !allowed {
+        return None;
+    }
+    std::env::var(key).ok().filter(|v| !v.trim().is_empty())
 }
 
 /// One key of the Portal's or the gateway's own configuration (`JC_*`), as the standalone
@@ -652,6 +729,8 @@ pub struct Secrets {
     pub portal_age_key_file: Option<PathBuf>,
     /// `[remote]`'s client secret.
     pub remote_client_secret: Option<Given>,
+    /// The model provider's key the assistant's proxy holds (a file only).
+    pub model_key: Option<Given>,
 }
 
 impl Secrets {
@@ -734,6 +813,18 @@ impl Secrets {
             return Err(ConfigError::FileOnly("JCBIN_PORTAL_AGE_KEY"));
         }
         out.portal_age_key_file = cfg.portal.age_key_file.clone();
+        for name in ["JCBIN_MODEL_KEY", REFUSED_MODEL_KEY] {
+            if env.contains_key(name) {
+                return Err(ConfigError::ModelKeyValue(name));
+            }
+        }
+        if let Some(path) = &cfg.assistant.model_key_file {
+            out.model_key = Some(Given {
+                secret: jc_secret::read_file("JCBIN_MODEL_KEY_FILE", path)?,
+                source: jc_secret::Source::File,
+                path: Some(path.clone()),
+            });
+        }
         if let Some(remote) = &cfg.remote {
             let file = remote.client_secret_file.clone().or_else(|| {
                 env.get("JCBIN_REMOTE_CLIENT_SECRET_FILE")
@@ -765,6 +856,9 @@ impl Secrets {
         }
         if let Some(g) = &self.remote_client_secret {
             out.push(("remote-client-secret", g.source));
+        }
+        if let Some(g) = &self.model_key {
+            out.push(("model-key", g.source));
         }
         out
     }
@@ -1189,6 +1283,37 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
             e.contains("JCBIN_PORTAL_AGE_KEY_FILE") && !e.contains("AGE-SECRET"),
             "{e}"
         );
+    }
+
+    #[test]
+    fn the_model_key_is_a_file_only_and_its_value_never_shows() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("model-key");
+        std::fs::write(&file, "sk-or-v1-test-only\n").unwrap();
+        let path = file.to_str().unwrap();
+        let cfg = Config::merge(
+            cli(&["--role", "all", "--model-key-file", path]),
+            FileConfig::default(),
+        )
+        .unwrap();
+        let secrets = Secrets::load_from(&cfg, &BTreeMap::new()).unwrap();
+        let key = secrets.model_key.as_ref().unwrap();
+        assert_eq!(
+            (key.secret.expose(), key.source),
+            ("sk-or-v1-test-only", jc_secret::Source::File)
+        );
+        assert!(!format!("{secrets:?}").contains("sk-or-v1"));
+        // As a value, under jc's name or the proxy's, it is refused and the error names no value.
+        for name in ["JCBIN_MODEL_KEY", "JC_MODEL_KEY"] {
+            let env = BTreeMap::from([(name.to_owned(), "sk-or-v1-from-env".to_owned())]);
+            let e = Secrets::load_from(&cfg, &env).unwrap_err().to_string();
+            assert!(e.contains(name) && e.contains("file"), "{e}");
+            assert!(!e.contains("sk-or-v1"), "{e}");
+        }
+        // The assistant's own lookup never answers the key.
+        assert_eq!(assistant_env("JC_MODEL_KEY"), None);
+        assert_eq!(assistant_env("JC_MODEL_KEY_FILE"), None);
+        assert_eq!(assistant_env("JC_OIDC_CLIENT_SECRET"), None);
     }
 
     #[test]

@@ -363,6 +363,31 @@ impl UiLabels {
 /// Content Security Policy header with per-request nonce (`_csp` / `jc_csp_header` in
 /// `ours/ckan-theme/plugin.py` lines 1581-1606, D7).
 pub fn csp_header_for_domain(nonce: &str, domain: Option<&str>, framable_map: bool) -> String {
+    csp_header_with_frame(nonce, domain, framable_map, None)
+}
+
+/// [`csp_header_for_domain`] that may also frame `frame`, an `https://host[:port]` (or
+/// `http://` for a local rehearsal) origin such as the host's assistant widget; anything else
+/// is left out.
+pub fn csp_header_with_frame(
+    nonce: &str,
+    domain: Option<&str>,
+    framable_map: bool,
+    frame: Option<&str>,
+) -> String {
+    let frame = frame
+        .filter(|o| {
+            let host = o
+                .strip_prefix("https://")
+                .or_else(|| o.strip_prefix("http://"))
+                .unwrap_or_default();
+            !host.is_empty()
+                && host
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'))
+        })
+        .map(|o| format!(" {o}"))
+        .unwrap_or_default();
     let ancestors = if framable_map { "*" } else { "'self'" };
     let own = match domain.filter(|d| {
         !d.is_empty()
@@ -373,7 +398,7 @@ pub fn csp_header_for_domain(nonce: &str, domain: Option<&str>, framable_map: bo
         None => String::new(),
     };
     format!(
-        "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}'; img-src 'self' data:{own}; connect-src 'self'{own}; frame-src 'self'{own}; font-src 'self'; worker-src 'self'; manifest-src 'self'; form-action 'self'; frame-ancestors {ancestors}; object-src 'none'; base-uri 'self'"
+        "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}'; img-src 'self' data:{own}; connect-src 'self'{own}; frame-src 'self'{own}{frame}; font-src 'self'; worker-src 'self'; manifest-src 'self'; form-action 'self'; frame-ancestors {ancestors}; object-src 'none'; base-uri 'self'"
     )
 }
 
@@ -496,13 +521,15 @@ impl PageChrome {
         } else {
             String::new()
         };
-        let assistant_widget_url = if !branding.domain.is_empty() {
-            format!(
-                "https://assistant.{}/d/data/widget?embed=1&dock=1&lang={norm_lang}&scheme=light",
+        let widget_query = format!("embed=1&dock=1&lang={norm_lang}&scheme=light");
+        let assistant_widget_url = match branding.assistant_widget.as_deref() {
+            Some("") => String::new(),
+            Some(page) => format!("{page}?{widget_query}"),
+            None if !branding.domain.is_empty() => format!(
+                "https://assistant.{}/d/data/widget?{widget_query}",
                 branding.domain
-            )
-        } else {
-            String::new()
+            ),
+            None => String::new(),
         };
         let has_mcp = jc_mcp_install(&branding).is_some();
 

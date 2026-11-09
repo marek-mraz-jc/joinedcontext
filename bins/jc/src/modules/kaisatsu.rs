@@ -94,6 +94,14 @@ async fn apply_portal_realm(store: &Arc<dyn Store>, ctx: BuildCtx<'_>) -> Result
     {
         files.push(setup::gateway_realm_file());
     }
+    if ctx
+        .setup
+        .value(setup::Secret::AssistantClientSecret)
+        .is_some()
+    {
+        setup::add_assistant_audience(&mut files);
+        files.push(setup::assistant_realm_file());
+    }
     let options = ApplyOptions {
         env_vars: setup::realm_env(ctx.setup),
         ..ApplyOptions::default()

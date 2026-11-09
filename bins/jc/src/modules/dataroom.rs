@@ -12,8 +12,10 @@ use crate::app::StartError;
 use crate::config::DataroomSection;
 use crate::module::Module;
 use crate::setup::{Secret, Setup};
+use crate::siblings::Siblings;
 use axum::Router;
 use dataroom_api::DataroomState;
+use dataroom_core::branding::BrandingBlock;
 use dataroom_core::{CatalogueId, OrgId, PolicyAuthorizer, Store};
 use dataroom_store_memory::MemoryStore;
 use dataroom_store_pg::PgStore;
@@ -54,10 +56,21 @@ async fn open_store(cfg: &DataroomSection) -> Result<Arc<dyn Store>, StartError>
     ))
 }
 
+/// The assistant widget the catalogue docks (G2): the assistant's page of `deployment` when the
+/// module runs in this `jc`, else empty, so no launcher points at an assistant that is off.
+#[must_use]
+pub fn assistant_widget(siblings: &Siblings, deployment: &str) -> String {
+    siblings
+        .get(Module::Assistant)
+        .map(|a| format!("{}/d/{deployment}/widget", a.public))
+        .unwrap_or_default()
+}
+
 pub async fn build(
     cfg: &DataroomSection,
     setup: &Setup,
     mount: Mount,
+    assistant_widget: String,
 ) -> Result<Router, StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Dataroom, e);
     let org_id = OrgId::parse_verified(&cfg.org_id).map_err(|e| err(&e))?;
@@ -77,6 +90,10 @@ pub async fn build(
     let state = DataroomState::new(store, Arc::new(authorizer), org_id, catalogue_id)
         .with_tokens(tokens)
         .with_public_base(mount.public_base())
-        .with_mount_prefix(mount.path_prefix);
+        .with_mount_prefix(mount.path_prefix)
+        .with_installation_branding(BrandingBlock {
+            assistant_widget: Some(assistant_widget),
+            ..BrandingBlock::default()
+        });
     Ok(dataroom_api::router(state))
 }
