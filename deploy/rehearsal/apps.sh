@@ -51,6 +51,10 @@ if [ "${REHEARSAL_APPS:-on}" != off ]; then
   mkdir -p "$home/state/apps-cache"
   chmod 700 "$home/state/apps-cache"
   export JC_PORTAL_APPS_CACHE_DIR=$home/state/apps-cache
+  # The Portal behind prod's edge believes the edge's X-Access-Token (components/portal
+  # base-values JC_TRUST_EDGE_TOKEN), the one credential an App function's data calls carry;
+  # the rehearsal listens on loopback only, and the charts-apps suite stands in for the edge.
+  if [ "$bind" = 127.0.0.1 ]; then export JC_TRUST_EDGE_TOKEN=true; fi
   echo "apps.sh: $(find "$JC_PORTAL_APPS_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l) shipped bundles from ${REHEARSAL_JC_IMAGE:-the apps stage} (${apps_id:7:12})"
 
   realm_file=$(find "$home/state/realms" -maxdepth 1 -name '*.json' 2>/dev/null | head -1)
