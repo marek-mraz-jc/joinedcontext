@@ -29,6 +29,8 @@ args=(--base-url "http://localhost:$port" --out "$out" --export "$export_dir" --
 [ "${SMOKE_E2E:-0}" = 1 ] && args+=(--e2e)
 # The logs suite also looks for every secret value of the rehearsal in the log.
 args+=(--with "logs=--secrets-dir $home/secrets")
+# Bounded: each run is polled until it ends, so ten runs of five minutes outlast the job.
+args+=(--with "pipelines=--runs 3 --wait 120")
 # Screenshots need Playwright for Python and its Chromium; without them charts-apps skips the shots.
 python3 -c 'import playwright' 2>/dev/null || args+=(--with "charts-apps=--no-shots")
 # shellcheck disable=SC2206 # SMOKE_ARGS is a flag list by design
