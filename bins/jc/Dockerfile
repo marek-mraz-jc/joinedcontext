@@ -243,7 +243,7 @@ RUN find bins crates vendor -name '*.rs' -not -path '*/node_modules/*' -exec tou
 #   (vendor/joinedcontext-platform jc-manifest assemble.rs), and without it jc stops at start.
 # - zlib1g from trixie-security (DSA-6613-1: CVE-2026-76844, CVE-2026-85091, HIGH), as the
 #   Portal image lays it (crates/portal/Dockerfile, T-6684), until the pinned base carries it.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2 AS base
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab AS base
 FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS overlay
 COPY --from=base /var/lib/dpkg/status.d /base-status
 RUN set -eu; apt-get update; \
