@@ -393,6 +393,13 @@ async fn the_portal_runs_on_its_sibling_modules() {
     }
     let kept = "portal-client-secret";
     assert!(!jc.log_has(&jc.secret(kept)), "{kept} appears in the log");
+    // The runner reaches the Portal's internal listener, as prod's does (its deployment sets
+    // JC_PORTAL_PIPELINE_TEST_CAPTURE_URL): streams carry the validation stage and the run-log
+    // sinks, so a run reaches GET .../runs.
+    assert!(
+        !jc.log_has("no internal listener address for the runner"),
+        "the Portal renders streams without validation and run log"
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

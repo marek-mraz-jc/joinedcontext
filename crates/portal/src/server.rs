@@ -379,6 +379,16 @@ pub async fn spawn_internal_listener(
         return Ok(None);
     }
     let internal = tokio::net::TcpListener::bind(state.config.internal_bind).await?;
+    serve_internal_listener(state, internal, shutdown).map(Some)
+}
+
+/// [`spawn_internal_listener`] on a listener the caller bound already: jc binds it before the
+/// Portal's state is built, so the stream deployer's sinks name its address.
+pub fn serve_internal_listener(
+    state: &AppState,
+    internal: tokio::net::TcpListener,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> std::io::Result<std::net::SocketAddr> {
     let addr = internal.local_addr()?;
     crate::api::pipeline_test::internal_listener_bound(addr);
     tracing::info!(bind = %addr, "portal internal listener listening");
@@ -391,7 +401,7 @@ pub async fn spawn_internal_listener(
             tracing::error!(error = %err, "the internal listener stopped");
         }
     });
-    Ok(Some(addr))
+    Ok(addr)
 }
 
 async fn shutdown_signal() {
