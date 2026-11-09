@@ -368,6 +368,9 @@ jobs:
           if [ -n "$red" ]; then echo "::error::red:$red"; exit 1; fi
   # A branch that changes the Dockerfile or its ignore file: the full `docker build` (every stage,
   # no push), which the shipped image skips by handing in its compiled binary.
+  # The layer cache (scope jc) is written by jc-portal-1 only, the default branch whose caches
+  # every branch reads: without a writer every branch built cold (39 min, runs 42617814130 and
+  # 42611953211); no branch writes it, so none evicts it.
   dockerfile:
     needs: changes
     if: needs.changes.outputs.image == 'true' && needs.changes.outputs.release != 'true'
@@ -383,6 +386,7 @@ jobs:
           file: bins/jc/Dockerfile
           push: false
           cache-from: type=gha,scope=jc
+          cache-to: ${{ github.ref == 'refs/heads/jc-portal-1' && 'type=gha,scope=jc,mode=max' || '' }}
   # main and ship-proof/** only, from here on.
   image:
     needs: changes
