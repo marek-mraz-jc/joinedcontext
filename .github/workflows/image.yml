@@ -134,13 +134,17 @@ jobs:
       - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
       - run: |
           set -eu
+          # ghcr answers a GITHUB_TOKEN read of this package 403 or 404 now and then (main ci
+          # 42702031687: not found, then 403 on a HEAD of the tag, then of a blob): each registry
+          # call gets three tries 20 s apart, and a call that still fails fails the step.
+          try() { for n in 1 2 3; do "$@" && return 0; [ "$n" = 3 ] || sleep 20; done; return 1; }
           printf '%s' "$DIGEST" | grep -qxE 'sha256:[0-9a-f]{64}' || { echo "::error::'$DIGEST' is no digest"; exit 1; }
           # The digest must be the one this commit's tag names: a sign call never signs another image.
-          tagged=$(docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA" --format '{{json .Manifest}}' | jq -r '.digest // empty')
+          tagged=$(try docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA" --format '{{json .Manifest}}' | jq -r '.digest // empty')
           [ "$tagged" = "$DIGEST" ] || { echo "::error::$IMAGE:$GITHUB_SHA is $tagged, not $DIGEST"; exit 1; }
-          cosign sign --yes "$IMAGE@$DIGEST"
+          try cosign sign --yes "$IMAGE@$DIGEST"
           case "$GITHUB_REF" in
-            refs/heads/main) docker buildx imagetools create -t "$IMAGE:main" "$IMAGE@$DIGEST" ;;
-            refs/tags/*) docker buildx imagetools create -t "$IMAGE:$GITHUB_REF_NAME" "$IMAGE@$DIGEST" ;;
+            refs/heads/main) try docker buildx imagetools create -t "$IMAGE:main" "$IMAGE@$DIGEST" ;;
+            refs/tags/*) try docker buildx imagetools create -t "$IMAGE:$GITHUB_REF_NAME" "$IMAGE@$DIGEST" ;;
           esac
           echo "jc $GITHUB_SHA signed: $IMAGE@$DIGEST" >> "$GITHUB_STEP_SUMMARY"

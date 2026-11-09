@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! What validation and the writers answer instead of a document.
 
 use std::fmt;
@@ -202,6 +202,10 @@ pub enum Problem {
     InvalidAppliesTo,
     /// A reference without includes.
     EmptyReference,
+    /// A function without a return type (CSDL XML 12.8).
+    FunctionWithoutReturnType,
+    /// An action or function import naming no operation of the model.
+    UnknownImportOperation,
 }
 
 impl Problem {
@@ -241,6 +245,8 @@ impl Problem {
             Self::InvalidPath => "invalid path",
             Self::InvalidAppliesTo => "invalid AppliesTo entry",
             Self::EmptyReference => "reference without includes",
+            Self::FunctionWithoutReturnType => "function without a return type",
+            Self::UnknownImportOperation => "import names no action or function of the model",
         }
     }
 }

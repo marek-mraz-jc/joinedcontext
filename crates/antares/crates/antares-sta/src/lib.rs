@@ -743,11 +743,9 @@ fn references(doc: &Value) -> Option<Value> {
 /// the view answers them: a name the list does not hold, an output that does not hold, or one
 /// whose sources the view shows none of serves nobody.
 fn output(view: &ViewOps, name: &str) -> Result<Named, Problem> {
-    let (_, found) = outputs::listed(view.representation("sta"), "sta")
-        .into_iter()
-        .find(|(n, _)| n == name)
-        .ok_or_else(not_found)?;
-    let output = found.map_err(|_| not_found())?;
+    let output = outputs::one(view.representation("sta"), "sta", name)
+        .ok_or_else(not_found)?
+        .map_err(|_| not_found())?;
     let sources = output.sources.iter().map(|s| s.entity_type.as_str());
     let types: Vec<String> = if view.shows_every_name() {
         sources.map(str::to_owned).collect()
@@ -761,7 +759,17 @@ fn output(view: &ViewOps, name: &str) -> Result<Named, Problem> {
     if types.is_empty() {
         return Err(not_found());
     }
-    Ok(Named { output, types })
+    let streams = output
+        .sources
+        .iter()
+        .flat_map(|s| s.role("datastreams"))
+        .map(str::to_owned)
+        .collect();
+    Ok(Named {
+        output,
+        types,
+        streams,
+    })
 }
 
 /// A named output and the types it reads.
@@ -769,19 +777,16 @@ fn output(view: &ViewOps, name: &str) -> Result<Named, Problem> {
 struct Named {
     output: Output,
     types: Vec<String>,
+    /// The `datastreams` role names of its sources, read once per request
+    /// rather than once per member of every Entity (R3-025).
+    streams: std::collections::HashSet<String>,
 }
 
 impl Named {
     /// Whether Attribute `name` (its local name) is one of the output's Datastreams: one its
     /// sources' `datastreams` role names, every one when no source maps the role.
     fn streams(&self, name: &str) -> bool {
-        let named: Vec<&str> = self
-            .output
-            .sources
-            .iter()
-            .flat_map(|s| s.role("datastreams"))
-            .collect();
-        named.is_empty() || named.contains(&local(name))
+        self.streams.is_empty() || self.streams.contains(local(name))
     }
 
     /// The Entity `e` holding as measurements only the output's Datastreams.
@@ -1693,6 +1698,7 @@ mod tests {
         Some(Named {
             output: output.ok()?,
             types: vec!["Car".into()],
+            streams: std::collections::HashSet::default(),
         })
     }
 

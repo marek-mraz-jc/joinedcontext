@@ -4,6 +4,7 @@
 //! here on the SensorThings JSON the view already answered, so it reads only members the view
 //! shows. The caller reads the collection whole first, at most [`MAX_SCAN`] resources.
 
+use std::cell::OnceCell;
 use std::cmp::Ordering;
 
 use serde_json::Value;
@@ -575,8 +576,11 @@ pub fn orderby(value: &str) -> Result<Vec<(Vec<String>, bool)>, Bad> {
 }
 
 /// Two members in `$orderby` order: null first, then by [`order`]; objects and arrays and values
-/// of two kinds by their JSON text.
-fn rank(a: Option<&Value>, b: Option<&Value>) -> Ordering {
+/// of two kinds by their JSON text, written once per member into its `text` cell.
+fn rank(
+    (a, ta): (Option<&Value>, &OnceCell<String>),
+    (b, tb): (Option<&Value>, &OnceCell<String>),
+) -> Ordering {
     let (a, b) = (a.unwrap_or(&Value::Null), b.unwrap_or(&Value::Null));
     match (a.is_null(), b.is_null()) {
         (true, true) => return Ordering::Equal,
@@ -584,15 +588,31 @@ fn rank(a: Option<&Value>, b: Option<&Value>) -> Ordering {
         (false, true) => return Ordering::Greater,
         _ => {}
     }
-    order(a, b, false).unwrap_or_else(|| a.to_string().cmp(&b.to_string()))
+    order(a, b, false).unwrap_or_else(|| {
+        ta.get_or_init(|| a.to_string())
+            .cmp(tb.get_or_init(|| b.to_string()))
+    })
 }
 
-/// `items` in `$orderby` order, stable for ties.
+/// `items` in `$orderby` order, stable for ties. The order is worked out
+/// over positions, so each member's text fallback is written at most once
+/// per item and key instead of on both sides of every comparison (R3-027).
 pub fn sort(items: &mut [Value], keys: &[(Vec<String>, bool)]) {
-    items.sort_by(|a, b| {
+    let texts: Vec<Vec<OnceCell<String>>> = items
+        .iter()
+        .map(|_| keys.iter().map(|_| OnceCell::new()).collect())
+        .collect();
+    let mut at: Vec<usize> = (0..items.len()).collect();
+    at.sort_by(|&i, &j| {
+        let (Some(a), Some(b), Some(ta), Some(tb)) =
+            (items.get(i), items.get(j), texts.get(i), texts.get(j))
+        else {
+            return Ordering::Equal;
+        };
         keys.iter()
-            .map(|(path, desc)| {
-                let o = rank(member(a, path), member(b, path));
+            .zip(ta.iter().zip(tb))
+            .map(|((path, desc), (ca, cb))| {
+                let o = rank((member(a, path), ca), (member(b, path), cb));
                 if *desc {
                     o.reverse()
                 } else {
@@ -602,6 +622,13 @@ pub fn sort(items: &mut [Value], keys: &[(Vec<String>, bool)]) {
             .find(|o| o.is_ne())
             .unwrap_or(Ordering::Equal)
     });
+    let sorted: Vec<Value> = at
+        .iter()
+        .map(|&i| items.get_mut(i).map(std::mem::take).unwrap_or_default())
+        .collect();
+    for (slot, v) in items.iter_mut().zip(sorted) {
+        *slot = v;
+    }
 }
 
 #[cfg(test)]
@@ -708,6 +735,26 @@ mod tests {
         }
         let deep = format!("{}name eq 'a'{}", "(".repeat(40), ")".repeat(40));
         assert!(parse(&deep).is_err());
+    }
+
+    /// R3-027: objects and mixed kinds order by their JSON text, stable for
+    /// ties, the text written once per item.
+    #[test]
+    fn objects_and_mixed_kinds_order_by_their_text() {
+        let mut items = vec![
+            json!({"n": 1, "a": {"y": 1}}),
+            json!({"n": 2, "a": [2]}),
+            json!({"n": 3, "a": {"x": 1}}),
+            json!({"n": 4, "a": {"y": 1}}),
+            json!({"n": 5, "a": 7}),
+        ];
+        sort(&mut items, &orderby("a").unwrap_or_default());
+        let order: Vec<i64> = items
+            .iter()
+            .filter_map(|i| i.get("n").and_then(Value::as_i64))
+            .collect();
+        // texts: 7, [2], {"x":1}, {"y":1} twice (stable)
+        assert_eq!(order, vec![5, 2, 3, 1, 4]);
     }
 
     #[test]

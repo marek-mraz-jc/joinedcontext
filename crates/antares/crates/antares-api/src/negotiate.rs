@@ -94,6 +94,13 @@ impl From<crate::policy::Denied> for ApiError {
         if d.0 == crate::views::TOO_MANY_RULES {
             return Self::Ngsi(NgsiError::BadRequestData(d.0));
         }
+        // An engine that did not answer in time is overload, not a verdict:
+        // the request is still refused (fail closed), but as 503 with
+        // Retry-After, so a client backs off instead of reading a 403 as
+        // "no access" (T-6614, R1-019).
+        if d.0 == crate::policy::ENGINE_TIMED_OUT {
+            return Self::Overloaded(POLICY_RETRY_AFTER_SECONDS);
+        }
         Self::Denied(d.0)
     }
 }
@@ -103,6 +110,11 @@ impl From<crate::policy::Denied> for ApiError {
 /// the same wall; one second past it is the first moment the queue can have
 /// moved.
 pub(crate) const RETRY_AFTER_SECONDS: u64 = 6;
+
+/// How long a client is told to wait after the policy engine timed out. The
+/// engine's own wait is [`crate::policy::TIMEOUT`] (250 ms by default), so a
+/// retry one second later meets a queue that has had four timeouts to move.
+pub(crate) const POLICY_RETRY_AFTER_SECONDS: u64 = 1;
 
 impl From<NgsiError> for ApiError {
     fn from(e: NgsiError) -> Self {
@@ -652,22 +664,47 @@ fn body_context_member(v: &Value) -> Option<Value> {
 }
 
 /// Context for GET/DELETE requests: Link header or core (6.3.5; the
-/// no-@context fallback to the Core @context is 5.5.5).
+/// no-@context fallback to the Core @context is 5.5.5). Counts one use of
+/// each @context it names (5.13.3.5 numberOfHits).
 pub(crate) async fn request_context(
     loader: &Loader,
     headers: &HeaderMap,
 ) -> ApiResult<Arc<Context>> {
+    resolve_request_context(loader, headers, true).await
+}
+
+/// [`request_context`] for a second look at the same request's @context (a
+/// gate before the handler, a layer after it): the handler's own resolve
+/// counts the use, so this one does not, or one request counted two or
+/// three hits and paid a shared-row bump for each (T-6605).
+pub(crate) async fn request_context_quiet(
+    loader: &Loader,
+    headers: &HeaderMap,
+) -> ApiResult<Arc<Context>> {
+    resolve_request_context(loader, headers, false).await
+}
+
+async fn resolve_request_context(
+    loader: &Loader,
+    headers: &HeaderMap,
+    count: bool,
+) -> ApiResult<Arc<Context>> {
+    let resolve = |tenant: TenantId, user: Arc<Value>| async move {
+        if count {
+            loader.resolve_for(&tenant, &user).await
+        } else {
+            loader.resolve_quiet_for(&tenant, &user).await
+        }
+    };
     #[cfg(feature = "views")]
     if let Some(context) = crate::state::inprocess_context() {
-        return Ok(loader.resolve_for(&tenant_from(headers)?, &context).await?);
+        return Ok(resolve(tenant_from(headers)?, context).await?);
     }
     match link_context(headers)? {
         // 5.5.10: the Tenant bounds what the operation may see, and a locally
         // stored @context (5.13.1) is information related to the Tenant that
         // stored it — so the URL resolves only for that Tenant.
-        Some(url) => Ok(loader
-            .resolve_for(&tenant_from(headers)?, &Value::String(url))
-            .await?),
+        Some(url) => Ok(resolve(tenant_from(headers)?, Arc::new(Value::String(url))).await?),
         None => Ok(loader.core()),
     }
 }
@@ -844,16 +881,20 @@ pub(crate) fn list_context(ctx: &Context, accept: Accept) -> Option<Value> {
 /// One Entity of a streamed list as written ([`respond_frames`]), with
 /// `ld_ctx` ([`list_context`]) as its `@context`.
 pub(crate) fn list_frame(doc: Value, ld_ctx: Option<&Value>) -> axum::body::Bytes {
-    let doc = match (ld_ctx, doc) {
-        (Some(ctx_val), Value::Object(mut o)) => {
-            o.insert("@context".into(), ctx_val.clone());
-            Value::Object(o)
-        }
-        (_, other) => other,
-    };
     let mut buf = Vec::new();
     // serializing a Value into a Vec cannot fail
-    let _ = serde_json::to_writer(&mut buf, &SpecOrder(&doc));
+    let _ = match (ld_ctx, doc) {
+        (Some(ctx), Value::Object(mut o)) => {
+            // a placeholder holds the member's place in the map's order; the
+            // shared @context is written in its stead, never cloned (R1-016)
+            o.insert("@context".into(), Value::Null);
+            serde_json::to_writer(
+                &mut buf,
+                &antares_model::SpecOrderWithContext { doc: &o, ctx },
+            )
+        }
+        (_, other) => serde_json::to_writer(&mut buf, &SpecOrder(&other)),
+    };
     axum::body::Bytes::from(buf)
 }
 
@@ -1238,6 +1279,27 @@ mod clause_5_5_3 {
         assert!(ok.value.get("@context").is_none());
     }
 
+    /// T-6614 (R1-019): an engine that did not answer in time is overload:
+    /// still refused, but 503 with Retry-After, never a 403 a client reads
+    /// as "no access". An engine's own refusal stays 403.
+    #[test]
+    fn a_policy_timeout_answers_503_and_a_refusal_403() {
+        use crate::policy::{Denied, ENGINE_FAILED, ENGINE_TIMED_OUT};
+        let timed_out = ApiError::from(Denied(ENGINE_TIMED_OUT.to_owned())).into_response();
+        assert_eq!(timed_out.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            timed_out
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok()),
+            Some("1")
+        );
+        for why in ["not yours", ENGINE_FAILED] {
+            let refused = ApiError::from(Denied(why.to_owned())).into_response();
+            assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{why}");
+        }
+    }
+
     /// RFC 9110 clause 5.3: a list-type field may be split over any number of
     /// field lines, and a single-value field may not be repeated at all.
     #[test]
@@ -1352,6 +1414,33 @@ mod negotiation {
     use axum::extract::FromRequestParts;
     use axum::http::HeaderValue;
     use serde_json::json;
+
+    /// R1-016: a list frame writes the page's one @context in the place an
+    /// inserted clone took, byte for byte.
+    #[test]
+    fn a_list_frame_is_the_clone_it_replaced() {
+        let ctx = json!(["https://a/c.jsonld", {"x": "https://x/"}]);
+        for doc in [
+            json!({"type": "T", "id": "urn:ngsi-ld:T:1", "a": {"type": "Property", "value": 1}, "0": 1}),
+            json!({"id": "urn:ngsi-ld:T:2", "@context": "old", "z": 2}),
+            json!({}),
+            json!(3),
+        ] {
+            let old = match doc.clone() {
+                Value::Object(mut o) => {
+                    o.insert("@context".into(), ctx.clone());
+                    Value::Object(o)
+                }
+                other => other,
+            };
+            let want = serde_json::to_vec(&SpecOrder(&old)).unwrap_or_default();
+            assert_eq!(
+                list_frame(doc.clone(), Some(&ctx)).as_ref(),
+                want.as_slice(),
+                "{doc}"
+            );
+        }
+    }
 
     fn hdr(name: &'static str, value: &str) -> HeaderMap {
         let mut h = HeaderMap::new();

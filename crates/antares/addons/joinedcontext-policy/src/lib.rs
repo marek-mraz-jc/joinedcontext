@@ -25,6 +25,7 @@
 pub mod access;
 pub mod decide;
 pub mod document;
+mod memo;
 pub mod names;
 pub mod odrl;
 pub mod subject;
@@ -99,12 +100,15 @@ impl JoinedcontextPolicy {
 
     fn decide_now(&self, subject: &Subject, op: &Operation<'_>) -> Decision {
         let table = self.table(subject.tenant.as_str());
-        decide::decide(
-            table.as_deref().map(|t| t.through(subject.view())),
-            &Caller::of(subject),
-            op,
-            chrono::Utc::now(),
-        )
+        let now = chrono::Utc::now();
+        memo::decided(table.as_ref(), subject, op, now, || {
+            decide::decide(
+                table.as_deref().map(|t| t.through(subject.view())),
+                &Caller::of(subject),
+                op,
+                now,
+            )
+        })
     }
 }
 
@@ -163,7 +167,7 @@ impl PolicyEngine for JoinedcontextPolicy {
         };
         match self.decide_now(subject, &op) {
             Decision::Allow => NotifyDecision::Deliver,
-            Decision::Filter(f) => NotifyDecision::Filter(Box::new(f)),
+            Decision::Filter(f) => NotifyDecision::Filter(Box::new(Arc::unwrap_or_clone(f))),
             Decision::Deny(_) | Decision::AllowIf(_) => NotifyDecision::Drop,
         }
     }

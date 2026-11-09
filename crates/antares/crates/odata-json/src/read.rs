@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The request-body reader for the mapped writes (ADR-0024 decision 5, row `odata-json`): create
 //! (W1, W2), update and replace (W4, W6), a property (W10, W11) and a single-valued or full
 //! collection reference (W16, W20). Every name is checked against the model before the surface

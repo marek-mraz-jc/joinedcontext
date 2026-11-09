@@ -64,7 +64,8 @@ async fn setup() -> Result<(TestBroker, Router, Arc<JoinedcontextPolicy>), Strin
     let app = broker.serve(Access::new(engine.clone()))?;
     let view = json!({"id": "air", "tenant": "city",
         "selector": ["AirQualityObserved", "InternalIncident"],
-        "rules": [{"types": ["AirQualityObserved", "InternalIncident"], "attributes": ["pm10"]}],
+        "rules": [{"types": ["AirQualityObserved", "InternalIncident"],
+                   "attributes": ["pm10", "pm25", "location", "severity", "reportedBy", "notes"]}],
         "operations": ["query_entities", "query_entities_post", "retrieve_entity",
                        "temporal_query", "temporal_query_post", "create_entity",
                        "partial_attribute_update"]});
@@ -594,5 +595,75 @@ async fn the_check_and_the_attribute_table_answer_per_attribute() -> Res {
     )
     .await?;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+/// F-13: the view's narrowing bounds every answer: an Attribute the view hides is no permit,
+/// a type it does not select is no grant, and no document names either.
+#[tokio::test]
+async fn check_honours_the_views_hidden_attributes() -> Res {
+    let (_b, app, _) = setup().await?;
+    // a view of AirQualityObserved alone, showing pm10 alone
+    let view = json!({"id": "narrow", "tenant": "city", "selector": ["AirQualityObserved"],
+        "rules": [{"types": ["AirQualityObserved"], "attributes": ["pm10"]}],
+        "operations": ["query_entities", "create_entity"]});
+    let (status, _, body) =
+        call(&app, "PUT", "/q/views/narrow", &[], Some(&view.to_string())).await?;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let ask = |who: &'static [(&'static str, &'static str)], query: Value| {
+        let app = app.clone();
+        async move {
+            let (status, _, body) = call(
+                &app,
+                "POST",
+                "/x/views/narrow/access/check",
+                who,
+                Some(&query.to_string()),
+            )
+            .await?;
+            if status != StatusCode::OK {
+                return Err(format!("{status} {body}"));
+            }
+            parse(&body)
+        }
+    };
+    let get = |who: &'static [(&'static str, &'static str)], accept: &'static str| {
+        let app = app.clone();
+        async move {
+            let (_, _, body) = call(
+                &app,
+                "GET",
+                "/x/views/narrow/access",
+                &[who, &[("Accept", accept)]].concat(),
+                None,
+            )
+            .await?;
+            Ok::<String, String>(body)
+        }
+    };
+    let read = |attribute: &str| {
+        json!({"action": {"name": "queryEntity"},
+               "resource": {"type": "AirQualityObserved", "properties": {"attribute": attribute}}})
+    };
+    assert_eq!(at(&ask(&ANONYMOUS, read("pm10")).await?, "/decision"), true);
+    // the grant lists pm25, the view shows only pm10
+    assert_eq!(
+        ask(&ANONYMOUS, read("pm25")).await?,
+        json!({"decision": false})
+    );
+    for accept in [
+        "application/json",
+        "application/odrl+json",
+        "application/vnd.joinedcontext.grant-ast+json",
+    ] {
+        let d = get(&ANONYMOUS, accept).await?;
+        assert!(d.contains("pm10") && !d.contains("pm25"), "{accept}: {d}");
+        let d = get(&STEWARD, accept).await?;
+        assert!(!d.contains("InternalIncident"), "{accept}: {d}");
+    }
+    // the steward's InternalIncident grant is none through a view that does not select it
+    let create =
+        json!({"action": {"name": "createEntity"}, "resource": {"type": "InternalIncident"}});
+    assert_eq!(ask(&STEWARD, create).await?, json!({"decision": false}));
     Ok(())
 }

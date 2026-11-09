@@ -326,10 +326,10 @@ async fn a_served_map_carries_no_record_of_whose_it_is() {
 /// because Table 6.3.2-1 names none.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_narrowing_answer_to_a_whole_tenant_operation_is_a_refusal() {
-    let st = state(Decision::Filter(Filter {
+    let st = state(Decision::Filter(std::sync::Arc::new(Filter {
         q: Some(Box::new(antares_ql::parse_q("speed<50").expect("q"))),
         ..Filter::default()
-    }));
+    })));
     // no seed: the gate answers before the operation reads anything, and
     // this engine narrows the create too, which is refused for the same
     // reason the four operations below are
@@ -368,7 +368,7 @@ async fn a_narrowing_answer_to_a_whole_tenant_operation_is_a_refusal() {
 /// `Filter` must not lock a deployment out of its own snapshots.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_empty_filter_on_a_whole_tenant_operation_is_an_allow() {
-    let st = state(Decision::Filter(Filter::default()));
+    let st = state(Decision::Filter(std::sync::Arc::new(Filter::default())));
     seed(&st).await;
     let (code, _, body) = call(
         &st,

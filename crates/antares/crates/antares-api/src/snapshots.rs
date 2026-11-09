@@ -740,6 +740,7 @@ async fn run_query(
                 page: Some((offset, st.max_limit)),
                 proj: None,
                 order_keys: None,
+                q: None,
             },
             // a snapshot under a narrowing is refused at its gate
             None,

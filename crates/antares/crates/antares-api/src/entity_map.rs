@@ -165,29 +165,10 @@ pub(crate) async fn map_put(
         return Ok(());
     };
     clamp_expiry(&mut doc);
-    // The ceiling decides whether a NEW map fits; rewriting a map that is
-    // already stored replaces a row that is already counted, so the paging
-    // path neither lists the tenant's maps nor evicts one per page. A count
-    // the store refuses leaves the ceiling unenforceable, and an unbounded
-    // buffer is not the safer half of that choice: the write is refused.
-    if st.store.get(tenant, Kind::EntityMap, &id).await?.is_none() {
-        let existing = st.store.list(tenant, Kind::EntityMap).await?;
-        if existing.len() >= MAX_MAPS_PER_TENANT {
-            // eviction order is a heuristic — earliest expiresAt string wins
-            if let Some(victim) = existing
-                .iter()
-                .min_by(|a, b| {
-                    a["expiresAt"]
-                        .as_str()
-                        .unwrap_or("")
-                        .cmp(b["expiresAt"].as_str().unwrap_or(""))
-                })
-                .and_then(|d| d.get("id").and_then(Value::as_str))
-            {
-                st.store.delete(tenant, Kind::EntityMap, victim).await?;
-            }
-        }
-    }
+    // The ceiling counts NEW maps; rewriting a map that is already stored
+    // replaces a row that is already counted, so the paging path neither
+    // lists the tenant's maps nor evicts one per page.
+    let is_new = st.store.get(tenant, Kind::EntityMap, &id).await?.is_none();
     let updated = st
         .store
         .mutate(tenant, Kind::EntityMap, &id, |d| {
@@ -198,6 +179,37 @@ pub(crate) async fn map_put(
         .is_some();
     if !updated {
         st.store.create(tenant, Kind::EntityMap, &id, doc).await?;
+    }
+    if is_new {
+        trim_to_ceiling(st, tenant, &id).await?;
+    }
+    Ok(())
+}
+
+/// Evict the earliest-expiring maps until the tenant holds at most
+/// [`MAX_MAPS_PER_TENANT`], never the one just written. It runs AFTER the
+/// create: a count before it let concurrent puts all pass at the ceiling
+/// minus one (T-6614, R1-028), while every writer trimming after its own
+/// create leaves the last of them seeing every map and cutting to the
+/// ceiling, on any number of pods, with no lock. A count the store refuses
+/// leaves the ceiling unenforceable, and an unbounded buffer is not the
+/// safer half of that choice: the write is refused.
+async fn trim_to_ceiling(st: &AppState, tenant: &TenantId, keep: &str) -> Result<(), NgsiError> {
+    let existing = st.store.list(tenant, Kind::EntityMap).await?;
+    let Some(over) = existing.len().checked_sub(MAX_MAPS_PER_TENANT) else {
+        return Ok(());
+    };
+    // eviction order is a heuristic — earliest expiresAt string wins
+    let mut victims: Vec<(&str, &str)> = existing
+        .iter()
+        .filter_map(|d| {
+            let id = d.get("id").and_then(Value::as_str)?;
+            (id != keep).then(|| (d["expiresAt"].as_str().unwrap_or(""), id))
+        })
+        .collect();
+    victims.sort_unstable();
+    for (_, victim) in victims.into_iter().take(over) {
+        st.store.delete(tenant, Kind::EntityMap, victim).await?;
     }
     Ok(())
 }
@@ -878,6 +890,41 @@ mod tests {
         }
         // What no read will serve, the sweep frees: the four seeded above.
         assert_eq!(sweep_expired_maps(&st, &t).await, 4);
+    }
+
+    /// T-6614 (R1-028): puts racing at the ceiling minus one all passed a
+    /// count taken before their create; trimming after the create holds the
+    /// ceiling whatever the interleaving.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn racing_puts_at_the_ceiling_stay_under_it() {
+        let st = AppState::new("antares-em-race".into());
+        let t = TenantId::default();
+        for i in 0..MAX_MAPS_PER_TENANT - 1 {
+            map_put(&st, &t, live_map(&format!("urn:ngsi-ld:entitymap:{i:04}")))
+                .await
+                .expect("stored");
+        }
+        let racers: Vec<_> = (0..32)
+            .map(|i| {
+                let (st, t) = (st.clone(), t.clone());
+                tokio::spawn(async move {
+                    map_put(&st, &t, live_map(&format!("urn:ngsi-ld:entitymap:r{i:02}"))).await
+                })
+            })
+            .collect();
+        for r in racers {
+            r.await.expect("joined").expect("stored");
+        }
+        let held = st
+            .store
+            .list(&t, Kind::EntityMap)
+            .await
+            .expect("list")
+            .len();
+        assert!(
+            held <= MAX_MAPS_PER_TENANT,
+            "{held} maps over a ceiling of {MAX_MAPS_PER_TENANT}"
+        );
     }
 
     /// 5.14.1.1 storage: every buffer is bounded — the per-tenant EntityMap

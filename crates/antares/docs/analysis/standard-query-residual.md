@@ -69,10 +69,10 @@ through `ViewOps::scan`; T-3749 and T-3750 add the constructs.
 | F23 | `all`, `any` with any other body | | lambda over a list value | | T-3749 |
 | F24 | navigation path in a filter | | | gated on T-3470 (ADR-0023 rule 6) | T-3470 |
 | F25 | property against property | | yes | | T-3749 |
-| F27 | guid, duration, binary, enum, complex and collection literals | | compared as typed values | geography literals other than F29's polygon, until T-3756 | T-3749 |
+| F27 | guid, duration, binary, enum, complex and collection literals | | compared as typed values | geography literals other than F29's polygon, until T-3756; a geometry literal is 400 (no planar member, T-6631) | T-3749 |
 | F29 beyond a top-level conjunct | `geo.intersects` anywhere | the top-level conjunct, as today | elsewhere, through T-3756 | | T-3749 |
-| F30 | `geo.distance`, `geo.length` | | | ADR-0028 rule 8 (unit unstated) | none |
-| F33 | `createdAt`, `modifiedAt`, `_types`, `_datasets` | | with `options=sysAttrs` | | T-3749 |
+| F30 | `geo.distance`, `geo.length` | `near` with `maxDistance`/`minDistance` in metres, a top-level conjunct (T-6631) | | ADR-0028 rule 8: `geo.distance` elsewhere, `geo.length` | T-6631 |
+| F33 | `createdAt`, `modifiedAt`, `_types`, `_datasets` | | `createdAt`, `modifiedAt` with `options=sysAttrs` (T-6631) | `_types`, `_datasets` | T-6631 |
 | Q9 | `$orderby` on an expression | members only | sort within the budget (rule 5) | | T-3758 |
 | Q13, `$count=true` | count with a residual | the pushdown's count when the residual is empty | exact within the budget, else 400 `TooManyResults` | | T-3758 |
 | Q14 | `$search` | | free text over the String Attributes the view shows | | T-3750 |

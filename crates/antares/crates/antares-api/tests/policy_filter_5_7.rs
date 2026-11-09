@@ -45,7 +45,7 @@ impl PolicyEngine for Narrowing {
 
     fn decide<'a>(&'a self, _s: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
         let answer = if antares_api::policy::FILTERABLE.contains(&op.clause) {
-            Decision::Filter(self.0.clone())
+            Decision::Filter(std::sync::Arc::new(self.0.clone()))
         } else {
             Decision::Allow
         };

@@ -33,8 +33,7 @@ pub(super) async fn retry_and_settle(
     let mut last_err = first_err.clone();
     while let Some(delay) = policy.next_delay(made, started.elapsed()) {
         tokio::time::sleep(delay).await;
-        // the subscription may have gone, or its endpoint may have tripped
-        // the breaker meanwhile — a retry is still one more attempt
+        // the subscription may have gone meanwhile
         if st
             .store
             .get(tenant, kind, sub_id)
@@ -46,6 +45,13 @@ pub(super) async fn retry_and_settle(
             return;
         }
         made = made.saturating_add(1);
+        // a destination that tripped the breaker meanwhile is not dialled
+        // (F-18): the attempt counts as failed, and an exhausted policy
+        // parks the letter for a replay as before
+        if network_policed(st, uri) && st.egress.is_open(tenant.as_str(), uri) {
+            "the destination's circuit breaker is open".clone_into(&mut last_err);
+            continue;
+        }
         match send_outbound(st, tenant, uri, timeout_ms, &outbound).await {
             Ok(()) => {
                 st.egress.record_success(tenant.as_str(), uri);

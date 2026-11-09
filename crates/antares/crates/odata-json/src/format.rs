@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! Format parameters, context URLs and the request headers that choose a response's shape
 //! (JSON Format 4.01 sections 3 and 10; Protocol 4.01 sections 8.2.6 to 8.2.8).
 

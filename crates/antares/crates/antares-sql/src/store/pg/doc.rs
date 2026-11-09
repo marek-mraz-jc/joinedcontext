@@ -53,7 +53,7 @@ impl DocKind {
             | DocKind::View => "doc",
         }
     }
-    fn has_bookkeeping(self) -> bool {
+    pub(crate) fn has_bookkeeping(self) -> bool {
         matches!(self, DocKind::Subscription | DocKind::CSourceSubscription)
     }
 }
@@ -626,6 +626,61 @@ impl PgDocStore {
                 Ok((id, (doc, r.get(2))))
             })
             .collect()
+    }
+
+    /// `antares_store::record_failure_via_mutate` in ONE statement (T-6606):
+    /// the row lock lasts the UPDATE alone, where `mutate` held it from its
+    /// SELECT across the round trip back. Only the notification bookkeeping
+    /// members move, none of them sealed, so no credential is opened. The
+    /// stored document as it now stands; `None` when the row is gone.
+    pub async fn record_failure(
+        &self,
+        tenant: &TenantId,
+        kind: DocKind,
+        id: &str,
+        prev_success: Option<&Value>,
+        now: &str,
+    ) -> Result<Option<Value>, sqlx::Error> {
+        let table = kind.table();
+        let col = kind.doc_column();
+        let canonical = |t: &str| antares_store::filter::canonical_datetime(t).into_owned();
+        let last_success = prev_success.and_then(Value::as_str).map(canonical);
+        // literals from DocKind; every value is bound. `is` asks whether
+        // the document has a notification object to book on, as the rule
+        // does; it reads the row the UPDATE locked.
+        let is = format!("jsonb_typeof(d.{col} -> 'notification') = 'object'");
+        let sql = format!(
+            "UPDATE {table} AS d SET
+               {col} = CASE WHEN {is} THEN
+                   jsonb_set(jsonb_set(jsonb_set(jsonb_set(
+                       CASE WHEN $3::jsonb IS NULL
+                            THEN d.{col} #- '{{notification,lastSuccess}}'
+                            ELSE jsonb_set(d.{col}, '{{notification,lastSuccess}}', $3::jsonb) END,
+                       '{{notification,lastFailure}}', to_jsonb($4::text)),
+                       '{{notification,timesFailed}}',
+                       to_jsonb(COALESCE((d.{col} #>> '{{notification,timesFailed}}')::bigint, 0) + 1)),
+                       '{{notification,status}}', '\"failed\"'::jsonb),
+                       '{{status}}', '\"failed\"'::jsonb)
+                 ELSE jsonb_set(d.{col}, '{{status}}', '\"failed\"'::jsonb) END,
+               last_success = CASE WHEN {is} THEN $5::timestamptz END,
+               last_failure = CASE WHEN {is} THEN $6::timestamptz END
+             WHERE d.tenant_id = $1 AND d.id = $2
+             RETURNING d.{col}"
+        );
+        let mut tx = super::begin(&self.pool).await?;
+        crate::store::pg::set_tenant(&mut tx, tenant).await?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(tenant.as_str())
+            .bind(id)
+            .bind(prev_success)
+            .bind(now)
+            .bind(last_success)
+            .bind(canonical(now))
+            .fetch_optional(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        row.map(|r| self.opened(kind, tenant, id, r.get(0)))
+            .transpose()
     }
 
     pub async fn mutate<T, E>(

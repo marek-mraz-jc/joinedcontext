@@ -292,6 +292,7 @@ pub async fn serve(config: Config) -> std::io::Result<()> {
 
     spawn_background(&state);
     spawn_internal_listener(&state, shutdown_signal()).await?;
+    spawn_build_listener(&state, shutdown_signal()).await?;
 
     let router = app(state);
     axum::serve(listener, router)
@@ -337,14 +338,17 @@ pub fn spawn_background(state: &AppState) {
         }
     }
 
-    // A build pod per queued App build (AP-130), on the replica that holds the lease.
-    if let (Some(syncer), Some(shako), Some(settings)) = (
+    // A build of every new head of an App and a pod per queued build (AP-130), on the replica
+    // that holds the lease.
+    if let (Some(syncer), Some(shako), Some(db), Some(settings)) = (
         state.syncer.as_ref(),
         state.shako.as_ref(),
+        state.db.clone(),
         state.config.build_pods.clone(),
     ) {
         crate::apps::build_pods::spawn_periodic(
             shako.clone(),
+            db,
             syncer.clone(),
             state.mirror.clone(),
             settings,
@@ -389,6 +393,46 @@ pub async fn spawn_internal_listener(
             .await
         {
             tracing::error!(error = %err, "the internal listener stopped");
+        }
+    });
+    Ok(Some(addr))
+}
+
+/// The router of the build listener: the build pods' routes and nothing else.
+pub fn build_app(state: AppState) -> Router {
+    Router::new()
+        .merge(api::build_listener::router())
+        .with_state(state)
+}
+
+/// The build listener runs beside the public one whenever this Portal builds Apps
+/// (`JC_PORTAL_BUILD_NAMESPACE`): a port of its own (`JC_PORTAL_BUILD_BIND`) that a build pod's
+/// NetworkPolicy reaches, where nothing but a build's own token is accepted
+/// (`api::build_listener`). Serves until `shutdown` resolves; returns the bound address, or
+/// `None` when no listener opens.
+pub async fn spawn_build_listener(
+    state: &AppState,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> std::io::Result<Option<std::net::SocketAddr>> {
+    let Some(settings) = state.config.build_pods.as_ref() else {
+        return Ok(None);
+    };
+    if state.db.is_none() {
+        tracing::warn!(
+            "JC_PORTAL_BUILD_NAMESPACE is set and the Portal has no database: no App builds"
+        );
+        return Ok(None);
+    }
+    let listener = tokio::net::TcpListener::bind(settings.bind).await?;
+    let addr = listener.local_addr()?;
+    tracing::info!(bind = %addr, "portal build listener listening");
+    let router = build_app(state.clone());
+    tokio::spawn(async move {
+        if let Err(err) = axum::serve(listener, router)
+            .with_graceful_shutdown(shutdown)
+            .await
+        {
+            tracing::error!(error = %err, "the build listener stopped");
         }
     });
     Ok(Some(addr))

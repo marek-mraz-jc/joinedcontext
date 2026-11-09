@@ -212,18 +212,43 @@ impl HistoryRules {
 /// write can create a Tenant at any moment, so a "does not exist" is never
 /// kept. A purge on this process forgets the name at once; a purge on
 /// another process sharing the store is seen once the entry ages out.
+///
+/// The names sit in [`KnownTenants::SHARDS`] maps by hash (T-6611, R1-007):
+/// every request asks, and one process-wide lock made every worker thread
+/// queue on it; a shard's lock covers one hash lookup.
 #[derive(Debug, Default)]
-pub struct KnownTenants(std::sync::Mutex<std::collections::HashMap<String, Instant>>);
+pub struct KnownTenants(
+    [std::sync::Mutex<std::collections::HashMap<String, Instant>>; KNOWN_SHARDS],
+);
+
+/// [`KnownTenants::SHARDS`].
+const KNOWN_SHARDS: usize = 16;
 
 impl KnownTenants {
     /// How long a remembered "exists" stands in for the store's answer.
     pub const TTL: std::time::Duration = std::time::Duration::from_secs(30);
     /// The most names held at once (ADR-0001's 10 000-tenant target): a
-    /// full map takes no new name until its old entries age out.
+    /// full shard takes no new name until its old entries age out.
     pub const CAP: usize = 10_000;
+    /// Maps the names are spread over.
+    pub const SHARDS: usize = KNOWN_SHARDS;
 
-    fn map(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, Instant>> {
+    fn map(
+        &self,
+        tenant: &str,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, Instant>> {
+        use std::hash::BuildHasher as _;
+        let hash =
+            std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
+                .hash_one(tenant);
+        let shard = hash
+            .checked_rem(Self::SHARDS as u64)
+            .and_then(|i| usize::try_from(i).ok())
+            .unwrap_or_default();
+        let [first, ..] = &self.0;
         self.0
+            .get(shard)
+            .unwrap_or(first)
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -231,17 +256,18 @@ impl KnownTenants {
     /// Did the store say this Tenant exists within the last [`Self::TTL`]?
     #[must_use]
     pub fn holds(&self, tenant: &antares_model::TenantId) -> bool {
-        self.map()
+        self.map(tenant.as_str())
             .get(tenant.as_str())
             .is_some_and(|at| at.elapsed() < Self::TTL)
     }
 
     /// The store just said this Tenant exists.
     pub fn remember(&self, tenant: &antares_model::TenantId) {
-        let mut map = self.map();
-        if map.len() >= Self::CAP && !map.contains_key(tenant.as_str()) {
+        let mut map = self.map(tenant.as_str());
+        let cap = Self::CAP.div_ceil(Self::SHARDS);
+        if map.len() >= cap && !map.contains_key(tenant.as_str()) {
             map.retain(|_, at| at.elapsed() < Self::TTL);
-            if map.len() >= Self::CAP {
+            if map.len() >= cap {
                 return;
             }
         }
@@ -250,7 +276,57 @@ impl KnownTenants {
 
     /// The Tenant was purged: the next request asks the store again.
     pub fn forget(&self, tenant: &antares_model::TenantId) {
-        self.map().remove(tenant.as_str());
+        self.map(tenant.as_str()).remove(tenant.as_str());
+    }
+}
+
+#[cfg(test)]
+mod known_tenants_tests {
+    use super::KnownTenants;
+    use antares_model::TenantId;
+
+    fn tenant(name: &str) -> TenantId {
+        TenantId::try_from(name.to_owned()).unwrap()
+    }
+
+    /// A lookup of one Tenant does not wait while another Tenant's entry is
+    /// locked (T-6611, R1-007): on dev b683bfc3 one mutex held every name.
+    #[test]
+    fn a_lookup_does_not_wait_for_another_tenants_lock() {
+        let known = std::sync::Arc::new(KnownTenants::default());
+        let held = tenant("t6611-held");
+        known.remember(&held);
+        let guard = known.map(held.as_str());
+        let other = (0..32)
+            .map(|i| tenant(&format!("t6611-other-{i}")))
+            .find(|t| {
+                let probe = known.clone();
+                let t = t.clone();
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(probe.holds(&t));
+                });
+                rx.recv_timeout(std::time::Duration::from_secs(2)).is_ok()
+            });
+        drop(guard);
+        assert!(
+            other.is_some(),
+            "every other Tenant waited for one held lock"
+        );
+        assert!(known.holds(&held));
+    }
+
+    /// The cap still bounds the whole memory, spread over the shards.
+    #[test]
+    fn the_cap_bounds_every_shard() {
+        let known = KnownTenants::default();
+        for i in 0..KnownTenants::CAP * 2 {
+            known.remember(&tenant(&format!("t{i}")));
+        }
+        let held: usize = known.0.iter().map(|m| m.lock().unwrap().len()).sum();
+        assert!(held <= KnownTenants::CAP.div_ceil(KnownTenants::SHARDS) * KnownTenants::SHARDS);
+        known.forget(&tenant("t0"));
+        assert!(!known.holds(&tenant("t0")));
     }
 }
 
@@ -293,6 +369,13 @@ pub(crate) fn inprocess_context() -> Option<Arc<serde_json::Value>> {
     INPROCESS_CONTEXT.try_with(Arc::clone).ok()
 }
 
+#[cfg(feature = "views")]
+tokio::task_local! {
+    /// The view the in-process request this task serves came through, which
+    /// the shared router's state reads as its own ([`AppState::view`]).
+    static REQUEST_VIEW: Arc<crate::views::CompiledView>;
+}
+
 /// How many [`AppState::call`] frames the running task is inside: zero
 /// outside an in-process call. A caller that must not reach the router past
 /// [`crate::bounds::MAX_IN_PROCESS_CALL_DEPTH`] reads it to answer for
@@ -321,9 +404,19 @@ tokio::task_local! {
 pub struct AppState {
     shared: Arc<Shared>,
     /// The endpoint view every operation through this state is narrowed to
-    /// (ADR-0023); `None` serves the NGSI-LD API as it is.
+    /// (ADR-0023); `None` serves the NGSI-LD API as it is. Read through
+    /// [`AppState::view`].
     #[cfg(feature = "views")]
-    pub view: Option<Arc<crate::views::CompiledView>>,
+    view: Option<Arc<crate::views::CompiledView>>,
+    /// This is the state of the router every view shares (T-6677): its view
+    /// is the request's, [`REQUEST_VIEW`], and outside one it shows nothing.
+    #[cfg(feature = "views")]
+    per_request: bool,
+    /// The one router narrowed states call through, built on the first such
+    /// call and shared by every clone and narrowed copy of the state it
+    /// hangs off (T-6677: a router per view cost ~246 KiB).
+    #[cfg(feature = "views")]
+    viewed: Arc<std::sync::OnceLock<axum::Router>>,
     /// The router [`AppState::call`] serves in-process requests through,
     /// built on first use. Empty until a façade actually calls: building it
     /// costs about 1.5 ms, which is worth memoizing per state and not worth
@@ -531,6 +624,10 @@ impl std::ops::DerefMut for AppState {
         // the memoised in-process router captured the settings about to
         // change: a later call must build one over the new ones
         self.inbound = Arc::new(std::sync::OnceLock::new());
+        #[cfg(feature = "views")]
+        {
+            self.viewed = Arc::new(std::sync::OnceLock::new());
+        }
         Arc::make_mut(&mut self.shared)
     }
 }
@@ -562,7 +659,7 @@ impl AppState {
     #[must_use]
     pub fn same(&self, other: &Self) -> bool {
         #[cfg(feature = "views")]
-        let view = match (&self.view, &other.view) {
+        let view = match (&self.view(), &other.view()) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (a, b) => a.is_none() && b.is_none(),
         };
@@ -682,51 +779,16 @@ impl AppState {
         // have no row and are never evicted.
         {
             let store = store.clone();
+            let hits = Arc::new(HitBatch::default());
             loader.set_usage_bump(Arc::new(move |tenant, url| {
                 let store = store.clone();
+                let hits = Arc::clone(&hits);
                 Box::pin(async move {
                     if Loader::is_pinned_core(url) {
                         return true;
                     }
-                    let id = match hosted_row_id(&*store, tenant, url).await {
-                        Some(id) => id,
-                        None => uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, url.as_bytes())
-                            .to_string(),
-                    };
-                    // under the row lock: a bump racing a delete leaves the row
-                    // deleted, and two racing bumps both count
-                    let bumped = store
-                        .context_mutate(
-                            tenant,
-                            &id,
-                            Box::new(|row| {
-                                let o = row.as_object_mut().ok_or(())?;
-                                let hits = o
-                                    .get("numberOfHits")
-                                    .and_then(serde_json::Value::as_u64)
-                                    .unwrap_or(0)
-                                    .saturating_add(1);
-                                o.insert("numberOfHits".into(), serde_json::json!(hits));
-                                o.insert("lastUsage".into(), serde_json::json!(now_iso()));
-                                Ok(())
-                            }),
-                        )
-                        .await;
-                    match bumped {
-                        Ok(Some(Ok(()))) => true,
-                        // a row that cannot carry the counters is left
-                        // uncounted, and still exists: it must not be evicted
-                        Ok(Some(Err(()))) => true,
-                        Ok(None) => false,
-                        // a store hiccup must never evict a healthy cache entry
-                        Err(e) => {
-                            tracing::warn!(
-                                "@context hit bump failed for {}: {e}",
-                                antares_notifier::redact_userinfo(url)
-                            );
-                            true
-                        }
-                    }
+                    hits.bump(tenant, url, |n| bump_row(&*store, tenant, url, n))
+                        .await
                 })
             }));
         }
@@ -795,6 +857,10 @@ impl AppState {
         Self {
             #[cfg(feature = "views")]
             view: None,
+            #[cfg(feature = "views")]
+            per_request: false,
+            #[cfg(feature = "views")]
+            viewed: Arc::new(std::sync::OnceLock::new()),
             inbound: Arc::new(std::sync::OnceLock::new()),
             shared: Arc::new(Shared {
                 store,
@@ -884,8 +950,26 @@ impl AppState {
     pub fn with_view(&self, view: Arc<crate::views::CompiledView>) -> Self {
         let mut st = self.clone();
         st.view = Some(view);
+        st.per_request = false;
         st.inbound = Arc::new(std::sync::OnceLock::new());
         st
+    }
+
+    /// The view every operation through this state is narrowed to, if any.
+    /// The shared router's state answers the view of the request it serves;
+    /// a task it spawned without that view sees a view that shows nothing,
+    /// never the whole Tenant (fail closed).
+    #[cfg(feature = "views")]
+    #[must_use]
+    pub fn view(&self) -> Option<Arc<crate::views::CompiledView>> {
+        if self.per_request {
+            return Some(
+                REQUEST_VIEW
+                    .try_with(Arc::clone)
+                    .unwrap_or_else(|_| crate::views::CompiledView::nothing()),
+            );
+        }
+        self.view.clone()
     }
 
     /// Every stored view document's (ADR-0023 rule 10) id and digest, the
@@ -1280,6 +1364,22 @@ impl AppState {
             ))
             .into_response();
         }
+        #[cfg(feature = "views")]
+        if let Some(view) = self.view() {
+            let router = self.viewed.get_or_init(|| {
+                // Built from a state that holds no view of its own and a
+                // fresh cell, for the reason the memo below gives.
+                let mut inner = self.clone();
+                inner.view = None;
+                inner.per_request = true;
+                inner.viewed = Arc::new(std::sync::OnceLock::new());
+                inner.inbound = Arc::new(std::sync::OnceLock::new());
+                crate::router(inner)
+            });
+            return REQUEST_VIEW
+                .scope(view, self.serve_in_process(depth, router, caller, req))
+                .await;
+        }
         let router = self.inbound.get_or_init(|| {
             // Every layer of a built router captured an `AppState` clone, so
             // the memo owns states. The clone it is built from must NOT be
@@ -1292,6 +1392,18 @@ impl AppState {
             inner.inbound = Arc::new(std::sync::OnceLock::new());
             crate::router(inner)
         });
+        self.serve_in_process(depth, router, caller, req).await
+    }
+
+    /// [`AppState::call`] past its depth check, through `router`.
+    async fn serve_in_process(
+        &self,
+        depth: usize,
+        router: &axum::Router,
+        caller: &axum::http::HeaderMap,
+        req: axum::http::Request<axum::body::Body>,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse as _;
         let (mut parts, body) = req.into_parts();
         for name in &PROPAGATED {
             if parts.headers.contains_key(name) {
@@ -1513,6 +1625,126 @@ async fn hosted_row_id(
     hosted_row(store, tenant, url).await.map(|(id, _)| id)
 }
 
+/// Add `n` counted uses to the shared row of `url` (5.13.3.5) and answer
+/// whether the row still exists: `false` is a delete through another
+/// instance, so the loader drops its warm copies (5.13.5.4).
+async fn bump_row(
+    store: &dyn CurrentStateDriver,
+    tenant: Option<&antares_model::TenantId>,
+    url: &str,
+    n: u64,
+) -> bool {
+    let id = match hosted_row_id(store, tenant, url).await {
+        Some(id) => id,
+        None => uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, url.as_bytes()).to_string(),
+    };
+    // under the row lock: a bump racing a delete leaves the row
+    // deleted, and two racing bumps both count
+    let bumped = store
+        .context_mutate(
+            tenant,
+            &id,
+            Box::new(move |row| {
+                let o = row.as_object_mut().ok_or(())?;
+                let hits = o
+                    .get("numberOfHits")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
+                    .saturating_add(n);
+                o.insert("numberOfHits".into(), serde_json::json!(hits));
+                o.insert("lastUsage".into(), serde_json::json!(now_iso()));
+                Ok(())
+            }),
+        )
+        .await;
+    match bumped {
+        Ok(Some(Ok(()))) => true,
+        // a row that cannot carry the counters is left
+        // uncounted, and still exists: it must not be evicted
+        Ok(Some(Err(()))) => true,
+        Ok(None) => false,
+        // a store hiccup must never evict a healthy cache entry
+        Err(e) => {
+            tracing::warn!(
+                "@context hit bump failed for {}: {e}",
+                antares_notifier::redact_userinfo(url)
+            );
+            true
+        }
+    }
+}
+
+/// Group commit of @context hits (T-6605). Every request naming a hosted or
+/// Cached @context bumped its ONE shared row under the row lock, so all of
+/// them queued on that row in Postgres, each holding a pool connection. Here
+/// a bump adds its hit to the (Tenant, URL) slot and waits for the slot's
+/// one writer: whoever holds the slot writes every hit queued so far in one
+/// update, and the queued requests return on that write. Each request still
+/// returns only after its own hit is on the shared row, so a peer instance
+/// reads the same numberOfHits as before (5.13.3.5 behind a load balancer)
+/// and a delete through a peer is still seen on the next use (5.13.5.4).
+/// Keyed by Tenant: a hit is written with the Tenant that made it.
+#[derive(Default)]
+struct HitBatch {
+    slots: std::sync::Mutex<std::collections::HashMap<HitKey, Arc<HitSlot>>>,
+}
+
+type HitKey = (Option<antares_model::TenantId>, String);
+
+struct HitSlot {
+    /// Hits added and not yet taken by a writer.
+    pending: std::sync::atomic::AtomicU64,
+    /// Held while one update is in flight; holds what the last update said
+    /// of the row (true: it exists).
+    write: tokio::sync::Mutex<bool>,
+}
+
+impl HitBatch {
+    async fn bump<F, Fut>(
+        &self,
+        tenant: Option<&antares_model::TenantId>,
+        url: &str,
+        write: F,
+    ) -> bool
+    where
+        F: FnOnce(u64) -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        use std::sync::atomic::Ordering;
+        let key: HitKey = (tenant.cloned(), url.to_owned());
+        let slot = Arc::clone(self.lock().entry(key.clone()).or_insert_with(|| {
+            Arc::new(HitSlot {
+                pending: std::sync::atomic::AtomicU64::new(0),
+                write: tokio::sync::Mutex::new(true),
+            })
+        }));
+        slot.pending.fetch_add(1, Ordering::AcqRel);
+        let exists = {
+            let mut last = slot.write.lock().await;
+            // zero: the writer before us took our hit and wrote it already
+            let n = slot.pending.swap(0, Ordering::AcqRel);
+            if n > 0 {
+                *last = write(n).await;
+            }
+            *last
+        };
+        // the last user of an idle slot drops it, so the map holds only
+        // the (Tenant, URL) pairs in use right now; the count is read under
+        // the map lock, which every new user of the slot takes first
+        let mut slots = self.lock();
+        if Arc::strong_count(&slot) == 2 {
+            slots.remove(&key);
+        }
+        exists
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<HitKey, Arc<HitSlot>>> {
+        self.slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 /// Server-managed timestamp, ISO 8601 UTC with milliseconds.
 pub fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
@@ -1602,6 +1834,47 @@ mod jsonld_context_locality_5_13 {
             serde_json::json!(2),
             "both counted uses land on the shared row (5.13.3.5)"
         );
+    }
+
+    /// T-6605 (R1-001): a query resolved its Link @context in the gate,
+    /// in the handler and in the metadata layer, and each resolve counted a
+    /// hit and bumped the shared row. Only the handler's resolve counts now.
+    #[tokio::test]
+    async fn a_second_look_at_the_request_context_counts_no_hit() {
+        let st = AppState::new("me".into());
+        let (url, _fetches) = context_server("/ngsi-ld/v1/jsonldContexts/quiet-ctx");
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::LINK,
+            format!("<{url}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
+                .parse()
+                .expect("header"),
+        );
+        let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, url.as_bytes()).to_string();
+        let hits = || async {
+            st.store
+                .context_get(None, &id)
+                .await
+                .expect("store")
+                .expect("row")["numberOfHits"]
+                .clone()
+        };
+        crate::negotiate::request_context(&st.loader, &headers)
+            .await
+            .expect("counted resolve");
+        assert_eq!(hits().await, serde_json::json!(1));
+        crate::negotiate::request_context_quiet(&st.loader, &headers)
+            .await
+            .expect("quiet resolve");
+        assert_eq!(
+            hits().await,
+            serde_json::json!(1),
+            "a second look counts no hit"
+        );
+        crate::negotiate::request_context(&st.loader, &headers)
+            .await
+            .expect("counted resolve");
+        assert_eq!(hits().await, serde_json::json!(2));
     }
 
     /// F-ANT4-002: the default Tenant's Hosted @context is not fetched for
@@ -1973,5 +2246,176 @@ mod clone_cost {
         let mut c = a.clone();
         c.max_limit = 1;
         assert_eq!(call(&c).await, axum::http::StatusCode::FORBIDDEN);
+    }
+}
+
+/// T-6677: every view calls through one router, which reads the view of
+/// the request it serves.
+#[cfg(all(test, feature = "views"))]
+mod shared_view_router {
+    use super::*;
+    use crate::policy::Rule;
+    use crate::views::CompiledView;
+    use axum::body::Body;
+    use axum::http::{HeaderMap, Request};
+
+    fn view_of(t: &str) -> Arc<CompiledView> {
+        Arc::new(
+            CompiledView::new(
+                &[t.into()],
+                None,
+                None,
+                None,
+                vec![Rule {
+                    types: vec![t.into()],
+                    attributes: vec!["speed".into()],
+                    ..Rule::default()
+                }],
+            )
+            .expect("a view")
+            .named(t),
+        )
+    }
+
+    async fn ids(st: &AppState) -> Vec<String> {
+        let req = Request::get("/ngsi-ld/v1/entities?type=Car,Bike&limit=100")
+            .body(Body::empty())
+            .expect("request");
+        let r = st.call(&HeaderMap::new(), req).await;
+        let bytes = axum::body::to_bytes(r.into_body(), 1 << 20)
+            .await
+            .expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        let mut ids: Vec<String> = v
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e["id"].as_str().map(str::to_owned))
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    async fn seeded() -> AppState {
+        let st = AppState::new("antares-test".into());
+        for (id, t) in [("urn:ngsi-ld:Car:1", "Car"), ("urn:ngsi-ld:Bike:1", "Bike")] {
+            let body =
+                serde_json::json!({"id": id, "type": t, "speed": {"type": "Property", "value": 1}});
+            let body = body.to_string();
+            let req = Request::post("/ngsi-ld/v1/entities")
+                .header("content-type", "application/json")
+                .header("content-length", body.len())
+                .body(Body::from(body))
+                .expect("request");
+            let r = st.call(&HeaderMap::new(), req).await;
+            assert!(r.status().is_success(), "{}", r.status());
+        }
+        st
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn each_view_sees_its_own_entities_through_the_one_router() {
+        let st = seeded().await;
+        let (cars, bikes) = (st.with_view(view_of("Car")), st.with_view(view_of("Bike")));
+        let runs: Vec<_> = (0..32)
+            .map(|i| {
+                let st = if i % 2 == 0 {
+                    cars.clone()
+                } else {
+                    bikes.clone()
+                };
+                tokio::spawn(async move { (i % 2, ids(&st).await) })
+            })
+            .collect();
+        for run in runs {
+            let (odd, got) = run.await.expect("joined");
+            let want = if odd == 0 {
+                "urn:ngsi-ld:Car:1"
+            } else {
+                "urn:ngsi-ld:Bike:1"
+            };
+            assert_eq!(got, vec![want.to_owned()]);
+        }
+        assert!(Arc::ptr_eq(&cars.viewed, &bikes.viewed), "one router cell");
+        assert!(cars.viewed.get().is_some(), "built once, by the first call");
+        assert!(cars.inbound.get().is_none(), "no router of the view's own");
+        assert_eq!(ids(&st).await.len(), 2, "the plain API is not narrowed");
+    }
+
+    /// Fail closed: the shared router's state outside the request whose
+    /// view it serves (a task it spawned) reads a view that shows nothing.
+    #[tokio::test]
+    async fn the_shared_state_without_its_request_shows_nothing() {
+        let st = seeded().await;
+        let mut shared = st.clone();
+        shared.per_request = true;
+        let seen = shared.view().expect("a view");
+        assert!(Arc::ptr_eq(&seen, &CompiledView::nothing()));
+        assert_eq!(ids(&shared).await, Vec::<String>::new());
+        let cars = view_of("Car");
+        let inside = REQUEST_VIEW
+            .scope(cars.clone(), async { shared.view() })
+            .await
+            .expect("a view");
+        assert!(Arc::ptr_eq(&inside, &cars), "inside the request: its view");
+    }
+}
+
+#[cfg(test)]
+mod hit_batch {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// T-6605 (R2-015): 64 requests on one @context ran 64 locked updates of
+    /// its row. Under a slow writer they now share a few updates, every hit
+    /// is written, and none returns before its own hit is on the row.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_hits_on_one_context_share_one_write_and_all_count() {
+        let batch = Arc::new(HitBatch::default());
+        let written = Arc::new(AtomicU64::new(0));
+        let writes = Arc::new(AtomicU64::new(0));
+        let mut tasks = Vec::new();
+        for _ in 0..64 {
+            let (batch, written, writes) = (
+                Arc::clone(&batch),
+                Arc::clone(&written),
+                Arc::clone(&writes),
+            );
+            tasks.push(tokio::spawn(async move {
+                let w = Arc::clone(&written);
+                let exists = batch
+                    .bump(None, "https://ctx.example/a.jsonld", |n| async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        writes.fetch_add(1, Ordering::SeqCst);
+                        w.fetch_add(n, Ordering::SeqCst);
+                        true
+                    })
+                    .await;
+                // at least this request's own hit is written when it returns
+                (exists, written.load(Ordering::SeqCst))
+            }));
+        }
+        for t in tasks {
+            let (exists, seen) = t.await.expect("join");
+            assert!(exists);
+            assert!(seen >= 1);
+        }
+        assert_eq!(written.load(Ordering::SeqCst), 64, "every hit is counted");
+        let writes = writes.load(Ordering::SeqCst);
+        assert!(writes < 16, "64 hits took {writes} writes");
+        assert!(batch.lock().is_empty(), "an idle slot is dropped");
+    }
+
+    /// The batch is per Tenant: one Tenant's hits never land on another's
+    /// row, and a row gone for one Tenant says so to that Tenant only.
+    #[tokio::test]
+    async fn hits_are_written_per_tenant() {
+        let batch = HitBatch::default();
+        let a = antares_model::TenantId::new("a").expect("tenant");
+        let b = antares_model::TenantId::new("b").expect("tenant");
+        let url = "https://ctx.example/shared.jsonld";
+        assert!(!batch.bump(Some(&a), url, |_| async { false }).await);
+        assert!(batch.bump(Some(&b), url, |_| async { true }).await);
+        assert!(batch.bump(None, url, |n| async move { n == 1 }).await);
     }
 }

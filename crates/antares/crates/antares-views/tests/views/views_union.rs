@@ -407,3 +407,53 @@ async fn view_pages_past_the_answer_budget_together_are_413() -> Result<(), Stri
     assert!(many.text.contains("max_answer_bytes"), "{}", many.text);
     Ok(())
 }
+
+/// T-6666: the view pages of a read across views are read through the
+/// broker's one answer pool and held there until the read ends, so
+/// concurrent reads together hold what the pool allows, not one
+/// `max_answer_bytes` each; a read that finds no room answers 503 with
+/// Retry-After. Before, a union's pages bypassed the pool: two pages in a
+/// pool of one and a half answered 200 and the pool's peak stayed 0.
+#[tokio::test(flavor = "multi_thread")]
+async fn reads_across_views_hold_their_pages_in_the_answer_pool() -> Result<(), String> {
+    let plain = fixture().await?;
+    speed_views(&plain.app, 1).await?;
+    let page = union(&plain.app, "views=car0&type=Car&limit=1000")
+        .await
+        .text
+        .len();
+    drop(plain);
+
+    let roomy = TestBroker::with_answer_pool(page.saturating_mul(3)).await?;
+    let pool = roomy.answer_pool();
+    let f = fixture_with(roomy).await?;
+    speed_views(&f.app, 2).await?;
+    let _ = pool.take_peak();
+    let both = union(&f.app, "views=car0,car1&type=Car&limit=1000").await;
+    assert_eq!(both.status, StatusCode::OK, "{}", both.text);
+    assert!(
+        pool.take_peak() >= page.saturating_mul(2),
+        "both view pages were charged to the pool together"
+    );
+    assert_eq!(pool.held(), 0, "a finished read gives its share back");
+
+    let tight = TestBroker::with_answer_pool(page.saturating_mul(3) / 2).await?;
+    let pool = tight.answer_pool();
+    let f = fixture_with(tight).await?;
+    speed_views(&f.app, 2).await?;
+    let one = union(&f.app, "views=car0&type=Car&limit=1000").await;
+    assert_eq!(one.status, StatusCode::OK, "{}", one.text);
+    let full = union(&f.app, "views=car0,car1&type=Car&limit=1000").await;
+    assert_eq!(
+        full.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        full.text
+    );
+    assert!(
+        full.header("retry-after").is_some(),
+        "503 without Retry-After"
+    );
+    assert_eq!(pool.held(), 0, "a refused read gives its share back");
+    Ok(())
+}

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! CSDL XML and CSDL JSON describe one model (surfaces-test-plan section 3, threat O17).
 //!
 //! Random valid models are written both ways; the XML is read back by a small reader and turned

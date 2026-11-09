@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The batch response writers (Protocol 4.01 section 11.7.7.3, JSON Format 4.01 section 19.2).
 //! Neither lets a response change the framing: a header with a line break, or a body that
 //! holds the multipart delimiter, is refused before a byte is written.

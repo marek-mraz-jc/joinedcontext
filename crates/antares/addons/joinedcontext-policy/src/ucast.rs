@@ -9,7 +9,7 @@
 //! (EP-59). `q` travels verbatim beside `where`: splitting an NGSI-LD filter
 //! into branches would need a second query grammar.
 
-use crate::access::{actions, selectors, Grants};
+use crate::access::{actions, Grants};
 use crate::document::Policy;
 use crate::odrl::members;
 use serde_json::{json, Map, Value};
@@ -36,7 +36,7 @@ pub fn grant_ast(grants: &Grants<'_>, served: &dyn Fn(&str) -> bool) -> Value {
     let mut denied: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
     for p in &grants.prohibitions {
         let ops = actions(p, served);
-        for s in selectors(p) {
+        for s in grants.selectors(p) {
             denied.entry(s.entity_type).or_default().extend(&ops);
         }
     }
@@ -46,7 +46,7 @@ pub fn grant_ast(grants: &Grants<'_>, served: &dyn Fn(&str) -> bool) -> Value {
         if ops.is_empty() {
             continue;
         }
-        for s in selectors(p) {
+        for s in grants.selectors(p) {
             let entry = granted.entry(s.entity_type).or_default();
             entry.operations.extend(&ops);
             if s.attributes.is_empty() {

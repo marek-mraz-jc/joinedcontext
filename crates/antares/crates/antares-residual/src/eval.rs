@@ -152,17 +152,13 @@ impl<'a> Eval<'a> {
                 }
                 None => None,
             },
-            Node::Any(list, body) => match (self.value(list)?, body) {
-                (Some(Val::Json(Value::Array(items))), None) => Some(Val::Bool(!items.is_empty())),
-                (Some(Val::Json(Value::Array(items))), Some(body)) => {
-                    of(self.lambda(items, body, Truth::False)?)
-                }
+            Node::Any(list, body) => match (self.value(list)?.as_ref().and_then(items), body) {
+                (Some(items), None) => Some(Val::Bool(!items.is_empty())),
+                (Some(items), Some(body)) => of(self.lambda(items, body, Truth::False)?),
                 _ => None,
             },
-            Node::All(list, body) => match self.value(list)? {
-                Some(Val::Json(Value::Array(items))) => {
-                    of(self.lambda(items, body, Truth::True)?)
-                }
+            Node::All(list, body) => match self.value(list)?.as_ref().and_then(items) {
+                Some(items) => of(self.lambda(items, body, Truth::True)?),
                 _ => None,
             },
             Node::Match(a, regex) => match self.value(a)? {
@@ -211,6 +207,16 @@ impl<'a> Eval<'a> {
             }
         }
         Ok(acc)
+    }
+}
+
+/// The items `any`/`all` walk: a list, or a lone string `scope` as a list of one.
+fn items<'a>(v: &Val<'a>) -> Option<&'a [Value]> {
+    let Val::Json(json) = v else { return None };
+    match *json {
+        Value::Array(items) => Some(items),
+        Value::String(_) => Some(std::slice::from_ref(*json)),
+        _ => None,
     }
 }
 
@@ -283,6 +289,7 @@ fn path<'a>(entity: &'a Value, p: &Path) -> Option<Val<'a>> {
     match p {
         Path::Id => entity.get("id").and_then(from_json),
         Path::Type => entity.get("type").and_then(from_json),
+        Path::Scope => entity.get("scope").map(Val::Json),
         Path::CreatedAt => stamp(entity.get("createdAt")),
         Path::ModifiedAt => stamp(entity.get("modifiedAt")),
         Path::Attribute {

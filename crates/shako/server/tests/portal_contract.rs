@@ -1001,26 +1001,16 @@ async fn a_sync_source_origin_serves_the_advertisement_and_the_page_archive() {
     }
 }
 
-/// Actions (App builds) are not served yet: every Portal OData call gets the forge's "not found",
-/// which the Portal reports as no runs instead of failing to parse (PORTAL-ODATA.md section 10).
+/// Actions (App builds) are not served yet: the artifact reads the Portal keeps for builds of
+/// another forge get the forge's "not found", which the Portal reports as no artifact instead of
+/// failing to parse (PORTAL-ODATA.md section 10). The run, dispatch, queue and runner-token calls
+/// are gone from the Portal's client: Actions transport replaced by the Portal build lane,
+/// jc-app-builds.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn actions_calls_answer_not_found_until_runners_land() {
     let w = World::start().await;
     let app = w.client("bikes").for_application("bikes");
     assert!(app.ensure_repository("App").await.unwrap());
-    assert!(matches!(app.latest_runs(5).await, Err(GitError::NotFound)));
-    assert!(matches!(
-        app.dispatch_workflow("build.yaml", "main").await,
-        Err(GitError::NotFound)
-    ));
-    assert!(matches!(
-        app.applications().queued_jobs().await,
-        Err(GitError::NotFound)
-    ));
-    assert!(matches!(
-        app.repository_registration_token().await,
-        Err(GitError::NotFound)
-    ));
     assert!(matches!(
         app.artifacts_named("dist").await,
         Err(GitError::NotFound)
