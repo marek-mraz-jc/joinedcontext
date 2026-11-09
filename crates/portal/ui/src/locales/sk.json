@@ -2779,6 +2779,8 @@
     "expiryRefused": "Nič sa neodstraňuje: runner odmietol čistenie: {reason}",
     "errorReason": "Prečo: {reason}",
     "errorOpen": "Otvoriť pipeline",
+    "errorShared": "Prečo: dôvod nad zoznamom",
+    "sharedFailure": "Pipeliny zastavené z jedného spoločného dôvodu ({count}): {reason}. Jedna oprava nastavenia, ktoré uvádza, ich spustí všetky.",
     "writesType": "Zapisuje",
     "notWriting": "Nezapisuje nič",
     "rejected": {

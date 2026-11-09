@@ -2779,6 +2779,8 @@
     "expiryRefused": "Nichts wird entfernt: Der Runner hat die Bereinigung abgelehnt: {reason}",
     "errorReason": "Grund: {reason}",
     "errorOpen": "Pipeline öffnen",
+    "errorShared": "Grund: siehe über der Liste",
+    "sharedFailure": "Pipelines aus einem gemeinsamen Grund gestoppt ({count}): {reason}. Eine Korrektur der genannten Einstellung startet sie alle wieder.",
     "writesType": "Schreibt",
     "notWriting": "Schreibt nichts",
     "rejected": {

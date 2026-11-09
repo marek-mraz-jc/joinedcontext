@@ -2779,6 +2779,8 @@
     "expiryRefused": "Nothing is removed: the runner refused the sweep: {reason}",
     "errorReason": "Why: {reason}",
     "errorOpen": "Open the pipeline",
+    "errorShared": "Why: the reason above the list",
+    "sharedFailure": "Pipelines stopped for one shared reason ({count}): {reason}. One fix in the setting it names restarts them all.",
     "writesType": "Writes",
     "notWriting": "Writes nothing",
     "rejected": {

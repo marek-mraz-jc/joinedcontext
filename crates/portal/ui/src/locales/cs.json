@@ -2779,6 +2779,8 @@
     "expiryRefused": "Nic se neodstraňuje: runner odmítl úklid: {reason}",
     "errorReason": "Proč: {reason}",
     "errorOpen": "Otevřít pipeline",
+    "errorShared": "Proč: důvod nad seznamem",
+    "sharedFailure": "Pipelines zastavené z jednoho společného důvodu ({count}): {reason}. Jedna oprava nastavení, které uvádí, je spustí všechny.",
     "writesType": "Zapisuje",
     "notWriting": "Nezapisuje nic",
     "rejected": {

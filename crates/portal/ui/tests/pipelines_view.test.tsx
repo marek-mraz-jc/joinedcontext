@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { App } from "../src/App";
-import { executionClass, failureCause } from "../src/routes/PipelinesPage";
+import { executionClass, failureCause, sharedFailureOf } from "../src/routes/PipelinesPage";
 
 const IDENTITY = {
   subject: "b7c1e0f4",
@@ -212,6 +212,27 @@ describe("pipelines view", () => {
     // Its Last run cell no longer says "Has not run yet" beside "the last run … failed".
     expect(within(row).queryByText(en.pipelines.lastRun.never)).toBeNull();
     expect(await within(row).findByText(en.pipelines.lastRun.noneWritten)).toBeInTheDocument();
+  });
+
+  it("says a cause every failing pipeline shares once above the list, the rows point to it", async () => {
+    // Thirty rows repeated one missing setting, a 6000 px phone page (UI judge 2026-11-09).
+    const status = (cause: string) =>
+      ({
+        phase: "Error",
+        conditions: [{ type: "StreamDeployed", status: "False", reason: "RunnerRefused", message: `the runner refused the run: ${cause}` }],
+      }) as never;
+    const failed = structuredClone(PIPELINES);
+    failed.items[0].status = status("environment variable 'JC_CLIENT_SECRET_BB' was not defined");
+    failed.items[1].status = status("environment variable 'JC_CLIENT_SECRET_BB' was not defined");
+    renderPipelines(METRICS, 200, failed);
+    const banner = await screen.findByTestId("pipelines-shared-failure");
+    expect(banner).toHaveTextContent("(2): environment variable 'JC_CLIENT_SECRET_BB' was not defined");
+    for (const name of ["aq-mqtt-ingest", "parking-daily"]) {
+      expect(within(await rowOf(name)).getByTestId("pipeline-error-reason")).toHaveTextContent(en.pipelines.errorShared);
+    }
+
+    expect(sharedFailureOf([failed.items[0], { ...failed.items[1], status: status("source unreachable at all") }] as never)).toBeNull();
+    expect(sharedFailureOf([failed.items[0]] as never)).toBeNull();
   });
 
   it("says in the row that the runner refused the sweep, with its reason", async () => {

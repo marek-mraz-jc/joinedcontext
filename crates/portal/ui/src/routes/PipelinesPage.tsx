@@ -71,6 +71,24 @@ export function failureCause(message: string): string {
   return cause.length >= 12 ? cause : message;
 }
 
+/** Why a pipeline in Error stopped, from the first False condition the reconciler wrote; "" when it runs. */
+export function failureOf(pipeline: Manifest): string {
+  if (!["error", "failed"].includes((pipeline.status?.phase ?? "").toLowerCase())) return "";
+  const failure = (pipeline.status?.conditions ?? []).find(
+    (condition) => condition.status === "False" && condition.type !== "ExpirySweep" && (condition.message ?? condition.reason),
+  );
+  return failure ? failureCause(failure.message ?? failure.reason ?? "") : "";
+}
+
+/**
+ * The one cause every failing pipeline shares, when two or more fail: the page says it once above
+ * the list instead of thirty times in the rows (UI judge 2026-11-09). null when causes differ.
+ */
+export function sharedFailureOf(pipelines: Manifest[]): string | null {
+  const causes = pipelines.map(failureOf).filter((cause) => cause !== "");
+  return causes.length >= 2 && causes.every((cause) => cause === causes[0]) ? causes[0] : null;
+}
+
 /** When one row's pipeline last ran, with a resident runner's totals beside it (T-4817). */
 function RowLastRun({
   project,
@@ -323,12 +341,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
     const stalled = notWriting(pipeline);
     const counted = running && klass === "resident";
     const source = dataSourceOf(spec);
-    const failure = ["error", "failed"].includes((pipeline.status?.phase ?? "").toLowerCase())
-      ? (pipeline.status?.conditions ?? []).find(
-          (condition) => condition.status === "False" && condition.type !== "ExpirySweep" && (condition.message ?? condition.reason),
-        )
-      : undefined;
-    const failureText = failure ? failureCause(failure.message ?? failure.reason ?? "") : "";
+    const failureText = failureOf(pipeline);
     const phase = (
       <>
         {/* The row said "Live" beside a stream that said "Paused" (T-2759): a paused
@@ -348,7 +361,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
         {failureText ? (
           <div className="mt-1 max-w-64 text-caption">
             <p className="text-danger [overflow-wrap:anywhere]" data-testid="pipeline-error-reason">
-              {t("pipelines.errorReason", { reason: failureText })}
+              {failureText === sharedFailure ? t("pipelines.errorShared") : t("pipelines.errorReason", { reason: failureText })}
             </p>
             <RecordLink project={project} plural="pipelines" name={pipeline.metadata.name}>
               {t("pipelines.errorOpen")}
@@ -369,6 +382,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
   };
 
   const pipelines = asManifests(list.data?.items ?? []);
+  const sharedFailure = sharedFailureOf(pipelines);
   const shown = pipelines.filter((pipeline) =>
     pipelineMatches(pipeline, needle, statusFilter, classFilter, locale),
   );
@@ -459,6 +473,11 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
       ) : null}
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
+      {sharedFailure !== null ? (
+        <Alert role="status" tone="danger" data-testid="pipelines-shared-failure">
+          {t("pipelines.sharedFailure", { count: pipelines.filter((pipeline) => failureOf(pipeline) !== "").length, reason: sharedFailure })}
+        </Alert>
+      ) : null}
       {error ? (
         <Alert role="alert" tone="danger">
           {error}
