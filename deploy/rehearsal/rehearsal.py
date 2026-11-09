@@ -1480,13 +1480,15 @@ def import_portal_made(h: Http, auth: dict, export: Path, orgs: dict) -> list[di
 def bundle_settled(export: Path) -> str:
     """Why the bundle is still being written, or "" when it is not: manifest.json is written last,
     so a data file newer than it belongs to an export in progress. An exporter's own work
-    directories (`.parts`) are not read."""
+    directories (`.parts`) and the bundle's prose description (EXPORT.md, read by no import and
+    written beside the manifest) are not read."""
     manifest = export / "manifest.json"
     if not manifest.exists():
         return "no manifest.json"
     at = manifest.stat().st_mtime
     newer = sorted(str(p.relative_to(export)) for p in export.rglob("*")
-                   if p.is_file() and ".parts" not in p.parts and p.stat().st_mtime > at)
+                   if p.is_file() and ".parts" not in p.parts and p != export / "EXPORT.md"
+                   and p.stat().st_mtime > at)
     return f"written after manifest.json: {newer[:3]}" if newer else ""
 
 

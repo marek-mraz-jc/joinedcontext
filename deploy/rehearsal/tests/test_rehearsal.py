@@ -379,6 +379,19 @@ def test_a_restart_signs_jc_in_with_the_realms_secret_of_each_of_its_clients(tmp
 
 
 
+def test_a_bundles_description_written_after_its_manifest_does_not_stop_the_import(tmp_path):
+    # prod-final-20261109T1958Z: EXPORT.md 4 ms after manifest.json; a data file still stops it.
+    (tmp_path / "antares").mkdir()
+    (tmp_path / "antares" / "entities.jsonl").write_text("")
+    os.utime(tmp_path / "antares" / "entities.jsonl", (1, 1))
+    (tmp_path / "manifest.json").write_text("{}")
+    os.utime(tmp_path / "manifest.json", (2, 2))
+    (tmp_path / "EXPORT.md").write_text("# bundle")
+    assert rh.bundle_settled(tmp_path) == ""
+    (tmp_path / "antares" / "EXPORT.md").write_text("")
+    assert "antares/EXPORT.md" in rh.bundle_settled(tmp_path)
+
+
 def test_a_bundle_still_being_written_is_not_imported(tmp_path):
     (tmp_path / "antares").mkdir()
     data = tmp_path / "antares" / "entities.jsonl"
