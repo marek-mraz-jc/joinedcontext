@@ -240,6 +240,57 @@ async fn stored_odata_record_queries_with_the_record_audience() {
 }
 
 #[tokio::test]
+async fn stored_ngsild_and_odata_records_read_with_no_authorization_when_the_caller_has_no_token() {
+    let (url, seen) = mock(vec![
+        (
+            "/odata/v4/Datasets",
+            json!({ "value": [ { "name": "a" } ] }),
+        ),
+        ("/api/endpoint/publicslug/ngsi-ld/v1/entities", json!([])),
+    ])
+    .await;
+    // The deny exchanger refuses any call: a read that goes out proves none was made.
+    let deny = DriverDeps {
+        secrets: Arc::new(MapSecretResolver::new()),
+        token_exchanger: Arc::new(DenyTokenExchanger),
+        policy: loopback_policy(),
+    };
+    let odata = record(
+        "catalog",
+        "odata",
+        &format!("{url}/odata/v4"),
+        json!({ "audience": "dataroom" }),
+    );
+    let ngsild = record(
+        "air",
+        "ngsild-grafana-datasource",
+        &format!("{url}/api/endpoint/publicslug"),
+        json!({ "oauthPassThru": true }),
+    );
+    let empty = Subject::authenticated("e", vec![ORG], vec![]).with_bearer_token("");
+    for (rec, model) in [
+        (&odata, json!({ "entitySet": "Datasets" })),
+        (&ngsild, json!({ "queryType": "entity", "entityType": "T" })),
+    ] {
+        let driver = build_driver(rec, &deny).await.unwrap();
+        for subject in [Subject::anonymous(), empty.clone()] {
+            driver
+                .query(&ctx(subject), &q(model.clone()))
+                .await
+                .unwrap();
+        }
+    }
+    let heads = seen.lock().clone();
+    assert_eq!(heads.len(), 4, "{heads:?}");
+    for head in heads {
+        assert!(
+            !head.to_ascii_lowercase().contains("authorization"),
+            "{head}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn the_guard_of_a_built_driver_refuses_what_the_operator_did_not_open() {
     let (url, seen) = mock(vec![("/", json!({}))]).await;
     let rec = record("prom", "prometheus", &url, json!({}));

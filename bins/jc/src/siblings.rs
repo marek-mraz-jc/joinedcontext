@@ -446,6 +446,36 @@ mod tests {
         assert_eq!(siblings.listener, "[::1]:1".parse().unwrap());
     }
 
+    /// daiya reaches the gateway's Endpoints on the own listener at the address the Portal names
+    /// in the datasources it makes (`{JC_PORTAL_GATEWAY_URL}/api/endpoint/{slug}`), and nothing
+    /// when the gateway answers on a host of its own.
+    #[cfg(feature = "daiya")]
+    #[test]
+    fn daiya_reaches_the_gateway_endpoints_the_portal_names() {
+        use crate::modules::daiya::gateway_reach;
+        use daiya_server::OwnReach;
+        let (siblings, _, _d) = fixture("https");
+        let gateway = siblings.get(Module::Gateway).unwrap().internal.clone();
+        assert_eq!(
+            gateway_reach(&siblings),
+            Some(OwnReach::endpoints(&format!("{gateway}/api/endpoint/")).unwrap())
+        );
+        assert_eq!(
+            gateway_reach(&siblings).map(|r| r.addr()),
+            Some(siblings.listener)
+        );
+        let mut mounts = BTreeMap::new();
+        mounts.insert(
+            Module::Gateway,
+            MountOverride {
+                host: Some("api.city.example".into()),
+                path_prefix: None,
+            },
+        );
+        let siblings = Siblings::new(&plans(mounts, "https"), LISTEN.parse().unwrap());
+        assert_eq!(gateway_reach(&siblings), None);
+    }
+
     #[test]
     fn live_addresses_come_from_the_mounts_unless_named_and_nobody_serves_tiles_or_assistant() {
         let (siblings, _, _d) = fixture("https");

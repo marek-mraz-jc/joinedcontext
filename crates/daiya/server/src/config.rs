@@ -441,8 +441,7 @@ pub async fn build_state(cfg: &DaiyaConfig) -> CrResult<Built> {
 }
 
 /// Loads the provisioning directory `dir` into the organizations of `state` its `orgId`s name
-/// (1 the default organization, another number one the directory holds) and lets
-/// the datasources it wrote reach [`DaiyaState::own_addresses`] (`DaiyaState::trust_provisioned`).
+/// (1 the default organization, another number one the directory holds).
 pub async fn provision(
     state: &DaiyaState,
     dir: &Path,
@@ -457,7 +456,7 @@ pub async fn provision(
         .filter(|(num, _)| **num != 1)
         .map(|(num, (_, org))| (*num, *org))
         .collect();
-    let report = load_provisioning_dir(
+    load_provisioning_dir(
         state.store.as_ref(),
         ProvisioningTarget {
             installation_id: state.installation_id,
@@ -469,9 +468,7 @@ pub async fn provision(
         &state.limits,
         vars,
     )
-    .await?;
-    state.trust_provisioned(&report.datasources);
-    Ok(report)
+    .await
 }
 
 /// The request context of the CLI subcommands: the operator, admin of the organization.
