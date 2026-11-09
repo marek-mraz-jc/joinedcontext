@@ -57,13 +57,12 @@ macro_rules! gate {
                         },
                     )
                     .await
-                    .map(std::sync::Arc::new)
                 }
             };
             // A state served through an endpoint view adds the view's
             // narrowing to the engine's (ADR-0023, T-3494).
             #[cfg(feature = "views")]
-            let answer = $crate::views::with_view($st.view.as_deref(), $clause, answer);
+            let answer = $crate::views::with_view($st.view().as_deref(), $clause, answer);
             answer
         }
     };

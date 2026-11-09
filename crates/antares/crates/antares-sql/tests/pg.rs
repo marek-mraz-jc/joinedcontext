@@ -130,6 +130,84 @@ async fn tenant_upsert_is_idempotent() {
     b.expect("second");
 }
 
+/// T-6606 (R2-005): a write claims its tenant without a row lock, so the
+/// `tenants` tuple keeps xmax 0: no write of the page, no multixact when
+/// several writers claim at once. A first claim inserts the row.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_claim_leaves_the_tenant_row_untouched() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let t = TenantId::new(&format!("claim{run}")).expect("tenant");
+    for _ in 0..2 {
+        let claims = (0..4).map(|_| {
+            let pool = pool.clone();
+            let t = t.clone();
+            async move {
+                let mut tx = pool.begin().await?;
+                pg::set_tenant(&mut tx, &t).await?;
+                pg::claim_tenant(&mut tx, &t).await?;
+                tx.commit().await
+            }
+        });
+        for claimed in futures_util::future::join_all(claims).await {
+            claimed.expect("claim");
+        }
+    }
+    let xmax: String = sqlx::query_scalar("SELECT xmax::text FROM tenants WHERE tenant_id = $1")
+        .bind(t.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the claim inserted the tenant row");
+    assert_eq!(xmax, "0", "a claim locked or rewrote the tenant row");
+}
+
+/// T-6606: a purge waits for a write that claimed the tenant, and a write
+/// that claims after the purge committed puts the tenant row back.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_purge_waits_for_the_write_that_claimed_its_tenant() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let t = TenantId::new(&format!("fence{run}")).expect("tenant");
+    let mut write = pool.begin().await.expect("begin");
+    pg::set_tenant(&mut write, &t).await.expect("scope");
+    pg::claim_tenant(&mut write, &t).await.expect("claim");
+    // the claim is not committed yet: the purge cannot see the row, but it
+    // must still wait for the fence
+    let purge = tokio::spawn({
+        let t = t.clone();
+        async move { store.purge_tenant(&t).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(!purge.is_finished(), "the purge stepped over an open write");
+    write.commit().await.expect("commit the write");
+    assert!(
+        purge.await.expect("joined").expect("purge"),
+        "the purge found the committed tenant"
+    );
+    let mut write = pool.begin().await.expect("begin");
+    pg::set_tenant(&mut write, &t).await.expect("scope");
+    pg::claim_tenant(&mut write, &t).await.expect("claim again");
+    write.commit().await.expect("commit");
+    let back: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM tenants WHERE tenant_id = $1)")
+            .bind(t.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("probe");
+    assert!(back, "a write after the purge left no tenant row");
+}
+
 /// T-5303: `entity_values` (0024) follows every write of an Entity: a
 /// create keys its values, a read-modify-write and a replace re-key them, a
 /// delete drops them, and a q= read finds the Entity by the new value only.
@@ -189,6 +267,72 @@ async fn entity_values_follow_create_update_replace_and_delete() {
     assert_eq!((finds("speed==2").await, finds("speed>=3").await), (0, 1));
     assert!(store.delete(&t, id).await.expect("delete").is_some());
     assert!(keyed().await.is_empty(), "a deleted Entity leaves no row");
+}
+
+/// T-6610: an Entity's scopes are `entity_values` rows too (0032), attr
+/// `scope`, normalised (`A//B/` is `/A/B`), kept on every write, and a
+/// `scopeQ` read finds the Entity through their probe.
+#[tokio::test]
+async fn entity_values_key_the_scopes_and_scope_q_finds_them() {
+    use antares_sql::store::pg::entity::{EntityFilter, PgEntityStore};
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let t = TenantId::new("pg_entity_scopes").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let store = PgEntityStore::new(pool.clone());
+    let id = "urn:ngsi-ld:V:scoped";
+    let _ = store.delete(&t, id).await.expect("clear");
+    let doc = |scope: serde_json::Value| serde_json::json!({"id": id, "type": "V", "scope": scope});
+    assert!(store
+        .create(&t, id, &doc(serde_json::json!(["A//B/", "/C"])))
+        .await
+        .expect("create"));
+    let scopes = || async {
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT txt FROM entity_values WHERE tenant_id = $1 AND id = $2 AND attr = 'scope' ORDER BY txt",
+        )
+        .bind(t.as_str())
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .expect("rows");
+        rows
+    };
+    let finds = |sq: &'static str| {
+        let (store, t) = (&store, &t);
+        async move {
+            let expand = |term: &str| term.to_owned();
+            let f = EntityFilter {
+                scope_q: Some(sq),
+                expand: &expand,
+                ..Default::default()
+            };
+            store.query(t, &f).await.expect("query").rows.len()
+        }
+    };
+    assert_eq!(scopes().await, ["/A/B", "/C"]);
+    for (sq, n) in [
+        ("/A/B", 1),
+        ("/A/#", 1),
+        ("/A/+", 1),
+        ("/C;/A/B", 1),
+        ("/D,/C/#", 1),
+        ("/A", 0),
+        ("/B/#", 0),
+    ] {
+        assert_eq!(finds(sq).await, n, "{sq}");
+    }
+    store
+        .batch_upsert_replace(&t, &[(id.to_owned(), doc(serde_json::json!("/D")))])
+        .await
+        .expect("replace");
+    assert_eq!(scopes().await, ["/D"]);
+    assert_eq!((finds("/A/#").await, finds("/D").await), (0, 1));
+    assert!(store.delete(&t, id).await.expect("delete").is_some());
+    assert!(
+        scopes().await.is_empty(),
+        "a deleted Entity leaves no scope row"
+    );
 }
 
 /// T-5772: an update rewrites only the `entity_values` rows that changed
@@ -1056,8 +1200,8 @@ async fn a_repeat_write_does_not_rewrite_the_tenant_row() {
 /// The invariant the row lock exists for: a purge must wait for a write that
 /// is already in flight in the same Tenant, so it cannot step over it and
 /// leave rows behind for a Tenant the inventory no longer names. The write
-/// holds a shared lock, the purge asks for `FOR UPDATE`, and the two
-/// conflict — proven here by giving the purge a deadline it must miss.
+/// holds the tenant fence shared, the purge asks for it exclusively
+/// (`PURGE_FENCE_SQL`), and the two conflict — proven here by giving the purge a deadline it must miss.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_purge_waits_for_an_in_flight_write_in_the_same_tenant() {
     let url = require_db!();
@@ -1085,11 +1229,10 @@ async fn a_purge_waits_for_an_in_flight_write_in_the_same_tenant() {
         .await
         .expect("lock_timeout");
     pg::set_tenant(&mut purge, &t).await.expect("set_tenant");
-    let blocked =
-        sqlx::query_scalar::<_, i32>("SELECT 1 FROM tenants WHERE tenant_id = $1 FOR UPDATE")
-            .bind(t.as_str())
-            .fetch_optional(&mut *purge)
-            .await;
+    let blocked = sqlx::query(pg::PURGE_FENCE_SQL)
+        .bind(t.as_str())
+        .execute(&mut *purge)
+        .await;
     assert!(
         blocked.is_err(),
         "the purge took the tenant row while a write held it, so it can step \
@@ -1101,11 +1244,16 @@ async fn a_purge_waits_for_an_in_flight_write_in_the_same_tenant() {
     writing.commit().await.expect("commit");
     let mut after = pool.begin().await.expect("begin");
     pg::set_tenant(&mut after, &t).await.expect("set_tenant");
+    sqlx::query(pg::PURGE_FENCE_SQL)
+        .bind(t.as_str())
+        .execute(&mut *after)
+        .await
+        .expect("after the write commits the purge proceeds");
     let got = sqlx::query_scalar::<_, i32>("SELECT 1 FROM tenants WHERE tenant_id = $1 FOR UPDATE")
         .bind(t.as_str())
         .fetch_optional(&mut *after)
         .await
-        .expect("after the write commits the purge proceeds");
+        .expect("the purge locks the row");
     assert_eq!(got, Some(1));
     after.commit().await.expect("commit");
 

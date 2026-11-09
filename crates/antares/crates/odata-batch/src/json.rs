@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! JSON batches (JSON Format 4.01 section 19.1).
 
 use serde_json::{Map, Value};

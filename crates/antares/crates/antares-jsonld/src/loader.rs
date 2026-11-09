@@ -4,7 +4,8 @@
 
 use crate::context::Context;
 use crate::pinned::{
-    core_context, merge_context_value, pinned, CORE_CONTEXT, MAX_CONTEXT_BYTES, MAX_CONTEXT_URLS,
+    core_context, is_pinned, merge_context_value, pinned, CORE_CONTEXT, MAX_CONTEXT_BYTES,
+    MAX_CONTEXT_URLS,
 };
 use antares_model::{NgsiError, TenantId};
 use serde_json::Value;
@@ -1349,7 +1350,7 @@ impl Loader {
 
     /// Is `url` one of the built-in (pinned) core context URLs?
     pub fn is_pinned_core(url: &str) -> bool {
-        pinned(url).is_some()
+        is_pinned(url)
     }
 
     /// Fetch a remote context document, returning its `@context` member.

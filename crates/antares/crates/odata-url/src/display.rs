@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The canonical form of an [`ODataUri`]: what [`parse`](crate::parse) reads back to the same
 //! tree. Spaces are written `%20`, system options in a fixed order with their `$`, and
 //! parentheses only where the precedence needs them.
@@ -395,6 +395,10 @@ impl Display for Literal {
                 f.write_char('\'')
             }
             Literal::Geography(geography) => write!(f, "{geography}"),
+            Literal::Geometry(geometry) => {
+                let text = geometry.to_string();
+                write!(f, "geometry{}", &text["geography".len()..])
+            }
             Literal::Duration(text) => write!(f, "duration'{}'", text.replace('+', "%2B")),
             Literal::Binary(text) => write!(f, "binary'{text}'"),
         }

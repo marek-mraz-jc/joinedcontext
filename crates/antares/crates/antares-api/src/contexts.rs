@@ -352,7 +352,7 @@ async fn find_entry(st: &AppState, tenant: &TenantId, id: &str) -> ApiResult<Opt
 /// term for an Attribute that caller may not see (ADR-0023 rule 5, T-4009).
 fn shows_stored(st: &AppState, narrowing: &crate::policy::Filter) -> bool {
     #[cfg(feature = "views")]
-    if st.view.as_ref().is_some_and(|v| !v.shows_every_name()) {
+    if st.view().as_ref().is_some_and(|v| !v.shows_every_name()) {
         return false;
     }
     #[cfg(not(feature = "views"))]

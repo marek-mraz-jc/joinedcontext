@@ -1215,3 +1215,97 @@ fn a_distributed_subscription_forwards_its_copy_under_the_split_fleet() {
         },
     );
 }
+
+/// The matcher pod takes every change its consumer already holds into one
+/// pass (T-6608), as the local bus does: a burst of writes reaches the
+/// subscriber whole, and a subscription's matches of one pass share a
+/// notification. The run prints how long the burst took to arrive.
+#[test]
+fn a_write_burst_reaches_the_subscriber_whole_through_the_matcher_pod() {
+    let _serial = serial();
+    let (Ok(db), Ok(nats)) = (
+        std::env::var("ANTARES_TEST_DATABASE_URL"),
+        std::env::var("ANTARES_TEST_NATS_URL"),
+    ) else {
+        eprintln!("SKIP: ANTARES_TEST_DATABASE_URL / ANTARES_TEST_NATS_URL not set");
+        return;
+    };
+    let run = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_millis();
+    let tenant = format!("burst{run}");
+    let api_port = free_port();
+    let worker_port = free_port();
+    let _api = start(api_port, "api", &db, &nats);
+    let _worker = start(worker_port, "matcher,notifier,temporal", &db, &nats);
+    wait_healthy(api_port);
+    wait_healthy(worker_port);
+    let (rx_port, seen) = receiver();
+    let sub = format!(
+        r#"{{"id":"urn:ngsi-ld:Subscription:burst:{run}","type":"Subscription",
+            "entities":[{{"type":"Burst"}}],
+            "notification":{{"endpoint":{{"uri":"http://127.0.0.1:{rx_port}/notify"}}}}}}"#
+    );
+    let resp = http(
+        api_port,
+        "POST",
+        "/ngsi-ld/v1/subscriptions",
+        Some(&tenant),
+        Some(&sub),
+    );
+    assert!(resp.starts_with("HTTP/1.1 201"), "sub create: {resp}");
+    // the subscription reaches the matcher pod's mirror through the KV
+    std::thread::sleep(stretch(2));
+
+    const BATCHES: usize = 8;
+    const PER_BATCH: usize = 100;
+    let started = Instant::now();
+    for b in 0..BATCHES {
+        let body: Vec<String> = (0..PER_BATCH)
+            .map(|i| {
+                format!(
+                    r#"{{"id":"urn:ngsi-ld:Burst:{run}:{b}:{i}","type":"Burst","n":{{"type":"Property","value":{i}}}}}"#
+                )
+            })
+            .collect();
+        let resp = http(
+            api_port,
+            "POST",
+            "/ngsi-ld/v1/entityOperations/upsert",
+            Some(&tenant),
+            Some(&format!("[{}]", body.join(","))),
+        );
+        assert!(resp.starts_with("HTTP/1.1 20"), "batch {b}: {resp}");
+    }
+    let written = started.elapsed();
+    let arrived = || {
+        let seen = seen.lock().expect("seen");
+        let mut ids = std::collections::HashSet::new();
+        for raw in seen.iter() {
+            let body = raw.split("\r\n\r\n").nth(1).unwrap_or("");
+            let Ok(n) = serde_json::from_str::<serde_json::Value>(body) else {
+                continue;
+            };
+            for e in n["data"].as_array().into_iter().flatten() {
+                if let Some(id) = e["id"].as_str() {
+                    ids.insert(id.to_owned());
+                }
+            }
+        }
+        (ids.len(), seen.len())
+    };
+    wait_for("every entity of the burst", 120, || {
+        arrived().0 == BATCHES * PER_BATCH
+    });
+    let (entities, posts) = arrived();
+    eprintln!(
+        "{entities} entities written in {written:?}, all notified after {:?} in {posts} notifications",
+        started.elapsed()
+    );
+    // one message at a time made one notification per entity
+    assert!(
+        posts < entities,
+        "{posts} notifications for {entities} entities: the matcher pod matched one change per pass"
+    );
+}

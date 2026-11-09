@@ -1056,10 +1056,11 @@ impl Streamed {
 
 /// Each Feature after a comma.
 fn listed(features: &[Value]) -> String {
+    use std::fmt::Write as _;
     let mut out = String::new();
     for f in features {
-        out.push(',');
-        out.push_str(&f.to_string());
+        // Written into `out`, no text per Feature (T-6612, R3-016).
+        let _ = write!(out, ",{f}");
     }
     out
 }

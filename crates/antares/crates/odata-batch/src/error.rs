@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! Why a batch was refused: fixed text per kind and a byte offset at most, never a value from
 //! the request.
 

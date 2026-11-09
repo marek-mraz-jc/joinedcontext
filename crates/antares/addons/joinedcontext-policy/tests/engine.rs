@@ -788,6 +788,121 @@ async fn coordinates_outside_the_granted_area_are_refused() -> Res {
     )
     .await?;
     assert_eq!(code, StatusCode::FORBIDDEN);
+    // F-08: a partial update of the location itself is judged on the new
+    // location too, not on the bare instance the request carries
+    let zone = with(
+        with(
+            writer(json!([{"entities": [{"type": "Car"}]}])),
+            "geoQ",
+            json!(AREA),
+        ),
+        "operations",
+        json!(["5.6.1", "5.6.4"]),
+    );
+    let (st, _) = broker(doc(&[zone])).await?;
+    seed(&st, &[at(23, 0.5)]).await?;
+    let to = |x: f64| json!({"value": {"type": "Point", "coordinates": [x, 0.5]}});
+    let location = "/ngsi-ld/v1/entities/urn:ngsi-ld:Car:23/attrs/location";
+    let (code, _) = send(&st, "PATCH", location, &ANA, Some(&to(5.0))).await?;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+    let (code, body) = send(&st, "PATCH", location, &ANA, Some(&to(0.7))).await?;
+    assert_eq!(code, StatusCode::NO_CONTENT, "{body}");
+    Ok(())
+}
+
+/// F-08: a grant listing Attributes admits a replace or a delete only when it lists every
+/// Attribute the stored Entity holds; a replace naming one granted Attribute would wipe the rest.
+#[tokio::test]
+async fn a_replace_or_delete_keeps_unlisted_stored_attributes_refused() -> Res {
+    let speed_only = grant("w", "group", "city", &["5.6.6", "5.6.18"], cars(&["speed"]));
+    let (st, _) = broker(doc(&[speed_only])).await?;
+    let lean = json!({"id": "urn:ngsi-ld:Car:7", "type": "Car", "speed": prop(json!(1))});
+    seed(&st, &[car(1, 10, "/a"), lean]).await?;
+    let replace = |n: u32| json!({"id": format!("urn:ngsi-ld:Car:{n}"), "type": "Car", "speed": prop(json!(5))});
+    let (code, _) = send(
+        &st,
+        "PUT",
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:Car:1",
+        &ANA,
+        Some(&replace(1)),
+    )
+    .await?;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+    let (code, _) = send(
+        &st,
+        "DELETE",
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:Car:1",
+        &ANA,
+        None,
+    )
+    .await?;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+    // an Entity holding only the granted Attribute is replaced and deleted
+    let (code, body) = send(
+        &st,
+        "PUT",
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:Car:7",
+        &ANA,
+        Some(&replace(7)),
+    )
+    .await?;
+    assert_eq!(code, StatusCode::NO_CONTENT, "{body}");
+    let (code, body) = send(
+        &st,
+        "DELETE",
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:Car:7",
+        &ANA,
+        None,
+    )
+    .await?;
+    assert_eq!(code, StatusCode::NO_CONTENT, "{body}");
+    Ok(())
+}
+
+/// F-08: a write under a condition must leave the Entity inside it: a PATCH out of the `q`
+/// slice and a replace that drops the stored scope out of `scopeQ` are refused.
+#[tokio::test]
+async fn a_write_may_not_move_the_entity_out_of_its_condition() -> Res {
+    let slow = with(
+        with(
+            writer(json!([{"entities": [{"type": "Car"}]}])),
+            "q",
+            json!("speed<50"),
+        ),
+        "operations",
+        json!(["5.6.2"]),
+    );
+    let here = with(
+        with(
+            with(
+                writer(json!([{"entities": [{"type": "Car"}]}])),
+                "scopeQ",
+                json!("/geo/SK/BB"),
+            ),
+            "id",
+            json!("s"),
+        ),
+        "operations",
+        json!(["5.6.18"]),
+    );
+    let (st, _) = broker(doc(&[slow, here])).await?;
+    fleet(&st).await?;
+    let one = "/ngsi-ld/v1/entities/urn:ngsi-ld:Car:1";
+    let fast = json!({"speed": prop(json!(90))});
+    let (code, _) = send(&st, "PATCH", &format!("{one}/attrs"), &ANA, Some(&fast)).await?;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+    let (code, body) = send(&st, "GET", one, &ADMIN, None).await?;
+    assert_eq!(
+        body.pointer("/speed/value"),
+        Some(&json!(10)),
+        "{code} {body}"
+    );
+    let unscoped = json!({"id": "urn:ngsi-ld:Car:1", "type": "Car", "speed": prop(json!(10))});
+    let (code, _) = send(&st, "PUT", one, &ANA, Some(&unscoped)).await?;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+    let scoped = with(unscoped, "scope", json!("/geo/SK/BB"));
+    let (code, body) = send(&st, "PUT", one, &ANA, Some(&scoped)).await?;
+    assert_eq!(code, StatusCode::NO_CONTENT, "{body}");
     Ok(())
 }
 
@@ -1872,6 +1987,36 @@ async fn a_query_on_a_stripped_member_answers_400_naming_it() -> Res {
         "/ngsi-ld/v1/entities?type=Air&q=pm10.observedAt%3E2026-01-01T00:00:00Z",
         &ANONYMOUS,
         None,
+    )
+    .await?;
+    assert_eq!(code, StatusCode::OK, "{list}");
+    assert_eq!(ids(&list), ["urn:ngsi-ld:Air:1"]);
+    Ok(())
+}
+
+/// F-10: a POST query's body `q` is judged as the URL's is, so the hidden
+/// value cannot be probed through `entityOperations/query`.
+#[tokio::test]
+async fn a_post_query_on_a_stripped_member_answers_400_naming_it() -> Res {
+    let st = air().await?;
+    let query = |member: &str, value: &str| json!({"type": "Query", "entities": [{"type": "Air"}], member: value});
+    let uri = "/ngsi-ld/v1/entityOperations/query";
+    let (code, problem) = send(
+        &st,
+        "POST",
+        uri,
+        &ANONYMOUS,
+        Some(&query("q", "pm10.unitCode==\"GQ\"")),
+    )
+    .await?;
+    assert_eq!(code, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(problem.to_string().contains("pm10.unitCode"), "{problem}");
+    let (code, list) = send(
+        &st,
+        "POST",
+        uri,
+        &ANONYMOUS,
+        Some(&query("q", "pm10.observedAt>2026-01-01T00:00:00Z")),
     )
     .await?;
     assert_eq!(code, StatusCode::OK, "{list}");

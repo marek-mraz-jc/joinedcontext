@@ -315,6 +315,25 @@ impl HeldAnswer {
     pub fn into_bytes(self) -> Bytes {
         self.bytes
     }
+    /// The bytes and the pool share apart: a reader that parses the bytes
+    /// keeps the share for as long as the parsed value lives, which is
+    /// larger than the bytes it came from (T-6666).
+    #[must_use]
+    pub fn into_parts(self) -> (Bytes, AnswerCharge) {
+        (
+            self.bytes,
+            AnswerCharge {
+                _charge: self._charge,
+            },
+        )
+    }
+}
+
+/// A share of the [`AnswerPool`] held without its bytes, returned on drop:
+/// what a parsed answer keeps charged while it is in use.
+#[derive(Debug)]
+pub struct AnswerCharge {
+    _charge: Charge,
 }
 
 impl std::ops::Deref for HeldAnswer {
@@ -1062,6 +1081,26 @@ mod tests {
 
     fn body_of(n: usize) -> Body {
         Body::from(vec![b'x'; n])
+    }
+
+    /// T-6666: a reader that parses an answer keeps its share after the
+    /// bytes go, until the parsed value it holds the charge with drops.
+    #[tokio::test]
+    async fn a_parsed_answer_keeps_its_share_until_its_charge_drops() {
+        let pool = AnswerPool::with_wait(1000, std::time::Duration::ZERO);
+        let held = read_answer(&pool, body_of(600), 800, "test")
+            .await
+            .expect("fits");
+        let (bytes, charge) = held.into_parts();
+        assert_eq!(bytes.len(), 600);
+        drop(bytes);
+        assert_eq!(pool.held(), 600, "the share outlives the bytes");
+        assert_eq!(
+            read_answer(&pool, body_of(600), 800, "test").await.err(),
+            Some(AnswerRefusal::OverBudget)
+        );
+        drop(charge);
+        assert_eq!(pool.held(), 0);
     }
 
     /// N concurrent buffered answers share one pool: past it a read is

@@ -313,6 +313,13 @@ pub(super) fn routes(state: AppState) -> Router {
         }
     }
     if let Some(shared) = view_root {
+        // F-01: a view surface hands the request's subject to an in-process
+        // call, which believes it; so the subject is vouched here, at the
+        // door, as the API nest vouches its own (T-5032, F-ANT2-001).
+        let shared = shared.layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::admin_auth::subject_or_admin,
+        ));
         surfaces = surfaces.nest(surface::VIEW_ROOT, shared);
     }
     let surfaces = surfaces

@@ -216,7 +216,7 @@ impl ExamplePolicy {
             // rather than drop it, and this rule is about what may be seen,
             // not about what may be written. The type denial above has
             // already had its say on the write.
-            Some(f) if FILTERABLE.contains(&op.clause) => Decision::Filter(f),
+            Some(f) if FILTERABLE.contains(&op.clause) => Decision::Filter(std::sync::Arc::new(f)),
             _ => Decision::Allow,
         }
     }

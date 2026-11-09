@@ -1876,6 +1876,33 @@ mod delivery_policy_tests {
         );
     }
 
+    /// F-18: a retry honours the breaker: once the destination trips, no retry dials it, and
+    /// the exhausted policy still parks the letter for a replay.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_retry_does_not_dial_a_tripped_destination() {
+        let (st, t) = state(policy(3, 300));
+        let (uri, hits) = flaky_endpoint(usize::MAX).await;
+        let sub = subscribe(&st, &t, SUB_ID, &uri).await;
+        send(&st, &t, &sub).await;
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "the first attempt was made");
+        for _ in 0..crate::egress::TRIP_AFTER {
+            st.egress.record_failure(t.as_str(), &uri);
+        }
+        wait_until(
+            || async { !letters(&st, &t).await.is_empty() },
+            "dead letter",
+        )
+        .await;
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "no retry dialled the tripped destination"
+        );
+        let l = letters(&st, &t).await;
+        assert_eq!(l.len(), 1, "{l:?}");
+        assert_eq!(l[0]["attempts"], json!(3));
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn an_exhausted_policy_leaves_exactly_one_dead_letter() {
         let (st, t) = state(policy(2, 50));

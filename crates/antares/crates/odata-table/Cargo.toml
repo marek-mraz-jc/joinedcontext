@@ -1,0 +1,57 @@
+[package]
+name = "odata-table"
+description = "OData 4.01 entity sets over any row source: one Table interface, one query plan, and the in-memory, PostgreSQL and Git sources behind it (T-6642)."
+version.workspace = true
+edition.workspace = true
+publish = false
+license = "MIT"
+rust-version.workspace = true
+
+# ADR-0024 decision 1 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "protocol"
+
+[dependencies]
+odata-csdl = { path = "../odata-csdl" }
+odata-url = { path = "../odata-url", features = ["edm"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+# `postgres`: the PgTable source. Same sqlx line as antares-sql, no default features.
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "json"], optional = true }
+# `git`: the GitTable source reads YAML files; serde_norway is the YAML crate the platform and
+# Portal already parse their manifests with (serde_yaml is unmaintained).
+serde_norway = { version = "0.9", default-features = false, optional = true }
+
+[features]
+default = []
+postgres = ["dep:sqlx"]
+git = ["dep:serde_norway"]
+
+[[test]]
+name = "shared"
+required-features = ["git", "postgres"]
+
+[dev-dependencies]
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "json", "runtime-tokio"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt"] }
+
+# surfaces-threat-model 10.1: the full table, not the workspace's.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"

@@ -19,8 +19,21 @@ pub(crate) fn digest(tool: &str, args: &crate::schema::Args) -> u64 {
     // same digest.
     let mut h = std::collections::hash_map::DefaultHasher::new();
     tool.hash(&mut h);
-    format!("{args:?}").hash(&mut h);
+    // The Debug text streamed into the hasher, then the terminator `str::hash` writes: the
+    // digest `format!("{args:?}").hash(..)` gave, without building the text (T-6612, R3-026).
+    let _ = std::fmt::Write::write_fmt(&mut Sink(&mut h), format_args!("{args:?}"));
+    h.write_u8(0xff);
     h.finish()
+}
+
+/// A [`std::fmt::Write`] that feeds a hasher.
+struct Sink<'a, H: Hasher>(&'a mut H);
+
+impl<H: Hasher> std::fmt::Write for Sink<'_, H> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.0.write(s.as_bytes());
+        Ok(())
+    }
 }
 
 /// The cursor of the row at `offset` of `tool` under `digest`.
@@ -69,6 +82,20 @@ pub(crate) fn decode(cursor: &str, tool: &str, digest: u64) -> Result<u64, &'sta
 mod tests {
     use super::*;
     use crate::schema::{Args, Checked};
+
+    /// T-6612, R3-026: the streamed digest equals the one the Debug text gave, so a cursor a
+    /// pod of the previous build issued still reads on this one.
+    #[test]
+    fn the_digest_is_the_one_the_debug_text_gave() {
+        let mut args = Args::new();
+        args.insert("type", Checked::Many(vec!["Car".into(), "Stop".into()]));
+        args.insert("limit", Checked::Int(20));
+        args.insert("q", Checked::Json(serde_json::json!({"a": [1, "b"]})));
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        "query_entities".hash(&mut h);
+        format!("{args:?}").hash(&mut h);
+        assert_eq!(digest("query_entities", &args), h.finish());
+    }
 
     #[test]
     fn a_cursor_names_its_offset_for_its_tool_and_arguments_only() {

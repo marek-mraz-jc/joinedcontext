@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! OData 4.01 JSON format (ADR-0024 decision 1 and 5, row `odata-json`).
 //!
 //! - Writers for an entity, a collection, entity references, the service document and the

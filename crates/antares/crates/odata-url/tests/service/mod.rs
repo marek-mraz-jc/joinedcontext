@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The model the property test and the bench parse against: buildings with an address, rooms,
 //! tags, sensors and an owner.
 

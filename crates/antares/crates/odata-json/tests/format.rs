@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! Format parameters, context URLs, version negotiation and `Prefer` (JSON Format 4.01 sections
 //! 3 and 10; Protocol 4.01 sections 8.2.6 to 8.2.8).
 

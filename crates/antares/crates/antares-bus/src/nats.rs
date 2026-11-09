@@ -207,6 +207,46 @@ impl NatsBus {
     /// the outbox seq so a drain retry after a crash is absorbed by the
     /// stream's duplicate window, not delivered twice.
     pub async fn publish(&self, ev: &ChangeEvent) -> Result<(), BusError> {
+        // double-ack: await the JetStream publish ack, not just the TCP write
+        self.send(ev).await?.await.map_err(err)?;
+        Ok(())
+    }
+
+    /// Publish a page of change events and say how many of them, from the
+    /// front, the stream acknowledged. Every event is written before the
+    /// first ack is awaited, so a page costs one ack round trip instead of
+    /// one per event (T-6608: one awaited ack per event bounded the outbox
+    /// drain at 1 / ack RTT). The writes leave on one connection in page
+    /// order, so the stream keeps the outbox order. A failed send stops the
+    /// page there; a failed ack counts only the events before it, and the
+    /// caller republishes the rest, which `Nats-Msg-Id` dedup absorbs for
+    /// any of them the stream did store.
+    pub async fn publish_all(&self, events: &[ChangeEvent]) -> (usize, Option<BusError>) {
+        let mut acks = Vec::with_capacity(events.len());
+        let mut failed = None;
+        for ev in events {
+            match self.send(ev).await {
+                Ok(ack) => acks.push(ack),
+                Err(e) => {
+                    failed = Some(e);
+                    break;
+                }
+            }
+        }
+        let sent = acks.len();
+        for (done, ack) in acks.into_iter().enumerate() {
+            if let Err(e) = ack.await {
+                return (done, Some(err(e)));
+            }
+        }
+        (sent, failed)
+    }
+
+    /// Write one change event and hand back its pending JetStream ack.
+    async fn send(
+        &self,
+        ev: &ChangeEvent,
+    ) -> Result<async_nats::jetstream::context::PublishAckFuture, BusError> {
         let ev = ev.clone().claim_check(crate::CLAIM_CHECK_BYTES);
         let subject = subjects::change_subject(
             &ev.tenant,
@@ -219,14 +259,10 @@ impl NatsBus {
             format!("{}:{}", ev.tenant.as_str(), ev.seq).as_str(),
         );
         let bytes = serde_json::to_vec(&ev).map_err(err)?;
-        // double-ack: await the JetStream publish ack, not just the TCP write
         self.js
             .publish_with_headers(subject, headers, bytes.into())
             .await
-            .map_err(err)?
-            .await
-            .map_err(err)?;
-        Ok(())
+            .map_err(err)
     }
 
     /// Publish a registration CUD delta: the full registration document

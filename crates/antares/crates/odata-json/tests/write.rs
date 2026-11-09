@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The writers, pinned byte for byte in `tests/golden/` per metadata level and version
 //! (`ODATA_JSON_BLESS=1` rewrites the files; a change is a reviewed diff), and an I/O error
 //! wherever the sink fails.

@@ -73,10 +73,10 @@ impl PolicyEngine for Narrowing {
     fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
         let named = op.types == [CAR] && op.attrs == [SPEED];
         let d = match op.clause {
-            "5.7.7" if named => Decision::Filter(Filter {
+            "5.7.7" if named => Decision::Filter(std::sync::Arc::new(Filter {
                 omit: vec![COLOUR.into()],
                 ..Filter::default()
-            }),
+            })),
             "5.7.10" => Decision::Deny("no".into()),
             _ => Decision::Allow,
         };

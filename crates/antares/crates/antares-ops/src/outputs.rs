@@ -312,6 +312,23 @@ impl Output {
 /// nobody.
 #[must_use]
 pub fn listed(listed: Option<&Value>, format: &str) -> Vec<(String, Result<Output, String>)> {
+    judged(listed, format, None)
+}
+
+/// The output `name` of `listed`, judged as [`listed`] judges it, without
+/// reading the other elements of the list: a request names one output, and
+/// reading all [`MAX_OUTPUTS`] of them was the cost of every such request
+/// (R3-025).
+#[must_use]
+pub fn one(listed: Option<&Value>, format: &str, name: &str) -> Option<Result<Output, String>> {
+    judged(listed, format, Some(name)).pop().map(|(_, o)| o)
+}
+
+fn judged(
+    listed: Option<&Value>,
+    format: &str,
+    only: Option<&str>,
+) -> Vec<(String, Result<Output, String>)> {
     let all: Vec<&Value> = listed
         .and_then(Value::as_array)
         .into_iter()
@@ -329,7 +346,11 @@ pub fn listed(listed: Option<&Value>, format: &str) -> Vec<(String, Result<Outpu
     let whole = listed_names <= MAX_OUTPUTS && names.len() == listed_names;
     all.into_iter()
         .filter_map(|o| {
-            let name = o.get("name")?.as_str()?.to_owned();
+            let name = o.get("name")?.as_str()?;
+            if only.is_some_and(|n| n != name) {
+                return None;
+            }
+            let name = name.to_owned();
             let output = serde_json::from_value::<Output>(o.clone())
                 .map_err(|e| format!("{name}: {e}"))
                 .and_then(|o| o.check(format))
@@ -418,6 +439,29 @@ mod tests {
         for bad in ["", "2a", "a-b", "a.b", "é", &"n".repeat(129)] {
             assert!(!is_name(bad), "{bad}");
         }
+    }
+
+    /// R3-025: `one` judges the named output as `listed` does, the rest of
+    /// the list read only for its names.
+    #[test]
+    fn one_output_is_judged_as_the_list_judges_it() {
+        let car = json!({"name": "a", "sources": [{"type": "Car"}]});
+        let list = json!([car, {"name": "b", "sources": 7}, {"sources": []}]);
+        let whole = listed(Some(&list), "sta");
+        for name in ["a", "b"] {
+            let want = whole
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, o)| o.is_ok());
+            assert_eq!(
+                one(Some(&list), "sta", name).map(|o| o.is_ok()),
+                want,
+                "{name}"
+            );
+        }
+        assert!(one(Some(&list), "sta", "c").is_none());
+        let twice = json!([car, car]);
+        assert!(one(Some(&twice), "sta", "a").is_some_and(|o| o.is_err()));
     }
 
     fn checked(output: &Value, format: &str) -> Result<Output, String> {

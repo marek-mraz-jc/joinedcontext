@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! Round trips: a batch written from random members reads back to exactly those members, in
 //! both formats; arbitrary bytes never panic either parser.
 

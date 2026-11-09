@@ -420,7 +420,8 @@ fn valued<'q>(q: &'q QNode, expand: &dyn Fn(&str) -> String) -> Option<(String, 
             let [term] = path.path.as_slice() else {
                 return None;
             };
-            Some((expand(term), value_key(*op, value)?)).filter(|(iri, _)| !iri.contains('\0'))
+            Some((expand(term), value_key(*op, value)?))
+                .filter(|(iri, _)| !iri.contains('\0') && !OWN_MEMBERS.contains(&iri.as_str()))
         }
         QNode::And(all) => all.iter().find_map(|n| valued(n, expand)),
         _ => None,
@@ -490,6 +491,37 @@ fn attrs_probe(tenant: &TenantId, attrs: &[String]) -> Option<Probe> {
     }
     let names = Bind::TextArr(super::storable(attrs));
     Some(Probe::new(tenant, names, "attr = ANY($2)", vec![]))
+}
+
+/// A compiled `scopeQ` as a probe of the scope rows (0032, attr `scope`):
+/// per OR group, the normalised scope one of its patterns' matches equals or
+/// starts with, or 'NaN', the mark of a scope past `MAX_KEYED_TEXT`. Call it
+/// only for a `scopeQ` that compiled: the regex stays and decides.
+fn scope_probe(tenant: &TenantId, scope_q: &str) -> Option<Probe> {
+    let mut arms = Vec::new();
+    let mut binds = Vec::new();
+    for key in crate::compile::scope::scope_keys(scope_q)? {
+        if let Some(exact) = key.exact {
+            binds.push(Bind::Text(exact));
+            arms.push(format!("txt = ${}", binds.len().saturating_add(2)));
+        }
+        if let Some(under) = key.under {
+            // `under` ends in `/`; the first text past every one starting
+            // with it ends in `0`, the next byte (COLLATE "C")
+            let past = format!("{}0", under.trim_end_matches('/'));
+            binds.push(Bind::Text(under));
+            binds.push(Bind::Text(past));
+            let n = binds.len().saturating_add(2);
+            arms.push(format!("(txt >= ${} AND txt < ${n})", n.saturating_sub(1)));
+        }
+    }
+    let cond = format!("attr = $2 AND ({} OR f = 'NaN')", arms.join(" OR "));
+    Some(Probe::new(
+        tenant,
+        Bind::Text("scope".to_owned()),
+        &cond,
+        binds,
+    ))
 }
 
 /// The distinct ids `p` reads, `None` when there are `PROBE_ROWS` rows or
@@ -1399,6 +1431,7 @@ impl PgEntityStore {
             {
                 wheres.push(c.sql);
                 binds.extend(c.binds.into_iter().map(Bind::Text));
+                probes.extend(scope_probe(tenant, sq));
             }
         }
         let mut tx = self

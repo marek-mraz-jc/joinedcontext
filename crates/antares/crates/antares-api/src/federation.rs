@@ -3074,7 +3074,7 @@ pub async fn write_regs(
     // ADR-0023 rule 7 is checked on the local store: a write through an
     // endpoint view is local, and no Context Source receives it.
     #[cfg(feature = "views")]
-    if st.view.is_some() {
+    if st.view().is_some() {
         return Ok(Vec::new());
     }
     Ok(matching_regs(st, tenant, spec, ctx, headers)

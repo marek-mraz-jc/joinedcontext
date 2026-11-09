@@ -257,13 +257,24 @@ impl From<Refusal> for Stop {
 }
 
 /// The bytes of view pages one union request may still read: every view read
-/// of the request takes from the one budget, frame by frame, so the pages it
-/// holds at once stay under the broker's `max_answer_bytes` (F-ANT1-001).
-struct Budget(Mutex<usize>);
+/// of the request takes from the one budget, so the pages it holds at once
+/// stay under the broker's `max_answer_bytes` (F-ANT1-001). Each page is also
+/// read through the broker's shared answer pool, and its share is kept here
+/// until the request ends: concurrent unions together stay inside the
+/// memory budget (T-6666).
+struct Budget(Mutex<usize>, Mutex<Vec<antares_ops::bounds::AnswerCharge>>);
 
 impl Budget {
     fn new(bytes: usize) -> Self {
-        Self(Mutex::new(bytes))
+        Self(Mutex::new(bytes), Mutex::new(Vec::new()))
+    }
+
+    /// Keeps a page's pool share until the request's budget drops.
+    fn hold(&self, charge: antares_ops::bounds::AnswerCharge) {
+        self.1
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(charge);
     }
 
     /// Takes the `n` bytes of a frame that follows `read` bytes of one
@@ -437,16 +448,13 @@ async fn read(view: &ViewOps, r: &Read<'_>, target: String) -> Fetched {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let mut body = answer.into_body().into_data_stream();
-    let mut bytes = Vec::new();
-    while let Some(frame) = body.next().await {
-        let frame = frame.map_err(|_| Refusal::Limit(PAGE_TOO_LARGE))?;
-        r.budget
-            .take(bytes.len(), frame.len())
-            .map_err(Refusal::Limit)?;
-        bytes.extend_from_slice(&frame);
-    }
+    let (bytes, charge) = view
+        .read_answer(answer.into_body(), "union")
+        .await?
+        .into_parts();
+    r.budget.take(0, bytes.len()).map_err(Refusal::Limit)?;
     let docs = serde_json::from_slice(&bytes).map_err(|_| Refusal::Limit(PAGE_TOO_LARGE))?;
+    r.budget.hold(charge);
     Ok(Some((docs, count)))
 }
 

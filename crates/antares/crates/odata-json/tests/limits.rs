@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! Threat model O22: every bound of `BodyLimits` refuses the first body over it, through every
 //! reader, and takes the body at it.
 
