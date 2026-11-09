@@ -273,7 +273,11 @@ async fn two_organizations_publish_and_read_only_their_own_catalogue() {
         let branding: Value = serde_json::from_str(&body).unwrap();
         let addresses = &branding["addresses"];
         assert_eq!(addresses["api"], format!("http://api.{org}.test"), "{body}");
-        assert_eq!(addresses["portal"], format!("http://portal.{org}.test"), "{body}");
+        assert_eq!(
+            addresses["portal"],
+            format!("http://portal.{org}.test"),
+            "{body}"
+        );
     }
 
     // Behind a trusted proxy the forwarded host names the catalogue, not the raw Host: the
