@@ -83,7 +83,12 @@ def stub(handler_answer):
     return srv
 
 
-def jc_like(device=False):
+CIMD_POLICY = {"policies": [{"name": "cimd", "enabled": True, "profiles": ["cimd"], "conditions": [
+    {"condition": "client-id-uri", "configuration": {"client-id-uri-allow-permitted-domains": ["claude.ai"]}}]}]}
+
+
+def jc_like(device=False, cimd=False):
+    """kaisatsu's answers; `cimd`: the realm has the client-id-uri policy, so a URL client_id signs in."""
     def answer(h):
         base = f"http://127.0.0.1:{h.server.server_port}"
         u = urllib.parse.urlparse(h.path)
@@ -96,15 +101,18 @@ def jc_like(device=False):
         if u.path == "/oauth/authorize":
             return 400, "text/plain", b"The request was refused: the client_id is not one this server issued, or it expired; register again.\n"
         if u.path.endswith("/protocol/openid-connect/auth"):
+            client = urllib.parse.parse_qs(u.query).get("client_id", [""])[0]
+            if client.startswith("https://") and not cimd:
+                return 401, "application/json", b'{"error":"invalid_client","error_description":"unknown client_id"}'
             return 200, "text/html", LOGIN
         return 404, "text/plain", b"no"
     return answer
 
 
-def export_dir(tmp_path):
+def export_dir(tmp_path, realm=None):
     kc = tmp_path / "export" / "keycloak"
     kc.mkdir(parents=True)
-    (kc / f"realm-{REALM}.json").write_text(json.dumps(realm_doc()))
+    (kc / f"realm-{REALM}.json").write_text(json.dumps(realm or realm_doc()))
     (tmp_path / "export" / "gitea" / "files").mkdir(parents=True)
     state = tmp_path / "state"
     state.mkdir()
@@ -112,11 +120,11 @@ def export_dir(tmp_path):
     return tmp_path / "export", state
 
 
-def run_suite(tmp_path, answer, monkeypatch):
+def run_suite(tmp_path, answer, monkeypatch, realm=None):
     monkeypatch.setattr(suite, "realm_of", lambda s: REALM)
     srv = stub(answer)
     try:
-        export, _state = export_dir(tmp_path)
+        export, _state = export_dir(tmp_path, realm)
         out = tmp_path / "out"
         # Without --state the live part is one named skip.
         a = suite.argparse.Namespace(base_url=f"http://127.0.0.1:{srv.server_port}", export=str(export), out=str(out), state=None, keep=False,
@@ -178,6 +186,31 @@ def test_the_suite_on_a_jc_like_stub_fails_only_the_missing_device_grant(tmp_pat
     assert rows["live"]["result"] == "skip" and "--state" in rows["live"]["reason"]
     rows = run_suite(tmp_path / "fixed", jc_like(device=True), monkeypatch)
     assert not [i for i, r in rows.items() if r["result"] == "fail" and i.startswith("discovery.")]
+
+
+def test_a_url_client_id_signs_in_only_where_the_realm_has_the_cimd_policy(tmp_path, monkeypatch):
+    # Prod's realm (no client-id-uri policy): refused as prod refuses it; a login form fails.
+    rows = run_suite(tmp_path / "prod", jc_like(), monkeypatch)
+    assert rows["authorize.cimd-claude"]["result"] == "pass", rows["authorize.cimd-claude"]
+    assert "owner decision" in rows["authorize.cimd-claude"]["reason"]
+    rows = run_suite(tmp_path / "prod-login", jc_like(cimd=True), monkeypatch)
+    assert rows["authorize.cimd-claude"]["result"] == "fail"
+    # A realm with the policy (jc's shipped realm): the connector sign-in; a refusal fails.
+    with_policy = {**realm_doc(), "clientPolicies": CIMD_POLICY}
+    rows = run_suite(tmp_path / "jc", jc_like(cimd=True), monkeypatch, with_policy)
+    assert rows["authorize.cimd-claude"]["result"] == "pass"
+    rows = run_suite(tmp_path / "jc-refused", jc_like(), monkeypatch, with_policy)
+    assert rows["authorize.cimd-claude"]["result"] == "fail"
+
+
+def test_the_shipped_realm_allows_cimd_and_portal_api_exchange_and_prod_neither():
+    shipped = json.loads(suite.SHIPPED_REALM.read_text())
+    assert suite.cimd_allowed(shipped) and suite.exchanges(shipped, "portal-api")
+    prod = realm_doc()
+    assert not suite.cimd_allowed(prod) and not suite.exchanges(prod, "portal-api")
+    assert suite.exchanges(prod, "context-gateway")
+    off = {"policies": [{**CIMD_POLICY["policies"][0], "enabled": False}]}
+    assert not suite.cimd_allowed({"clientPolicies": off})
 
 
 def test_a_stub_answering_200_to_everything_fails(tmp_path, monkeypatch):
