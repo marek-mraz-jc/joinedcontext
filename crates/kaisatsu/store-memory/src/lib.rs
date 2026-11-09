@@ -79,22 +79,20 @@ impl MemoryStore {
 
     /// Ensures a realm has active ES256 and RS256 signing keys.
     pub fn ensure_realm_keys(&self, realm_id: &str) -> Result<()> {
+        self.ensure_key(realm_id, "ES256")?;
+        self.ensure_key(realm_id, "RS256")
+    }
+
+    /// Ensures a realm has an active key of `algorithm`, generating one when it has none.
+    fn ensure_key(&self, realm_id: &str, algorithm: &str) -> Result<()> {
         let mut st = self.inner.write();
-        let has_es = st
+        let has = st
             .signing_keys
             .iter()
-            .any(|k| k.realm_id == realm_id && k.algorithm == "ES256" && k.status == "ACTIVE");
-        if !has_es {
-            let es = KeyManager::generate_es256(realm_id, &self.kek, 100, "ACTIVE")?;
-            st.signing_keys.push(es);
-        }
-        let has_rs = st
-            .signing_keys
-            .iter()
-            .any(|k| k.realm_id == realm_id && k.algorithm == "RS256" && k.status == "ACTIVE");
-        if !has_rs {
-            let rs = KeyManager::generate_rs256(realm_id, &self.kek, 50, "ACTIVE")?;
-            st.signing_keys.push(rs);
+            .any(|k| k.realm_id == realm_id && k.algorithm == algorithm && k.status == "ACTIVE");
+        if !has {
+            let key = KeyManager::generate(algorithm, realm_id, &self.kek, "ACTIVE")?;
+            st.signing_keys.push(key);
         }
         Ok(())
     }
@@ -1645,6 +1643,14 @@ impl Store for MemoryStore {
             keys.sort_by_key(|k| std::cmp::Reverse(k.priority));
             Ok(keys)
         })
+    }
+
+    fn ensure_signing_key<'a>(
+        &'a self,
+        realm_id: &'a str,
+        algorithm: &'a str,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move { self.ensure_key(realm_id, algorithm) })
     }
 
     fn put_auth_session<'a>(&'a self, session: AuthSession) -> StoreFuture<'a, ()> {

@@ -22,14 +22,14 @@ jc_bin=${JC_BIN:-${CARGO_TARGET_DIR:-$here/../../target}/debug/jc}
 export_dir=${REHEARSAL_EXPORT:-$home/export}
 bind=${REHEARSAL_BIND:-127.0.0.1}
 
-mkdir -p "$home"/secrets/realm "$home"/state/realms "$home"/import "$home"/repos "$home"/files
+mkdir -p "$home"/secrets "$home"/state/realms "$home"/import "$home"/repos "$home"/files
 chmod 700 "$home/state" "$home/state/realms"
-chmod 700 "$home" "$home"/secrets "$home"/secrets/realm "$home"/state
+chmod 700 "$home" "$home"/secrets "$home"/state
 
-secret() { # secret <name>: a random secret file, made once
+secret() { # secret <name>: a random secret file (64 hex digits), made once
   local f="$home/secrets/$1"
   if [ ! -s "$f" ]; then
-    (umask 077; head -c 24 /dev/urandom | base64 | tr -d '/+=\n' > "$f")
+    (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$f")
   fi
   printf '%s' "$f"
 }
@@ -112,12 +112,18 @@ people_args=()
 [ -f "$demo_users" ] && people_args+=(--demo-users "$demo_users")
 if [ -d "$export_dir/keycloak" ]; then
   python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/state/realms" \
-    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" --secrets-dir "$home/secrets/realm" "${people_args[@]}"
-  # Each secret the realm config names gets a fresh value of the rehearsal (never the old one), as
-  # a 0600 file in secrets/realm, the only dir jc's realm import may read ($(file:...); it reads no
-  # environment).
+    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}" --secrets-dir "$home/secrets/realm"
+  # Each secret the realm config names gets a fresh value of the rehearsal (never the old one), in
+  # a file of its own under secrets/realm: kaisatsu inside jc reads $(file:...) there and no
+  # environment. secrets/realm-NAME stays a link to it for the smoke and shots.
+  mkdir -p "$home/secrets/realm"; chmod 700 "$home/secrets/realm"
   while read -r name; do
-    [ -n "$name" ] && secret "realm/$name" >/dev/null
+    [ -n "$name" ] || continue
+    if [ -f "$home/secrets/realm-$name" ] && [ ! -L "$home/secrets/realm-$name" ]; then
+      mv "$home/secrets/realm-$name" "$home/secrets/realm/$name"
+    fi
+    secret "realm/$name" > /dev/null
+    ln -sfn "realm/$name" "$home/secrets/realm-$name"
   done < "$home/state/realm-vars.txt"
 fi
 
@@ -148,8 +154,8 @@ export JC_PORTAL_CKAN_URL=https://catalogue.rehearsal.invalid JC_PORTAL_CKAN_API
 # token (Read and Propose on the rehearsal's default catalogue), given to jc as a file: jc holds its
 # own per boot in memory only.
 CKAN_API_TOKEN=$(cat "$(secret catalogue-token)"); export CKAN_API_TOKEN
-# The Portal's shako token likewise: rehearsal.py import and the smoke suites read it from here.
 export JCBIN_DATAROOM_PORTAL_TOKEN_FILE=$home/secrets/catalogue-token
+# The Portal's shako token likewise: rehearsal.py import and the smoke suites read it from here.
 JCBIN_SHAKO_TOKEN_FILE=$(secret shako-token); export JCBIN_SHAKO_TOKEN_FILE
 # The Portal's internal listener (/metrics, run callbacks) on loopback, one port per environment.
 export JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 100))
@@ -163,6 +169,10 @@ export JC_GITEA_OWNER=$JC_SHAKO_OWNER JC_GITEA_REPO=$JC_SHAKO_REPO
 if [ -s "$home/jc.pid" ]; then
   "$here/stop-jc.sh" "$(cat "$home/jc.pid")" || exit 1
 fi
+for pid in $("$here/jcs-of.sh" "$home/jc.toml"); do
+  echo "up.sh: jc $pid of $home/jc.toml runs outside the pid file; stopping it" >&2
+  "$here/stop-jc.sh" "$pid" || exit 1
+done
 # The Grafana files' datasources as daiya provisioning on jc's own address (REHEARSAL_DASHBOARDS,
 # default $home/dashboards: a rehearsal.py dashboards dir); daiya lets only file-provisioned
 # datasources reach it.

@@ -1210,26 +1210,52 @@ async fn verify_client_assertion(
     Ok(client)
 }
 
-fn select_signing_key<'a>(
-    keys: &'a [SigningKeyRecord],
+/// The key that signs `client`'s ID token (`for_id_token`) or access token. A client attribute
+/// naming an algorithm gets a key of exactly that algorithm: a missing ES256, RS256 or EdDSA key
+/// is generated (as Keycloak creates one), any other algorithm is a `server_error` naming the
+/// client and the attribute, never a key. Only the realm default (attribute absent or empty) may
+/// fall back to another active key.
+async fn select_signing_key(
+    state: &OidcState,
+    keys: &[SigningKeyRecord],
     realm: &RealmConfig,
     client: &ClientRepresentation,
     for_id_token: bool,
-) -> Result<&'a SigningKeyRecord> {
-    let attr_key = if for_id_token {
-        "id.token.signed.response.alg"
-    } else {
-        "access.token.signed.response.alg"
-    };
-    let wanted_alg = client
+) -> Result<SigningKeyRecord> {
+    let attr_key = SIGNATURE_ALG_ATTRIBUTES[usize::from(!for_id_token)];
+    let pinned = client
         .attributes
         .get(attr_key)
         .map(String::as_str)
-        .unwrap_or(&realm.default_signature_algorithm);
-    keys.iter()
-        .find(|k| k.status == "ACTIVE" && k.algorithm == wanted_alg)
-        .or_else(|| keys.iter().find(|k| k.status == "ACTIVE"))
-        .ok_or_else(|| KaisatsuError::Crypto("no active signing key in realm".into()))
+        .filter(|alg| !alg.is_empty());
+    let active = |keys: &[SigningKeyRecord], alg: &str| {
+        keys.iter()
+            .find(|k| k.status == "ACTIVE" && k.algorithm == alg)
+            .cloned()
+    };
+    let Some(alg) = pinned else {
+        let alg = realm.default_signature_algorithm.as_str();
+        return active(keys, alg)
+            .or_else(|| keys.iter().find(|k| k.status == "ACTIVE").cloned())
+            .ok_or_else(|| KaisatsuError::Crypto("no active signing key in realm".into()));
+    };
+    if let Some(key) = active(keys, alg) {
+        return Ok(key);
+    }
+    if !SIGNING_ALGORITHMS.contains(&alg) {
+        return Err(KaisatsuError::oauth(
+            500,
+            "server_error",
+            format!(
+                "client {} asks for {alg} in {attr_key}, which this realm cannot sign",
+                client.client_id
+            ),
+        ));
+    }
+    state.store.ensure_signing_key(&realm.id, alg).await?;
+    let keys = state.store.list_signing_keys(&realm.id).await?;
+    active(&keys, alg)
+        .ok_or_else(|| KaisatsuError::Crypto(format!("no active {alg} key after generating one")))
 }
 
 /// `user` with the roles of every group they are in, the groups' ancestors included (Keycloak
@@ -1326,7 +1352,14 @@ async fn mint_tokens_for_principal(
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(realm.access_token_lifespan.max(60));
     let access_exp = now + access_ttl;
-    let access_jti = uuid::Uuid::now_v7().to_string();
+    // The family this grant's refresh token belongs to, named in the access token's `jti` so a
+    // revoked family takes its access tokens with it (introspection, userinfo, token exchange).
+    let family_id = include_refresh.then(|| {
+        existing_family
+            .as_ref()
+            .map_or_else(|| uuid::Uuid::now_v7().to_string(), |f| f.id.clone())
+    });
+    let access_jti = access_jti_for(family_id.as_deref());
 
     // K2: Determine active_org for token claims. If `organization:<alias>` was requested in
     // `granted_scope_str` (or pinned on the SSO session), verify that `user` is actually a
@@ -1364,8 +1397,8 @@ async fn mint_tokens_for_principal(
     };
 
     let access_claims = evaluate_mappers(&mapper_ctx, TokenKind::AccessToken)?;
-    let access_key = select_signing_key(&keys, realm, client, false)?;
-    let access_token = sign_jwt(access_key, &state.kek, Some("JWT"), &access_claims)?;
+    let access_key = select_signing_key(state, &keys, realm, client, false).await?;
+    let access_token = sign_jwt(&access_key, &state.kek, Some("JWT"), &access_claims)?;
 
     let token_type = if dpop_jkt.is_some() { "DPoP" } else { "Bearer" };
     let mut response = json!({
@@ -1386,8 +1419,8 @@ async fn mint_tokens_for_principal(
         let mut id_ctx = mapper_ctx.clone();
         id_ctx.jti = &id_jti;
         let id_claims = evaluate_mappers(&id_ctx, TokenKind::IdToken)?;
-        let id_key = select_signing_key(&keys, realm, client, true)?;
-        let id_token = sign_jwt(id_key, &state.kek, Some("JWT"), &id_claims)?;
+        let id_key = select_signing_key(state, &keys, realm, client, true).await?;
+        let id_token = sign_jwt(&id_key, &state.kek, Some("JWT"), &id_claims)?;
         response["id_token"] = Value::String(id_token);
     }
 
@@ -1428,10 +1461,7 @@ async fn mint_tokens_for_principal(
         };
         // W2: the refresh token is an opaque handle `{family id}.{256-bit random}`; only its
         // SHA-256 is stored. The family id finds the family; the hash proves the handle.
-        let family_id = existing_family
-            .as_ref()
-            .map(|f| f.id.clone())
-            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        let family_id = family_id.clone().unwrap_or_default();
         let refresh_token = format!("{family_id}.{}", random_handle_256());
         let refresh_hash = sha256_hex(&refresh_token);
         match existing_family {
@@ -1450,9 +1480,7 @@ async fn mint_tokens_for_principal(
                 }
                 // Two requests with the same handle: only the first rotates.
                 if !state.store.rotate_refresh_family(fam, &expected).await? {
-                    return Err(KaisatsuError::invalid_grant(
-                        "Refresh token was already used",
-                    ));
+                    return Err(KaisatsuError::invalid_grant(LOST_ROTATION));
                 }
             }
             None => {
@@ -1939,7 +1967,7 @@ async fn handle_refresh_token_grant(
     client: &ClientRepresentation,
     form: &BTreeMap<String, String>,
     dpop_jkt: Option<&str>,
-    _client_ip: &ClientIp,
+    client_ip: &ClientIp,
 ) -> Result<Value> {
     let raw_refresh = form
         .get("refresh_token")
@@ -1958,19 +1986,12 @@ async fn handle_refresh_token_grant(
         return Err(KaisatsuError::invalid_grant("Session not active"));
     }
 
-    // W1, W12: Refresh token rotation and reuse detection. A rotated-away handle presented
-    // again revokes the entire refresh token family and the SSO session.
+    // W1, W12: Refresh token rotation and reuse detection, as Keycloak with
+    // `refreshTokenMaxReuse` 0: a rotated-away handle presented again revokes the whole family
+    // (its refresh and access tokens) and keeps the SSO session, so the client signs the person
+    // in again without a password.
     if !is_current {
-        let mut revoked_fam = family.clone();
-        revoked_fam.revoked = true;
-        state.store.upsert_refresh_family(revoked_fam).await?;
-        let _ = state
-            .store
-            .delete_sso_session(&realm.id, &family.sso_session_id)
-            .await;
-        return Err(KaisatsuError::invalid_grant(
-            "Refresh token reuse detected; session revoked",
-        ));
+        return Err(revoke_reused_family(state, realm, family, "rotated_handle", client_ip).await);
     }
 
     // W1: Public clients that bound their refresh token with DPoP must present the matching DPoP proof
@@ -2019,7 +2040,8 @@ async fn handle_refresh_token_grant(
         .map(str::to_owned)
         .or_else(|| family.dpop_jkt.clone());
 
-    mint_tokens_for_principal(
+    let reused = family.clone();
+    match mint_tokens_for_principal(
         state,
         mount,
         realm,
@@ -2038,6 +2060,99 @@ async fn handle_refresh_token_grant(
         Some(family),
     )
     .await
+    {
+        // Another request rotated this handle first: the handle was used twice, which is reuse.
+        Err(KaisatsuError::OAuth { description, .. }) if description == LOST_ROTATION => {
+            Err(revoke_reused_family(state, realm, reused, "concurrent_rotation", client_ip).await)
+        }
+        other => other,
+    }
+}
+
+/// The description of the `invalid_grant` a refresh grant gets when another request rotated the
+/// same handle first (the rotation compare-and-swap lost).
+const LOST_ROTATION: &str = "Refresh token was already used";
+
+/// An access token's `jti`: a fresh id, followed by `.{family id}` when the grant carries a
+/// refresh token, so [`token_is_live`] can refuse the tokens of a revoked family.
+fn access_jti_for(family_id: Option<&str>) -> String {
+    let id = uuid::Uuid::now_v7().to_string();
+    match family_id {
+        Some(family) => format!("{id}.{family}"),
+        None => id,
+    }
+}
+
+/// Revokes `family` after a reused refresh handle (`reason`: a rotated-away handle, or a lost
+/// rotation race), records one audit event and counts it in `kaisatsu_refresh_token_reuse_total`,
+/// and answers the `invalid_grant` the client gets. The SSO session stays: Keycloak 26.8 removes
+/// only the client's session and token family, and the client signs the person in again silently.
+async fn revoke_reused_family(
+    state: &OidcState,
+    realm: &RealmConfig,
+    family: RefreshTokenFamily,
+    reason: &'static str,
+    client_ip: &ClientIp,
+) -> KaisatsuError {
+    metrics::counter!("kaisatsu_refresh_token_reuse_total", "reason" => reason).increment(1);
+    let event = AuditEvent {
+        id: uuid::Uuid::now_v7().to_string(),
+        realm_id: realm.id.clone(),
+        org_id: family.org_id.clone(),
+        time: Utc::now().timestamp_millis(),
+        event_type: "REFRESH_TOKEN_ERROR".into(),
+        client_id: Some(family.client_id.clone()),
+        user_id: Some(family.user_id.clone()),
+        session_id: Some(family.sso_session_id.clone()),
+        ip_address: client_ip.for_audit(),
+        error: Some("refresh_token_reuse".into()),
+        details: BTreeMap::from([("reason".to_owned(), reason.to_owned())]),
+    };
+    // Re-read: a lost race holds the family as it was before the winner rotated it.
+    let mut revoked = match state.store.get_refresh_family(&realm.id, &family.id).await {
+        Ok(Some(current)) => current,
+        Ok(None) => family,
+        Err(e) => return e,
+    };
+    revoked.revoked = true;
+    if let Err(e) = state.store.upsert_refresh_family(revoked).await {
+        return e;
+    }
+    if let Err(e) = state.store.append_event(event).await {
+        return e;
+    }
+    KaisatsuError::invalid_grant("Refresh token reuse detected; token family revoked")
+}
+
+/// Whether an access token's `jti` and `sid` still stand: the `jti` is not revoked, the SSO
+/// session lives, and the refresh family the `jti` names (if any) exists and is not revoked.
+async fn token_is_live(
+    state: &OidcState,
+    realm_id: &str,
+    jti: Option<&str>,
+    sid: Option<&str>,
+) -> Result<bool> {
+    if let Some(jti) = jti {
+        if state
+            .store
+            .is_token_revoked(realm_id, &sha256_hex(jti))
+            .await?
+        {
+            return Ok(false);
+        }
+        if let Some((_, family)) = jti.split_once('.') {
+            match state.store.get_refresh_family(realm_id, family).await? {
+                Some(f) if !f.revoked => {}
+                _ => return Ok(false),
+            }
+        }
+    }
+    if let Some(sid) = sid
+        && state.store.get_sso_session(realm_id, sid).await?.is_none()
+    {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 async fn handle_client_credentials_grant(
@@ -2187,16 +2302,13 @@ async fn handle_token_exchange_grant(
     if subj_claims.get("typ").and_then(Value::as_str) != Some("Bearer") {
         return Err(KaisatsuError::invalid_request("Invalid token"));
     }
-    if let Some(jti) = subj_claims.get("jti").and_then(Value::as_str)
-        && state
-            .store
-            .is_token_revoked(&realm.id, &sha256_hex(jti))
-            .await?
-    {
-        return Err(KaisatsuError::invalid_request("Invalid token"));
-    }
-    if let Some(sid) = subj_claims.get("sid").and_then(Value::as_str)
-        && state.store.get_sso_session(&realm.id, sid).await?.is_none()
+    if !token_is_live(
+        state,
+        &realm.id,
+        subj_claims.get("jti").and_then(Value::as_str),
+        subj_claims.get("sid").and_then(Value::as_str),
+    )
+    .await?
     {
         return Err(KaisatsuError::invalid_request("Invalid token"));
     }
@@ -2698,16 +2810,13 @@ async fn introspect_endpoint(
         return Ok(Json(json!({ "active": false })));
     };
 
-    if let Some(jti) = claims.get("jti").and_then(Value::as_str)
-        && state
-            .store
-            .is_token_revoked(&realm.id, &sha256_hex(jti))
-            .await?
-    {
-        return Ok(Json(json!({ "active": false })));
-    }
-    if let Some(sid) = claims.get("sid").and_then(Value::as_str)
-        && state.store.get_sso_session(&realm.id, sid).await?.is_none()
+    if !token_is_live(
+        &state,
+        &realm.id,
+        claims.get("jti").and_then(Value::as_str),
+        claims.get("sid").and_then(Value::as_str),
+    )
+    .await?
     {
         return Ok(Json(json!({ "active": false })));
     }
@@ -2871,18 +2980,15 @@ async fn userinfo_inner(
         dpop_scheme,
     )
     .await?;
-    // A revoked token, or one whose SSO session ended (logout, code replay, refresh reuse),
-    // gets no claims, as at introspection.
-    if let Some(jti) = claims.get("jti").and_then(Value::as_str)
-        && state
-            .store
-            .is_token_revoked(&realm.id, &sha256_hex(jti))
-            .await?
-    {
-        return Err(KaisatsuError::Unauthorized("token is not active".into()));
-    }
-    if let Some(sid) = claims.get("sid").and_then(Value::as_str)
-        && state.store.get_sso_session(&realm.id, sid).await?.is_none()
+    // A revoked token, one whose SSO session ended (logout, code replay) or whose refresh family
+    // was revoked (refresh reuse) gets no claims, as at introspection.
+    if !token_is_live(
+        &state,
+        &realm.id,
+        claims.get("jti").and_then(Value::as_str),
+        claims.get("sid").and_then(Value::as_str),
+    )
+    .await?
     {
         return Err(KaisatsuError::Unauthorized("token is not active".into()));
     }
@@ -3012,7 +3118,15 @@ pub async fn dispatch_backchannel_logout(
         ) else {
             continue;
         };
-        let key = select_signing_key(&keys, realm, &client, true)?;
+        // A client whose pinned algorithm this realm cannot sign gets no logout token; the
+        // other clients of the session still get theirs.
+        let key = match select_signing_key(state, &keys, realm, &client, true).await {
+            Ok(key) => key,
+            Err(e) => {
+                tracing::warn!(client = %client.client_id, error = %e, "no back-channel logout token");
+                continue;
+            }
+        };
         let logout_claims = json!({
             "iss": issuer,
             "sub": logout_sub,
@@ -3028,7 +3142,7 @@ pub async fn dispatch_backchannel_logout(
         });
         // The header says `JWT`, as Keycloak's does: the `Logout` type is the claim's. A relying
         // party on `openidconnect` (the Portal) refuses any other header type.
-        let logout_token = sign_jwt(key, &state.kek, Some("JWT"), &logout_claims)?;
+        let logout_token = sign_jwt(&key, &state.kek, Some("JWT"), &logout_claims)?;
         let _ = state
             .guard
             .post_form(logout_url, &[("logout_token", &logout_token)])

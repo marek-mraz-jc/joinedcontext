@@ -43,6 +43,7 @@ from common import FAIL, PASS, SKIP, Results, loopback_only, read_token
 import inventory as inv
 from session import Session, admin_token, make_person, sign_in
 
+APPS_OWNER = "joinedcontext-apps"
 NO_RUNNER = ("jc has no App build runner (App builds runner is an open owner decision: shako-native "
              "runner, supervisor 2026-11-08)")
 
@@ -147,7 +148,9 @@ def main(argv=None) -> int:
     since = max(now - dt.timedelta(hours=24),
                 ex.parse_time(cutoff) if cutoff else now - dt.timedelta(hours=24))
     window = {"from": str(int(since.timestamp() * 1000)), "to": str(int(now.timestamp() * 1000))}
-    meta = {"export": str(export), "exportedAt": manifest.get("exportedAt"), "window":
+    meta = {"export": str(export), "exportedAt": manifest.get("exportedAt"),
+            # a synthetic bundle (rehearsal.py synth) holds the deployment's config only, not the source's data
+            "bundle": "synthetic" if manifest.get("synthetic") else "export", "window":
             f"{since.isoformat(timespec='seconds')} .. {now.isoformat(timespec='seconds')}"}
 
     # ---- the person and the Portal session
@@ -284,7 +287,7 @@ def main(argv=None) -> int:
     # ---- Apps
     if a.apps:
         apps = inv.load_apps(export / "gitea" / "files")
-        repos = [r for r in json.loads((export / "gitea" / "repos.json").read_text()) if r["owner"] == "joinedcontext-apps"]
+        repos = [r for r in json.loads((export / "gitea" / "repos.json").read_text()) if r["owner"] == APPS_OWNER]
         shako = secret("shako-token")
         sauth = {"Authorization": f"token {shako}"} if shako else None
         named = {x.git for x in apps}
@@ -314,7 +317,12 @@ def main(argv=None) -> int:
                 owner, repo = app.git.split("/", 1)
                 call = f"GET /git/api/v1/projects/{owner}/repositories/{repo}"
                 st, _ = s.json("GET", call.split(" ", 1)[1], headers=sauth)
-                res.check("app.source", tgt, call, "200 (the App's spec.source.git is in shako)", f"{st}", st == 200)
+                actual = f"{st}"
+                if st == 404 and owner != APPS_OWNER:
+                    # say where the repository went when the import put it under the apps owner
+                    ost, _ = s.json("GET", f"/git/api/v1/projects/{APPS_OWNER}/repositories/{repo}", headers=sauth)
+                    actual += f"; {APPS_OWNER}/{repo} answers {ost}"
+                res.check("app.source", tgt, call, "200 (the App's spec.source.git is in shako)", actual, st == 200)
             if app.lifecycle != "published":
                 res.skip("app.served", tgt, f"GET /apps/{app.name}/", "-", f"lifecycle {app.lifecycle!r}: not served by design")
                 continue

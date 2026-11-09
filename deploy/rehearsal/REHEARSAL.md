@@ -59,8 +59,10 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
 - `up.sh` starts PostgreSQL (PostGIS image by digest), makes one role per store with a random
   password file under `secrets/` (0600, never printed or passed in argv), runs the kaisatsu
   migrations, writes the export's realm without people into the kaisatsu import dir, and starts
-  `jc`. Each `$(env:NAME)` secret of the realm gets a fresh random value. It restarts a running
-  `jc` of the same environment.
+  `jc`. Each `$(env:NAME)` secret of the realm gets a fresh random value in
+  `secrets/realm/NAME` (0600), and the realm file names it as `$(file:...)`: kaisatsu inside jc
+  reads no environment, only `--kaisatsu-import-secrets-dir`. It stops a running `jc` of the same
+  environment first (`stop-jc.sh`: SIGTERM, then SIGKILL after 10 s).
 - kaisatsu, the Portal, Antares, shako, daiya, dataroom and ekiben keep their state in PostgreSQL
   (one database each, request roles without BYPASSRLS). Each module's `[<m>.database]` in
   `jc.toml` names role, host and database inline; jc refuses a password in a URL, and every

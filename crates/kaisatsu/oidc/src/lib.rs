@@ -8,7 +8,8 @@
 //! - Token endpoint (`/protocol/openid-connect/token`) supporting:
 //!   - `authorization_code` (single-use, 60 s, replay revokes tokens issued from it, bound to
 //!     `client_id`, `redirect_uri`, `realm_id`, and PKCE verifier),
-//!   - `refresh_token` (rotation, reuse detection revoking the whole family, DPoP binding),
+//!   - `refresh_token` (rotation, reuse detection revoking the whole family and its access
+//!     tokens while the SSO session stays, DPoP binding),
 //!   - `client_credentials` (`client-secret`, `client-jwt` / `private_key_jwt`, and `federated-jwt`
 //!     for Kubernetes ServiceAccount tokens),
 //!   - `urn:ietf:params:oauth:grant-type:token-exchange` (Standard Token Exchange V2 + `act` claim),

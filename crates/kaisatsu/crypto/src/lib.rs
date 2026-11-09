@@ -14,7 +14,7 @@ pub mod totp;
 pub mod webauthn;
 
 pub use jose::{DecodedHeader, JwtHeader, sign_jwt, verify_jwt, verify_jwt_with_jwk};
-pub use keys::{Kek, KeyManager, PublicJwk, PublicJwkSet};
+pub use keys::{Kek, KeyManager, PublicJwk, PublicJwkSet, SIGNING_ALGORITHMS};
 pub use password::{
     PasswordVerifyOutcome, check_password_policy, hash_password, verify_and_maybe_rehash,
     verify_keycloak_credential,
