@@ -395,6 +395,9 @@ async fn the_rest_takes_only_live_audience_account_tokens_of_this_realm() {
     assert_eq!(st, StatusCode::UNAUTHORIZED);
 }
 
+/// One change to a token's claims.
+type ClaimEdit<'a> = dyn Fn(&mut Value) + 'a;
+
 /// Each token check stands alone: a token signed with the realm's own key that breaks exactly
 /// one property (audience, issuer, typ, session holder, enabled person, no service account)
 /// is refused, while the unchanged copy is accepted.
@@ -412,7 +415,7 @@ async fn every_token_check_refuses_a_token_that_breaks_only_it() {
         .find(|k| k.kid == kid)
         .unwrap();
     let base = decode_jwt_payload(&me.token);
-    let forge = |edit: &dyn Fn(&mut Value)| {
+    let forge = |edit: &ClaimEdit<'_>| {
         let mut claims = base.clone();
         claims["jti"] = json!(uuid::Uuid::new_v4().to_string());
         edit(&mut claims);
@@ -421,7 +424,7 @@ async fn every_token_check_refuses_a_token_that_breaks_only_it() {
     let (st, _) = rest(&app, Method::GET, "/", &forge(&|_| {}), None).await;
     assert_eq!(st, StatusCode::OK, "the unchanged copy is accepted");
 
-    let cases: [(&str, &dyn Fn(&mut Value)); 4] = [
+    let cases: [(&str, &ClaimEdit<'_>); 4] = [
         ("audience", &|c| c["aud"] = json!(["broker"])),
         ("issuer", &|c| {
             c["iss"] = json!(format!("{ISSUER_ORIGIN}/realms/other"));
