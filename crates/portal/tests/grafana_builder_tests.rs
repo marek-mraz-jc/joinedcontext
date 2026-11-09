@@ -203,8 +203,30 @@ fn board() -> Value {
             panel(3, "table", 12, json!({
                 "filters": [{ "attribute": "availableBikeNumber", "op": "gt", "value": "2" }],
             })),
-            panel(4, "gauge", 18, json!({ "aggregation": "max" })),
+            panel(4, "gauge", 18, json!({ "aggregation": "max", "min": 0, "max": 40 })),
+            panel(5, "bargauge", 0, json!({
+                "grid": { "x": 0, "y": 8, "w": 6, "h": 8 }, "min": 0, "max": 40,
+                "bargauge": { "displayMode": "lcd", "orientation": "horizontal" },
+            })),
+            panel(6, "piechart", 6, json!({
+                "grid": { "x": 6, "y": 8, "w": 6, "h": 8 }, "aggregation": "sum",
+                "piechart": { "pieType": "donut" },
+            })),
+            panel(7, "barchart", 12, json!({
+                "grid": { "x": 12, "y": 8, "w": 6, "h": 8 }, "unit": "short",
+                "barchart": { "xField": "name" },
+            })),
+            text_panel(8, 18, 8),
         ],
+    })
+}
+
+/// A text panel: its words, and nothing it reads.
+fn text_panel(id: u32, x: u32, y: u32) -> Value {
+    json!({
+        "id": id, "kind": "text", "title": "About these stations",
+        "grid": { "x": x, "y": y, "w": 6, "h": 8 },
+        "text": { "content": "## Bike stations\nFree bikes per station, read every **5 minutes**." },
     })
 }
 
@@ -277,7 +299,7 @@ async fn change_of(shako: &MockServer, number: u64, uid: &str, text: &str) {
 }
 
 #[tokio::test]
-async fn a_builder_saves_four_kinds_as_one_grafana_file_that_reads_back_as_the_same_choices() {
+async fn a_builder_saves_eight_kinds_as_one_grafana_file_that_reads_back_as_the_same_choices() {
     let shako = common::forge().await;
     let grafana = daiya().await;
     let state = world(&shako, &grafana);
@@ -303,9 +325,25 @@ async fn a_builder_saves_four_kinds_as_one_grafana_file_that_reads_back_as_the_s
         .iter()
         .filter_map(|p| p["type"].as_str())
         .collect();
-    assert_eq!(kinds, ["stat", "timeseries", "table", "gauge"]);
+    assert_eq!(
+        kinds,
+        [
+            "stat",
+            "timeseries",
+            "table",
+            "gauge",
+            "bargauge",
+            "piechart",
+            "barchart",
+            "text"
+        ]
+    );
     for panel in file["panels"].as_array().expect("panels") {
-        assert_eq!(panel["datasource"]["uid"], DATASOURCE, "{panel}");
+        if panel["type"] == "text" {
+            assert!(panel.get("datasource").is_none(), "{panel}");
+        } else {
+            assert_eq!(panel["datasource"]["uid"], DATASOURCE, "{panel}");
+        }
     }
     // The variable offers what the dashboards service read as the person, deduplicated.
     let variable = &file["templating"]["list"][0];
@@ -568,6 +606,58 @@ async fn each_shape_rule_is_refused_by_its_field_before_anything_is_written() {
     let mut missing = board();
     missing["panels"][3]["attribute"] = json!("noSuchAttribute");
     cases.push((missing, "panels[3].attribute"));
+    let mut scale = board();
+    scale["panels"][4]["min"] = json!(40);
+    cases.push((scale, "panels[4].max"));
+    let mut unscaled = board();
+    unscaled["panels"][0]["max"] = json!(10);
+    cases.push((unscaled, "panels[0].max"));
+    let mut stray = board();
+    stray["panels"][0]["piechart"] = json!({ "pieType": "pie" });
+    cases.push((stray, "panels[0].piechart"));
+    let mut bare = board();
+    bare["panels"][4]
+        .as_object_mut()
+        .expect("a panel")
+        .remove("bargauge");
+    cases.push((bare, "panels[4].bargauge"));
+    let mut numbered = board();
+    numbered["panels"][6]["barchart"]["xField"] = json!("availableBikeNumber");
+    cases.push((numbered, "panels[6].barchart.xField"));
+    let mut absent = board();
+    absent["panels"][6]["barchart"]["xField"] = json!("noSuchAttribute");
+    cases.push((absent, "panels[6].barchart.xField"));
+    let mut over = board();
+    over["panels"][6]["aggregation"] = json!("avg");
+    cases.push((over, "panels[6].aggregation"));
+    let mut wordy = board();
+    wordy["panels"][7]["text"]["content"] = json!("x".repeat(builder::MAX_CONTENT + 1));
+    cases.push((wordy, "panels[7].text.content"));
+    let mut reading = board();
+    reading["panels"][7]["endpoint"] = json!("bikes-open");
+    cases.push((reading, "panels[7].endpoint"));
+    let mut silent = board();
+    silent["panels"][7]["text"]["content"] = json!("  ");
+    cases.push((silent, "panels[7].text.content"));
+    // A kind's own choices take only their own members and words.
+    for (at, block) in [
+        ("bargauge", json!({ "displayMode": "lcd", "fill": 1 })),
+        ("bargauge", json!({ "displayMode": "retro" })),
+        ("piechart", json!({ "pieType": "pie", "labels": ["name"] })),
+        (
+            "barchart",
+            json!({ "xField": "name", "stacking": "normal" }),
+        ),
+    ] {
+        let index = ["bargauge", "piechart", "barchart"]
+            .iter()
+            .position(|kind| *kind == at)
+            .expect("a kind")
+            + 4;
+        let mut sent = board();
+        sent["panels"][index][at] = block;
+        cases.push((sent, at));
+    }
     for (sent, field) in cases {
         let answer = send(
             &state,
@@ -920,7 +1010,8 @@ async fn the_reconciler_provisions_approved_files_keeps_equal_ones_and_removes_o
     Mock::given(method("GET"))
         .and(path("/api/search"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "uid": uid }, { "uid": "jcd-00000000000000aa" }, { "uid": "made-by-hand" }
+            { "uid": uid }, { "uid": "jcd-00000000000000aa" }, { "uid": "made-by-hand" },
+            { "uid": "jc-assistant" }
         ])))
         .mount(&service)
         .await;
@@ -936,11 +1027,17 @@ async fn the_reconciler_provisions_approved_files_keeps_equal_ones_and_removes_o
         password: "unused".into(),
     });
     let foreign = r#"{"uid":"jcd-1111111111111111","title":"x","panels":[{"id":1,"type":"text"}]}"#;
+    // Dev's assistant dashboard with its two Prometheus bar gauges: by its own name the sync
+    // never reads it, and copied under a builder uid it is refused naming its datasource.
+    let dev = include_str!("fixtures/grafana-builder/dev-assistant.json");
+    let copied = dev.replacen("\"jc-assistant\"", "\"jcd-2222222222222222\"", 1);
     let root = staged(
         "sync",
         &[
             (PROJECT, &uid, &text),
             (PROJECT, "jcd-1111111111111111", foreign),
+            (PROJECT, "jc-assistant", dev),
+            (PROJECT, "jcd-2222222222222222", &copied),
         ],
     );
     let projects = [PROJECT.to_owned()];
@@ -963,10 +1060,26 @@ async fn the_reconciler_provisions_approved_files_keeps_equal_ones_and_removes_o
             .any(|o| matches!(o, Outcome::Refused(_, u, _) if u == "jcd-1111111111111111")),
         "{first:?}"
     );
-    // A hand-made dashboard is never the reconciler's to remove.
-    assert!(!first
+    assert!(
+        first.iter().any(|o| matches!(o, Outcome::Refused(_, u, why)
+            if u == "jcd-2222222222222222" && why.contains("prometheus datasource prometheus"))),
+        "{first:?}"
+    );
+    // A hand-made dashboard is never the reconciler's to save or remove.
+    for hand in ["made-by-hand", "jc-assistant"] {
+        assert!(
+            !first.iter().any(|o| matches!(o,
+                Outcome::Removed(_, u) | Outcome::Saved(_, u) | Outcome::Kept(_, u) | Outcome::Refused(_, u, _)
+                if u == hand)),
+            "{hand}: {first:?}"
+        );
+    }
+    assert!(!service
+        .received_requests()
+        .await
+        .unwrap_or_default()
         .iter()
-        .any(|o| matches!(o, Outcome::Removed(_, u) if u == "made-by-hand")));
+        .any(|r| r.url.path().contains("jc-assistant")));
     let saved: Vec<Value> = service
         .received_requests()
         .await
@@ -993,4 +1106,76 @@ async fn the_reconciler_provisions_approved_files_keeps_equal_ones_and_removes_o
         "{second:?}"
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn a_preview_of_a_bar_chart_reads_one_row_per_entity_and_a_text_panel_reads_nothing() {
+    let shako = common::forge().await;
+    let grafana = daiya().await;
+    let state = world(&shako, &grafana);
+    let preview = json!({ "board": board(), "panel": 7 });
+    let answer = send(
+        &state,
+        person("eva"),
+        "POST",
+        &format!("{BUILDER}/preview"),
+        Some(preview),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    assert_eq!(body(&answer)["panel"]["options"]["xField"], "name");
+    let queries = || async {
+        grafana
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path().ends_with("/ds/query"))
+            .filter_map(|r| serde_json::from_slice::<Value>(&r.body).ok())
+            .collect::<Vec<_>>()
+    };
+    let asked = queries().await;
+    let sent = &asked.last().expect("a query")["queries"][0];
+    assert_eq!(sent["attributes"], json!(["name", "availableBikeNumber"]));
+    assert_eq!(sent["format"], "table");
+    assert_eq!(sent["queryType"], "entity");
+
+    let preview = json!({ "board": board(), "panel": 8 });
+    let answer = send(
+        &state,
+        person("eva"),
+        "POST",
+        &format!("{BUILDER}/preview"),
+        Some(preview),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    assert_eq!(body(&answer)["panel"]["type"], "text");
+    assert!(body(&answer)["panel"]["options"]["content"]
+        .as_str()
+        .is_some_and(|c| c.starts_with("## Bike stations")));
+    assert_eq!(
+        queries().await.len(),
+        asked.len(),
+        "a text panel runs no query"
+    );
+
+    // A new kind on an Endpoint the person cannot read is refused by its field, as the others.
+    let mut sent = board();
+    sent["panels"][6]["endpoint"] = json!("air-closed");
+    let answer = send(
+        &state,
+        person("zoe"),
+        "POST",
+        BUILDER,
+        Some(json!({ "board": sent })),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.text);
+    assert!(
+        answer.text.contains("panels[6].endpoint"),
+        "{}",
+        answer.text
+    );
+    assert!(committed_files(&shako, REPO).await.is_empty());
 }

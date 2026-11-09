@@ -37,6 +37,8 @@ pub const MAX_PANELS: usize = 24;
 pub const MAX_VARIABLES: usize = 8;
 pub const MAX_FILTERS: usize = 8;
 pub const MAX_THRESHOLDS: usize = 8;
+/// The longest text a text panel holds, in characters.
+pub const MAX_CONTENT: usize = 4000;
 /// The longest filter value a person types.
 pub const MAX_VALUE: usize = 128;
 /// The most values a variable offers.
@@ -86,32 +88,126 @@ pub enum PanelKind {
     Stat,
     Table,
     Gauge,
+    Bargauge,
+    Piechart,
+    Barchart,
+    Text,
 }
 
 impl PanelKind {
+    const ALL: [PanelKind; 8] = [
+        Self::Timeseries,
+        Self::Stat,
+        Self::Table,
+        Self::Gauge,
+        Self::Bargauge,
+        Self::Piechart,
+        Self::Barchart,
+        Self::Text,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             PanelKind::Timeseries => "timeseries",
             PanelKind::Stat => "stat",
             PanelKind::Table => "table",
             PanelKind::Gauge => "gauge",
+            PanelKind::Bargauge => "bargauge",
+            PanelKind::Piechart => "piechart",
+            PanelKind::Barchart => "barchart",
+            PanelKind::Text => "text",
         }
     }
 
     fn parse(text: &str) -> Option<Self> {
-        [Self::Timeseries, Self::Stat, Self::Table, Self::Gauge]
-            .into_iter()
-            .find(|kind| kind.as_str() == text)
+        Self::ALL.into_iter().find(|kind| kind.as_str() == text)
     }
 
-    /// The visualization page's kind with the same needs: a gauge draws what a stat draws.
-    pub fn drawn_as(self) -> crate::grafana::Kind {
+    /// The visualization page's kind with the same needs: a gauge, a bar gauge, a pie chart and
+    /// a bar chart draw numbers as a stat does. A text panel reads no data, so it has none.
+    pub fn drawn_as(self) -> Option<crate::grafana::Kind> {
         match self {
-            PanelKind::Timeseries => crate::grafana::Kind::Timeseries,
-            PanelKind::Stat | PanelKind::Gauge => crate::grafana::Kind::Stat,
-            PanelKind::Table => crate::grafana::Kind::Table,
+            PanelKind::Timeseries => Some(crate::grafana::Kind::Timeseries),
+            PanelKind::Stat
+            | PanelKind::Gauge
+            | PanelKind::Bargauge
+            | PanelKind::Piechart
+            | PanelKind::Barchart => Some(crate::grafana::Kind::Stat),
+            PanelKind::Table => Some(crate::grafana::Kind::Table),
+            PanelKind::Text => None,
         }
     }
+
+    /// A gauge and a bar gauge have a scale with a minimum and a maximum.
+    fn scaled(self) -> bool {
+        matches!(self, PanelKind::Gauge | PanelKind::Bargauge)
+    }
+
+    /// Reads each entity's current value, never readings over time: a table and a bar chart.
+    fn current_only(self) -> bool {
+        matches!(self, PanelKind::Table | PanelKind::Barchart)
+    }
+}
+
+/// How a bar gauge fills its bars, Grafana's `displayMode`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplayMode {
+    #[default]
+    Gradient,
+    Lcd,
+    Basic,
+}
+
+/// Which way bars run, Grafana's `orientation`; `auto` follows the panel's shape.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Orientation {
+    #[default]
+    Auto,
+    Horizontal,
+    Vertical,
+}
+
+/// A pie chart's shape, Grafana's `pieType`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PieType {
+    #[default]
+    Pie,
+    Donut,
+}
+
+/// A bar gauge's own choices.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BarGaugeOptions {
+    #[serde(default)]
+    pub display_mode: DisplayMode,
+    #[serde(default)]
+    pub orientation: Orientation,
+}
+
+/// A pie chart's own choices.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PieChartOptions {
+    #[serde(default)]
+    pub pie_type: PieType,
+}
+
+/// A bar chart's own choices: the text attribute that names each bar, one bar per entity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BarChartOptions {
+    pub x_field: String,
+}
+
+/// A text panel's own choice: what it says, in Markdown. The Portal shows it as plain text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TextOptions {
+    pub content: String,
 }
 
 /// How readings are combined: by the broker per interval for a time series, over the range for a
@@ -267,10 +363,12 @@ pub struct BoardPanel {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     pub grid: Grid,
-    /// An Endpoint of the project, by name.
+    /// An Endpoint of the project, by name; a text panel names none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub endpoint: String,
-    #[serde(rename = "type")]
+    #[serde(default, rename = "type", skip_serializing_if = "String::is_empty")]
     pub entity_type: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub attribute: String,
     #[serde(default)]
     pub aggregation: Aggregation,
@@ -284,6 +382,20 @@ pub struct BoardPanel {
     pub decimals: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thresholds: Option<Thresholds>,
+    /// The scale of a gauge or bar gauge; Grafana scales to the data where none is given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// Each kind's own choices, given for that kind only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bargauge: Option<BarGaugeOptions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub piechart: Option<PieChartOptions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub barchart: Option<BarChartOptions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<TextOptions>,
 }
 
 /// A variable over the current values of one attribute.
@@ -480,6 +592,9 @@ fn check_panel(at: &str, panel: &BoardPanel, variables: &BTreeSet<&str>) -> Resu
             "a place on the 24 columns: x + w at most 24, a height of 2 to 40 rows",
         ));
     }
+    if panel.kind == PanelKind::Text {
+        return check_text(at, panel);
+    }
     for (field, name) in [
         ("endpoint", &panel.endpoint),
         ("type", &panel.entity_type),
@@ -489,15 +604,19 @@ fn check_panel(at: &str, panel: &BoardPanel, variables: &BTreeSet<&str>) -> Resu
             return Err(refuse(format!("{at}.{field}"), "choose one from the list"));
         }
     }
-    match panel.kind {
-        PanelKind::Table if panel.aggregation != Aggregation::None => {
-            return Err(refuse(
-                format!("{at}.aggregation"),
-                "a table shows the current values; choose no aggregation",
-            ))
-        }
-        _ => {}
+    if panel.kind.current_only() && panel.aggregation != Aggregation::None {
+        let what = if panel.kind == PanelKind::Table {
+            "a table"
+        } else {
+            "a bar chart"
+        };
+        return Err(refuse(
+            format!("{at}.aggregation"),
+            format!("{what} shows the current values; choose no aggregation"),
+        ));
     }
+    check_kind_options(at, panel)?;
+    check_scale(at, panel)?;
     let aggregates_in_time = panel.aggregation != Aggregation::None;
     if !aggregates_in_time && panel.interval != Interval::Auto {
         return Err(refuse(
@@ -587,6 +706,129 @@ fn check_panel(at: &str, panel: &BoardPanel, variables: &BTreeSet<&str>) -> Resu
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// The members each kind's own choices sit under, and the kind that takes them.
+const KIND_OPTIONS: [(&str, PanelKind, &str); 4] = [
+    ("bargauge", PanelKind::Bargauge, "a bar gauge"),
+    ("piechart", PanelKind::Piechart, "a pie chart"),
+    ("barchart", PanelKind::Barchart, "a bar chart"),
+    ("text", PanelKind::Text, "a text panel"),
+];
+
+/// Each kind's own choices: given for that kind, for no other.
+fn check_kind_options(at: &str, panel: &BoardPanel) -> Result<(), Refusal> {
+    let given = [
+        panel.bargauge.is_some(),
+        panel.piechart.is_some(),
+        panel.barchart.is_some(),
+        panel.text.is_some(),
+    ];
+    for ((field, owner, words), given) in KIND_OPTIONS.into_iter().zip(given) {
+        if given && panel.kind != owner {
+            return Err(refuse(
+                format!("{at}.{field}"),
+                format!("only {words} takes these choices; leave them out"),
+            ));
+        }
+        if !given && panel.kind == owner {
+            return Err(refuse(
+                format!("{at}.{field}"),
+                format!("{words} needs its own choices"),
+            ));
+        }
+    }
+    if let Some(bars) = &panel.barchart {
+        if !plain_name(&bars.x_field) {
+            return Err(refuse(
+                format!("{at}.barchart.xField"),
+                "choose the attribute that names each bar, for example name",
+            ));
+        }
+        if bars.x_field == panel.attribute {
+            return Err(refuse(
+                format!("{at}.barchart.xField"),
+                format!(
+                    "{} is the value the bars show; name the bars by another attribute",
+                    panel.attribute
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The scale of a gauge or a bar gauge: finite numbers, the minimum below the maximum.
+fn check_scale(at: &str, panel: &BoardPanel) -> Result<(), Refusal> {
+    for (field, bound) in [("min", panel.min), ("max", panel.max)] {
+        let Some(bound) = bound else { continue };
+        if !panel.kind.scaled() {
+            return Err(refuse(
+                format!("{at}.{field}"),
+                "only a gauge or a bar gauge has a scale; leave it out",
+            ));
+        }
+        if !bound.is_finite() {
+            return Err(refuse(format!("{at}.{field}"), "a number, for example 100"));
+        }
+    }
+    if let (Some(min), Some(max)) = (panel.min, panel.max) {
+        if min >= max {
+            return Err(refuse(
+                format!("{at}.max"),
+                format!("the maximum must be above the minimum {min}"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A text panel: its text within [`MAX_CONTENT`], lines and tabs allowed, and no data choice.
+fn check_text(at: &str, panel: &BoardPanel) -> Result<(), Refusal> {
+    let data = [
+        ("endpoint", !panel.endpoint.is_empty()),
+        ("type", !panel.entity_type.is_empty()),
+        ("attribute", !panel.attribute.is_empty()),
+        ("aggregation", panel.aggregation != Aggregation::None),
+        ("interval", panel.interval != Interval::Auto),
+        ("filters", !panel.filters.is_empty()),
+        ("unit", !panel.unit.is_empty()),
+        ("decimals", panel.decimals.is_some()),
+        ("thresholds", panel.thresholds.is_some()),
+        ("min", panel.min.is_some()),
+        ("max", panel.max.is_some()),
+    ];
+    if let Some((field, _)) = data.into_iter().find(|(_, given)| *given) {
+        return Err(refuse(
+            format!("{at}.{field}"),
+            "a text panel reads no data; leave it out",
+        ));
+    }
+    check_kind_options(at, panel)?;
+    let content = panel.text.as_ref().map_or("", |text| text.content.as_str());
+    let field = format!("{at}.text.content");
+    if content.trim().is_empty() {
+        return Err(refuse(field, "write what the panel says"));
+    }
+    if content.chars().count() > MAX_CONTENT {
+        return Err(refuse(field, format!("{MAX_CONTENT} characters at most")));
+    }
+    if content
+        .chars()
+        .any(|c| c.is_control() && c != '\n' && c != '\t')
+    {
+        return Err(refuse(
+            field,
+            "no control characters other than line breaks",
+        ));
+    }
+    if crate::secret_scan::secret_text(content) {
+        return Err(refuse(
+            field,
+            "this reads like a credential; write something else",
+        ));
     }
     Ok(())
 }
@@ -772,7 +1014,26 @@ fn compiled_variable(variable: &BoardVariable, values: &[String]) -> Value {
     out
 }
 
+/// A text panel: its words and nothing it reads.
+fn compiled_text(panel: &BoardPanel) -> Value {
+    let content = panel.text.as_ref().map_or("", |text| text.content.as_str());
+    let mut out = json!({
+        "id": panel.id,
+        "type": PanelKind::Text.as_str(),
+        "title": panel.title.trim(),
+        "gridPos": { "x": panel.grid.x, "y": panel.grid.y, "w": panel.grid.w, "h": panel.grid.h },
+        "options": { "mode": "markdown", "content": content },
+    });
+    if !panel.description.trim().is_empty() {
+        out["description"] = json!(panel.description.trim());
+    }
+    out
+}
+
 fn compiled_panel(panel: &BoardPanel, source: &Source) -> Value {
+    if panel.kind == PanelKind::Text {
+        return compiled_text(panel);
+    }
     let reference = json!({ "type": PLUGIN, "uid": source.datasource });
     let mut target = json!({
         "refId": "A",
@@ -790,13 +1051,16 @@ fn compiled_panel(panel: &BoardPanel, source: &Source) -> Value {
         }
     } else {
         target["queryType"] = json!("entity");
-        target["format"] = json!(if panel.kind == PanelKind::Table {
+        target["format"] = json!(if panel.kind.current_only() {
             "table"
         } else {
             "timeseries"
         });
     }
-    if source.named {
+    if let Some(bars) = &panel.barchart {
+        // One row per entity: the bar's name, then its value.
+        target["attributes"] = json!([bars.x_field, panel.attribute]);
+    } else if source.named {
         if panel.kind == PanelKind::Table {
             if panel.attribute != "name" {
                 target["attributes"] = json!(["name", panel.attribute]);
@@ -827,6 +1091,11 @@ fn compiled_panel(panel: &BoardPanel, source: &Source) -> Value {
     if let Some(decimals) = panel.decimals {
         defaults.insert("decimals".into(), json!(decimals));
     }
+    for (key, bound) in [("min", panel.min), ("max", panel.max)] {
+        if let Some(bound) = bound {
+            defaults.insert(key.into(), json!(bound));
+        }
+    }
     if let Some(thresholds) = &panel.thresholds {
         let steps: Vec<Value> = std::iter::once(json!({ "color": thresholds.base, "value": null }))
             .chain(
@@ -841,7 +1110,7 @@ fn compiled_panel(panel: &BoardPanel, source: &Source) -> Value {
             json!({ "mode": "absolute", "steps": steps }),
         );
         match panel.kind {
-            PanelKind::Stat | PanelKind::Gauge => {
+            PanelKind::Stat | PanelKind::Gauge | PanelKind::Bargauge | PanelKind::Barchart => {
                 defaults.insert("color".into(), json!({ "mode": "thresholds" }));
             }
             PanelKind::Timeseries => {
@@ -850,7 +1119,7 @@ fn compiled_panel(panel: &BoardPanel, source: &Source) -> Value {
                     json!({ "thresholdsStyle": { "mode": "line" } }),
                 );
             }
-            PanelKind::Table => {}
+            PanelKind::Table | PanelKind::Piechart | PanelKind::Text => {}
         }
     }
     let reduce = json!({ "calcs": [panel.aggregation.calc()], "fields": "", "values": false });
@@ -871,6 +1140,29 @@ fn compiled_panel(panel: &BoardPanel, source: &Source) -> Value {
             "showThresholdLabels": false,
         }),
         PanelKind::Table => json!({ "showHeader": true }),
+        PanelKind::Bargauge => {
+            let own = panel.bargauge.unwrap_or_default();
+            json!({
+                "reduceOptions": reduce,
+                "displayMode": own.display_mode,
+                "orientation": own.orientation,
+                "showUnfilled": true,
+            })
+        }
+        PanelKind::Piechart => json!({
+            "reduceOptions": reduce,
+            "pieType": panel.piechart.unwrap_or_default().pie_type,
+            "legend": { "displayMode": "list", "placement": "right", "showLegend": true },
+            "tooltip": { "mode": "single", "sort": "none" },
+        }),
+        PanelKind::Barchart => json!({
+            "xField": panel.barchart.as_ref().map(|bars| bars.x_field.as_str()),
+            "orientation": "auto",
+            "showValue": "auto",
+            "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+            "tooltip": { "mode": "single", "sort": "none" },
+        }),
+        PanelKind::Text => unreachable!("a text panel is compiled by compiled_text"),
     };
     let mut out = json!({
         "id": panel.id,
@@ -947,6 +1239,7 @@ pub fn decompile(
     endpoint_of: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Board, String> {
     let object = file.as_object().ok_or("the file holds no JSON object")?;
+    foreign_datasource(file)?;
     if let Some(stray) = object.keys().find(|key| !FILE_KEYS.contains(&key.as_str())) {
         return Err(format!(
             "the file has a member the builder does not write: {stray}"
@@ -984,6 +1277,97 @@ pub fn decompile(
     })
 }
 
+/// The first panel reading another datasource than an NGSI-LD Endpoint (a made-by-hand
+/// dashboard's Prometheus panel), named with its datasource, as the refusal of the whole file.
+fn foreign_datasource(file: &Value) -> Result<(), String> {
+    for panel in file["panels"].as_array().into_iter().flatten() {
+        let reads = [&panel["datasource"]].into_iter().chain(
+            panel["targets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|t| &t["datasource"]),
+        );
+        for datasource in reads {
+            let kind = datasource["type"].as_str().unwrap_or_default();
+            if !datasource.is_null() && kind != PLUGIN {
+                return Err(format!(
+                    "panel {} ({}) reads the {kind} datasource {}; the builder reads NGSI-LD Endpoints only",
+                    panel["id"],
+                    panel["title"].as_str().unwrap_or_default(),
+                    datasource["uid"].as_str().unwrap_or_default(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A text panel read back: its words, and no data choice.
+fn decompiled_text(id: u32, panel: &Value) -> Result<BoardPanel, String> {
+    if panel.get("targets").is_some() || panel.get("datasource").is_some() {
+        return Err(format!(
+            "text panel {id} reads data; the builder writes none"
+        ));
+    }
+    let content = panel["options"]["content"]
+        .as_str()
+        .ok_or_else(|| format!("text panel {id} says nothing"))?;
+    Ok(BoardPanel {
+        id,
+        kind: PanelKind::Text,
+        title: panel["title"].as_str().unwrap_or_default().to_owned(),
+        description: panel["description"].as_str().unwrap_or_default().to_owned(),
+        grid: grid_of(panel),
+        endpoint: String::new(),
+        entity_type: String::new(),
+        attribute: String::new(),
+        aggregation: Aggregation::None,
+        interval: Interval::Auto,
+        filters: Vec::new(),
+        unit: String::new(),
+        decimals: None,
+        thresholds: None,
+        min: None,
+        max: None,
+        bargauge: None,
+        piechart: None,
+        barchart: None,
+        text: Some(TextOptions {
+            content: content.to_owned(),
+        }),
+    })
+}
+
+fn grid_of(panel: &Value) -> Grid {
+    let grid = &panel["gridPos"];
+    let at = |key: &str| {
+        grid[key]
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(0)
+    };
+    Grid {
+        x: at("x"),
+        y: at("y"),
+        w: at("w"),
+        h: at("h"),
+    }
+}
+
+/// One of an enum's words in a panel's options, read as the builder wrote it.
+fn option_of<T: serde::de::DeserializeOwned + Default>(
+    id: u32,
+    options: &Value,
+    key: &str,
+) -> Result<T, String> {
+    match options.get(key) {
+        None => Ok(T::default()),
+        Some(word) => serde_json::from_value(word.clone())
+            .map_err(|_| format!("panel {id} has a {key} the builder does not write: {word}")),
+    }
+}
+
 fn decompiled_panel(
     panel: &Value,
     endpoint_of: &dyn Fn(&str) -> Option<String>,
@@ -998,6 +1382,9 @@ fn decompiled_panel(
             panel["type"]
         )
     })?;
+    if kind == PanelKind::Text {
+        return decompiled_text(id, panel);
+    }
     let targets = panel["targets"].as_array().map_or(&[][..], Vec::as_slice);
     let [target] = targets else {
         return Err(format!(
@@ -1009,18 +1396,32 @@ fn decompiled_panel(
     let endpoint = endpoint_of(datasource).ok_or_else(|| {
         format!("panel {id} reads a datasource that reads no Endpoint of this project")
     })?;
-    let attributes: Vec<&str> = target["attributes"]
+    let options = &panel["options"];
+    let read: Vec<&str> = target["attributes"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .filter(|a| {
-            !(kind == PanelKind::Table
-                && *a == "name"
-                && target["attributes"]
-                    .as_array()
-                    .is_some_and(|all| all.len() > 1))
+        .collect();
+    let barchart = if kind == PanelKind::Barchart {
+        // A bar chart reads the bars' names, then their value.
+        let x_field = options["xField"].as_str().unwrap_or_default();
+        if read.first() != Some(&x_field) {
+            return Err(format!(
+                "panel {id} names its bars by an attribute it does not read first"
+            ));
+        }
+        Some(BarChartOptions {
+            x_field: x_field.to_owned(),
         })
+    } else {
+        None
+    };
+    let attributes: Vec<&str> = read
+        .iter()
+        .copied()
+        .skip(usize::from(barchart.is_some()))
+        .filter(|a| !(kind == PanelKind::Table && *a == "name" && read.len() > 1))
         .collect();
     let [attribute] = attributes[..] else {
         return Err(format!(
@@ -1070,24 +1471,27 @@ fn decompiled_panel(
                     .collect(),
             })
         });
-    let grid = &panel["gridPos"];
-    let at = |key: &str| {
-        grid[key]
-            .as_u64()
-            .and_then(|n| u32::try_from(n).ok())
-            .unwrap_or(0)
-    };
+    let bargauge = (kind == PanelKind::Bargauge)
+        .then(|| {
+            Ok::<_, String>(BarGaugeOptions {
+                display_mode: option_of(id, options, "displayMode")?,
+                orientation: option_of(id, options, "orientation")?,
+            })
+        })
+        .transpose()?;
+    let piechart = (kind == PanelKind::Piechart)
+        .then(|| {
+            Ok::<_, String>(PieChartOptions {
+                pie_type: option_of(id, options, "pieType")?,
+            })
+        })
+        .transpose()?;
     Ok(BoardPanel {
         id,
         kind,
         title: panel["title"].as_str().unwrap_or_default().to_owned(),
         description: panel["description"].as_str().unwrap_or_default().to_owned(),
-        grid: Grid {
-            x: at("x"),
-            y: at("y"),
-            w: at("w"),
-            h: at("h"),
-        },
+        grid: grid_of(panel),
         endpoint,
         entity_type: target["entityType"].as_str().unwrap_or_default().to_owned(),
         attribute: attribute.to_owned(),
@@ -1099,6 +1503,12 @@ fn decompiled_panel(
             .as_u64()
             .and_then(|d| u8::try_from(d).ok()),
         thresholds,
+        min: defaults["min"].as_f64(),
+        max: defaults["max"].as_f64(),
+        bargauge,
+        piechart,
+        barchart,
+        text: None,
     })
 }
 
@@ -1154,6 +1564,7 @@ pub fn read_file(uid: &str, text: &str) -> Result<Value, String> {
     }
     let file: Value = serde_json::from_str(text).map_err(|e| format!("not JSON: {e}"))?;
     let object = file.as_object().ok_or("not a JSON object")?;
+    foreign_datasource(&file)?;
     if let Some(stray) = object.keys().find(|key| !FILE_KEYS.contains(&key.as_str())) {
         return Err(format!("a member the builder does not write: {stray}"));
     }
@@ -1232,10 +1643,27 @@ fn builders_own(file: &Value) -> Result<(), String> {
                 "panel {id} has a member the builder does not write: {key}"
             ));
         }
-        if PanelKind::parse(panel["type"].as_str().unwrap_or_default()).is_none() {
+        let Some(kind) = PanelKind::parse(panel["type"].as_str().unwrap_or_default()) else {
             return Err(format!(
-                "panel {id} is not a time series, stat, table or gauge"
+                "panel {id} is a {}, which the builder does not write",
+                panel["type"]
             ));
+        };
+        if kind == PanelKind::Text {
+            if panel.get("datasource").is_some() || panel.get("targets").is_some() {
+                return Err(format!(
+                    "text panel {id} reads data; the builder writes none"
+                ));
+            }
+            if !panel["options"]["content"]
+                .as_str()
+                .is_some_and(|content| content.chars().count() <= MAX_CONTENT)
+            {
+                return Err(format!(
+                    "text panel {id} holds no text of {MAX_CONTENT} characters at most"
+                ));
+            }
+            continue;
         }
         if panel["datasource"]["type"] != PLUGIN {
             return Err(format!("panel {id} reads no NGSI-LD Endpoint"));
@@ -1487,7 +1915,22 @@ mod tests {
             unit: String::new(),
             decimals: None,
             thresholds: None,
+            min: None,
+            max: None,
+            bargauge: (kind == PanelKind::Bargauge).then(BarGaugeOptions::default),
+            piechart: (kind == PanelKind::Piechart).then(PieChartOptions::default),
+            barchart: (kind == PanelKind::Barchart).then(|| BarChartOptions {
+                x_field: "station".into(),
+            }),
+            text: None,
         }
+    }
+
+    /// A panel of `kind` in the second row.
+    fn below(id: u32, kind: PanelKind, x: u32) -> BoardPanel {
+        let mut panel = panel(id, kind, x);
+        panel.grid.y = 8;
+        panel
     }
 
     pub(crate) fn board() -> Board {
@@ -1527,6 +1970,26 @@ mod tests {
             value: Some("Kallio".into()),
             variable: None,
         }];
+        gauge.min = Some(0.0);
+        gauge.max = Some(150.0);
+        let mut bars = below(5, PanelKind::Bargauge, 0);
+        bars.bargauge = Some(BarGaugeOptions {
+            display_mode: DisplayMode::Lcd,
+            orientation: Orientation::Horizontal,
+        });
+        bars.max = Some(50.0);
+        let mut pie = below(6, PanelKind::Piechart, 6);
+        pie.piechart = Some(PieChartOptions {
+            pie_type: PieType::Donut,
+        });
+        let chart = below(7, PanelKind::Barchart, 12);
+        let mut words = below(8, PanelKind::Text, 18);
+        words.endpoint = String::new();
+        words.entity_type = String::new();
+        words.attribute = String::new();
+        words.text = Some(TextOptions {
+            content: "## About\nReadings every **10 minutes**.".into(),
+        });
         Board {
             title: "Air".into(),
             description: "Air in Helsinki".into(),
@@ -1541,7 +2004,7 @@ mod tests {
                 attribute: "station".into(),
                 include_all: true,
             }],
-            panels: vec![series, stat, table, gauge],
+            panels: vec![series, stat, table, gauge, bars, pie, chart, words],
         }
     }
 
@@ -1601,6 +2064,23 @@ mod tests {
             file["panels"][3]["targets"][0]["customQuery"],
             "station!=\"Kallio\""
         );
+        assert_eq!(file["panels"][3]["fieldConfig"]["defaults"]["min"], 0.0);
+        assert_eq!(file["panels"][3]["fieldConfig"]["defaults"]["max"], 150.0);
+        let bars = &file["panels"][4];
+        assert_eq!(bars["type"], "bargauge");
+        assert_eq!(bars["options"]["displayMode"], "lcd");
+        assert_eq!(bars["options"]["orientation"], "horizontal");
+        assert_eq!(file["panels"][5]["options"]["pieType"], "donut");
+        let chart = &file["panels"][6];
+        assert_eq!(chart["options"]["xField"], "station");
+        assert_eq!(
+            chart["targets"][0]["attributes"],
+            json!(["station", "pm25"])
+        );
+        assert_eq!(chart["targets"][0]["format"], "table");
+        let words = &file["panels"][7];
+        assert_eq!(words["options"]["mode"], "markdown");
+        assert!(words.get("targets").is_none() && words.get("datasource").is_none());
         let variable = &file["templating"]["list"][0];
         assert_eq!(variable["query"], "Kallio,Vallila");
         assert_eq!(variable["allValue"], ".*");
@@ -1665,6 +2145,56 @@ mod tests {
                 "panels[0].endpoint",
                 Box::new(|b| b.panels[0].endpoint = "../other".into()),
             ),
+            ("panels[3].max", Box::new(|b| b.panels[3].max = Some(0.0))),
+            ("panels[4].max", Box::new(|b| b.panels[4].min = Some(50.0))),
+            ("panels[1].min", Box::new(|b| b.panels[1].min = Some(1.0))),
+            (
+                "panels[3].min",
+                Box::new(|b| b.panels[3].min = Some(f64::NAN)),
+            ),
+            (
+                "panels[4].bargauge",
+                Box::new(|b| b.panels[4].bargauge = None),
+            ),
+            (
+                "panels[1].piechart",
+                Box::new(|b| b.panels[1].piechart = Some(PieChartOptions::default())),
+            ),
+            (
+                "panels[6].barchart.xField",
+                Box::new(|b| b.panels[6].barchart.as_mut().unwrap().x_field = "pm25".into()),
+            ),
+            (
+                "panels[6].barchart.xField",
+                Box::new(|b| b.panels[6].barchart.as_mut().unwrap().x_field = "a b".into()),
+            ),
+            (
+                "panels[6].aggregation",
+                Box::new(|b| b.panels[6].aggregation = Aggregation::Avg),
+            ),
+            (
+                "panels[7].text.content",
+                Box::new(|b| {
+                    b.panels[7].text.as_mut().unwrap().content = "x".repeat(MAX_CONTENT + 1)
+                }),
+            ),
+            (
+                "panels[7].text.content",
+                Box::new(|b| b.panels[7].text.as_mut().unwrap().content = " \n ".into()),
+            ),
+            (
+                "panels[7].text.content",
+                Box::new(|b| b.panels[7].text.as_mut().unwrap().content = "a\u{7}b".into()),
+            ),
+            (
+                "panels[7].endpoint",
+                Box::new(|b| b.panels[7].endpoint = "open".into()),
+            ),
+            (
+                "panels[7].unit",
+                Box::new(|b| b.panels[7].unit = "percent".into()),
+            ),
+            ("panels[7].text", Box::new(|b| b.panels[7].text = None)),
         ];
         for (field, change) in cases {
             let mut board = board();
@@ -1720,6 +2250,31 @@ mod tests {
                 read_file("jcd-0123456789abcdef", &other.to_string()).is_err(),
                 "{field}"
             );
+        }
+    }
+
+    #[test]
+    fn a_dashboard_reading_prometheus_is_refused_naming_its_datasource() {
+        let dev: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/grafana-builder/dev-assistant.json"
+        ))
+        .expect("the dev dashboard");
+        let why = decompile(&dev, &|_| Some("open".into())).expect_err("made by hand");
+        assert!(why.contains("prometheus datasource prometheus"), "{why}");
+        let why = read_file("jc-assistant", &dev.to_string()).expect_err("made by hand");
+        assert!(why.contains("prometheus datasource"), "{why}");
+        let bargauges: Vec<&Value> = dev["panels"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|p| p["type"] == "bargauge")
+            .collect();
+        assert_eq!(bargauges.len(), 2, "dev's two bar gauges");
+        for one in bargauges {
+            let alone = json!({ "uid": "jc-assistant", "title": "x", "panels": [one] });
+            let why = decompile(&alone, &|_| Some("open".into())).expect_err("prometheus");
+            assert!(why.starts_with(&format!("panel {}", one["id"])), "{why}");
+            assert!(why.contains("prometheus"), "{why}");
         }
     }
 
