@@ -46,6 +46,8 @@ pub struct NgsiLdDatasource {
     pub uid: String,
     pub endpoint_url: String,
     pub endpoint_slug: Option<String>,
+    /// Grafana's `oauthPassThru`, kept as stored. It changes no request: a caller's token is
+    /// exchanged either way, and with none the read goes out without `Authorization`.
     pub oauth_pass_thru: bool,
     pub page_size: u32,
     pub context_url: Option<String>,
@@ -108,18 +110,10 @@ impl NgsiLdDatasource {
             headers.push(("NGSILD-Tenant".to_owned(), t.trim().to_owned()));
         }
 
-        // Exchange caller's token for Endpoint audience when oauthPassThru is active or bearer token is present
-        if self.oauth_pass_thru {
-            let caller_token = ctx.subject.bearer_token.as_deref().unwrap_or("");
-            let audience = self.endpoint_slug.as_deref().unwrap_or(self.uid.as_str());
-            let exchanged = self
-                .token_exchanger
-                .exchange_for_audience(caller_token, audience)?;
-            headers.push((
-                "Authorization".to_owned(),
-                format!("Bearer {}", exchanged.as_str()),
-            ));
-        } else if let Some(caller_token) = &ctx.subject.bearer_token
+        // A caller's token leaves only exchanged for the Endpoint's audience. With no token the
+        // read goes out anonymously, whether or not oauthPassThru is on (Grafana parity): the
+        // gateway answers it by the Endpoint's audience.
+        if let Some(caller_token) = &ctx.subject.bearer_token
             && !caller_token.is_empty()
         {
             let audience = self.endpoint_slug.as_deref().unwrap_or(self.uid.as_str());
@@ -197,6 +191,55 @@ pub fn grafana_unit(code: Option<&str>) -> Option<String> {
         other => return Some(format!("suffix: {other}")),
     };
     Some(mapped.to_owned())
+}
+
+/// The target with the dashboard's variables put into its `customQuery`, as Grafana's
+/// `templateSrv.replace` does for the plugin: `${name:regex}`, `${name}` and `$name` each become
+/// the text `variables` holds for `name` (already formatted by the caller, a multi-value pick as an
+/// escaped `(a|b)`). A name the dashboard does not hold is left as written.
+#[must_use]
+pub fn with_variables(model: &Value, variables: &BTreeMap<String, String>) -> Value {
+    let Some(text) = model.get("customQuery").and_then(Value::as_str) else {
+        return model.clone();
+    };
+    if variables.is_empty() || !text.contains('$') {
+        return model.clone();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('$') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let (name, used) = if let Some(braced) = after.strip_prefix('{') {
+            match braced.find('}') {
+                Some(end) => {
+                    let inner = &braced[..end];
+                    let name = inner.split_once(':').map_or(inner, |(name, _)| name);
+                    (name, end + 2)
+                }
+                None => ("", 0),
+            }
+        } else {
+            let end = after
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(after.len());
+            (&after[..end], end)
+        };
+        match variables.get(name).filter(|_| used > 0) {
+            Some(value) => {
+                out.push_str(value);
+                rest = &after[used..];
+            }
+            None => {
+                out.push('$');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    let mut model = model.clone();
+    model["customQuery"] = Value::String(out);
+    model
 }
 
 /// Builds the `/entities` or `/temporal/entities` path and query parameters (`NGP src/request.ts:buildRequest`).
@@ -799,8 +842,9 @@ impl Datasource for NgsiLdDatasource {
                 if q.hide {
                     continue;
                 }
+                let model = with_variables(&q.model, &ctx.variables);
                 let (path, params) = build_ngsild_request(
-                    &q.model,
+                    &model,
                     ctx.from_ms,
                     ctx.to_ms,
                     ctx.interval_ms,

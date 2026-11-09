@@ -2906,6 +2906,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/grafana/builder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read The Dashboard Builder
+         * @description Whether the caller may build dashboards in the project, the builder dashboards whose Change waits for approval, and the refresh intervals, units and colours the forms offer. Changes no data.
+         */
+        get: operations["builder_start"];
+        put?: never;
+        /**
+         * Propose A New Dashboard
+         * @description Compiles a dashboard from choices into a Grafana dashboard file and proposes it as a Change that adds `projects/{project}/grafana/{uid}.json`. The uid is minted here. Needs propose on Dashboard and read on every Endpoint a choice names.
+         */
+        post: operations["builder_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/grafana/builder/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview A Builder Panel
+         * @description Runs one panel of an unsaved dashboard as the caller: the Portal compiles the panel's query from its choices, checks it as the dashboard page checks a saved panel, and answers the panel and its frames. The body takes choices only; a query member is refused. Needs propose on Dashboard. Changes no data.
+         */
+        post: operations["builder_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/grafana/builder/values": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read A Builder Variable's Values
+         * @description The current values of one text attribute of a type on an Endpoint the caller may read, read with the caller's rights: what a dashboard variable over it offers. Needs propose on Dashboard. Changes no data.
+         */
+        get: operations["builder_values"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/grafana/builder/{uid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read A Builder Dashboard
+         * @description A builder dashboard's file read back into choices for its next edit, with the revision the edit starts from and the Change of it that waits for approval, if any. Needs propose on Dashboard. Changes no data.
+         */
+        get: operations["builder_get"];
+        /**
+         * Propose A Dashboard Edit
+         * @description Compiles the edited dashboard from choices and proposes it as a Change of `projects/{project}/grafana/{uid}.json`. `base` is the revision the edit started from; a file changed since is a conflict. Needs propose on Dashboard and read on every Endpoint a choice names.
+         */
+        put: operations["builder_update"];
+        post?: never;
+        /**
+         * Propose Removing A Dashboard
+         * @description Proposes a Change that removes `projects/{project}/grafana/{uid}.json`; once it merges the reconciler takes the dashboard out of the dashboards service. Needs propose on Dashboard.
+         */
+        delete: operations["builder_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/grafana/dashboards": {
         parameters: {
             query?: never;
@@ -7713,6 +7805,12 @@ export interface components {
          * @enum {string}
          */
         AgentState: "active" | "paused" | "running" | "waiting";
+        /**
+         * @description How readings are combined: by the broker per interval for a time series, over the range for a
+         *     stat or gauge. `none` draws each reading (a time series) or the latest value (a stat, a gauge).
+         * @enum {string}
+         */
+        Aggregation: "none" | "avg" | "min" | "max" | "sum";
         /** @enum {string} */
         AlertDelivery: "portal" | "digest";
         /** @enum {string} */
@@ -8055,6 +8153,15 @@ export interface components {
             /** @description The JWT the provider signed, carrying the `logout_events` claim. */
             logout_token: string;
         };
+        /** @description A bar chart's own choices: the text attribute that names each bar, one bar per entity. */
+        BarChartOptions: {
+            xField: string;
+        };
+        /** @description A bar gauge's own choices. */
+        BarGaugeOptions: {
+            displayMode?: components["schemas"]["DisplayMode"];
+            orientation?: components["schemas"]["Orientation"];
+        };
         /** @description One topic filter's way to an attribute; it ends at the first hop the caller may not read. */
         Binding: {
             /** @description The output mapper's map; absent for a step written by hand. */
@@ -8068,6 +8175,58 @@ export interface components {
         Bindings: {
             bindings: components["schemas"]["Binding"][];
             broker: string;
+        };
+        /** @description A dashboard, as choices: what the builder sends and reads back. */
+        Board: {
+            description?: string;
+            /** @description The default range, Grafana's words (`now-6h`, `now`). */
+            from?: string;
+            panels?: components["schemas"]["BoardPanel"][];
+            /** @description One of [`REFRESHES`]; empty is off. */
+            refresh?: string;
+            title: string;
+            to?: string;
+            variables?: components["schemas"]["BoardVariable"][];
+        };
+        /** @description One panel, as choices. */
+        BoardPanel: {
+            aggregation?: components["schemas"]["Aggregation"];
+            attribute?: string;
+            barchart?: null | components["schemas"]["BarChartOptions"];
+            bargauge?: null | components["schemas"]["BarGaugeOptions"];
+            /** Format: int32 */
+            decimals?: number | null;
+            description?: string;
+            /** @description An Endpoint of the project, by name; a text panel names none. */
+            endpoint?: string;
+            filters?: components["schemas"]["Filter"][];
+            grid: components["schemas"]["Grid"];
+            /** Format: int32 */
+            id: number;
+            interval?: components["schemas"]["Interval"];
+            kind: components["schemas"]["PanelKind"];
+            /** Format: double */
+            max?: number | null;
+            /**
+             * Format: double
+             * @description The scale of a gauge or bar gauge; Grafana scales to the data where none is given.
+             */
+            min?: number | null;
+            piechart?: null | components["schemas"]["PieChartOptions"];
+            text?: null | components["schemas"]["TextOptions"];
+            thresholds?: null | components["schemas"]["Thresholds"];
+            title: string;
+            type?: string;
+            unit?: string;
+        };
+        /** @description A variable over the current values of one attribute. */
+        BoardVariable: {
+            attribute: string;
+            endpoint: string;
+            includeAll?: boolean;
+            label?: string;
+            name: string;
+            type: string;
         };
         /** @description Everything the Portal shows that names or themes an installation. */
         Branding: {
@@ -8238,6 +8397,36 @@ export interface components {
             current: boolean;
             /** Format: int64 */
             number?: number | null;
+        };
+        /** @description One builder dashboard, for its next edit. */
+        BuilderDashboard: {
+            /**
+             * @description The file's revision on the default branch, sent back with the edit; none while only a
+             *     Change holds the file.
+             */
+            base?: string | null;
+            board: components["schemas"]["Board"];
+            pending?: null | components["schemas"]["PendingDashboard"];
+            uid: string;
+        };
+        /** @description What a save proposed. */
+        BuilderSaved: {
+            change: components["schemas"]["Change"];
+            uid: string;
+        };
+        /**
+         * @description Where the builder starts: whether the caller may build here, and the dashboards whose
+         *     Change waits for approval.
+         */
+        BuilderStart: {
+            colors: string[];
+            /** @description The caller may propose dashboards in the project. */
+            mayEdit: boolean;
+            /** @description Open Changes of builder dashboards; empty for a caller who may not edit. */
+            pending: components["schemas"]["PendingDashboard"][];
+            /** @description What the forms offer, the server's lists: refresh intervals, units, colours. */
+            refreshes: string[];
+            units: string[];
         };
         Capabilities: {
             /** @description An endpoint not named here is `read`. */
@@ -9356,6 +9545,11 @@ export interface components {
             passed?: string[];
             run?: string | null;
         };
+        /**
+         * @description How a bar gauge fills its bars, Grafana's `displayMode`.
+         * @enum {string}
+         */
+        DisplayMode: "gradient" | "lcd" | "basic";
         /** @description `status.domainVerification` of an Organization (PF-41, Architecture/03 §3). */
         DomainVerification: {
             /** @description What the TXT record carries after `jc-verify=`. Not a secret: it is published in DNS. */
@@ -9496,6 +9690,66 @@ export interface components {
             firstName?: string | null;
             lastName?: string | null;
             locale?: string | null;
+        };
+        /**
+         * @description An edit of a saved dashboard.
+         * @example {
+         *       "base": "3f2a9c",
+         *       "board": {
+         *         "panels": [
+         *           {
+         *             "aggregation": "avg",
+         *             "attribute": "availableBikeNumber",
+         *             "decimals": 0,
+         *             "endpoint": "helsinki-bikes",
+         *             "filters": [
+         *               {
+         *                 "attribute": "status",
+         *                 "op": "eq",
+         *                 "variable": "status"
+         *               }
+         *             ],
+         *             "grid": {
+         *               "h": 8,
+         *               "w": 12,
+         *               "x": 0,
+         *               "y": 0
+         *             },
+         *             "id": 1,
+         *             "kind": "stat",
+         *             "thresholds": {
+         *               "base": "green",
+         *               "steps": [
+         *                 {
+         *                   "color": "red",
+         *                   "value": 5
+         *                 }
+         *               ]
+         *             },
+         *             "title": "Free bikes",
+         *             "type": "BikeHireDockingStation",
+         *             "unit": "none"
+         *           }
+         *         ],
+         *         "refresh": "5m",
+         *         "title": "Bike stations",
+         *         "variables": [
+         *           {
+         *             "attribute": "status",
+         *             "endpoint": "helsinki-bikes",
+         *             "includeAll": true,
+         *             "label": "Status",
+         *             "name": "status",
+         *             "type": "BikeHireDockingStation"
+         *           }
+         *         ]
+         *       }
+         *     }
+         */
+        EditedBoard: {
+            /** @description The `base` the edit started from. */
+            base: string;
+            board: components["schemas"]["Board"];
         };
         /** @description What one caller may do in one project: `GET /api/v1/projects/{project}/permissions/me`. */
         Effective: {
@@ -9711,6 +9965,14 @@ export interface components {
             fields: components["schemas"]["FieldConflict"][];
             path: string;
         };
+        /** @description One filter: an attribute compared with a value, or matched against a variable's picks. */
+        Filter: {
+            attribute: string;
+            op: components["schemas"]["Op"];
+            value?: string | null;
+            /** @description A variable of the dashboard; then `op` is `eq` and there is no `value`. */
+            variable?: string | null;
+        };
         Finding: {
             level: components["schemas"]["Level"];
             message: string;
@@ -9917,6 +10179,17 @@ export interface components {
             policy: string;
             rule: number;
             types: string[];
+        };
+        /** @description Where a panel sits on Grafana's 24-column grid. */
+        Grid: {
+            /** Format: int32 */
+            h: number;
+            /** Format: int32 */
+            w: number;
+            /** Format: int32 */
+            x: number;
+            /** Format: int32 */
+            y: number;
         };
         GroupRef: {
             name: string;
@@ -10135,6 +10408,11 @@ export interface components {
             /** @description Base URL of the catalogue. */
             url: string;
         };
+        /**
+         * @description The period the broker aggregates over; `auto` follows the panel's width and range.
+         * @enum {string}
+         */
+        Interval: "auto" | "PT1M" | "PT5M" | "PT15M" | "PT1H" | "P1D";
         /** @description A new client secret, in this answer and nowhere else. */
         IssuedSecret: {
             /** @description The Keycloak client the external system signs in as, `{project}-{name}`. */
@@ -10483,6 +10761,63 @@ export interface components {
             scope: string;
             target: string;
         };
+        /**
+         * @description A new dashboard.
+         * @example {
+         *       "board": {
+         *         "panels": [
+         *           {
+         *             "aggregation": "avg",
+         *             "attribute": "availableBikeNumber",
+         *             "decimals": 0,
+         *             "endpoint": "helsinki-bikes",
+         *             "filters": [
+         *               {
+         *                 "attribute": "status",
+         *                 "op": "eq",
+         *                 "variable": "status"
+         *               }
+         *             ],
+         *             "grid": {
+         *               "h": 8,
+         *               "w": 12,
+         *               "x": 0,
+         *               "y": 0
+         *             },
+         *             "id": 1,
+         *             "kind": "stat",
+         *             "thresholds": {
+         *               "base": "green",
+         *               "steps": [
+         *                 {
+         *                   "color": "red",
+         *                   "value": 5
+         *                 }
+         *               ]
+         *             },
+         *             "title": "Free bikes",
+         *             "type": "BikeHireDockingStation",
+         *             "unit": "none"
+         *           }
+         *         ],
+         *         "refresh": "5m",
+         *         "title": "Bike stations",
+         *         "variables": [
+         *           {
+         *             "attribute": "status",
+         *             "endpoint": "helsinki-bikes",
+         *             "includeAll": true,
+         *             "label": "Status",
+         *             "name": "status",
+         *             "type": "BikeHireDockingStation"
+         *           }
+         *         ]
+         *       }
+         *     }
+         */
+        NewBoard: {
+            board: components["schemas"]["Board"];
+        };
         /** @description What a person asks for when creating a connector (API/14 §1). */
         NewConnector: {
             /** @description OAuth client ids the connector answers, e.g. a CIMD URL `https://claude.ai/oauth/mcp-client-metadata`. */
@@ -10661,6 +10996,11 @@ export interface components {
             /** @description The page's visible text. */
             text: string;
         };
+        /**
+         * @description A filter's comparison.
+         * @enum {string}
+         */
+        Op: "eq" | "ne" | "gt" | "ge" | "lt" | "le";
         /** @description What a person fills in to open a project. */
         OpenProject: {
             description?: string | null;
@@ -10745,6 +11085,11 @@ export interface components {
             name: string;
             title?: components["schemas"]["Text"];
         };
+        /**
+         * @description Which way bars run, Grafana's `orientation`; `auto` follows the panel's shape.
+         * @enum {string}
+         */
+        Orientation: "auto" | "horizontal" | "vertical";
         /** @description One grant of this broker the account carries that is not in force now. */
         OutOfWindow: {
             /** @description The binding's role, e.g. `mqtt/air/sensor`. */
@@ -10798,6 +11143,15 @@ export interface components {
              */
             frames: Record<string, never>[];
         };
+        /**
+         * @description What a panel draws.
+         * @enum {string}
+         */
+        PanelKind: "timeseries" | "stat" | "table" | "gauge" | "bargauge" | "piechart" | "barchart" | "text";
+        /** @description The preview of one panel: the panel as the dashboard page draws it, and its data. */
+        PanelPreview: components["schemas"]["PanelData"] & {
+            panel: Record<string, never>;
+        };
         /** @enum {string} */
         Part: "freshness" | "completeness" | "validity" | "links";
         /** @description What the collector reads: how many records the Portal refused, and why the first one was. */
@@ -10814,6 +11168,16 @@ export interface components {
         PauseRequest: {
             /** @description `true` switches the loop off, `false` switches it back on. */
             paused: boolean;
+        };
+        /** @description A dashboard whose Change waits for approval. */
+        PendingDashboard: {
+            /** @description The Change, `chg-…`. */
+            change: string;
+            /** @description The Change's title, which names the dashboard. */
+            title: string;
+            uid: string;
+            /** @description Where the merge request is read. */
+            url: string;
         };
         /** @description A person as the Portal shows one (API/01 §24). */
         Person: {
@@ -10877,6 +11241,15 @@ export interface components {
          * @description Lifecycle phase enumeration.
          */
         Phase: "Draft" | "Pending" | "Deploying" | "Live" | "Error" | "Drifted";
+        /** @description A pie chart's own choices. */
+        PieChartOptions: {
+            pieType?: components["schemas"]["PieType"];
+        };
+        /**
+         * @description A pie chart's shape, Grafana's `pieType`.
+         * @enum {string}
+         */
+        PieType: "pie" | "donut";
         /** @description How many of the records the runs of an hour took did not reach the space (T-5291). */
         PipelineErrorRatio: {
             /**
@@ -11294,6 +11667,77 @@ export interface components {
             /** @description Why the loader refused the render, when it did (CC-78). */
             reason?: string | null;
             state: components["schemas"]["PreviewState"];
+        };
+        /**
+         * @description One panel of an unsaved board, run as the caller.
+         * @example {
+         *       "board": {
+         *         "panels": [
+         *           {
+         *             "aggregation": "avg",
+         *             "attribute": "availableBikeNumber",
+         *             "decimals": 0,
+         *             "endpoint": "helsinki-bikes",
+         *             "filters": [
+         *               {
+         *                 "attribute": "status",
+         *                 "op": "eq",
+         *                 "variable": "status"
+         *               }
+         *             ],
+         *             "grid": {
+         *               "h": 8,
+         *               "w": 12,
+         *               "x": 0,
+         *               "y": 0
+         *             },
+         *             "id": 1,
+         *             "kind": "stat",
+         *             "thresholds": {
+         *               "base": "green",
+         *               "steps": [
+         *                 {
+         *                   "color": "red",
+         *                   "value": 5
+         *                 }
+         *               ]
+         *             },
+         *             "title": "Free bikes",
+         *             "type": "BikeHireDockingStation",
+         *             "unit": "none"
+         *           }
+         *         ],
+         *         "refresh": "5m",
+         *         "title": "Bike stations",
+         *         "variables": [
+         *           {
+         *             "attribute": "status",
+         *             "endpoint": "helsinki-bikes",
+         *             "includeAll": true,
+         *             "label": "Status",
+         *             "name": "status",
+         *             "type": "BikeHireDockingStation"
+         *           }
+         *         ]
+         *       },
+         *       "panel": 1,
+         *       "vars": {
+         *         "status": [
+         *           "open"
+         *         ]
+         *       }
+         *     }
+         */
+        PreviewAsked: {
+            board: components["schemas"]["Board"];
+            from?: string | null;
+            /** Format: int32 */
+            panel: number;
+            to?: string | null;
+            /** @description The values picked per variable (`$__all` for All). */
+            vars?: {
+                [key: string]: string[];
+            };
         };
         /** @description One Endpoint of a preview and where it answers. */
         PreviewEndpoint: {
@@ -12559,6 +13003,21 @@ export interface components {
         /** @description A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string. */
         Text: string | {
             [key: string]: string;
+        };
+        /** @description A text panel's own choice: what it says, in Markdown. The Portal shows it as plain text. */
+        TextOptions: {
+            content: string;
+        };
+        /** @description One threshold step above the base colour. */
+        ThresholdStep: {
+            color: string;
+            /** Format: double */
+            value: number;
+        };
+        /** @description A panel's colours by value: the base colour, then each step from its value up. */
+        Thresholds: {
+            base: string;
+            steps?: components["schemas"]["ThresholdStep"][];
         };
         /** @description One deleted entity, as its keeper read it. */
         TrashItem: {
@@ -22092,6 +22551,522 @@ export interface operations {
                 };
             };
             /** @description Grafana or the database did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    builder_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The builder's start */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderStart"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project the caller has a part in */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    builder_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewBoard"];
+            };
+        };
+        responses: {
+            /** @description Proposed; waits for approval */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderSaved"];
+                };
+            };
+            /** @description A body that does not parse */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller may not build dashboards, or may not read an Endpoint a choice names */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project the caller has a part in */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No dashboards service for the project */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A field the builder does not take; the errors name it */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The forge or the dashboards service did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    builder_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewAsked"];
+            };
+        };
+        responses: {
+            /** @description The panel and its frames, or why it has none */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PanelPreview"];
+                };
+            };
+            /** @description A body that does not parse */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller may not build dashboards, or may not read an Endpoint a choice names */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project, or no such panel on the board */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No dashboards service for the project */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A field the builder does not take; the errors name it */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    builder_values: {
+        parameters: {
+            query: {
+                endpoint: string;
+                type: string;
+                attribute: string;
+            };
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The values */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VariableValues"];
+                };
+            };
+            /** @description An unknown query parameter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller may not build dashboards, or may not read the Endpoint */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project the caller has a part in */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No dashboards service for the project */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A type or attribute the model does not have */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    builder_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Dashboard uid */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The dashboard as choices */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderDashboard"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller may not build dashboards */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project, or no builder dashboard of that uid in it */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The file was not written by the builder */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    builder_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Dashboard uid */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditedBoard"];
+            };
+        };
+        responses: {
+            /** @description Proposed; waits for approval */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderSaved"];
+                };
+            };
+            /** @description A body that does not parse */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller may not build dashboards, or may not read an Endpoint a choice names */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project, or no builder dashboard of that uid in it */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The file changed since the edit started, or a Change of it is open */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A field the builder does not take; the errors name it */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The forge or the dashboards service did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    builder_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Dashboard uid */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Proposed; waits for approval */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderSaved"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller may not build dashboards */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project, or no builder dashboard of that uid in it */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A Change of the dashboard is open */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The forge did not answer */
             503: {
                 headers: {
                     [name: string]: unknown;

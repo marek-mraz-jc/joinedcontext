@@ -133,7 +133,7 @@ pub fn vars(
         // endpoint, as the Portal's sign-in does, because kaisatsu names the issuer by the host a
         // request reached it on and the Portal's internal listener checks it. The keys are read
         // on the listener (`JC_OIDC_JWKS_URL`).
-        let realm = format!("/realms/{}", setup::PORTAL_REALM);
+        let realm = format!("/realms/{}", setup.realm);
         group(vec![
             ("JC_OIDC_ISSUER", Some(format!("{}{realm}", id.public))),
             (
@@ -426,6 +426,18 @@ mod tests {
         assert_eq!(
             v["JC_OIDC_CLIENT_SECRET"],
             setup.value(Secret::GatewayClientSecret).unwrap()
+        );
+        // A deployment naming its realm moves the issuer and the keys with it.
+        let mut dev = setup.clone();
+        dev.realm = setup::Realm::parse("dev").unwrap();
+        let named = vars(&siblings, &dev, true, &mount, Some(&hop), None, bind);
+        assert_eq!(
+            named["JC_OIDC_ISSUER"],
+            "https://city.example/id/realms/dev"
+        );
+        assert_eq!(
+            named["JC_OIDC_JWKS_URL"],
+            "http://127.0.0.1:8443/id/realms/dev/protocol/openid-connect/certs"
         );
         assert_eq!(
             v["JC_GATEWAY_REVOCATIONS_URL"],

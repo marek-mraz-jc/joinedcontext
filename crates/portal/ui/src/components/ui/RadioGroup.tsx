@@ -24,6 +24,10 @@ export interface RadioGroupProps<T extends string> {
   /** `row` when the labels are one word each; the default stacks them. */
   layout?: "row" | "column";
   className?: string;
+  /** The id of the chosen button (the first when none is chosen), so a refusal can focus the group. */
+  id?: string;
+  /** What is wrong with the answer, one per line, announced and drawn under the group as a Field does. */
+  errors?: string[];
 }
 
 /**
@@ -51,7 +55,11 @@ export function RadioGroup<T extends string>({
   onChange,
   layout = "column",
   className,
+  id,
+  errors,
 }: RadioGroupProps<T>): JSX.Element {
+  const errorId = errors?.length ? `${name}__error` : undefined;
+  const focused = options.some((option) => option.value === value) ? value : options[0]?.value;
   const describedBy = description ? `${name}__description` : undefined;
   const labelledBy = `${name}__legend`;
   const optionId = `${useId()}-option`;
@@ -59,8 +67,9 @@ export function RadioGroup<T extends string>({
     <fieldset
       role="radiogroup"
       aria-labelledby={labelledBy}
-      aria-describedby={describedBy}
-      className={clsx("flex flex-col gap-1.5", className)}
+      aria-describedby={[describedBy, errorId].filter(Boolean).join(" ") || undefined}
+      aria-invalid={errorId ? true : undefined}
+      className={clsx("flex flex-col gap-1.5", errorId && "rounded-md border border-danger p-2", className)}
     >
       <legend id={labelledBy} className="text-body font-medium text-fg">
         {legend}
@@ -82,6 +91,7 @@ export function RadioGroup<T extends string>({
             <input
               type="radio"
               name={name}
+              id={option.value === focused ? id : undefined}
               value={option.value}
               checked={value === option.value}
               disabled={option.disabled}
@@ -101,6 +111,15 @@ export function RadioGroup<T extends string>({
           </label>
         ))}
       </div>
+      {errorId ? (
+        <div id={errorId} role="alert" className="text-caption font-medium text-danger">
+          <ul>
+            {errors!.map((message) => (
+              <li key={message}>{message}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </fieldset>
   );
 }

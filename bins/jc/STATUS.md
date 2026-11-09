@@ -534,6 +534,29 @@ unlinked, and `endpoint:*` stays only as the hub's default. No realm-wide option
 `tests/gateway_endpoints.rs` reads the closed Endpoint through `/api/v1/mcp` as a member, and a
 person in no group gets the exchanged token and is still refused by the gateway's Policy.
 
+### The deployment's realm (`[identity] realm`, jc-realm-name)
+
+- `[identity] realm` in `jc.toml` or `JCBIN_IDENTITY_REALM` (`--identity-realm`) names the one realm of the
+  deployment; default `jc`. Refused at start: an empty name, a name outside `[A-Za-z0-9._-]` or starting with `.`,
+  and `master` in any case (`setup::Realm::parse`).
+- It moves the Portal's `JC_OIDC_ISSUER`, the gateway's issuer and JWKS, the realm files jc applies (the shipped
+  `jc-portal.json` gets that `id` and `realm`), the account console and the Endpoint scope linker.
+- Who writes the realm is decided once and kept in `<state_dir>/realm-owner-<realm>` (`jc` or `import`). Without
+  that file the deployment owns the realm when the import dir defines `portal-api` in it (a Keycloak export), or
+  when the store held a realm other than `jc` before this start; an older `jc` made only `jc` and kept no file.
+  jc writes none of its first-start files (realm, first admin, gateway client, account console) into an imported
+  realm, and makes no other realm. The linker still links the Endpoint scopes there.
+- The import dir applies each realm on its own (files grouped by `realm`, merged in file-name order within one);
+  a file naming no realm joins the single realm the others name, and is refused when they name several.
+- An imported realm keeps its own client secrets: the cutover writes the export's `portal-api`,
+  `portal-reconciler` and `context-gateway` secrets into the state files `portal-client-secret`,
+  `portal-admin-client-secret` and `gateway-client-secret` (jc reads an existing file, never rewrites it), and the
+  export names them as `$(file:...)` under `--kaisatsu-import-secrets-dir`.
+- Tests: `tests/gateway_endpoints.rs::a_deployment_on_realm_dev_admits_its_realm_and_no_other` (an imported `dev`
+  beside a twin `jc` with the same clients, people and secrets; restart without the twin),
+  `tests/portal_siblings.rs::the_portal_runs_on_its_own_host_in_host_mode` (a fresh `dev` jc makes),
+  lib tests in `config`, `setup`, `siblings`, `modules::gateway`, `modules::kaisatsu`.
+
 ### Role split (`src/door.rs`)
 
 - Module container, `[door]` (`issuer`, `jwks_url`, `clients`): a bearer JWT that kaisatsu signed (ES256, RS256 or

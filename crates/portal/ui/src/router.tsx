@@ -31,6 +31,7 @@ import type { FormTarget } from "./components/forms/FormRoute";
 import { ActivityPage } from "./routes/ActivityPage";
 import { GrafanaPage } from "./pages/grafana/GrafanaPage";
 import { DashboardPage } from "./pages/grafana/DashboardPage";
+import { DashboardBuilderPage } from "./pages/grafana/DashboardBuilder";
 import { HealthPage } from "./pages/health/HealthLog";
 const SecretFormPage = lazy(() => import("./pages/secrets/SecretFormPage").then((module) => ({ default: module.SecretFormPage })));
 const ApprovalsPage = lazy(() => import("./routes/ApprovalsPage").then((module) => ({ default: module.ApprovalsPage })));
@@ -576,6 +577,34 @@ const dashboardViewRoute = createRoute({
     return (
       <Shell project={project}>
         <DashboardPage project={project} uid={uid} />
+      </Shell>
+    );
+  },
+});
+
+/** A new dashboard, built from choices and saved as a Change (dashboard builder). */
+const dashboardNewRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/projects/$project/grafana/new",
+  component: function DashboardNewRoute() {
+    const { project } = dashboardNewRoute.useParams();
+    return (
+      <Shell project={project}>
+        <DashboardBuilderPage project={project} />
+      </Shell>
+    );
+  },
+});
+
+/** The next edit of a dashboard the builder saved. */
+const dashboardEditRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/projects/$project/grafana/dashboards/$uid/edit",
+  component: function DashboardEditRoute() {
+    const { project, uid } = dashboardEditRoute.useParams();
+    return (
+      <Shell project={project}>
+        <DashboardBuilderPage key={uid} project={project} uid={uid} />
       </Shell>
     );
   },
@@ -1539,6 +1568,8 @@ export const routeTree = rootRoute.addChildren([
     activityRoute,
     grafanaRoute,
     dashboardViewRoute,
+    dashboardNewRoute,
+    dashboardEditRoute,
     healthRoute,
     approvalsRoute,
     approvalDetailRoute,

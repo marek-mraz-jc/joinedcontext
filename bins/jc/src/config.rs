@@ -114,6 +114,10 @@ pub struct Cli {
     /// (default `jc-state` in the working directory).
     #[arg(long, env = "JCBIN_STATE_DIR")]
     pub state_dir: Option<PathBuf>,
+    /// The realm the Portal signs in through, the gateway's issuer and the Endpoint scope
+    /// linker use (default `jc`; a migrated deployment names its Keycloak realm, e.g. `dev`).
+    #[arg(long, env = "JCBIN_IDENTITY_REALM")]
+    pub identity_realm: Option<String>,
     /// Whether the Portal's settings default to its sibling modules in this `jc` (default
     /// true; `false` keeps the Portal on its own `JC_*` environment alone).
     #[arg(long, env = "JCBIN_PORTAL_SIBLINGS")]
@@ -297,6 +301,13 @@ impl Default for DataroomSection {
     }
 }
 
+/// `[identity]` section: the one realm of the deployment (`crate::setup::Realm`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IdentitySection {
+    pub realm: Option<String>,
+}
+
 /// `[portal]` section: what `jc` hands the Portal beside its own `JC_*` environment.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -411,6 +422,8 @@ pub struct FileConfig {
     pub portal: PortalSection,
     #[serde(default)]
     pub assistant: AssistantSection,
+    #[serde(default)]
+    pub identity: IdentitySection,
     pub door: Option<DoorSection>,
     pub remote: Option<RemoteSection>,
 }
@@ -455,6 +468,8 @@ pub enum ConfigError {
         "[dataroom.addresses] {0}: '{1}' is not a base URL (http(s)://host[:port][/path], no trailing slash)"
     )]
     Address(&'static str, String),
+    #[error("[identity] realm: {0}")]
+    Realm(String),
 }
 
 /// The resolved configuration `jc` runs with.
@@ -481,6 +496,8 @@ pub struct Config {
     pub daiya: DaiyaSection,
     pub portal: PortalSection,
     pub assistant: AssistantSection,
+    /// `[identity] realm`, checked.
+    pub realm: crate::setup::Realm,
     pub door: Option<DoorSection>,
     pub remote: Option<RemoteSection>,
     /// `[remote.modules]`, parsed: each module and the base it is called at.
@@ -649,6 +666,10 @@ impl Config {
         let portal = PortalSection {
             age_key_file: cli.portal_age_key_file.or(file.portal.age_key_file),
         };
+        let realm = match cli.identity_realm.or(file.identity.realm) {
+            Some(name) => crate::setup::Realm::parse(&name).map_err(ConfigError::Realm)?,
+            None => crate::setup::Realm::default(),
+        };
         let remote_modules = match &file.remote {
             Some(remote) => remote_modules(remote, &roles)?,
             None => BTreeMap::new(),
@@ -682,6 +703,7 @@ impl Config {
             daiya,
             portal,
             assistant,
+            realm,
             door: file.door,
             remote: file.remote,
             remote_modules,
@@ -1638,6 +1660,34 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         .unwrap();
         let err = Config::merge(cli(&["--role", "dataroom"]), bad).unwrap_err();
         assert!(matches!(err, ConfigError::Address("viz", _)), "{err}");
+    }
+
+    #[test]
+    fn the_identity_realm_defaults_to_jc_and_refuses_unsafe_names() {
+        let file = |text: &str| Config::parse_file(Path::new("jc.toml"), text).unwrap();
+        let cfg = Config::merge(cli(&[]), FileConfig::default()).unwrap();
+        assert_eq!(cfg.realm.as_str(), "jc");
+        let cfg = Config::merge(cli(&[]), file("[identity]\nrealm = \"dev\"\n")).unwrap();
+        assert_eq!(cfg.realm.as_str(), "dev");
+        // The flag (and so JCBIN_IDENTITY_REALM) wins over the file.
+        let cfg = Config::merge(
+            cli(&["--identity-realm", "smartcity"]),
+            file("[identity]\nrealm = \"dev\"\n"),
+        )
+        .unwrap();
+        assert_eq!(cfg.realm.as_str(), "smartcity");
+        for bad in ["", "master", "MASTER", "a/b", "../jc", "a b", ".x", "dév"] {
+            let err =
+                Config::merge(cli(&["--identity-realm", bad]), FileConfig::default()).unwrap_err();
+            assert!(matches!(err, ConfigError::Realm(_)), "{bad:?}: {err}");
+            let text = format!("[identity]\nrealm = {bad:?}\n");
+            let err = Config::merge(cli(&[]), file(&text)).unwrap_err();
+            assert!(matches!(err, ConfigError::Realm(_)), "{bad:?}: {err}");
+        }
+        assert!(
+            Config::parse_file(Path::new("jc.toml"), "[identity]\nrealms = \"dev\"\n").is_err(),
+            "an unknown key is refused"
+        );
     }
 
     #[test]

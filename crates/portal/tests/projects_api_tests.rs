@@ -313,7 +313,10 @@ async fn anyone_may_open_a_project_and_gets_steward_on_it_and_nothing_else() {
     assert!(binding.contains("role: steward"), "{binding}");
     assert!(binding.contains("project: doprava"), "{binding}");
     assert!(!binding.contains("organization:"), "{binding}");
-    assert!(binding.contains("nobody@hel.fi"), "{binding}");
+    // Named by the opener's user id, never by e-mail: a binding naming an e-mail fails validation
+    // and the reconciler drops it (PF-126).
+    assert!(binding.contains("user: sub-nobody"), "{binding}");
+    assert!(!binding.contains("nobody@hel.fi"), "{binding}");
 
     // The project file is one the loader takes (T-2643): `organizationRef` as jc-core reads it.
     let project = bodies(&shako)

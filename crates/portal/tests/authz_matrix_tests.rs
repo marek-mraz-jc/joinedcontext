@@ -367,6 +367,23 @@ async fn fixture() -> AppState {
     .expect("config");
     // A forge that takes every write, so a route gets past "no forge" to the caller's check.
     let forge = common::forge().await;
+    // One builder dashboard file on main, so its doors reach the file past the caller's check.
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path(format!(
+            "{}/Shako.File(Path=@p,Ref=@r)",
+            common::REPO
+        )))
+        .and(wiremock::matchers::query_param(
+            "@p",
+            format!("'projects/{PROJECT}/grafana/jcd-0123456789abcdef.json'"),
+        ))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .set_body_json(json!({ "Sha": "blob-1", "Content": common::encode("{}") })),
+        )
+        .with_priority(1)
+        .mount(&forge)
+        .await;
     let client = joinedcontext_portal::forge::ShakoClient::new(
         forge.uri().parse().expect("mock url"),
         "test-owner",

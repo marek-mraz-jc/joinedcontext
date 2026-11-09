@@ -607,3 +607,74 @@ async fn a_host_check_can_name_the_server_admin() {
     let (status, _) = host.admin("GET", "/orgs/name/helsinki", None, None).await;
     assert_eq!(status, StatusCode::OK);
 }
+
+/// What the Portal's dashboard builder commits (`crates/portal/tests/grafana_builder_tests.rs`
+/// writes it): the reconciler saves it as it is, and the dashboard page reads it back.
+const BUILDER_FILE: &str =
+    include_str!("../../../portal/tests/fixtures/grafana-builder/bike-stations.json");
+
+#[tokio::test]
+async fn a_builder_file_reads_back_from_daiya_as_the_portal_saved_it() {
+    let grafana = Grafana::new(Arc::new(FlakyStore::default()), None);
+    let helsinki = grafana.provision("helsinki").await;
+    let file: Value = serde_json::from_str(BUILDER_FILE).expect("the builder file");
+    let uid = file["uid"].as_str().expect("a uid").to_owned();
+    // `DashboardSync`'s save: `Client::save`, into the project's folder, overwriting.
+    let (status, body) = grafana
+        .admin(
+            "POST",
+            "/dashboards/db",
+            Some(helsinki),
+            Some(json!({
+                "dashboard": file, "folderUid": "project-helsinki", "overwrite": true,
+                "message": "saved from the Portal",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // `Client::dashboard`: what `meaning` compares the file with on the next pass, every member
+    // the builder writes equal.
+    let (status, held) = grafana
+        .admin(
+            "GET",
+            &format!("/dashboards/uid/{uid}"),
+            Some(helsinki),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{held}");
+    for (key, value) in file.as_object().expect("an object") {
+        assert_eq!(&held["dashboard"][key], value, "{key} came back otherwise");
+    }
+    assert_eq!(held["meta"]["folderUid"], "project-helsinki", "{held}");
+    // `Client::dashboards`: the builder's uid is listed, which the sync's orphan sweep reads.
+    let (status, listed) = grafana
+        .admin("GET", "/search?type=dash-db", Some(helsinki), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert!(
+        listed
+            .as_array()
+            .is_some_and(|hits| hits.iter().any(|hit| hit["uid"] == uid.as_str())),
+        "{listed}"
+    );
+    // `Client::remove`: the sweep's delete, and the dashboard is gone.
+    let (status, _) = grafana
+        .admin(
+            "DELETE",
+            &format!("/dashboards/uid/{uid}"),
+            Some(helsinki),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = grafana
+        .admin(
+            "GET",
+            &format!("/dashboards/uid/{uid}"),
+            Some(helsinki),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

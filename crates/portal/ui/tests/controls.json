@@ -1407,6 +1407,16 @@
         "share_flow.test.tsx"
       ]
     },
+    "src/pages/grafana/DashboardBuilder.tsx": {
+      "controls": {
+        "Button": 16,
+        "Checkbox": 2,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "dashboard_builder.test.tsx"
+      ]
+    },
     "src/pages/grafana/GrafanaPage.tsx": {
       "controls": {
         "Button": 4

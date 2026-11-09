@@ -2553,6 +2553,36 @@
         "evidence/T-6208/spaces-refused-400.png"
       ]
     },
+    "src/pages/grafana/DashboardBuilder.tsx": {
+      "walkedBy": "jc-dashboard-builder",
+      "date": "2026-11-09",
+      "screenshots": [
+        "evidence/jc-dashboard-builder/shots/adding-1440.png",
+        "evidence/jc-dashboard-builder/shots/adding-400.png",
+        "evidence/jc-dashboard-builder/shots/conflict-1440.png",
+        "evidence/jc-dashboard-builder/shots/conflict-400.png",
+        "evidence/jc-dashboard-builder/shots/empty-1440.png",
+        "evidence/jc-dashboard-builder/shots/empty-400.png",
+        "evidence/jc-dashboard-builder/shots/form-gauge-1440.png",
+        "evidence/jc-dashboard-builder/shots/form-gauge-400.png",
+        "evidence/jc-dashboard-builder/shots/form-stat-1440.png",
+        "evidence/jc-dashboard-builder/shots/form-stat-400.png",
+        "evidence/jc-dashboard-builder/shots/form-table-1440.png",
+        "evidence/jc-dashboard-builder/shots/form-table-400.png",
+        "evidence/jc-dashboard-builder/shots/form-timeseries-1440.png",
+        "evidence/jc-dashboard-builder/shots/form-timeseries-400.png",
+        "evidence/jc-dashboard-builder/shots/pending-1440.png",
+        "evidence/jc-dashboard-builder/shots/pending-400.png",
+        "evidence/jc-dashboard-builder/shots/preview-failed-1440.png",
+        "evidence/jc-dashboard-builder/shots/preview-failed-400.png",
+        "evidence/jc-dashboard-builder/shots/readonly-1440.png",
+        "evidence/jc-dashboard-builder/shots/readonly-400.png",
+        "evidence/jc-dashboard-builder/shots/refused-1440.png",
+        "evidence/jc-dashboard-builder/shots/refused-400.png",
+        "evidence/jc-dashboard-builder/shots/saving-1440.png",
+        "evidence/jc-dashboard-builder/shots/saving-400.png"
+      ]
+    },
     "src/pages/grafana/DashboardPage.tsx": {
       "walkedBy": "jc-charts",
       "date": "2026-11-08",

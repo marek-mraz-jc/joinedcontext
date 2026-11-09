@@ -233,7 +233,7 @@ pub fn portal_vars(
         let mut values = vec![
             (
                 "JC_OIDC_ISSUER",
-                Some(format!("{}/realms/{}", id.public, setup::PORTAL_REALM)),
+                Some(format!("{}/realms/{}", id.public, setup.realm)),
             ),
             ("JC_OIDC_CLIENT_ID", Some(setup::PORTAL_CLIENT.to_owned())),
             ("JC_OIDC_CLIENT_SECRET", secret(Secret::PortalClientSecret)),
@@ -446,6 +446,36 @@ mod tests {
         assert_eq!(siblings.listener, "[::1]:1".parse().unwrap());
     }
 
+    /// daiya reaches the gateway's Endpoints on the own listener at the address the Portal names
+    /// in the datasources it makes (`{JC_PORTAL_GATEWAY_URL}/api/endpoint/{slug}`), and nothing
+    /// when the gateway answers on a host of its own.
+    #[cfg(feature = "daiya")]
+    #[test]
+    fn daiya_reaches_the_gateway_endpoints_the_portal_names() {
+        use crate::modules::daiya::gateway_reach;
+        use daiya_server::OwnReach;
+        let (siblings, _, _d) = fixture("https");
+        let gateway = siblings.get(Module::Gateway).unwrap().internal.clone();
+        assert_eq!(
+            gateway_reach(&siblings),
+            Some(OwnReach::endpoints(&format!("{gateway}/api/endpoint/")).unwrap())
+        );
+        assert_eq!(
+            gateway_reach(&siblings).map(|r| r.addr()),
+            Some(siblings.listener)
+        );
+        let mut mounts = BTreeMap::new();
+        mounts.insert(
+            Module::Gateway,
+            MountOverride {
+                host: Some("api.city.example".into()),
+                path_prefix: None,
+            },
+        );
+        let siblings = Siblings::new(&plans(mounts, "https"), LISTEN.parse().unwrap());
+        assert_eq!(gateway_reach(&siblings), None);
+    }
+
     #[test]
     fn live_addresses_come_from_the_mounts_unless_named_and_nobody_serves_tiles_or_assistant() {
         let (siblings, _, _d) = fixture("https");
@@ -492,6 +522,15 @@ mod tests {
         ] {
             assert!(!is_base_url(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn the_portal_signs_in_at_the_configured_realm() {
+        let (siblings, mut setup, _d) = fixture("https");
+        let issuer = |setup: &Setup| portal_vars(&siblings, setup, none)["JC_OIDC_ISSUER"].clone();
+        assert_eq!(issuer(&setup), "https://city.example/id/realms/jc");
+        setup.realm = setup::Realm::parse("dev").unwrap();
+        assert_eq!(issuer(&setup), "https://city.example/id/realms/dev");
     }
 
     /// Asserts the keys of one row come from the sibling and an explicit URL keeps the whole row

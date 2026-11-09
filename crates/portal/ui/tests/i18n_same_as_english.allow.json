@@ -112,7 +112,13 @@
     "ChatGPT",
     "VS Code (.vscode/mcp.json)",
     "QoS {level}",
-    "cameras/${clientid}/frames"
+    "cameras/${clientid}/frames",
+    "Panel {n}",
+    "Panel: {title}",
+    "Euro",
+    "Interval",
+    "Panel",
+    "Filter: {field}"
   ],
   "cs": [
     "@context",
@@ -225,7 +231,12 @@
     "ChatGPT",
     "VS Code (.vscode/mcp.json)",
     "QoS {level}",
-    "cameras/${clientid}/frames"
+    "cameras/${clientid}/frames",
+    "Panel {n}",
+    "Panel: {title}",
+    "Euro",
+    "Interval",
+    "Panel"
   ],
   "de": [
     "@context",
@@ -383,6 +394,17 @@
     "Commits",
     "Repositories",
     "Reviews",
-    "Tags"
+    "Tags",
+    "Panels",
+    "Panel {n}",
+    "Panel: {title}",
+    "Euro",
+    "Orange",
+    "Variable {name}, {field}",
+    "Aggregation",
+    "Position",
+    "Variable",
+    "Panel",
+    "Filter: {field}"
   ]
 }

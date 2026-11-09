@@ -294,9 +294,10 @@ export function BarGaugePanel({ title, frames, fieldConfig, options, height, loc
   const thickness = room >= 64 ? "h-8" : room >= 40 ? "h-5" : "h-3";
   return (
     <div ref={measure} className="flex h-full flex-col gap-2">
-      <ul aria-label={title} className="flex min-h-0 flex-1 flex-col justify-around gap-2">
+      {/* One grid for every row, so each track starts and ends where the others do. */}
+      <ul aria-label={title} className="grid min-h-0 flex-1 grid-cols-[minmax(0,10rem)_1fr_auto] content-around items-center gap-2 max-sm:grid-cols-[1fr_auto]">
         {shown.map((one) => (
-          <li key={one.reduced.name} className="grid grid-cols-[minmax(0,10rem)_1fr_auto] items-center gap-2 max-sm:grid-cols-[1fr_auto]">
+          <li key={one.reduced.name} className="col-span-full grid grid-cols-subgrid items-center gap-2">
             <span className="truncate text-caption max-sm:col-span-2">{one.reduced.name}</span>
             <span className={clsx(thickness, "overflow-hidden rounded-sm bg-surface-muted")} {...meter(one)}>
               <Fill share={one.share} color={one.color} paint={paint(one)} />

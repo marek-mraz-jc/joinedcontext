@@ -7,16 +7,18 @@
 //! holds for the Portal.
 
 use crate::config::DaiyaSection;
+use crate::module::Module;
 use crate::setup::{DASHBOARDS_USER, Secret, Setup};
+use crate::siblings::Siblings;
 use axum::Router;
 use daiya_model::OrgId;
 use daiya_server::config::{
     MigrateConfig, StoreConfig, declare_organizations, open_store, provision,
     provisioning_vars_from,
 };
-use daiya_server::{DaiyaState, router};
+use daiya_server::{DaiyaState, OwnReach, router};
+
 use jc_router::Mount;
-use std::net::SocketAddr;
 
 fn store_config(cfg: &DaiyaSection) -> StoreConfig {
     match &cfg.database {
@@ -50,19 +52,34 @@ pub(crate) async fn state(cfg: &DaiyaSection, setup: &Setup) -> Result<DaiyaStat
         .map_err(|e| e.to_string())
 }
 
-/// daiya's router. With `[daiya] provisioning_dir` the files are loaded, and only the
-/// datasources they wrote may reach `own`, `jc`'s listener; the API's datasources keep the
-/// default outbound policy (no loopback, no private address, no http).
+/// The gateway's Endpoints on `jc`'s own listener, as the Portal names them in the datasources
+/// it makes (`{JC_PORTAL_GATEWAY_URL}/api/endpoint/{slug}`, `crate::siblings`): `None` when the
+/// gateway is not in this container or answers on a host of its own.
+#[must_use]
+pub fn gateway_reach(siblings: &Siblings) -> Option<OwnReach> {
+    let gateway = siblings.get(Module::Gateway)?;
+    let own = format!("http://{}", crate::siblings::reach(siblings.listener));
+    gateway
+        .internal
+        .strip_prefix(&own)
+        .filter(|path| path.is_empty() || path.starts_with('/'))?;
+    OwnReach::endpoints(&format!("{}/api/endpoint/", gateway.internal)).ok()
+}
+
+/// daiya's router. With `[daiya] provisioning_dir` the files are loaded. Every NGSI-LD and OData
+/// datasource, file-made or not, may read the gateway's Endpoints on `jc`'s own listener
+/// ([`gateway_reach`]) and nothing else there; the rest keeps the default outbound policy (no
+/// loopback, no private address, no http).
 pub async fn build(
     cfg: &DaiyaSection,
     setup: &Setup,
-    own: SocketAddr,
+    siblings: &Siblings,
     mount: Mount,
 ) -> Result<Router, String> {
     let mut state = state(cfg, setup).await?;
     declare_organizations(&state, &cfg.organizations).map_err(|e| e.to_string())?;
+    state.own_reach = gateway_reach(siblings).into_iter().collect();
     if let Some(dir) = &cfg.provisioning_dir {
-        state.own_addresses = vec![own];
         let vars = provisioning_vars_from(crate::config::process_env());
         let report = provision(&state, dir, &vars)
             .await
