@@ -285,6 +285,10 @@ pub struct Config {
     /// (`JC_SHAKO_*`) the environment leaves unset, read by `AppState::from_config` after
     /// `from_vars`. Empty for the standalone Portal; an environment value always wins.
     pub host_vars: std::collections::BTreeMap<String, String>,
+    /// Whether the Portal's own router serves the `/metrics` scrape (OPS-16; the edge refuses the
+    /// path in the cluster). A hosting process with its own guarded scrape (`jc`'s admin
+    /// listener) turns it off; no environment key turns it on again.
+    pub public_metrics: bool,
     /// The client the reconciler manages the realm's groups with: a `ServiceAccount` client
     /// holding `manage-users` and `query-groups` of `realm-management` and nothing else
     /// (`JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID` and one of `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SECRET`, a
@@ -1991,12 +1995,14 @@ impl Config {
             apps_db,
             pipeline_secrets,
             host_vars: std::collections::BTreeMap::new(),
+            public_metrics: true,
         })
     }
 
     pub fn for_tests() -> Self {
         Self {
             host_vars: std::collections::BTreeMap::new(),
+            public_metrics: true,
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             internal_bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             public_base_url: Url::parse("http://localhost:8080")

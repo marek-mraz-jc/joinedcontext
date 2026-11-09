@@ -198,7 +198,11 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
 
     // The admin listener is separate: metrics (behind the admin token: they carry Antares'
     // series, which the broker serves only behind its own token) and open liveness there, never
-    // on the public listener.
+    // on the public listener, the Portal's own scrape included.
+    for public in ["/metrics", "/portal/metrics"] {
+        let (status, body) = get(addr, "city.test", public).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{public}: {body}");
+    }
     let admin = running.admin_addr.expect("admin listener");
     let (status, body) = get(admin, "localhost", "/healthz").await;
     assert_eq!((status, body.as_str()), (StatusCode::OK, "ok"));

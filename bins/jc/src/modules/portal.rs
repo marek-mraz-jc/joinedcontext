@@ -43,6 +43,8 @@ pub(crate) fn config(
     })
     .map_err(err)?;
     config.host_vars = siblings;
+    // jc serves the scrape on its admin listener, behind the admin token (`app::admin_router`).
+    config.public_metrics = false;
     Ok(config)
 }
 
