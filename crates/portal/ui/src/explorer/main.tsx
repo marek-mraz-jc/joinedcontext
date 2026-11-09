@@ -17,7 +17,8 @@ import { EndpointDataView } from "../components/entities/EndpointDataView";
 import type { DataLink, RowCard } from "../components/entities/EndpointDataView";
 
 export interface MountOptions {
-  /** `https://api.{domain}`: the only origin the widget reads. */
+  /** The gateway's origin, the only one the widget reads: `https://api.{domain}` on dev and prod,
+   * jc's own origin when its viz module serves the page (named by the server, never the address). */
   origin: string;
   slug: string;
   lang?: string;
@@ -33,11 +34,12 @@ export interface MountOptions {
 }
 
 const SLUG = /^[a-z0-9-]{1,64}$/;
-const ORIGIN = /^https:\/\/api\.[a-z0-9.-]+$/;
+// Any https origin, or http on loopback (a local jc): a scheme, a host and a port, nothing else.
+const ORIGIN = /^(https:\/\/[a-z0-9]([a-z0-9.-]*[a-z0-9])?|http:\/\/(localhost|127\.0\.0\.1|\[::1\]))(:[0-9]{1,5})?$/;
 
 export function mount(element: Element, options: MountOptions): Root {
   // The page passes its own host's sibling; anything else is a mistake to refuse, never to follow.
-  if (!ORIGIN.test(options.origin)) throw new Error(`jcExplorer: origin ${options.origin} is not https://api.{domain}`);
+  if (!ORIGIN.test(options.origin)) throw new Error(`jcExplorer: origin ${options.origin} is no https origin (or http on loopback)`);
   if (!SLUG.test(options.slug)) throw new Error("jcExplorer: the slug names no Endpoint");
   const lang = options.lang === "sk" ? "sk" : "en";
   void i18n.changeLanguage(lang);
