@@ -52,6 +52,8 @@ args=(--base-url "http://localhost:$port" --out "$out" --export "$export_dir" --
 args+=(--with "logs=--secrets-dir $home/secrets")
 # The subscriptions probe is written by the project's ServiceAccount: its client secret is here.
 args+=(--with "subscriptions=--realm-secrets-dir $home/secrets/realm")
+# restore backs this environment up, restores it beside it (its own Postgres and ports) and compares.
+args+=(--with "restore=--home $home")
 # Bounded: each run is polled until it ends, so ten runs of five minutes outlast the job.
 args+=(--with "pipelines=--runs 3 --wait 120")
 # Failures the gate knows, each with where it is filed; only a new one turns the verdict red.
