@@ -12,6 +12,7 @@ import http.server
 import json
 import os
 import subprocess
+import re
 import sys
 import threading
 import time
@@ -865,3 +866,12 @@ def test_an_imported_realm_gets_the_test_persons_admin_group_once():
     assert [g["name"] for g in out["groups"]] == ["bbsk", "platform-admins"]
     again = rh.add_tester({"groups": out["groups"]})
     assert [g["name"] for g in again["groups"]].count("platform-admins") == 1
+
+
+def test_up_sh_gives_jc_every_secret_it_holds_only_in_memory():
+    """jc keeps these in memory and removes a stale state copy (jc-secrets), so the suites and the
+    smoke read them only from the file up.sh gives jc."""
+    text = (HERE / "up.sh").read_text()
+    for var in ("JCBIN_SHAKO_TOKEN_FILE", "JCBIN_DATAROOM_PORTAL_TOKEN_FILE", "JCBIN_EKIBEN_TOKEN_FILE",
+                "JCBIN_DAIYA_PORTAL_PASSWORD_FILE"):
+        assert re.search(rf"\bexport {var}\b|{var}=.*; export {var}\b", text), var

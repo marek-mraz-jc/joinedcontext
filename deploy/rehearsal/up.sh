@@ -176,6 +176,7 @@ export JCBIN_DATAROOM_PORTAL_TOKEN_FILE=$home/secrets/catalogue-token
 JCBIN_SHAKO_TOKEN_FILE=$(secret shako-token); export JCBIN_SHAKO_TOKEN_FILE
 # ekiben's admin token too: the pipelines smoke reads streams with it.
 JCBIN_EKIBEN_TOKEN_FILE=$(secret ekiben-token); export JCBIN_EKIBEN_TOKEN_FILE
+JCBIN_DAIYA_PORTAL_PASSWORD_FILE=$(secret dashboards-password); export JCBIN_DAIYA_PORTAL_PASSWORD_FILE
 # The Portal's internal listener (/metrics, run callbacks) on loopback, one port per environment.
 export JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 100))
 export RUST_LOG=${RUST_LOG:-info,sqlx=warn}
