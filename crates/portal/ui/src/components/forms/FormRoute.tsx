@@ -9,6 +9,7 @@ import type { DialogSize } from "../ui";
 import { failureKind } from "../ui/PageState";
 import { ProjectHidden } from "../ProjectHidden";
 import { usePermissions } from "../../api/permissions";
+import { ORG_NAMESPACE } from "../../api/manifest";
 
 /**
  * A bigger form is a page with an address of its own, not a popup (T-2474, UI-27).
@@ -429,6 +430,9 @@ export function FormRouteHost({
   const formKey = form === null ? null : form.mode === "new" ? "new" : `edit:${form.name}`;
   const { settled, readFailed } = useFormReads(formKey);
   const unopened = form !== null && !showing && !readFailed && settled;
+  // An outsider at an organization address: the page under it already says whom to ask, and "this
+  // project is not open to you" named a project the address is not about (gate 2026-11-09T192034Z).
+  const orgRefused = permissions.denied === true && project === ORG_NAMESPACE;
   // The last form closed, by its back control, its Cancel, a saved proposal or a page that
   // dropped its editor: the address leaves the form too, so a reload or the back button does
   // not land on a form that is no longer there. (The browser's back button leaves the address
@@ -459,7 +463,7 @@ export function FormRouteHost({
         {notice !== null && form === null && !showing ? <div className="mb-4">{notice}</div> : null}
         {/* An address whose form nothing opened says so above the list, which stays: the page
             keeps its heading and what does exist is one glance away (UI-16, T-2730). */}
-        {unopened && form !== null ? (
+        {unopened && form !== null && !orgRefused ? (
           <div className="mb-4 flex flex-col gap-3">
             {/* A role that may propose nothing here reads why, not a red warning (T-4263). */}
             {permissions.denied ? (
