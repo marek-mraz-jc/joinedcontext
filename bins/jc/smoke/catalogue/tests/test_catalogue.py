@@ -107,9 +107,9 @@ def serve(answer):
     return srv
 
 
-def run(tmp_path, answer, export_env="prod"):
+def run(tmp_path, answer, export_env="prod", renames=RENAMES):
     (tmp_path / "prod.json").write_text(json.dumps(PROD))
-    (tmp_path / "RENAMES.md").write_text(RENAMES)
+    (tmp_path / "RENAMES.md").write_text(renames)
     export = tmp_path / "export"
     export.mkdir(exist_ok=True)
     (export / "manifest.json").write_text(json.dumps({"env": export_env}))
@@ -147,6 +147,17 @@ def test_a_missing_dataset_a_wrong_count_and_a_lost_alias_fail(tmp_path):
     assert {"package_list.trees", "package_show.trees", "package_show.air", "package_search.praha",
             "rename.catalog", "dcat.dataset.trees", "dcat.dataset.air", "dcat.total"} <= set(fails(rows))
     assert "package_show.catalog" not in fails(rows)
+
+
+def test_an_extra_passes_only_when_renames_md_lists_it(tmp_path):
+    store = dict(jc_store(), **{"praha-catalog": ("praha", 1)})
+    code, rows = run(tmp_path, dataroom(store),
+                     renames=RENAMES + "| dataset (extra) | (none) | praha-catalog | own name | nothing to keep |\n")
+    assert fails(rows) == [] and code == 0, fails(rows)
+    assert "praha-catalog" in rows["package_search.praha"]["expected"] and "praha-catalog" in rows["dcat.total"]["expected"]
+    code, rows = run(tmp_path, dataroom(store))
+    assert code == 1 and {"package_search.praha", "dcat.total"} <= set(fails(rows))
+    assert "no RENAMES.md extra 1: praha-catalog" in rows["package_search.praha"]["actual"]
 
 
 def test_a_stub_answering_200_to_everything_fails(tmp_path):

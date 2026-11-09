@@ -3,7 +3,9 @@
 A prod name jc lacks fails, unless RENAMES.md lists it (kind, old = the prod name) and both hold:
 jc has the new name, and the old address still answers on jc. A jc name prod lacks is a report
 line (`extra`), never a pass for a missing one: a missing name's row names the extras of its
-scope as what may stand in for it, so the rename gets written down instead."""
+scope as what may stand in for it, so the rename gets written down instead. A row of kind
+`<kind> (extra)` with old `(none)` writes down a jc name prod never held (RENAMES.md "dataset
+(extra)"): a suite that counts jc's names accepts that name as an extra, and no other."""
 
 from __future__ import annotations
 
@@ -24,11 +26,13 @@ class Rename:
     new: str
     why: str
     keeps: str  # how old clients keep working
+    extra: bool = False  # a `<kind> (extra)` row: `new` is a jc name prod never held, `old` is "(none)"
 
 
 def load_renames(path: str | None) -> list[Rename]:
     """The table rows of RENAMES.md: | kind | old | new | why | how old clients keep working |.
-    No file means no renames. A row naming an unknown kind or missing a cell is refused."""
+    No file means no renames. A row naming an unknown kind or missing a cell is refused, and so is
+    an extra row (`<kind> (extra)`) whose old cell is not `(none)`."""
     if not path:
         return []
     out = []
@@ -41,9 +45,12 @@ def load_renames(path: str | None) -> list[Rename]:
             continue
         if len(cells) < 5 or not all(cells[:5]):
             raise SystemExit(f"{path}:{n}: a rename needs kind, old, new, why and how old clients keep working")
-        if cells[0] not in KINDS:
+        kind, extra = re.subn(r"\s*\(extra\)$", "", cells[0])
+        if kind not in KINDS:
             raise SystemExit(f"{path}:{n}: unknown kind {cells[0]!r}; kinds: {', '.join(KINDS)}")
-        out.append(Rename(*cells[:5]))
+        if extra and cells[1] != "(none)":
+            raise SystemExit(f"{path}:{n}: an extra names a jc name prod never held: its old cell is (none)")
+        out.append(Rename(kind, *cells[1:5], extra=bool(extra)))
     return out
 
 
@@ -63,7 +70,7 @@ def compare(res, kind: str, prod: list[str], jc: set[str] | None, renames: list[
 
     `jc` is None when jc's listing could not be read: every row then fails with that reason.
     `answers(old)` -> (ok, detail): whether the old address of a renamed name answers on jc."""
-    by_old = {r.old: r for r in renames if r.kind == kind}
+    by_old = {r.old: r for r in renames if r.kind == kind and not r.extra}
     prod_set = set(prod)
     if jc is None:
         for name in sorted(prod_set):
@@ -96,9 +103,14 @@ def compare(res, kind: str, prod: list[str], jc: set[str] | None, renames: list[
 
 
 def stale_renames(res, renames: list[Rename], prod_by_kind: dict) -> None:
-    """A listed rename whose old name production does not hold names nothing: a row, so the list
-    stays true."""
+    """A listed rename whose old name production does not hold names nothing, and an extra whose
+    name production holds is no extra: a row each, so the list stays true."""
     for r in renames:
+        if r.extra:
+            if r.kind in prod_by_kind and r.new in prod_by_kind[r.kind]:
+                res.check("renames.stale", f"{r.kind} (extra) {r.new}", "RENAMES.md", "a name prod never held",
+                          "production holds this name", False)
+            continue
         if r.kind in prod_by_kind and r.old not in prod_by_kind[r.kind]:
             res.check("renames.stale", f"{r.kind} {r.old}", "RENAMES.md", "the old name is a prod name",
                       "production holds no such name", False)
