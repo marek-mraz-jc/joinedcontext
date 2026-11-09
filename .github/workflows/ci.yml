@@ -45,6 +45,7 @@ jobs:
       portal: ${{ steps.paths.outputs.portal }}
       ui: ${{ steps.paths.outputs.ui }}
       supply: ${{ steps.paths.outputs.supply }}
+      platform: ${{ steps.paths.outputs.platform }}
       workflows: ${{ steps.paths.outputs.workflows }}
       image: ${{ steps.paths.outputs.image }}
       dockerfiles: ${{ steps.paths.outputs.dockerfiles }}
@@ -187,6 +188,30 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: "junit-root-${{ matrix.part }}", path: target/nextest/ci/junit.xml, if-no-files-found: ignore, retention-days: 7 }
+  # The platform crates vendored under vendor/joinedcontext-platform (context-gateway, jc-core,
+  # jcctl and the rest the Portal links): path dependencies of the root build, not members, so
+  # root-test runs none of their tests. Their own workspace, whose Cargo.lock repeats the root
+  # lockfile's versions (lock-subset.py) and whose ngsild is jc's: what the platform's fast lane
+  # runs, every member's lib and bins, jc-core's and context-gateway's `it` binary, jcctl's Portal
+  # API drift test; `cargo test`, as there (in-process locks). Beside root-test, so the run does
+  # not get longer. The assistant is a root member (root-test).
+  platform-test:
+    needs: changes
+    if: needs.changes.outputs.platform == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults: { run: { working-directory: vendor/joinedcontext-platform } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: python3 ../../.github/scripts/lock-subset.py ../../Cargo.lock Cargo.lock
+      - uses: ./.github/actions/rust
+        with: { workspace: vendor/joinedcontext-platform, key: platform-test }
+      - run: cargo test --workspace --locked --no-fail-fast --lib --bins
+      - run: cargo test --locked --no-fail-fast -p jc-core --test it
+        env: { ODRL_RECORDS_DIR: "${{ runner.temp }}/odrl-records" }
+      - run: cargo test --locked --no-fail-fast -p context-gateway --test it
+        env: { DCAT_RECORDS_DIR: "${{ runner.temp }}/dcat-records" }
+      - run: "cargo test --locked --no-fail-fast -p jcctl --test it portal_api_drift_tests::"
   antares-clippy:
     needs: changes
     if: needs.changes.outputs.antares == 'true'
@@ -405,7 +430,7 @@ jobs:
   # it deployable (deployment verify-pinned-images.py). A skipped gate is one this push's paths
   # do not reach, or one another run of this commit passed (changes.sh REUSE).
   promote:
-    needs: [changes, root-clippy, root-test, antares-clippy, antares-test, ekiben, portal-clippy, portal-test, ui, supply-chain, image, scan]
+    needs: [changes, root-clippy, root-test, platform-test, antares-clippy, antares-test, ekiben, portal-clippy, portal-test, ui, supply-chain, image, scan]
     if: >-
       always() && needs.image.result == 'success' && needs.scan.result == 'success' &&
       !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
