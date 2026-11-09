@@ -662,18 +662,16 @@ fn default_dataset_type() -> String {
 }
 
 impl Dataset {
-    /// Canonical dataset IRI for DCAT serializations.
+    /// Canonical dataset IRI for DCAT serializations: its `uri`, else the catalogue's address
+    /// of it, as ckanext-dcat's `dataset_uri`. A `source_uri` extra names where a harvested
+    /// record came from (its landing page), never the record itself.
     pub fn canonical_uri(&self, catalogue_base: &str) -> String {
         if let Some(uri) = &self.uri {
             if !uri.trim().is_empty() {
                 return uri.trim().to_owned();
             }
         }
-        if let Some(uri) = self
-            .extras
-            .get("uri")
-            .or_else(|| self.extras.get("source_uri"))
-        {
+        if let Some(uri) = self.extras.get("uri") {
             if !uri.trim().is_empty() {
                 return uri.trim().to_owned();
             }

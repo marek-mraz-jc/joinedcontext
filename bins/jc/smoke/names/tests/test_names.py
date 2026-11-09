@@ -121,6 +121,27 @@ def test_no_renames_file_means_no_renames_and_a_bad_row_is_refused(tmp_path):
         cmp.load_renames(str(f))
 
 
+def test_an_extra_row_is_read_as_its_kind_and_never_stands_in_for_a_missing_name(tmp_path):
+    renames = renames_file(tmp_path, ("dataset", "catalog", "zilina-catalog", "why", "alias"),
+                           ("dataset (extra)", "(none)", "praha-catalog", "why", "nothing to keep"))
+    assert [(r.kind, r.new, r.extra) for r in renames] == [("dataset", "zilina-catalog", False),
+                                                           ("dataset", "praha-catalog", True)]
+    res = Results("names", "http://localhost")
+    cmp.compare(res, "dataset", ["catalog", "(none)"], {"zilina-catalog", "praha-catalog"}, renames,
+                lambda o: (True, "200"), "GET x")
+    by = rows_by_target(res)
+    assert by["catalog"]["result"] == PASS and by["(none)"]["result"] == FAIL
+    stale = Results("names", "http://localhost")
+    cmp.stale_renames(stale, renames, {"dataset": {"catalog"}})
+    assert stale.rows == []
+    cmp.stale_renames(stale, renames, {"dataset": {"catalog", "praha-catalog"}})
+    assert [r["target"] for r in stale.rows] == ["dataset (extra) praha-catalog"]
+    f = tmp_path / "R.md"
+    f.write_text("| kind | old | new | why | how |\n|---|---|---|---|---|\n| dataset (extra) | catalog | x | c | d |\n")
+    with pytest.raises(SystemExit):
+        cmp.load_renames(str(f))
+
+
 def test_a_rename_of_a_name_prod_lacks_is_a_failing_row(tmp_path):
     renames = renames_file(tmp_path, ("project", "nope", "x", "why", "how"))
     res = Results("names", "http://localhost")
