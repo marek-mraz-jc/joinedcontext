@@ -54,15 +54,17 @@ pub(crate) fn config(
 pub async fn build(
     ctx: BuildCtx<'_>,
     wire_siblings: bool,
+    organizations: BTreeMap<String, String>,
     mount: Mount,
     shutdown: &CancellationToken,
 ) -> Result<(Router, Option<std::net::SocketAddr>), StartError> {
     let env = crate::config::portal_env;
-    let siblings = if wire_siblings {
+    let mut siblings = if wire_siblings {
         crate::siblings::portal_vars(ctx.siblings, ctx.setup, env)
     } else {
         BTreeMap::new()
     };
+    siblings.extend(organizations);
     tracing::info!(
         keys = ?siblings.keys().collect::<Vec<_>>(),
         "portal: settings filled from sibling modules"
@@ -75,6 +77,73 @@ pub async fn build(
         .await
         .map_err(|e| err(format!("internal listener: {e}")))?;
     Ok((server::app(state), internal))
+}
+
+/// The Portal's settings for the `[[organizations]]` of `cfg`, each one's Portal host and own
+/// catalogue: `JC_PORTAL_ORGANIZATION_HOSTS` and, when dataroom runs here,
+/// `JC_PORTAL_ORGANIZATION_CATALOGUES` for every Organization that has a Portal token, called on
+/// this jc's own `listener` under the catalogue's host name. Empty without Organizations; an
+/// environment value still wins.
+pub(crate) fn organization_vars(
+    cfg: &crate::config::Config,
+    listener: std::net::SocketAddr,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    if cfg.organizations.is_empty() {
+        return out;
+    }
+    let scheme = &cfg.scheme;
+    let hosts: Vec<String> = cfg
+        .organizations
+        .iter()
+        .map(|org| format!("{}={scheme}://{}", org.name, org.hosts.portal))
+        .collect();
+    out.insert("JC_PORTAL_ORGANIZATION_HOSTS".to_owned(), hosts.join(","));
+    if cfg.roles.contains(&Module::Dataroom) {
+        let reach = crate::siblings::reach(listener);
+        let catalogues: Vec<serde_json::Value> = cfg
+            .organizations
+            .iter()
+            .filter_map(|org| {
+                let token = org.portal_token_file.as_ref()?;
+                // The gateway links a dataset's resources; off https a whole origin.
+                let data_host = match scheme.as_str() {
+                    "https" => org.hosts.api.clone(),
+                    _ => format!("{scheme}://{}", org.hosts.api),
+                };
+                Some(serde_json::json!({
+                    "organization": org.name,
+                    "url": format!("{scheme}://{}", org.hosts.opendata),
+                    "api": format!("http://{}", org.hosts.opendata),
+                    "reach": reach.to_string(),
+                    "dataHost": data_host,
+                    "tokenFile": token,
+                }))
+            })
+            .collect();
+        if !catalogues.is_empty() {
+            out.insert(
+                "JC_PORTAL_ORGANIZATION_CATALOGUES".to_owned(),
+                serde_json::Value::Array(catalogues).to_string(),
+            );
+        }
+    }
+    out
+}
+
+/// The Portal's router behind the host jc placed the request on (`Mount`, a trusted proxy's
+/// `X-Forwarded-Host` applied), which pins an Organization's host (`organization_host`).
+pub(crate) fn with_request_host(router: Router) -> Router {
+    router.layer(axum::middleware::from_fn(
+        |mut req: axum::extract::Request, next: axum::middleware::Next| async move {
+            let host = req.extensions().get::<Mount>().map(|m| m.host.clone());
+            if let Some(host) = host {
+                req.extensions_mut()
+                    .insert(joinedcontext_portal::organization_host::RequestHost(host));
+            }
+            next.run(req).await
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -142,5 +211,54 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cfg.broker_url.as_deref(), Some("https://broker.example"));
+    }
+    /// jc-multiorg-portal: every Organization's Portal host reaches the Portal, and with
+    /// dataroom here its own catalogue, called on this jc under the catalogue's name, with the
+    /// Organization's token file; an Organization without a token publishes nowhere.
+    #[test]
+    fn each_organization_gets_its_portal_host_and_its_own_catalogue() {
+        use clap::Parser as _;
+        let text = include_str!("../../tests/fixtures/two-orgs.toml");
+        let file = crate::config::Config::parse_file(std::path::Path::new("jc.toml"), text)
+            .expect("parses");
+        let cli =
+            |roles: &str| crate::config::Cli::try_parse_from(["jc", "--role", roles]).expect("cli");
+        let listener: std::net::SocketAddr = "0.0.0.0:42301".parse().unwrap();
+        let mut cfg =
+            crate::config::Config::merge(cli("portal,dataroom"), file.clone()).expect("config");
+        cfg.organizations[0].portal_token_file = Some("/run/alpha-token".into());
+        let vars = organization_vars(&cfg, listener);
+        assert_eq!(
+            vars["JC_PORTAL_ORGANIZATION_HOSTS"],
+            format!(
+                "alpha={0}://portal.alpha.test,beta={0}://portal.beta.test",
+                cfg.scheme
+            )
+        );
+        let catalogues: serde_json::Value =
+            serde_json::from_str(&vars["JC_PORTAL_ORGANIZATION_CATALOGUES"]).expect("json");
+        let parsed = joinedcontext_portal::organization_host::parse_catalogues(
+            &vars["JC_PORTAL_ORGANIZATION_CATALOGUES"],
+        )
+        .expect("the Portal reads it");
+        assert_eq!(parsed.len(), 1, "beta has no token: {catalogues}");
+        assert_eq!(parsed[0].organization, "alpha");
+        assert_eq!(
+            parsed[0].api.as_ref().map(url::Url::as_str),
+            Some("http://opendata.alpha.test/")
+        );
+        assert!(parsed[0].reach.is_some_and(|r| r.ip().is_loopback()));
+        assert_eq!(
+            parsed[0].token_file,
+            std::path::PathBuf::from("/run/alpha-token")
+        );
+        assert!(!vars["JC_PORTAL_ORGANIZATION_CATALOGUES"].contains("beta"));
+        // Without dataroom here, the hosts alone; without Organizations, nothing.
+        let mut portal_only = crate::config::Config::merge(cli("portal"), file).expect("config");
+        portal_only.organizations[0].portal_token_file = Some("/run/alpha-token".into());
+        let vars = organization_vars(&portal_only, listener);
+        assert!(!vars.contains_key("JC_PORTAL_ORGANIZATION_CATALOGUES"));
+        portal_only.organizations.clear();
+        assert!(organization_vars(&portal_only, listener).is_empty());
     }
 }

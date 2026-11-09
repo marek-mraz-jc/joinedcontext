@@ -125,9 +125,12 @@ pub async fn build(
             .await
             .map(gateway::at_root),
         #[cfg(feature = "portal")]
-        Module::Portal => portal::build(ctx, cfg.portal_siblings, mount, shutdown)
-            .await
-            .map(|(router, _)| router),
+        Module::Portal => {
+            let organizations = portal::organization_vars(cfg, ctx.siblings.listener);
+            portal::build(ctx, cfg.portal_siblings, organizations, mount, shutdown)
+                .await
+                .map(|(router, _)| router)
+        }
         #[cfg(feature = "shako")]
         Module::Shako => {
             let state = shako::build_state(&cfg.shako, ctx.setup, ctx.secrets).await?;

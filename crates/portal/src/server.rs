@@ -121,7 +121,12 @@ pub fn app(state: AppState) -> Router {
             )),
         )
         .merge(portal)
-        .with_state(state)
+        .with_state(state.clone())
+        // An Organization's own Portal host pins every request on it, MCP and Apps included.
+        .layer(from_fn_with_state(
+            state,
+            crate::organization_host::middleware,
+        ))
         .layer(from_fn(telemetry::record))
         // Outermost of the logging layers, so every line of the request carries its id.
         .layer(from_fn(crate::request_id::middleware))

@@ -74,6 +74,15 @@ impl SecretValue {
             .map(Self::new)
     }
 
+    /// A secret the operator mounted as a file, read whole and trimmed: the Portal's token for
+    /// one Organization's catalogue. `None` when the file is unreadable or holds nothing; the
+    /// error never carries its content.
+    pub fn from_file(path: &std::path::Path) -> Option<Self> {
+        let text = Zeroizing::new(std::fs::read_to_string(path).ok()?);
+        let value = text.trim();
+        (!value.is_empty()).then(|| Self::new(value.to_owned()))
+    }
+
     /// The plaintext. Every call site that uses this is a place where a secret can escape.
     pub fn expose(&self) -> &str {
         &self.0

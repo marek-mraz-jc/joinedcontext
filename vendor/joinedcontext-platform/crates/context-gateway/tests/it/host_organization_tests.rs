@@ -9,7 +9,7 @@ use crate::common;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use axum::Router;
-use context_gateway::app::{router, Gateway, HostOrganization};
+use context_gateway::app::{router, Gateway, HostBase, HostOrganization};
 use context_gateway::auth::accounts::ServiceAccounts;
 use context_gateway::pdp::PolicyPdp;
 use context_gateway::proxy::Broker;
@@ -261,5 +261,53 @@ async fn every_listing_on_one_host_holds_nothing_of_the_other_organization() {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{slug}: {body}");
+    }
+}
+
+/// jc-multiorg-portal: with the host's link base beside its Organization (`HostBase`), every
+/// answer on beta's API host links beta's host and never the one configured public URL; without
+/// it the configured URL stays, as before.
+#[tokio::test]
+async fn an_answer_on_one_organizations_host_links_only_that_host() {
+    let realm = common::Realm::new();
+    let app = app(&realm);
+    let on = |base: Option<&'static str>, path: &'static str| {
+        let app = app.clone();
+        async move {
+            let mut request = Request::builder()
+                .method(Method::GET)
+                .uri(path)
+                .body(Body::empty())
+                .expect("a request");
+            request
+                .extensions_mut()
+                .insert(HostOrganization("beta".to_owned()));
+            if let Some(base) = base {
+                request.extensions_mut().insert(HostBase(base.to_owned()));
+            }
+            let response = app.oneshot(request).await.expect("an answer");
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
+                .await
+                .expect("a body");
+            (status, String::from_utf8_lossy(&bytes).into_owned())
+        }
+    };
+    for path in ["/api/endpoints", "/catalog.jsonld", "/cs"] {
+        let (status, text) = on(Some("http://api.beta.test:8080"), path).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {text}");
+        assert!(
+            text.contains("http://api.beta.test:8080/"),
+            "{path} links beta's host: {text}"
+        );
+        assert!(
+            !text.contains("api.city.test"),
+            "{path} links the configured URL: {text}"
+        );
+        let (_, control) = on(None, path).await;
+        assert!(
+            control.contains("https://api.city.test/"),
+            "{path} without a host base: {control}"
+        );
     }
 }

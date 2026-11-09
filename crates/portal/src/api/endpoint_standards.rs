@@ -194,7 +194,7 @@ async fn build(
         .gateway_url
         .as_deref()
         .and_then(|g| Url::parse(g).ok())
-        .unwrap_or_else(|| state.config.public_base_url.clone());
+        .unwrap_or_else(|| state.config.public_base());
     let at = Endpoint {
         read: endpoint_url(&gateway, slug),
         shown: endpoint_url(&state.config.api_base_url(), slug),

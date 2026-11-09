@@ -1,0 +1,3939 @@
+{
+ "fetchedAt": "2026-11-09T10:31:57Z",
+ "base": "https://opendata.smartcity.joinedcontext.com",
+ "organizations": [
+  "banskabystrica",
+  "barcelona",
+  "bbsk",
+  "bratislava",
+  "hel-fi",
+  "praha",
+  "slovensko",
+  "zilina"
+ ],
+ "packageList": [
+  "air-quality",
+  "areas",
+  "banskabystrica-kataster",
+  "banskabystrica-pocasie",
+  "banskabystrica-podujatia",
+  "banskabystrica-skoly",
+  "barcelona-accidents",
+  "barcelona-bike-lanes",
+  "barcelona-charging",
+  "barcelona-parking",
+  "barcelona-places",
+  "barcelona-traffic",
+  "bb-aktuality",
+  "bb-dtm-bb-register-adries",
+  "bb-dtm-bb-register-statickej-dopravy",
+  "bb-dtm-bb-register-verejnej-zelene-1",
+  "bb-podujatia",
+  "bbsk-clenovia-samospravy-efc2f3",
+  "bbsk-cykloscitace-miesta-6e967d",
+  "bbsk-cykloturisticke-trasy-linie-e6a1a7",
+  "bbsk-cykloturisticke-trasy-linie-povrchy-2ec670",
+  "bbsk-cykloturisticke-trasy-nosic-infotabula-odpocivadlo-znacenie-f3c643",
+  "bbsk-dilatacne-celky-v-banskobystrickom-kraji-public-view-6ff77a",
+  "bbsk-dodavatelia-825cd0",
+  "bbsk-ekologicky-potencial-vodnych-utvarov-672eca",
+  "bbsk-ekologicky-stav-vodnych-utvarov-48bbbd",
+  "bbsk-faktury-422b35",
+  "bbsk-hlasovania-poslancov-ba7ca6",
+  "bbsk-hranice",
+  "bbsk-hustota-obyvatelstva-2021-503a78",
+  "bbsk-hustota-obyvatelstva-v-obciach-bbk-79fd96",
+  "bbsk-komisie-zastupitelstva-banskobystrickeho-samospravneho-kraja-59b9e4",
+  "bbsk-kontaktne-miesta-2128a0",
+  "bbsk-kontakty-na-miestne-samospravy-v-bbk-fc5ecb",
+  "bbsk-kpi",
+  "bbsk-kraj-bbk-hranica-a05568",
+  "bbsk-kulturne-institucie-bbsk-24fbf9",
+  "bbsk-kulturne-institucie-bbsk-a-ich-pobocky-2f9362",
+  "bbsk-materske-skoly-v-banskobystrickom-kraji-3f7d07",
+  "bbsk-mosty",
+  "bbsk-mosty-v-banskobystrickom-kraji-public-view-3b4675",
+  "bbsk-mosty-v-sprave-bbrsc-public-view-d3252c",
+  "bbsk-nabijacky-a-zastavky-937210",
+  "bbsk-nehodovost-v-bbk-0ea72d",
+  "bbsk-obce-bbk-centroidy-cbd19f",
+  "bbsk-obce-bbk-hranice-ec7ac6",
+  "bbsk-objednavky-a97e8a",
+  "bbsk-obyvatelstvo-podla-dalsej-narodnosti-2021-obce-11667a",
+  "bbsk-obyvatelstvo-podla-dalsej-narodnosti-2021-okresy-54bc2c",
+  "bbsk-obyvatelstvo-podla-ekonomickej-aktivity-2021-984966",
+  "bbsk-obyvatelstvo-podla-materinskeho-jazyka-2011-obce-c0f097",
+  "bbsk-obyvatelstvo-podla-materinskeho-jazyka-2011-okresy-590643",
+  "bbsk-obyvatelstvo-podla-materinskeho-jazyka-2021-obce-fc02ff",
+  "bbsk-obyvatelstvo-podla-materinskeho-jazyka-2021-okresy-404a3d",
+  "bbsk-obyvatelstvo-podla-nabozenskeho-vyznania-2011-obce-81576b",
+  "bbsk-obyvatelstvo-podla-nabozenskeho-vyznania-2011-okresy-3844c8",
+  "bbsk-obyvatelstvo-podla-nabozenskeho-vyznania-2021-obce-5fb2e9",
+  "bbsk-obyvatelstvo-podla-nabozenskeho-vyznania-2021-okresy-4d7df9",
+  "bbsk-obyvatelstvo-podla-narodnosti-2011-obce-a36024",
+  "bbsk-obyvatelstvo-podla-narodnosti-2011-okresy-09f7d6",
+  "bbsk-obyvatelstvo-podla-narodnosti-2021-obce-bf372d",
+  "bbsk-obyvatelstvo-podla-narodnosti-2021-okresy-d559c2",
+  "bbsk-obyvatelstvo-podla-rodinneho-stavu-2021-obce-40138c",
+  "bbsk-obyvatelstvo-podla-rodinneho-stavu-2021-okresy-04e229",
+  "bbsk-obyvatelstvo-podla-vekovej-struktury-2011-2021-obce-281902",
+  "bbsk-obyvatelstvo-podla-vekovej-struktury-2011-2021-okresy-5e08d3",
+  "bbsk-obyvatelstvo-podla-vzdelania-2021-2481df",
+  "bbsk-ohrozenie-samosprav-zmenou-klimy-extremne-horucavy-68ff15",
+  "bbsk-ohrozenie-samosprav-zmenou-klimy-extremne-sucho-576a4f",
+  "bbsk-ohrozenie-samosprav-zmenou-klimy-extremne-zrazky-a0f87f",
+  "bbsk-okresy-bbk-hranice-17725f",
+  "bbsk-organizacie",
+  "bbsk-organizacie-v-zriadovatelskej-posobnosti-bbsk-bc762a",
+  "bbsk-organizacna-struktura-40329b",
+  "bbsk-peticie-f80530",
+  "bbsk-plan-verejneho-obstaravania-48b7e9",
+  "bbsk-pocet-obyvatelov-v-obciach-bbk-b2adc3",
+  "bbsk-podjazdy-v-banskobystrickom-kraji-public-view-e6fb8f",
+  "bbsk-podujatia",
+  "bbsk-pohyb-obyvatelstva-v-obciach-1996-2024-919463",
+  "bbsk-pohyb-obyvatelstva-v-okresoch-1996-2024-8b7fa1",
+  "bbsk-povodia-banskobystrickeho-kraja-067504",
+  "bbsk-ppa-platby-f3c509",
+  "bbsk-ppa-platby-po-okresoch-bf09ef",
+  "bbsk-priepusty-v-banskobystrickom-kraji-public-view-a9ed8e",
+  "bbsk-prispevkove-rozpoctove-a-ine-organizacie-samospravy-cec768",
+  "bbsk-prognoza-poctu-obyvatelov-2018-2040-3a097f",
+  "bbsk-projekty-banskobystrickeho-kraja-itms21-c8bfea",
+  "bbsk-realizovane-verejne-obstaravania-754eee",
+  "bbsk-register-investicii-bodova-vrstva-e0b3b4",
+  "bbsk-register-investicii-polygonova-vrstva-e902a9",
+  "bbsk-skoly-a-skolske-zariadenia-v-zriadovatelskej-posobnosti-bbsk-791897",
+  "bbsk-stredne-skoly-v-banskobystrickom-kraji-581554",
+  "bbsk-stredne-skoly-v-bbk-odbory-a-pocet-studentov-2023-e85365",
+  "bbsk-uradne-hodiny-c912ed",
+  "bbsk-vekova-struktura-v-obciach-1996-2022-6de8c3",
+  "bbsk-vekova-struktura-v-okresoch-1996-2022-29ed8a",
+  "bbsk-vysoke-skoly-v-banskobystrickom-kraji-b0be47",
+  "bbsk-vyvoj-emisii-v-bbk-c8d1ed",
+  "bbsk-vyvoj-imisii-v-bbk-377176",
+  "bbsk-zakladne-skoly-v-banskobystrickom-kraji-13a8b6",
+  "bbsk-zariadenia",
+  "bbsk-zasadnutia-samospravy-9a27f2",
+  "bbsk-zeleznicne-priecestia-v-banskobystrickom-kraji-public-view-89feb8",
+  "bbsk-zoznam-lekarni-v-bbk-c564de",
+  "bbsk-zoznam-poskytovatelov-socialnych-sluzieb-v-bbk-9ab090",
+  "bbsk-zoznam-ucinnych-vseobecne-zavaznych-nariadeni-vzn-80db50",
+  "bbsk-zoznam-zdravotnickych-zariadeni-v-bbk-701db2",
+  "bratislava-autorizacie-dtmb-2019",
+  "bratislava-autorizacie-dtmb-2020-2025",
+  "bratislava-bajk",
+  "bratislava-bezbarierovost",
+  "bratislava-bkis-ziadosti",
+  "bratislava-buduci-bytovy-fond-v-okresoch-bsk-v",
+  "bratislava-bytovy-fond-v-obciach-bsk",
+  "bratislava-celozivotne-vzdelavanie",
+  "bratislava-centra-volneho-casu",
+  "bratislava-cerpanie-rozpoctu-2021",
+  "bratislava-cestovne-bez-listka-eura",
+  "bratislava-cestujuci-bez-listka",
+  "bratislava-cestujuci-letisko",
+  "bratislava-charakter-zariadeni-materskych-skol",
+  "bratislava-charakter-zariadeni-strednych-skol",
+  "bratislava-charakter-zariadeni-zakladnych-skol",
+  "bratislava-chodci",
+  "bratislava-cyklisti",
+  "bratislava-demografia",
+  "bratislava-districts",
+  "bratislava-dni-prekrocenia-o3",
+  "bratislava-dochadzajuci-studenti-zo-zazemia",
+  "bratislava-dochadzka-do-skol-medzi-jednotlivymi",
+  "bratislava-dochadzka-do-zamestnania-medzi",
+  "bratislava-dopravne-nehody",
+  "bratislava-dopravne-nehody-druh-vozidla-vinnika",
+  "bratislava-dopravne-nehody-kategoria-cesty",
+  "bratislava-dopravne-nehody-v-obci-a-mimo-obce",
+  "bratislava-dopravne-vykony-mhd",
+  "bratislava-fixpointy",
+  "bratislava-free-wifi-dlzka-pripojenia",
+  "bratislava-free-wifi-novi-a-vracajuci-sa",
+  "bratislava-free-wifi-operacny-system",
+  "bratislava-free-wifi-prehliadac",
+  "bratislava-free-wifi-sucasne-pripojeni",
+  "bratislava-free-wifi-zariadenie",
+  "bratislava-index-migracnej-efektivnosti-mestskych",
+  "bratislava-index-socialnej-a-ekonomickej-podpory-v",
+  "bratislava-investicne-vydavky-do-sportovej",
+  "bratislava-jazyk-prehliadaca-free-wifi",
+  "bratislava-kamery-mestskeho-kameroveho-systemu",
+  "bratislava-kapacita-domovov-mladeze-internaty",
+  "bratislava-kapacita-skolskych-jedalni",
+  "bratislava-kapacita-vysokoskolskych-internatov-a",
+  "bratislava-kapacity-zariadeni-pre-seniorov-v",
+  "bratislava-komare",
+  "bratislava-kontaktne-miesta",
+  "bratislava-materske-skoly",
+  "bratislava-medzirocne-porovnanie-poctu",
+  "bratislava-mestske-karantene-zariadenie-hradska",
+  "bratislava-mestske-organizacie",
+  "bratislava-miera-energetickeho-zhodnotenia-odpadov",
+  "bratislava-miera-objasnenosti-trestnych-cinov-v",
+  "bratislava-miera-recyklacie-komunalnych-odpadov",
+  "bratislava-miera-skladkovania-komunalnych-odpadov",
+  "bratislava-miera-zhodnotenia-biologicky",
+  "bratislava-miery-plodnosti-zien-a-na-slovensku-v",
+  "bratislava-miery-plodnosti-zien-v-okresoch-v",
+  "bratislava-miery-plodnosti-zien-v-v-rokoch-2000-2004-ba",
+  "bratislava-migracna-efektivnost-okresov",
+  "bratislava-migracne-saldo-cista-migracia-muzov-a",
+  "bratislava-migracne-saldo-mestskych-casti-v-obdobi",
+  "bratislava-migracne-saldo-okresov-na-1-000",
+  "bratislava-migracne-saldo-okresov-v-rokoch-2017-ba",
+  "bratislava-migracne-saldo-okresov-v-veku-a-pohlavia-zeny",
+  "bratislava-migracne-saldo-vnutornym-a-zahranicnym",
+  "bratislava-migracny-obrat-mestskych-casti-v-obdobi",
+  "bratislava-migracny-obrat-okresov-na-1-000",
+  "bratislava-mnozstvo-komunalneho-odpadu",
+  "bratislava-mnozstvo-komunalneho-odpadu-na-obyvatela",
+  "bratislava-mnozstvo-vysadenych-stromov-od-roku-2016-ba",
+  "bratislava-model-rastu-bytoveho-fondu-v-obciach-bsk",
+  "bratislava-model-rastu-poctu-obyvatelov-v-obciach-bsk",
+  "bratislava-ms-deti",
+  "bratislava-ms-kapacita",
+  "bratislava-navstevnici-a-registrovani-citatelia-v",
+  "bratislava-navstevnost-divadelnych-predstaveni-a",
+  "bratislava-navstevnost-galerie-a-pocet-vystav",
+  "bratislava-navstevnost-lokalit-muzea",
+  "bratislava-navstevnost-zoo",
+  "bratislava-nehody-s-nasledkom-na-zdravi",
+  "bratislava-nehody-s-usmrtenim",
+  "bratislava-nezamestnanost",
+  "bratislava-objem-stahovania-medzi-mestskymi",
+  "bratislava-objem-stahovania-medzi-na-1000-obyvatelov",
+  "bratislava-obyvatelia-podla-dovodu-pristahovania-zsj",
+  "bratislava-obyvatelia-podla-jazyka-na-verejnosti-zsj",
+  "bratislava-obyvatelia-podla-jazyka-v-domacnosti-zsj",
+  "bratislava-obyvatelia-podla-materinskeho-jazyka-zsj",
+  "bratislava-obyvatelia-podla-miesta-pobytu-zsj",
+  "bratislava-obyvatelia-podla-nabozenstva-zsj",
+  "bratislava-obyvatelia-podla-narodnosti-zsj",
+  "bratislava-obyvatelia-podla-vzdelania-zsj",
+  "bratislava-obyvatelia-zsj-ekonomicka-aktivita",
+  "bratislava-obyvatelia-zsj-odvetvie",
+  "bratislava-obyvatelia-zsj-pohlavie",
+  "bratislava-obyvatelia-zsj-postavenie-v-zamestnani",
+  "bratislava-obyvatelia-zsj-praca-s-internetom",
+  "bratislava-obyvatelia-zsj-praca-s-postou",
+  "bratislava-obyvatelia-zsj-praca-s-tabulkami",
+  "bratislava-obyvatelia-zsj-statna-prislusnost",
+  "bratislava-obyvatelia-zsj-vek",
+  "bratislava-ocakavany-vyvoj-domoveho-fondu-v",
+  "bratislava-ochladzovacie-miesta",
+  "bratislava-odchadzka-do-zamestnania-a-skol-v",
+  "bratislava-osv-cerpanie-2019-06-30",
+  "bratislava-osv-cerpanie-2019-09-06",
+  "bratislava-plodnost",
+  "bratislava-pocet-absolventov-i-a-ii-stupna-studia",
+  "bratislava-pocet-absolventov-iii-stupna-studia-na",
+  "bratislava-pocet-bytov-podla-celkovej-plochy-zsj",
+  "bratislava-pocet-bytov-podla-obytnej-plochy-zsj",
+  "bratislava-pocet-bytov-podla-obyvanosti-zsj",
+  "bratislava-pocet-bytov-podla-poctu-miestnosti-zsj",
+  "bratislava-pocet-clenov-zaujmovych-utvarov-cvc",
+  "bratislava-pocet-deti-a-materskych-skol-podla-typu",
+  "bratislava-pocet-deti-a-specialnych-skol",
+  "bratislava-pocet-deti-a-zariadeni-dalsieho-vzdelavania",
+  "bratislava-pocet-deti-v-materskych-skolach",
+  "bratislava-pocet-deti-ziakov-a-studentov-v-skolach",
+  "bratislava-pocet-divadelnych-predstaveni-a-premier",
+  "bratislava-pocet-dochadzajucich-deti-do-materskych",
+  "bratislava-pocet-dochadzajucich-studentov-na",
+  "bratislava-pocet-dochadzajucich-ziakov-do",
+  "bratislava-pocet-doktorandov-na-vysokych-skolach",
+  "bratislava-pocet-dospievajucich-a-strednych-skol",
+  "bratislava-pocet-evidovanych-prvkov-v-dtm",
+  "bratislava-pocet-evidovanych-vodicov",
+  "bratislava-pocet-fakult-a-pocet-absolventov",
+  "bratislava-pocet-gymnazii-a-strednych-sportovych",
+  "bratislava-pocet-hovorov-prijatych-na-linke-159",
+  "bratislava-pocet-konzervatorii",
+  "bratislava-pocet-materskych-skol",
+  "bratislava-pocet-mladych-nezamestnanych-podla-veku",
+  "bratislava-pocet-nevybavenych-ziadosti-do-ms-podla",
+  "bratislava-pocet-obyvatelov-v-mestskych-castiach-v",
+  "bratislava-pocet-obyvatelov-v-obciach-bsk",
+  "bratislava-pocet-obyvatelov-vo-vekovych-skupinach",
+  "bratislava-pocet-odbornych-zamestnancov-vo",
+  "bratislava-pocet-oddeleni-skolskych-klubov",
+  "bratislava-pocet-oddeleni-skolskych-skolskych-klubov",
+  "bratislava-pocet-osob-ktorym-bol-poskytnuty",
+  "bratislava-pocet-ostatnych-udalosti",
+  "bratislava-pocet-pedagogickych-zamestnancov-cvc",
+  "bratislava-pocet-pedagogickych-zamestnancov-na",
+  "bratislava-pocet-poberatelov-nahradneho-vyzivneho",
+  "bratislava-pocet-poberatelov-prispevku-na-byvanie",
+  "bratislava-pocet-poberatelov-upsvar",
+  "bratislava-pocet-podujati-a-ucastnikov",
+  "bratislava-pocet-pokut-a-prijem-z-pokut-podla",
+  "bratislava-pocet-pracovnikov-vo-vybranych",
+  "bratislava-pocet-priestupkov-a-dopravnych",
+  "bratislava-pocet-priestupkov-a-pocet-mestskych",
+  "bratislava-pocet-priestupkov-a-vyska-pokut",
+  "bratislava-pocet-priestupkov-podla-druhu-udalosti",
+  "bratislava-pocet-priestupkov-podla-kategorii-podla",
+  "bratislava-pocet-prijatych-ziadosti-o-vydanie",
+  "bratislava-pocet-prijatych-ziadosti-obcanom-podla-veku",
+  "bratislava-pocet-prijatych-ziadosti-obcianskeho-preukazu",
+  "bratislava-pocet-skol-za-obdobie-2010-2022-ba",
+  "bratislava-pocet-stihanych-a-podla-vzdelania",
+  "bratislava-pocet-stihanych-a-vysetrovanych-mladych",
+  "bratislava-pocet-stihanych-a-vysetrovanych-osob",
+  "bratislava-pocet-strednych-odbornych-skol",
+  "bratislava-pocet-studentov-na-jednotlivych",
+  "bratislava-pocet-studentov-na-strednych-skolach",
+  "bratislava-pocet-studentov-na-vysokych-skolach",
+  "bratislava-pocet-trestnych-cinov-a-pocet-stihanych",
+  "bratislava-pocet-trestnych-cinov-a-stihane-a",
+  "bratislava-pocet-trestnych-cinov-spachanych",
+  "bratislava-pocet-tried-v-gymnaziach-a-sportovych",
+  "bratislava-pocet-tried-v-konzervatoriach",
+  "bratislava-pocet-tried-v-materskych-skolach",
+  "bratislava-pocet-tried-v-strednych-odbornych",
+  "bratislava-pocet-tried-v-zakladnych-skolach",
+  "bratislava-pocet-trvalych-pobytov-deti-v-mestskych",
+  "bratislava-pocet-trvalych-pobytov-studentov-a-mimo",
+  "bratislava-pocet-ucebni-v-zakladnych-umeleckych",
+  "bratislava-pocet-uchadzacov-o-zamestnanie",
+  "bratislava-pocet-uchadzacov-o-zamestnanie-v-ba",
+  "bratislava-pocet-ucitelov-v-gymnaziach-a-strednych",
+  "bratislava-pocet-ucitelov-v-jazykovych-skolach",
+  "bratislava-pocet-ucitelov-v-konzervatoriach",
+  "bratislava-pocet-ucitelov-v-materskych-skolach",
+  "bratislava-pocet-ucitelov-v-strednych-odbornych",
+  "bratislava-pocet-ucitelov-v-zakladnych-skolach",
+  "bratislava-pocet-ucitelov-v-zakladnych-umeleckych",
+  "bratislava-pocet-vydanych-stratenych-a-odcudzenych",
+  "bratislava-pocet-vydanych-vodicskych-preukazov-a",
+  "bratislava-pocet-zahranicnych-a-medzinarodnych",
+  "bratislava-pocet-zahranicnych-studentov-na",
+  "bratislava-pocet-zakladnych-a-strednych-skol-podla",
+  "bratislava-pocet-zakladnych-skol",
+  "bratislava-pocet-zakladnych-umeleckych-skol",
+  "bratislava-pocet-zamestnancov-v-stavebnictve-v",
+  "bratislava-pocet-zapisanych-ziakov-v-skolskych",
+  "bratislava-pocet-zapisanych-ziakov-v-v-skolskych-kluboch",
+  "bratislava-pocet-ziadosti-o-vydanie-cestovneho-pasu",
+  "bratislava-pocet-ziakov-a-zakladnych-skol-podla",
+  "bratislava-pocet-ziakov-sportovych-tried",
+  "bratislava-pocet-ziakov-v-gymnaziach-a-strednych",
+  "bratislava-pocet-ziakov-v-jazykovych-skolach",
+  "bratislava-pocet-ziakov-v-konzervatoriach",
+  "bratislava-pocet-ziakov-v-strednych-odbornych",
+  "bratislava-pocet-ziakov-v-zakladnych-skolach",
+  "bratislava-pocet-ziakov-v-zakladnych-umeleckych",
+  "bratislava-pocet-zistenych-objasnenych-aj",
+  "bratislava-pocet-zrealizovanych-podujati-bkis-bez",
+  "bratislava-pocetnost-obyvatelov-vo-vybranych",
+  "bratislava-pocty-pristahovanych-muzov-a-zien-do",
+  "bratislava-pocty-vystahovanych-muzov-a-zien-z",
+  "bratislava-pocty-ziakov-1-rocnika-zs-podla-typu",
+  "bratislava-podiel-jednotlivych-odvetvi-na-trzbach",
+  "bratislava-podiel-plodnosti-zien-vo-plodnosti-ba-sr",
+  "bratislava-podiel-plodnosti-zien-vo-veku-30-a-viac",
+  "bratislava-podiel-plodnosti-zien-vo-veku-do-25",
+  "bratislava-podiel-plodnosti-zien-vo-veku-do-25-z",
+  "bratislava-podiel-priestupkov-podla-kategorii",
+  "bratislava-podiel-strednych-skol-podla",
+  "bratislava-podiel-trzieb-z-predaja-do-zahranicia-v",
+  "bratislava-podiel-zahranicnej-migracie-v-okresoch",
+  "bratislava-podiel-zahranicnej-zlozky-na-celkovom",
+  "bratislava-podiel-zahranicnych-a-medzinarodnych",
+  "bratislava-podiel-ziakov-v-zakladnych-skolach",
+  "bratislava-predpokladane-migracne-saldo-do-roku",
+  "bratislava-predpokladane-migracne-saldo-mestskych",
+  "bratislava-predpokladane-migracne-saldo-okresov-do",
+  "bratislava-predpokladany-vyvoj-uhrnnej-plodnosti-v",
+  "bratislava-prekrocenia-pm10",
+  "bratislava-prenesene-data-free-wifi",
+  "bratislava-prepravene-osoby-mhd",
+  "bratislava-priemerna-koncentracia-pm10",
+  "bratislava-priemerna-koncentracia-pm25",
+  "bratislava-priemerna-nominalna-mesacna-mzda",
+  "bratislava-priemerna-obsadenost-bytov-trvalo",
+  "bratislava-priemerny-evidencny-pocet-cinnosti-sk-nace",
+  "bratislava-priemerny-evidencny-pocet-trhovych-sluzbach",
+  "bratislava-priemerny-evidencny-pocet-zamestnancov",
+  "bratislava-priemerny-pocet-bytov-na-dom-podla",
+  "bratislava-priemerny-rozsah-zastavanych-ploch-na",
+  "bratislava-priemerny-vek-obyvatelov-a-slovenska-v",
+  "bratislava-priemerny-vek-obyvatelov-v-mestskych",
+  "bratislava-priemerny-vek-obyvatelov-v-okresoch-v",
+  "bratislava-priemerny-vek-obyvatelstva-mestskych",
+  "bratislava-priemerny-vek-pri-sobasi-muzov-v",
+  "bratislava-priemerny-vek-pri-sobasi-zien-v",
+  "bratislava-priemerny-vek-pristahovanych-a",
+  "bratislava-priemerny-vek-zien-pri-narodeni-dietata",
+  "bratislava-priemerny-vek-zien-pri-narodeni-prveho",
+  "bratislava-priemerny-vek-zien-pri-v-rokoch-2000-2021-2",
+  "bratislava-priemerny-vek-zien-pri-v-rokoch-2000-2021-3",
+  "bratislava-priemerny-vek-zien-pri-v-rokoch-2000-2021-4",
+  "bratislava-priemerny-vek-zien-pri-v-rokoch-2000-2021-ba",
+  "bratislava-priestupky",
+  "bratislava-priestupky-ulice",
+  "bratislava-prispevky-dlzka-zivota-muzi-percenta",
+  "bratislava-prispevky-dlzka-zivota-muzi-roky",
+  "bratislava-prispevky-dlzka-zivota-zeny-percenta",
+  "bratislava-prispevky-dlzka-zivota-zeny-roky",
+  "bratislava-prispevky-pricin-smrti-medzi-ba-a-sr",
+  "bratislava-prispevky-pricin-smrti-medzi-ba-a-sr-podiel",
+  "bratislava-prispevky-pricin-smrti-v-ba",
+  "bratislava-prispevky-pricin-smrti-v-ba-podiel",
+  "bratislava-prispevky-vekovych-skupin-muzi-v-ba",
+  "bratislava-prispevky-vekovych-skupin-zeny-v-ba",
+  "bratislava-prognoza-celkovy-prirastok",
+  "bratislava-prognoza-ekonomicke-zatazenie",
+  "bratislava-prognoza-index-starnutia",
+  "bratislava-prognoza-obyvatelia",
+  "bratislava-prognoza-poctu-obyvatelov-v-rokoch-2022-ba",
+  "bratislava-prognoza-priemerny-vek",
+  "bratislava-prognoza-prirodzeny-prirastok",
+  "bratislava-prognozovana-zmena-hlavnych-vekovych",
+  "bratislava-prognozovana-zmena-podielu-hlavnych",
+  "bratislava-prognozovany-celkovy-prirastok",
+  "bratislava-prognozovany-index-starnutia",
+  "bratislava-prognozovany-index-v-rokoch-2020-2050-ba",
+  "bratislava-prognozovany-pocet-obyvatelov-okresov-v",
+  "bratislava-prognozovany-priemerny-vek-obyvatelov-v",
+  "bratislava-prognozovany-priemerny-vek-obyvatelstva",
+  "bratislava-prognozovany-prirodzeny-prirastok",
+  "bratislava-prognozovany-vyvoj-ba-v-r-2022-2035-ba",
+  "bratislava-prognozovany-vyvoj-ba-v-rokoch-2022-2050-2",
+  "bratislava-prognozovany-vyvoj-ba-v-rokoch-2022-2050-ba",
+  "bratislava-prognozovany-vyvoj-celkoveho-prirastku",
+  "bratislava-prognozovany-vyvoj-indexu-ba-v-rokoch-2022-2050-ba",
+  "bratislava-prognozovany-vyvoj-indexu-ekonomickeho",
+  "bratislava-prognozovany-vyvoj-prirodzeneho",
+  "bratislava-prognozovany-vyvoj-strednej-dlzky",
+  "bratislava-prognozovany-vyvoj-uhrnnej-plodnosti-do",
+  "bratislava-prognozovany-vyvoj-uhrnnej-plodnosti-v",
+  "bratislava-pzi-rast",
+  "bratislava-pzi-v-zahranici",
+  "bratislava-registrovani-citatelia-v-mestskej",
+  "bratislava-rozloha-mestskych-casti",
+  "bratislava-rozpocet-2014-vydavky",
+  "bratislava-rozpocet-2015-vydavky",
+  "bratislava-rozpocet-2016-vydavky",
+  "bratislava-rozpocet-2017-vydavky",
+  "bratislava-rozpocet-2018-vydavky",
+  "bratislava-rozpocet-prijmy-2014",
+  "bratislava-rozpocet-prijmy-2015",
+  "bratislava-rozpocet-prijmy-2016",
+  "bratislava-rozpocet-prijmy-2017",
+  "bratislava-rozpocet-prijmy-2018",
+  "bratislava-rozpocet-prijmy-2019",
+  "bratislava-saldo-zahranicnej-migracie-okresov-na-1",
+  "bratislava-skolska-integracia-deti-so-specialnymi",
+  "bratislava-skolska-integracia-ziakov-do-zakladnych-skol",
+  "bratislava-skolska-integracia-ziakov-so",
+  "bratislava-sluzby-bez-domova",
+  "bratislava-sodb-2011-byty-podla-druhu-budovy",
+  "bratislava-sodb-2011-byty-podla-obdobia-vystavby",
+  "bratislava-sodb-2011-byty-podla-obyvanosti",
+  "bratislava-sodb-2011-byty-podla-typu-budovy",
+  "bratislava-sodb-2011-obyvane-byty-obyvatelov-v-byte",
+  "bratislava-sodb-2011-obyvane-byty-podla-formy",
+  "bratislava-sodb-2011-obyvane-byty-podla-poctu",
+  "bratislava-sodb-2011-obyvane-byty-podla-systemu",
+  "bratislava-sodb-2011-obyvane-byty-podla-typu",
+  "bratislava-sodb-2011-obyvatelstvo-podla",
+  "bratislava-sodb-2011-obyvatelstvo-podla-postavenia",
+  "bratislava-sodb-2011-obyvatelstvo-podla-rodinneho",
+  "bratislava-sodb-2011-obyvatelstvo-podla-vekovych",
+  "bratislava-sodb-2011-obyvatelstvo-podla-zamestnania",
+  "bratislava-sodb-2011-obyvatelstvo-vzdelania",
+  "bratislava-sodb-2011-pocet-miesta-pracoviska",
+  "bratislava-sodb-2011-pocet-obyvatelov-podla",
+  "bratislava-sodb-2011-pocet-obyvatelov-podla-miesta",
+  "bratislava-sodb-2011-pocet-v-zamestnani",
+  "bratislava-sodb-2011-rodiny-podla-typu",
+  "bratislava-sodb-2011-rodiny-podla-velkosti-zakladu",
+  "bratislava-sodb-2011-sukromne-domacnosti-podla",
+  "bratislava-sodb-2011-sukromne-domacnosti-podla-typu",
+  "bratislava-sodb-2011-sukromne-podla-velkosti",
+  "bratislava-specialne-materske-skoly",
+  "bratislava-specialne-stredne-skoly",
+  "bratislava-specialne-zakladne-skoly",
+  "bratislava-sposob-nakladania-s-nakladania-s-odpadmi",
+  "bratislava-sposob-nakladania-s-odpadmi",
+  "bratislava-sposobena-skoda-trestnych-cinov-v-1-000",
+  "bratislava-sposoby-riesenia-priestupkov-podla",
+  "bratislava-ss-kapacita",
+  "bratislava-ss-studenti",
+  "bratislava-standardizovane-miery-umrtnosti-muzov",
+  "bratislava-standardizovane-miery-umrtnosti-zien-na",
+  "bratislava-starz-navstevnici",
+  "bratislava-statisticky-prehlad-priestupkov-na",
+  "bratislava-stav-kniznicneho-fondu-v-mestskej",
+  "bratislava-struktura-deti-v-materskych-skolach",
+  "bratislava-struktura-migrantov-podla-do-zahranicia",
+  "bratislava-struktura-migrantov-podla-vnutorne-pristahovani",
+  "bratislava-struktura-migrantov-podla-vnutorne-vystahovani",
+  "bratislava-struktura-migrantov-podla-vzdelania",
+  "bratislava-struktura-muzov-a-zien-podla-rodinneho",
+  "bratislava-struktura-muzov-a-zien-sodb-2021-rozvedeni",
+  "bratislava-struktura-muzov-podla-najvyssieho",
+  "bratislava-struktura-muzov-podla-rodinneho-stavu",
+  "bratislava-struktura-uchadzacov-o-sledovaneho-roka",
+  "bratislava-struktura-uchadzacov-o-vo-vybranych-rokov",
+  "bratislava-struktura-uchadzacov-o-zamestnanie",
+  "bratislava-struktura-ucitelov-v-gymnaziach-a",
+  "bratislava-struktura-ucitelov-v-konzervatoriach",
+  "bratislava-struktura-ucitelov-v-materskych-skolach",
+  "bratislava-struktura-ucitelov-v-strednych",
+  "bratislava-struktura-ucitelov-v-zakladnych-skolach",
+  "bratislava-struktura-ziakov-v-gymnaziach-a",
+  "bratislava-struktura-ziakov-v-konzervatoriach",
+  "bratislava-struktura-ziakov-v-strednych-odbornych",
+  "bratislava-struktura-ziakov-v-zakladnych-skolach",
+  "bratislava-struktura-zien-podla-najvyssieho",
+  "bratislava-struktura-zien-podla-rodinneho-stavu-vo",
+  "bratislava-transfer-nestatnym-skolam",
+  "bratislava-trzby-najvyznamnejsich-spolocnosti-v",
+  "bratislava-trzby-z-predaja-do-zahranicia-v",
+  "bratislava-turisticke-autobusy",
+  "bratislava-udaje-za-kriminalitu-mladych-podla",
+  "bratislava-uhrnna-rozvodovost-a-na-slovensku-v",
+  "bratislava-uhrnna-rozvodovost-v-okresoch-v-obdobi",
+  "bratislava-uhrnna-sobasnost-muzov-a-zien-vo-veku",
+  "bratislava-uhrnna-sobasnost-muzov-v-okresoch-v",
+  "bratislava-uhrnna-sobasnost-zien-v-okresoch-v",
+  "bratislava-uroven-vytriedenia-komunalnych-odpadov",
+  "bratislava-vekova-struktura-obyvatelov-v-roku-2021-ba",
+  "bratislava-vekove-zlozenie-migracneho-salda",
+  "bratislava-vekove-zlozenie-obyvatelov-a-slovenska",
+  "bratislava-vekove-zlozenie-obyvatelov-v-roku-2021-ba",
+  "bratislava-vekove-zlozenie-pocet",
+  "bratislava-vekove-zlozenie-podiel",
+  "bratislava-veterinarne-zariadenia",
+  "bratislava-vklady-dtmb-2018",
+  "bratislava-vklady-dtmb-2019",
+  "bratislava-vklady-dtmb-2020-2025",
+  "bratislava-vnutorna-priestorova-struktura-medzi",
+  "bratislava-vozidla",
+  "bratislava-vozidla-mhd",
+  "bratislava-vydavky-programy",
+  "bratislava-vykony-cestovneho-ruchu-pocet",
+  "bratislava-vykony-cestovneho-ruchu-pocet-prenocovani",
+  "bratislava-vymera",
+  "bratislava-vypozicky-v-mestskej-kniznici",
+  "bratislava-vysadba-stromov-a-krov-v-katastralnych",
+  "bratislava-vysadba-v-katastralnych-uzemiach-v",
+  "bratislava-vyska-mzdy-v-sektore-vzdelavanie",
+  "bratislava-vyvoj-celkovej-zamestnanosti-a",
+  "bratislava-vyvoj-miery-registrovanej",
+  "bratislava-vyvoj-poctu-malych-strednych-a-velkych",
+  "bratislava-vyvoj-poctu-obyvatelov-mestskych",
+  "bratislava-vyvoj-poctu-obyvatelov-v-rokoch-2000-ba",
+  "bratislava-vyvoj-poctu-studentov-doktorandskeho",
+  "bratislava-vyvoj-poctu-studentov-sr-v-rokoch-2015-2021-ba",
+  "bratislava-vyvoj-poctu-vseobecnych-ambulancii-na",
+  "bratislava-vyvoj-poctu-ziackych-miest-na-1000-ba",
+  "bratislava-vyvoj-stavebnej-produkcie-v-ba-v",
+  "bratislava-vyvoj-strednej-dlzky-rokov-2000-2021-2",
+  "bratislava-vyvoj-strednej-dlzky-rokov-2000-2021-3",
+  "bratislava-vyvoj-strednej-dlzky-rokov-2000-2021-ba",
+  "bratislava-vyvoj-strednej-dlzky-zivota-pri",
+  "bratislava-vyvoj-trzieb-za-ubytovanie-v-rokoch",
+  "bratislava-vyvoj-trzieb-za-vlastne-sluzbach-v-ba",
+  "bratislava-vyvoj-trzieb-za-vlastne-v-rokoch-2008-2021-ba",
+  "bratislava-vyvoj-trzieb-za-vlastne-vykony-a-tovar",
+  "bratislava-vyvoj-uhrnnej-plodnosti-zien-a-na",
+  "bratislava-vyvoj-uhrnnej-plodnosti-zien-v-okresoch",
+  "bratislava-vyvoj-zamestnanosti-v-obchode",
+  "bratislava-vzajomne-migracne-saldo-casti-2000-2004-ba",
+  "bratislava-vzajomne-migracne-saldo-mestskych-casti",
+  "bratislava-vzdelanostna-struktura-muzov-vo-veku-15",
+  "bratislava-vzdelanostna-struktura-v-okresoch-sodb-2021-2",
+  "bratislava-vzdelanostna-struktura-v-okresoch-sodb-2021-ba",
+  "bratislava-vzdelanostna-struktura-zien-vo-veku-15",
+  "bratislava-vzdelavacie-institucie",
+  "bratislava-wifi-pouzivatelia",
+  "bratislava-zachytne-bezpecnostne-zariadenia",
+  "bratislava-zakladne-skoly",
+  "bratislava-zakladne-umelecke-skoly",
+  "bratislava-zamestnavanie-statnych-prislusnikov",
+  "bratislava-zbierkove-predmety-v-galerii",
+  "bratislava-ziaci-sportovych-tried-podla-sportu",
+  "bratislava-zmena-dopravneho-dopytu",
+  "bratislava-zmena-poctu-obyvatelov-a-slovenska",
+  "bratislava-zmena-poctu-obyvatelov-v-mestskych",
+  "bratislava-zmena-poctu-obyvatelov-v-okresoch-medzi",
+  "bratislava-zmena-poctu-obyvatelov-v-rokom-2022-a-2035-ba",
+  "bratislava-zmena-priemerneho-veku-obyvatelov-a",
+  "bratislava-zmena-priemerneho-veku-obyvatelstva",
+  "bratislava-zmena-priemerneho-veku-v-mestskych",
+  "bratislava-zmena-priemerneho-veku-v-rokom-2022-a-2035-ba",
+  "bratislava-zs-kapacita",
+  "bratislava-zs-ziaci",
+  "catalog",
+  "groundwater",
+  "helsinki-air-quality",
+  "helsinki-beach-water",
+  "helsinki-bikes",
+  "helsinki-cycle-counts",
+  "helsinki-districts",
+  "helsinki-events",
+  "helsinki-feedback",
+  "helsinki-heritage",
+  "helsinki-nature",
+  "helsinki-news",
+  "helsinki-noise",
+  "helsinki-parking",
+  "helsinki-places",
+  "helsinki-public-area-permits",
+  "helsinki-service-property-energy",
+  "helsinki-statistics-education",
+  "helsinki-statistics-employment",
+  "helsinki-statistics-environment",
+  "helsinki-statistics-housing",
+  "helsinki-statistics-income",
+  "helsinki-statistics-population",
+  "helsinki-statistics-services",
+  "helsinki-statistics-welfare",
+  "helsinki-street-cleaning-air",
+  "helsinki-traffic-counts",
+  "helsinki-traffic-signals",
+  "helsinki-traffic-volumes",
+  "helsinki-transport",
+  "helsinki-trees",
+  "helsinki-vision-counts",
+  "helsinki-weather",
+  "local-trees",
+  "ovzdusie-sk",
+  "pedestrian-crossings",
+  "praha-akce",
+  "praha-bilancni-celky",
+  "praha-cerpani-rozpoctu",
+  "praha-cinnost-mestske-policie",
+  "praha-cinnost-mestske-policie-utvary",
+  "praha-cyklotrasy",
+  "praha-financni-vztahy-mc",
+  "praha-hluk",
+  "praha-hrbitovy",
+  "praha-letni-udrzba",
+  "praha-linky-pid",
+  "praha-mestske-casti",
+  "praha-mista",
+  "praha-naucne-stezky",
+  "praha-opravy-a-uzavirky",
+  "praha-ovzdusi",
+  "praha-parkovaci-automaty",
+  "praha-parkovani",
+  "praha-parkoviste-pr",
+  "praha-pietni-mista",
+  "praha-pocasi",
+  "praha-posty",
+  "praha-protipovodnova-ochrana",
+  "praha-psi-zony",
+  "praha-radon",
+  "praha-rozpocet",
+  "praha-sdilena-kola",
+  "praha-stromy",
+  "praha-tarifni-pasma",
+  "praha-technicke-prvky-zelene",
+  "praha-trideny-odpad",
+  "praha-ulicni-useky",
+  "praha-vodni-plochy",
+  "praha-vstupy-metra",
+  "praha-vybavenost",
+  "praha-zakazy-stani",
+  "praha-zaplavova-uzemi",
+  "praha-zastavky-pid",
+  "praha-zdravotni-a-socialni-sluzby",
+  "praha-zdroje-znecisteni",
+  "praha-zelen",
+  "public-air",
+  "slovensko-participacia",
+  "slovensko-podujatia",
+  "slovensko-podujatia-bratislava",
+  "statistics-housing",
+  "statistics-population",
+  "statistics-vehicles",
+  "street-furniture",
+  "susr-as",
+  "susr-cr",
+  "susr-cr-navstevnici",
+  "susr-do",
+  "susr-do-preprava",
+  "susr-en",
+  "susr-ik",
+  "susr-kp",
+  "susr-kp-priemysel",
+  "susr-ku",
+  "susr-kz",
+  "susr-kz-zdravie",
+  "susr-np",
+  "susr-nu",
+  "susr-nu-odvetvia",
+  "susr-ob",
+  "susr-od",
+  "susr-og",
+  "susr-om",
+  "susr-om-pohyb",
+  "susr-pl",
+  "susr-pm",
+  "susr-pm-ceny",
+  "susr-pr",
+  "susr-pr-mzdy",
+  "susr-ps",
+  "susr-ps-vydavky",
+  "susr-ra",
+  "susr-sk",
+  "susr-so",
+  "susr-sp",
+  "susr-sp-jadrova",
+  "susr-st",
+  "susr-st-povolenia",
+  "susr-sv",
+  "susr-ts",
+  "susr-vh",
+  "susr-vt",
+  "susr-vt-pracovnici",
+  "susr-zd",
+  "susr-zo",
+  "susr-zo-kapitoly",
+  "susr-zo-krajiny",
+  "susr-zp",
+  "susr-zp-emisie",
+  "tourist-flats",
+  "weather",
+  "weather-forecast",
+  "zilina-kpi",
+  "zilina-ovzdusie",
+  "zilina-pamiatky",
+  "zilina-parkoviska",
+  "zilina-scitace",
+  "zilina-svietidla",
+  "zilina-uniza",
+  "zilina-zeleznicne-stanice"
+ ],
+ "searchCount": 627,
+ "listedNotFound": [
+  "bb-aktuality",
+  "bb-dtm-bb-register-adries",
+  "bb-dtm-bb-register-verejnej-zelene-1",
+  "bb-podujatia",
+  "bbsk-cykloturisticke-trasy-linie-e6a1a7",
+  "bbsk-cykloturisticke-trasy-linie-povrchy-2ec670",
+  "bbsk-cykloturisticke-trasy-nosic-infotabula-odpocivadlo-znacenie-f3c643",
+  "bbsk-dilatacne-celky-v-banskobystrickom-kraji-public-view-6ff77a",
+  "bbsk-dodavatelia-825cd0",
+  "bbsk-ekologicky-potencial-vodnych-utvarov-672eca",
+  "bbsk-faktury-422b35",
+  "bbsk-hlasovania-poslancov-ba7ca6",
+  "bbsk-hustota-obyvatelstva-2021-503a78",
+  "bbsk-hustota-obyvatelstva-v-obciach-bbk-79fd96",
+  "bbsk-komisie-zastupitelstva-banskobystrickeho-samospravneho-kraja-59b9e4",
+  "bbsk-kontakty-na-miestne-samospravy-v-bbk-fc5ecb",
+  "bbsk-kraj-bbk-hranica-a05568",
+  "bbsk-kulturne-institucie-bbsk-24fbf9",
+  "bbsk-mosty-v-banskobystrickom-kraji-public-view-3b4675",
+  "bbsk-mosty-v-sprave-bbrsc-public-view-d3252c",
+  "bbsk-nabijacky-a-zastavky-937210",
+  "bbsk-obce-bbk-centroidy-cbd19f",
+  "bbsk-obce-bbk-hranice-ec7ac6",
+  "bbsk-objednavky-a97e8a",
+  "bbsk-obyvatelstvo-podla-dalsej-narodnosti-2021-obce-11667a",
+  "bbsk-obyvatelstvo-podla-dalsej-narodnosti-2021-okresy-54bc2c",
+  "bbsk-obyvatelstvo-podla-ekonomickej-aktivity-2021-984966",
+  "bbsk-obyvatelstvo-podla-materinskeho-jazyka-2011-obce-c0f097",
+  "bbsk-obyvatelstvo-podla-materinskeho-jazyka-2011-okresy-590643",
+  "bbsk-obyvatelstvo-podla-materinskeho-jazyka-2021-obce-fc02ff",
+  "bbsk-obyvatelstvo-podla-materinskeho-jazyka-2021-okresy-404a3d",
+  "bbsk-obyvatelstvo-podla-nabozenskeho-vyznania-2011-obce-81576b",
+  "bbsk-obyvatelstvo-podla-nabozenskeho-vyznania-2011-okresy-3844c8",
+  "bbsk-obyvatelstvo-podla-nabozenskeho-vyznania-2021-obce-5fb2e9",
+  "bbsk-obyvatelstvo-podla-nabozenskeho-vyznania-2021-okresy-4d7df9",
+  "bbsk-obyvatelstvo-podla-narodnosti-2011-obce-a36024",
+  "bbsk-obyvatelstvo-podla-narodnosti-2011-okresy-09f7d6",
+  "bbsk-obyvatelstvo-podla-narodnosti-2021-obce-bf372d",
+  "bbsk-obyvatelstvo-podla-narodnosti-2021-okresy-d559c2",
+  "bbsk-obyvatelstvo-podla-rodinneho-stavu-2021-obce-40138c",
+  "bbsk-obyvatelstvo-podla-rodinneho-stavu-2021-okresy-04e229",
+  "bbsk-obyvatelstvo-podla-vekovej-struktury-2011-2021-obce-281902",
+  "bbsk-obyvatelstvo-podla-vekovej-struktury-2011-2021-okresy-5e08d3",
+  "bbsk-obyvatelstvo-podla-vzdelania-2021-2481df",
+  "bbsk-ohrozenie-samosprav-zmenou-klimy-extremne-horucavy-68ff15",
+  "bbsk-ohrozenie-samosprav-zmenou-klimy-extremne-sucho-576a4f",
+  "bbsk-ohrozenie-samosprav-zmenou-klimy-extremne-zrazky-a0f87f",
+  "bbsk-okresy-bbk-hranice-17725f",
+  "bbsk-organizacie-v-zriadovatelskej-posobnosti-bbsk-bc762a",
+  "bbsk-organizacna-struktura-40329b",
+  "bbsk-peticie-f80530",
+  "bbsk-plan-verejneho-obstaravania-48b7e9",
+  "bbsk-pocet-obyvatelov-v-obciach-bbk-b2adc3",
+  "bbsk-pohyb-obyvatelstva-v-obciach-1996-2024-919463",
+  "bbsk-pohyb-obyvatelstva-v-okresoch-1996-2024-8b7fa1",
+  "bbsk-povodia-banskobystrickeho-kraja-067504",
+  "bbsk-ppa-platby-f3c509",
+  "bbsk-ppa-platby-po-okresoch-bf09ef",
+  "bbsk-prispevkove-rozpoctove-a-ine-organizacie-samospravy-cec768",
+  "bbsk-prognoza-poctu-obyvatelov-2018-2040-3a097f",
+  "bbsk-projekty-banskobystrickeho-kraja-itms21-c8bfea",
+  "bbsk-realizovane-verejne-obstaravania-754eee",
+  "bbsk-register-investicii-bodova-vrstva-e0b3b4",
+  "bbsk-register-investicii-polygonova-vrstva-e902a9",
+  "bbsk-skoly-a-skolske-zariadenia-v-zriadovatelskej-posobnosti-bbsk-791897",
+  "bbsk-stredne-skoly-v-bbk-odbory-a-pocet-studentov-2023-e85365",
+  "bbsk-vekova-struktura-v-obciach-1996-2022-6de8c3",
+  "bbsk-vekova-struktura-v-okresoch-1996-2022-29ed8a",
+  "bbsk-vyvoj-emisii-v-bbk-c8d1ed",
+  "bbsk-vyvoj-imisii-v-bbk-377176",
+  "bbsk-zasadnutia-samospravy-9a27f2",
+  "bbsk-zoznam-poskytovatelov-socialnych-sluzieb-v-bbk-9ab090",
+  "bbsk-zoznam-ucinnych-vseobecne-zavaznych-nariadeni-vzn-80db50"
+ ],
+ "perOrganization": {
+  "barcelona": 18,
+  "bbsk": 22,
+  "hel-fi": 31,
+  "bratislava": 451,
+  "praha": 41,
+  "banskabystrica": 6,
+  "zilina": 9,
+  "slovensko": 49
+ },
+ "dcat": {
+  "pages": 7,
+  "totalItems": 627,
+  "catalogNodes": 7,
+  "datasetNodes": 626
+ },
+ "datasets": {
+  "air-quality": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "areas": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "banskabystrica-kataster": {
+   "organization": "banskabystrica",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "banskabystrica-pocasie": {
+   "organization": "banskabystrica",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "banskabystrica-podujatia": {
+   "organization": "banskabystrica",
+   "resources": 16,
+   "dcatDistributions": 16
+  },
+  "banskabystrica-skoly": {
+   "organization": "banskabystrica",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "barcelona-accidents": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "barcelona-bike-lanes": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "barcelona-charging": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "barcelona-parking": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "barcelona-places": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "barcelona-traffic": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bb-dtm-bb-register-statickej-dopravy": {
+   "organization": "banskabystrica",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-clenovia-samospravy-efc2f3": {
+   "organization": "bbsk",
+   "resources": 12,
+   "dcatDistributions": 12
+  },
+  "bbsk-cykloscitace-miesta-6e967d": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-ekologicky-stav-vodnych-utvarov-48bbbd": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-hranice": {
+   "organization": "bbsk",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bbsk-kontaktne-miesta-2128a0": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-kpi": {
+   "organization": "bbsk",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bbsk-kulturne-institucie-bbsk-a-ich-pobocky-2f9362": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-materske-skoly-v-banskobystrickom-kraji-3f7d07": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-mosty": {
+   "organization": "bbsk",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bbsk-nehodovost-v-bbk-0ea72d": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-organizacie": {
+   "organization": "bbsk",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bbsk-podjazdy-v-banskobystrickom-kraji-public-view-e6fb8f": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-podujatia": {
+   "organization": "bbsk",
+   "resources": 19,
+   "dcatDistributions": 19
+  },
+  "bbsk-priepusty-v-banskobystrickom-kraji-public-view-a9ed8e": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-stredne-skoly-v-banskobystrickom-kraji-581554": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-uradne-hodiny-c912ed": {
+   "organization": "bbsk",
+   "resources": 12,
+   "dcatDistributions": 12
+  },
+  "bbsk-vysoke-skoly-v-banskobystrickom-kraji-b0be47": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-zakladne-skoly-v-banskobystrickom-kraji-13a8b6": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-zariadenia": {
+   "organization": "bbsk",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bbsk-zeleznicne-priecestia-v-banskobystrickom-kraji-public-view-89feb8": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-zoznam-lekarni-v-bbk-c564de": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bbsk-zoznam-zdravotnickych-zariadeni-v-bbk-701db2": {
+   "organization": "bbsk",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "bratislava-autorizacie-dtmb-2019": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-autorizacie-dtmb-2020-2025": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-bajk": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-bezbarierovost": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-bkis-ziadosti": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-buduci-bytovy-fond-v-okresoch-bsk-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-bytovy-fond-v-obciach-bsk": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-celozivotne-vzdelavanie": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-centra-volneho-casu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-cerpanie-rozpoctu-2021": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-cestovne-bez-listka-eura": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-cestujuci-bez-listka": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-cestujuci-letisko": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-charakter-zariadeni-materskych-skol": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-charakter-zariadeni-strednych-skol": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-charakter-zariadeni-zakladnych-skol": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-chodci": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-cyklisti": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-demografia": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-districts": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-dni-prekrocenia-o3": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-dochadzajuci-studenti-zo-zazemia": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-dochadzka-do-skol-medzi-jednotlivymi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-dochadzka-do-zamestnania-medzi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-dopravne-nehody": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-dopravne-nehody-druh-vozidla-vinnika": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-dopravne-nehody-kategoria-cesty": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-dopravne-nehody-v-obci-a-mimo-obce": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-dopravne-vykony-mhd": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-fixpointy": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-free-wifi-dlzka-pripojenia": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-free-wifi-novi-a-vracajuci-sa": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-free-wifi-operacny-system": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-free-wifi-prehliadac": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-free-wifi-sucasne-pripojeni": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-free-wifi-zariadenie": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-index-migracnej-efektivnosti-mestskych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-index-socialnej-a-ekonomickej-podpory-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-investicne-vydavky-do-sportovej": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-jazyk-prehliadaca-free-wifi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-kamery-mestskeho-kameroveho-systemu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-kapacita-domovov-mladeze-internaty": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-kapacita-skolskych-jedalni": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-kapacita-vysokoskolskych-internatov-a": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-kapacity-zariadeni-pre-seniorov-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-komare": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-kontaktne-miesta": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-materske-skoly": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-medzirocne-porovnanie-poctu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-mestske-karantene-zariadenie-hradska": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-mestske-organizacie": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-miera-energetickeho-zhodnotenia-odpadov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-miera-objasnenosti-trestnych-cinov-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-miera-recyklacie-komunalnych-odpadov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-miera-skladkovania-komunalnych-odpadov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-miera-zhodnotenia-biologicky": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-miery-plodnosti-zien-a-na-slovensku-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-miery-plodnosti-zien-v-okresoch-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-miery-plodnosti-zien-v-v-rokoch-2000-2004-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-migracna-efektivnost-okresov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-migracne-saldo-cista-migracia-muzov-a": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-migracne-saldo-mestskych-casti-v-obdobi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-migracne-saldo-okresov-na-1-000": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-migracne-saldo-okresov-v-rokoch-2017-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-migracne-saldo-okresov-v-veku-a-pohlavia-zeny": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-migracne-saldo-vnutornym-a-zahranicnym": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-migracny-obrat-mestskych-casti-v-obdobi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-migracny-obrat-okresov-na-1-000": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-mnozstvo-komunalneho-odpadu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-mnozstvo-komunalneho-odpadu-na-obyvatela": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-mnozstvo-vysadenych-stromov-od-roku-2016-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-model-rastu-bytoveho-fondu-v-obciach-bsk": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-model-rastu-poctu-obyvatelov-v-obciach-bsk": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-ms-deti": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-ms-kapacita": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-navstevnici-a-registrovani-citatelia-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-navstevnost-divadelnych-predstaveni-a": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-navstevnost-galerie-a-pocet-vystav": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-navstevnost-lokalit-muzea": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-navstevnost-zoo": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-nehody-s-nasledkom-na-zdravi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-nehody-s-usmrtenim": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-nezamestnanost": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-objem-stahovania-medzi-mestskymi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-objem-stahovania-medzi-na-1000-obyvatelov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-podla-dovodu-pristahovania-zsj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-podla-jazyka-na-verejnosti-zsj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-podla-jazyka-v-domacnosti-zsj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-podla-materinskeho-jazyka-zsj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-podla-miesta-pobytu-zsj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-podla-nabozenstva-zsj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-podla-narodnosti-zsj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-podla-vzdelania-zsj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-zsj-ekonomicka-aktivita": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-zsj-odvetvie": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-zsj-pohlavie": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-zsj-postavenie-v-zamestnani": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-zsj-praca-s-internetom": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-zsj-praca-s-postou": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-zsj-praca-s-tabulkami": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-zsj-statna-prislusnost": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-obyvatelia-zsj-vek": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-ocakavany-vyvoj-domoveho-fondu-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-ochladzovacie-miesta": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-odchadzka-do-zamestnania-a-skol-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-osv-cerpanie-2019-06-30": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-osv-cerpanie-2019-09-06": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-plodnost": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-absolventov-i-a-ii-stupna-studia": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-absolventov-iii-stupna-studia-na": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-bytov-podla-celkovej-plochy-zsj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-bytov-podla-obytnej-plochy-zsj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-bytov-podla-obyvanosti-zsj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-bytov-podla-poctu-miestnosti-zsj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-clenov-zaujmovych-utvarov-cvc": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-deti-a-materskych-skol-podla-typu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-deti-a-specialnych-skol": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-deti-a-zariadeni-dalsieho-vzdelavania": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-deti-v-materskych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-deti-ziakov-a-studentov-v-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-divadelnych-predstaveni-a-premier": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-dochadzajucich-deti-do-materskych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-dochadzajucich-studentov-na": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-dochadzajucich-ziakov-do": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-doktorandov-na-vysokych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-dospievajucich-a-strednych-skol": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-evidovanych-prvkov-v-dtm": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-evidovanych-vodicov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-fakult-a-pocet-absolventov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-gymnazii-a-strednych-sportovych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-hovorov-prijatych-na-linke-159": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-konzervatorii": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-materskych-skol": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-mladych-nezamestnanych-podla-veku": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-nevybavenych-ziadosti-do-ms-podla": {
+   "organization": "bratislava",
+   "resources": 7,
+   "dcatDistributions": 7
+  },
+  "bratislava-pocet-obyvatelov-v-mestskych-castiach-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-obyvatelov-v-obciach-bsk": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-obyvatelov-vo-vekovych-skupinach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-odbornych-zamestnancov-vo": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-oddeleni-skolskych-klubov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-oddeleni-skolskych-skolskych-klubov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-osob-ktorym-bol-poskytnuty": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ostatnych-udalosti": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-pedagogickych-zamestnancov-cvc": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-pedagogickych-zamestnancov-na": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-poberatelov-nahradneho-vyzivneho": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-poberatelov-prispevku-na-byvanie": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-poberatelov-upsvar": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-podujati-a-ucastnikov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-pokut-a-prijem-z-pokut-podla": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-pracovnikov-vo-vybranych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-priestupkov-a-dopravnych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-priestupkov-a-pocet-mestskych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-priestupkov-a-vyska-pokut": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-priestupkov-podla-druhu-udalosti": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-priestupkov-podla-kategorii-podla": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-prijatych-ziadosti-o-vydanie": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-prijatych-ziadosti-obcanom-podla-veku": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-prijatych-ziadosti-obcianskeho-preukazu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-skol-za-obdobie-2010-2022-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-stihanych-a-podla-vzdelania": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-stihanych-a-vysetrovanych-mladych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-stihanych-a-vysetrovanych-osob": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-strednych-odbornych-skol": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-studentov-na-jednotlivych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-studentov-na-strednych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-studentov-na-vysokych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-trestnych-cinov-a-pocet-stihanych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-trestnych-cinov-a-stihane-a": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-trestnych-cinov-spachanych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-tried-v-gymnaziach-a-sportovych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-tried-v-konzervatoriach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-tried-v-materskych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-tried-v-strednych-odbornych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-tried-v-zakladnych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-trvalych-pobytov-deti-v-mestskych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-trvalych-pobytov-studentov-a-mimo": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ucebni-v-zakladnych-umeleckych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-uchadzacov-o-zamestnanie": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-uchadzacov-o-zamestnanie-v-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ucitelov-v-gymnaziach-a-strednych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ucitelov-v-jazykovych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ucitelov-v-konzervatoriach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ucitelov-v-materskych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ucitelov-v-strednych-odbornych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ucitelov-v-zakladnych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ucitelov-v-zakladnych-umeleckych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-vydanych-stratenych-a-odcudzenych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-vydanych-vodicskych-preukazov-a": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-zahranicnych-a-medzinarodnych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-zahranicnych-studentov-na": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-zakladnych-a-strednych-skol-podla": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-zakladnych-skol": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-zakladnych-umeleckych-skol": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-zamestnancov-v-stavebnictve-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-zapisanych-ziakov-v-skolskych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-zapisanych-ziakov-v-v-skolskych-kluboch": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ziadosti-o-vydanie-cestovneho-pasu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ziakov-a-zakladnych-skol-podla": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ziakov-sportovych-tried": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ziakov-v-gymnaziach-a-strednych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ziakov-v-jazykovych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ziakov-v-konzervatoriach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ziakov-v-strednych-odbornych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ziakov-v-zakladnych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-ziakov-v-zakladnych-umeleckych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-zistenych-objasnenych-aj": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocet-zrealizovanych-podujati-bkis-bez": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocetnost-obyvatelov-vo-vybranych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocty-pristahovanych-muzov-a-zien-do": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocty-vystahovanych-muzov-a-zien-z": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pocty-ziakov-1-rocnika-zs-podla-typu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-podiel-jednotlivych-odvetvi-na-trzbach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-podiel-plodnosti-zien-vo-plodnosti-ba-sr": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-podiel-plodnosti-zien-vo-veku-30-a-viac": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-podiel-plodnosti-zien-vo-veku-do-25": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-podiel-plodnosti-zien-vo-veku-do-25-z": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-podiel-priestupkov-podla-kategorii": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-podiel-strednych-skol-podla": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-podiel-trzieb-z-predaja-do-zahranicia-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-podiel-zahranicnej-migracie-v-okresoch": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-podiel-zahranicnej-zlozky-na-celkovom": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-podiel-zahranicnych-a-medzinarodnych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-podiel-ziakov-v-zakladnych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-predpokladane-migracne-saldo-do-roku": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-predpokladane-migracne-saldo-mestskych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-predpokladane-migracne-saldo-okresov-do": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-predpokladany-vyvoj-uhrnnej-plodnosti-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prekrocenia-pm10": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prenesene-data-free-wifi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prepravene-osoby-mhd": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerna-koncentracia-pm10": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerna-koncentracia-pm25": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerna-nominalna-mesacna-mzda": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerna-obsadenost-bytov-trvalo": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-evidencny-pocet-cinnosti-sk-nace": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-evidencny-pocet-trhovych-sluzbach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-evidencny-pocet-zamestnancov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-pocet-bytov-na-dom-podla": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-rozsah-zastavanych-ploch-na": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-obyvatelov-a-slovenska-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-obyvatelov-v-mestskych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-obyvatelov-v-okresoch-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-obyvatelstva-mestskych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-pri-sobasi-muzov-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-pri-sobasi-zien-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-pristahovanych-a": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-zien-pri-narodeni-dietata": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-zien-pri-narodeni-prveho": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-zien-pri-v-rokoch-2000-2021-2": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-zien-pri-v-rokoch-2000-2021-3": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-zien-pri-v-rokoch-2000-2021-4": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priemerny-vek-zien-pri-v-rokoch-2000-2021-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priestupky": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-priestupky-ulice": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prispevky-dlzka-zivota-muzi-percenta": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prispevky-dlzka-zivota-muzi-roky": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prispevky-dlzka-zivota-zeny-percenta": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prispevky-dlzka-zivota-zeny-roky": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prispevky-pricin-smrti-medzi-ba-a-sr": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prispevky-pricin-smrti-medzi-ba-a-sr-podiel": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prispevky-pricin-smrti-v-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prispevky-pricin-smrti-v-ba-podiel": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prispevky-vekovych-skupin-muzi-v-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prispevky-vekovych-skupin-zeny-v-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognoza-celkovy-prirastok": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognoza-ekonomicke-zatazenie": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognoza-index-starnutia": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognoza-obyvatelia": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognoza-poctu-obyvatelov-v-rokoch-2022-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognoza-priemerny-vek": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognoza-prirodzeny-prirastok": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovana-zmena-hlavnych-vekovych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovana-zmena-podielu-hlavnych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-celkovy-prirastok": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-index-starnutia": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-index-v-rokoch-2020-2050-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-pocet-obyvatelov-okresov-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-priemerny-vek-obyvatelov-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-priemerny-vek-obyvatelstva": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-prirodzeny-prirastok": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-vyvoj-ba-v-r-2022-2035-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-vyvoj-ba-v-rokoch-2022-2050-2": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-vyvoj-ba-v-rokoch-2022-2050-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-vyvoj-celkoveho-prirastku": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-vyvoj-indexu-ba-v-rokoch-2022-2050-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-vyvoj-indexu-ekonomickeho": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-vyvoj-prirodzeneho": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-vyvoj-strednej-dlzky": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-vyvoj-uhrnnej-plodnosti-do": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-prognozovany-vyvoj-uhrnnej-plodnosti-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pzi-rast": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-pzi-v-zahranici": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-registrovani-citatelia-v-mestskej": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-rozloha-mestskych-casti": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-rozpocet-2014-vydavky": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-rozpocet-2015-vydavky": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-rozpocet-2016-vydavky": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-rozpocet-2017-vydavky": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-rozpocet-2018-vydavky": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-rozpocet-prijmy-2014": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-rozpocet-prijmy-2015": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-rozpocet-prijmy-2016": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-rozpocet-prijmy-2017": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-rozpocet-prijmy-2018": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-rozpocet-prijmy-2019": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-saldo-zahranicnej-migracie-okresov-na-1": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-skolska-integracia-deti-so-specialnymi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-skolska-integracia-ziakov-do-zakladnych-skol": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-skolska-integracia-ziakov-so": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sluzby-bez-domova": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-byty-podla-druhu-budovy": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-byty-podla-obdobia-vystavby": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-byty-podla-obyvanosti": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-byty-podla-typu-budovy": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-obyvane-byty-obyvatelov-v-byte": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-obyvane-byty-podla-formy": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-obyvane-byty-podla-poctu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-obyvane-byty-podla-systemu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-obyvane-byty-podla-typu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-obyvatelstvo-podla": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-obyvatelstvo-podla-postavenia": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-obyvatelstvo-podla-rodinneho": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-obyvatelstvo-podla-vekovych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-obyvatelstvo-podla-zamestnania": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-obyvatelstvo-vzdelania": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-pocet-miesta-pracoviska": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-pocet-obyvatelov-podla": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-pocet-obyvatelov-podla-miesta": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-pocet-v-zamestnani": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-rodiny-podla-typu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-rodiny-podla-velkosti-zakladu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-sukromne-domacnosti-podla": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-sukromne-domacnosti-podla-typu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sodb-2011-sukromne-podla-velkosti": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-specialne-materske-skoly": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-specialne-stredne-skoly": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-specialne-zakladne-skoly": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sposob-nakladania-s-nakladania-s-odpadmi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sposob-nakladania-s-odpadmi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sposobena-skoda-trestnych-cinov-v-1-000": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-sposoby-riesenia-priestupkov-podla": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-ss-kapacita": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-ss-studenti": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-standardizovane-miery-umrtnosti-muzov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-standardizovane-miery-umrtnosti-zien-na": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-starz-navstevnici": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-statisticky-prehlad-priestupkov-na": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-stav-kniznicneho-fondu-v-mestskej": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-deti-v-materskych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-migrantov-podla-do-zahranicia": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-migrantov-podla-vnutorne-pristahovani": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-migrantov-podla-vnutorne-vystahovani": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-migrantov-podla-vzdelania": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-muzov-a-zien-podla-rodinneho": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-muzov-a-zien-sodb-2021-rozvedeni": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-muzov-podla-najvyssieho": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-muzov-podla-rodinneho-stavu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-uchadzacov-o-sledovaneho-roka": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-uchadzacov-o-vo-vybranych-rokov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-uchadzacov-o-zamestnanie": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-ucitelov-v-gymnaziach-a": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-ucitelov-v-konzervatoriach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-ucitelov-v-materskych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-ucitelov-v-strednych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-ucitelov-v-zakladnych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-ziakov-v-gymnaziach-a": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-ziakov-v-konzervatoriach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-ziakov-v-strednych-odbornych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-ziakov-v-zakladnych-skolach": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-zien-podla-najvyssieho": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-struktura-zien-podla-rodinneho-stavu-vo": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-transfer-nestatnym-skolam": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-trzby-najvyznamnejsich-spolocnosti-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-trzby-z-predaja-do-zahranicia-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-turisticke-autobusy": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-udaje-za-kriminalitu-mladych-podla": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-uhrnna-rozvodovost-a-na-slovensku-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-uhrnna-rozvodovost-v-okresoch-v-obdobi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-uhrnna-sobasnost-muzov-a-zien-vo-veku": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-uhrnna-sobasnost-muzov-v-okresoch-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-uhrnna-sobasnost-zien-v-okresoch-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-uroven-vytriedenia-komunalnych-odpadov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vekova-struktura-obyvatelov-v-roku-2021-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vekove-zlozenie-migracneho-salda": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vekove-zlozenie-obyvatelov-a-slovenska": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vekove-zlozenie-obyvatelov-v-roku-2021-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vekove-zlozenie-pocet": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vekove-zlozenie-podiel": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-veterinarne-zariadenia": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vklady-dtmb-2018": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vklady-dtmb-2019": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vklady-dtmb-2020-2025": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vnutorna-priestorova-struktura-medzi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vozidla": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vozidla-mhd": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vydavky-programy": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vykony-cestovneho-ruchu-pocet": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vykony-cestovneho-ruchu-pocet-prenocovani": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vymera": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vypozicky-v-mestskej-kniznici": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vysadba-stromov-a-krov-v-katastralnych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vysadba-v-katastralnych-uzemiach-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyska-mzdy-v-sektore-vzdelavanie": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-celkovej-zamestnanosti-a": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-miery-registrovanej": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-poctu-malych-strednych-a-velkych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-poctu-obyvatelov-mestskych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-poctu-obyvatelov-v-rokoch-2000-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-poctu-studentov-doktorandskeho": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-poctu-studentov-sr-v-rokoch-2015-2021-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-poctu-vseobecnych-ambulancii-na": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-poctu-ziackych-miest-na-1000-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-stavebnej-produkcie-v-ba-v": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-strednej-dlzky-rokov-2000-2021-2": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-strednej-dlzky-rokov-2000-2021-3": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-strednej-dlzky-rokov-2000-2021-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-strednej-dlzky-zivota-pri": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-trzieb-za-ubytovanie-v-rokoch": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-trzieb-za-vlastne-sluzbach-v-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-trzieb-za-vlastne-v-rokoch-2008-2021-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-trzieb-za-vlastne-vykony-a-tovar": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-uhrnnej-plodnosti-zien-a-na": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-uhrnnej-plodnosti-zien-v-okresoch": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vyvoj-zamestnanosti-v-obchode": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vzajomne-migracne-saldo-casti-2000-2004-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vzajomne-migracne-saldo-mestskych-casti": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vzdelanostna-struktura-muzov-vo-veku-15": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vzdelanostna-struktura-v-okresoch-sodb-2021-2": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vzdelanostna-struktura-v-okresoch-sodb-2021-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vzdelanostna-struktura-zien-vo-veku-15": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-vzdelavacie-institucie": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-wifi-pouzivatelia": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zachytne-bezpecnostne-zariadenia": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zakladne-skoly": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zakladne-umelecke-skoly": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zamestnavanie-statnych-prislusnikov": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zbierkove-predmety-v-galerii": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-ziaci-sportovych-tried-podla-sportu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zmena-dopravneho-dopytu": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zmena-poctu-obyvatelov-a-slovenska": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zmena-poctu-obyvatelov-v-mestskych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zmena-poctu-obyvatelov-v-okresoch-medzi": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zmena-poctu-obyvatelov-v-rokom-2022-a-2035-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zmena-priemerneho-veku-obyvatelov-a": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zmena-priemerneho-veku-obyvatelstva": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zmena-priemerneho-veku-v-mestskych": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zmena-priemerneho-veku-v-rokom-2022-a-2035-ba": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zs-kapacita": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "bratislava-zs-ziaci": {
+   "organization": "bratislava",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "catalog": {
+   "organization": "zilina",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "groundwater": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-air-quality": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-beach-water": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-bikes": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-cycle-counts": {
+   "organization": "hel-fi",
+   "resources": 16,
+   "dcatDistributions": 16
+  },
+  "helsinki-districts": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-events": {
+   "organization": "hel-fi",
+   "resources": 16,
+   "dcatDistributions": 16
+  },
+  "helsinki-feedback": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-heritage": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-nature": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-news": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-noise": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-parking": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-places": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-public-area-permits": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-service-property-energy": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-statistics-education": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-statistics-employment": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-statistics-environment": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-statistics-housing": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-statistics-income": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-statistics-population": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-statistics-services": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-statistics-welfare": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-street-cleaning-air": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-traffic-counts": {
+   "organization": "hel-fi",
+   "resources": 16,
+   "dcatDistributions": 16
+  },
+  "helsinki-traffic-signals": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-traffic-volumes": {
+   "organization": "hel-fi",
+   "resources": 16,
+   "dcatDistributions": 16
+  },
+  "helsinki-transport": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-trees": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "helsinki-vision-counts": {
+   "organization": "hel-fi",
+   "resources": 16,
+   "dcatDistributions": 16
+  },
+  "helsinki-weather": {
+   "organization": "hel-fi",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "local-trees": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "ovzdusie-sk": {
+   "organization": "slovensko",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "pedestrian-crossings": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-akce": {
+   "organization": "praha",
+   "resources": 16,
+   "dcatDistributions": 16
+  },
+  "praha-bilancni-celky": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-cerpani-rozpoctu": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-cinnost-mestske-policie": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-cinnost-mestske-policie-utvary": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-cyklotrasy": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-financni-vztahy-mc": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-hluk": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-hrbitovy": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-letni-udrzba": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-linky-pid": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-mestske-casti": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-mista": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-naucne-stezky": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-opravy-a-uzavirky": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-ovzdusi": {
+   "organization": "praha",
+   "resources": 16,
+   "dcatDistributions": 16
+  },
+  "praha-parkovaci-automaty": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-parkovani": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-parkoviste-pr": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-pietni-mista": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-pocasi": {
+   "organization": "praha",
+   "resources": 16,
+   "dcatDistributions": 16
+  },
+  "praha-posty": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-protipovodnova-ochrana": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-psi-zony": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-radon": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-rozpocet": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-sdilena-kola": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-stromy": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-tarifni-pasma": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-technicke-prvky-zelene": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-trideny-odpad": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-ulicni-useky": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-vodni-plochy": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-vstupy-metra": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-vybavenost": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-zakazy-stani": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-zaplavova-uzemi": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-zastavky-pid": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-zdravotni-a-socialni-sluzby": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-zdroje-znecisteni": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "praha-zelen": {
+   "organization": "praha",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "public-air": {
+   "organization": "banskabystrica",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "slovensko-participacia": {
+   "organization": "slovensko",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "slovensko-podujatia": {
+   "organization": "slovensko",
+   "resources": 16,
+   "dcatDistributions": 16
+  },
+  "slovensko-podujatia-bratislava": {
+   "organization": "slovensko",
+   "resources": 16,
+   "dcatDistributions": 16
+  },
+  "statistics-housing": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "statistics-population": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "statistics-vehicles": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "street-furniture": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "susr-as": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-cr": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-cr-navstevnici": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-do": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-do-preprava": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-en": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-ik": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-kp": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-kp-priemysel": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-ku": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-kz": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-kz-zdravie": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-np": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-nu": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-nu-odvetvia": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-ob": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-od": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-og": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-om": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-om-pohyb": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-pl": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-pm": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-pm-ceny": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-pr": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-pr-mzdy": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-ps": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-ps-vydavky": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-ra": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-sk": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-so": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-sp": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-sp-jadrova": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-st": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-st-povolenia": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-sv": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-ts": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-vh": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-vt": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-vt-pracovnici": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-zd": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-zo": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-zo-kapitoly": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-zo-krajiny": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-zp": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "susr-zp-emisie": {
+   "organization": "slovensko",
+   "resources": 14,
+   "dcatDistributions": 14
+  },
+  "tourist-flats": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "weather": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "weather-forecast": {
+   "organization": "barcelona",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "zilina-kpi": {
+   "organization": "zilina",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "zilina-ovzdusie": {
+   "organization": "zilina",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "zilina-pamiatky": {
+   "organization": "zilina",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "zilina-parkoviska": {
+   "organization": "zilina",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "zilina-scitace": {
+   "organization": "zilina",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "zilina-svietidla": {
+   "organization": "zilina",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "zilina-uniza": {
+   "organization": "zilina",
+   "resources": 15,
+   "dcatDistributions": 15
+  },
+  "zilina-zeleznicne-stanice": {
+   "organization": "zilina",
+   "resources": 15,
+   "dcatDistributions": 15
+  }
+ }
+}
