@@ -2005,10 +2005,7 @@ impl ViewSync {
         for (tenant, (owner, rules)) in &part.retention {
             let path = format!("/q/retention/{tenant}");
             let outcome = if rules.is_empty() {
-                match self.delete(base, token, &path).await {
-                    Ok(()) => ViewOutcome::Written,
-                    Err(reason) => ViewOutcome::Failed(reason),
-                }
+                self.delete_unless_gone(base, token, &path).await
             } else {
                 let context = lock(&self.compiled)
                     .get(tenant)
@@ -2022,10 +2019,7 @@ impl ViewSync {
         for (tenant, (owner, rules)) in &part.quality {
             let path = format!("/q/quality/{tenant}");
             let outcome = if rules.is_empty() {
-                match self.delete(base, token, &path).await {
-                    Ok(()) => ViewOutcome::Written,
-                    Err(reason) => ViewOutcome::Failed(reason),
-                }
+                self.delete_unless_gone(base, token, &path).await
             } else {
                 let context = lock(&self.compiled)
                     .get(tenant)
@@ -2364,6 +2358,27 @@ impl ViewSync {
                 .await,
             ),
             Err(err) => ViewOutcome::Failed(format!("the broker did not answer PUT {path}: {err}")),
+        }
+    }
+
+    /// [`Self::delete`] for a rule document a space may never have had: once the broker answered
+    /// it gone, it is taken as gone for [`CONFIRMED_FOR`], as [`Self::put_if_changed`] takes a
+    /// held one. Every sync deleted it again, a 404 for each space without rules every run.
+    async fn delete_unless_gone(&self, base: &str, token: &str, path: &str) -> ViewOutcome {
+        let address = format!("{base}{path}");
+        let gone = digest(&Value::Null);
+        let held = lock(&self.confirmed)
+            .get(&address)
+            .is_some_and(|(seen, at)| *seen == gone && at.elapsed() < CONFIRMED_FOR);
+        if held {
+            return ViewOutcome::Written;
+        }
+        match self.delete(base, token, path).await {
+            Ok(()) => {
+                lock(&self.confirmed).insert(address, (gone, std::time::Instant::now()));
+                ViewOutcome::Written
+            }
+            Err(reason) => ViewOutcome::Failed(reason),
         }
     }
 
@@ -4841,6 +4856,49 @@ mod tests {
                 "{outcomes:?}"
             );
         }
+    }
+
+    /// A space without retention or quality rules has its documents deleted once, not on every
+    /// sync: the broker answered a DELETE 404 for each such space every run (jc-logs-gate, 14,118
+    /// `DELETE /q/quality/{tenant}` 404s in a 50 min prod rehearsal).
+    #[tokio::test]
+    async fn a_space_without_rules_has_its_documents_deleted_once() {
+        let mut s = with_model(sources(vec![("cars", cars())]));
+        s.retention
+            .insert(("city".into(), "air".into()), Vec::new());
+        s.quality.insert(("city".into(), "air".into()), Vec::new());
+        let tools = model_tools(
+            json!({"brokerSchema": {"classes": {}}, "context": {}, "errors": []}),
+            1,
+        )
+        .await;
+        let server = broker_with_the_space_view(&s).await;
+        Mock::given(method("PUT"))
+            .and(path("/q/schemas/city-air"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&server)
+            .await;
+        for doc in ["/q/retention/city-air", "/q/quality/city-air"] {
+            Mock::given(method("DELETE"))
+                .and(path(doc))
+                .respond_with(ResponseTemplate::new(404))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+
+        let file = token_file();
+        let sync = ViewSync::new(server.uri(), &file).with_model_tools(tools.uri());
+        for _ in 0..3 {
+            let outcomes = sync.apply(desired(&s), Pass::Whole).await;
+            assert!(
+                outcomes
+                    .iter()
+                    .all(|(_, outcome)| *outcome == ViewOutcome::Written),
+                "{outcomes:?}"
+            );
+        }
+        let _ = std::fs::remove_file(&file);
     }
 
     /// DM-85: the broker counts the document the reconciler would write, and its IRIs come back

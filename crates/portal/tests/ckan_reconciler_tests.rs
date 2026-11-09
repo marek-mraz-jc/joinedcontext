@@ -1146,6 +1146,107 @@ async fn a_wave_publishes_side_by_side_and_creates_each_organization_once() {
     assert!(most.load(Ordering::SeqCst) <= PUBLISH_CONCURRENCY);
 }
 
+/// A target whose Endpoint serves several representations and declares one chart, so its
+/// dataset has several resources and one view.
+fn charted(name: &str) -> Target {
+    let mut target = target(name, "public", dataset_only());
+    let spec = &mut target.manifest.spec;
+    spec["enabledRepresentations"] = json!(["ngsi-ld", "csv", "ogc-features"]);
+    spec["catalog"] = json!({ "visualizations": [{
+        "name": "bikes-now",
+        "title": { "en": "Bikes now" },
+        "description": { "en": "Free bikes per station." },
+        "data": { "source": "csv", "type": "BikeHireDockingStation" },
+        "spec": {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "data": { "name": "source" },
+            "mark": "bar",
+            "encoding": { "x": { "field": "name", "type": "nominal" } },
+        },
+    }]});
+    target
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_wave_makes_a_fixed_number_of_catalogue_calls_per_dataset() {
+    // C1: on the prod rehearsal every hourly republish read the view list of every resource of
+    // every dataset, about 15 a dataset: 25,004 resource_view_list calls in 2 h 35 min over
+    // about 609 datasets. Each dataset's calls are bounded whatever its resource count.
+    const N: usize = 12;
+    let catalogue = Arc::new(Mutex::new((
+        InMemoryCkan::new().with_token(TOKEN),
+        Vec::new(),
+    )));
+    let targets: Vec<Target> = (0..N)
+        .map(|n| charted(&format!("helsinki-bikes-{n}")))
+        .collect();
+    let run = |targets: Vec<Target>| {
+        let catalogue = catalogue.clone();
+        let known = Organizations::default();
+        wave(targets, PUBLISH_CONCURRENCY, move |target| {
+            let (catalogue, known) = (catalogue.clone(), known.clone());
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let mut api = Paced::new(Shared(catalogue), Arc::default(), Duration::ZERO)
+                        .remembering("http://127.0.0.1:42301", known);
+                    publish_with(&mut api, &target, &record(), None, &settings())
+                })
+                .await
+                .expect("the publication finishes")
+            }
+        })
+    };
+    // (shows, writes) the catalogue saw so far, and forget them.
+    let calls = || {
+        let mut held = catalogue.lock().expect("catalogue");
+        let shows = std::mem::take(&mut held.1);
+        let writes = held.0.actions().len();
+        (shows, writes)
+    };
+
+    let first = run(targets.clone()).await;
+    assert!(
+        first
+            .iter()
+            .all(|r| matches!(r, Ok(Publication::Published { .. }))),
+        "{first:?}"
+    );
+    let (shows, writes_first) = calls();
+    let resources = catalogue
+        .lock()
+        .expect("catalogue")
+        .0
+        .package("helsinki-bikes-0")
+        .expect("dataset")["resources"]
+        .as_array()
+        .expect("resources")
+        .len();
+    assert!(resources > 2, "the dataset has {resources} resources");
+    // One organization_show for the pass; then per dataset a package_show before the write and
+    // one before the views; a new dataset holds no view, so no list is read.
+    assert!(shows.len() <= 1 + 2 * N, "{} shows: {shows:?}", shows.len());
+    // organization_create once; per dataset package_create and resource_view_create.
+    assert!(writes_first <= 1 + 2 * N, "{writes_first} writes");
+
+    // The hourly refresh of the same datasets: two package_show and the one resource that holds
+    // the view, whatever the number of resources; nothing written.
+    let again = run(targets).await;
+    assert!(
+        again
+            .iter()
+            .all(|r| matches!(r, Ok(Publication::Published { .. }))),
+        "{again:?}"
+    );
+    let (shows, writes) = calls();
+    assert_eq!(writes, writes_first, "an unchanged dataset is written");
+    let lists = shows
+        .iter()
+        .filter(|s| s.starts_with("resource_view_list"))
+        .count();
+    assert_eq!(lists, N, "{shows:?}");
+    assert!(shows.len() <= 1 + 3 * N, "{} shows: {shows:?}", shows.len());
+}
+
 #[tokio::test]
 async fn one_failing_target_of_a_wave_is_its_own_result() {
     let targets: Vec<Target> = ["a", "b", "c", "d"]

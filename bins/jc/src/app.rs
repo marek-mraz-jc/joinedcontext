@@ -622,18 +622,24 @@ pub fn report_secrets(
         .chain(cfg.database_report())
         .collect();
     for (name, source) in &lines {
-        if *source == jc_secret::Source::Env && profile == crate::config::Profile::Production {
-            tracing::warn!(
-                secret = name,
-                source = source.as_str(),
-                "a secret comes from the environment: in production give it as a file \
-                 (NAME_FILE, a compose secret or a mounted Kubernetes Secret)"
-            );
-        } else {
-            tracing::info!(secret = name, source = source.as_str(), "secret");
-        }
+        report_secret(name, *source, profile);
     }
     lines
+}
+
+/// One line of the start report. The secret's name goes in a `name` field: `secret="<name>"`
+/// has the shape of a printed value, which the logs smoke suite (and any log scanner) flags.
+fn report_secret(name: &str, source: jc_secret::Source, profile: crate::config::Profile) {
+    if source == jc_secret::Source::Env && profile == crate::config::Profile::Production {
+        tracing::warn!(
+            name,
+            source = source.as_str(),
+            "a secret comes from the environment: in production give it as a file \
+             (NAME_FILE, a compose secret or a mounted Kubernetes Secret)"
+        );
+    } else {
+        tracing::info!(name, source = source.as_str(), "secret");
+    }
 }
 
 /// The internal admin router: Prometheus text of the one recorder behind the admin bearer token
@@ -1405,5 +1411,49 @@ mod tests {
             .await
             .expect("the retry loop stops on shutdown")
             .unwrap();
+    }
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .map_err(|_| std::io::ErrorKind::Other)?
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The start report names each secret in a `name` field: `secret="admin-token"` reads as a
+    /// printed value to the logs smoke suite (27 false password fields in the 2026-11-09 gate).
+    #[test]
+    fn the_start_report_names_a_secret_without_a_value_shaped_field() {
+        let buf = Captured::default();
+        let writer = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            report_secret(
+                "admin-token",
+                jc_secret::Source::File,
+                crate::config::Profile::Development,
+            );
+            report_secret(
+                "ekiben-token",
+                jc_secret::Source::Env,
+                crate::config::Profile::Production,
+            );
+        });
+        let log = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        assert!(log.contains(r#"name="admin-token" source="file""#), "{log}");
+        assert!(log.contains(r#"name="ekiben-token" source="env""#), "{log}");
+        assert!(!log.contains("secret="), "{log}");
     }
 }

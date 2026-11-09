@@ -937,7 +937,9 @@ impl AppState {
             // The deployment's own catalogue is called on its Service, not through the public
             // edge whose limit the visitors share (T-5314).
             if let Some((public, api)) = &self.config.ckan_api_route {
-                catalogue = catalogue.reaching(public.as_str(), api.as_str());
+                catalogue = catalogue
+                    .reaching(public.as_str(), api.as_str())
+                    .reached_at(self.config.ckan_api_reach);
             }
             // Each dataset carries the pass rate and the freshness of its space (DM-95).
             catalogue =

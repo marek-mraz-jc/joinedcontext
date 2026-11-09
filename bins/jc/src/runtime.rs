@@ -12,11 +12,33 @@ use std::sync::OnceLock;
 
 static METRICS: OnceLock<Result<PrometheusHandle, String>> = OnceLock::new();
 
-/// Installs the one tracing subscriber (`RUST_LOG` filter, `info` by default). Returns `false` when
-/// a subscriber was already installed (by an earlier call or by the embedding test harness).
+/// Libraries whose INFO lines tell an operator nothing, each at the level `jc` logs it at unless
+/// `RUST_LOG` names it: rmcp writes three lifecycle lines per MCP session ("Service initialized",
+/// "input stream terminated", "serve finished"), 18k of the broker's 115k lines in the 2026-11-09
+/// gate; its refusals and failures are WARN and ERROR.
+const QUIET: [(&str, &str); 1] = [("rmcp", "warn")];
+
+/// `given` (the `RUST_LOG` filter; `info` when unset or unreadable), with [`QUIET`] for every
+/// library it does not name.
+fn filter(given: Option<tracing_subscriber::EnvFilter>) -> tracing_subscriber::EnvFilter {
+    let mut filter = given.unwrap_or_else(|| tracing_subscriber::EnvFilter::new("info"));
+    let named = filter.to_string();
+    for (target, level) in QUIET {
+        let mentioned = named
+            .split(',')
+            .any(|d| d.trim().split(['=', '[']).next() == Some(target));
+        if !mentioned && let Ok(directive) = format!("{target}={level}").parse() {
+            filter = filter.add_directive(directive);
+        }
+    }
+    filter
+}
+
+/// Installs the one tracing subscriber (`RUST_LOG` filter, `info` by default, [`QUIET`] libraries
+/// at their level). Returns `false` when a subscriber was already installed (by an earlier call or
+/// by the embedding test harness).
 pub fn init_tracing(format: LogFormat) -> bool {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let filter = filter(tracing_subscriber::EnvFilter::try_from_default_env().ok());
     let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_ansi(std::io::stderr().is_terminal())
@@ -54,6 +76,22 @@ pub fn install_crypto_provider() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rmcp_lifecycle_lines_stay_out_unless_rust_log_names_rmcp() {
+        let of = |v: &str| filter(tracing_subscriber::EnvFilter::try_new(v).ok()).to_string();
+        for given in ["info", "info,sqlx=warn", "not a [filter"] {
+            assert!(of(given).contains("rmcp=warn"), "{given}: {}", of(given));
+        }
+        assert!(filter(None).to_string().contains("rmcp=warn"));
+        let named = of("info,rmcp=debug");
+        assert!(
+            named.contains("rmcp=debug") && !named.contains("rmcp=warn"),
+            "{named}"
+        );
+        // A library whose name only starts the same is no mention.
+        assert!(of("rmcp_x=debug").contains("rmcp=warn"));
+    }
 
     #[test]
     fn installers_are_idempotent() {

@@ -240,7 +240,10 @@ class SecretIndex:
 
 # A bearer credential printed anywhere: a JWT, an `Authorization: Bearer` value, a password field.
 JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")
-BEARER = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/-]{16,}")
+# A challenge's auth-param (`401 Bearer resource_metadata="…"`, RFC 6750 and RFC 9728) is a name, not a
+# value: only those names, each followed by `=`, are skipped.
+BEARER = re.compile(r"(?i)\bbearer\s+(?!(?:realm|scope|error|error_description|error_uri|resource_metadata)=)"
+                    r"[A-Za-z0-9._~+/-]{16,}")
 PW_FIELD = re.compile(r"(?i)\b(?:password|passwd|client_secret|secret|token)\s*[=:]\s*\"?([^\s\",}]{8,})")
 REDACTED = re.compile(r"(?i)^(?:\*+|<redacted>|\[redacted\]|redacted|xxx+|\.\.\.)$")
 EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b")
@@ -292,9 +295,10 @@ def personal_data(text: str) -> list[str]:
 
 # ---------------------------------------------------------------- volume
 
-def volume(records: list[Record]) -> dict:
+def volume(records: list[Record], minutes: float | None = None) -> dict:
     """Per module: lines, bytes, minutes covered, lines and bytes per minute, the most repeated
-    message (as `target: message`) and how often it came."""
+    message (as `target: message`) and how often it came. `minutes` is the window the records
+    were read over; without it, the span from the first line to the last."""
     per: dict[str, dict] = {}
     for r in records:
         if not r.structured or r.ts is None:
@@ -307,6 +311,8 @@ def volume(records: list[Record]) -> dict:
         v["msgs"][key] = v["msgs"].get(key, 0) + 1
     span_all = [r.ts for r in records if r.ts]
     total_min = max((max(span_all) - min(span_all)).total_seconds() / 60, 1 / 60) if span_all else 0
+    if minutes:
+        total_min = minutes
     out = {}
     for m, v in per.items():
         top = max(v["msgs"].items(), key=lambda kv: kv[1])
@@ -315,3 +321,24 @@ def volume(records: list[Record]) -> dict:
                   "bytesPerMinute": round(v["bytes"] / total_min) if total_min else 0,
                   "topMessage": top[0], "topCount": top[1]}
     return out
+
+
+def request_lines(records: list[Record], bound: int) -> dict:
+    """Lines per request id across every module: how many requests, the mean, p95 and max, how
+    many wrote more than `bound`, and the most common shape of those (`module target` per line)."""
+    per: dict[str, list[Record]] = {}
+    for r in records:
+        if r.structured and r.request_id:
+            per.setdefault(r.request_id, []).append(r)
+    counts = sorted(len(v) for v in per.values())
+    if not counts:
+        return {"requests": 0, "mean": 0, "p95": 0, "max": 0, "over": 0, "shape": ""}
+    shapes: dict[str, int] = {}
+    for rs in per.values():
+        if len(rs) > bound:
+            key = ", ".join(sorted(f"{r.module} {r.target}" for r in rs))
+            shapes[key] = shapes.get(key, 0) + 1
+    return {"requests": len(counts), "mean": round(sum(counts) / len(counts), 2),
+            "p95": counts[int(len(counts) * 0.95)], "max": counts[-1],
+            "over": sum(shapes.values()), "shape": max(shapes.items(), key=lambda kv: kv[1])[0] if shapes else ""}
+
