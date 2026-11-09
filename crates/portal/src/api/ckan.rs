@@ -129,7 +129,8 @@ pub async fn get_status(
         })
         .collect();
 
-    let settings = Settings::new(host_of(&state));
+    let catalogue = organization_catalogue(&state, &project);
+    let settings = Settings::new(data_host(&state, catalogue));
     let apps = state.mirror.list(&project, "App", &opts).items;
     let endpoints = state.mirror.list(&project, "Endpoint", &opts).items;
     let publications = publications(endpoints, &apps, &project, &instances, &settings);
@@ -139,7 +140,11 @@ pub async fn get_status(
             .iter()
             .map(|(name, spec)| InstanceSummary {
                 name: name.clone(),
-                url: spec.base_url().to_owned(),
+                // Where the reconciler publishes it: its Organization's own catalogue, if any.
+                url: catalogue.map_or_else(
+                    || spec.base_url().to_owned(),
+                    |c| c.url.as_str().trim_end_matches('/').to_owned(),
+                ),
                 organization_default: spec.organization_default.clone(),
                 api_token_ref: spec.api_token_ref.name.clone(),
             })
@@ -148,15 +153,30 @@ pub async fn get_status(
     }))
 }
 
-/// The host endpoints answer on, which is the host that served this page: APISIX routes
-/// `/api/endpoint/` to the gateway and everything else to the Portal.
-fn host_of(state: &AppState) -> String {
+/// The Organization catalogue `project` publishes into (`reconciler::ckan`), if its
+/// Organization has one.
+fn organization_catalogue<'a>(
+    state: &'a AppState,
+    project: &str,
+) -> Option<&'a crate::organization_host::OrganizationCatalogue> {
+    let organization = crate::permissions::organization_of(&state.mirror, project)?;
     state
         .config
-        .public_base()
-        .host_str()
-        .unwrap_or("localhost")
-        .to_owned()
+        .organization_catalogues
+        .iter()
+        .find(|c| c.organization == organization)
+}
+
+/// Where the endpoints answer, as a dataset links them: the Organization's data host when its
+/// catalogue names one, else the host that served this page (APISIX routes `/api/endpoint/` to
+/// the gateway and everything else to the Portal), its scheme and port kept off `https:443`.
+fn data_host(
+    state: &AppState,
+    catalogue: Option<&crate::organization_host::OrganizationCatalogue>,
+) -> String {
+    catalogue
+        .and_then(|c| c.data_host.clone())
+        .unwrap_or_else(|| crate::state::origin_or_host(&state.config.public_base()))
 }
 
 /// One status per dataset the endpoints publish, as the publisher plans them, and one per
@@ -314,4 +334,48 @@ pub fn router() -> axum::Router<AppState> {
         "/projects/{project}/ckan/status",
         axum::routing::get(get_status),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    /// The supervisor's critic of the UI judge: the status named `https://localhost` because only
+    /// the host reached the publisher; scheme and port are kept, and an Organization's project
+    /// links its own data host and shows its own catalogue.
+    #[test]
+    fn a_dataset_links_the_origin_its_endpoints_answer_at() {
+        let config = |base: &str| Config {
+            public_base_url: base.parse().unwrap(),
+            organization_catalogues: crate::organization_host::parse_catalogues(
+                r#"[{"organization":"ba","url":"http://opendata.ba.localhost:42141/",
+                     "dataHost":"http://api.ba.localhost:42141","tokenFile":"/run/ba"}]"#,
+            )
+            .unwrap(),
+            ..Config::for_tests()
+        };
+        let state = AppState::new(config("http://localhost:42141/"), None);
+        assert_eq!(data_host(&state, None), "http://localhost:42141");
+        let state = AppState::new(config("https://portal.example/"), None);
+        assert_eq!(data_host(&state, None), "portal.example");
+        state.mirror.upsert(
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Project",
+                "metadata": { "name": "bratislava", "namespace": crate::permissions::ORG_NAMESPACE },
+                "spec": { "organizationRef": "ba" },
+            }))
+            .unwrap(),
+        );
+        let catalogue = organization_catalogue(&state, "bratislava");
+        assert_eq!(
+            catalogue.map(|c| c.url.as_str()),
+            Some("http://opendata.ba.localhost:42141/")
+        );
+        assert_eq!(
+            data_host(&state, catalogue),
+            "http://api.ba.localhost:42141"
+        );
+        assert!(organization_catalogue(&state, "helsinki").is_none());
+    }
 }

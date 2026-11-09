@@ -1327,7 +1327,12 @@ impl FromRef<AppState> for Key {
 
 /// The host the catalogue publisher reads each Endpoint's record and schemas on.
 fn catalogue_host(config: &Config) -> String {
-    let base = config.api_base_url();
+    origin_or_host(&config.api_base_url())
+}
+
+/// `base` as a dataset links the Endpoints answering there (jcctl `Settings::host`): a bare
+/// host for `https` on its default port, else the whole origin, scheme and port kept.
+pub(crate) fn origin_or_host(base: &url::Url) -> String {
     let host = base.host_str().unwrap_or("localhost");
     // Only `https` on its default port is a bare host; anything else (a one-machine jc on
     // `http://localhost:8080`) keeps its origin, or every Endpoint read went to port 443.
