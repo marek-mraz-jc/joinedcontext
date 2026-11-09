@@ -846,9 +846,18 @@ def _daiya_kind(name: str) -> str:
 
 def rehearsal_endpoint_url(url: str, base: str) -> str:
     """A datasource's Endpoint URL (`<gateway>/api/endpoint/<slug>[/...]`) on the rehearsal's own
-    gateway: the same slug, the rehearsal's base. Any other URL is left as it is."""
+    gateway: the same slug, the rehearsal's base with `localhost` spelled 127.0.0.1, as the Portal
+    writes it (daiya's reach refuses the name). Any other URL is left as it is."""
     head, sep, rest = url.partition("/api/endpoint/")
-    return f"{base.rstrip('/')}/api/endpoint/{rest}" if sep and head and rest else url
+    return f"{loopback_ip(base)}/api/endpoint/{rest}" if sep and head and rest else url
+
+
+def loopback_ip(base: str) -> str:
+    """`base` without a trailing slash, its host `localhost` written as 127.0.0.1."""
+    u = urllib.parse.urlsplit(base.rstrip("/"))
+    if u.hostname == "localhost":
+        u = u._replace(netloc="127.0.0.1" + (f":{u.port}" if u.port else ""))
+    return urllib.parse.urlunsplit(u)
 
 
 def daiya_org(h: Http, auth: dict, project: str) -> int:
@@ -1493,7 +1502,7 @@ def panel_class(status: int, answer, datasource_url: str, base: str) -> str:
             and not answer.get("error"):
         return "data"
     text = json.dumps(answer) if not isinstance(answer, str) else answer
-    own = datasource_url.startswith(base.rstrip("/") + "/api/endpoint/")
+    own = datasource_url.startswith((base.rstrip("/") + "/api/endpoint/", loopback_ip(base) + "/api/endpoint/"))
     guard = any(r in text for r in OWN_LISTENER_REFUSALS) and any(c in text for c in OWN_LISTENER_CODES)
     return "expected" if own and guard else "red"
 

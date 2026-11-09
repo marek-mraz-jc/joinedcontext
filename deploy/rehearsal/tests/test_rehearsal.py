@@ -331,7 +331,9 @@ def test_the_old_history_check_fails_when_it_cannot_read(tmp_path):
 def test_a_datasource_reads_the_same_endpoint_on_the_rehearsal():
     gw = "http://context-gateway.smartcity.svc.cluster.local:8080/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
     assert rh.rehearsal_endpoint_url(gw, "http://localhost:42102/") == \
-        "http://localhost:42102/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
+        "http://127.0.0.1:42102/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
+    assert rh.rehearsal_endpoint_url(gw, "http://127.0.0.1:42102") == \
+        "http://127.0.0.1:42102/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
     assert rh.rehearsal_endpoint_url("http://prometheus:9090", "http://localhost:42102") == "http://prometheus:9090"
 
 
