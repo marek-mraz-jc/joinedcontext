@@ -942,3 +942,40 @@ def test_every_kit_secret_is_long_enough_for_the_strictest_reader(tmp_path):
     assert len(values) == 200
     assert all(len(v) >= 32 and v.isascii() and v.isprintable() and " " not in v for v in values)
     assert all((tmp_path / "secrets" / f"s{i}").stat().st_mode & 0o777 == 0o600 for i in range(1, 201))
+
+
+CATALOG = (b"apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: catalog\n"
+           b"  namespace: zilina\n  title: { sk: K }\nspec:\n  publish:\n    ckan:\n"
+           b"      instanceRef: { kind: CkanInstance, name: zilina }\n      license: cc-zero\n"
+           b"  catalog:\n    license: CC0\n")
+
+
+def test_each_catalog_endpoint_publishes_its_own_ckan_name_and_the_old_one_is_an_alias():
+    import yaml
+    named = rh.name_datasets(CATALOG)
+    ckan = yaml.safe_load(named)["spec"]["publish"]["ckan"]
+    assert ckan == {"name": "zilina-catalog", "instanceRef": {"kind": "CkanInstance", "name": "zilina"},
+                    "license": "cc-zero"}
+    assert rh.name_datasets(named) == named
+    # A name already set, another city, another Endpoint, another kind: left as they are.
+    for data in (named.replace(b"zilina-catalog", b"own"), CATALOG.replace(b"namespace: zilina", b"namespace: bbsk"),
+                 CATALOG.replace(b"  name: catalog\n", b"  name: air\n"),
+                 CATALOG.replace(b"kind: Endpoint", b"kind: CkanInstance")):
+        assert rh.name_datasets(data) == data
+    names = sorted(rh.CKAN_NAMES.values())
+    assert len(set(names)) == len(names) == 3
+    assert set(rh.DATASET_ALIASES.values()) <= set(names)
+    assert not set(rh.DATASET_ALIASES) & set(names)
+
+
+def test_the_hub_sources_are_the_deployments_and_a_malformed_list_stops(tmp_path):
+    f = tmp_path / rh.GATEWAY_VALUES
+    f.parent.mkdir(parents=True)
+    f.write_text('env:\n  JC_GATEWAY_ASSISTANT_URL: "http://x"\n  JC_GATEWAY_HUB_KNOWLEDGE_SOURCES: "bbsk/web, praha/web"\n')
+    assert rh.hub_sources(tmp_path) == "bbsk/web,praha/web"
+    f.write_text("env:\n  OTHER: 1\n")
+    assert rh.hub_sources(tmp_path) == ""
+    for bad in ("web", "bbsk/web,../x/y", "bbsk/web/x", "Bbsk/web"):
+        f.write_text(f'  JC_GATEWAY_HUB_KNOWLEDGE_SOURCES: "{bad}"\n')
+        with pytest.raises(SystemExit):
+            rh.hub_sources(tmp_path)

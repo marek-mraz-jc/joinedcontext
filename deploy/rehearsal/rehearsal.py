@@ -728,6 +728,70 @@ def fence_writes(data: bytes) -> bytes:
     return CKAN_URL.sub(lambda m: m.group(1) + REHEARSAL_CATALOGUE, data)
 
 
+# The one rename of evidence/jc-dev/RENAMES.md: prod's three catalog Endpoints publish one CKAN
+# name `catalog` and overwrite each other's package; jc refuses that collision, so each gets its
+# own name (namespace, Endpoint) -> spec.publish.ckan.name, and dataroom answers the old name as
+# an alias of the city that held it (DATASET_ALIASES, jc.toml [dataroom.aliases]).
+CKAN_NAMES = {("helsinki", "catalog"): "helsinki-catalog", ("praha", "catalog"): "praha-catalog",
+              ("zilina", "catalog"): "zilina-catalog"}
+DATASET_ALIASES = {"catalog": "zilina-catalog"}
+_META = re.compile(rb"^metadata:\s*\n((?:[ \t]+.*\n|\s*\n)*)", re.M)
+_CKAN = re.compile(rb"^([ \t]+)ckan:[ \t]*\n", re.M)
+
+
+def name_datasets(data: bytes) -> bytes:
+    """An Endpoint of CKAN_NAMES with a `publish.ckan` block and no name gets its new name, as
+    the first key of that block. Every other file is returned as it is."""
+    if not re.search(rb"^kind:\s*Endpoint\s*$", data, re.M):
+        return data
+    meta = _META.search(data)
+    if not meta:
+        return data
+    field = lambda k: (re.search(rb"^[ \t]+" + k + rb":\s*(\S+)\s*$", meta.group(1), re.M) or [None, b""])[1]
+    new = CKAN_NAMES.get((field(b"namespace").decode(), field(b"name").decode()))
+    m = _CKAN.search(data)
+    if not new or not m:
+        return data
+    indent = m.group(1) + b"  "
+    rest = data[m.end():]
+    block = re.match(rb"(?:" + re.escape(indent) + rb".*\n)*", rest).group(0)
+    if re.search(rb"^" + re.escape(indent) + rb"name:", block, re.M):
+        return data
+    return data[:m.end()] + indent + b"name: " + new.encode() + b"\n" + rest
+
+
+# The hub's `search_documents` sources, as the deployment gives the gateway (MF-57).
+GATEWAY_VALUES = "components/context-gateway/values/gateway/base-values.yaml.gotmpl"
+_HUB_SOURCES = re.compile(r'^\s*JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:\s*"([^"]*)"\s*$', re.M)
+_SOURCE = re.compile(r"[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*")
+
+
+def hub_sources(deployment: Path) -> str:
+    """The deployment's JC_GATEWAY_HUB_KNOWLEDGE_SOURCES (comma-separated `{project}/{source}`);
+    a file without the key gives none, a malformed list stops the start."""
+    m = _HUB_SOURCES.search((deployment / GATEWAY_VALUES).read_text())
+    if not m:
+        return ""
+    parts = [x.strip() for x in m.group(1).split(",") if x.strip()]
+    bad = [x for x in parts if not _SOURCE.fullmatch(x)]
+    if bad:
+        raise SystemExit(f"{GATEWAY_VALUES}: JC_GATEWAY_HUB_KNOWLEDGE_SOURCES: not {{project}}/{{source}}: {bad}")
+    return ",".join(parts)
+
+
+def cmd_hub_sources(a):
+    print(hub_sources(Path(a.deployment)))
+    return 0
+
+
+def cmd_aliases(a):
+    """jc.toml's [dataroom.aliases] for the renames this kit makes."""
+    print("[dataroom.aliases]")
+    for old, new in DATASET_ALIASES.items():
+        print(f'{old} = "{new}"')
+    return 0
+
+
 def import_shako(h: Http, token: str, export: Path, report: dict):
     auth = {"Authorization": f"token {token}"}
     listing = json.loads((export / "gitea" / "repos.json").read_text())
@@ -739,9 +803,13 @@ def import_shako(h: Http, token: str, export: Path, report: dict):
         for p in sorted(root.rglob("*")):
             if p.is_file() and not p.is_symlink():
                 data = p.read_bytes()
-                files[p.relative_to(root).as_posix()] = fenced = fence_writes(data)
+                rel = p.relative_to(root).as_posix()
+                fenced = fence_writes(data)
+                files[rel] = named = name_datasets(fenced)
                 if fenced != data:
-                    report.setdefault("fenced", []).append(f"{owner}/{name}/{p.relative_to(root).as_posix()}")
+                    report.setdefault("fenced", []).append(f"{owner}/{name}/{rel}")
+                if named != fenced:
+                    report.setdefault("renamed", []).append(f"{owner}/{name}/{rel}")
         row = {"repo": f"{owner}/{name}", "files": len(files)}
         st, _ = h.json("GET", f"/git/api/v1/projects/{owner}/repositories/{name}", headers=auth)
         if st == 404:
@@ -1825,9 +1893,11 @@ def main(argv=None):
     s.add_argument("--dashboards", required=True); s.add_argument("--report", required=True)
     s = sub.add_parser("provisioning"); s.add_argument("--dashboards", required=True)
     s.add_argument("--port", type=int, required=True); s.add_argument("--out", required=True)
+    sub.add_parser("aliases")
+    s = sub.add_parser("hub-sources"); s.add_argument("--deployment", required=True)
     s = sub.add_parser("policy-check"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     a = p.parse_args(argv)
-    return {"provisioning": cmd_provisioning, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import,
+    return {"provisioning": cmd_provisioning, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import, "aliases": cmd_aliases, "hub-sources": cmd_hub_sources,
             "retain": cmd_retain, "smoke": cmd_smoke}[a.cmd](a) or 0
 
 

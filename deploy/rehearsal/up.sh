@@ -204,7 +204,16 @@ if compgen -G "$REHEARSAL_DASHBOARDS/*.datasource.*.json" >/dev/null; then
     --out "$home/daiya-provisioning"
   db_config+=$(printf '\n[daiya]\nprovisioning_dir = "%s"\n' "$home/daiya-provisioning")
 fi
-printf '[mounts.portal]\npath_prefix = ""\n%s\n%s\n' "$db_config" "$realm_config" > "$home/jc.toml"
+# The hub's search_documents searches the sources the deployment names (base-values of the
+# context-gateway; REHEARSAL_DEPLOYMENT is a deployment clone); jc fills the assistant's address.
+if [ -z "${JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:-}" ]; then
+  JC_GATEWAY_HUB_KNOWLEDGE_SOURCES=$(python3 -I "$here/rehearsal.py" hub-sources \
+    --deployment "${REHEARSAL_DEPLOYMENT:-/workspace/joinedcontext-deployment}")
+  export JC_GATEWAY_HUB_KNOWLEDGE_SOURCES
+fi
+# The datasets this kit renames answer their old names too (RENAMES.md, rehearsal.py CKAN_NAMES).
+alias_config=$(python3 -I "$here/rehearsal.py" aliases)
+printf '[mounts.portal]\npath_prefix = ""\n%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_config" > "$home/jc.toml"
 nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" \

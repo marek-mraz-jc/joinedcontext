@@ -290,6 +290,9 @@ pub struct DataroomSection {
     pub database: Option<DatabaseSection>,
     /// `[dataroom.addresses]`: where the catalogue's live parts answer.
     pub addresses: DataroomAddresses,
+    /// `[dataroom.aliases]`: `old = "new"` per renamed dataset (evidence/jc-dev/RENAMES.md); a
+    /// read of the old name answers the new dataset.
+    pub aliases: BTreeMap<String, String>,
 }
 
 /// `[dataroom.addresses]`: the bases (`http(s)://host[:port][/path]`) the dataset pages frame,
@@ -332,6 +335,7 @@ impl Default for DataroomSection {
             portal_token_file: None,
             database: None,
             addresses: DataroomAddresses::default(),
+            aliases: BTreeMap::new(),
         }
     }
 }
@@ -1922,6 +1926,22 @@ path_prefix = "/api/endpoint"
         .unwrap();
         let err = Config::merge(cli(&["--role", "dataroom"]), bad).unwrap_err();
         assert!(matches!(err, ConfigError::Address("viz", _)), "{err}");
+    }
+
+    #[test]
+    fn dataroom_aliases_are_read_as_old_to_new_names() {
+        let file = Config::parse_file(
+            Path::new("jc.toml"),
+            "[dataroom.aliases]\ncatalog = \"zilina-catalog\"\n",
+        )
+        .unwrap();
+        let cfg = Config::merge(cli(&["--role", "dataroom"]), file).unwrap();
+        assert_eq!(
+            cfg.dataroom.aliases,
+            BTreeMap::from([("catalog".to_owned(), "zilina-catalog".to_owned())])
+        );
+        let cfg = Config::merge(cli(&["--role", "dataroom"]), FileConfig::default()).unwrap();
+        assert!(cfg.dataroom.aliases.is_empty());
     }
 
     #[test]

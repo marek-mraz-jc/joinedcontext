@@ -98,6 +98,17 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   The rehearsal answers on `http://localhost:<port>`, so each client URL on the source Portal's
   host (or its domain, where the Apps live) gets a twin on that address beside it (`realms
   --public-base`); the source URLs stay. Rehearsal only: the cutover runs jc on the source hosts.
+- Dataset names (evidence/jc-dev/RENAMES.md): prod's `helsinki/catalog`, `praha/catalog` and
+  `zilina/catalog` all publish the CKAN name `catalog`, which jc refuses as a collision. `import`
+  writes `spec.publish.ckan.name` `helsinki-catalog`, `praha-catalog` and `zilina-catalog` into
+  them (`rehearsal.py CKAN_NAMES`; listed under `renamed` in the import report), and `jc.toml`
+  gets `[dataroom.aliases] catalog = "zilina-catalog"` (`rehearsal.py aliases`), so a read of
+  `catalog` (package_show, the dataset page, its DCAT files) answers zilina-catalog. The cutover
+  needs the same two changes in the configuration repository and in jc's config.
+- Hub `search_documents`: jc gives the gateway its assistant's internal address
+  (`JC_GATEWAY_ASSISTANT_URL`); up.sh exports `JC_GATEWAY_HUB_KNOWLEDGE_SOURCES` from the
+  deployment clone's context-gateway base-values (`REHEARSAL_DEPLOYMENT`, default
+  `/workspace/joinedcontext-deployment`, main; prod runs the `release` branch).
 - Test persons: `smoke` and `shots.py` create their own (`rehearsal-*`, random passwords kept in
   memory) in that realm, in group `platform-admins` (the Portal's default bootstrap admins; added
   to an imported realm without it, as `rehearsal-tester` is).
