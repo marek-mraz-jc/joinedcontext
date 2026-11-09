@@ -54,3 +54,9 @@ each uses and the answer it parses, replayed by `server/tests/portal_contract.rs
 | 44 | `GET` / `PUT` / `DELETE` | `/admin/realms/{realm}/clients/{uuid}/{default,optional}-client-scopes[/{scope_id}]` | — | `200`, `204` | `POR src/reconciler/app_clients.rs:431`, `workload_clients.rs:622`, `hub_scopes.rs:247`, `charts/admin-permissions/files/sync-admin-permissions.sh:151` | `row_35_to_46_clients_secrets_mappers_and_scopes` |
 | 45 | `GET` / `POST` / `PUT` / `DELETE` | `/admin/realms/{realm}/client-scopes[/{id}]` | — | `200`, `201`, `204`, `409` (name in use) | `POR src/reconciler/hub_scopes.rs:146`, `:162`, `:198`, `:228`, `workload_clients.rs:648`, `charts/admin-permissions/files/sync-admin-permissions.sh:104` | `row_35_to_46_clients_secrets_mappers_and_scopes` |
 | 46 | `DELETE` | `/admin/realms/{realm}/attack-detection/brute-force/users/{user_id}` | — | `204` | `components/keycloak/README.md:54` (break-glass) | `row_35_to_46_clients_secrets_mappers_and_scopes` |
+
+## Token endpoint scope behaviour (OIDC, beside the admin rows)
+
+| # | Grant | Behaviour, as Keycloak 26.8 | Test |
+|---|---|---|---|
+| T1 | `authorization_code`, `refresh_token` | An optional scope with `include.in.token.scope=false` (`gateway-hub`) asked at `/authorize` keeps its protocol mappers at the code exchange and on every refresh (`aud: mcp-hub` for `portal-api`, as `client_credentials` gives); the `scope` claim leaves it out as before. An optional scope not linked to the client is `invalid_scope` at `/authorize` (`endpoint:*` and an unlinked `endpoint:{slug}` included). A mapper scope the client lost between `/authorize` and the token request is dropped, as `TokenManager.getRequestedClientScopes` drops it; a refresh adds no scope it asks for. | `server/tests/portal_contract.rs::an_optional_scope_outside_the_scope_claim_keeps_its_mappers_in_the_code_flow` |
