@@ -1334,7 +1334,9 @@ mod tests {
             std::fs::write(&token_file, format!("{org}-token\n")).expect("token");
             crate::organization_host::OrganizationCatalogue {
                 organization: org.to_owned(),
-                url: format!("http://opendata.{org}.localhost:42301").parse().unwrap(),
+                url: format!("http://opendata.{org}.localhost:42301")
+                    .parse()
+                    .unwrap(),
                 api: Some(format!("http://opendata.{org}.localhost").parse().unwrap()),
                 reach: Some("127.0.0.1:42301".parse().unwrap()),
                 data_host: Some(format!("http://api.{org}.localhost:42301")),
@@ -1347,7 +1349,11 @@ mod tests {
             env: None,
             age_key_file: None,
         };
-        for (project, org) in [("helsinki", "hel"), ("bratislava", "ba"), ("unowned", "hel")] {
+        for (project, org) in [
+            ("helsinki", "hel"),
+            ("bratislava", "ba"),
+            ("unowned", "hel"),
+        ] {
             // The instance names hel-fi on data.example.fi: the Organization's catalogue wins.
             let routed = sync.routed(&repo, target(project));
             let own = format!("http://opendata.{org}.localhost:42301");

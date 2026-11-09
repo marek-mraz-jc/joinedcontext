@@ -2270,7 +2270,8 @@ mod tests {
         mirror.upsert(org(
             "Role",
             "admin",
-            serde_json::json!({ "rules": [{ "kinds": ["*"], "verbs": ["read", "propose", "approve", "delete"] }] }),
+            serde_json::json!({ "rules": [{ "kinds": ["Project", "ContextSpace", "Organization", "RoleBinding", "Group"],
+                                  "verbs": ["read", "propose", "approve", "delete"] }] }),
         ));
         mirror.upsert(org(
             "Organization",
