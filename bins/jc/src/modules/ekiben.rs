@@ -242,7 +242,7 @@ fn host_target(siblings: &Siblings, defaults: &BTreeMap<String, String>) -> Opti
     .filter_map(|u| u.strip_prefix(&origin).map(str::to_owned))
     .filter(|path| path.starts_with('/'))
     .collect();
-    (!prefixes.is_empty()).then(|| HostTarget {
+    (!prefixes.is_empty()).then_some(HostTarget {
         addr: siblings.listener,
         path_prefixes: prefixes,
     })
