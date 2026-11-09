@@ -50,7 +50,9 @@ describe("the catalogue widget's mount", () => {
 
   it("carries only the view's strings, in English and Slovak, and no map", () => {
     expect(Object.keys(i18n.options.resources ?? {}).sort()).toEqual(["en", "sk"]);
-    expect(Object.keys(i18n.options.resources?.sk.translation ?? {}).sort()).toEqual(["app", "endpoints", "entityGrid", "spaces"]);
+    expect(Object.keys(i18n.options.resources?.sk.translation ?? {}).sort()).toEqual(["app", "endpoints", "entityGrid", "problem", "spaces"]);
+    // A refusal speaks the page's language: the catalogue showed the API's English hint in Slovak.
+    expect(i18n.getFixedT("sk")("problem.resource-not-found")).toBe("Skontrolujte názov v adrese; neexistuje alebo s vami nie je zdieľaný.");
     // The Data toolbar (T-6303) reads its labels from spaces.toolbar: the explorer showed the raw keys (T-6313).
     expect(Object.keys((i18n.options.resources?.sk.translation as { spaces: object }).spaces).sort()).toEqual(["saved", "toolbar"]);
     expect(i18n.getFixedT("sk")("spaces.toolbar.filter")).not.toBe("spaces.toolbar.filter");
