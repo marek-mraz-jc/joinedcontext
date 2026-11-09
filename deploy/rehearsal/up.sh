@@ -112,7 +112,8 @@ people_args=()
 [ -f "$demo_users" ] && people_args+=(--demo-users "$demo_users")
 if [ -d "$export_dir/keycloak" ]; then
   python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/state/realms" \
-    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}" --secrets-dir "$home/secrets/realm"
+    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}" --secrets-dir "$home/secrets/realm" \
+    --public-base "http://localhost:$port"
   # Each secret the realm config names gets a fresh value of the rehearsal (never the old one), in
   # a file of its own under secrets/realm: kaisatsu inside jc reads $(file:...) there and no
   # environment. secrets/realm-NAME stays a link to it for the smoke and shots.

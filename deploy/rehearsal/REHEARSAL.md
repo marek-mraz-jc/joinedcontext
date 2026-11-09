@@ -95,6 +95,9 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   The export carries no users, so the Portal's two service accounts (`service-account-portal-api`,
   `service-account-portal-reconciler`, with prod's `realm-management` roles) come from jc's shipped
   realm `crates/kaisatsu/import/realms/jc-portal.json` when the realm lacks them.
+  The rehearsal answers on `http://localhost:<port>`, so each client URL on the source Portal's
+  host (or its domain, where the Apps live) gets a twin on that address beside it (`realms
+  --public-base`); the source URLs stay. Rehearsal only: the cutover runs jc on the source hosts.
 - Test persons: `smoke` and `shots.py` create their own (`rehearsal-*`, random passwords kept in
   memory) in that realm, in group `platform-admins` (the Portal's default bootstrap admins; added
   to an imported realm without it, as `rehearsal-tester` is).

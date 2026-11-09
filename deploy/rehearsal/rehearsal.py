@@ -487,6 +487,48 @@ def add_service_accounts(realm: dict, shipped: dict) -> tuple[dict, list[str]]:
     return out, sorted(u["serviceAccountClientId"] for u in add)
 
 
+def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
+    """Each client URL on the source Portal's origin (`portal-api` rootUrl, e.g.
+    https://portal.smartcity.joinedcontext.com) or its domain's (https://smartcity.joinedcontext.com,
+    where the Apps live) gets a twin on the rehearsal's `base` beside it, in redirectUris, webOrigins
+    and post.logout.redirect.uris: the rehearsal answers on loopback, and the source URL stays.
+    Answers the realm and how many URLs were added."""
+    root = next((c.get("rootUrl") for c in realm.get("clients", []) if c.get("clientId") == "portal-api"), None)
+    if not root:
+        return realm, 0
+    u = urllib.parse.urlsplit(root)
+    origins = {f"{u.scheme}://{u.netloc}"}
+    if u.netloc.startswith("portal."):
+        origins.add(f"{u.scheme}://{u.netloc[len('portal.'):]}")
+    base = base.rstrip("/")
+
+    def twins(values):
+        out = list(values)
+        for v in values:
+            o = next((o for o in origins if v == o or v.startswith(o + "/")), None)
+            if o and base + v[len(o):] not in out:
+                out.append(base + v[len(o):])
+        return out
+
+    added, clients = 0, []
+    for c in realm.get("clients", []):
+        c = dict(c)
+        for key in ("redirectUris", "webOrigins"):
+            if c.get(key):
+                new = twins(c[key])
+                added += len(new) - len(c[key])
+                c[key] = new
+        attrs = dict(c.get("attributes") or {})
+        if attrs.get("post.logout.redirect.uris") not in (None, "", "+"):
+            old = attrs["post.logout.redirect.uris"].split("##")
+            new = twins(old)
+            added += len(new) - len(old)
+            attrs["post.logout.redirect.uris"] = "##".join(new)
+            c["attributes"] = attrs
+        clients.append(c)
+    return {**realm, "clients": clients}, added
+
+
 def realm_of(state: Path) -> str:
     """The deployment's realm the rehearsal's jc runs on (`realms` writes it), else jc's default."""
     p = state / "realm-name.txt"
@@ -628,6 +670,9 @@ def cmd_realms(a):
             print(f"realm {name}: {counts}")
         clean = add_tester(clean)
         clean, by_secret = jc_clients_by_secret(clean)
+        if a.public_base:
+            clean, twins = add_rehearsal_origin(clean, a.public_base)
+            print(f"realm {name}: {twins} client URLs of the source host got a twin on {a.public_base}")
         clean, accounts = add_service_accounts(clean, json.loads(SHIPPED_REALM.read_text()))
         if accounts:
             print(f"realm {name}: service accounts of {accounts} taken from jc's shipped realm (the export has none)")
@@ -1758,6 +1803,7 @@ def main(argv=None):
     s.add_argument("--env", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("realms"); s.add_argument("--export", required=True); s.add_argument("--out", required=True)
     s.add_argument("--kaisatsu-bin", help="leave out the mappers this kaisatsu refuses (named in the report)")
+    s.add_argument("--public-base", help="the rehearsal's own address: a twin of each client URL on the source host")
     s.add_argument("--people", help="a 0700 dir holding users-<realm>.jsonl (dev only): people without credentials")
     s.add_argument("--demo-users", help="the deployment's demo-users.yaml: the personas that keep e-mail and names")
     s.add_argument("--secrets-dir", help="write each secret as $(file:<dir>/NAME), the form kaisatsu in jc reads")

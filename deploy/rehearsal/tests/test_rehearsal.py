@@ -908,3 +908,22 @@ def test_an_export_without_service_accounts_gets_the_portals_from_jcs_shipped_re
     assert rec["clientRoles"]["realm-management"] == ["manage-users", "query-groups"]
     assert [u["clientRoles"] for u in out["users"] if u["serviceAccountClientId"] == "portal-api"] == [{"x": ["y"]}]
     assert rh.add_service_accounts({"clients": []}, shipped)[1] == []
+
+
+def test_client_urls_of_the_source_host_get_a_twin_on_the_rehearsal_and_keep_their_own():
+    p, d = "https://portal.smartcity.joinedcontext.com", "https://smartcity.joinedcontext.com"
+    realm = {"clients": [
+        {"clientId": "portal-api", "rootUrl": p, "redirectUris": [f"{p}/api/v1/auth/callback"], "webOrigins": [p]},
+        {"clientId": "edge", "redirectUris": [f"{p}/*", f"{d}/apps/*"],
+         "attributes": {"post.logout.redirect.uris": f"{p}/*##https://elsewhere.example/*"}},
+        {"clientId": "other", "redirectUris": ["https://evil.example/smartcity.joinedcontext.com/x"]},
+    ]}
+    out, n = rh.add_rehearsal_origin(realm, "http://localhost:42102/")
+    by = {c["clientId"]: c for c in out["clients"]}
+    assert by["portal-api"]["redirectUris"] == [f"{p}/api/v1/auth/callback", "http://localhost:42102/api/v1/auth/callback"]
+    assert by["portal-api"]["webOrigins"] == [p, "http://localhost:42102"]
+    assert by["edge"]["redirectUris"] == [f"{p}/*", f"{d}/apps/*", "http://localhost:42102/*", "http://localhost:42102/apps/*"]
+    assert by["edge"]["attributes"]["post.logout.redirect.uris"] == f"{p}/*##https://elsewhere.example/*##http://localhost:42102/*"
+    assert by["other"] == realm["clients"][2]
+    assert n == 5
+    assert rh.add_rehearsal_origin({"clients": [{"clientId": "x"}]}, "http://localhost:1") == ({"clients": [{"clientId": "x"}]}, 0)
