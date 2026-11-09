@@ -432,7 +432,8 @@ export function MapLibreView({
         const stacked = document.createElement("div");
         stacked.append(count, root);
         if (more.textContent) stacked.append(more);
-        new Popup({ className: "z-10", maxWidth: "20rem" })
+        // A phone map is narrow: the popup keeps to it, a wider map lets a heading and its time share a line.
+        new Popup({ className: "z-10", maxWidth: (container.current?.clientWidth ?? 0) < 500 ? "18rem" : "20rem" })
           .setLngLat(event.lngLat)
           .setDOMContent(features.length === 1 ? popupNode(features[0], layer.popupProperties, layer.open, layer.titleProperty) : stacked)
           .addTo(instance);
