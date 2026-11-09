@@ -7,7 +7,7 @@
 # name already concluded success in another ci run of this same commit (a fast-forward merge of a
 # branch head ci passed) is not run again: the same commit is the same input, workflow file
 # included. supply-chain, gitleaks and the image always run.
-#   EVENT=push BEFORE=<sha> REF=<github.ref> sh changes.sh      # in ci.yml
+#   EVENT=push BEFORE=<sha> sh changes.sh      # in ci.yml (reads GITHUB_REF)
 #   sh changes.sh --selftest
 set -eu
 JOBS="root antares ekiben portal ui supply workflows image dockerfiles platform"
@@ -122,7 +122,7 @@ esac
 # A branch push checks what the branch brings to jc-portal-1: its diff from the merge base. A new
 # branch has no `before`, and a push that merged jc-portal-1 would otherwise count trunk's changes
 # as its own (one ci.yml change on trunk ran all 21 jobs of a 6-file branch).
-if [ "${EVENT:-}" = push ] && [ -n "${REF:-}" ] && ! trunk "$REF"; then
+if [ "${EVENT:-}" = push ] && [ -n "${GITHUB_REF:-}" ] && ! trunk "$GITHUB_REF"; then
   base=$(git merge-base origin/jc-portal-1 HEAD 2>/dev/null) || base=
 fi
 if [ -z "$base" ] || [ "$base" = "$zero" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
