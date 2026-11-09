@@ -179,6 +179,17 @@ JCBIN_SHAKO_TOKEN_FILE=$(secret shako-token); export JCBIN_SHAKO_TOKEN_FILE
 # ekiben's admin token too: the pipelines smoke reads streams with it.
 JCBIN_EKIBEN_TOKEN_FILE=$(secret ekiben-token); export JCBIN_EKIBEN_TOKEN_FILE
 JCBIN_DAIYA_PORTAL_PASSWORD_FILE=$(secret dashboards-password); export JCBIN_DAIYA_PORTAL_PASSWORD_FILE
+# The projects' SOPS secrets (secretRef, e.g. praha's golemio.enc.yaml) are encrypted to the
+# deployment's age recipient: REHEARSAL_AGE_KEY_FILE names that identity file (0600 or 0400; dev's
+# for both rehearsals, as release's files name dev's recipient). jc reads it in place: no copy, the
+# values stay encrypted on disk and only the Portal decrypts them per sync. Without it jc's own
+# generated identity decrypts nothing of the export and those pipelines answer SecretUnresolved.
+if [ -n "${REHEARSAL_AGE_KEY_FILE:-}" ]; then
+  case $(stat -c %a "$REHEARSAL_AGE_KEY_FILE") in
+    600|400) export JCBIN_PORTAL_AGE_KEY_FILE=$REHEARSAL_AGE_KEY_FILE ;;
+    *) echo "up.sh: $REHEARSAL_AGE_KEY_FILE is readable by others: refused" >&2; exit 1 ;;
+  esac
+fi
 # The Portal's internal listener (/metrics, run callbacks) on loopback, one port per environment.
 export JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 100))
 export RUST_LOG=${RUST_LOG:-info,sqlx=warn}

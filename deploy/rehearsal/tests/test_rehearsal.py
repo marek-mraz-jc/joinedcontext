@@ -934,6 +934,21 @@ def test_up_sh_gives_jc_every_secret_it_holds_only_in_memory():
         assert re.search(rf"\bexport {var}\b|{var}=.*; export {var}\b", text), var
 
 
+def test_up_sh_hands_jc_the_deployments_age_identity_in_place_and_refuses_an_open_one(tmp_path):
+    key = tmp_path / "age.key"
+    key.write_text("AGE-SECRET-KEY-1X\n")
+    text = (HERE / "up.sh").read_text()
+    block = text[text.index('if [ -n "${REHEARSAL_AGE_KEY_FILE:-}" ]'):]
+    block = block[:block.index("\nfi\n") + 4]
+    run = lambda mode: subprocess.run(["bash", "-c", f"set -e; {block}\necho \"$JCBIN_PORTAL_AGE_KEY_FILE\""],
+                                      env=dict(os.environ, REHEARSAL_AGE_KEY_FILE=str(key)),
+                                      capture_output=True, text=True) if not key.chmod(mode) else None
+    ok = run(0o600)
+    assert ok.returncode == 0 and ok.stdout.strip() == str(key)
+    bad = run(0o644)
+    assert bad.returncode == 1 and "refused" in bad.stderr
+
+
 def test_only_the_clients_jc_signs_in_as_trade_federated_jwt_for_their_secret():
     k8s = {"jwt.credential.sub": "system:serviceaccount:smartcity:portal", "jwt.credential.issuer": "kubernetes"}
     realm = {"clients": [

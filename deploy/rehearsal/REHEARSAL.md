@@ -109,6 +109,11 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   (`JC_GATEWAY_ASSISTANT_URL`); up.sh exports `JC_GATEWAY_HUB_KNOWLEDGE_SOURCES` from the
   deployment clone's context-gateway base-values (`REHEARSAL_DEPLOYMENT`, default
   `/workspace/joinedcontext-deployment`, main; prod runs the `release` branch).
+- Project secrets (`secretRef`, SOPS files such as praha's `golemio.enc.yaml`): release's files
+  are encrypted to dev's age recipient. `REHEARSAL_AGE_KEY_FILE` names that identity (mode 0600 or
+  0400; up.sh refuses any other); up.sh hands it to jc as `JCBIN_PORTAL_AGE_KEY_FILE` in place, never
+  copied or printed, and the Portal decrypts per sync. Without it those pipelines read
+  SecretUnresolved. The dev cutover gives jc the age identity dev's Portal holds today.
 - Test persons: `smoke` and `shots.py` create their own (`rehearsal-*`, random passwords kept in
   memory) in that realm, in group `platform-admins` (the Portal's default bootstrap admins; added
   to an imported realm without it, as `rehearsal-tester` is).
