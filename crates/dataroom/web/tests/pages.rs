@@ -323,6 +323,10 @@ fn every_page_escapes_publisher_text_and_nonces_every_script() {
     }
     for (name, html) in &pages {
         assert_safe_page(name, html, "sk");
+        // One h1 per page (smoke ui one-h1): a count above a list is an h2; the framable map
+        // has none.
+        let h1 = usize::from(*name != "map");
+        assert_eq!(html.matches("<h1").count(), h1, "{name}: h1 count");
     }
     let page = |n: &str| pages.iter().find(|(k, _)| *k == n).expect(n).1.clone();
     // A theme, a filter value or a query reaches the topics page, the filter pills, the hidden
