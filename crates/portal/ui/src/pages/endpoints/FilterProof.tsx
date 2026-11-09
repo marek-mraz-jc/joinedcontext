@@ -10,6 +10,7 @@ import {
   Alert,
   Button,
   Field,
+  Icon,
   Select,
   Table,
   TableBody,
@@ -316,6 +317,7 @@ export function FilterProof({
     served.error instanceof ApiError && served.error.status === 400
       ? (served.error.problem?.detail ?? served.error.message)
       : null;
+  const failed = served.isError && refused === null;
 
   return (
     <section className="space-y-3" aria-labelledby="filter-proof-title">
@@ -347,118 +349,131 @@ export function FilterProof({
         <Alert tone="danger" role="alert">
           {t("endpoints.proof.refused", { reason: refused })}
         </Alert>
-      ) : served.isError ? (
-        <Alert tone="danger" role="alert">
+      ) : failed ? (
+        <Alert
+          tone="danger"
+          role="alert"
+          actions={
+            <Button size="sm" icon={<Icon name="refresh" className="size-4" />} onClick={() => void served.refetch()}>
+              {t("app.error.retry")}
+            </Button>
+          }
+        >
           {t("endpoints.proof.failed", {
             reason: served.error instanceof ApiError ? served.error.message : t("app.error.generic"),
           })}
         </Alert>
       ) : null}
+      {/* A failed read with nothing to show is said once: no wait, no empty table, no window of the other side. */}
+      {failed && served.data === undefined ? null : (
+        <>
 
-      <p role="status" aria-live="polite" className="text-body">
-        {served.data === undefined
-          ? t("endpoints.proof.loading")
-          : readable
-            ? t("endpoints.proof.summary", { served: served.data.total, total, type, hidden: hidden.length })
-            : t("endpoints.proof.summaryServedOnly", { served: served.data.total, type })}
-      </p>
-      {!readable && !original.isPending ? (
-        <p className="text-caption text-fg-muted">{t("endpoints.proof.originalUnreadable")}</p>
-      ) : null}
+          <p role="status" aria-live="polite" className="text-body">
+            {served.data === undefined
+              ? t("endpoints.proof.loading")
+              : readable
+                ? t("endpoints.proof.summary", { served: served.data.total, total, type, hidden: hidden.length })
+                : t("endpoints.proof.summaryServedOnly", { served: served.data.total, type })}
+          </p>
+          {!readable && !original.isPending ? (
+            <p className="text-caption text-fg-muted">{t("endpoints.proof.originalUnreadable")}</p>
+          ) : null}
 
-      {readable ? (
-        <Tabs
-          id="filter-proof-side"
-          label={t("endpoints.proof.sides")}
-          variant="pill"
-          className="lg:hidden"
-          value={side}
-          onChange={setSide}
-          tabs={[
-            { value: "served", label: t("endpoints.proof.served") },
-            { value: "original", label: t("endpoints.proof.original") },
-          ]}
-        />
-      ) : null}
+          {readable ? (
+            <Tabs
+              id="filter-proof-side"
+              label={t("endpoints.proof.sides")}
+              variant="pill"
+              className="lg:hidden"
+              value={side}
+              onChange={setSide}
+              tabs={[
+                { value: "served", label: t("endpoints.proof.served") },
+                { value: "original", label: t("endpoints.proof.original") },
+              ]}
+            />
+          ) : null}
 
-      <div {...(readable ? tabPanelProps("filter-proof-side", side) : {})}>
-        {/* A page of entities with every attribute was 8,500 px of this page (T-5015): the frame scrolls instead. */}
-        <Table caption={t("endpoints.proof.caption", { type })} zebra={false} maxHeight="max-h-160" className="table-fixed text-caption">
-          <TableHead>
-            <TableHeaderCell className={clsx(readable && side !== "served" && "hidden lg:table-cell")}>
-              {t("endpoints.proof.served")}
-            </TableHeaderCell>
-            {readable ? (
-              <TableHeaderCell className={clsx(side !== "original" && "hidden lg:table-cell")}>
-                {t("endpoints.proof.original")}
-              </TableHeaderCell>
-            ) : null}
-          </TableHead>
-          <TableBody>
-            {rows.length === 0 && served.data ? (
-              <TableRow>
-                <TableCell colSpan={readable ? 2 : 1} className="text-fg-muted">
-                  {t("endpoints.proof.empty")}
-                </TableCell>
-              </TableRow>
-            ) : null}
-            {rows.map((row) => (
-              <TableRow key={row.id} data-testid="proof-row">
-                <TableCell className={clsx(readable && side !== "served" && "hidden lg:table-cell")}>
-                  {row.served ? (
-                    <EntityCell entity={row.served} struck={[]} />
-                  ) : (
-                    <p className="text-fg-muted">
-                      <span className="font-mono">{shortId(row.id)}</span> · {t("endpoints.proof.notServed")}
-                    </p>
-                  )}
-                </TableCell>
+          <div {...(readable ? tabPanelProps("filter-proof-side", side) : {})}>
+            {/* A page of entities with every attribute was 8,500 px of this page (T-5015): the frame scrolls instead. */}
+            <Table caption={t("endpoints.proof.caption", { type })} zebra={false} maxHeight="max-h-160" className="table-fixed text-caption">
+              <TableHead>
+                <TableHeaderCell className={clsx(readable && side !== "served" && "hidden lg:table-cell")}>
+                  {t("endpoints.proof.served")}
+                </TableHeaderCell>
                 {readable ? (
-                  <TableCell
-                    className={clsx(
-                      side !== "original" && "hidden lg:table-cell",
-                      row.served === undefined && "bg-surface-muted text-fg-muted",
-                    )}
-                  >
-                    {row.original ? <EntityCell entity={row.original} struck={row.struck} /> : null}
-                    {row.served === undefined ? (
-                      <p className="mt-1 font-medium">{t("endpoints.proof.notServedMark")}</p>
-                    ) : null}
-                  </TableCell>
+                  <TableHeaderCell className={clsx(side !== "original" && "hidden lg:table-cell")}>
+                    {t("endpoints.proof.original")}
+                  </TableHeaderCell>
                 ) : null}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+              </TableHead>
+              <TableBody>
+                {rows.length === 0 && served.data ? (
+                  <TableRow>
+                    <TableCell colSpan={readable ? 2 : 1} className="text-fg-muted">
+                      {t("endpoints.proof.empty")}
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+                {rows.map((row) => (
+                  <TableRow key={row.id} data-testid="proof-row">
+                    <TableCell className={clsx(readable && side !== "served" && "hidden lg:table-cell")}>
+                      {row.served ? (
+                        <EntityCell entity={row.served} struck={[]} />
+                      ) : (
+                        <p className="text-fg-muted">
+                          <span className="font-mono">{shortId(row.id)}</span> · {t("endpoints.proof.notServed")}
+                        </p>
+                      )}
+                    </TableCell>
+                    {readable ? (
+                      <TableCell
+                        className={clsx(
+                          side !== "original" && "hidden lg:table-cell",
+                          row.served === undefined && "bg-surface-muted text-fg-muted",
+                        )}
+                      >
+                        {row.original ? <EntityCell entity={row.original} struck={row.struck} /> : null}
+                        {row.served === undefined ? (
+                          <p className="mt-1 font-medium">{t("endpoints.proof.notServedMark")}</p>
+                        ) : null}
+                      </TableCell>
+                    ) : null}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          disabled={offset === 0}
-          disabledReason={t("app.firstPage")}
-          onClick={() => setOffset(Math.max(0, offset - PROOF_PAGE))}
-        >
-          {t("endpoints.proof.previous")}
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          disabled={offset + PROOF_PAGE >= total}
-          disabledReason={t("app.lastPage")}
-          onClick={() => setOffset(offset + PROOF_PAGE)}
-        >
-          {t("endpoints.proof.next")}
-        </Button>
-        {total > 0 ? (
-          <span className="text-caption text-fg-muted">
-            {t("endpoints.proof.window", { from: offset + 1, to: Math.min(offset + PROOF_PAGE, total), total })}
-          </span>
-        ) : null}
-      </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={offset === 0}
+              disabledReason={t("app.firstPage")}
+              onClick={() => setOffset(Math.max(0, offset - PROOF_PAGE))}
+            >
+              {t("endpoints.proof.previous")}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={offset + PROOF_PAGE >= total}
+              disabledReason={t("app.lastPage")}
+              onClick={() => setOffset(offset + PROOF_PAGE)}
+            >
+              {t("endpoints.proof.next")}
+            </Button>
+            {total > 0 ? (
+              <span className="text-caption text-fg-muted">
+                {t("endpoints.proof.window", { from: offset + 1, to: Math.min(offset + PROOF_PAGE, total), total })}
+              </span>
+            ) : null}
+          </div>
+        </>
+      )}
     </section>
   );
 }

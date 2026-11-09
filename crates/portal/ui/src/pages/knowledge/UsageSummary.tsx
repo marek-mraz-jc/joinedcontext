@@ -75,6 +75,9 @@ export function UsageSummary({ project, filter }: { project: string; filter: Con
   const [forgot, setForgot] = useState<number | null>(null);
   const usage = useQuery({
     queryKey: conversationKeys.usage(project, filter),
+    // A failed read says so with its Retry at once; the silent retry left "Loading…" over a 503
+    // (UI judge 2026-11-09).
+    retry: false,
     queryFn: () => conversationUsage(project, filter),
   });
   const unknown = t("conversations.unknownPrice");

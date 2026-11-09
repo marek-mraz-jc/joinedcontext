@@ -119,7 +119,12 @@ pub(crate) async fn mcp_answer(
         return answer;
     }
 
-    let operation = mcp_operation(calls.then_some(tool.as_deref().unwrap_or_default()));
+    let operation = mcp_operation(
+        &gateway,
+        &endpoint,
+        &subject,
+        calls.then_some(tool.as_deref().unwrap_or_default()),
+    );
     let mut request = Request::from_parts(parts, Body::empty());
     if let Err(answer) =
         view_request(&gateway, &endpoint, &subject, "", operation, &mut request).await
@@ -557,15 +562,30 @@ pub(crate) fn federated(answer: &mut Value, method: &str, members: &[String]) {
     }
 }
 
-/// The operation the domain gate (PF-41) weighs a message as: a tool the gateway does not know
-/// as a read is a write. It stands for the class of the call; the broker gates the tool's own
-/// clause.
-fn mcp_operation(tool: Option<&str>) -> Operation {
-    if tool.is_some_and(|tool| !mcp::writes::is_read_tool(tool)) {
-        Operation::UpsertBatch
-    } else {
-        Operation::QueryEntity
-    }
+/// The operation the gates of `view_request` weigh a message as: a tool the gateway does not know
+/// as a read is a write. A write tool is weighed as the first of its own operations the caller
+/// holds, so the decision point asks what the tool listing asked (SP-16); a tool holding none
+/// stands for the class of the call, and the broker's view gates the tool's own clause.
+fn mcp_operation(
+    gateway: &Gateway,
+    endpoint: &Endpoint,
+    subject: &Subject,
+    tool: Option<&str>,
+) -> Operation {
+    let Some(tool) = tool.filter(|tool| !mcp::writes::is_read_tool(tool)) else {
+        return Operation::QueryEntity;
+    };
+    mcp::tools::TOOLS
+        .iter()
+        .find(|known| known.name == tool)
+        .and_then(|known| {
+            known
+                .operations
+                .iter()
+                .find(|op| mcp::tools::granted(gateway, endpoint, subject, &[**op]))
+        })
+        .copied()
+        .unwrap_or(Operation::UpsertBatch)
 }
 
 /// One `tools/call` of the hub or of a named server as the broker's view of the member answers
@@ -579,7 +599,12 @@ pub(crate) async fn member_call(
     mut message: Value,
 ) -> Value {
     let id = message["id"].clone();
-    let operation = mcp_operation(message["params"]["name"].as_str());
+    let operation = mcp_operation(
+        gateway,
+        endpoint,
+        subject,
+        message["params"]["name"].as_str(),
+    );
     let mut request = Request::new(Body::empty());
     if let Err(refusal) =
         view_request(gateway, endpoint, subject, "", operation, &mut request).await

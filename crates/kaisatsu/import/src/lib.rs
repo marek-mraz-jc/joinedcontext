@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Embedded JSON Schema of the accepted realm representation (W1b).
@@ -337,13 +337,48 @@ pub const KNOWN_FLOW_ALIASES: &[&str] = &[
 ];
 
 fn sha256_json(val: &Value) -> String {
-    let bytes = serde_json::to_vec(val).unwrap_or_default();
-    let digest = Sha256::digest(&bytes);
+    hex(&Sha256::digest(serde_json::to_vec(val).unwrap_or_default()))
+}
+
+fn hex(digest: &[u8]) -> String {
     let mut s = String::with_capacity(64);
     for b in digest {
         s.push_str(&format!("{b:02x}"));
     }
     s
+}
+
+/// What the apply's fast path compares with the last apply: the documents and the current value
+/// of each secret reference in them (`$(file:...)`, `$(env:NAME)`, `$(NAME)`), each value only
+/// as its hash. A rotated secret file or variable behind an unchanged document so re-applies,
+/// where the documents alone read "unchanged" and kept the old secret (jc-smoke-live F5).
+fn apply_checksum(merged: &Value, opts: &ApplyOptions) -> String {
+    fn refs<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
+        match v {
+            Value::String(s) if s.trim().starts_with("$(") && s.trim().ends_with(')') => {
+                out.push(s)
+            }
+            Value::Array(a) => a.iter().for_each(|v| refs(v, out)),
+            Value::Object(o) => o.values().for_each(|v| refs(v, out)),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    refs(merged, &mut found);
+    let mut h = Sha256::new();
+    h.update(sha256_json(merged));
+    for raw in found {
+        h.update([0]);
+        h.update(raw);
+        match resolve_secret_value(raw, "secret", opts) {
+            Ok(value) => {
+                h.update([1]);
+                h.update(Sha256::digest(value));
+            }
+            Err(_) => h.update([2]),
+        }
+    }
+    hex(&h.finalize())
 }
 
 /// True when `raw` is a `$(NAME)` / `$(env:NAME)` reference to a variable that is set nowhere.
@@ -369,12 +404,14 @@ fn resolve_secret_value(raw: &str, field_path: &str, opts: &ApplyOptions) -> Res
     let trimmed = raw.trim();
     if let Some(inner) = trimmed.strip_prefix("$(").and_then(|s| s.strip_suffix(')')) {
         if let Some(file_path) = inner.strip_prefix("file:") {
-            let candidate = Path::new(file_path.trim());
             let base_dir = opts.secrets_dir.as_deref().ok_or_else(|| {
                 KaisatsuError::BadRequest(format!(
                     "{field_path}: $(file:...) requires a configured secrets directory"
                 ))
             })?;
+            // A relative name is read under the secrets directory, so a realm file and its
+            // secrets copied to another path together still apply.
+            let candidate = base_dir.join(file_path.trim());
             let canonical_base = base_dir
                 .canonicalize()
                 .unwrap_or_else(|_| base_dir.to_path_buf());
@@ -825,6 +862,79 @@ pub async fn compute_realm_state_checksum(
     Ok(sha256_json(&exported))
 }
 
+/// D5: the domains a Keycloak realm file lets CIMD clients come from, as Keycloak decides it: an
+/// enabled client policy whose `client-id-uri` condition (scheme `https`) names the client
+/// domains, and whose profile's `client-id-metadata-document` executor names the redirect
+/// domains. No such policy (prod's smartcity): both empty, and every https client_id is unknown.
+#[must_use]
+pub fn cimd_policy(realm: &Value) -> (Vec<String>, Vec<String>) {
+    let strings = |v: Option<&Value>| -> Vec<String> {
+        v.and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let profiles = realm
+        .pointer("/clientProfiles/profiles")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut clients = Vec::new();
+    let mut redirects = Vec::new();
+    let policies = realm
+        .pointer("/clientPolicies/policies")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for policy in policies {
+        if policy.get("enabled").and_then(Value::as_bool) == Some(false) {
+            continue;
+        }
+        let Some(cond) = policy
+            .get("conditions")
+            .and_then(Value::as_array)
+            .and_then(|c| {
+                c.iter()
+                    .find(|c| c.get("condition").and_then(Value::as_str) == Some("client-id-uri"))
+            })
+            .and_then(|c| c.get("configuration"))
+        else {
+            continue;
+        };
+        if !strings(cond.get("client-id-uri-scheme"))
+            .iter()
+            .all(|s| s == "https")
+        {
+            continue;
+        }
+        for name in strings(policy.get("profiles")) {
+            let executor = profiles
+                .iter()
+                .filter(|p| p.get("name").and_then(Value::as_str) == Some(name.as_str()))
+                .filter_map(|p| p.get("executors").and_then(Value::as_array))
+                .flatten()
+                .find(|e| {
+                    e.get("executor").and_then(Value::as_str) == Some("client-id-metadata-document")
+                });
+            if let Some(executor) = executor {
+                clients.extend(strings(cond.get("client-id-uri-allow-permitted-domains")));
+                redirects.extend(strings(
+                    executor.pointer("/configuration/cimd-allow-permitted-domains"),
+                ));
+            }
+        }
+    }
+    clients.sort();
+    clients.dedup();
+    redirects.sort();
+    redirects.dedup();
+    (clients, redirects)
+}
+
 /// Before a real apply writes anything: every secret variable the documents name is set, except
 /// where an existing client or SMTP configuration keeps its current secret (all or nothing).
 async fn refuse_unset_secret_variables(
@@ -903,7 +1013,7 @@ pub async fn apply_realm_files(
 ) -> Result<ApplyReport> {
     let merged = merge_realm_files(files)?;
     let warnings = check_realm_value(&merged, opts)?;
-    let file_checksum = sha256_json(&merged);
+    let file_checksum = apply_checksum(&merged, opts);
 
     let obj = merged
         .as_object()
@@ -949,6 +1059,11 @@ pub async fn apply_realm_files(
 
     // 1. RealmConfig
     let mut realm_cfg: RealmConfig = serde_json::from_value(merged.clone()).unwrap_or_default();
+    if merged.get("cimdAllowedClientDomains").is_none() {
+        let (clients, redirects) = cimd_policy(&merged);
+        realm_cfg.cimd_allowed_client_domains = clients;
+        realm_cfg.cimd_allowed_redirect_domains = redirects;
+    }
     realm_cfg.id = realm_id.clone();
     realm_cfg.realm = realm_name.clone();
     realm_cfg.apply_checksum = Some(file_checksum.clone());

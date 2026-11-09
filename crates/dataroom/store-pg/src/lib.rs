@@ -1140,6 +1140,72 @@ impl Store for PgStore {
         })
     }
 
+    fn claim_harvest_run<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        mut run: HarvestRun,
+        stale_before: chrono::DateTime<Utc>,
+    ) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            run.org_id = ctx.org_id;
+            run.catalogue_id = ctx.catalogue_id;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let stale: Vec<(Json<HarvestRun>,)> = sqlx::query_as(
+                "SELECT doc FROM dataroom.cat_harvest_run
+                 WHERE org_id = $1 AND catalogue_id = $2 AND source_id COLLATE \"C\" = $3
+                   AND state = 'running' AND started_at < $4
+                 FOR UPDATE",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(&run.source_id)
+            .bind(stale_before)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            for (Json(mut old),) in stale {
+                dataroom_core::abandon_run(&mut old);
+                sqlx::query(
+                    "UPDATE dataroom.cat_harvest_run SET state = $4, finished_at = $5, doc = $6
+                     WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = $3",
+                )
+                .bind(ctx.org_id.as_uuid())
+                .bind(ctx.catalogue_id.as_uuid())
+                .bind(&old.id)
+                .bind(old.state.as_str())
+                .bind(old.finished_at)
+                .bind(Json(&old))
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+            }
+            // The partial unique index `cat_harvest_run_one_running` is the lock: a second
+            // Running row of the source waits for the first transaction, then inserts nothing.
+            let inserted = sqlx::query(
+                "INSERT INTO dataroom.cat_harvest_run
+                 (org_id, catalogue_id, id, source_id, state, started_at, doc)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 ON CONFLICT (org_id, catalogue_id, source_id) WHERE state = 'running'
+                 DO NOTHING",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(&run.id)
+            .bind(&run.source_id)
+            .bind(run.state.as_str())
+            .bind(run.started_at)
+            .bind(Json(&run))
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?
+            .rows_affected();
+            tx.commit().await.map_err(db_err)?;
+            Ok(inserted == 1)
+        })
+    }
+
     fn record_activity<'a>(
         &'a self,
         ctx: &'a RequestCtx,

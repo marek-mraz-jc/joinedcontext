@@ -10,6 +10,9 @@ import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { expandOperations } from "./endpoints/operationGroups";
 import { kindPlural } from "../kindWords";
+import { personLabel, usePersonNames } from "../api/personNames";
+
+const NO_NAMES = new Map<string, string>();
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -75,11 +78,14 @@ export function verbsInWords(verbs: readonly string[], t: Translate, language: s
 }
 
 /**
- * The display name of a grantee: an endpoint's role by its endpoint, anything else by its id.
+ * The display name of a grantee: an endpoint's role by its endpoint, a person by name, anything
+ * else by its id.
  * `endpoint:{project}/{endpoint}[/{tier}]` is the role an Endpoint declares for its readers and,
  * with a tier, for its stewards.
  */
-export function granteeName(kind: string, id: string, t: Translate): string {
+export function granteeName(kind: string, id: string, t: Translate, names: Map<string, string> = NO_NAMES): string {
+  // A person is a Keycloak id: their name when it was resolved, never the bare id (UI-01).
+  if (kind === "user") return personLabel(id, names);
   const endpointRole = kind === "role" ? /^endpoint:[^/]+\/([^/]+)(?:\/(.+))?$/.exec(id) : null;
   if (endpointRole) {
     const [, endpoint, tier] = endpointRole;
@@ -154,10 +160,11 @@ export function OperationsInWords({ operations }: { operations: readonly string[
 /** A grantee by name, what kind of grantee it is muted beside it and its id on hover. */
 export function GranteeInWords({ kind, id }: { kind: string; id: string }): JSX.Element {
   const { t } = useTranslation();
+  const names = usePersonNames(kind === "user" ? [id] : []);
   if (!id) return <span className="text-fg-subtle">{t("policies.sentence.nobody")}</span>;
   return (
     <span className="flex flex-col" title={`${kind}:${id}`}>
-      <span className="text-fg">{granteeName(kind, id, t)}</span>
+      <span className="text-fg">{granteeName(kind, id, t, names)}</span>
       <span className="text-caption text-fg-muted">
         {t(`choice.principalKind.${kind}`, { defaultValue: kind })}
       </span>

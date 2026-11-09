@@ -31,16 +31,21 @@ export function day(value: string | undefined, language: string): string | undef
   return Number.isNaN(at.getTime()) ? value : new Intl.DateTimeFormat(language, { dateStyle: "medium" }).format(at);
 }
 
-export function policySentence(policy: Partial<PolicyForm>, t: T, language: string): string {
+export function policySentence(
+  policy: Partial<PolicyForm>,
+  t: T,
+  language: string,
+  names?: Map<string, string>,
+): string {
   // A Policy with `rules[]` grants once per rule (ADR-N-057): one sentence each (F-UI3-015).
   const rules = (policy as { rules?: unknown }).rules;
   if (Array.isArray(rules) && rules.length > 0) {
     return rules
-      .map((rule) => policySentence({ ...policy, ...(rule as Partial<PolicyForm>), rules: undefined } as Partial<PolicyForm>, t, language))
+      .map((rule) => policySentence({ ...policy, ...(rule as Partial<PolicyForm>), rules: undefined } as Partial<PolicyForm>, t, language, names))
       .join(" ");
   }
   const assignee = policy.assignee ?? { kind: "role", id: "" };
-  const named = granteeName(assignee.kind, assignee.id, t);
+  const named = granteeName(assignee.kind, assignee.id, t, names);
   // An endpoint's role reads by its endpoint, not as "the role endpoint:helsinki/app-…" (T-4990).
   const who = named !== assignee.id
     ? named

@@ -147,7 +147,7 @@ function renderPage({
   endpoint = ENDPOINT,
 }: {
   space?: "readable" | "refused";
-  preview?: "serves" | "refuses";
+  preview?: "serves" | "refuses" | "fails";
   endpoint?: unknown;
 } = {}) {
   const sent: Sent[] = [];
@@ -173,6 +173,9 @@ function renderPage({
     if (path === PREVIEW) {
       if (preview === "refuses") {
         return json({ title: "Bad Request", detail: "projection.filter.q: an empty query string filters nothing" }, 400);
+      }
+      if (preview === "fails") {
+        return json({ title: "Service Unavailable", status: 503, detail: "the broker did not answer; try again shortly" }, 503);
       }
       const asked = JSON.parse(text) as { id?: string[]; limit: number };
       // Only the upcoming concert passes the filter; asked for both ids, it answers one.
@@ -361,6 +364,18 @@ describe("the endpoint's filter editor and its proof", () => {
         "The draft filter is refused: projection.filter.q: an empty query string filters nothing",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("says a failed preview once, with a retry, and shows no wait, table or window beside it", async () => {
+    renderPage({ preview: "fails" });
+
+    const proof = await screen.findByRole("region", { name: en.endpoints.proof.title });
+    const alert = await within(proof).findByText(/the broker did not answer; try again shortly/);
+    expect(within(proof).getByRole("button", { name: en.app.error.retry })).toBeInTheDocument();
+    expect(alert).toBeInTheDocument();
+    expect(within(proof).queryByText(en.endpoints.proof.loading)).not.toBeInTheDocument();
+    expect(within(proof).queryByRole("table")).not.toBeInTheDocument();
+    expect(within(proof).queryByText(/^Entities \d+ to \d+ of \d+$/)).not.toBeInTheDocument();
   });
 
   it("shows the same proof in the endpoint's form, for the classes and hidden attributes it holds", async () => {

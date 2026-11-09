@@ -41,6 +41,6 @@ pub use quota::{
 };
 pub use store::{MemorySecretStore, SecretStore, Store, StoreFuture};
 pub use validate::{
-    repo_disk_path, validate_branch_name, validate_full_ref_name, validate_package_segment,
-    validate_repo_or_owner_name, validate_tag_name, validate_tree_path,
+    check_secret_ref, is_secret_ref, repo_disk_path, validate_branch_name, validate_full_ref_name,
+    validate_package_segment, validate_repo_or_owner_name, validate_tag_name, validate_tree_path,
 };

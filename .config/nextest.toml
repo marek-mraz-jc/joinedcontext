@@ -20,8 +20,12 @@ final-status-level = "slow"
 # The runner has two cores and most tests wait on Postgres or a socket.
 test-threads = 4
 
+[profile.ci.junit]
+# target/nextest/ci/junit.xml: every test's time, uploaded by ci.yml (the partition sums)
+path = "junit.xml"
+
 [[profile.default.overrides]]
-filter = 'package(kaisatsu-store-pg) or (package(kaisatsu-server) and binary(cli)) or (package(jc) and (binary(portal_siblings) or binary(jc)))'
+filter = 'package(kaisatsu-store-pg) or (package(kaisatsu-server) and (binary(cli) or binary(refresh_reuse))) or (package(jc) and (binary(portal_siblings) or binary(jc) or binary(edge_client) or binary(restart_pg)))'
 test-group = 'pg-kaisatsu'
 
 [[profile.default.overrides]]

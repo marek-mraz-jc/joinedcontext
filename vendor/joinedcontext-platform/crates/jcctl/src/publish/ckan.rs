@@ -902,7 +902,18 @@ pub fn publish_views_on(
     }
 
     let mut done = Views::default();
-    for resource in &resources {
+    // CKAN flags each resource that holds a view (`has_views`): one without any has nothing
+    // to update or delete, so its list is not read. Every hourly republish read the list of
+    // every resource, fifteen per dataset (C1). A forged view sets the flag and is still found.
+    let viewless: BTreeSet<&str> = live
+        .get("resources")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|r| r.get("has_views") == Some(&Value::Bool(false)))
+        .filter_map(|r| r.get("id").and_then(Value::as_str))
+        .collect();
+    for resource in resources.iter().filter(|r| !viewless.contains(r.as_str())) {
         let views = api
             .show("resource_view_list", resource)?
             .unwrap_or_default();
@@ -1900,7 +1911,14 @@ impl InMemoryCkan {
 impl CkanApi for InMemoryCkan {
     fn show(&self, action: &str, name: &str) -> Result<Option<Value>, CkanError> {
         match action {
-            "package_show" => Ok(self.packages.get(name).cloned()),
+            // CKAN flags each resource that holds a view.
+            "package_show" => Ok(self.packages.get(name).cloned().map(|mut p| {
+                for r in p["resources"].as_array_mut().into_iter().flatten() {
+                    let id = r["id"].as_str().unwrap_or_default();
+                    r["has_views"] = json!(!self.views(id).is_empty());
+                }
+                p
+            })),
             "organization_show" => Ok(self.organizations.get(name).map(|title| match title {
                 Some(title) => json!({ "name": name, "title": title }),
                 None => json!({ "name": name }),

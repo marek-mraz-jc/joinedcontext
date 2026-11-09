@@ -230,6 +230,29 @@ describe("ckan publishing manager", () => {
     expect(failed).toHaveClass("text-danger");
   });
 
+  // UI judge 2026-11-09: a green Live beside "published to …" and a red failed run read as two
+  // answers, and "Fix the cause" told a viewer to do what only a publisher may.
+  it("says an endpoint whose last run failed is not published, and whom a viewer asks", async () => {
+    const failing = structuredClone(STATUS);
+    Object.assign(failing.publications[1], { instance: "open-data", instanceMissing: false, phase: "Live" });
+    renderCkan(failing, { project: "banskabystrica", bootstrap: false, grants: [] });
+    const entry = (await screen.findByText("hluk-public")).closest("li") as HTMLElement;
+    expect(await within(entry).findByText("not published to open-data")).toBeInTheDocument();
+    expect(within(entry).queryByText("published to open-data")).not.toBeInTheDocument();
+    expect(await within(entry).findByTestId("ckan-last-run")).toHaveTextContent(
+      /A project steward publishes it again once the cause is fixed\.$/,
+    );
+  });
+
+  it("keeps the dataset page in view and folds the formats under one line", async () => {
+    // UI judge 2026-11-09: nine format links per card made the list 4,850 px tall on a phone.
+    renderCkan();
+    const summary = await screen.findByText(en.ckan.publications.formats.replace("{count}", "2"));
+    expect(summary.tagName).toBe("SUMMARY");
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getAllByText(en.ckan.publications.mapAndTable)[0].closest("a")).toHaveAttribute("href", expect.stringContaining("/dataset/"));
+  });
+
   it("says which endpoint points at a catalogue that is not there", async () => {
     renderCkan();
 

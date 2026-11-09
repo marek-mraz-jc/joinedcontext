@@ -322,6 +322,10 @@ pub async fn sync_repo_mirrors_on_commit(
         if !m.sync_on_commit {
             continue;
         }
+        if !shako_core::is_secret_ref(&m.credential_secret_ref) {
+            // Stored before the API refused non-key names: still used, never logged.
+            tracing::warn!(mirror = %m.id, "a push mirror's secret reference is not a secret-store key name; add the mirror again");
+        }
         let cred = state
             .secret_store
             .get_secret(repo.org_id, &m.credential_secret_ref)

@@ -206,7 +206,8 @@ function GrantTable({
   const { t, i18n } = useTranslation();
   const labelsOf = useLabels(slug, i18n.language);
   return (
-    <Table caption={caption}>
+    // A card per grant below 640 px: six columns of chips were cut off at 400 px.
+    <Table stack caption={caption}>
       <TableHead>
         <TableHeaderCell>
           <Term name="entityType">{t("access.matrix.type")}</Term>
@@ -239,19 +240,19 @@ function GrantTable({
                     ) : null}
                   </th>
                 ) : null}
-                <TableCell>
+                <TableCell data-label={t("access.matrix.read")}>
                   <Operations actions={readsOf(actions)} />
                 </TableCell>
-                <TableCell>
+                <TableCell data-label={t("access.matrix.write")}>
                   <Operations actions={writesOf(actions)} tone="warning" />
                 </TableCell>
-                <TableCell>
+                <TableCell data-label={t("access.matrix.attributes")}>
                   <Attributes attributes={entry.attributes} labels={labels} />
                 </TableCell>
-                <TableCell>
+                <TableCell data-label={t("access.matrix.residual")}>
                   <ConstraintList entry={entry} labels={labels} />
                 </TableCell>
-                <TableCell>
+                <TableCell data-label={t("access.matrix.source")}>
                   <Sources project={project} names={sourcesOf(entry, policies, space, effect)} />
                 </TableCell>
               </TableRow>

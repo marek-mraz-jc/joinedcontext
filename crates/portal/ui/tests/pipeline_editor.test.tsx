@@ -1111,6 +1111,10 @@ describe("the pipeline editor against the UI contract", () => {
     expect(box).toHaveAttribute("readonly");
     expect(within(dialog).queryByLabelText(en.pipelines.field.bloblang)).toBeNull();
 
+    // The live walk found the box without a hint (UI-16).
+    expect(within(section(dialog, "workbench-mapping-title")).getByLabelText(en.pipelines.workbench.mapping.fileEdit)).toHaveAccessibleDescription(
+      en.pipelines.workbench.mapping.fileEditHint,
+    );
     await user.click(within(section(dialog, "workbench-mapping-title")).getByLabelText(en.pipelines.workbench.mapping.fileEdit));
     expect(box).not.toHaveAttribute("readonly");
     fireEvent.change(box, { target: { value: `${file}# checked\n` } });
@@ -1149,7 +1153,7 @@ describe("the pipeline editor against the UI contract", () => {
     expect(await within(file).findByRole("button", { name: /retry|try again/i })).toBeInTheDocument();
     const edit = within(section(dialog, "workbench-mapping-title")).getByLabelText(en.pipelines.workbench.mapping.fileEdit);
     expect(edit).toHaveAttribute("aria-disabled", "true");
-    expect(edit).toHaveAccessibleDescription(en.pipelines.workbench.mapping.fileEditDisabled);
+    expect(edit).toHaveAccessibleDescription(`${en.pipelines.workbench.mapping.fileEditHint} ${en.pipelines.workbench.mapping.fileEditDisabled}`);
     await user.click(edit);
     expect(edit).not.toBeChecked();
   });

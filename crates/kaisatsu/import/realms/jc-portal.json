@@ -60,6 +60,55 @@
     "connector",
     "offline_access"
   ],
+  "clientProfiles": {
+    "profiles": [
+      {
+        "name": "cimd",
+        "description": "Client ID Metadata Documents of the known AI clients",
+        "executors": [
+          {
+            "executor": "client-id-metadata-document",
+            "configuration": {
+              "accept-public-client-with-confidential-client-only-grant": true,
+              "cimd-allow-permitted-domains": [
+                "claude.ai",
+                "vscode.dev",
+                "code.visualstudio.com",
+                "localhost",
+                "127.0.0.1"
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "clientPolicies": {
+    "policies": [
+      {
+        "name": "cimd",
+        "description": "Client ids that are https URLs of the known AI clients",
+        "enabled": true,
+        "conditions": [
+          {
+            "condition": "client-id-uri",
+            "configuration": {
+              "client-id-uri-allow-permitted-domains": [
+                "claude.ai",
+                "vscode.dev"
+              ],
+              "client-id-uri-scheme": [
+                "https"
+              ]
+            }
+          }
+        ],
+        "profiles": [
+          "cimd"
+        ]
+      }
+    ]
+  },
   "clientScopes": [
     {
       "name": "connector",
@@ -432,23 +481,37 @@
     },
     {
       "clientId": "mcp-hub",
-      "name": "MCP hub",
+      "name": "MCP hub connector",
       "enabled": true,
       "protocol": "openid-connect",
-      "publicClient": false,
-      "bearerOnly": true,
-      "standardFlowEnabled": false,
+      "publicClient": true,
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "redirectUris": [],
+      "redirectUris": [
+        "https://claude.ai/api/mcp/auth_callback",
+        "https://claude.com/api/mcp/auth_callback",
+        "https://chatgpt.com/connector_platform_oauth_redirect",
+        "https://platform.openai.com/chatkit-oauth-callback"
+      ],
       "webOrigins": [],
       "defaultClientScopes": [
-        "basic"
+        "acr",
+        "basic",
+        "email",
+        "profile",
+        "roles"
       ],
-      "optionalClientScopes": [],
-      "attributes": {},
-      "protocolMappers": []
+      "optionalClientScopes": [
+        "offline_access"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [],
+      "consentRequired": true
     },
     {
       "clientId": "mcp-local",

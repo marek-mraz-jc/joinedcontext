@@ -1,3 +1,4 @@
+import pytest
 import json
 import shutil
 import sys
@@ -140,3 +141,16 @@ def test_a_known_gap_stays_listed_but_only_a_new_failure_turns_the_verdict_red(t
     known.write_text("")
     assert all_suite.main(["--base-url", "http://localhost:1", "--out", str(out), "--export", "E",
                            "--known", str(known)]) == 1
+
+
+def test_the_realm_is_the_state_files_name_else_jc_and_a_bad_name_stops(tmp_path):
+    from common import realm_of
+    assert realm_of(None) == "jc"
+    assert realm_of(tmp_path) == "jc"
+    (tmp_path / "realm-name.txt").write_text("smartcity\n")
+    assert realm_of(tmp_path) == "smartcity"
+    assert realm_of(str(tmp_path)) == "smartcity"
+    for bad in ("master", "Master", "../x", "a/b", "a b", ".x"):
+        (tmp_path / "realm-name.txt").write_text(bad)
+        with pytest.raises(SystemExit):
+            realm_of(tmp_path)

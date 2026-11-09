@@ -24,6 +24,7 @@ pub mod broker_routes;
 pub mod brute_force;
 pub mod cimd;
 pub mod client_ip;
+pub mod device;
 pub mod dpop;
 pub mod dpop_guard;
 pub mod guard;
@@ -41,6 +42,6 @@ pub use dpop::{
 pub use dpop_guard::{
     external_htu, into_dpop_aware_response, parse_authz_header, verify_resource_dpop,
 };
-pub use guard::{OutboundGuard, OutboundPolicy};
+pub use guard::{ClusterCredentials, OutboundGuard, OutboundPolicy};
 pub use handlers::{OidcState, dispatch_backchannel_logout, oidc_router, redirect_with_params};
 pub use redirect::{validate_post_logout_redirect_uri, validate_redirect_uri};

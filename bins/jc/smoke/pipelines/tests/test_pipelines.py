@@ -1,3 +1,4 @@
+import pytest
 """Unit tests of the pipelines suite and bench (no jc needed):
 python3 -m pytest bins/jc/smoke/pipelines/tests"""
 
@@ -121,3 +122,76 @@ def test_the_runner_check_refuses_the_portal_page_answered_in_place_of_ekiben():
     assert suite.runner_list({"content-type": "text/html"}, b"<!doctype html>") is None
     assert suite.runner_list({"content-type": "application/json"}, b"not json") is None
     assert suite.runner_list({"content-type": "application/json"}, b'{"zilina.a": {}}') == {"zilina.a": {}}
+
+
+def test_the_runner_check_sends_the_ekiben_token_jc_was_given_as_a_file(tmp_path):
+    """jc removes <state>/ekiben-token when given --ekiben-token-file: the suite reads
+    <home>/secrets/ekiben-token instead, or ekiben answers its stream list 401."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    import suite
+    from common import Http
+
+    class Ekiben(BaseHTTPRequestHandler):
+        def do_GET(self):
+            ok = self.headers.get("Authorization") == "Bearer t0ken"
+            self.send_response(200 if ok else 401)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"{}" if ok else b'{"error":"unauthorized"}')
+
+        def log_message(self, *a):
+            pass
+
+    (tmp_path / "state").mkdir()
+    (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets" / "ekiben-token").write_text("t0ken\n")
+    srv = HTTPServer(("127.0.0.1", 0), Ekiben)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        http = Http(f"http://127.0.0.1:{srv.server_port}")
+        assert http.call("GET", "/streams/streams", None)[0] == 401
+        tok = suite.ekiben_token(tmp_path / "state")
+        assert http.call("GET", "/streams/streams", tok)[0] == 200
+    finally:
+        srv.shutdown()
+    assert suite.ekiben_token(tmp_path / "nothing" / "state") is None
+
+
+def test_the_admin_signs_in_at_the_realm_the_state_names(tmp_path, monkeypatch):
+    import common
+    import people
+    seen = []
+    monkeypatch.setattr(common.Http, "call", lambda self, m, path, *a, **k: seen.append(path) or (401, {}, b""))
+    (tmp_path / "portal-admin-client-secret").write_text("x")
+    (tmp_path / "realm-name.txt").write_text("smartcity")
+    with pytest.raises(RuntimeError, match="401"):
+        people.Admin("http://127.0.0.1:9", tmp_path)
+    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]
+
+
+def test_a_schedule_prods_portal_refuses_too_is_a_named_same_on_prod_skip(monkeypatch):
+    import suite
+    assert manifests.cron_out_of_range("77 3 * * 3") == "minute"
+    assert manifests.cron_out_of_range("0 25 * * *") == "hour"
+    for ok in ("0 5 * * *", "*/15 0-23 1,15 * 7", "", "0 5 * *"):
+        assert manifests.cron_out_of_range(ok) is None, ok
+
+    class H:
+        def call(self, method, path, *a, **k):
+            if path.endswith("/bento"):
+                return 404, {}, b""
+            return 200, {}, json.dumps({"metadata": {"name": "noise-rail"}, "status": {
+                "phase": "Error", "conditions": [{"type": "StreamDeployed", "status": "False", "reason": "RunnerRefused",
+                                                  "message": "schedule `77 3 * * 3` is not five cron fields"}]}}).encode()
+
+    def rows(schedule):
+        r = suite.Results("pipelines", "http://x")
+        p = manifests.Pipeline("helsinki", "noise-rail", "p.yaml", {"schedule": schedule}, False)
+        suite.check_pipeline(r, H(), None, p)
+        return {c["id"]: c for c in r.rows}
+    status = rows("77 3 * * 3")["status"]
+    assert status["result"] == "skip" and status["reason"].startswith("same on prod: schedule minute out of range")
+    # A refusal of a schedule prod would take stays a fail.
+    assert rows("7 3 * * 3")["status"]["result"] == "fail"

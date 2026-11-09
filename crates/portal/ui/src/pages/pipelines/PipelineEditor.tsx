@@ -146,6 +146,35 @@ export function endpointUrn(orgDomain: string, endpoint: Manifest): string | und
 }
 
 /**
+ * The Endpoints a pipeline's source and target choose from. A saved target the URN this Portal
+ * mints does not match (another domain spelling, an older URN) stays the stored value under its
+ * Endpoint's name when one Endpoint of the list ends it in `:{space}:{name}`; only a target no
+ * Endpoint ends shows as the URN itself (UI judge 2026-11-09: it showed as `urn:urn:…`).
+ */
+export function endpointOptionsFor(
+  endpoints: Manifest[],
+  orgDomain: string,
+  current: string | undefined,
+  target: string | undefined,
+): EndpointOption[] {
+  const known: EndpointOption[] = endpoints.map((endpoint) => ({
+    name: endpoint.metadata.name,
+    urn: endpointUrn(orgDomain, endpoint),
+  }));
+  const names = known.map((endpoint) => endpoint.name);
+  const extra: EndpointOption[] = current && !names.includes(current) ? [{ name: current }] : [];
+  if (!target || known.some((endpoint) => endpoint.urn === target)) return [...known, ...extra];
+  const owner = endpoints.findIndex((endpoint) => {
+    const space = (endpoint.spec as { contextSpaceRef?: unknown }).contextSpaceRef;
+    return target.startsWith("urn:ngsi-ld:Endpoint:") && typeof space === "string" && target.endsWith(`:${space}:${endpoint.metadata.name}`);
+  });
+  if (owner >= 0) {
+    return [...known.map((endpoint, index) => (index === owner ? { ...endpoint, urn: target } : endpoint)), ...extra];
+  }
+  return [...known, ...extra, { name: target, urn: target }];
+}
+
+/**
  * The Endpoints a person may name in a pipeline (PL-94): a public one, or one into a space where
  * they read `Entity`. The server refuses the rest at every door with "No access to …"; a target
  * also needs `propose` on Pipeline there, which the API judges.
@@ -597,21 +626,10 @@ export function PipelineEditorDialog({
       ),
     [dataSourceList, draft?.source?.dataSourceRef],
   );
-  const endpointOptions = useMemo<EndpointOption[]>(() => {
-    const known = endpointList.map((endpoint) => ({
-      name: endpoint.metadata.name,
-      urn: endpointUrn(orgDomain, endpoint),
-    }));
-    const current = draft?.source?.endpointRef;
-    const target = draft?.targetEndpoint;
-    const names = known.map((endpoint) => endpoint.name);
-    const urns = known.flatMap((endpoint) => (endpoint.urn ? [endpoint.urn] : []));
-    return [
-      ...known,
-      ...(current && !names.includes(current) ? [{ name: current }] : []),
-      ...(target && !urns.includes(target) ? [{ name: `urn:${target}`, urn: target }] : []),
-    ];
-  }, [endpointList, orgDomain, draft?.source?.endpointRef, draft?.targetEndpoint]);
+  const endpointOptions = useMemo<EndpointOption[]>(
+    () => endpointOptionsFor(endpointList, orgDomain, draft?.source?.endpointRef, draft?.targetEndpoint),
+    [endpointList, orgDomain, draft?.source?.endpointRef, draft?.targetEndpoint],
+  );
 
   const secretNames = useMemo(() => knownSecretNames(dataSourceList), [dataSourceList]);
   const schema = useMemo(
