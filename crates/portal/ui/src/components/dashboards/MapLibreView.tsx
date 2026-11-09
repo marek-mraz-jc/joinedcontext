@@ -63,6 +63,8 @@ export interface MapLibreViewProps {
    * same map instead of a second one beside it.
    */
   onReady?: (map: MapLibreMap) => (() => void) | void;
+  /** Told once the map draws on the plain ground: no project, or its basemap route failed. */
+  onPlainGround?: () => void;
 }
 
 /**
@@ -227,6 +229,7 @@ export function MapLibreView({
   onReady,
   onMoveEnd,
   fill,
+  onPlainGround,
 }: MapLibreViewProps): JSX.Element {
   const { t } = useTranslation();
   const container = useRef<HTMLDivElement | null>(null);
@@ -238,6 +241,10 @@ export function MapLibreView({
   useEffect(() => {
     moveEnd.current = onMoveEnd;
   }, [onMoveEnd]);
+  const plainGround = useRef(onPlainGround);
+  useEffect(() => {
+    plainGround.current = onPlainGround;
+  }, [onPlainGround]);
   // The layers on the map, by name, to diff the next render against.
   const drawn = useRef(new Map<string, MapLayer>());
   /** The click handlers each drawn layer added, so its removal takes them along (F-UI1-016). */
@@ -271,6 +278,9 @@ export function MapLibreView({
       return;
     }
     map.current = instance;
+    if (!project) {
+      plainGround.current?.();
+    }
     const detach = onReady?.(instance);
     instance.on("load", () => setLoaded(instance));
     // A platform without a basemap answers the style with 404: the map falls back to the plain
@@ -283,6 +293,7 @@ export function MapLibreView({
         // `style.load` is what says the layers may be added now (T-3256).
         instance.once("style.load", () => setLoaded(instance));
         instance.setStyle(blankStyle());
+        plainGround.current?.();
       }
     });
     instance.on("moveend", () => {

@@ -4,7 +4,7 @@
  * of the dev export, written by daiya's own frame code (crates/daiya/query/tests/ngsild.rs
  * `the_helsinki_geomap_target_answers_the_frame_the_portal_map_reads`), never typed here.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "../src/i18n";
 import { PanelView } from "../src/components/panels/PanelView";
@@ -26,6 +26,7 @@ const calls = vi.hoisted(() => ({
   styles: [] as unknown[],
   clicks: new Map<string, (event: unknown) => void>(),
   popups: [] as HTMLElement[],
+  controls: [] as [string, string | undefined][],
 }));
 
 vi.mock("maplibre-gl", () => {
@@ -33,7 +34,10 @@ vi.mock("maplibre-gl", () => {
     constructor(options: Record<string, unknown>) {
       calls.constructed.push(options);
     }
-    addControl() {}
+    addControl(control: unknown, at?: string) {
+      calls.controls.push([control?.constructor.name ?? "", at]);
+    }
+    removeControl() {}
     addSource(id: string, source: never) {
       calls.sources.push({ id, source });
     }
@@ -76,7 +80,7 @@ vi.mock("maplibre-gl", () => {
       return this;
     }
   }
-  return { setWorkerUrl: () => {}, Map: FakeMap, NavigationControl: class {}, Popup: FakePopup };
+  return { setWorkerUrl: () => {}, Map: FakeMap, NavigationControl: class {}, ScaleControl: class {}, Popup: FakePopup };
 });
 
 const frames = frameFixture as unknown as Frame[];
@@ -103,6 +107,7 @@ beforeEach(() => {
   calls.styles.length = 0;
   calls.clicks.clear();
   calls.popups.length = 0;
+  calls.controls.length = 0;
 });
 
 describe("the helsinki air quality geomap", () => {
@@ -201,9 +206,11 @@ describe("the helsinki air quality geomap", () => {
 });
 
 describe("the geomap's basemap", () => {
-  it("draws on the plain ground without a project, fetching nothing", () => {
+  it("draws on the plain ground without a project, fetching nothing, and says so beside a scale", () => {
     draw(frames);
     expect(calls.constructed[0].style).toEqual(blankStyle());
+    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100 · no basemap on this platform, positions only");
+    expect(calls.controls).toContainEqual(["ScaleControl", "bottom-left"]);
   });
 
   it("asks the project's basemap route on the Portal's own origin, no token in the address, and falls back to the plain ground on a 404", () => {
@@ -213,8 +220,10 @@ describe("the geomap's basemap", () => {
     expect(url.origin).toBe(window.location.origin);
     expect(url.pathname).toBe("/api/v1/projects/helsinki/basemap/default/style.json");
     expect(url.search).toBe("");
-    calls.errorHandlers[0]();
+    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100");
+    act(() => calls.errorHandlers[0]());
     expect(calls.styles).toEqual([blankStyle()]);
+    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100 · no basemap on this platform, positions only");
   });
 });
 

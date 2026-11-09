@@ -371,10 +371,12 @@ for (const width of [1440, 400]) {
           await expect(map.getByText("No data")).toBeVisible();
         } else if (state === "nolocation") {
           await expect(map.getByText("No row has a location")).toBeVisible();
+          await expect(map.getByText("None of the 100 rows has a point in a location field.")).toBeVisible();
           await expect(map.locator("canvas")).toHaveCount(0);
         } else {
           await expect(map.getByRole("application", { name: `Map of Air quality map (t6516-mw3xzrhm): ${state === "filled" ? 100 : 88} markers` })).toBeVisible();
           await expect(map.locator("canvas")).toHaveCount(1);
+          await expect(map.getByText(`Markers: ${state === "filled" ? 100 : 88} · no basemap on this platform, positions only`)).toBeVisible();
           await expect(map.getByText(/shown as a table/)).toHaveCount(0);
           if (state === "unlocated") await expect(map.getByText("12 of 100 rows have no location and are not drawn.")).toBeVisible();
           // The markers are drawn: a shot of the map holds the layer's orange (#FF9830).

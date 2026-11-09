@@ -11903,12 +11903,14 @@
     "geomap": {
       "label": "Map of {title}: {n} markers",
       "noneTitle": "No row has a location",
-      "none": "None of the {rows} rows read holds a point to draw.",
+      "none": "None of the {rows} rows has a point in a location field.",
       "mode": "This map reads locations from a GeoJSON point or latitude and longitude fields, not by “{mode}”.",
       "missing": "{n} of {rows} rows have no location and are not drawn.",
       "basemap": "The “{type}” basemap is not drawn here.",
       "view": "The saved view is not kept; the map fits its markers.",
-      "layers": "Only the first of {n} layers is drawn."
+      "layers": "Only the first of {n} layers is drawn.",
+      "plain": "no basemap on this platform, positions only",
+      "count": "Markers: {n}"
     }
   },
   "repositories": {

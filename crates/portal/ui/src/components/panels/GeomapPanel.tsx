@@ -5,12 +5,15 @@
  * name and values, and the view fitted to the markers. What the map cannot honour (another
  * basemap, a fixed view, a location mode it does not read) is said in one line above it.
  */
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { JSX } from "react";
+import { ScaleControl } from "maplibre-gl";
+import type { Map as MapLibreMap } from "maplibre-gl";
 import { useTranslation } from "react-i18next";
 import { MapLibreView } from "../dashboards/MapLibreView";
 import type { MapLayer } from "../dashboards/MapLibreView";
 import { Icon } from "../ui";
+import { useIsPhone } from "../../phone";
 import type { Frame, FrameField } from "./frames";
 import { displayNameOf } from "./frames";
 import type { FieldConfigSource } from "./fieldConfig";
@@ -18,6 +21,8 @@ import { colorOf, displayValue, settingsFor } from "./fieldConfig";
 
 /** Grafana's markers defaults where the layer names none (`green`, 5 px, 0.4). */
 const DEFAULT_MARKER = { color: "green", size: 5, opacity: 0.4 };
+/** The tallest map on a phone, in px: a panel's desktop height is mostly empty ground there. */
+const PHONE_HEIGHT = 360;
 /** The fields a tooltip shows besides the name, Grafana's way: the row's values, a few. */
 const TOOLTIP_FIELDS = 6;
 
@@ -152,6 +157,17 @@ export interface GeomapPanelProps {
 
 export function GeomapPanel({ title, frames, fieldConfig, options, height, locale, project, empty }: GeomapPanelProps): JSX.Element {
   const { t } = useTranslation();
+  const phone = useIsPhone();
+  // On the plain ground the markers float on nothing: the caption says why and the scale gives distance.
+  const [plain, setPlain] = useState(false);
+  const onPlainGround = useCallback(() => setPlain(true), []);
+  const onReady = useCallback((map: MapLibreMap) => {
+    const scale = new ScaleControl({ unit: "metric" });
+    map.addControl(scale, "bottom-left");
+    return () => {
+      map.removeControl(scale);
+    };
+  }, []);
   const markers = useMemo(() => markersOf(frames, options, fieldConfig, locale), [frames, options, fieldConfig, locale]);
   const layers = useMemo<MapLayer[]>(
     () => [{ name: "markers", url: "", data: markers.features, style: "circle", marker: markers.marker, popupProperties: markers.popupProperties, popup: markers.popup }],
@@ -162,15 +178,19 @@ export function GeomapPanel({ title, frames, fieldConfig, options, height, local
     return empty(t("dashboardView.geomap.noneTitle"), mode ? t("dashboardView.geomap.mode", mode.values) : t("dashboardView.geomap.none", { rows: markers.rows }));
   }
   return (
-    <div className="flex h-full min-h-0 flex-col gap-1" style={{ height }}>
+    <div className="flex h-full min-h-0 flex-col gap-1" style={{ height: phone ? Math.min(height, PHONE_HEIGHT) : height }}>
       {markers.notes.length > 0 ? (
-        <p className="flex min-w-0 items-start gap-1 text-caption text-fg-muted" data-geomap-note="">
+        <p className="flex min-w-0 items-start gap-1 text-caption text-fg" data-geomap-note="">
           <Icon name="info" className="mt-0.5 size-3.5 shrink-0" />
           <span className="min-w-0">{markers.notes.map((note) => t(`dashboardView.geomap.${note.key}`, note.values)).join(" ")}</span>
         </p>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-hidden rounded-sm">
-        <MapLibreView layers={layers} label={t("dashboardView.geomap.label", { title, n: markers.features.features.length })} project={project} fill />
+      <div className="relative min-h-0 flex-1 overflow-hidden rounded-sm">
+        <MapLibreView layers={layers} label={t("dashboardView.geomap.label", { title, n: markers.features.features.length })} project={project} fill onReady={onReady} onPlainGround={onPlainGround} />
+        <p className="pointer-events-none absolute left-2 top-2 max-w-[calc(100%-4rem)] rounded-sm bg-surface px-1.5 py-0.5 text-caption text-fg shadow-1" data-geomap-caption="">
+          {t("dashboardView.geomap.count", { n: markers.features.features.length })}
+          {plain ? ` · ${t("dashboardView.geomap.plain")}` : null}
+        </p>
       </div>
     </div>
   );
