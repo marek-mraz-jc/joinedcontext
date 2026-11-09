@@ -157,6 +157,11 @@ class Suite:
                     pending.discard(org)
             if pending:
                 time.sleep(5)
+        # Sessions and tokens taken while waiting predate the {org}_bound groups (jc_org): every
+        # check signs in again.
+        for p in self.people.values():
+            p.pop("http", None)
+            p.pop("tokens", None)
         self.row("setup.bindings-synced", ",".join(self.exp), "GET /api/v1/projects (each org admin)",
                  "every admin lists its projects; DelegationPolicy, Dashboard and {org}_bound group synced", f"not yet: {sorted(pending)}" if pending else "all",
                  not pending)
@@ -701,7 +706,7 @@ class Suite:
                 org = key.rsplit("-", 1)[0] if key != "platform" else None
                 own = sorted(self.exp[org]["projects"])[0] if org else "helsinki"
                 foreign = sorted(sorted(o["projects"])[0] for k, o in self.exp.items() if k != org)[0] if org else None
-                pages = [("projects", "/"), ("own-project", f"/projects/{own}"), ("organization", "/organization")]
+                pages = [("own-project", f"/projects/{own}"), ("projects", "/"), ("organization", "/organization")]
                 if foreign:
                     pages.append(("foreign-project", f"/projects/{foreign}"))
                 for width, height in ((1440, 900), (400, 860)):
@@ -719,6 +724,22 @@ class Suite:
                         page.screenshot(path=str(file), full_page=False)
                         text = page.locator("body").inner_text(timeout=5000)
                         shots.append({"persona": key, "page": name, "path": path, "width": width, "file": file.name})
+                        if name == "own-project":
+                            # The control: the app rendered and names the project, or no other page
+                            # of this context is judged.
+                            item = next((i for i in (self.session(key).json("GET", "/api/v1/projects")[1] or {})
+                                         .get("items", []) if i.get("name") == own), {})
+                            title = item.get("title")
+                            names = [own, *(title.values() if isinstance(title, dict) else [title] if title else [])]
+                            rendered = "UI bundle not built" not in text and any(n.lower() in text.lower() for n in names)
+                            self.row(f"ui.{key}.own-project.{width}", org or "all", f"GET {path} (browser)",
+                                     f"the Portal app names {own} or its title", text.strip()[:80].replace("\n", " "), rendered)
+                            if not rendered:
+                                for later, _ in pages[1:]:
+                                    if org and later in ("projects", "foreign-project"):
+                                        self.row(f"ui.{key}.{later}.{width}", org or "all", "(browser)", "-", "-", None,
+                                                 "the Portal app did not render (own-project control): nothing to judge")
+                                break
                         if name == "projects" and org:
                             names = set(re.findall(r"[a-z0-9-]+", text.lower()))
                             seen_foreign = sorted(x for x in everything - set(self.exp[org]["projects"])
@@ -728,7 +749,7 @@ class Suite:
                                      not seen_foreign)
                         if name == "foreign-project":
                             other = next(k for k, o in self.exp.items() if foreign in o["projects"])
-                            leaked = [n for n in self.exp[other]["projects"][foreign]["Endpoint"] if len(n) >= 8 and n in text]
+                            leaked = [n for n in self.exp[other]["projects"][foreign]["Endpoint"] if len(n) >= 8 and n != foreign and n in text]
                             self.row(f"ui.{key}.foreign-project.{width}", f"{org}->{other}", f"GET {path} (browser)",
                                      "a not-found page, no object of the project", f"leaked {leaked[:3]}", not leaked)
                     ctx.close()
