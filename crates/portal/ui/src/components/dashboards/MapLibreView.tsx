@@ -39,6 +39,8 @@ export interface MapLayer {
   marker?: { color: string; size: number; opacity: number };
   /** `false` opens no popup on a click (a geomap layer with its tooltip off). */
   popup?: boolean;
+  /** The property a popup shows as its heading, out of its list (a geomap row's `name`). */
+  titleProperty?: string;
   /** The popup's own button, opening the feature's entity by its `id` property (T-3256). */
   open?: { label: string; onOpen: (id: string) => void };
 }
@@ -164,19 +166,29 @@ export function popupNode(
   feature: Pick<MapGeoJSONFeature, "properties">,
   properties?: string[],
   open?: MapLayer["open"],
+  titleProperty?: string,
 ): HTMLElement {
   const props = feature.properties ?? {};
-  const keys = properties?.length ? properties : Object.keys(props).filter((key) => key !== "id").slice(0, 6);
+  const keys = (properties?.length ? properties : Object.keys(props).filter((key) => key !== "id").slice(0, 6)).filter((key) => key !== titleProperty);
   const root = document.createElement("div");
+  const title = titleProperty === undefined ? undefined : props[titleProperty];
+  if (title !== undefined && title !== null && title !== "") {
+    const heading = document.createElement("p");
+    heading.className = "mb-1 pr-6 text-body font-semibold text-fg";
+    heading.textContent = String(title);
+    root.append(heading);
+  }
   const list = document.createElement("dl");
-  list.className = "grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 text-caption";
+  list.className = "grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-body";
   for (const key of keys) {
     const term = document.createElement("dt");
     term.className = "text-fg-muted";
     term.textContent = key;
     const value = document.createElement("dd");
-    value.className = "[overflow-wrap:anywhere] text-fg";
+    // One line a value: a long address is cut and kept whole in its title.
+    value.className = "min-w-0 truncate text-fg";
     value.textContent = props[key] === undefined || props[key] === null ? "—" : String(props[key]);
+    value.title = value.textContent;
     list.append(term, value);
   }
   root.append(list);
@@ -400,9 +412,9 @@ export function MapLibreView({
         }
         // Every feature under the click, a few: stacked markers each get their rows, not only the top one.
         const root = document.createElement("div");
-        root.className = "flex max-h-40 flex-col gap-2 divide-y divide-border overflow-y-auto [&>*+*]:pt-2";
+        root.className = "flex max-h-48 flex-col gap-2 divide-y divide-border overflow-y-auto [&>*+*]:pt-2";
         for (const feature of features.slice(0, STACKED)) {
-          root.append(popupNode(feature, layer.popupProperties, layer.open));
+          root.append(popupNode(feature, layer.popupProperties, layer.open, layer.titleProperty));
         }
         if (features.length > STACKED) {
           const more = document.createElement("p");
@@ -412,7 +424,7 @@ export function MapLibreView({
         // Above the map's own controls (the scale, the attribution), which MapLibre stacks over a popup.
         new Popup({ className: "z-10", maxWidth: "18rem" })
           .setLngLat(event.lngLat)
-          .setDOMContent(features.length === 1 ? popupNode(features[0], layer.popupProperties, layer.open) : root)
+          .setDOMContent(features.length === 1 ? popupNode(features[0], layer.popupProperties, layer.open, layer.titleProperty) : root)
           .addTo(instance);
       });
       drawn.current.set(layer.name, layer);
@@ -424,7 +436,9 @@ export function MapLibreView({
       if (boxes.length > 0) {
         const box = boxes.reduce((a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])]);
         fitted.current = true;
-        instance.fitBounds([box[0], box[1], box[2], box[3]], { padding: 40, maxZoom: 14, duration: 0 });
+        // A phone's map is a few hundred px: the desktop margin would leave the markers a third of it.
+        const padding = (container.current?.clientWidth ?? 800) < 500 ? 16 : 40;
+        instance.fitBounds([box[0], box[1], box[2], box[3]], { padding, maxZoom: 14, duration: 0 });
       }
     }
   }, [layers, loaded, center, t]);

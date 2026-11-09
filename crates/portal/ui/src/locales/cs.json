@@ -11910,8 +11910,8 @@
       "basemap": "Podklad „{type}“ se zde nekreslí.",
       "view": "Uložený pohled se nezachová; mapa se přizpůsobí značkám.",
       "layers": "Kreslí se jen první z {n} vrstev.",
-      "plain": "platforma nemá podkladovou mapu, jen polohy",
-      "count": "Značky: {n}"
+      "plain": "bez podkladové mapy, jen polohy",
+      "count": "Značky: {n}, poslední hodnoty"
     }
   },
   "repositories": {

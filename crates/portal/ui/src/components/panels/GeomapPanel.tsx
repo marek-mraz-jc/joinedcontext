@@ -43,6 +43,8 @@ export interface Markers {
   marker: { color: string; size: number; opacity: number };
   popupProperties: string[];
   popup: boolean;
+  /** The tooltip's heading: the row's name, when the frame has one. */
+  titleProperty?: string;
   /** Keys of `dashboardView.geomap.*` with their values, one note each. */
   notes: { key: string; values?: Record<string, string | number> }[];
 }
@@ -108,6 +110,7 @@ export function markersOf(frames: Frame[], options: Record<string, unknown> | un
 
   const features: Markers["features"]["features"] = [];
   const shown = new Set<string>();
+  let titleProperty: string | undefined;
   let rows = 0;
   let unread = false;
   for (const frame of frames) {
@@ -122,7 +125,8 @@ export function markersOf(frames: Frame[], options: Record<string, unknown> | un
     const listed = frame.fields.filter((field) => !find.used.includes(field) && field.name !== "id" && field.name !== "type" && field.type !== "json" && field.type !== "geo");
     const name = byName(listed, ["name"]);
     const ordered = name ? [name, ...listed.filter((field) => field !== name)] : listed;
-    const tooltip = ordered.slice(0, TOOLTIP_FIELDS);
+    if (name) titleProperty ??= displayNameOf(name, frame);
+    const tooltip = ordered.slice(0, TOOLTIP_FIELDS + (name ? 1 : 0));
     for (let row = 0; row < length; row++) {
       const at = find.at(row);
       if (!at) continue;
@@ -139,7 +143,7 @@ export function markersOf(frames: Frame[], options: Record<string, unknown> | un
   }
   if (unread) notes.push({ key: "mode", values: { mode: layer.location?.mode ?? "auto" } });
   else if (features.length > 0 && features.length < rows) notes.push({ key: "missing", values: { n: rows - features.length, rows } });
-  return { features: { type: "FeatureCollection", features }, rows, marker, popupProperties: [...shown], popup: layer.tooltip !== false, notes };
+  return { features: { type: "FeatureCollection", features }, rows, marker, popupProperties: [...shown], popup: layer.tooltip !== false, titleProperty, notes };
 }
 
 export interface GeomapPanelProps {
@@ -170,7 +174,7 @@ export function GeomapPanel({ title, frames, fieldConfig, options, height, local
   }, []);
   const markers = useMemo(() => markersOf(frames, options, fieldConfig, locale), [frames, options, fieldConfig, locale]);
   const layers = useMemo<MapLayer[]>(
-    () => [{ name: "markers", url: "", data: markers.features, style: "circle", marker: markers.marker, popupProperties: markers.popupProperties, popup: markers.popup }],
+    () => [{ name: "markers", url: "", data: markers.features, style: "circle", marker: markers.marker, popupProperties: markers.popupProperties, popup: markers.popup, titleProperty: markers.titleProperty }],
     [markers],
   );
   if (markers.features.features.length === 0) {

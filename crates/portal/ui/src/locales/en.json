@@ -11910,8 +11910,8 @@
       "basemap": "The “{type}” basemap is not drawn here.",
       "view": "The saved view is not kept; the map fits its markers.",
       "layers": "Only the first of {n} layers is drawn.",
-      "plain": "no basemap on this platform, positions only",
-      "count": "Markers: {n}"
+      "plain": "no basemap, positions only",
+      "count": "Markers: {n}, latest values"
     }
   },
   "repositories": {

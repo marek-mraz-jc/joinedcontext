@@ -11910,8 +11910,8 @@
       "basemap": "Die Grundkarte „{type}“ wird hier nicht gezeichnet.",
       "view": "Die gespeicherte Ansicht bleibt nicht erhalten; die Karte passt sich den Markierungen an.",
       "layers": "Nur die erste von {n} Ebenen wird gezeichnet.",
-      "plain": "keine Grundkarte auf dieser Plattform, nur Positionen",
-      "count": "Markierungen: {n}"
+      "plain": "ohne Grundkarte, nur Positionen",
+      "count": "Markierungen: {n}, letzte Werte"
     }
   },
   "repositories": {

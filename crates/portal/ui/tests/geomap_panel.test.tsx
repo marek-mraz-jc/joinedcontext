@@ -134,10 +134,10 @@ describe("the helsinki air quality geomap", () => {
     draw(frames);
     calls.clicks.get("markers")!({ features: [{ properties: calls.sources[0].source.data.features[0].properties }], lngLat: [0, 0] });
     const terms = [...calls.popups[0].querySelectorAll("dt")].map((term) => term.textContent);
-    expect(terms[0]).toBe("name");
+    expect(calls.popups[0].querySelector("p")!.textContent).toBe("Volvo (pesuauto)");
+    expect(terms).not.toContain("name");
     expect(terms).toContain("pm10");
     expect(terms).not.toContain("location");
-    expect(calls.popups[0].querySelector("dd")!.textContent).toBe("Volvo (pesuauto)");
     expect(calls.popups[0].textContent).toMatch(/µg\/m³|μg\/m³/);
   });
 
@@ -217,7 +217,7 @@ describe("the geomap's basemap", () => {
   it("draws on the plain ground without a project, fetching nothing, and says so beside a scale", () => {
     draw(frames);
     expect(calls.constructed[0].style).toEqual(blankStyle());
-    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100 · no basemap on this platform, positions only");
+    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100, latest values · no basemap, positions only");
     expect(calls.controls).toContainEqual(["ScaleControl", "bottom-left"]);
   });
 
@@ -228,10 +228,10 @@ describe("the geomap's basemap", () => {
     expect(url.origin).toBe(window.location.origin);
     expect(url.pathname).toBe("/api/v1/projects/helsinki/basemap/default/style.json");
     expect(url.search).toBe("");
-    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100");
+    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100, latest values");
     act(() => calls.errorHandlers[0]());
     expect(calls.styles).toEqual([blankStyle()]);
-    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100 · no basemap on this platform, positions only");
+    expect(document.querySelector("[data-geomap-caption]")!.textContent).toBe("Markers: 100, latest values · no basemap, positions only");
   });
 });
 
