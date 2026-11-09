@@ -6,7 +6,7 @@
 //! each change to what the caller may read, as they cut a REST read (T-4755); the clients'
 //! filters only narrow it further.
 
-use super::{changed, compile, FilterId, Index};
+use super::{changed, compile, created, FilterId, Index};
 use crate::pdp::projection;
 use crate::resolver::Endpoint;
 use antares_jsonld::{expand_entity, Context, ExpandOpts};
@@ -624,8 +624,8 @@ impl Hub {
     /// One change from the upstream, already cut to this hub's identity by the broker: the table
     /// keeps it, and each connection with a candidate filter is sent what its filters make of it
     /// (ADR-N-049 §2.5).
-    pub fn apply(&self, entity: Value, at: chrono::DateTime<chrono::Utc>) {
-        let Some(id) = entity.get("id").and_then(Value::as_str).map(str::to_owned) else {
+    pub fn apply(&self, stamped: Value, at: chrono::DateTime<chrono::Utc>) {
+        let Some(id) = stamped.get("id").and_then(Value::as_str).map(str::to_owned) else {
             return;
         };
         let mut state = self.state();
@@ -634,6 +634,10 @@ impl Hub {
         if state.index.is_empty() {
             return;
         }
+        // The table and most clients hold the entity without the upstream's stamps.
+        let created = created(&stamped);
+        let mut entity = stamped.clone();
+        without_sys_attrs(&mut entity);
         let previous = if entity.get("deletedAt").is_some() {
             // An entity that left sends nothing: that message would reveal a hidden change.
             state.table.remove(&id);
@@ -657,13 +661,19 @@ impl Hub {
                 continue;
             };
             for filter in filters {
-                if !state.index.decides(filter, &full, &delta, core()) {
+                if !state
+                    .index
+                    .decides(filter, &full, (&delta, created), core())
+                {
                     continue;
                 }
                 let Some(sub) = conn.subs.values().find(|s| s.filter == filter) else {
                     continue;
                 };
-                let mut data = entity.clone();
+                let mut data = match asks_sys_attrs(&sub.body) {
+                    true => stamped.clone(),
+                    false => entity.clone(),
+                };
                 if let Some(names) = &sub.attributes {
                     projection::project_entity(&mut data, names, &BTreeSet::new());
                 }
@@ -713,6 +723,44 @@ impl State {
             metrics::counter!("jc_gateway_ws_entities_evicted_total").increment(batch as u64);
         }
         previous
+    }
+}
+
+/// Whether a client's subscription asks `notification.sysAttrs` (TS 104 175 Table 5.2.14-1).
+fn asks_sys_attrs(sub: &Value) -> bool {
+    sub.pointer("/notification/sysAttrs")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// Takes `createdAt` and `modifiedAt` off the entity and off each attribute instance and
+/// sub-attribute, never out of a value: the upstream asks them to tell a creation (F2), and a
+/// client that did not ask is sent what it was sent before.
+fn without_sys_attrs(entity: &mut Value) {
+    const VALUES: &[&str] = &[
+        "value",
+        "object",
+        "json",
+        "vocab",
+        "valueList",
+        "objectList",
+        "languageMap",
+        "@context",
+    ];
+    let Some(members) = entity.as_object_mut() else {
+        return;
+    };
+    members.remove("createdAt");
+    members.remove("modifiedAt");
+    for (name, member) in members.iter_mut() {
+        if VALUES.contains(&name.as_str()) {
+            continue;
+        }
+        match member {
+            Value::Array(instances) => instances.iter_mut().for_each(without_sys_attrs),
+            instance @ Value::Object(_) => without_sys_attrs(instance),
+            _ => {}
+        }
     }
 }
 
@@ -953,9 +1001,7 @@ mod tests {
     fn a_bare_create_reaches_a_filter_that_watches_nothing() {
         let now = chrono::Utc::now();
         let t0 = "2026-11-09T12:00:00.000Z";
-        let bare = |id: &str, modified: &str| {
-            json!({"id": id, "type": "Vehicle", "createdAt": t0, "modifiedAt": modified})
-        };
+        let bare = |id: &str, modified: &str| json!({"id": id, "type": "Vehicle", "createdAt": t0, "modifiedAt": modified});
         let hub = Hub::new("s", 100);
         let (all, all_queue) = open(&hub);
         let (watching, watching_queue) = open(&hub);
@@ -977,8 +1023,14 @@ mod tests {
         assert!(data(&watching_queue).is_empty());
         assert!(data(&other_queue).is_empty());
 
-        hub.apply(bare("urn:ngsi-ld:Vehicle:7", "2026-11-09T12:00:01.000Z"), now);
-        hub.apply(bare("urn:ngsi-ld:Vehicle:8", "2026-11-09T12:00:01.000Z"), now);
+        hub.apply(
+            bare("urn:ngsi-ld:Vehicle:7", "2026-11-09T12:00:01.000Z"),
+            now,
+        );
+        hub.apply(
+            bare("urn:ngsi-ld:Vehicle:8", "2026-11-09T12:00:01.000Z"),
+            now,
+        );
         assert!(data(&all_queue).is_empty(), "no change the hub sees");
 
         let mut full = bus("urn:ngsi-ld:Vehicle:9", 10.0, "x");
