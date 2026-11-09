@@ -2172,6 +2172,35 @@ pub(crate) fn shared_id_patterns(rules: &[Rule]) -> Option<&[String]> {
     .then_some(first.id_patterns.as_slice())
 }
 
+/// Whether `rules` admit every Entity the type selection `groups` selects
+/// and show each the same Attributes: each group names a type some rule
+/// admits by type alone, so whatever the other rules narrow, that one
+/// holds, and every rule naming a selected type shows what it shows, so
+/// the stored Entity orders and filters as the shown one. A whole-space
+/// Endpoint binds the space's every Policy: a type-wide public read beside
+/// a dataset's `idPattern` rule of the same type was judged per row, and a
+/// count over 255 283 Gardens stopped at the gateway's 10 s.
+pub(crate) fn admit_every(rules: &[Rule], groups: &[Vec<String>]) -> bool {
+    let wide = |t: &String| {
+        rules
+            .iter()
+            .any(|r| r.admits_by_type_alone() && r.types.contains(t))
+    };
+    fn shows(r: &Rule) -> (bool, Vec<&String>) {
+        let mut a: Vec<&String> = r.attributes.iter().collect();
+        a.sort();
+        a.dedup();
+        (r.every_attribute, a)
+    }
+    let mut naming = rules
+        .iter()
+        .filter(|r| r.types.is_empty() || groups.iter().flatten().any(|t| r.types.contains(t)));
+    let first = naming.next().map(shows);
+    !groups.is_empty()
+        && groups.iter().all(|g| g.iter().any(wide))
+        && naming.all(|r| Some(shows(r)) == first)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

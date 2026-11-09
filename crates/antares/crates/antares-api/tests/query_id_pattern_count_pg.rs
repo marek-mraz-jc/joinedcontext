@@ -262,6 +262,47 @@ async fn a_views_id_pattern_over_a_whole_type_is_counted_in_the_store() {
         assert!(read <= 10, "{query} read {read} Entity rows for a page");
     }
 
+    // A whole-space Endpoint binds the space's every Policy: a type-wide
+    // public read beside the dataset's pattern rule of the same type admits
+    // every Tree, so the store counts and pages them as at the root, the
+    // decoys included.
+    let wide = Filter {
+        rules: vec![
+            Rule {
+                types: vec![iri("Tree"), iri("Garden")],
+                attributes: vec![iri("name")],
+                ..Rule::default()
+            },
+            Rule {
+                types: vec![iri("Tree")],
+                id_patterns: vec![
+                    "^urn:ngsi-ld:Tree:[a-z0-9.-]+:praha-mesto:green-[a-z-]+-[0-9a-f-]{36}$".into(),
+                ],
+                attributes: vec![iri("name")],
+                ..Rule::default()
+            },
+        ],
+        ..Filter::default()
+    };
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
+    let mut st = AppState::with_store("me".into(), Arc::new(store), "postgres")
+        .with_policy(Arc::new(Narrowing(wide)));
+    antares_api::wire(&mut st).await;
+    for query in [
+        "type=Tree&count=true&limit=0",
+        "type=Tree&count=true&limit=1",
+    ] {
+        rows.take();
+        let (code, count, body, took) = get(&st, &tenant, query).await;
+        let read = rows.take();
+        eprintln!("whole space {query}: {code} in {took:?}, {read} Entity rows read");
+        assert_eq!(code, StatusCode::OK, "{query}: {body}");
+        assert_eq!(count.as_deref(), Some("164003"), "{query}");
+        assert!(read <= 10, "{query} read {read} Entity rows for a page");
+    }
+
     antares_sql::sqlx::query("DELETE FROM entities WHERE tenant_id = $1")
         .bind(&tenant)
         .execute(&pool)

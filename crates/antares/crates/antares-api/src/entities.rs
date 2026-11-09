@@ -1719,9 +1719,15 @@ async fn filter_rows(
     // So too rules that narrow their types only by one set of `idPattern`s
     // the store applies exactly (T-5826): it takes them as a selection too.
     let rule_patterns = rules.and_then(|f| crate::policy::shared_id_patterns(&f.rules));
+    // So too a type selection whose every type a rule admits by type alone,
+    // whatever the other rules narrow.
+    let admit_every = rules
+        .zip(type_sel.as_deref())
+        .is_some_and(|(f, groups)| crate::policy::admit_every(&f.rules, groups));
     let by_type = rules
         .filter(|f| {
             rule_patterns.is_some()
+                || admit_every
                 || f.rules
                     .iter()
                     .all(crate::policy::Rule::admits_by_type_alone)

@@ -1379,6 +1379,79 @@ async fn a_page_under_type_rules_is_a_page_of_what_they_admit() {
     );
 }
 
+/// A type-wide rule beside a narrower rule of the same type showing the
+/// same Attributes (a whole-space Endpoint binding a public read and a
+/// dataset's Policy) admits every Entity of the type: the page, the count
+/// and the order are the type's; a type only the narrow rule names stays
+/// narrowed, and a narrow rule showing more is still judged per Entity.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_type_wide_rule_beside_a_narrow_one_admits_the_whole_type() {
+    for extra in [&["speed"][..], &["speed", "colour"][..]] {
+        let st = state(Filter {
+            rules: vec![
+                rule("Car", &["speed"]),
+                Rule {
+                    ids: id_list("Car", &[1]),
+                    ..rule("Car", extra)
+                },
+                Rule {
+                    ids: id_list("User", &[1]),
+                    ..rule("User", &["name"])
+                },
+            ],
+            ..Filter::default()
+        })
+        .await;
+        fleet(&st).await;
+        let got = pages(&st, "/ngsi-ld/v1/entities?type=Car").await;
+        let mut seen: Vec<String> = got.iter().flat_map(|p| p.0.clone()).collect();
+        seen.sort();
+        assert_eq!(seen, id_list("Car", &[0, 1, 2, 3, 4]), "{extra:?}");
+        assert_eq!(
+            count(&st, "/ngsi-ld/v1/entities?type=Car&count=true&limit=0").await,
+            Some(5),
+            "{extra:?}"
+        );
+        assert_eq!(
+            count(&st, "/ngsi-ld/v1/entities?type=User&count=true&limit=0").await,
+            Some(1),
+            "{extra:?}"
+        );
+        let (_, list) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?type=Car&orderBy=speed;desc&limit=2",
+            None,
+        )
+        .await;
+        let order: Vec<&str> = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["id"].as_str())
+            .collect();
+        assert_eq!(
+            order,
+            ["urn:ngsi-ld:Car:4", "urn:ngsi-ld:Car:3"],
+            "{extra:?}: {list}"
+        );
+        let (_, one) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?type=Car&id=urn:ngsi-ld:Car:1",
+            None,
+        )
+        .await;
+        let mut want = vec!["id", "type"];
+        want.extend(extra);
+        assert_eq!(
+            members(&one).into_values().collect::<Vec<_>>(),
+            [keys(&want)],
+            "{extra:?}"
+        );
+    }
+}
+
 /// A conditional rule is judged on the Entity, a page at a time: the page
 /// still holds only what the rule admits, and the last one links nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
