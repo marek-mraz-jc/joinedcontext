@@ -1241,9 +1241,12 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let (status, body) = exchange_at_dev(&jc, &twin_member).await;
     assert!(status.is_client_error(), "{status} {body}");
-    let error = body["error"].as_str().unwrap_or_default();
+    // kaisatsu answers as Keycloak 26 does for a subject token it cannot verify (signature,
+    // exact issuer, audience): invalid_request "Invalid token".
+    let refused = (body["error"].as_str(), body["error_description"].as_str());
     assert!(
-        matches!(error, "invalid_grant" | "invalid_token"),
+        matches!(refused.0, Some("invalid_grant" | "invalid_token"))
+            || refused == (Some("invalid_request"), Some("Invalid token")),
         "{status} {body}"
     );
 
