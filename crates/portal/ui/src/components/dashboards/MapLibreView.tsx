@@ -169,10 +169,13 @@ export function popupNode(
   const keys = properties?.length ? properties : Object.keys(props).filter((key) => key !== "id").slice(0, 6);
   const root = document.createElement("div");
   const list = document.createElement("dl");
+  list.className = "grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 text-caption";
   for (const key of keys) {
     const term = document.createElement("dt");
+    term.className = "text-fg-muted";
     term.textContent = key;
     const value = document.createElement("dd");
+    value.className = "[overflow-wrap:anywhere] text-fg";
     value.textContent = props[key] === undefined || props[key] === null ? "—" : String(props[key]);
     list.append(term, value);
   }
@@ -397,7 +400,7 @@ export function MapLibreView({
         }
         // Every feature under the click, a few: stacked markers each get their rows, not only the top one.
         const root = document.createElement("div");
-        root.className = "flex flex-col gap-2";
+        root.className = "flex max-h-40 flex-col gap-2 divide-y divide-border overflow-y-auto [&>*+*]:pt-2";
         for (const feature of features.slice(0, STACKED)) {
           root.append(popupNode(feature, layer.popupProperties, layer.open));
         }
@@ -406,7 +409,8 @@ export function MapLibreView({
           more.textContent = t("dashboards.moreHere", { n: features.length - STACKED });
           root.append(more);
         }
-        new Popup()
+        // Above the map's own controls (the scale, the attribution), which MapLibre stacks over a popup.
+        new Popup({ className: "z-10", maxWidth: "18rem" })
           .setLngLat(event.lngLat)
           .setDOMContent(features.length === 1 ? popupNode(features[0], layer.popupProperties, layer.open) : root)
           .addTo(instance);

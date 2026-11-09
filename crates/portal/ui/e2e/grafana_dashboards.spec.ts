@@ -394,6 +394,38 @@ for (const width of [1440, 400]) {
               return orange;
             }, png);
           }, { timeout: 10_000 }).toBeGreaterThan(100);
+          if (state === "filled") {
+            // A tap on the marker of most orange around it opens the stacked rows' tooltip.
+            const canvas = map.locator("canvas");
+            const png = (await canvas.screenshot()).toString("base64");
+            const at = await page.evaluate(async (data) => {
+              const image = new Image();
+              image.src = `data:image/png;base64,${data}`;
+              await image.decode();
+              const context = Object.assign(document.createElement("canvas"), { width: image.width, height: image.height }).getContext("2d")!;
+              context.drawImage(image, 0, 0);
+              const pixels = context.getImageData(0, 0, image.width, image.height).data;
+              const orange = (x: number, y: number) => {
+                const i = (y * image.width + x) * 4;
+                return pixels[i] > 200 && pixels[i + 1] > 110 && pixels[i + 1] < 190 && pixels[i + 2] < 120;
+              };
+              let best = { x: 0, y: 0, score: -1 };
+              for (let y = 12; y < image.height - 12; y += 3)
+                for (let x = 12; x < image.width - 12; x += 3) {
+                  if (!orange(x, y)) continue;
+                  let score = 0;
+                  for (let dy = -12; dy <= 12; dy += 3) for (let dx = -12; dx <= 12; dx += 3) if (orange(x + dx, y + dy)) score++;
+                  if (score > best.score) best = { x, y, score };
+                }
+              return best;
+            }, png);
+            const box = (await canvas.boundingBox())!;
+            const scale = box.width / (await canvas.evaluate((c: HTMLCanvasElement) => c.clientWidth));
+            await page.mouse.click(box.x + at.x / scale, box.y + at.y / scale);
+            const popup = page.locator(".maplibregl-popup");
+            await expect(popup.getByText(/Volvo \(pesuauto\)|Wille \(harjakone\)/).first()).toBeVisible();
+            await pageShot(page, "geomap-popup", width);
+          }
         }
         await pageShot(page, `geomap-${state}`, width);
         expect(await page.evaluate(pageFindings, { namespaces: NAMESPACES, layout: true })).toEqual([]);
