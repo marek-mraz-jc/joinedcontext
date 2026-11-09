@@ -54,15 +54,17 @@ pub(crate) fn config(
 pub async fn build(
     ctx: BuildCtx<'_>,
     wire_siblings: bool,
+    organizations: BTreeMap<String, String>,
     mount: Mount,
     shutdown: &CancellationToken,
 ) -> Result<(Router, Option<std::net::SocketAddr>), StartError> {
     let env = crate::config::portal_env;
-    let siblings = if wire_siblings {
+    let mut siblings = if wire_siblings {
         crate::siblings::portal_vars(ctx.siblings, ctx.setup, env)
     } else {
         BTreeMap::new()
     };
+    siblings.extend(organizations);
     tracing::info!(
         keys = ?siblings.keys().collect::<Vec<_>>(),
         "portal: settings filled from sibling modules"
@@ -75,6 +77,73 @@ pub async fn build(
         .await
         .map_err(|e| err(format!("internal listener: {e}")))?;
     Ok((server::app(state), internal))
+}
+
+/// The Portal's settings for the `[[organizations]]` of `cfg`, each one's Portal host and own
+/// catalogue: `JC_PORTAL_ORGANIZATION_HOSTS` and, when dataroom runs here,
+/// `JC_PORTAL_ORGANIZATION_CATALOGUES` for every Organization that has a Portal token, called on
+/// this jc's own `listener` under the catalogue's host name. Empty without Organizations; an
+/// environment value still wins.
+pub(crate) fn organization_vars(
+    cfg: &crate::config::Config,
+    listener: std::net::SocketAddr,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    if cfg.organizations.is_empty() {
+        return out;
+    }
+    let scheme = &cfg.scheme;
+    let hosts: Vec<String> = cfg
+        .organizations
+        .iter()
+        .map(|org| format!("{}={scheme}://{}", org.name, org.hosts.portal))
+        .collect();
+    out.insert("JC_PORTAL_ORGANIZATION_HOSTS".to_owned(), hosts.join(","));
+    if cfg.roles.contains(&Module::Dataroom) {
+        let reach = crate::siblings::reach(listener);
+        let catalogues: Vec<serde_json::Value> = cfg
+            .organizations
+            .iter()
+            .filter_map(|org| {
+                let token = org.portal_token_file.as_ref()?;
+                // The gateway links a dataset's resources; off https a whole origin.
+                let data_host = match scheme.as_str() {
+                    "https" => org.hosts.api.clone(),
+                    _ => format!("{scheme}://{}", org.hosts.api),
+                };
+                Some(serde_json::json!({
+                    "organization": org.name,
+                    "url": format!("{scheme}://{}", org.hosts.opendata),
+                    "api": format!("http://{}", org.hosts.opendata),
+                    "reach": reach.to_string(),
+                    "dataHost": data_host,
+                    "tokenFile": token,
+                }))
+            })
+            .collect();
+        if !catalogues.is_empty() {
+            out.insert(
+                "JC_PORTAL_ORGANIZATION_CATALOGUES".to_owned(),
+                serde_json::Value::Array(catalogues).to_string(),
+            );
+        }
+    }
+    out
+}
+
+/// The Portal's router behind the host jc placed the request on (`Mount`, a trusted proxy's
+/// `X-Forwarded-Host` applied), which pins an Organization's host (`organization_host`).
+pub(crate) fn with_request_host(router: Router) -> Router {
+    router.layer(axum::middleware::from_fn(
+        |mut req: axum::extract::Request, next: axum::middleware::Next| async move {
+            let host = req.extensions().get::<Mount>().map(|m| m.host.clone());
+            if let Some(host) = host {
+                req.extensions_mut()
+                    .insert(joinedcontext_portal::organization_host::RequestHost(host));
+            }
+            next.run(req).await
+        },
+    ))
 }
 
 #[cfg(test)]

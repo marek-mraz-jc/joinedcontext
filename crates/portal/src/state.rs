@@ -925,7 +925,8 @@ impl AppState {
             };
             let mut catalogue =
                 crate::reconciler::ckan::CkanSync::new(catalogue_host(&self.config))
-                    .with_age_key_file(age_key_file);
+                    .with_age_key_file(age_key_file)
+                    .for_organizations(self.config.organization_catalogues.clone());
             let branding = crate::branding::Branding::load(self.config.branding_file.as_deref());
             if !branding.organisation.trim().is_empty() {
                 catalogue = catalogue.titled(branding.organisation);

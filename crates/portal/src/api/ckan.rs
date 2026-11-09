@@ -153,7 +153,7 @@ pub async fn get_status(
 fn host_of(state: &AppState) -> String {
     state
         .config
-        .public_base_url
+        .public_base()
         .host_str()
         .unwrap_or("localhost")
         .to_owned()

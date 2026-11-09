@@ -373,7 +373,7 @@ fn welcome_page(state: &AppState, project: Option<&str>) -> Option<(String, Stri
         || "/".to_owned(),
         |p| format!("/projects/{p}/home?welcome=1"),
     );
-    let page = state.config.public_base_url.join(&path).ok()?;
+    let page = state.config.public_base().join(&path).ok()?;
     Some((client, page.to_string()))
 }
 
