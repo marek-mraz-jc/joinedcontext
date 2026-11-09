@@ -184,7 +184,7 @@ echo "$env_name: jc on http://localhost:$port (log $home/jc.log)"
 
 
 # The 24 h rule, now and hourly, beside jc (rehearsal database only).
-[ -s "$home/retain.pid" ] && kill "$(cat "$home/retain.pid")" 2>/dev/null || true
+if [ -s "$home/retain.pid" ]; then kill "$(cat "$home/retain.pid")" 2>/dev/null || true; fi
 nohup python3 -I "$here/rehearsal.py" retain --port "$pg_port" --password-file "$(secret antares-pw)" \
   --every "${REHEARSAL_RETAIN_SECS:-3600}" > "$home/retain.log" 2>&1 &
 echo $! > "$home/retain.pid"
