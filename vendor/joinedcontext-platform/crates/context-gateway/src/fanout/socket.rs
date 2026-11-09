@@ -312,7 +312,8 @@ fn upstream_subscription() -> Value {
             "type": "Subscription",
             "entities": [{"type": "*"}],
             "notificationTrigger": ["entityCreated", "entityUpdated", "entityDeleted"],
-            "notification": {"format": "normalized"},
+            // The stamps tell the hub an entity's creation (`fanout::created`, F2).
+            "notification": {"format": "normalized", "sysAttrs": true},
         },
     })
 }

@@ -62,6 +62,17 @@ fn repo(test: &str) -> PathBuf {
          assigner: did:web:hel.fi\n  assignee: { kind: role, id: public }\n  \
          operations: [retrieveOps]\n  information:\n    - entities:\n        - type: Feedback\n",
     );
+    // The writes these tests send anonymously. The fixture granted none, so the decision point
+    // refuses them since an ungranted write stops at the gateway (403); Portal compiles a view's
+    // writes from the same Policies, so prod's broker would refuse them as well.
+    write(
+        "writes.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: public-writes\n  \
+         namespace: helsinki\nspec:\n  contextSpaceRef: { kind: ContextSpace, name: helsinki }\n  \
+         assigner: did:web:hel.fi\n  assignee: { kind: role, id: public }\n  \
+         operations: [createEntity, mergeEntity, replaceEntity, deleteEntity, updateAttrs, \
+         replaceAttrs, deleteAttrs]\n  information:\n    - entities:\n        - type: Feedback\n",
+    );
     dir
 }
 

@@ -78,3 +78,32 @@ async fn a_built_image_serves_the_portal_and_not_the_placeholder() {
         "the shell must load the application: {html}"
     );
 }
+
+/// The SPA answers a page for GET and HEAD only: a POST to a path no route serves, such as the
+/// MQTT broker's internal auth hook on the public base, is not a 200 with the shell (F8), so a
+/// misrouted write never looks like it succeeded. Holds with or without a built bundle.
+#[tokio::test]
+async fn only_get_and_head_reach_the_spa_fallback() {
+    let app = server::app(AppState::new(Config::for_tests(), None));
+    let call = |method: &str| {
+        Request::builder()
+            .method(method)
+            .uri("/internal/mqtt/auth")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .unwrap()
+    };
+    for method in ["POST", "PUT", "PATCH", "DELETE"] {
+        let response = app.clone().oneshot(call(method)).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{method} on an unknown path"
+        );
+        assert_eq!(response.headers()[header::ALLOW], "GET, HEAD", "{method}");
+    }
+    for method in ["GET", "HEAD"] {
+        let response = app.clone().oneshot(call(method)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{method} is a page");
+    }
+}
