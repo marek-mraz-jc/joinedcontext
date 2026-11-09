@@ -308,6 +308,10 @@ impl OutboundGuard {
         let jwks: serde_json::Value = self
             .fetch_json(url.as_str(), None, token.as_deref(), ca.as_deref())
             .await?;
+        // Only a set with keys is kept: an empty or broken answer is read again next time.
+        if !jwks["keys"].as_array().is_some_and(|keys| !keys.is_empty()) {
+            return Ok(jwks);
+        }
         let mut cache = self.cluster_jwks.write();
         if cache.len() >= CLUSTER_JWKS_ENTRIES && !cache.contains_key(url.as_str()) {
             cache.clear();
