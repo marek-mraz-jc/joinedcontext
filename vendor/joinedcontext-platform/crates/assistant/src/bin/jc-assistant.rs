@@ -5,7 +5,8 @@
 //! `JC_ASSISTANT_REPO_DIR` (the organization's checkout), `JC_ASSISTANT_PROJECTS_DIR` and
 //! `JC_ASSISTANT_ASSEMBLY_DIR` (layout 2), `JC_ASSISTANT_ORG_DOMAIN`, `JC_ASSISTANT_MODEL_DIR`
 //! (the embedding model's files, `scripts/ci/e5-small.sh`), `JC_ASSISTANT_EMBED_THREADS`
-//! (default 2), `JC_ASSISTANT_BIND` (the chat route and the health probe, default
+//! (default 2) or `JC_ASSISTANT_EMBEDDER_URL` and its client (the shared embedder service,
+//! [`embedder_from_env`]), `JC_ASSISTANT_BIND` (the chat route and the health probe, default
 //! `0.0.0.0:8080`), `HOSTNAME` (the worker's name in the queue), and for the chat:
 //! `JC_ASSISTANT_PROXY_URL` (`jc-agent-proxy`), `JC_ASSISTANT_GATEWAY_URL` (the connectors' MCP
 //! surfaces), `JC_ASSISTANT_TOKEN_URL`, `JC_ASSISTANT_CLIENT_ID` (default `jc-assistant`) and
@@ -76,20 +77,17 @@ async fn run() -> Result<(), Startup> {
             .filter(|value| !value.trim().is_empty())
     };
 
-    let (Some(url), Some(checkout), Some(organization), Some(model_dir)) = (
+    let (Some(url), Some(checkout), Some(organization)) = (
         env("JC_ASSISTANT_DATABASE_URL"),
         host::checkout(env),
         env("JC_ASSISTANT_ORG_DOMAIN"),
-        env("JC_ASSISTANT_MODEL_DIR"),
     ) else {
         return Err(Startup {
-            what: "JC_ASSISTANT_DATABASE_URL, JC_ASSISTANT_REPO_DIR, JC_ASSISTANT_ORG_DOMAIN and JC_ASSISTANT_MODEL_DIR are required",
+            what: "JC_ASSISTANT_DATABASE_URL, JC_ASSISTANT_REPO_DIR and JC_ASSISTANT_ORG_DOMAIN are required",
             why: "one of them is unset or empty".into(),
         });
     };
-    let threads = embed_threads(&env).map_err(fail("the embedding model is not configured"))?;
-    let embedder = Embedder::load(std::path::Path::new(&model_dir), threads)
-        .map_err(fail("the embedding model is not usable"))?;
+    let embedder = embedder_from_env(&env).map_err(fail("the embedding model is not usable"))?;
     let pool = pool_options()
         .connect(&url)
         .await
@@ -158,4 +156,12 @@ fn chat_state(
     let config = host::chat_config(env, credential).map_err(|(what, why)| Startup { what, why })?;
     service::chat_state(config, pool, embedder, organization)
         .map_err(fail("the HTTP client could not be built"))
+}
+
+/// The embedder [`Embedder::from_lookup`] names, over the process environment.
+fn embedder_from_env(env: &impl Fn(&str) -> Option<String>) -> Result<Embedder, String> {
+    if env("JC_ASSISTANT_EMBEDDER_URL").is_some() {
+        return Embedder::from_lookup(env, 1);
+    }
+    Embedder::from_lookup(env, embed_threads(env)?)
 }

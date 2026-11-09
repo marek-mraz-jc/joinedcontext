@@ -1,0 +1,28 @@
+[package]
+name = "jc-door"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "kaisatsu client-credentials on both sides: the JWKS verifier of a service's door and the token fetch of its caller"
+
+[features]
+# A signing issuer with its own JWKS listener, for tests of a service behind a door.
+testing = ["dep:aws-lc-rs", "dep:axum", "dep:base64", "dep:tokio"]
+
+[dependencies]
+jc-secret = { path = "../jc-secret" }
+http = "1"
+jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+aws-lc-rs = { version = "1.19", optional = true }
+axum = { version = "0.8", optional = true }
+base64 = { version = "0.22", optional = true }
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "net"], optional = true }
+
+[dev-dependencies]
+jc-door = { path = ".", features = ["testing"] }
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "net"] }

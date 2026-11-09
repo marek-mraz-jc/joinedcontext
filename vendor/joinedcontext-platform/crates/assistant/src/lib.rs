@@ -41,7 +41,7 @@ pub mod upload;
 pub mod worker;
 
 /// The dimension of every embedding: `multilingual-e5-small` (ADR-N-040 §3.1).
-pub const DIMENSIONS: usize = 384;
+pub const DIMENSIONS: usize = jc_embedder::DIMENSIONS;
 
 /// How many candidates each ranking contributes before fusion.
 pub const CANDIDATES: i64 = 50;

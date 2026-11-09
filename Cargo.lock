@@ -769,12 +769,12 @@ dependencies = [
  "geo",
  "hex",
  "jc-core",
+ "jc-embedder",
  "jc-manifest",
  "jsonschema",
  "kreuzberg",
  "lopdf",
  "ngsild-ql",
- "ort",
  "quick-xml 0.41.0",
  "rcgen",
  "regex",
@@ -790,7 +790,6 @@ dependencies = [
  "sqlx",
  "texting_robots",
  "time",
- "tokenizers",
  "tokio",
  "tokio-rustls",
  "tower",
@@ -6239,12 +6238,12 @@ dependencies = [
  "http-body-util",
  "ipnet",
  "jc-core",
+ "jc-door",
  "jc-manifest",
  "jc-router",
  "jc-secret",
  "jcctl",
  "joinedcontext-portal",
- "jsonwebtoken 11.1.0",
  "kaisatsu-core",
  "kaisatsu-crypto",
  "kaisatsu-import",
@@ -6312,6 +6311,50 @@ version = "0.1.0"
 dependencies = [
  "jc-core",
  "serde_json",
+]
+
+[[package]]
+name = "jc-door"
+version = "0.1.0"
+dependencies = [
+ "aws-lc-rs",
+ "axum",
+ "base64 0.22.1",
+ "http",
+ "jc-door",
+ "jc-secret",
+ "jsonwebtoken 11.1.0",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "jc-embedder"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "futures-util",
+ "hex",
+ "jc-door",
+ "jc-secret",
+ "metrics",
+ "metrics-exporter-prometheus 0.18.3",
+ "ort",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "tokenizers",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

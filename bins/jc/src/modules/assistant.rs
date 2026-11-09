@@ -219,7 +219,10 @@ fn missing(
             return Some(format!("setup holds no {}", secret.file_name()));
         }
     }
-    match lookup("JC_ASSISTANT_MODEL_DIR") {
+    // The shared embedder service needs neither the model nor ONNX Runtime in this process.
+    let local = lookup("JC_ASSISTANT_EMBEDDER_URL").is_none();
+    match lookup("JC_ASSISTANT_MODEL_DIR").filter(|_| local) {
+        None if !local => {}
         None => return Some("JC_ASSISTANT_MODEL_DIR (the embedding model) is unset".into()),
         Some(dir) if !Path::new(&dir).is_dir() => {
             return Some(format!(
@@ -228,7 +231,8 @@ fn missing(
         }
         Some(_) => {}
     }
-    match lookup("ORT_DYLIB_PATH") {
+    match lookup("ORT_DYLIB_PATH").filter(|_| local) {
+        None if !local => {}
         None => return Some("ORT_DYLIB_PATH (ONNX Runtime) is unset".into()),
         Some(file) if !Path::new(&file).is_file() => {
             return Some(format!("ONNX Runtime {file} does not exist"));
@@ -239,6 +243,32 @@ fn missing(
         return Some("[assistant.database] is not configured".into());
     }
     None
+}
+
+/// The embedder: the shared service when `JC_ASSISTANT_EMBEDDER_URL` names one (a token of
+/// audience `embedder` for the `jc-assistant` client, its secret from setup), else the model in
+/// this process over ONNX Runtime. A failing service later is an error, never the local model.
+async fn embedder(
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<assistant::embed::Embedder, String> {
+    if lookup("JC_ASSISTANT_EMBEDDER_URL").is_some() {
+        return assistant::embed::Embedder::from_lookup(lookup, 1)
+            .map_err(|e| format!("the embedder service is not usable: {e}"));
+    }
+    let (Some(model_dir), Some(ort)) = (lookup("JC_ASSISTANT_MODEL_DIR"), lookup("ORT_DYLIB_PATH"))
+    else {
+        return Err("JC_ASSISTANT_MODEL_DIR or ORT_DYLIB_PATH is unset".into());
+    };
+    let threads = assistant::host::embed_threads(lookup)?;
+    tokio::task::spawn_blocking(move || {
+        ort::init_from(&ort)
+            .map_err(|e| format!("ONNX Runtime {ort} is not usable: {e}"))?
+            .commit();
+        assistant::embed::Embedder::load(Path::new(&model_dir), threads)
+            .map_err(|e| format!("the embedding model is not usable: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// The model proxy `jc` runs, bound but not yet serving.
@@ -362,25 +392,14 @@ async fn try_start(
     if let Some(why) = missing(cfg, siblings, setup, &lookup) {
         return Err(why);
     }
-    let (Some(model_dir), Some(ort), Some(organization), Some(checkout), Some(db)) = (
-        lookup("JC_ASSISTANT_MODEL_DIR"),
-        lookup("ORT_DYLIB_PATH"),
+    let (Some(organization), Some(checkout), Some(db)) = (
         lookup("JC_ASSISTANT_ORG_DOMAIN"),
         assistant::host::checkout(&lookup),
         cfg.assistant.database.as_ref(),
     ) else {
         return Err("the organization or its checkout is unknown".into());
     };
-    let threads = assistant::host::embed_threads(&lookup)?;
-    let embedder = tokio::task::spawn_blocking(move || {
-        ort::init_from(&ort)
-            .map_err(|e| format!("ONNX Runtime {ort} is not usable: {e}"))?
-            .commit();
-        assistant::embed::Embedder::load(Path::new(&model_dir), threads)
-            .map_err(|e| format!("the embedding model is not usable: {e}"))
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+    let embedder = embedder(&lookup).await?;
     let pool = assistant::host::pool_options()
         .max_connections(db.max_connections())
         .connect_with(db.app_options()?)
@@ -644,6 +663,35 @@ mod tests {
         alone.remove(Module::Gateway);
         let why = missing(&cfg, &alone, &setup, &found).unwrap();
         assert!(why.contains("gateway"), "{why}");
+    }
+
+    /// With the shared embedder named, neither the model nor ONNX Runtime is asked for, and the
+    /// embedder is the service, with the token URL and the client's secret file setup gave.
+    #[tokio::test]
+    async fn the_embedder_service_needs_no_model_and_is_the_one_used() {
+        let (mut cfg, siblings, setup, dir) = fixture();
+        cfg.assistant.database = Some(crate::pg::DatabaseSection {
+            url: "postgres://assistant@127.0.0.1:1/assistant".into(),
+            password_file: dir.path().join("pw"),
+            max_connections: None,
+            migrate_url: None,
+            migrate_password_file: None,
+        });
+        let filled = vars(&siblings, &setup, None, Some("http://127.0.0.1:4200"));
+        let none = |_: &str| None;
+        let remote = lookup(&none, &filled);
+        assert_eq!(missing(&cfg, &siblings, &setup, &remote), None);
+        let embedder = embedder(&remote).await.unwrap();
+        assert!(embedder.is_remote());
+        // Without the service the in-process model stays the one asked for.
+        let local = vars(&siblings, &setup, None, None);
+        let why = missing(&cfg, &siblings, &setup, &lookup(&none, &local)).unwrap();
+        assert!(why.contains("JC_ASSISTANT_MODEL_DIR"), "{why}");
+        // A service named without its secret file does not start.
+        let mut broken = filled.clone();
+        broken.remove("JC_ASSISTANT_EMBEDDER_CLIENT_SECRET_FILE");
+        let why = embedder(&lookup(&none, &broken)).await.unwrap_err();
+        assert!(why.contains("CLIENT_SECRET_FILE"), "{why}");
     }
 
     /// A writer the test's tracing subscriber appends to, read after the module started.
