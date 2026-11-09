@@ -175,9 +175,10 @@ async fn main() {
         }
     }
     // Only `DAIYA_VAR_*` reach the provisioning files; the rest of the environment never does.
+    #[allow(clippy::disallowed_methods)] // The standalone daiya binary reads its own environment.
+    let environment = std::env::vars_os();
     cfg.provisioning_vars = provisioning_vars_from(
-        std::env::vars_os()
-            .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?))),
+        environment.filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?))),
     );
     let built = match build_state(&cfg).await {
         Ok(built) => built,
