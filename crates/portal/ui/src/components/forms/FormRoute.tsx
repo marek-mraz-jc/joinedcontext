@@ -306,7 +306,9 @@ function useFormReads(formKey: string | null): { settled: boolean; readFailed: b
   const fetching = useIsFetching();
   // A read with nothing to show yet. A refresh of what the page holds (a poll, an invalidation)
   // drops no verdict: the page went behind the skeleton for it, its h1 with it (T-6525, UI-16).
-  const reading = useIsFetching({ predicate: (query) => query.state.data === undefined });
+  // Nor does a read that already answered with an error and is asked again (a reader mounted at
+  // phone width): it has no data, yet the page has shown that answer (gate 2026-11-09T192034Z).
+  const reading = useIsFetching({ predicate: (query) => query.state.data === undefined && query.state.errorUpdateCount === 0 });
   const queryClient = useQueryClient();
   const [settledFor, setSettledFor] = useState<string | null>(null);
   // A read the page needed failed (a server error, a lost connection): the page says so itself
