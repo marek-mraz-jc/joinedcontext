@@ -307,10 +307,15 @@ function useWidth(): [React.RefObject<HTMLDivElement | null>, number] {
   return [ref, width];
 }
 
+/** A text panel's first line on its tile, each address cut to its host: no query (or key in it) shows. */
+export function textGist(content: string): string {
+  return plainText(content).split("\n")[0].replace(/\b[a-z][a-z0-9+.-]*:\/\/([^/\s?#]+)\S*/gi, "$1");
+}
+
 /** One panel on the canvas: its title, what it reads, and its drag and resize handles. */
 function CanvasCard({ panel, selected, onSelect, onDrag }: { panel: BoardPanel; selected: boolean; onSelect: () => void; onDrag?: (event: ReactPointerEvent, mode: Drag["mode"]) => void }): JSX.Element {
   const { t } = useTranslation();
-  const reads = panel.kind === "text" ? plainText(panel.text?.content ?? "").split("\n")[0] || t("builder.notWritten") : panel.attribute ? `${panel.type} · ${panel.attribute}` : t("builder.notChosen");
+  const reads = panel.kind === "text" ? textGist(panel.text?.content ?? "") || t("builder.notWritten") : panel.attribute ? `${panel.type} · ${panel.attribute}` : t("builder.notChosen");
   return (
     <div className={`flex h-full min-w-0 flex-col rounded-md border bg-surface shadow-sm ${selected ? "border-primary ring-2 ring-primary/40" : "border-border"}`}>
       <div

@@ -12,7 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { jsonResponse, renderRoute } from "./pageHarness";
 import { boardOf, drawable, emptyBoard, fieldId, fieldWords, missing, newPanel, refusals, withKind } from "../src/pages/grafana/builderModel";
 import i18n from "../src/i18n";
-import { DisplayEditor, KindOptions, PositionEditor, SaveProblem, TextEditor } from "../src/pages/grafana/DashboardBuilder";
+import { DisplayEditor, KindOptions, PositionEditor, SaveProblem, TextEditor, textGist } from "../src/pages/grafana/DashboardBuilder";
 import { ApiError } from "../src/api/client";
 
 const BUILDER = "/api/v1/projects/helsinki/grafana/builder";
@@ -136,6 +136,8 @@ describe("the builder's new kinds", () => {
     expect(fieldId("panels[0].text.content", board)).toBe("builder-panel-1-content");
     expect(fieldId("panels[0].min", board)).toBe("builder-panel-1-min");
     expect(fieldId("panels[0].kind", board)).toBe("builder-panel-1-kind");
+    // A tile shows a link by its host only, so a key in its query never reaches the grid.
+    expect(textGist("Readings: https://counters.example/v1/r?token=abc and [docs](https://x.example/a)\nmore")).toBe("Readings: counters.example and docs");
   });
 
   it("offers a bar gauge's style and direction, a pie's shape, and text attributes to name bars", async () => {

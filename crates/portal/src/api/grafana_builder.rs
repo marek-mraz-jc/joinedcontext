@@ -341,7 +341,7 @@ fn check_choices(
             return Err(refused(
                 &format!("{at}kind"),
                 format!(
-                    "{} cannot draw {}: the data model holds it as {}; choose another kind",
+                    "{} cannot draw {}: the data model holds it as {}; choose an attribute it can draw or another kind",
                     panel.kind.words(),
                     panel.attribute,
                     held_as(&kind, value_type.as_deref())
