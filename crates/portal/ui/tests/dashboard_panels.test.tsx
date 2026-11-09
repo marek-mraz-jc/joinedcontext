@@ -15,7 +15,7 @@ import { FALLBACK } from "../src/components/panels/palette";
 import { PanelView } from "../src/components/panels/PanelView";
 import type { PanelDefinition } from "../src/components/panels/PanelView";
 import { barGradient, BarGaugePanel, DEFAULT_THRESHOLDS, globalRange, shownValues, StatPanel } from "../src/components/panels/ValuePanels";
-import { TableCellValue, tableOf, TablePanel } from "../src/components/panels/TablePanel";
+import { PhoneTable, TableCellValue, tableOf, TablePanel } from "../src/components/panels/TablePanel";
 import { Legend } from "../src/components/panels/TimeSeriesPanel";
 import type { LegendOptions } from "../src/components/panels/TimeSeriesPanel";
 import { colorOf, displayValue, formatDate, formatUnit, settingsFor } from "../src/components/panels/fieldConfig";
@@ -200,6 +200,20 @@ describe("table", () => {
     const settings = settingsFor({ defaults: { custom: { cellOptions: { type: "color-text" } } } }, { name: "Status", type: "string", values: [] });
     render(<TableCellValue settings={settings} value="withIncidence" locale="en" />);
     expect(screen.getByText("withIncidence")).toHaveStyle({ color: colorOf("green") });
+  });
+
+  it("keeps a time at the left: Grafana aligns a time field left though it is a number", () => {
+    const { container } = render(<TableCellValue settings={{ ...settingsFor(undefined, { name: "Time", type: "time", values: [] }), unit: "dateTimeAsSystem" }} value={1794117600000} locale="en" />);
+    expect(container.firstElementChild).not.toHaveClass("text-right");
+  });
+
+  it("draws every column on a phone as plain headers and cells, numbers at the right", () => {
+    const { columns, entities } = tableOf(frames.stations, fieldConfig);
+    render(<PhoneTable title="Stations" columns={columns} entities={entities} locale="en" />);
+    const table = screen.getByRole("table", { name: "Stations" });
+    expect(within(table).getAllByRole("columnheader").map((head) => head.textContent)).toEqual(columns.map((column) => column.label));
+    expect(within(table).getAllByRole("row")).toHaveLength(entities.length + 1);
+    expect(within(table).queryByRole("button")).toBeNull();
   });
 
   it("puts a number at the cell's right edge and text at the left, unless custom.align says", () => {

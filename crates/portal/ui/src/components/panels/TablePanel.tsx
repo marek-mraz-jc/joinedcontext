@@ -10,11 +10,12 @@ import { clsx } from "clsx";
 import { EntityGrid, fixtureSource, parseGridConfig } from "@joinedcontext/sdk/grid";
 import type { EntityGridProps } from "@joinedcontext/sdk/grid";
 import { gridLabels } from "../entities/PortalEntityGrid";
-import { InlineError, Select } from "../ui";
+import { InlineError, Select, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "../ui";
+import { useIsPhone } from "../../phone";
 import type { Frame } from "./frames";
 import { frameName, rowsOf } from "./frames";
 import type { FieldConfigSource, FieldSettings } from "./fieldConfig";
-import { colorOf, DEFAULT_THRESHOLDS, displayValue, settingsFor, stepFor } from "./fieldConfig";
+import { colorOf, DEFAULT_THRESHOLDS, displayValue, isDateUnit, settingsFor, stepFor } from "./fieldConfig";
 import { Tinted } from "./paint";
 
 /** The type the in-memory rows carry, which no Endpoint has. */
@@ -81,6 +82,50 @@ export function tableOf(frames: Frame[], fieldConfig: FieldConfigSource | undefi
   return { columns: columns.filter((column) => !column.hidden), entities };
 }
 
+/** Whether Grafana's auto alignment puts `value` right: a number, not a time. */
+function numeric(settings: FieldSettings, value: unknown): boolean {
+  return typeof value === "number" && !isDateUnit(settings.unit);
+}
+
+/**
+ * A panel table as Grafana draws it on a phone: plain headers and cells in their unit, mapping and
+ * colour, every column in a compact row. The grid's filter and menu heads need ~8rem a column,
+ * which pushes all but two columns past a 400 px screen.
+ */
+export function PhoneTable({ title, columns, entities, locale }: { title: string; columns: TableColumn[]; entities: Record<string, unknown>[]; locale: string }): JSX.Element {
+  const { t } = useTranslation();
+  const valueOf = (entity: Record<string, unknown>, attr: string): unknown => (entity[attr] as { value?: unknown } | undefined)?.value;
+  const right = columns.map((column) => entities.some((entity) => numeric(column.settings, valueOf(entity, column.attr))));
+  return (
+    <Table caption={title} zebra={false} className="text-caption [&_td]:px-2 [&_td]:py-1.5 [&_th]:px-2 [&_th]:py-1.5">
+      <TableHead>
+        {columns.map((column, index) => (
+          <TableHeaderCell key={column.attr} align={right[index] ? "right" : "left"}>
+            {column.label}
+          </TableHeaderCell>
+        ))}
+      </TableHead>
+      <TableBody>
+        {entities.length === 0 ? (
+          <TableRow>
+            <TableCell>{t("dashboardView.noRows")}</TableCell>
+          </TableRow>
+        ) : (
+          entities.map((entity, row) => (
+            <TableRow key={row}>
+              {columns.map((column) => (
+                <TableCell key={column.attr} className="max-w-40">
+                  <TableCellValue settings={column.settings} value={valueOf(entity, column.attr)} locale={locale} />
+                </TableCell>
+              ))}
+            </TableRow>
+          ))
+        )}
+      </TableBody>
+    </Table>
+  );
+}
+
 /** One cell as Grafana draws it: mapped or in its unit, coloured as `cellOptions.type` says. */
 export function TableCellValue({ settings, value, locale }: { settings: FieldSettings; value: unknown; locale: string }): JSX.Element {
   const shown = displayValue(settings, value, locale);
@@ -92,7 +137,7 @@ export function TableCellValue({ settings, value, locale }: { settings: FieldSet
   const color = shown.color ?? (step ? colorOf(step.color) : undefined);
   // Grafana's `custom.align`: auto puts a number at the right edge, text at the left.
   const asked = settings.custom.align;
-  const align = asked === "left" || asked === "center" || asked === "right" ? asked : typeof value === "number" ? "right" : "left";
+  const align = asked === "left" || asked === "center" || asked === "right" ? asked : numeric(settings, value) ? "right" : "left";
   const aligned = align === "right" ? "text-right" : align === "center" ? "text-center" : undefined;
   if (color && (cellType === "color-background" || cellType === "color-background-solid")) {
     return (
@@ -128,6 +173,7 @@ export function TablePanel({ title, frames, fieldConfig, options, locale }: Tabl
   const { t } = useTranslation();
   // Several frames are one table each, picked below the grid, as Grafana's table panel does.
   const [picked, setPicked] = useState(0);
+  const phone = useIsPhone();
   const at = picked < frames.length ? picked : 0;
   const shown = useMemo(() => (frames.length > 1 ? [frames[at]] : frames), [frames, at]);
   const sortBy = Array.isArray(options?.sortBy) ? (options.sortBy as SortBy) : undefined;
@@ -166,7 +212,11 @@ export function TablePanel({ title, frames, fieldConfig, options, locale }: Tabl
   }
   return (
     <div aria-label={title} className="min-w-0">
-      <EntityGrid key={at} config={parsed.config} source={source} labels={labels} renderers={renderers} hidden={["id", "entity:type"]} locale={locale} filterRow={false} queryBox={false} />
+      {phone ? (
+        <PhoneTable title={title} columns={table.columns} entities={table.entities} locale={locale} />
+      ) : (
+        <EntityGrid key={at} config={parsed.config} source={source} labels={labels} renderers={renderers} hidden={["id", "entity:type"]} locale={locale} filterRow={false} queryBox={false} />
+      )}
       {frames.length > 1 && (
         <Select className="mt-2 w-full" aria-label={t("dashboardView.frame", { title })} value={String(at)} onChange={(event) => setPicked(Number(event.target.value))}>
           {frames.map((frame, index) => (
