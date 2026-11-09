@@ -92,6 +92,9 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   Those three clients sign in by `federated-jwt` on dev and prod (Keycloak trusts the pod's
   Kubernetes service account token); jc has no Kubernetes issuer, so `realms` switches only them to
   `client-secret` and drops their `jwt.credential.*` attributes. Every other client keeps its own.
+  The export carries no users, so the Portal's two service accounts (`service-account-portal-api`,
+  `service-account-portal-reconciler`, with prod's `realm-management` roles) come from jc's shipped
+  realm `crates/kaisatsu/import/realms/jc-portal.json` when the realm lacks them.
 - Test persons: `smoke` and `shots.py` create their own (`rehearsal-*`, random passwords kept in
   memory) in that realm, in group `platform-admins` (the Portal's default bootstrap admins; added
   to an imported realm without it, as `rehearsal-tester` is).

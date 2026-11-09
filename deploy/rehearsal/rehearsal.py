@@ -469,6 +469,24 @@ def jc_clients_by_secret(realm: dict) -> tuple[dict, list[str]]:
     return out, sorted(changed)
 
 
+SHIPPED_REALM = Path(__file__).resolve().parents[2] / "crates/kaisatsu/import/realms/jc-portal.json"
+
+
+def add_service_accounts(realm: dict, shipped: dict) -> tuple[dict, list[str]]:
+    """The service-account users of jc's shipped realm (`service-account-portal-api`, `-portal-
+    reconciler`, with prod's realm-management roles) for each of their clients the realm defines
+    without one: an export without users lost them, and the Portal's admin calls then see nothing.
+    Answers the realm and the clients given one."""
+    clients = {c.get("clientId") for c in realm.get("clients", [])}
+    have = {u.get("serviceAccountClientId") for u in realm.get("users") or []}
+    add = [u for u in shipped.get("users") or []
+           if u.get("serviceAccountClientId") in clients - have and not u.get("credentials")]
+    out = dict(realm)
+    if add:
+        out["users"] = list(realm.get("users") or []) + add
+    return out, sorted(u["serviceAccountClientId"] for u in add)
+
+
 def realm_of(state: Path) -> str:
     """The deployment's realm the rehearsal's jc runs on (`realms` writes it), else jc's default."""
     p = state / "realm-name.txt"
@@ -610,6 +628,9 @@ def cmd_realms(a):
             print(f"realm {name}: {counts}")
         clean = add_tester(clean)
         clean, by_secret = jc_clients_by_secret(clean)
+        clean, accounts = add_service_accounts(clean, json.loads(SHIPPED_REALM.read_text()))
+        if accounts:
+            print(f"realm {name}: service accounts of {accounts} taken from jc's shipped realm (the export has none)")
         if by_secret:
             print(f"realm {name}: {by_secret} sign in by their secret (federated-jwt has no Kubernetes issuer in jc)")
         if a.kaisatsu_bin:

@@ -895,3 +895,16 @@ def test_only_the_clients_jc_signs_in_as_trade_federated_jwt_for_their_secret():
     assert by["pl-zilina-osm"] == realm["clients"][2]
     assert by["praha-pipelines"] == realm["clients"][3]
     assert realm["clients"][0]["clientAuthenticatorType"] == "federated-jwt"
+
+
+def test_an_export_without_service_accounts_gets_the_portals_from_jcs_shipped_realm():
+    shipped = json.loads(rh.SHIPPED_REALM.read_text())
+    realm = {"clients": [{"clientId": "portal-api"}, {"clientId": "portal-reconciler"}],
+             "users": [{"username": "service-account-portal-api", "serviceAccountClientId": "portal-api",
+                        "clientRoles": {"x": ["y"]}}]}
+    out, added = rh.add_service_accounts(realm, shipped)
+    assert added == ["portal-reconciler"]
+    rec = [u for u in out["users"] if u.get("serviceAccountClientId") == "portal-reconciler"][0]
+    assert rec["clientRoles"]["realm-management"] == ["manage-users", "query-groups"]
+    assert [u["clientRoles"] for u in out["users"] if u["serviceAccountClientId"] == "portal-api"] == [{"x": ["y"]}]
+    assert rh.add_service_accounts({"clients": []}, shipped)[1] == []
