@@ -69,9 +69,9 @@ pub fn mounted_secret(dir: Option<&Path>, secret: &SecretRef) -> Result<Basic, S
     Ok((user, Secret::new(password)))
 }
 
-/// One pass: every registry entry of `org_dir` linked under `projects` at its ref.
+/// One pass: every registry entry of `org_dir` linked under `projects` at its ref, fetched with
+/// [`GitCheckouts`].
 pub fn sync(org_dir: &Path, projects: &Path, options: &Options) -> Result<Vec<Linked>, String> {
-    let registry = read_registry(org_dir).map_err(|err| err.to_string())?;
     let forge_credential = match (&options.token, &options.token_file) {
         (Some(token), _) => Some(("jcctl".to_owned(), token.clone())),
         (None, Some(file)) => Some(("jcctl".to_owned(), Secret::new(read_trimmed(file)?))),
@@ -85,6 +85,18 @@ pub fn sync(org_dir: &Path, projects: &Path, options: &Options) -> Result<Vec<Li
         forge_credential,
         secrets: &secrets,
     };
+    sync_with(org_dir, projects, options, &resolver)
+}
+
+/// As [`sync`], each entry fetched by `resolver` (`jc` reads its forge over HTTP, without git).
+/// The resolver keeps its trees as `{projects}/.cache/{slug}.tree-*`, which this pass prunes.
+pub fn sync_with(
+    org_dir: &Path,
+    projects: &Path,
+    options: &Options,
+    resolver: &dyn Resolver,
+) -> Result<Vec<Linked>, String> {
+    let registry = read_registry(org_dir).map_err(|err| err.to_string())?;
     std::fs::create_dir_all(projects).map_err(|err| format!("{}: {err}", projects.display()))?;
     // Held until the pass returns; the kernel releases it when a killed pass's process ends.
     let lock_path = projects.join(".lock");
@@ -108,7 +120,7 @@ pub fn sync(org_dir: &Path, projects: &Path, options: &Options) -> Result<Vec<Li
             .and_then(|tree| link(projects, slug, &tree).map(|moved| (tree, moved)))
         {
             Ok((tree, moved)) => {
-                resolver.prune(slug, &tree);
+                prune(&projects.join(".cache"), slug, &tree);
                 (Ok(tree), moved)
             }
             Err(err) => (Err(err), false),
@@ -151,6 +163,17 @@ pub fn sync(org_dir: &Path, projects: &Path, options: &Options) -> Result<Vec<Li
         }
     }
     Ok(linked)
+}
+
+/// Removes the trees of `slug` in `cache` other than `keep`, after the link points at `keep`
+/// (as [`GitCheckouts::prune`]).
+fn prune(cache: &Path, slug: &str, keep: &Path) {
+    let prefix = format!("{slug}.tree-");
+    for item in std::fs::read_dir(cache).into_iter().flatten().flatten() {
+        if item.file_name().to_string_lossy().starts_with(&prefix) && item.path() != keep {
+            let _ = std::fs::remove_dir_all(item.path());
+        }
+    }
 }
 
 /// Points `{projects}/{slug}` at `tree` with one rename over the old link; whether it moved.

@@ -4,7 +4,8 @@
 //! `KAISATSU_TEST_DATABASE_URL` names a superuser connection to a server the tests may use. Each
 //! test gets its own database `kaisatsu_t_<uuid>` owned by `kaisatsu_migrate`, migrated by that
 //! role, and a store connected as `kaisatsu_app` (no SUPERUSER, no BYPASSRLS). The role passwords
-//! are random per test process and never written anywhere.
+//! are derived from the superuser URL, never written anywhere: every test process on one server
+//! sets the same value, so nextest's concurrent processes do not reset each other's (CI 42583061152).
 #![allow(dead_code)]
 
 use kaisatsu_crypto::Kek;
@@ -25,19 +26,17 @@ pub struct TestDb {
     pub migrate_pool: PgPool,
 }
 
-fn random_secret() -> String {
-    format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    )
+/// The password of `role` on the server `url` names: a hash of the superuser URL (its password
+/// included), the same in every process and unknown to anyone without that URL.
+pub fn role_secret(url: &str, role: &str) -> String {
+    kaisatsu_crypto::sha256_hex(&format!("kaisatsu test role {role} on {url}"))
 }
 
-async fn ensure_roles(admin: &PgPool) -> (String, String) {
+async fn ensure_roles(admin: &PgPool, url: &str) -> (String, String) {
     ROLES
         .get_or_init(|| async {
-            let app = random_secret();
-            let mig = random_secret();
+            let app = role_secret(url, "kaisatsu_app");
+            let mig = role_secret(url, "kaisatsu_migrate");
             for (role, pw) in [("kaisatsu_app", &app), ("kaisatsu_migrate", &mig)] {
                 sqlx::raw_sql(AssertSqlSafe(format!(
                     "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -65,7 +64,7 @@ pub async fn test_db(test: &str) -> Option<TestDb> {
         .connect_with(base.clone())
         .await
         .expect("connect test server as superuser");
-    let (app_password, migrate_password) = ensure_roles(&admin).await;
+    let (app_password, migrate_password) = ensure_roles(&admin, &url).await;
     let name = format!("kaisatsu_t_{}", uuid::Uuid::new_v4().simple());
     sqlx::raw_sql(AssertSqlSafe(format!(
         "CREATE DATABASE {name} OWNER kaisatsu_migrate"

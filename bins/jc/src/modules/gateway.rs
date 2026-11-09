@@ -10,8 +10,9 @@
 //! environment configures both. A key the environment leaves unset comes from a sibling
 //! ([`vars`]): the realm from kaisatsu (client `context-gateway`), the broker from Antares through
 //! its private hop, the Portal's internal listener for revocations, connectors and usage, and the
-//! manifests from shako's organization repository, checked out under the state directory every
-//! [`SYNC_EVERY`] by [`follow_forge`], as dev's git-sync and `jcctl checkouts` sidecars do.
+//! manifests from shako's organization repository, read over its HTTP API into the state directory
+//! every [`SYNC_EVERY`] by [`follow_forge`], as dev's git-sync and `jcctl checkouts` sidecars do
+//! with git.
 
 use crate::app::StartError;
 use crate::module::Module;
@@ -177,26 +178,333 @@ pub fn config(
     Config::from_vars(|key| env(&env_key(key)).or_else(|| filled.get(key).cloned())).map_err(err)
 }
 
-/// The organization repository `{forge}/{owner}/{repo}.git` checked out under `work`: the tree of
-/// `main` behind the link `repo/current`, swapped in one rename, then every registered project of
-/// a layout 2 organization under `projects/` (`jcctl checkouts`). Blocking (git).
+/// The largest archive one checkout downloads, and the ceilings its unpacking keeps: the
+/// Portal's sync-source limits (`crates/portal/src/sync/remote.rs`).
+const MAX_ARCHIVE: u64 = 64 * 1024 * 1024;
+/// The largest single file inside an archive.
+const MAX_ENTRY: u64 = 16 * 1024 * 1024;
+/// How many entries an archive may hold.
+const MAX_ENTRIES: usize = 10_000;
+/// The bytes one unpacked tree may occupy.
+const MAX_TREE: u64 = 4 * MAX_ARCHIVE;
+/// The largest branch answer read.
+const MAX_ANSWER: u64 = 64 * 1024;
+
+/// Repositories of shako read over its HTTP API, never with a `git` binary (the image has none):
+/// the commit of a ref from `branches/{ref}` (or the ref itself when it is a commit id), then
+/// `archive/{commit}.zip` once per commit, unpacked as `{cache}/{slug}.tree-{commit}`. Requests
+/// go to the forge's own address only, with its credential as a Basic header, and no redirect is
+/// followed. An entry naming an outside `url` (CC-89) is refused: jc reads its own forge only.
+pub struct ForgeArchives {
+    http: reqwest::blocking::Client,
+    /// The forge's base, `{forge}/api/v1/repos/...` its API.
+    forge: String,
+    owner: String,
+    cache: PathBuf,
+    authorization: HeaderValue,
+}
+
+/// A name of an owner or repository that may go into a URL path: `[A-Za-z0-9._-]`, never
+/// starting with a dot.
+fn path_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 100
+        && !name.starts_with('.')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// A branch name that goes into the URL path unescaped: git's rules for a ref name over the
+/// characters `[A-Za-z0-9._/-]`.
+fn branch_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 200
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/'))
+        && !name.starts_with(['-', '/', '.'])
+        && !name.ends_with(['/', '.'])
+        && !name.ends_with(".lock")
+        && !name.contains("..")
+        && !name.contains("//")
+        && !name.contains("/.")
+}
+
+/// A full commit id (SHA-1 or SHA-256), lower case.
+fn commit_id(id: &str) -> bool {
+    matches!(id.len(), 40 | 64) && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+impl ForgeArchives {
+    /// Reads the repositories of `owner` on the forge at `forge` (`http` or `https`) with `token`,
+    /// keeping the trees under `cache`.
+    pub fn new(
+        forge: &str,
+        owner: &str,
+        token: &jc_secret::Secret,
+        cache: PathBuf,
+    ) -> Result<Self, String> {
+        use base64::Engine as _;
+        if !(forge.starts_with("http://") || forge.starts_with("https://")) {
+            return Err("the forge's address is not http or https".to_owned());
+        }
+        if !path_name(owner) {
+            return Err(format!("`{owner}` is not an owner name"));
+        }
+        let pair = format!("jc:{}", token.expose());
+        let mut authorization = HeaderValue::from_str(&format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(pair)
+        ))
+        .map_err(|_| "the forge's token is not a header value".to_owned())?;
+        authorization.set_sensitive(true);
+        let http = reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(60))
+            .build()
+            .map_err(|e| format!("the forge's client: {e}"))?;
+        Ok(Self {
+            http,
+            forge: forge.trim_end_matches('/').to_owned(),
+            owner: owner.to_owned(),
+            cache,
+            authorization,
+        })
+    }
+
+    /// The body of `GET {forge}/api/v1/repos/{owner}/{path}`, at most `ceiling` bytes, or `None`
+    /// for a 404. A redirect is an error: the credential goes nowhere else.
+    fn get(&self, path: &str, ceiling: u64) -> Result<Option<Vec<u8>>, String> {
+        use std::io::Read as _;
+        let shown = format!("{}/{path}", self.owner);
+        let answer = self
+            .http
+            .get(format!("{}/api/v1/repos/{shown}", self.forge))
+            .header(
+                axum::http::header::AUTHORIZATION,
+                self.authorization.clone(),
+            )
+            .send()
+            .map_err(|e| format!("{shown}: the forge does not answer: {}", e.without_url()))?;
+        let status = answer.status();
+        if status.is_redirection() {
+            return Err(format!(
+                "{shown}: the forge answered a redirect ({status}), which jc never follows"
+            ));
+        }
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            return Err(format!("{shown}: the forge answered {status}"));
+        }
+        let mut body = Vec::new();
+        answer
+            .take(ceiling + 1)
+            .read_to_end(&mut body)
+            .map_err(|e| format!("{shown}: {}", e))?;
+        if body.len() as u64 > ceiling {
+            return Err(format!(
+                "{shown} is larger than the {ceiling} bytes jc reads"
+            ));
+        }
+        Ok(Some(body))
+    }
+
+    /// The commit `git_ref` of `repo` names: itself when it is a commit id, else a branch's head,
+    /// else (no such branch) the commit a tag names, read from the commit list at `git_ref`.
+    fn commit(&self, repo: &str, git_ref: &str) -> Result<String, String> {
+        if commit_id(git_ref) {
+            return Ok(git_ref.to_owned());
+        }
+        if !branch_name(git_ref) {
+            return Err(format!("`{git_ref}` is not a branch or tag name jc reads"));
+        }
+        #[derive(serde::Deserialize)]
+        struct Branch {
+            commit: Head,
+        }
+        #[derive(serde::Deserialize)]
+        struct Head {
+            id: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Commit {
+            sha: String,
+        }
+        let unread = |e: serde_json::Error| format!("{repo}: `{git_ref}` does not read: {e}");
+        let id = match self.get(&format!("{repo}/branches/{git_ref}"), MAX_ANSWER)? {
+            Some(body) => {
+                serde_json::from_slice::<Branch>(&body)
+                    .map_err(unread)?
+                    .commit
+                    .id
+            }
+            None => {
+                let body = self
+                    .get(&format!("{repo}/commits?sha={git_ref}&limit=1"), MAX_ANSWER)?
+                    .ok_or_else(|| format!("{repo}: `{git_ref}` names no branch or tag"))?;
+                let list: Vec<Commit> = serde_json::from_slice(&body).map_err(unread)?;
+                list.into_iter()
+                    .next()
+                    .map(|c| c.sha)
+                    .ok_or_else(|| format!("{repo}: `{git_ref}` names no commit"))?
+            }
+        };
+        if !commit_id(&id) {
+            return Err(format!("{repo}: `{git_ref}` names no commit id"));
+        }
+        Ok(id)
+    }
+
+    /// Removes the trees of `slug` other than `keep`, once the link points at `keep`.
+    pub fn prune(&self, slug: &str, keep: &Path) {
+        let prefix = format!("{slug}.tree-");
+        for item in std::fs::read_dir(&self.cache)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            if item.file_name().to_string_lossy().starts_with(&prefix) && item.path() != keep {
+                let _ = std::fs::remove_dir_all(item.path());
+            }
+        }
+    }
+}
+
+impl jc_manifest::assemble::Resolver for ForgeArchives {
+    fn checkout(&self, slug: &str, entry: &jc_core::kinds::ProjectSpec) -> Result<PathBuf, String> {
+        let repository = entry
+            .repository
+            .as_ref()
+            .ok_or("a registry entry names a repository")?;
+        let repo = match (&repository.name, &repository.url) {
+            (Some(name), None) => name,
+            // Decided (jc-image-forge, owner may override): an outside repository is not read.
+            (None, Some(_)) => {
+                return Err(format!(
+                    "the project `{slug}` names a repository outside jc's forge (`url`), and jc \
+                     reads its own forge's repositories only"
+                ));
+            }
+            _ => return Err("a repository names either a forge repository or a url".into()),
+        };
+        if !path_name(repo) || !path_name(slug) {
+            return Err(format!("`{slug}`: `{repo}` is not a repository name"));
+        }
+        let git_ref = entry
+            .git_ref
+            .as_deref()
+            .ok_or("a registry entry pins a ref")?;
+        let commit = self.commit(repo, git_ref)?;
+        let tree = self.cache.join(format!("{slug}.tree-{commit}"));
+        if tree.is_dir() {
+            return Ok(tree);
+        }
+        let archive = self
+            .get(&format!("{repo}/archive/{commit}.zip"), MAX_ARCHIVE)?
+            .ok_or_else(|| format!("{}/{repo}: no archive of {commit}", self.owner))?;
+        std::fs::create_dir_all(&self.cache).map_err(|e| e.to_string())?;
+        let partial = self.cache.join(format!(".{slug}.tree-{commit}.partial"));
+        let _ = std::fs::remove_dir_all(&partial);
+        std::fs::create_dir(&partial).map_err(|e| e.to_string())?;
+        if let Err(why) = unpack(&archive, &partial) {
+            let _ = std::fs::remove_dir_all(&partial);
+            return Err(format!("{}/{repo} at {commit}: {why}", self.owner));
+        }
+        std::fs::rename(&partial, &tree).map_err(|e| e.to_string())?;
+        Ok(tree)
+    }
+}
+
+/// Unpacks a forge archive (`{repo}-{ref}/` around every file) into the empty directory `into`:
+/// no entry outside it, no symlink created or followed (each file is created new), at most
+/// [`MAX_ENTRIES`] entries of [`MAX_ENTRY`] bytes and [`MAX_TREE`] in all.
+fn unpack(archive: &[u8], into: &Path) -> Result<(), String> {
+    use std::io::{Read as _, Write as _};
+    use std::path::Component;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))
+        .map_err(|e| format!("the archive did not open: {e}"))?;
+    if zip.len() > MAX_ENTRIES {
+        return Err(format!(
+            "the archive holds {} entries, past the {MAX_ENTRIES} entry limit",
+            zip.len()
+        ));
+    }
+    let mut budget = MAX_TREE;
+    for index in 0..zip.len() {
+        let mut entry = zip
+            .by_index(index)
+            .map_err(|e| format!("archive entry {index}: {e}"))?;
+        let name = String::from_utf8_lossy(entry.name_raw()).into_owned();
+        if entry.is_symlink() {
+            return Err(format!("the archive carries the symlink `{name}`"));
+        }
+        if entry.is_dir() {
+            continue;
+        }
+        let absolute = matches!(name.as_bytes().first(), Some(b'/' | b'\\'))
+            || name.as_bytes().get(1) == Some(&b':');
+        let Some(path) = entry.enclosed_name().filter(|_| !absolute) else {
+            return Err(format!(
+                "the archive carries `{name}`, outside the checkout"
+            ));
+        };
+        // Drop the directory the forge wraps the tree in.
+        let relative: PathBuf = path.components().skip(1).collect();
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        if !relative
+            .components()
+            .all(|c| matches!(c, Component::Normal(_)))
+        {
+            return Err(format!(
+                "the archive carries `{name}`, outside the checkout"
+            ));
+        }
+        let ceiling = MAX_ENTRY.min(budget);
+        if entry.size() > ceiling {
+            return Err(format!("`{name}` is past the archive's size limits"));
+        }
+        let mut body = Vec::new();
+        entry
+            .by_ref()
+            .take(ceiling + 1)
+            .read_to_end(&mut body)
+            .map_err(|e| format!("`{name}`: {e}"))?;
+        if body.len() as u64 > ceiling {
+            return Err(format!("`{name}` is past the archive's size limits"));
+        }
+        budget -= body.len() as u64;
+        let target = into.join(&relative);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("`{name}`: {e}"))?;
+        }
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+            .and_then(|mut file| file.write_all(&body))
+            .map_err(|e| format!("`{name}`: {e}"))?;
+    }
+    Ok(())
+}
+
+/// The organization repository `{owner}/{repo}` of the forge checked out under `work`: the tree
+/// of `main` behind the link `repo/current`, swapped in one rename, then every registered
+/// project of a layout 2 organization under `projects/` (`jcctl checkouts`), all read over the
+/// forge's HTTP API ([`ForgeArchives`]). Blocking.
 pub fn sync_forge(
     forge: &str,
     repo: &setup::ForgeRepo,
     token: &jc_secret::Secret,
     work: &Path,
 ) -> Result<PathBuf, String> {
-    use jc_manifest::assemble::{GitCheckouts, Resolver};
-    let owner = format!("{}/{}", forge.trim_end_matches('/'), repo.owner);
-    let resolver = GitCheckouts {
-        cache: work.join("org-cache"),
-        forge: owner.clone(),
-        forge_credential: Some((
-            "jc".to_owned(),
-            jc_core::Secret::new(token.expose().to_owned()),
-        )),
-        secrets: &|_| Err("jc names no Secret for an outside repository".to_owned()),
-    };
+    use jc_manifest::assemble::Resolver;
+    let resolver = ForgeArchives::new(forge, &repo.owner, token, work.join("org-cache"))?;
     let entry: jc_core::kinds::ProjectSpec = serde_json::from_value(serde_json::json!({
         "organizationRef": repo.owner,
         "repository": { "name": repo.repo },
@@ -204,25 +512,27 @@ pub fn sync_forge(
     }))
     .map_err(|e| e.to_string())?;
     let tree = resolver.checkout("org", &entry)?;
-    let repo = work.join("repo");
-    std::fs::create_dir_all(&repo).map_err(|e| e.to_string())?;
-    let next = repo.join(".current.next");
+    let current = work.join("repo");
+    std::fs::create_dir_all(&current).map_err(|e| e.to_string())?;
+    let next = current.join(".current.next");
     let _ = std::fs::remove_file(&next);
     #[cfg(unix)]
     std::os::unix::fs::symlink(&tree, &next).map_err(|e| e.to_string())?;
-    std::fs::rename(&next, repo.join("current")).map_err(|e| e.to_string())?;
+    std::fs::rename(&next, current.join("current")).map_err(|e| e.to_string())?;
     resolver.prune("org", &tree);
     let layout = std::fs::read_to_string(tree.join(".jc/layout")).unwrap_or_default();
     if layout.trim() == "2" {
+        let projects = work.join("projects");
         let options = jcctl::commands::checkouts::Options {
-            forge: owner,
+            forge: forge.to_owned(),
             token_file: None,
-            token: Some(jc_core::Secret::new(token.expose().to_owned())),
+            token: None,
             secrets_dir: None,
             only: None,
         };
+        let archives = ForgeArchives::new(forge, &repo.owner, token, projects.join(".cache"))?;
         let failed: BTreeSet<String> =
-            jcctl::commands::checkouts::sync(&tree, &work.join("projects"), &options)?
+            jcctl::commands::checkouts::sync_with(&tree, &projects, &options, &archives)?
                 .into_iter()
                 .filter_map(|linked| Some(format!("{}: {}", linked.slug, linked.result.err()?)))
                 .collect();
@@ -450,10 +760,11 @@ pub async fn build(
         let work = work_dir(ctx.setup);
         crate::setup::private_dir(&work)?;
         let (f, r, t, w) = (forge.clone(), repo.clone(), token.clone(), work.clone());
-        tokio::task::spawn_blocking(move || sync_forge(&f, &r, &t, &w))
+        let tree = tokio::task::spawn_blocking(move || sync_forge(&f, &r, &t, &w))
             .await
             .map_err(err)?
             .map_err(|why| err(format!("the forge checkout: {why}")))?;
+        tracing::info!(tree = %tree.display(), "gateway: the forge checkout read");
         tokio::spawn(follow_forge(forge, repo, token, work));
     }
     let mut broker = context_gateway::serve::broker_of(&config).map_err(err)?;
@@ -712,5 +1023,317 @@ mod tests {
             config(env, &filled).unwrap().broker_url,
             "https://broker.example"
         );
+    }
+
+    /// A zip of `files` under the forge's `{repo}-{ref}/` root.
+    fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write as _;
+        let mut out = std::io::Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(&mut out);
+        let opts = zip::write::SimpleFileOptions::default();
+        for (name, body) in files {
+            zip.start_file(*name, opts).unwrap();
+            zip.write_all(body).unwrap();
+        }
+        zip.finish().unwrap();
+        out.into_inner()
+    }
+
+    /// `router` served on a loopback port from its own thread; its base URL.
+    fn serve(router: Router) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                    axum::serve(listener, router).await.unwrap();
+                });
+        });
+        format!("http://{addr}")
+    }
+
+    const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn entry(spec: serde_json::Value) -> jc_core::kinds::ProjectSpec {
+        let mut base = serde_json::json!({"organizationRef": "city", "ref": "main"});
+        base.as_object_mut()
+            .unwrap()
+            .extend(spec.as_object().unwrap().clone());
+        serde_json::from_value(base).unwrap()
+    }
+
+    fn archives(forge: &str, cache: &Path) -> ForgeArchives {
+        let token = jc_secret::Secret::new("forge-token-not-secret".to_owned());
+        ForgeArchives::new(forge, "city", &token, cache.to_path_buf()).unwrap()
+    }
+
+    /// A forge holding `main` at [`SHA`] with `archive` as its zip; counts the archive reads and
+    /// refuses a request without the jc credential.
+    fn forge(archive: Vec<u8>) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use axum::http::{HeaderMap, StatusCode};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let reads = std::sync::Arc::new(AtomicUsize::new(0));
+        let counted = reads.clone();
+        let want = format!(
+            "Basic {}",
+            base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                "jc:forge-token-not-secret"
+            )
+        );
+        let authorized = move |headers: &HeaderMap| {
+            headers.get("authorization").and_then(|v| v.to_str().ok()) == Some(want.as_str())
+        };
+        let check = authorized.clone();
+        let router = Router::new()
+            .route(
+                "/api/v1/repos/city/conf/branches/main",
+                axum::routing::get(move |headers: HeaderMap| async move {
+                    if !check(&headers) {
+                        return (StatusCode::UNAUTHORIZED, String::new());
+                    }
+                    let body = serde_json::json!({"name": "main", "commit": {"id": SHA}});
+                    (StatusCode::OK, body.to_string())
+                }),
+            )
+            .route(
+                &format!("/api/v1/repos/city/conf/archive/{SHA}.zip"),
+                axum::routing::get(move |headers: HeaderMap| async move {
+                    if !authorized(&headers) {
+                        return (StatusCode::UNAUTHORIZED, Vec::new());
+                    }
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    (StatusCode::OK, archive)
+                }),
+            );
+        (serve(router), reads)
+    }
+
+    #[test]
+    fn a_checkout_reads_the_branch_and_its_archive_once_per_commit() {
+        use jc_manifest::assemble::Resolver as _;
+        let zip = zip_of(&[
+            ("conf-main/org.yaml", b"kind: Organization\n"),
+            ("conf-main/projects/a.yaml", b"a\n"),
+        ]);
+        let (base, reads) = forge(zip);
+        let cache = tempfile::tempdir().unwrap();
+        let resolver = archives(&base, cache.path());
+        let spec = entry(serde_json::json!({"repository": {"name": "conf"}}));
+        let tree = resolver.checkout("org", &spec).unwrap();
+        assert_eq!(tree, cache.path().join(format!("org.tree-{SHA}")));
+        assert_eq!(
+            std::fs::read_to_string(tree.join("org.yaml")).unwrap(),
+            "kind: Organization\n"
+        );
+        assert!(tree.join("projects/a.yaml").is_file());
+        // The same commit again: no second download.
+        assert_eq!(resolver.checkout("org", &spec).unwrap(), tree);
+        assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // A wrong credential is the forge's 401, named without the token.
+        let token = jc_secret::Secret::new("wrong".to_owned());
+        let other = ForgeArchives::new(&base, "city", &token, cache.path().join("x")).unwrap();
+        let why = other.checkout("org", &spec).unwrap_err();
+        assert!(why.contains("401") && !why.contains("wrong"), "{why}");
+    }
+
+    /// A layout 2 organization: its registry's forge project, pinned to a tag, is checked out
+    /// under `projects/` through `jcctl checkouts`, and an entry naming an outside `url` is
+    /// refused and linked nowhere.
+    #[test]
+    fn a_layout_2_organization_links_its_forge_projects_and_refuses_an_outside_one() {
+        use axum::http::{StatusCode, Uri};
+        const TAGGED: &str = "89abcdef0123456789abcdef0123456789abcdef";
+        let entry = |name: &str, repository: &str| {
+            format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata: {{ name: {name}, \
+                 namespace: org }}\nspec:\n  organizationRef: city\n  repository: {repository}\n  \
+                 ref: v1.0.0\n"
+            )
+        };
+        let (p, x) = (
+            entry("p", "{ name: proj }"),
+            entry("x", "{ url: \"https://elsewhere.example/city/x.git\" }"),
+        );
+        let org = zip_of(&[
+            ("conf-main/.jc/layout", b"2\n"),
+            ("conf-main/projects/p.yaml", p.as_bytes()),
+            ("conf-main/projects/x.yaml", x.as_bytes()),
+        ]);
+        let project = zip_of(&[("proj-v1.0.0/project.yaml", b"kind: Project\n")]);
+        let answers: BTreeMap<String, Vec<u8>> = BTreeMap::from([
+            (
+                "/api/v1/repos/city/conf/branches/main".to_owned(),
+                format!(r#"{{"commit":{{"id":"{SHA}"}}}}"#).into_bytes(),
+            ),
+            (format!("/api/v1/repos/city/conf/archive/{SHA}.zip"), org),
+            (
+                "/api/v1/repos/city/proj/commits?sha=v1.0.0&limit=1".to_owned(),
+                format!(r#"[{{"sha":"{TAGGED}"}}]"#).into_bytes(),
+            ),
+            (
+                format!("/api/v1/repos/city/proj/archive/{TAGGED}.zip"),
+                project,
+            ),
+        ]);
+        let base = serve(Router::new().fallback(move |uri: Uri| async move {
+            let key = uri.path_and_query().map(|p| p.as_str()).unwrap_or_default();
+            match answers.get(key) {
+                Some(body) => (StatusCode::OK, body.clone()),
+                None => (StatusCode::NOT_FOUND, Vec::new()),
+            }
+        }));
+        let work = tempfile::tempdir().unwrap();
+        let repo = setup::ForgeRepo {
+            owner: "city".into(),
+            repo: "conf".into(),
+        };
+        let token = jc_secret::Secret::new("forge-token-not-secret".to_owned());
+        let tree = sync_forge(&base, &repo, &token, work.path()).unwrap();
+        assert!(work.path().join("repo/current/projects/p.yaml").is_file());
+        assert_eq!(tree, work.path().join(format!("org-cache/org.tree-{SHA}")));
+        let linked = work.path().join("projects/p");
+        assert_eq!(
+            std::fs::read_to_string(linked.join("project.yaml")).unwrap(),
+            "kind: Project\n"
+        );
+        assert!(
+            std::fs::read_link(&linked)
+                .unwrap()
+                .ends_with(format!("p.tree-{TAGGED}"))
+        );
+        assert!(!work.path().join("projects/x").exists());
+    }
+
+    #[test]
+    fn a_ref_that_is_no_plain_branch_name_is_refused_before_any_request() {
+        use jc_manifest::assemble::Resolver as _;
+        let cache = tempfile::tempdir().unwrap();
+        // Port 9 answers nothing: a refusal naming the ref was decided before a request.
+        let resolver = archives("http://127.0.0.1:9", cache.path());
+        for bad in [
+            "../../admin",
+            "main/../../x",
+            "-main",
+            "/main",
+            "main?x=1",
+            "main#x",
+            "main%2f..",
+            "a b",
+            "a//b",
+            ".hidden",
+            "a/.b",
+            "x.lock",
+            "main/",
+            "",
+        ] {
+            let spec = entry(serde_json::json!({"repository": {"name": "conf"}, "ref": bad}));
+            let why = resolver.checkout("org", &spec).unwrap_err();
+            assert!(
+                why.contains("is not a branch or tag name"),
+                "{bad:?}: {why}"
+            );
+        }
+        for bad in ["../conf", "conf/x", ".git", "a b"] {
+            let spec = entry(serde_json::json!({"repository": {"name": bad}}));
+            let why = resolver.checkout("org", &spec).unwrap_err();
+            assert!(why.contains("is not a repository name"), "{bad:?}: {why}");
+        }
+        assert!(branch_name("main") && branch_name("workspace/air-v2"));
+        assert!(commit_id(SHA) && !commit_id(&SHA.to_uppercase()));
+    }
+
+    #[test]
+    fn an_outside_repository_is_refused() {
+        use jc_manifest::assemble::Resolver as _;
+        let cache = tempfile::tempdir().unwrap();
+        let resolver = archives("http://127.0.0.1:9", cache.path());
+        let spec = entry(serde_json::json!({
+            "repository": {"url": "https://elsewhere.example/city/conf.git"}
+        }));
+        let why = resolver.checkout("p", &spec).unwrap_err();
+        assert!(why.contains("outside jc's forge"), "{why}");
+        assert!(!why.contains("elsewhere.example"), "{why}");
+    }
+
+    #[test]
+    fn a_redirect_is_refused_and_not_followed() {
+        use axum::http::StatusCode;
+        use jc_manifest::assemble::Resolver as _;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let seen = hits.clone();
+        let elsewhere = serve(Router::new().fallback(move || async move {
+            seen.fetch_add(1, Ordering::SeqCst);
+            "{}"
+        }));
+        let target = format!("{elsewhere}/api/v1/repos/city/conf/branches/main");
+        let base = serve(Router::new().fallback(move || async move {
+            (StatusCode::FOUND, [(axum::http::header::LOCATION, target)])
+        }));
+        let cache = tempfile::tempdir().unwrap();
+        let spec = entry(serde_json::json!({"repository": {"name": "conf"}}));
+        let why = archives(&base, cache.path())
+            .checkout("org", &spec)
+            .unwrap_err();
+        assert!(why.contains("redirect"), "{why}");
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn an_over_long_branch_answer_is_refused() {
+        use jc_manifest::assemble::Resolver as _;
+        let huge = "x".repeat(MAX_ANSWER as usize + 1);
+        let base = serve(Router::new().fallback(move || async move { huge }));
+        let cache = tempfile::tempdir().unwrap();
+        let spec = entry(serde_json::json!({"repository": {"name": "conf"}}));
+        let why = archives(&base, cache.path())
+            .checkout("org", &spec)
+            .unwrap_err();
+        assert!(why.contains("larger than"), "{why}");
+    }
+
+    #[test]
+    fn an_archive_reaching_outside_holding_a_symlink_or_past_its_caps_is_refused() {
+        use std::io::Write as _;
+        let refused = |archive: Vec<u8>| {
+            let dir = tempfile::tempdir().unwrap();
+            let into = dir.path().join("tree");
+            std::fs::create_dir(&into).unwrap();
+            let why = unpack(&archive, &into).unwrap_err();
+            // Nothing landed beside the tree.
+            let beside: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().collect();
+            assert_eq!(beside.len(), 1, "{why}");
+            why
+        };
+        for name in ["conf-main/../../evil", "../evil", "/etc/evil", "C:/evil"] {
+            let why = refused(zip_of(&[(name, b"x")]));
+            assert!(why.contains("outside the checkout"), "{name}: {why}");
+        }
+        let mut out = std::io::Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(&mut out);
+        let opts = zip::write::SimpleFileOptions::default();
+        zip.add_symlink("conf-main/link", "/etc/passwd", opts)
+            .unwrap();
+        zip.finish().unwrap();
+        let why = refused(out.into_inner());
+        assert!(why.contains("symlink"), "{why}");
+        let big = vec![0u8; MAX_ENTRY as usize + 1];
+        let why = refused(zip_of(&[("conf-main/big", &big)]));
+        assert!(why.contains("size limits"), "{why}");
+        let mut out = std::io::Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(&mut out);
+        for i in 0..=MAX_ENTRIES {
+            zip.start_file(format!("conf-main/{i}"), opts).unwrap();
+            zip.write_all(b"x").unwrap();
+        }
+        zip.finish().unwrap();
+        let why = refused(out.into_inner());
+        assert!(why.contains("entry limit"), "{why}");
     }
 }

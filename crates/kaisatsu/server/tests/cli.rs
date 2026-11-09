@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::str::FromStr;
 
+#[path = "../../store-pg/tests/common/mod.rs"]
+mod pgdb;
+
 const BIN: &str = env!("CARGO_BIN_EXE_kaisatsu");
 
 const REALM_YAML: &str = r#"
@@ -251,14 +254,6 @@ struct PgEnv {
     migrate_password: String,
 }
 
-fn random_secret() -> String {
-    format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    )
-}
-
 async fn pg_env(test: &str) -> Option<PgEnv> {
     let Ok(url) = std::env::var("KAISATSU_TEST_DATABASE_URL") else {
         println!("SKIP {test}: KAISATSU_TEST_DATABASE_URL is unset; live PostgreSQL test not run");
@@ -270,8 +265,9 @@ async fn pg_env(test: &str) -> Option<PgEnv> {
         .connect_with(base.clone())
         .await
         .expect("connect test server");
-    let app_password = random_secret();
-    let migrate_password = random_secret();
+    // The same passwords the store tests set (pgdb::role_secret): nextest runs both at once.
+    let app_password = pgdb::role_secret(&url, "kaisatsu_app");
+    let migrate_password = pgdb::role_secret(&url, "kaisatsu_migrate");
     for (role, pw) in [
         ("kaisatsu_app", &app_password),
         ("kaisatsu_migrate", &migrate_password),
