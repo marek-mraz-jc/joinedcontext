@@ -15,3 +15,4 @@
 ^pipelines/(status|history|held)$  # every run RunnerRefused: the runner lacks JC_GATEWAY_URL, JC_TOKEN_URL, JC_CLIENT_SECRET_<PROJECT> (jc hands ekiben only EKIBEN_VAR_*; jc-portal-1 + jc-migrate, jc-smoke-gate REPORT)
 ^logs/(metrics\.ekiben\.own|rid\.flow\.ekiben-antares)$  # no stream runs in the rehearsal (the pipelines line above), so ekiben has no series and no write reaches the broker
 ^logs/secrets\.log\.shapes$  # false positive: jc's start lists each secret's name and source (`secret="dashboards-password" source="generated"`), no value (jc-smoke-logs)
+^assistant/(bundle\.widget\.(js|css)|page\.[^.]+|chat\..+)$  # assistant module off in the gate: deploy/rehearsal/up.sh gives jc no model key file, [assistant.database] (pgvector) or JC_ASSISTANT_MODEL_DIR/ORT_DYLIB_PATH; on a kit with them the suite passes 40/40 (jc-migrate; jc-smoke-live REPORT)
