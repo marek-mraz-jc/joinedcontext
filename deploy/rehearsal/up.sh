@@ -248,6 +248,8 @@ printf '[mounts.portal]\npath_prefix = ""\n%s\n%s\n\n%s\n' "$db_config" "$realm_
 if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then
   cat "$REHEARSAL_JC_TOML_EXTRA" >> "$home/jc.toml"
 fi
+# shellcheck source=deploy/rehearsal/apps.sh
+. "$here/apps.sh"  # the Apps: image bundles, apps cache, prod builds, roles person (jc-apps-export)
 nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" \
