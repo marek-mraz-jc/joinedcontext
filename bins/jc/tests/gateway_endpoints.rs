@@ -41,10 +41,15 @@ struct Jc {
     state: PathBuf,
     _dir: tempfile::TempDir,
     log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// The file the whole log goes to: one per test and run, so a red run keeps its evidence.
+    log_file: PathBuf,
 }
 
 impl Drop for Jc {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.save_log();
+        }
         let _ = Command::new("kill")
             .args(["-TERM", &self.child.id().to_string()])
             .status();
@@ -79,15 +84,25 @@ impl Jc {
         format!("{}{path}", self.base)
     }
 
+    /// Puts the test's own step into the log's timeline, so a red run shows what jc had logged
+    /// by then.
+    fn mark(&self, step: &str) {
+        let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+        self.log.lock().unwrap().push(format!("{at} TEST {step}"));
+    }
+
+    fn save_log(&self) {
+        let _ = std::fs::write(&self.log_file, self.log.lock().unwrap().join("\n"));
+    }
+
     /// The last lines of the child's log; the whole log goes to a file named in the answer.
     fn tail(&self) -> String {
+        self.save_log();
         let log = self.log.lock().unwrap();
-        let file = Path::new(env!("CARGO_TARGET_TMPDIR")).join("gateway_endpoints.log");
-        let _ = std::fs::write(&file, log.join("\n"));
         format!(
             "{}\n(whole log: {})",
             log[log.len().saturating_sub(60)..].join("\n"),
-            file.display()
+            self.log_file.display()
         )
     }
 }
@@ -199,7 +214,8 @@ fn realm_file(dir: &Path, secrets: &Path) {
     std::fs::write(dir.join("00-e2e.json"), realm.to_string()).unwrap();
 }
 
-async fn start() -> Jc {
+/// `test` names the log file, beside the pid and the start time of this run.
+async fn start(test: &str) -> Jc {
     let dir = tempfile::tempdir().unwrap();
     let state = dir.path().join("state");
     let realms = dir.path().join("realms");
@@ -264,6 +280,14 @@ async fn start() -> Jc {
         state,
         _dir: dir,
         log,
+        log_file: Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+            "gateway_endpoints-{test}-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        )),
     };
     match rx.recv_timeout(Duration::from_secs(180)) {
         Ok(Ok(())) => jc,
@@ -382,6 +406,7 @@ async fn put_file(jc: &Jc, path: &str, content: &str) {
             continue;
         }
         assert!(status.is_success(), "PUT contents/{path}: {status} {body}");
+        jc.mark(&format!("PUT {path} answered {status}"));
         return;
     }
 }
@@ -462,7 +487,7 @@ fn entity(kind: &str, local: &str) -> Value {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn endpoints_answer_inside_jc_as_on_dev() {
-    let jc = start().await;
+    let jc = start("endpoints_answer_inside_jc_as_on_dev").await;
     let started = Instant::now();
     // jc creates the organization repository in the Portal's background start, after it
     // listens: write once shako holds it.
@@ -640,6 +665,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     // A person with no grant on the Endpoint gets a token exchanged the same way, and the
     // gateway's Policy still refuses them: the scope names the Endpoint, never a right to it.
     let stranger = token_of(&jc, "e2e-mcp", STRANGER).await;
+    jc.mark("the stranger's jc_data_query sent");
     let (status, body) = call(
         &jc,
         post.clone(),
@@ -648,6 +674,9 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
         Some(&data_query(4)),
     )
     .await;
+    jc.mark(&format!(
+        "the stranger's jc_data_query answered {status}: {body}"
+    ));
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(
         !body.contains("urn:ngsi-ld:Thing:one"),
@@ -681,6 +710,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     // MCP through the hub: the tools list and one query of the public Endpoint, anonymously.
     let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
     let (status, body) = call(&jc, post.clone(), "/api/mcp", None, Some(&list)).await;
+    jc.mark(&format!("the hub's tools/list answered {status}"));
     assert_eq!(status, StatusCode::OK, "{body}");
     let listed: Value = serde_json::from_str(&body).unwrap();
     let names: Vec<&str> = listed["result"]["tools"]
@@ -854,7 +884,7 @@ slots:
 /// (without a schema both answer 404 "no such resource").
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_modelled_endpoint_answers_ogc_and_odata_inside_jc() {
-    let jc = start().await;
+    let jc = start("a_modelled_endpoint_answers_ogc_and_odata_inside_jc").await;
     for (path, content) in modelled_manifests() {
         put_file(&jc, &path, &content).await;
     }
