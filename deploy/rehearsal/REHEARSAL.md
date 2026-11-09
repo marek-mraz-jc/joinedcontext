@@ -98,6 +98,10 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   The rehearsal answers on `http://localhost:<port>`, so each client URL on the source Portal's
   host (or its domain, where the Apps live) gets a twin on that address beside it (`realms
   --public-base`); the source URLs stay. Rehearsal only: the cutover runs jc on the source hosts.
+- One prod reader, loopback prod rehearsal only (supervisor 2026-11-09): banskabystrica-zaznamy's
+  Endpoint has one read Policy naming one user id (fc3b55df, demo.steward). `REHEARSAL_APP_HOLDER_ID`
+  gives the Apps' holder `rehearsal-app-roles` that id, with its own rehearsal password, no e-mail,
+  name or credential of the source; apps.sh refuses it on any non-loopback bind. Never on jc-prod.
 - Realm lines of deployment main (supervisor 2026-11-09 16:1xZ: the cutover carries main's realm,
   as dev runs main): `rehearsal.py render` of release and of main for the environment, then
   `REHEARSAL_REALM_LINES_FROM=<release>/keycloak-config.values.yaml` and
