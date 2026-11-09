@@ -209,7 +209,7 @@ export function TargetCard({ space, type, target, history, onHistory, timeSlots 
         <>
           <p className="text-caption text-fg-muted">{t("pipelines.workbench.target.explain", { type })}</p>
           {onHistory ? <p id={HISTORY_EXPLAIN} className="text-caption text-fg-muted">{t("pipelines.history.explain")}</p> : null}
-          <Table caption={t("pipelines.workbench.target.caption", { type })} {...(onHistory ? {} : { maxHeight: "max-h-80" })}>
+          <Table stack caption={t("pipelines.workbench.target.caption", { type })} {...(onHistory ? {} : { maxHeight: "max-h-80" })}>
             <TableHead>
               <TableHeaderCell>{t("pipelines.workbench.target.field")}</TableHeaderCell>
               <TableHeaderCell>{t("pipelines.workbench.target.kind")}</TableHeaderCell>
@@ -228,10 +228,10 @@ export function TargetCard({ space, type, target, history, onHistory, timeSlots 
                       <TableCell>
                         <span className="font-mono">{attribute.name}</span>
                       </TableCell>
-                      <TableCell>{attribute.kind}</TableCell>
-                      <TableCell>{valueOf(attribute)}</TableCell>
-                      <TableCell>{attribute.required ? t("pipelines.workbench.target.isRequired") : t("pipelines.workbench.target.optional")}</TableCell>
-                      <TableCell>
+                      <TableCell data-label={t("pipelines.workbench.target.kind")}>{attribute.kind}</TableCell>
+                      <TableCell data-label={t("pipelines.workbench.target.value")}>{valueOf(attribute)}</TableCell>
+                      <TableCell data-label={t("pipelines.workbench.target.required")}>{attribute.required ? t("pipelines.workbench.target.isRequired") : t("pipelines.workbench.target.optional")}</TableCell>
+                      <TableCell data-label={t("pipelines.workbench.target.writable")}>
                         {verdict === undefined ? (
                           <span className="text-fg-subtle">{target.loading ? t("pipelines.workbench.target.judging") : "—"}</span>
                         ) : verdict.writable ? (
@@ -250,7 +250,7 @@ export function TargetCard({ space, type, target, history, onHistory, timeSlots 
                         )}
                       </TableCell>
                       {onHistory && type ? (
-                        <TableCell>
+                        <TableCell data-label={t("pipelines.history.column")}>
                           {verdict?.writable === false ? (
                             <span className="text-fg-subtle">—</span>
                           ) : (
@@ -271,15 +271,15 @@ export function TargetCard({ space, type, target, history, onHistory, timeSlots 
                 <TableCell>
                   <span className="font-mono">expiresAt</span>
                 </TableCell>
-                <TableCell>{t("pipelines.workbench.target.lifetimeKind")}</TableCell>
-                <TableCell>{t("pipelines.workbench.target.instant")}</TableCell>
-                <TableCell>{t("pipelines.workbench.target.optional")}</TableCell>
-                <TableCell>
+                <TableCell data-label={t("pipelines.workbench.target.kind")}>{t("pipelines.workbench.target.lifetimeKind")}</TableCell>
+                <TableCell data-label={t("pipelines.workbench.target.value")}>{t("pipelines.workbench.target.instant")}</TableCell>
+                <TableCell data-label={t("pipelines.workbench.target.required")}>{t("pipelines.workbench.target.optional")}</TableCell>
+                <TableCell data-label={t("pipelines.workbench.target.writable")}>
                   <a className={RECORD_LINK_STYLE} href="#workbench-lifetime">
                     {t("pipelines.workbench.target.inLifetime")}
                   </a>
                 </TableCell>
-                {onHistory ? <TableCell>—</TableCell> : null}
+                {onHistory ? <TableCell data-label={t("pipelines.history.column")}>—</TableCell> : null}
               </TableRow>
             </TableBody>
           </Table>

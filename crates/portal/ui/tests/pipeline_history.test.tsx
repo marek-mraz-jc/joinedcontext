@@ -87,6 +87,8 @@ describe("the History column", () => {
     inI18n(<TargetCard space="helsinki" type="Vehicle" target={TARGET} history={undefined} onHistory={onHistory} timeSlots={["observedOn"]} />);
     const table = screen.getByRole("table", { name: "Attributes of Vehicle" });
     expect(within(table).getByRole("columnheader", { name: "History" })).toBeInTheDocument();
+    // At 400 px the History selects sat off-screen (UI judge 2026-11-09): each row stacks there.
+    expect(table).toHaveClass("table-stack");
     fireEvent.change(screen.getByRole("combobox", { name: "What to keep of location" }), { target: { value: "changes" } });
     expect(onHistory).toHaveBeenLastCalledWith([{ type: "Vehicle", attributes: [{ names: ["location"], keep: "changes", heartbeat: "PT1H" }] }]);
     expect(screen.queryByRole("combobox", { name: "What to keep of nextStop" })).toBeNull();
