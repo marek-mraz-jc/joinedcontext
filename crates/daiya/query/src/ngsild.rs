@@ -46,6 +46,8 @@ pub struct NgsiLdDatasource {
     pub uid: String,
     pub endpoint_url: String,
     pub endpoint_slug: Option<String>,
+    /// Grafana's `oauthPassThru`, kept as stored. It changes no request: a caller's token is
+    /// exchanged either way, and with none the read goes out without `Authorization`.
     pub oauth_pass_thru: bool,
     pub page_size: u32,
     pub context_url: Option<String>,
@@ -108,18 +110,10 @@ impl NgsiLdDatasource {
             headers.push(("NGSILD-Tenant".to_owned(), t.trim().to_owned()));
         }
 
-        // Exchange caller's token for Endpoint audience when oauthPassThru is active or bearer token is present
-        if self.oauth_pass_thru {
-            let caller_token = ctx.subject.bearer_token.as_deref().unwrap_or("");
-            let audience = self.endpoint_slug.as_deref().unwrap_or(self.uid.as_str());
-            let exchanged = self
-                .token_exchanger
-                .exchange_for_audience(caller_token, audience)?;
-            headers.push((
-                "Authorization".to_owned(),
-                format!("Bearer {}", exchanged.as_str()),
-            ));
-        } else if let Some(caller_token) = &ctx.subject.bearer_token
+        // A caller's token leaves only exchanged for the Endpoint's audience. With no token the
+        // read goes out anonymously, whether or not oauthPassThru is on (Grafana parity): the
+        // gateway answers it by the Endpoint's audience.
+        if let Some(caller_token) = &ctx.subject.bearer_token
             && !caller_token.is_empty()
         {
             let audience = self.endpoint_slug.as_deref().unwrap_or(self.uid.as_str());

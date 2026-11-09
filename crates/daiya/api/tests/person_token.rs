@@ -388,3 +388,79 @@ async fn a_multi_value_variable_reaches_prometheus_as_a_regex_alternation() {
         "{seen:?}"
     );
 }
+
+/// A members-only Endpoint: answers 401 to every request and logs each request head.
+async fn members_only_gateway() -> (String, Arc<Mutex<Vec<String>>>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            let mut buf = vec![0u8; 16384];
+            let n = sock.read(&mut buf).await.unwrap_or(0);
+            log.lock()
+                .push(String::from_utf8_lossy(&buf[..n]).into_owned());
+            let body = r#"{"type":"about:blank","title":"Unauthorized","status":401}"#;
+            let resp = format!(
+                "HTTP/1.1 401 Unauthorized\r\ncontent-type: application/problem+json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        }
+    });
+    (format!("http://127.0.0.1:{}", addr.port()), seen)
+}
+
+#[tokio::test]
+async fn a_public_endpoint_panel_renders_with_no_person_token_and_no_authorization() {
+    let (base, seen) = gateway("nobody-a".into(), "nobody-b".into()).await;
+    let w = World::new();
+    // oauthPassThru on, as the Portal provisions every Endpoint datasource.
+    w.endpoint_board("public", &base, "publicslug", true).await;
+
+    let (status, view) = w.panel("public", None).await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(readings(&view), [json!(0)], "{view}");
+    let heads = std::mem::take(&mut *seen.lock());
+    assert_eq!(heads.len(), 1, "{heads:?}");
+    assert_eq!(bearer_of(&heads[0]), None, "{}", heads[0]);
+}
+
+#[tokio::test]
+async fn a_members_only_endpoint_read_with_no_token_goes_out_anonymously_and_its_401_is_the_error()
+{
+    let (base, seen) = members_only_gateway().await;
+    let w = World::new();
+    w.endpoint_board("members", &base, "membersslug", true)
+        .await;
+
+    let (status, view) = w.panel("members", None).await;
+    assert!(readings(&view).is_empty(), "{view}");
+    assert!(view.to_string().contains("401"), "{status} {view}");
+    let heads = std::mem::take(&mut *seen.lock());
+    assert_eq!(heads.len(), 1, "{heads:?}");
+    assert_eq!(bearer_of(&heads[0]), None, "{}", heads[0]);
+}
+
+#[tokio::test]
+async fn an_anonymous_read_and_a_persons_read_of_one_panel_never_share_a_cache_entry() {
+    let pia = jwt("sub-pia", "endpoint:closedslug");
+    let (base, seen) = gateway(pia.clone(), "nobody".into()).await;
+    let w = World::new();
+    w.endpoint_board("closed", &base, "closedslug", true).await;
+
+    let (_, anonymous) = w.panel("closed", None).await;
+    let (_, person) = w.panel("closed", Some(&pia)).await;
+    let (_, anonymous_again) = w.panel("closed", None).await;
+    let (_, person_again) = w.panel("closed", Some(&pia)).await;
+    assert_eq!(readings(&anonymous), [json!(0)], "{anonymous}");
+    assert_eq!(readings(&person), [json!(1)], "{person}");
+    assert_eq!(readings(&anonymous_again), [json!(0)], "{anonymous_again}");
+    assert_eq!(readings(&person_again), [json!(1)], "{person_again}");
+    // One upstream read each; the repeats came from two separate cache entries.
+    let heads = seen.lock().clone();
+    assert_eq!(heads.len(), 2, "{heads:?}");
+    assert_eq!(bearer_of(&heads[0]), None, "{}", heads[0]);
+    assert_eq!(bearer_of(&heads[1]), Some(format!("Bearer {pia}")));
+}

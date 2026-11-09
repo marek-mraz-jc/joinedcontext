@@ -417,34 +417,41 @@ async fn the_caller_token_leaves_only_exchanged_and_headers_carry_context_and_te
         "{lower}"
     );
 
-    // oauthPassThru without a caller token is refused before anything leaves.
+    // oauthPassThru without a caller token reads anonymously, as Grafana does: no exchange, no
+    // Authorization header, and the gateway decides by the Endpoint's audience.
     let pass = NgsiLdDatasource::new(
         "air",
         format!("{}/api/endpoint/slug-x", m.base),
         true,
         loopback_guard(),
-        Arc::new(PassthroughAudienceExchanger),
+        Arc::new(DenyTokenExchanger),
     );
-    let err = pass
-        .query(&ctx(Subject::anonymous()), &q(json!({ "entityType": "T" })))
+    pass.query(&ctx(Subject::anonymous()), &q(json!({ "entityType": "T" })))
         .await
-        .unwrap_err();
-    assert!(
-        matches!(err, DsError::TokenExchange { ref audience, .. } if audience == "slug-x"),
-        "{err}"
-    );
+        .unwrap();
+    let lower = m.head(2).to_ascii_lowercase();
+    assert!(!lower.contains("authorization"), "{lower}");
+    let empty = Subject::authenticated("e", vec![common::ORG], vec![]).with_bearer_token("");
+    pass.query(&ctx(empty), &q(json!({ "entityType": "T" })))
+        .await
+        .unwrap();
+    let lower = m.head(3).to_ascii_lowercase();
+    assert!(!lower.contains("authorization"), "{lower}");
     let h = pass.health(&ctx(Subject::anonymous())).await;
-    assert_eq!(h.status, HealthState::Error);
-    assert!(h.message.contains("token exchange"), "{}", h.message);
+    assert_eq!(h.status, HealthState::Ok, "{}", h.message);
+    let pass = NgsiLdDatasource {
+        token_exchanger: Arc::new(PassthroughAudienceExchanger),
+        ..pass
+    };
     let caller =
         Subject::authenticated("bob", vec![common::ORG], vec![]).with_bearer_token("jwt-b");
     pass.query(&ctx(caller), &q(json!({ "entityType": "T" })))
         .await
         .unwrap();
+    let head = m.head(5).to_ascii_lowercase();
     assert!(
-        m.head(2)
-            .to_ascii_lowercase()
-            .contains("authorization: bearer exchanged:slug-x:jwt-b")
+        head.contains("authorization: bearer exchanged:slug-x:jwt-b"),
+        "{head}"
     );
 
     // With the deny exchanger a caller's token is refused, not forwarded.
@@ -467,7 +474,7 @@ async fn the_caller_token_leaves_only_exchanged_and_headers_carry_context_and_te
         .await
         .unwrap_err();
     assert!(matches!(err, DsError::TokenExchange { .. }), "{err}");
-    assert_eq!(m.count(), 3);
+    assert_eq!(m.count(), 6);
 }
 
 #[tokio::test]
