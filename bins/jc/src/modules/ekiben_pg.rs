@@ -43,20 +43,49 @@ CREATE POLICY tenant_isolation ON ekiben.stream
     WITH CHECK (org = current_setting('ekiben.org', true));
 ";
 
+/// The resources posted to `/resources/{kind}/{id}` (the Portal's `<project>__pipeline_egress`
+/// rate limits), as posted (before `${VAR}` interpolation): a stream started at boot may name
+/// one before the Portal posts it again.
+const MIGRATION_0002_SQL: &str = "
+CREATE TABLE IF NOT EXISTS ekiben.resource (
+    org TEXT NOT NULL COLLATE \"C\",
+    kind TEXT NOT NULL COLLATE \"C\",
+    id TEXT NOT NULL COLLATE \"C\",
+    posted TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org, kind, id)
+);
+ALTER TABLE ekiben.resource ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ekiben.resource FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON ekiben.resource;
+CREATE POLICY tenant_isolation ON ekiben.resource
+    USING (org = current_setting('ekiben.org', true))
+    WITH CHECK (org = current_setting('ekiben.org', true));
+";
+
 /// Tables the boot check requires (every table of the schema must have forced RLS too).
-const REQUIRED_TABLES: [&str; 2] = ["org", "stream"];
+const REQUIRED_TABLES: [&str; 3] = ["org", "stream", "resource"];
 
 /// Runs the migration as the owning role, then grants `app_role` what the request path needs.
 pub async fn migrate(pool: &PgPool, app_role: &str) -> Result<(), String> {
     use sqlx::SqlSafeStr;
     use sqlx::migrate::{Migration, MigrationType, Migrator};
-    let mut migrator = Migrator::with_migrations(vec![Migration::new(
-        1,
-        "streams".into(),
-        MigrationType::Simple,
-        MIGRATION_0001_SQL.into_sql_str(),
-        false,
-    )]);
+    let mut migrator = Migrator::with_migrations(vec![
+        Migration::new(
+            1,
+            "streams".into(),
+            MigrationType::Simple,
+            MIGRATION_0001_SQL.into_sql_str(),
+            false,
+        ),
+        Migration::new(
+            2,
+            "resources".into(),
+            MigrationType::Simple,
+            MIGRATION_0002_SQL.into_sql_str(),
+            false,
+        ),
+    ]);
     migrator.create_schema("ekiben_migrations");
     migrator.dangerous_set_table_name("ekiben_migrations._sqlx_migrations");
     migrator
@@ -67,7 +96,8 @@ pub async fn migrate(pool: &PgPool, app_role: &str) -> Result<(), String> {
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "GRANT USAGE ON SCHEMA ekiben TO {role};
          GRANT SELECT, INSERT ON ekiben.org TO {role};
-         GRANT SELECT, INSERT, UPDATE, DELETE ON ekiben.stream TO {role};"
+         GRANT SELECT, INSERT, UPDATE, DELETE ON ekiben.stream TO {role};
+         GRANT SELECT, INSERT, UPDATE ON ekiben.resource TO {role};"
     )))
     .execute(pool)
     .await
@@ -154,8 +184,22 @@ impl PgStreams {
         Ok(rows)
     }
 
-    /// Starts every saved stream in `manager`. A definition that no longer starts (a variable
-    /// gone, a component refused) is reported and kept, so a later fix can still read it.
+    /// The saved resources of `org`, as (kind, id, posted).
+    async fn resources(&self, org: &OrgId) -> Result<Vec<(String, String, String)>, String> {
+        let mut tx = self.scoped(org).await?;
+        let rows = sqlx::query_as("SELECT kind, id, posted FROM ekiben.resource ORDER BY kind, id")
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Puts back every saved resource of each organization, then starts every saved stream in
+    /// `manager`, so a stream naming a resource finds it from its first run (an expiry sweep's
+    /// `<project>__pipeline_egress` used to be missing until the Portal's first pass). A
+    /// definition that no longer starts (a variable gone, a component refused) is reported and
+    /// kept, so a later fix can still read it.
     pub async fn restore(&self, manager: &StreamManager) -> Result<usize, String> {
         let orgs: Vec<String> = sqlx::query_scalar("SELECT org FROM ekiben.org ORDER BY org")
             .fetch_all(&self.pool)
@@ -163,6 +207,14 @@ impl PgStreams {
             .map_err(|e| e.to_string())?;
         let mut started = 0;
         for org in orgs.into_iter().map(OrgId) {
+            for (kind, id, posted) in self.resources(&org).await? {
+                if let Err(e) = manager.restore_resource(&org, &kind, &id, &posted) {
+                    tracing::error!(
+                        org = %org.0, kind = %kind, resource = %id, error = %e,
+                        "ekiben: a saved resource did not build"
+                    );
+                }
+            }
             for (id, posted) in self.list(&org).await? {
                 match manager.restore(org.clone(), id.clone(), posted).await {
                     Ok(()) => started += 1,
@@ -196,6 +248,35 @@ impl StreamPersistence for PgStreams {
                  ON CONFLICT (org, id) DO UPDATE SET posted = EXCLUDED.posted, updated_at = now()",
             )
             .bind(&org.0)
+            .bind(id)
+            .bind(posted)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+            tx.commit().await.map_err(|e| e.to_string())
+        })
+    }
+
+    fn resource_saved<'a>(
+        &'a self,
+        org: &'a OrgId,
+        kind: &'a str,
+        id: &'a str,
+        posted: &'a str,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            let mut tx = self.scoped(org).await?;
+            sqlx::query("INSERT INTO ekiben.org (org) VALUES ($1) ON CONFLICT DO NOTHING")
+                .bind(&org.0)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+            sqlx::query(
+                "INSERT INTO ekiben.resource (org, kind, id, posted) VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (org, kind, id) DO UPDATE SET posted = EXCLUDED.posted, updated_at = now()",
+            )
+            .bind(&org.0)
+            .bind(kind)
             .bind(id)
             .bind(posted)
             .execute(&mut *tx)

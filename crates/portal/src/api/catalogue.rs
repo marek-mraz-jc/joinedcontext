@@ -1257,7 +1257,7 @@ pub fn endpoint_slug(extra: &str, public_base: &Url) -> Option<String> {
 /// The slug of an Endpoint URL on the data host or, as written before it (T-4632), the Portal's.
 fn our_endpoint_slug(state: &AppState, extra: &str) -> Option<String> {
     endpoint_slug(extra, &state.config.api_base_url())
-        .or_else(|| endpoint_slug(extra, &state.config.public_base_url))
+        .or_else(|| endpoint_slug(extra, &state.config.public_base()))
 }
 
 /// The slug of the dataset's Endpoint when it is a public Endpoint of this installation.
@@ -1642,7 +1642,7 @@ fn gateway_endpoint(state: &AppState, slug: &str) -> String {
         .gateway_url
         .as_deref()
         .and_then(|g| Url::parse(g).ok())
-        .unwrap_or_else(|| state.config.public_base_url.clone());
+        .unwrap_or_else(|| state.config.public_base());
     endpoint_url(&base, slug)
 }
 

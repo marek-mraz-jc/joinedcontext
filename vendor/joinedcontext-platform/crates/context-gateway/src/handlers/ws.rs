@@ -116,9 +116,9 @@ pub(crate) async fn endpoint_ws(
     // A browser tab or a plain curl is no upgrade: it is told how to use the address instead
     // of axum's bare 400 (T-4064). It holds no connection, so it counts against no cap.
     if !asks_to_upgrade(request.headers()) {
-        return guide(&endpoint, gateway.base_url(), request.headers());
+        return guide(&endpoint, &gateway.base_url(), request.headers());
     }
-    if !origin_allowed(request.headers(), gateway.base_url()) {
+    if !origin_allowed(request.headers(), &gateway.base_url()) {
         tracing::info!(slug = %endpoint.slug, "WebSocket refused: a foreign Origin");
         return ProblemDetails::new(403, "origin-refused", "Forbidden")
             .with_detail("this Origin may not open the Endpoint's WebSocket")

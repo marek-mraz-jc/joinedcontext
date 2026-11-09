@@ -473,6 +473,15 @@ struct FlowState {
     nonce: String,
     /// Where to send the browser afterwards; always a path on this portal.
     redirect_to: String,
+    /// The redirect URI the realm was handed: the Portal host's own (`organization_host`), and
+    /// the one the code is redeemed with. Empty in a flow started before it was kept.
+    #[serde(default)]
+    redirect_uri: String,
+}
+
+/// The redirect URI of the host the running request reached.
+fn redirect_uri_here(state: &AppState) -> String {
+    crate::config::Config::redirect_uri_at(&crate::organization_host::public_base(&state.config))
 }
 
 #[derive(Debug, Deserialize)]
@@ -605,6 +614,13 @@ pub async fn login(
         .add_scope(Scope::new("profile".to_string()))
         .add_scope(Scope::new("email".to_string()))
         .set_pkce_challenge(challenge);
+    // Back to the host the person started on: each Organization's Portal host has its own.
+    let redirect_uri = redirect_uri_here(&state);
+    if redirect_uri != client.redirect_uri {
+        let url = RedirectUrl::new(redirect_uri.clone())
+            .map_err(|e| ApiError::Internal(format!("redirect uri: {e}")))?;
+        request = request.set_redirect_uri(std::borrow::Cow::Owned(url));
+    }
     // The sign-in page in the Portal's language: a Slovak Portal led to an English login (T-4199).
     if let Some(locale) = ui_locale(query.lang.as_deref()) {
         request = request.add_extra_param("ui_locales", locale);
@@ -621,6 +637,7 @@ pub async fn login(
         csrf_state: csrf_state.secret().clone(),
         nonce: nonce.secret().clone(),
         redirect_to: safe_redirect(query.redirect_to),
+        redirect_uri,
     };
     let value = serde_json::to_string(&flow)
         .map_err(|e| ApiError::Internal(format!("serialize oidc flow: {e}")))?;
@@ -654,7 +671,7 @@ pub const SSO_CHECK_DONE: &str = "/api/v1/auth/sso-check/done";
 )]
 pub async fn sso_check(State(state): State<AppState>) -> Result<Response, ApiError> {
     let client = oidc(&state)?;
-    let url = client.sso_check_url(&state.config.public_base_url);
+    let url = client.sso_check_url(&crate::organization_host::public_base(&state.config));
     Ok((
         [(axum::http::header::CACHE_CONTROL, "no-store")],
         Redirect::to(url.as_str()),
@@ -747,12 +764,24 @@ pub async fn callback(
     let code = query
         .code
         .ok_or_else(|| ApiError::BadRequest("missing code".into()))?;
+    // A flow ends on the host it began on: a flow cookie carried to another Organization's host
+    // opens with the shared key, and is refused here.
+    let redirect_uri = if flow.redirect_uri.is_empty() {
+        client.redirect_uri.clone()
+    } else {
+        flow.redirect_uri.clone()
+    };
+    if redirect_uri != redirect_uri_here(&state) {
+        return Err(ApiError::BadRequest(
+            "this login was started on another Portal host; sign in again".into(),
+        ));
+    }
 
     let token_response = client
         .token_request(&[
             ("grant_type", "authorization_code"),
             ("code", code.as_str()),
-            ("redirect_uri", client.redirect_uri.as_str()),
+            ("redirect_uri", redirect_uri.as_str()),
             ("code_verifier", flow.pkce_verifier.as_str()),
         ])
         .await
@@ -973,7 +1002,7 @@ pub async fn logout(
                 let mut params = url.query_pairs_mut();
                 params.append_pair(
                     "post_logout_redirect_uri",
-                    state.config.public_base_url.as_str(),
+                    crate::organization_host::public_base(&state.config).as_str(),
                 );
                 if let Some(hint) = session.as_ref().and_then(|s| state.take_id_token(s)) {
                     params.append_pair("id_token_hint", &hint);
@@ -984,7 +1013,7 @@ pub async fn logout(
             }
             url.to_string()
         })
-        .unwrap_or_else(|| state.config.public_base_url.to_string());
+        .unwrap_or_else(|| crate::organization_host::public_base(&state.config).to_string());
 
     Ok((
         jar,

@@ -132,16 +132,34 @@ fn member_of_organization_of(
     let Some(owner) = organization_of(mirror, project) else {
         return false;
     };
-    held.iter().any(|(reach, _)| {
-        let of = match reach {
-            Reach::Organization(org) => Some(org.clone()),
-            Reach::Project(p) => organization_of(mirror, p),
-            Reach::Space(space) => {
-                project_of_space(mirror, space).and_then(|p| organization_of(mirror, &p))
-            }
-        };
-        of.as_deref() == Some(owner.as_str())
-    })
+    held.iter()
+        .any(|(reach, _)| organization_of_reach(mirror, reach).as_deref() == Some(owner.as_str()))
+}
+
+/// The Organization a binding's reach lies in: its own, its project's, its space's project's.
+fn organization_of_reach(mirror: &Mirror, reach: &Reach) -> Option<String> {
+    match reach {
+        Reach::Organization(org) => Some(org.clone()),
+        Reach::Project(p) => organization_of(mirror, p),
+        Reach::Space(space) => {
+            project_of_space(mirror, space).and_then(|p| organization_of(mirror, &p))
+        }
+    }
+}
+
+/// Whether the caller belongs to `organization` on its own Portal host (`organization_host`): a
+/// binding in force that reaches it, one of its projects or one of their spaces, or the
+/// bootstrap group, whose administrators work in every Organization, each on its own host.
+pub fn belongs_to_organization(
+    mirror: &Mirror,
+    bootstrap_group: &str,
+    identity: &Identity,
+    organization: &str,
+) -> bool {
+    in_group(identity, bootstrap_group)
+        || in_force(mirror, identity, Utc::now())
+            .iter()
+            .any(|(reach, _)| organization_of_reach(mirror, reach).as_deref() == Some(organization))
 }
 
 /// Reads every `Role` and `RoleBinding` of the mirror and keeps the rules whose binding names
@@ -153,7 +171,25 @@ pub fn effective(
     project: &str,
     now: DateTime<Utc>,
 ) -> Effective {
-    if in_group(identity, bootstrap_group) {
+    // On an Organization's own Portal host (`organization_host`) only its projects exist, for
+    // everyone, the bootstrap group included: another Organization's project reads as absent.
+    let pin = crate::organization_host::organization();
+    if pin.is_some() && project != ORG_NAMESPACE && organization_of(mirror, project) != pin {
+        return Effective {
+            project: project.to_owned(),
+            bootstrap: false,
+            grants: Vec::new(),
+            projects: None,
+        };
+    }
+    // The organization's own namespace belongs to the installation (ADR-N-058 section 2.2). On
+    // another Organization's host it holds only that Organization's own settings, whoever asks:
+    // the installation is administered on its own host.
+    let foreign_namespace = project == ORG_NAMESPACE
+        && pin
+            .as_deref()
+            .is_some_and(|host| installation_organization(mirror).as_deref() != Some(host));
+    if in_group(identity, bootstrap_group) && !foreign_namespace {
         return Effective {
             project: project.to_owned(),
             bootstrap: true,
@@ -169,13 +205,20 @@ pub fn effective(
         .into_iter()
         .filter_map(|(reach, mut grant)| {
             grant.space = match reach {
-                Reach::Organization(org) if organization_reaches(mirror, &org, project) => None,
-                Reach::Organization(org) if project == ORG_NAMESPACE => {
+                Reach::Organization(org)
+                    if !foreign_namespace && organization_reaches(mirror, &org, project) =>
+                {
+                    None
+                }
+                Reach::Organization(org)
+                    if project == ORG_NAMESPACE
+                        && (!foreign_namespace || pin.as_deref() == Some(org.as_str())) =>
+                {
                     own_settings.extend(narrowed_to_own_settings(mirror, &org, grant));
                     return None;
                 }
                 Reach::Organization(_) => return None,
-                Reach::Project(p) if p == project => None,
+                Reach::Project(p) if p == project && !foreign_namespace => None,
                 Reach::Project(_) => return None,
                 Reach::Space(space) => {
                     let held_by = home
@@ -2206,6 +2249,112 @@ mod tests {
         assert!(member("ana@ba.sk", "bratislava") && member("bo@ba.sk", "bratislava"));
         assert!(member("cy@hel.fi", "helsinki") && !member("cy@hel.fi", "bratislava"));
         assert!(!member("dee@nowhere", "helsinki"), "no binding at all");
+    }
+
+    /// jc-multiorg-portal: on an Organization's own Portal host only its projects exist, for a
+    /// person bound in both and for the bootstrap group too; the organization's namespace there
+    /// holds that Organization's own settings and nothing of the installation's.
+    #[tokio::test]
+    async fn on_an_organizations_host_only_its_projects_exist_for_anyone() {
+        let mirror = Mirror::new();
+        let person = |email: &str, groups: Vec<String>| Identity {
+            client: None,
+            subject: format!("sub-{email}"),
+            username: email.to_owned(),
+            email: Some(email.to_owned()),
+            name: None,
+            roles: Vec::new(),
+            groups,
+            second_factor: false,
+        };
+        mirror.upsert(org(
+            "Role",
+            "admin",
+            serde_json::json!({ "rules": [{ "kinds": ["Project", "ContextSpace", "Organization", "RoleBinding", "Group"],
+                                  "verbs": ["read", "propose", "approve", "delete"] }] }),
+        ));
+        mirror.upsert(org(
+            "Organization",
+            "hel",
+            serde_json::json!({ "installation": true }),
+        ));
+        mirror.upsert(org("Organization", "bratislava", serde_json::json!({})));
+        for (project, owner) in [("helsinki", "hel"), ("bratislava", "bratislava")] {
+            mirror.upsert(org(
+                "Project",
+                project,
+                serde_json::json!({ "organizationRef": owner }),
+            ));
+        }
+        for (who, scope) in [
+            ("both@x.eu", serde_json::json!({ "organization": "hel" })),
+            (
+                "both@x.eu",
+                serde_json::json!({ "organization": "bratislava" }),
+            ),
+            (
+                "ba@x.eu",
+                serde_json::json!({ "organization": "bratislava" }),
+            ),
+        ] {
+            let name = format!("{}-{}", who.split('@').next().unwrap(), scope);
+            mirror.upsert(org(
+                "RoleBinding",
+                &name.replace(|c: char| !c.is_ascii_alphanumeric(), ""),
+                serde_json::json!({ "subjects": [{ "user": who }], "role": "admin", "scope": scope }),
+            ));
+        }
+        let both = person("both@x.eu", Vec::new());
+        let ba = person("ba@x.eu", Vec::new());
+        let root = person("root@x.eu", vec!["portal-approver".to_owned()]);
+        let reads = |who: &Identity, project: &str| {
+            effective(&mirror, "portal-approver", who, project, Utc::now()).may_read_project()
+        };
+        let host = |name: &str| crate::organization_host::OrganizationHost {
+            organization: name.to_owned(),
+            base: format!("https://portal.{name}.example").parse().unwrap(),
+        };
+        // Unpinned (the deployment's own address): as before.
+        assert!(reads(&both, "helsinki") && reads(&both, "bratislava") && reads(&root, "helsinki"));
+        let on_ba = crate::organization_host::scope(host("bratislava"), async {
+            (
+                reads(&both, "helsinki"),
+                reads(&root, "helsinki"),
+                reads(&both, "bratislava"),
+                reads(&root, "bratislava"),
+                effective(&mirror, "portal-approver", &root, ORG_NAMESPACE, Utc::now()).bootstrap,
+                {
+                    let grants =
+                        effective(&mirror, "portal-approver", &both, ORG_NAMESPACE, Utc::now())
+                            .grants;
+                    !grants.is_empty()
+                        && grants
+                            .iter()
+                            .all(|g| g.organization.as_deref() == Some("bratislava"))
+                },
+                belongs_to_organization(&mirror, "portal-approver", &ba, "bratislava"),
+                belongs_to_organization(&mirror, "portal-approver", &ba, "hel"),
+                belongs_to_organization(&mirror, "portal-approver", &root, "hel"),
+            )
+        })
+        .await;
+        assert_eq!(
+            on_ba,
+            (false, false, true, true, false, true, true, false, true),
+            "(both->helsinki, root->helsinki, both->bratislava, root->bratislava, root bootstrap \
+             in org, both's org grants all bratislava's own, ba belongs to bratislava, ba to hel, \
+             root to hel)"
+        );
+        let on_hel = crate::organization_host::scope(host("hel"), async {
+            (
+                reads(&both, "bratislava"),
+                reads(&root, "bratislava"),
+                reads(&both, "helsinki"),
+                effective(&mirror, "portal-approver", &root, ORG_NAMESPACE, Utc::now()).bootstrap,
+            )
+        })
+        .await;
+        assert_eq!(on_hel, (false, false, true, true));
     }
 
     #[test]

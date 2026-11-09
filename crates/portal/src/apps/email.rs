@@ -414,7 +414,7 @@ fn unsubscribe_link(state: &AppState, project: &str, app: &str, subject: &str) -
     let key = signature(state, project, app, subject)
         .map(|mac| KEY.encode(mac.finalize().into_bytes()))
         .unwrap_or_default();
-    let mut url = state.config.public_base_url.clone();
+    let mut url = state.config.public_base();
     url.set_path("/mail/unsubscribe");
     url.query_pairs_mut()
         .clear()
