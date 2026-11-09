@@ -413,10 +413,13 @@ export function MapLibreView({
         // Every feature under the click, a few: stacked markers each get their rows, not only the top one.
         const root = document.createElement("div");
         const count = document.createElement("p");
-        count.className = "mb-1 pr-6 text-body text-fg-muted";
+        count.className = "mb-1 pr-6 text-body font-semibold text-fg";
         count.textContent = t("dashboards.stackedHere", { n: features.length });
         // The list scrolls under a fade, so a cut reading reads as more below, not as a broken line.
-        root.className = "flex max-h-64 flex-col gap-2 divide-y divide-border overflow-y-auto pb-4 [mask-image:linear-gradient(to_bottom,black_80%,transparent)] [&>*+*]:pt-2";
+        root.className = "flex flex-col gap-2 divide-y divide-border overflow-y-auto pb-4 [mask-image:linear-gradient(to_bottom,black_80%,transparent)] [&>*+*]:pt-2";
+        // A share of the map's own height, so the tapped spot and its neighbours stay in view.
+        const mapHeight = container.current?.clientHeight ?? 400;
+        root.style.maxHeight = `${Math.round(mapHeight * (mapHeight < 480 ? 0.35 : 0.45))}px`;
         for (const feature of features.slice(0, STACKED)) {
           root.append(popupNode(feature, layer.popupProperties, layer.open, layer.titleProperty));
         }
