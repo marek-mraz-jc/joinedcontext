@@ -1,9 +1,9 @@
 import { useState } from "react";
 import type { JSX } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { proposeChecked } from "../../api/proposal";
 import { asManifests, isChange, ORG_NAMESPACE, storedMetadata } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
@@ -29,6 +29,8 @@ import {
   TableSkeleton,
 } from "../../components/ui";
 import { PermissionGuard } from "../../components/ui/PermissionGuard";
+import { useReadableList } from "../../api/permissions";
+import { AskAdmins } from "../organization/AskAdmins";
 
 interface Member {
   user?: string;
@@ -79,16 +81,9 @@ export function fromGroupEnvelope(manifest: unknown): GroupForm {
 }
 
 /** The organization's groups, which a binding or an application role may name (PF-64). */
+/** The organization's groups, asked only once its permissions say the caller reads them (jc-portal-refusals). */
 export function useGroups() {
-  return useQuery({
-    queryKey: queryKeys.list(ORG_NAMESPACE, "groups"),
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "groups" } },
-        }),
-      ),
-  });
+  return useReadableList(ORG_NAMESPACE, "groups", "Group");
 }
 
 /**
@@ -240,7 +235,9 @@ export function Groups({ project }: { project: string }): JSX.Element {
         </PermissionGuard>
       </div>
 
-      {groups.error ? (
+      {groups.hidden ? (
+        <AskAdmins message={t("organization.adminOnly")} />
+      ) : groups.error ? (
         <PageFailed
           error={groups.error}
           onRetry={() => {

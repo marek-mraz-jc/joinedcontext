@@ -145,6 +145,7 @@
     "notOpen": "Tento formulár sa nedá otvoriť: nič s názvom {name} tu nie je, alebo to nesmiete meniť.",
     "notOpenNew": "Na tejto adrese nie je formulár na vytvorenie, alebo tu nesmiete nič vytvárať.",
     "mayNotCreate": "Vaša rola vám dovoľuje tieto položky prezerať, nie tu nejakú vytvoriť. Toto právo vám môže dať správca projektu alebo administrátor.",
+    "projectHidden": "Tento projekt vám nie je prístupný: neexistuje, alebo vám ho nikto nesprístupnil. Skontrolujte názov v adrese alebo požiadajte toho, kto projekt spravuje.",
     "required": "Toto pole je povinné",
     "invalid": "Neplatná hodnota",
     "choose": "Vyberte…",
@@ -6645,6 +6646,7 @@
     "pickedClear": "Upravovať všetko"
   },
   "permissions": {
+    "unchecked": "Vaše oprávnenia sa teraz nepodarilo overiť. Formulár môžete vyplniť aj tak: server vaše práva overí znova, keď zmenu navrhnete.",
     "checking": "Overuje sa váš prístup…",
     "denied": "Vypnuté: vaša rola nedovoľuje ''{verb}'' na ''{kind}'' v tomto projekte",
     "deniedOrganization": "Len administrátor organizácie môže {action}: {kinds}.",
@@ -8217,7 +8219,9 @@
     },
     "nav": {
       "back": "Späť na projekty",
-      "notAdmin": "Správa je pre administrátorov organizácie. Vaše projekty sú o krok späť."
+      "notAdmin": "Správa je pre administrátorov organizácie. Vaše projekty sú o krok späť.",
+      "notAdminCatalogue": "Správa je pre administrátorov organizácie. Katalóg je o krok späť.",
+      "toCatalogue": "Späť na katalóg"
     },
     "group": {
       "access": "Ľudia a prístup",
