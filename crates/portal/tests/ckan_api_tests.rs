@@ -202,13 +202,13 @@ async fn the_status_names_the_catalogue_and_every_published_resource() {
     assert_eq!(
         urls,
         vec![
-            format!("https://localhost/api/endpoint/{SLUG}/ngsi-ld/v1/"),
-            format!("https://localhost/api/endpoint/{SLUG}/file.csv"),
+            format!("http://localhost:8080/api/endpoint/{SLUG}/ngsi-ld/v1/"),
+            format!("http://localhost:8080/api/endpoint/{SLUG}/file.csv"),
             // Every Endpoint serves its MCP instance unless `mcp: false` (EP-24, T-2901).
-            format!("https://localhost/api/endpoint/{SLUG}/mcp"),
-            format!("https://localhost/api/endpoint/{SLUG}/schema/index.json"),
+            format!("http://localhost:8080/api/endpoint/{SLUG}/mcp"),
+            format!("http://localhost:8080/api/endpoint/{SLUG}/schema/index.json"),
             // The Endpoint's own DCAT-AP record the dataset is made from (EP-143).
-            format!("https://localhost/api/endpoint/{SLUG}/"),
+            format!("http://localhost:8080/api/endpoint/{SLUG}/"),
         ],
         "every resource is served by the endpoint itself (EP-66)"
     );

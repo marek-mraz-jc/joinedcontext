@@ -59,12 +59,14 @@ check /streams/ping pong
 check /broker/ngsi-ld/v1/info/sourceIdentity antares
 check /git/api/healthz '"status":"ok"'
 check /api/v1/health '"status":"ok"'
-# The gateway checked out shako's organization repository with the image's git (jc stops at start
-# when that fails): the tree is in the state volume behind gateway/repo/current, from a clone.
+# The gateway checked out shako's organization repository over shako's HTTP API (jc stops at start
+# when that fails, bins/jc/src/modules/gateway.rs sync_forge): the tree lies in the state volume
+# under gateway/org-cache, behind the link gateway/repo/current. The volume is mounted where jc
+# mounts it, since jc may write the link with its absolute path.
 busybox=docker.io/busybox:1.38@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
-docker run --rm -v jc-smoke-state:/s:ro "$busybox" sh -c \
-  'test -L /s/gateway/repo/current && ls -A /s/gateway/repo/current/ | grep -q . && find /s/gateway/org-cache -name HEAD | grep -q .' \
+docker run --rm -v jc-smoke-state:/var/lib/jc:ro "$busybox" sh -c \
+  'c=/var/lib/jc/gateway/repo/current; test -L $c && ls -A $c/ | grep -q . && case $(readlink -f $c) in /var/lib/jc/gateway/org-cache/*) ;; *) exit 1 ;; esac' \
   || fail "the gateway's forge checkout is missing from the state dir"
-echo "ok gateway checkout: $(docker run --rm -v jc-smoke-state:/s:ro "$busybox" ls -A /s/gateway/repo/current/ | tr '\n' ' ')"
+echo "ok gateway checkout: $(docker run --rm -v jc-smoke-state:/var/lib/jc:ro "$busybox" ls -A /var/lib/jc/gateway/repo/current/ | tr '\n' ' ')"
 if docker logs jc-smoke 2>&1 | grep -q 'forge checkout failed\|project checkout failed'; then fail "a gateway checkout failed"; fi
 echo "SMOKE: ok"

@@ -382,6 +382,163 @@ async fn type_shapes(
     Ok(Some((shapes, partial)))
 }
 
+/// The attribute types of each instance of one stored Attribute.
+fn instance_types(v: &Value) -> impl Iterator<Item = String> + '_ {
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|i| i.get("type").and_then(Value::as_str))
+        .map(str::to_owned)
+}
+
+/// 5.7.7 from the attribute catalogue: `entityCount` is the count a query
+/// of the type answers through the same narrowing, and the Attributes are
+/// found as [`type_shapes`] finds them, each with the attribute types of the
+/// Entities its probe read. The fold read every Entity of the type, 500
+/// whole documents a page up to `max`: 10 s and the gateway's 503 for a
+/// dataset of 9 KPIs among the Tenant's 128 678, and a 404 once the 9 sat
+/// past the ceiling. `None` when the backend keeps no catalogue; `true`
+/// beside the answer when a probe stopped at `max` Entities read.
+/// ponytail: attributeTypes are those of the Entities the probes read, so a
+/// name that is a Property on some Entities and a Relationship on others
+/// unseen lists one type; keep the types in the catalogue if that matters.
+async fn type_info(
+    st: &AppState,
+    tenant: &antares_model::TenantId,
+    iri: &str,
+    max: usize,
+    view: View<'_>,
+    wait: std::time::Duration,
+) -> ApiResult<Option<((usize, BTreeMap<String, BTreeSet<String>>), bool)>> {
+    let until = until(wait);
+    // the count reads `iri` as a type selection (4.17): a name its grammar
+    // would split or trim is left to the fold, which compares it exactly
+    if iri.trim() != iri || iri.contains([',', '|', ';', '(', ')']) {
+        return Ok(None);
+    }
+    let Some(pairs) = st.store.entity_attr_pairs(tenant).await? else {
+        return Ok(None);
+    };
+    let mut attrs = BTreeMap::new();
+    // `omit` hides every Entity carrying a type it names (hides_a_type),
+    // which the count through a query does not judge
+    if let Some(omit) = view.and_then(|(r, _)| r.policy_omit.as_ref()) {
+        let named = |t: &str| omit.iter().any(|n| n.iri == t || n.raw == t);
+        if named(iri) {
+            return Ok(Some(((0, attrs), false)));
+        }
+        let beside = st
+            .store
+            .entity_types_beside(tenant, std::slice::from_ref(&iri.to_owned()))
+            .await?;
+        if beside.is_none_or(|b| b.iter().any(|t| named(t))) {
+            return Ok(None);
+        }
+    }
+    let count = count_of(st, tenant, iri, view).await?;
+    if count == 0 {
+        return Ok(Some(((0, attrs), false)));
+    }
+    let w = Walk {
+        st,
+        tenant,
+        max,
+        view,
+        beside: besides(st, tenant, view).await?,
+        until,
+    };
+    let mut partial = matches!(noting(&w, iri, None, &mut attrs).await?, Probe::Cut);
+    let wanted: Vec<String> = pairs
+        .into_iter()
+        .filter(|(t, a)| t == iri && !is_meta(a) && may_show(view, iri, a))
+        .map(|(_, a)| a)
+        .collect();
+    for a in wanted {
+        if !attrs.contains_key(&a) {
+            partial |= matches!(noting(&w, iri, Some(&a), &mut attrs).await?, Probe::Cut);
+        }
+    }
+    Ok(Some(((count, attrs), partial)))
+}
+
+/// One probe of [`type_info`] for an Entity of `iri` carrying `want` (any,
+/// when `None`); every visible Entity it reads adds its Attributes and their
+/// attribute types to `attrs`.
+async fn noting(
+    w: &Walk<'_>,
+    iri: &str,
+    want: Option<&str>,
+    attrs: &mut BTreeMap<String, BTreeSet<String>>,
+) -> Result<Probe, NgsiError> {
+    let mut note = |d: &Value| {
+        for (k, v) in d.as_object().into_iter().flatten() {
+            if !is_meta(k) {
+                attrs
+                    .entry(k.clone())
+                    .or_default()
+                    .extend(instance_types(v));
+            }
+        }
+        want.is_none_or(|a| d.get(a).is_some())
+    };
+    first_visible(w, iri, want, &mut note).await
+}
+
+/// 5.7.7's count and Attributes of type `iri`: from the attribute catalogue
+/// and a count ([`type_info`]); a backend without the catalogue folds the
+/// Entities of this type alone, so a tenant of 100M entities with 50
+/// Buildings still answers exactly.
+async fn type_details(
+    st: &AppState,
+    tenant: &antares_model::TenantId,
+    iri: &str,
+    max: usize,
+    view: View<'_>,
+) -> ApiResult<(TypeStats, bool)> {
+    Ok(
+        match type_info(st, tenant, iri, max, view, crate::bounds::DISCOVERY_WAIT).await? {
+            Some((info, partial)) => (TypeStats::from([(iri.to_owned(), info)]), partial),
+            None => type_stats(st, tenant, max, Narrow::Type(iri), view).await?,
+        },
+    )
+}
+
+/// How many Entities of type `iri` a query through the narrowing counts.
+async fn count_of(
+    st: &AppState,
+    tenant: &antares_model::TenantId,
+    iri: &str,
+    view: View<'_>,
+) -> ApiResult<usize> {
+    let mut params = std::collections::HashMap::from([
+        ("type".to_owned(), iri.to_owned()),
+        ("count".to_owned(), "true".to_owned()),
+        ("limit".to_owned(), "0".to_owned()),
+    ]);
+    // the engine's q and scopeQ ride in the parameters, as
+    // Filter::narrow_params puts them on a query
+    if let Some(reach) = view.and_then(|(r, _)| r.policy_reach.as_deref()) {
+        if let Some(q) = &reach.q {
+            params.insert("q".to_owned(), q.to_string());
+        }
+        if let Some(scope) = &reach.scope_q {
+            params.insert("scopeQ".to_owned(), scope.clone());
+        }
+    }
+    let push = crate::entities::Pushdown {
+        page: Some((0, 0)),
+        ..Default::default()
+    };
+    let (narrow, ctx) = match view {
+        Some((r, ctx)) => (Some(r), ctx),
+        None => (None, crate::repr::policy_context()),
+    };
+    let out =
+        crate::entities::filter_entities_paged(st, tenant, &params, ctx, Vec::new(), push, narrow)
+            .await?;
+    Ok(out.total.unwrap_or(out.docs.len()))
+}
+
 /// Whether the narrowing can show Attribute `attr` on an Entity of type
 /// `name` at all: the projection keeps it, a rule shows it and the type does
 /// not omit it. False only where [`visible`] would drop it from every such
@@ -458,6 +615,45 @@ struct Walk<'a> {
     max: usize,
     view: View<'a>,
     beside: Vec<Option<BTreeSet<String>>>,
+    until: Until,
+}
+
+/// When the probes of one answer stop ([`crate::bounds::DISCOVERY_WAIT`]);
+/// the wasm build has no tokio timer and never stops them.
+#[cfg(not(target_arch = "wasm32"))]
+type Until = Option<tokio::time::Instant>;
+#[cfg(target_arch = "wasm32")]
+type Until = Option<()>;
+
+/// The deadline `wait` from now.
+fn until(wait: std::time::Duration) -> Until {
+    #[cfg(not(target_arch = "wasm32"))]
+    return tokio::time::Instant::now().checked_add(wait);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = wait;
+        None
+    }
+}
+
+/// `probe` within the walk's deadline: one past it is cut, as one stopped
+/// at the ceiling is.
+async fn within(
+    w: &Walk<'_>,
+    probe: impl std::future::Future<Output = Result<Probe, NgsiError>>,
+) -> Result<Probe, NgsiError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(at) = w.until {
+        if tokio::time::Instant::now() >= at {
+            return Ok(Probe::Cut);
+        }
+        return tokio::time::timeout_at(at, probe)
+            .await
+            .unwrap_or(Ok(Probe::Cut));
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = w;
+    probe.await
 }
 
 impl<'a> Walk<'a> {
@@ -469,6 +665,7 @@ impl<'a> Walk<'a> {
         max: usize,
         view: View<'a>,
     ) -> Result<Option<(Self, Vec<String>)>, NgsiError> {
+        let until = until(crate::bounds::DISCOVERY_WAIT);
         let beside = besides(st, tenant, view).await?;
         let Some(names) = probe_names(st, tenant, view, &beside).await? else {
             return Ok(None);
@@ -479,6 +676,7 @@ impl<'a> Walk<'a> {
             max,
             view,
             beside,
+            until,
         };
         Ok(Some((walk, names)))
     }
@@ -532,7 +730,7 @@ async fn first_visible(
             rule: *rule,
             attr,
         };
-        match probe(w.st, w.tenant, w.max, &one, view, each).await? {
+        match within(w, probe(w.st, w.tenant, w.max, &one, view, each)).await? {
             Probe::Seen => return Ok(Probe::Seen),
             Probe::Cut => cut = true,
             Probe::None => {}
@@ -882,25 +1080,20 @@ pub async fn entity_type_info(
         let filter =
             gate!(st, &tenant, &headers, "5.7.7", types: std::slice::from_ref(&iri)).await?;
         let view = view_of(&filter);
-        // Only instances of this type carry its entityCount and its
-        // attributeDetails (5.2.26), so the fold asks the datastore for those
-        // and the ceiling applies to them — a tenant of 100M entities with 50
-        // Buildings answers exactly, instead of from the tenant's first page.
-        let (stats, partial) = type_stats(
-            &st,
-            &tenant,
-            *crate::bounds::MAX_FOLD_DOCS,
-            Narrow::Type(&iri),
-            view.as_ref().map(|r| (r, &*ctx)),
-        )
-        .await?;
-        let Some((count, attrs)) = stats.get(&iri) else {
-            let mut resp = ApiError::from(NgsiError::ResourceNotFound(format!(
-                "no entities of type {type_name}"
-            )))
-            .into_response();
-            mark_partial(&mut resp, partial, &st.host_alias);
-            return Ok(resp);
+        let view = view.as_ref().map(|r| (r, &*ctx));
+        let max = *crate::bounds::MAX_FOLD_DOCS;
+        let (stats, partial) = type_details(&st, &tenant, &iri, max, view).await?;
+        let empty = (0, BTreeMap::new());
+        let (count, attrs) = match stats.get(&iri) {
+            Some(found) if found.0 > 0 => found,
+            // a fold stopped at the ceiling has not read every Entity of the
+            // type: it answers what it read and says so
+            _ if partial => &empty,
+            _ => {
+                return Err(
+                    NgsiError::ResourceNotFound(format!("no entities of type {type_name}")).into(),
+                )
+            }
         };
         let attr_details: Vec<Value> = attrs
             .iter()
@@ -1100,6 +1293,9 @@ mod discovery_folds {
     /// A ceiling no test fixture reaches, so the fold sees every entity.
     const ALL: usize = 1_000;
 
+    /// A probe deadline no test fixture reaches.
+    const WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
     fn tid(t: &str) -> TenantId {
         TenantId::new(t).expect("tenant")
     }
@@ -1283,6 +1479,144 @@ mod discovery_folds {
                 }
             }
         }
+    }
+
+    /// 5.7.7 from the catalogue and a count answers what the fold of the
+    /// type answers, for five grant shapes, an id pattern few Entities match
+    /// included; a ceiling the type's Entities pass no longer hides them.
+    #[tokio::test]
+    async fn type_info_answers_what_the_fold_answers() {
+        use crate::policy::{Filter, Rule};
+        let st = AppState::new("test".into());
+        let a1 = "https://uri.etsi.org/ngsi-ld/default-context/a1".to_owned();
+        for n in 0..60u32 {
+            let id = format!("urn:ngsi-ld:B:{n:03}");
+            let mut doc =
+                json!({"id": id, "type": [BUILDING], V: [{"type": "Property", "value": n}]});
+            if n % 2 == 0 {
+                doc[R] = json!([{"type": "Relationship", "object": "urn:ngsi-ld:B:000"}]);
+            }
+            if n == 57 {
+                doc[a1.as_str()] = json!([{"type": "GeoProperty", "value": {"type": "Point", "coordinates": [0, 0]}}]);
+            }
+            seed(&st, "ti", &id, doc).await;
+        }
+        seed(
+            &st,
+            "ti",
+            "urn:ngsi-ld:S:1",
+            json!({"id": "urn:ngsi-ld:S:1", "type": [SENSOR], V: [{"type": "Property", "value": 1}]}),
+        )
+        .await;
+        seed(
+            &st,
+            "ti",
+            "urn:ngsi-ld:BS:1",
+            json!({"id": "urn:ngsi-ld:BS:1", "type": [BUILDING, SENSOR], V: [{"type": "Property", "value": 1}]}),
+        )
+        .await;
+        let rule = |q: Option<&str>, attrs: &[&str], pattern: Option<&str>| Rule {
+            types: vec![BUILDING.to_owned()],
+            q: q.map(|q| Box::new(antares_ql::parse_q(q).expect("q"))),
+            attributes: attrs.iter().map(|a| (*a).to_owned()).collect(),
+            every_attribute: attrs.is_empty(),
+            id_patterns: pattern.into_iter().map(str::to_owned).collect(),
+            ..Rule::default()
+        };
+        let omit = |t: &str| {
+            Some(Filter {
+                omit: vec![t.to_owned()],
+                ..Filter::default()
+            })
+        };
+        let one = |r: Rule| {
+            Some(Filter {
+                rules: vec![r],
+                ..Filter::default()
+            })
+        };
+        let shapes = [
+            ("the whole view", None),
+            ("a hidden attribute", one(rule(None, &[V, &a1], None))),
+            ("a condition", one(rule(Some("v>50"), &[], None))),
+            (
+                "an id pattern",
+                one(rule(None, &[], Some("urn:ngsi-ld:B:05[0-9]"))),
+            ),
+            ("nothing shown", one(rule(Some("v>500"), &[], None))),
+            (
+                "an engine q",
+                Some(Filter {
+                    q: Some(Box::new(antares_ql::parse_q("v>50").expect("q"))),
+                    ..Filter::default()
+                }),
+            ),
+            (
+                "an engine scopeQ",
+                Some(Filter {
+                    scope_q: Some("/nowhere".to_owned()),
+                    ..Filter::default()
+                }),
+            ),
+            ("an omitted type", omit(BUILDING)),
+            ("a type omitted beside it", omit(SENSOR)),
+        ];
+        let ctx = antares_jsonld::pinned::core_context();
+        let t = tid("ti");
+        for (shape, filter) in shapes {
+            let repr = filter.as_ref().map(crate::repr::narrowing);
+            let view = repr.as_ref().map(|r| (r, &ctx));
+            let (fold, cut) = type_stats(&st, &t, ALL, Narrow::Type(BUILDING), view)
+                .await
+                .expect("fold");
+            let fold = fold.get(BUILDING).cloned().unwrap_or_default();
+            let Some((got, partial)) = type_info(&st, &t, BUILDING, ALL, view, WAIT)
+                .await
+                .expect("info")
+            else {
+                // only the fold judges each Entity's other types
+                assert_eq!(shape, "a type omitted beside it");
+                let (stats, _) = type_details(&st, &t, BUILDING, ALL, view)
+                    .await
+                    .expect("details");
+                assert_eq!(stats.get(BUILDING), Some(&fold), "{shape}");
+                continue;
+            };
+            assert!(!cut && !partial, "{shape}");
+            assert_eq!(got, fold, "{shape}");
+            // the fold stops at a ceiling of 5 Entities read; the count does not
+            let (low, _) = type_info(&st, &t, BUILDING, 5, view, WAIT)
+                .await
+                .expect("info")
+                .expect("catalogue");
+            assert_eq!(low.0, fold.0, "{shape}: entityCount past the ceiling");
+            // and what /types/{type} answers is that, complete
+            let (stats, partial) = type_details(&st, &t, BUILDING, 5, view)
+                .await
+                .expect("details");
+            let got = stats.get(BUILDING).map_or(0, |s| s.0);
+            // a probe judging the engine's q walks the 49 hidden Buildings
+            // before a shown one: past the ceiling of 5 it says so
+            let cut = shape == "an engine q";
+            assert_eq!((got, partial), (fold.0, cut), "{shape}: /types/Building");
+        }
+        let (all, _) = type_info(&st, &t, BUILDING, ALL, None, WAIT)
+            .await
+            .expect("info")
+            .expect("catalogue");
+        // probes past their deadline: the count stays exact, the answer says
+        // it is incomplete
+        let (cut, partial) = type_info(&st, &t, BUILDING, ALL, None, std::time::Duration::ZERO)
+            .await
+            .expect("info")
+            .expect("catalogue");
+        assert_eq!((cut.0, partial), (61, true));
+        assert_eq!(all.0, 61);
+        assert!(
+            all.1[&a1].contains("GeoProperty"),
+            "a rare attribute and its type"
+        );
+        assert!(all.1[R].contains("Relationship"));
     }
 
     /// One shared datastore, one tenant per request: an entity of another

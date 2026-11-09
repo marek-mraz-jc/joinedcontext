@@ -300,7 +300,7 @@ fn view(state: &AppState, workspace: &Workspace, render: Option<&Render>) -> Pre
                     slug: slug.clone(),
                     url: state
                         .config
-                        .public_base_url
+                        .public_base()
                         .join(&format!("/api/endpoint/{slug}"))
                         .map(String::from)
                         .unwrap_or_default(),

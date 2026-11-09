@@ -261,7 +261,8 @@ async fn apply_portal_realm(
         );
         return Ok(());
     }
-    let mut files = setup::portal_realm_files(&base, realm).map_err(|e| err(&e))?;
+    let mut files = setup::portal_realm_files(&base, &ctx.siblings.organization_portals, realm)
+        .map_err(|e| err(&e))?;
     if ctx
         .setup
         .value(setup::Secret::GatewayClientSecret)
@@ -593,7 +594,7 @@ mod tests {
             Kek::from_raw_bytes("07".repeat(32).as_bytes()).unwrap(),
         ));
         let mut files =
-            setup::portal_realm_files("https://portal.city.example/", &setup.realm).unwrap();
+            setup::portal_realm_files("https://portal.city.example/", &[], &setup.realm).unwrap();
         setup::add_assistant_audience(&mut files);
         files.push(setup::assistant_realm_file(&setup.realm));
         let options = ApplyOptions {

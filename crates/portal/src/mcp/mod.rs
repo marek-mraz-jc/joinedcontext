@@ -99,7 +99,7 @@ pub fn router() -> Router<AppState> {
 pub async fn oauth_protected_resource(State(state): State<AppState>) -> Response {
     let resource = format!(
         "{}/api/v1/mcp",
-        state.config.public_base_url.as_str().trim_end_matches('/')
+        state.config.public_base().as_str().trim_end_matches('/')
     );
     let authorization_servers = if let Some(oidc) = state.config.oidc.as_ref() {
         vec![oidc.issuer.as_str().trim_end_matches('/').to_string()]
@@ -492,7 +492,7 @@ async fn dispatch(state: AppState, caller: crate::ops::Caller, body: Bytes) -> R
         "resources/read" => {
             let uri = params.get("uri").and_then(Value::as_str).unwrap_or("");
             if uri == app_view::URI {
-                let contents = app_view::contents(&state.config.public_base_url);
+                let contents = app_view::contents(&state.config.public_base());
                 return json_response(StatusCode::OK, &result(id, json!({ "contents": contents })));
             }
             match read_resource(&state, &caller, uri).await {
@@ -757,7 +757,7 @@ async fn answer_call(
         .may_run(op)
         .and_then(|()| caller.grants_input(op, &input))
         .map_err(|refused| {
-            decided_in_portal(&state.config.public_base_url, op, project, &input, refused)
+            decided_in_portal(&state.config.public_base(), op, project, &input, refused)
         })
         .and_then(|()| crate::ops::may_try(op, &caller.identity, state, project, Some(&input)))
     {
@@ -1115,7 +1115,7 @@ fn mcp_input_schema(mut schema: Value) -> Value {
 fn unauthorized_response(state: &AppState) -> Response {
     let resource_metadata = format!(
         "{}/.well-known/oauth-protected-resource/api/v1/mcp",
-        state.config.public_base_url.as_str().trim_end_matches('/')
+        state.config.public_base().as_str().trim_end_matches('/')
     );
     let mut resp = ApiError::Unauthorized.into_response();
     if let Ok(header_val) =
@@ -1160,7 +1160,8 @@ fn lane_word(lane: crate::change::Lane) -> &'static str {
 /// and the page is the one holding the resource the call is about.
 /// The Portal page where the person decides question `id` with their own session (T-5699).
 fn confirm_url(state: &AppState, project: &str, id: &str) -> String {
-    let base = state.config.public_base_url.as_str().trim_end_matches('/');
+    let base = state.config.public_base();
+    let base = base.as_str().trim_end_matches('/');
     format!("{base}/projects/{project}/mcp-elicitations/{id}")
 }
 

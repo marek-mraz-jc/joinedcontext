@@ -2196,6 +2196,88 @@ pub(crate) fn shared_id_patterns(rules: &[Rule]) -> Option<&[String]> {
     .then_some(first.id_patterns.as_slice())
 }
 
+/// Whether `rules` admit every Entity the type selection `groups` selects
+/// and show each the same Attributes: each group names a type some rule
+/// admits by type alone, so whatever the other rules narrow, that one
+/// holds, and every rule naming a selected type shows what it shows, so
+/// the stored Entity orders and filters as the shown one. A whole-space
+/// Endpoint binds the space's every Policy: a type-wide public read beside
+/// a dataset's `idPattern` rule of the same type was judged per row, and a
+/// count over 255 283 Gardens stopped at the gateway's 10 s.
+pub(crate) fn admit_every(rules: &[Rule], groups: &[Vec<String>]) -> bool {
+    let wide = |t: &String| {
+        rules
+            .iter()
+            .any(|r| r.admits_by_type_alone() && r.types.contains(t))
+    };
+    let first = naming(rules, groups).next().map(shows);
+    !groups.is_empty()
+        && groups.iter().all(|g| g.iter().any(wide))
+        && naming(rules, groups).all(|r| Some(shows(r)) == first)
+}
+
+/// The rules naming a type of `groups` (a rule naming no type holds for
+/// nothing, [`Rule::types`]).
+fn naming<'a>(rules: &'a [Rule], groups: &'a [Vec<String>]) -> impl Iterator<Item = &'a Rule> {
+    rules
+        .iter()
+        .filter(|r| groups.iter().flatten().any(|t| r.types.contains(t)))
+}
+
+/// What a rule shows: every Attribute, or these.
+fn shows(r: &Rule) -> (bool, Vec<&String>) {
+    let mut a: Vec<&String> = r.attributes.iter().collect();
+    a.sort();
+    a.dedup();
+    (r.every_attribute, a)
+}
+
+/// The `idPattern`s of every rule naming a type of `groups`, united, when
+/// each narrows by exact patterns alone and all show the same Attributes,
+/// and no Entity of those types carries a type another rule names: then
+/// the rules hold for exactly the selected Entities whose id matches one,
+/// and the store decides, pages and counts them as under
+/// [`shared_id_patterns`]. A whole-space Endpoint binds the space's every
+/// dataset Policy: 431 rules each narrowing KeyPerformanceIndicator by its
+/// own pattern were judged per row, and a count over bratislava's 128 678
+/// KPIs passed the gateway's 10 s.
+pub(crate) async fn united_id_patterns(
+    st: &crate::state::AppState,
+    tenant: &antares_model::TenantId,
+    rules: &[Rule],
+    groups: &[Vec<String>],
+) -> Result<Option<Vec<String>>, antares_model::NgsiError> {
+    let exact = |p: &String| {
+        antares_store::filter::id_pattern_sql(p).is_some()
+            && antares_ql::regex::compile(&format!("^(?:{p})$")).is_ok()
+    };
+    let first = naming(rules, groups).next().map(shows);
+    let alike = naming(rules, groups).all(|r| {
+        !r.is_conditional()
+            && r.ids.is_empty()
+            && !r.id_patterns.is_empty()
+            && r.id_patterns.iter().all(exact)
+            && Some(shows(r)) == first
+    });
+    if groups.is_empty() || first.is_none() || !alike {
+        return Ok(None);
+    }
+    let selected: Vec<String> = groups.iter().flatten().cloned().collect();
+    let Some(beside) = st.store.entity_types_beside(tenant, &selected).await? else {
+        return Ok(None);
+    };
+    let elsewhere = |t: &String| !selected.contains(t) && rules.iter().any(|r| r.types.contains(t));
+    if beside.iter().any(elsewhere) {
+        return Ok(None);
+    }
+    let mut all: Vec<String> = naming(rules, groups)
+        .flat_map(|r| r.id_patterns.iter().cloned())
+        .collect();
+    all.sort();
+    all.dedup();
+    Ok(Some(all))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

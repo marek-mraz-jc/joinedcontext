@@ -184,6 +184,35 @@ async fn a_lost_connection_is_dialled_again() {
 }
 
 #[tokio::test]
+async fn a_broker_down_at_start_is_dialled_until_it_answers() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+    let (reg, ctx, _stop) = context(true);
+    let mut input = build(
+        json!({"qos": 0, "topics": ["t"], "urls": [format!("tcp://{addr}")], "client_id": "c"}),
+        &ctx,
+        &reg,
+    );
+    input
+        .connect(&ctx)
+        .await
+        .expect("a broker that does not answer yet leaves the stream running");
+    let listener = TcpListener::bind(addr).await.unwrap();
+    let server = tokio::spawn(async move {
+        let (mut s, _, _) = accept(&listener).await;
+        s.write_all(&publish("t", 0, 0, b"late")).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    });
+    let (batch, _) = tokio::time::timeout(Duration::from_secs(15), input.read_batch(&ctx))
+        .await
+        .expect("a message once the broker answers")
+        .expect("read");
+    assert_eq!(batch[0].as_bytes_ref().as_ref(), b"late");
+    server.abort();
+}
+
+#[tokio::test]
 async fn a_loopback_broker_is_refused_by_the_outbound_rule() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

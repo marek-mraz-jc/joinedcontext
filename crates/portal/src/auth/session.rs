@@ -244,9 +244,11 @@ pub fn store(jar: PrivateCookieJar, session: &Session) -> Result<PrivateCookieJa
         serde_json::to_string(sealed)
             .map_err(|e| ApiError::Internal(format!("serialize session: {e}")))
     };
+    let organization = crate::organization_host::organization();
     let mut value = serialize(&Sealed {
         session: session.clone(),
         groups_kept: false,
+        organization: organization.clone(),
     })?;
     if value.len() > GROUPS_INLINE_MAX {
         let mut session = session.clone();
@@ -254,6 +256,7 @@ pub fn store(jar: PrivateCookieJar, session: &Session) -> Result<PrivateCookieJa
         value = serialize(&Sealed {
             session,
             groups_kept: true,
+            organization,
         })?;
     }
     let ttl = (session.expires_at - now_unix()).max(0);
@@ -276,6 +279,12 @@ struct Sealed {
     session: Session,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     groups_kept: bool,
+    /// The Organization whose Portal host the session was signed in on (`organization_host`);
+    /// none on the deployment's own address. One cookie key seals every host's cookies, so a
+    /// cookie copied to another host would open there: [`open`] refuses it unless it names the
+    /// Organization the request is pinned to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    organization: Option<String>,
 }
 
 /// Reads the session from the headers, with the active key or any key a rotation still lets in
@@ -304,6 +313,7 @@ pub fn load_with(headers: &HeaderMap, state: &AppState) -> Option<Session> {
     let Sealed {
         mut session,
         groups_kept,
+        ..
     } = open_from(headers, &state.config)?;
     if groups_kept {
         match state.session_groups(&session) {
@@ -323,6 +333,9 @@ pub fn load(jar: &PrivateCookieJar) -> Option<Session> {
 fn open(jar: &PrivateCookieJar) -> Option<Sealed> {
     let cookie = jar.get(SESSION_COOKIE)?;
     let mut sealed: Sealed = serde_json::from_str(cookie.value()).ok()?;
+    if sealed.organization != crate::organization_host::organization() {
+        return None;
+    }
     sealed.session.refresh_token = jar
         .get(REFRESH_COOKIE)
         .map(|c| c.value().to_string())
@@ -633,6 +646,53 @@ mod tests {
             assert!(line.contains("SameSite=Lax"), "{line}");
             assert!(line.contains("Path=/"), "{line}");
         }
+    }
+
+    /// jc-multiorg-portal: one cookie key seals every host's cookies, so a session signed in on
+    /// Organization A's Portal host is refused on B's, on the deployment's own address, and the
+    /// other way round; on its own host it reads back.
+    #[tokio::test]
+    async fn a_session_of_one_organizations_host_is_no_session_on_another() {
+        use crate::organization_host::{scope, OrganizationHost};
+        let host = |name: &str| OrganizationHost {
+            organization: name.to_owned(),
+            base: format!("https://portal.{name}.example")
+                .parse()
+                .expect("url"),
+        };
+        let key = Key::generate();
+        let mut config = crate::config::Config::for_tests();
+        config.cookie_key = key.clone();
+        let jar = || PrivateCookieJar::new(key.clone());
+        let on_a = scope(host("a"), async {
+            replay_cookies(store(jar(), &sample(600)).expect("store"))
+        })
+        .await;
+        let unpinned = replay_cookies(store(jar(), &sample(600)).expect("store"));
+        let read = |pin: Option<&str>, headers: &HeaderMap| {
+            let (config, headers) = (config.clone(), headers.clone());
+            let pin = pin.map(host);
+            async move {
+                match pin {
+                    Some(pin) => scope(pin, async { load_from(&headers, &config).is_some() }).await,
+                    None => load_from(&headers, &config).is_some(),
+                }
+            }
+        };
+        assert!(read(Some("a"), &on_a).await, "A's cookie on A's host");
+        assert!(!read(Some("b"), &on_a).await, "A's cookie on B's host");
+        assert!(
+            !read(None, &on_a).await,
+            "A's cookie on the deployment's address"
+        );
+        assert!(
+            !read(Some("a"), &unpinned).await,
+            "an unpinned cookie on A's host"
+        );
+        assert!(
+            read(None, &unpinned).await,
+            "an unpinned cookie where it was signed in"
+        );
     }
 
     #[test]
