@@ -1231,17 +1231,8 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
     let deadline = started + Duration::from_secs(180);
     let mut rendered = None;
     let entity = loop {
-        let (status, body) = call(
-            &jc,
-            reqwest::Method::GET,
-            &format!("{closed}/entities?type=Thing&limit=5"),
-            Some(&reader),
-            None,
-        )
-        .await;
-        if status == StatusCode::OK && body.contains("Thing:") {
-            break body;
-        }
+        // The stream first: it is held before it writes, so a Thing that lands between two
+        // polls never leaves the stream unseen.
         if rendered.is_none() {
             let held = Client::new()
                 .get(jc.url(&format!("/streams/streams/{PROJECT}.feed")))
@@ -1252,6 +1243,17 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
             if held.status().is_success() {
                 rendered = Some(held.text().await.unwrap_or_default());
             }
+        }
+        let (status, body) = call(
+            &jc,
+            reqwest::Method::GET,
+            &format!("{closed}/entities?type=Thing&limit=5"),
+            Some(&reader),
+            None,
+        )
+        .await;
+        if status == StatusCode::OK && body.contains("Thing:") {
+            break body;
         }
         if Instant::now() > deadline {
             let pipeline = proposer
