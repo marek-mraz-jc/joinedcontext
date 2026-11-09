@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Starts one rehearsal environment: PostgreSQL 17 in docker and `jc --role all` on it.
+# Starts one rehearsal environment: PostgreSQL 17 in docker and `jc --role all` on it
+# (REHEARSAL_ROLE: another role list, e.g. one module left out for a red smoke run).
 #
 #   deploy/rehearsal/up.sh <env> <public port> <postgres port>
 #
@@ -16,6 +17,8 @@ pg_port=${3:?postgres port}
 here=$(cd "$(dirname "$0")" && pwd)
 home=${REHEARSAL_HOME:-$HOME/rehearsal}/$env_name
 jc_bin=${JC_BIN:-${CARGO_TARGET_DIR:-$here/../../target}/debug/jc}
+# A jc embedding a Portal UI older than the clone's UI sources serves the old UI silently: refuse it.
+"$here/ui-fresh.sh" "$here/../.." "$jc_bin" || exit 1
 export_dir=${REHEARSAL_EXPORT:-$home/export}
 bind=${REHEARSAL_BIND:-127.0.0.1}
 
@@ -157,8 +160,8 @@ export JC_SHAKO_OWNER=${REHEARSAL_CONFIG_OWNER:-joinedcontext} JC_SHAKO_REPO=${R
 export JC_GITEA_OWNER=$JC_SHAKO_OWNER JC_GITEA_REPO=$JC_SHAKO_REPO
 
 # A jc of an earlier up.sh of this environment stops first (its memory stores go with it).
-if [ -s "$home/jc.pid" ] && kill "$(cat "$home/jc.pid")" 2>/dev/null; then
-  for _ in $(seq 20); do kill -0 "$(cat "$home/jc.pid")" 2>/dev/null || break; sleep 0.5; done
+if [ -s "$home/jc.pid" ]; then
+  "$here/stop-jc.sh" "$(cat "$home/jc.pid")" || exit 1
 fi
 # The Grafana files' datasources as daiya provisioning on jc's own address (REHEARSAL_DASHBOARDS,
 # default $home/dashboards: a rehearsal.py dashboards dir); daiya lets only file-provisioned
@@ -170,9 +173,13 @@ if compgen -G "$REHEARSAL_DASHBOARDS/*.datasource.*.json" >/dev/null; then
   db_config+=$(printf '\n[daiya]\nprovisioning_dir = "%s"\n' "$home/daiya-provisioning")
 fi
 printf '[mounts.portal]\npath_prefix = ""\n%s\n' "$db_config" > "$home/jc.toml"
-nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.toml" \
+# The service tokens jc would hold in memory only (shako, ekiben, daiya's Portal password) come
+# from files here instead, so the import and the smoke suites can call those modules too.
+nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" --kaisatsu-import-secrets-dir "$home/secrets/realm" \
+  --ekiben-token-file "$(secret ekiben-token)" \
+  --daiya-portal-password-file "$(secret dashboards-password)" \
   --kaisatsu-database-url-file "$home/secrets/kaisatsu-db-url" \
   --kaisatsu-db-password-file "$(secret kaisatsu-app-pw)" \
   --shako-repo-root "$home/repos" --ekiben-file-root "$home/files" \
@@ -184,7 +191,7 @@ echo "$env_name: jc on http://localhost:$port (log $home/jc.log)"
 
 
 # The 24 h rule, now and hourly, beside jc (rehearsal database only).
-[ -s "$home/retain.pid" ] && kill "$(cat "$home/retain.pid")" 2>/dev/null || true
+if [ -s "$home/retain.pid" ]; then kill "$(cat "$home/retain.pid")" 2>/dev/null || true; fi
 nohup python3 -I "$here/rehearsal.py" retain --port "$pg_port" --password-file "$(secret antares-pw)" \
   --every "${REHEARSAL_RETAIN_SECS:-3600}" > "$home/retain.log" 2>&1 &
 echo $! > "$home/retain.pid"

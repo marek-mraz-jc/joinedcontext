@@ -23,6 +23,7 @@ chrono = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 ekiben-processors = { workspace = true }

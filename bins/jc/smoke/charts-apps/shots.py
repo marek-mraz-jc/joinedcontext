@@ -1,0 +1,104 @@
+"""Playwright (playwright-py from /opt/jc-py) shots of the Portal's dashboard pages and the Apps'
+main pages, signed in with the suite's session cookies. Each shot is full height (the viewport grows
+to the page's scrollHeight, so a sticky sidebar is not cut)."""
+
+from __future__ import annotations
+
+import contextlib
+import urllib.parse
+from pathlib import Path
+
+WIDTHS = (1440, 400)
+
+
+class Browser:
+    def __init__(self, base: str, jar: dict, timeout_ms: int = 45000):
+        from playwright.sync_api import sync_playwright
+
+        self.base, self.timeout = base.rstrip("/"), timeout_ms
+        self._pw = sync_playwright().start()
+        self._browser = self._pw.chromium.launch(args=["--disable-dev-shm-usage", "--disable-gpu"])
+        host = urllib.parse.urlparse(self.base).hostname
+        self.cookies = [{"name": n, "value": v, "domain": host, "path": p, "secure": n.startswith(("__Host-", "__Secure-")),
+                         "httpOnly": True, "sameSite": "Lax"} for n, (v, p) in jar.items()]
+
+    def close(self):
+        self._browser.close()
+        self._pw.stop()
+
+    def _page(self, width: int):
+        ctx = self._browser.new_context(viewport={"width": width, "height": 900}, locale="en-GB")
+        ctx.add_cookies(self.cookies)
+        page = ctx.new_page()
+        page.set_default_timeout(self.timeout)
+        return ctx, page
+
+    def _settle(self, page):
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        with contextlib.suppress(PlaywrightTimeout):  # a page that keeps polling still gets its shot
+            page.wait_for_load_state("networkidle", timeout=self.timeout)
+        page.wait_for_timeout(1500)
+
+    def _shoot(self, page, width: int, out: Path):
+        height = page.evaluate("() => Math.min(document.documentElement.scrollHeight, 12000)")
+        page.set_viewport_size({"width": width, "height": max(900, int(height))})
+        page.wait_for_timeout(400)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(out))
+
+    def dashboard(self, project: str, uid: str, out_dir: Path) -> list[dict]:
+        rows = []
+        path = f"/projects/{urllib.parse.quote(project)}/grafana/dashboards/{urllib.parse.quote(uid)}"
+        for width in WIDTHS:
+            ctx, page = self._page(width)
+            panel_answers = []
+            page.on("response", lambda r, seen=panel_answers: seen.append(r.status) if "/panels/" in r.url else None)
+            row = {"width": width, "url": path}
+            try:
+                resp = page.goto(self.base + path)
+                row["status"] = resp.status if resp else 0
+                self._settle(page)
+                row["final"] = urllib.parse.urlparse(page.url).path
+                row["h1"] = (page.locator("h1").first.inner_text(timeout=5000) or "").strip()
+                row["alerts"] = [t.strip()[:160] for t in page.get_by_role("alert").all_inner_texts() if t.strip()]
+                row["panelAnswers"] = panel_answers
+                shot = out_dir / f"{project}--{uid}--{width}.png"
+                self._shoot(page, width, shot)
+                row["shot"] = str(shot)
+            except Exception as e:  # noqa: BLE001 - a failed shot is a failed check, said in the row
+                row["error"] = str(e).splitlines()[0][:200]
+            finally:
+                ctx.close()
+            rows.append(row)
+        return rows
+
+    def app(self, path: str, name: str, out_dir: Path) -> list[dict]:
+        rows = []
+        for width in WIDTHS:
+            ctx, page = self._page(width)
+            data, bad, console = [], [], []
+            page.on("console", lambda m, errors=console: errors.append(m.text[:160]) if m.type == "error" else None)
+
+            def seen(r, data=data, bad=bad):
+                if "/api/" not in r.url:
+                    return
+                (data if 200 <= r.status < 300 else bad).append(f"{r.status} {urllib.parse.urlparse(r.url).path[:120]}")
+
+            page.on("response", seen)
+            row = {"width": width, "url": path}
+            try:
+                resp = page.goto(self.base + path)
+                row["status"] = resp.status if resp else 0
+                self._settle(page)
+                row["title"] = page.title()
+                row.update(data=data[:20], dataCount=len(data), bad=bad[:20], console=console[:10])
+                shot = out_dir / f"app--{name}--{width}.png"
+                self._shoot(page, width, shot)
+                row["shot"] = str(shot)
+            except Exception as e:  # noqa: BLE001
+                row["error"] = str(e).splitlines()[0][:200]
+            finally:
+                ctx.close()
+            rows.append(row)
+        return rows

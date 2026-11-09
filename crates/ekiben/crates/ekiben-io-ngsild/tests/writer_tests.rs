@@ -732,3 +732,42 @@ async fn bento_client_test_http_client_oauth2_conf() {
         Some("Bearer tok-1")
     );
 }
+
+/// jc-smoke-gate (smoke logs row 4): every batch names itself by `X-Request-Id`, one run id with
+/// the batch's number, so the broker's line of the write joins the stream's; a retry keeps it.
+#[tokio::test]
+async fn each_batch_carries_one_request_id_of_its_run() {
+    let fake = FakeBroker::start().await;
+    let (_s, pctx, _stop) = ctx("org-a", true);
+    let p = processor(conf(&fake.base(), json!({})), &pctx);
+    let batch: Batch = (0..2500)
+        .map(|i| part(entity(&format!("urn:ngsi-ld:Vehicle:{i}"))))
+        .collect();
+    run(&p, &pctx, batch).await;
+    fake.script(503, &[("retry-after", "0")], "{}");
+    run(&p, &pctx, vec![part(entity("urn:ngsi-ld:Vehicle:x"))]).await;
+    let ids: Vec<String> = fake
+        .posts()
+        .iter()
+        .map(|r| r.header("x-request-id").expect("every batch names itself"))
+        .collect();
+    assert_eq!(ids.len(), 5, "{ids:?}");
+    let run_id = ids[0].rsplit_once('-').expect("<run>-<n>").0.to_owned();
+    assert_eq!(run_id.len(), 32, "{ids:?}");
+    let numbers: Vec<&str> = ids
+        .iter()
+        .map(|id| id.strip_prefix(&format!("{run_id}-")).expect("one run"))
+        .collect();
+    assert_eq!(
+        numbers,
+        ["0", "1", "2", "3", "3"],
+        "the retry keeps its batch's id"
+    );
+    for id in &ids {
+        assert!(
+            (8..=64).contains(&id.len())
+                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+            "jc keeps only a plain id: {id}"
+        );
+    }
+}

@@ -1,5 +1,6 @@
 2755ea9595b8c38868990768bddab40ebf51f0a1:crates/shako/server/tests/e2e.rs:generic-api-key:177
 e15cb30978bff4d5a3aab89ead3a21be6f110aad:crates/shako/server/tests/odata_ops.rs:generic-api-key:108
+3312fefd07ef3c36aa88a1733b69d8331c1df224:bins/jc/smoke/logs/tests/test_logscan.py:jwt:68
 8353ae16efea5b33cd427427a06c01cc83f7458b:vendor/joinedcontext-platform/crates/assistant/src/chat/redact.rs:jwt:199
 8353ae16efea5b33cd427427a06c01cc83f7458b:vendor/joinedcontext-platform/crates/assistant/src/chat/redact.rs:private-key:187
 8353ae16efea5b33cd427427a06c01cc83f7458b:vendor/joinedcontext-platform/crates/assistant/tests/fixtures/mcp/linkml-public-endpoints.json:generic-api-key:1

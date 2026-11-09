@@ -1,6 +1,7 @@
 //! Assembles the mount table from the configuration, builds every module's router, and serves them
 //! all on one listener through `jc-router` (plus an optional internal admin listener).
 
+use crate::access;
 use crate::config::{Config, MountMode};
 use crate::module::Module;
 use crate::modules;
@@ -215,7 +216,7 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
 }
 
 /// Mounts `router` at every entry of `plan`, behind the whole-path rewrite for a module that
-/// answers at whole paths.
+/// answers at whole paths and behind the access log of its module.
 fn mount_all(mut builder: JcRouterBuilder, plan: &MountPlan, router: &Router) -> JcRouterBuilder {
     for spec in plan.specs() {
         let router = router.clone();
@@ -225,7 +226,7 @@ fn mount_all(mut builder: JcRouterBuilder, plan: &MountPlan, router: &Router) ->
         } else {
             router
         };
-        builder = builder.mount(spec.clone(), router);
+        builder = builder.mount(spec.clone(), access::layer(plan.module.name(), router));
     }
     builder
 }
@@ -377,7 +378,7 @@ pub async fn build_router(
                 host: None,
                 path_prefix: Some("/v2".into()),
             };
-            builder = builder.mount(v2_spec, v2_router);
+            builder = builder.mount(v2_spec, access::layer("shako", v2_router));
             continue;
         }
         if plan.module == Module::Portal {

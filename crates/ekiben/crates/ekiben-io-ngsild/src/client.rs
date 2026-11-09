@@ -93,6 +93,19 @@ impl NgsiClient {
         url: &str,
         body: Option<Bytes>,
     ) -> Result<Answer, Failure> {
+        self.call_as(env, method, url, body, None).await
+    }
+
+    /// [`Self::call`] naming the request by `X-Request-Id` (every retry the same id), so the
+    /// broker's line of the write joins the stream's.
+    pub async fn call_as(
+        &self,
+        env: &CallEnv<'_>,
+        method: Method,
+        url: &str,
+        body: Option<Bytes>,
+        request_id: Option<&str>,
+    ) -> Result<Answer, Failure> {
         let parsed = Url::parse(url).map_err(|e| {
             Failure::Denied(CoreError::config(format!(
                 "invalid URL '{}': {e}",
@@ -150,6 +163,9 @@ impl NgsiClient {
                         "<{context}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\""
                     ),
                 );
+            }
+            if let Some(id) = request_id {
+                req = req.header(HeaderName::from_static("x-request-id"), id);
             }
             if let Some(t) = &token {
                 req = req.bearer_auth(t.expose());

@@ -26,7 +26,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use context_gateway::config::Config;
 use jc_router::Mount;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -221,13 +221,31 @@ pub fn sync_forge(
             secrets_dir: None,
             only: None,
         };
-        for linked in jcctl::commands::checkouts::sync(&tree, &work.join("projects"), &options)? {
-            if let Err(why) = linked.result {
-                tracing::warn!(project = %linked.slug, %why, "gateway: a project checkout failed");
-            }
+        let failed: BTreeSet<String> =
+            jcctl::commands::checkouts::sync(&tree, &work.join("projects"), &options)?
+                .into_iter()
+                .filter_map(|linked| Some(format!("{}: {}", linked.slug, linked.result.err()?)))
+                .collect();
+        for failure in newly_failed(failed) {
+            tracing::warn!(%failure, "gateway: a project checkout failed");
         }
     }
     Ok(tree)
+}
+
+/// The project checkouts the last pass found failing: a failure is logged when it first appears,
+/// not on every pass ([`SYNC_EVERY`]), which repeated each one per pass and hid other lines.
+static CHECKOUTS_FAILING: std::sync::Mutex<BTreeSet<String>> =
+    std::sync::Mutex::new(BTreeSet::new());
+
+/// Of this pass's `failed` checkouts, the ones the last pass did not have.
+fn newly_failed(failed: BTreeSet<String>) -> Vec<String> {
+    let mut last = CHECKOUTS_FAILING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let new = failed.difference(&last).cloned().collect();
+    *last = failed;
+    new
 }
 
 /// Fetches the forge every [`SYNC_EVERY`]; a failed pass keeps the last tree and says why.
@@ -355,6 +373,19 @@ pub async fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failing_checkout_is_logged_when_it_first_fails() {
+        let set = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<_>>();
+        assert_eq!(
+            newly_failed(set(&["a: gone", "b: gone"])),
+            ["a: gone", "b: gone"]
+        );
+        assert!(newly_failed(set(&["b: gone", "a: gone"])).is_empty());
+        assert!(newly_failed(set(&["b: gone"])).is_empty());
+        assert_eq!(newly_failed(set(&["a: gone", "b: gone"])), ["a: gone"]);
+        assert!(newly_failed(BTreeSet::new()).is_empty());
+    }
     use crate::config::{Cli, Config as JcConfig, FileConfig};
 
     /// A router with routes of its own (the assistant's `/d/...`) answers at a root path: the

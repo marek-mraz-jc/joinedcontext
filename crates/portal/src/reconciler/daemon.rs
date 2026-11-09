@@ -49,6 +49,9 @@ const PIPELINE_RUNNER_DEPLOYMENT: &str = "pipeline-runner";
 /// first write through. Every other kind has a step of a run that compares it with the mirror.
 const GO_LIVE_KINDS: [&str; 4] = ["ContextSpace", "DataModel", "Endpoint", "Policy"];
 
+/// How long a managed roles file seen held is taken as held before the branch is read again.
+const ROLES_HELD_FOR: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Status of the background Git mirror synchronization.
 ///
 /// Served to the browser, so it deliberately never carries a token,
@@ -109,6 +112,17 @@ fn drift_summary(err: &SyncError) -> String {
              forge and the Portal's forge token."
         ),
         other => format!("The repository did not load: {other}"),
+    }
+}
+
+/// One line when warnings of a family stopped standing since the last cycle, with how many.
+fn cleared(what: &str, change: &super::warned::Change) {
+    if change.cleared > 0 {
+        tracing::info!(
+            cleared = change.cleared,
+            standing = change.standing,
+            "{what}: some no longer stand"
+        );
     }
 }
 
@@ -194,6 +208,18 @@ pub struct Syncer {
     mqtt_capture: Option<Arc<crate::mqtt_capture::Capture>>,
     /// The MqttBroker warnings the last cycle logged ([`super::mqtt_brokers::log_warnings`]).
     mqtt_warned: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    /// The repository and realm warnings the last cycle logged: each is logged when it first
+    /// appears, and a line says when some cleared ([`super::warned`]).
+    warned_misplaced: super::warned::Warned,
+    warned_invalid: super::warned::Warned,
+    warned_members: super::warned::Warned,
+    warned_unstaged: super::warned::Warned,
+    warned_unbuilt: super::warned::Warned,
+    /// Each managed roles file the branch was seen holding as compiled, by path, as a hash of
+    /// the text, and when: a run read every one from the forge on every sync to find it equal
+    /// (jc-smoke-logs: 30 `Shako.File` reads a minute at a 10 s sync). Read again once
+    /// [`ROLES_HELD_FOR`] has passed, so an edit by hand is still put back.
+    roles_held: std::sync::Mutex<BTreeMap<String, (u64, std::time::Instant)>>,
     /// Where a run says what it did (OPS-48). `None` leaves the loop silent, which is what a
     /// Portal built without a state does in a unit test.
     activity: Option<ActivityStore>,
@@ -303,6 +329,12 @@ impl Syncer {
             mqtt_clients: None,
             mqtt_capture: None,
             mqtt_warned: Default::default(),
+            warned_misplaced: Default::default(),
+            warned_invalid: Default::default(),
+            warned_members: Default::default(),
+            warned_unstaged: Default::default(),
+            warned_unbuilt: Default::default(),
+            roles_held: Default::default(),
             activity: None,
             apps_cache_dir: None,
             apps_dir: None,
@@ -1027,6 +1059,7 @@ impl Syncer {
         let mut directories = BTreeMap::new();
         let mut projects = BTreeMap::new();
         let mut unstaged = Vec::new();
+        let mut unstaging = Vec::new();
         for (slug, entry) in read_registry(org.path())? {
             let git_ref = entry.spec.git_ref.clone().unwrap_or_default();
             let Some(name) = entry.spec.repository.and_then(|repository| repository.name) else {
@@ -1049,12 +1082,17 @@ impl Syncer {
                     listings.insert(slug.clone(), listed);
                 }
                 Err(error) => {
-                    tracing::warn!(project = %slug, %git_ref, %error, "the project's repository did not stage; its last render stays");
+                    unstaging.push(format!("{slug} at {git_ref}: {error}"));
                     unstaged.push(slug.clone());
                 }
             }
             projects.insert(slug, (client, git_ref));
         }
+        let change = self.warned_unstaged.cycle(unstaging);
+        for warning in &change.new {
+            tracing::warn!(%warning, standing = change.standing, "the project's repository did not stage; its last render stays");
+        }
+        cleared("project repositories that did not stage", &change);
         let root = into.as_ref().map_or_else(
             || self.assembly.clone(),
             |into| into.path().join("assembly"),
@@ -1430,9 +1468,17 @@ impl Syncer {
             elapsed_ms = staging.elapsed().as_millis() as u64,
             "repository staged and loaded"
         );
-        for (id, path, expected) in repository.misplaced() {
-            tracing::warn!(resource = %id, path = %path.display(), %expected, "manifest is not at the path its kind declares");
+        let misplaced = repository
+            .misplaced()
+            .into_iter()
+            .map(|(id, path, expected)| {
+                format!("{id} at {} (expected {expected})", path.display())
+            });
+        let change = self.warned_misplaced.cycle(misplaced);
+        for warning in &change.new {
+            tracing::warn!(%warning, standing = change.standing, "manifest is not at the path its kind declares");
         }
+        cleared("manifests not at the path their kind declares", &change);
         Ok((scratch, repository))
     }
 
@@ -1456,6 +1502,7 @@ impl Syncer {
                 .collect(),
         );
         let mut loaded = 0usize;
+        let mut invalid = Vec::new();
         for (_, resource) in repository.iter() {
             let path = resource.path.to_string_lossy().to_string();
             // The kind's own invariants, the check `jcctl validate` runs (T-0412). A manifest
@@ -1465,7 +1512,7 @@ impl Syncer {
                 if let Some(Err(err)) =
                     jc_core::registry::validate_yaml(&resource.manifest.kind, &yaml)
                 {
-                    tracing::warn!(path = %path, error = %err, "manifest fails its kind's validation");
+                    invalid.push(format!("{path}: {err}"));
                 }
             }
             let mut envelope: ResourceEnvelope = match serde_json::to_value(&resource.manifest)
@@ -1517,6 +1564,11 @@ impl Syncer {
             fresh_mirror.upsert(envelope);
             loaded += 1;
         }
+        let change = self.warned_invalid.cycle(invalid);
+        for warning in &change.new {
+            tracing::warn!(%warning, standing = change.standing, "manifest fails its kind's validation");
+        }
+        cleared("manifests failing their kind's validation", &change);
 
         if loaded == 0 {
             return Err(SyncError::Empty(
@@ -1626,6 +1678,17 @@ impl Syncer {
             let generated =
                 super::groups::derived_groups(fresh_mirror, projects, chrono::Utc::now());
             let outcomes = groups.converge_with(fresh_mirror, &generated).await;
+            let members = outcomes.iter().flat_map(|outcome| {
+                outcome
+                    .warnings
+                    .iter()
+                    .map(|warning| format!("{}: {warning}", outcome.name))
+            });
+            let change = self.warned_members.cycle(members);
+            for warning in &change.new {
+                tracing::warn!(%warning, standing = change.standing, "group member is not a realm user yet");
+            }
+            cleared("group members who were not realm users", &change);
             for outcome in &outcomes {
                 match (&outcome.error, outcome.drift.is_empty()) {
                     (Some(err), _) => {
@@ -1635,9 +1698,6 @@ impl Syncer {
                         tracing::info!(group = %outcome.name, drift = %outcome.drift.join("; "), "group brought back to the manifest")
                     }
                     (None, true) => {}
-                }
-                for warning in &outcome.warnings {
-                    tracing::warn!(group = %outcome.name, %warning, "group member is not a realm user yet");
                 }
             }
             super::groups::record(fresh_mirror, &outcomes);
@@ -2219,13 +2279,16 @@ impl Syncer {
 
         // 6b'. A published App with no build and no bundle the image ships serves nothing: it
         //      reads Pending with a red Ready, never Live (AP-13a, T-2989).
-        for name in crate::apps::static_host::report_unbuilt(
+        let unbuilt = crate::apps::static_host::report_unbuilt(
             self.apps_dir.as_deref(),
             &self.mirror,
             transitions,
-        ) {
-            tracing::warn!(app = %name, "a published App has no build to serve");
+        );
+        let change = self.warned_unbuilt.cycle(unbuilt);
+        for app in &change.new {
+            tracing::warn!(%app, standing = change.standing, "a published App has no build to serve");
         }
+        cleared("published Apps with no build to serve", &change);
     }
 
     async fn converge_artifact_store(&self, transitions: &super::transitions::Transitions) {
@@ -2715,6 +2778,9 @@ impl Syncer {
     }
 
     /// Writes every managed roles file whose content differs from the branch (T-0527).
+    ///
+    /// ponytail: a file this replica saw held is not read for [`ROLES_HELD_FOR`]; a forge that
+    /// tells the Portal of each push would end the reads altogether.
     async fn publish_roles(
         &self,
         repository: &jcctl::loader::Repository,
@@ -2726,9 +2792,30 @@ impl Syncer {
             return Ok(());
         };
         for (path, content) in files {
-            let existing = self.shako.get_file(path, branch).await?;
             let committed = crate::forge::shako::committed_text(path, &content);
+            let digest = {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                (branch, &*committed).hash(&mut hasher);
+                hasher.finish()
+            };
+            let held = |roles_held: &BTreeMap<String, (u64, std::time::Instant)>| {
+                roles_held
+                    .get(path)
+                    .is_some_and(|(seen, at)| *seen == digest && at.elapsed() < ROLES_HELD_FOR)
+            };
+            if held(&self.roles_held.lock().unwrap_or_else(|p| p.into_inner())) {
+                continue;
+            }
+            let existing = self.shako.get_file(path, branch).await?;
+            let hold = || {
+                self.roles_held
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(path.to_owned(), (digest, std::time::Instant::now()));
+            };
             if existing.as_ref().map(|f| f.content.as_str()) == Some(&*committed) {
+                hold();
                 continue;
             }
             let message = format!("roles: compile users/ into {path} (T-0527)");
@@ -2745,6 +2832,7 @@ impl Syncer {
                     },
                 })
                 .await?;
+            hold();
             tracing::info!(path, "roles compiled into the repository");
         }
         Ok(())
@@ -5131,6 +5219,20 @@ output_error{stream="kpi"} 6
         .unwrap();
         assert!(text.contains("@hel/stewards"), "{text}");
         assert!(writes("policies/roles.rego").is_empty());
+
+        // The next run neither reads a roles file it saw held nor writes it again (the four
+        // commits above stay four).
+        let reads = |requests: Vec<wiremock::Request>| {
+            requests
+                .iter()
+                .filter(|r| r.url.path().ends_with("/Shako.File(Path=@p,Ref=@r)"))
+                .filter(|r| r.url.query().is_some_and(|q| q.contains("roles.rego")))
+                .count()
+        };
+        let before = reads(server.received_requests().await.unwrap());
+        assert_eq!(before, 1);
+        syncer.sync_once().await.expect("the second sync");
+        assert_eq!(reads(server.received_requests().await.unwrap()), before);
     }
 
     #[tokio::test]

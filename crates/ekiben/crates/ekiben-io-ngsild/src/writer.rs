@@ -91,6 +91,9 @@ pub struct Writer {
     max_bytes: usize,
     max_in_flight: usize,
     client: NgsiClient,
+    /// One id per run of the output: each batch it sends is `X-Request-Id: <run>-<n>`.
+    run: String,
+    batches: std::sync::atomic::AtomicU64,
 }
 
 impl Writer {
@@ -147,6 +150,8 @@ impl Writer {
             )));
         }
         let settings = config::parse_client(&f, &base, Duration::from_secs(30), &[400, 413, 422])?;
+        let run = uuid::Uuid::now_v7().simple().to_string();
+        tracing::info!(run = %run, url = %ekiben_core::redact_url_str(&url), "ngsi_ld output: each batch is X-Request-Id {run}-<n>");
         Ok(Self {
             url,
             operation,
@@ -154,7 +159,18 @@ impl Writer {
             max_bytes,
             max_in_flight: usize::try_from(max_in_flight).unwrap_or(1),
             client: NgsiClient::new(org, settings)?,
+            run,
+            batches: std::sync::atomic::AtomicU64::new(0),
         })
+    }
+
+    /// The id of the next batch: this run's id and the batch's number (a plain token the
+    /// broker's and jc's request-id rule keeps: 32 hex digits, a dash, digits).
+    fn batch_id(&self) -> String {
+        let n = self
+            .batches
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        format!("{}-{n}", self.run)
     }
 
     /// The URL every batch request of this writer posts to.
@@ -293,10 +309,11 @@ impl Writer {
     ) -> Vec<(Vec<usize>, Result<Answer, Failure>)> {
         futures::stream::iter(requests.into_iter().map(|members| {
             let body = request_body(entities, &members);
+            let id = self.batch_id();
             async move {
                 let result = self
                     .client
-                    .call(env, Method::POST, &self.url, Some(body))
+                    .call_as(env, Method::POST, &self.url, Some(body), Some(&id))
                     .await;
                 (members, result)
             }

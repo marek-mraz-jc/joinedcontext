@@ -1481,6 +1481,23 @@ pub struct ViewSync {
     /// What the last run read, which a preview compiles its draft against (T-3802): the
     /// leader's converge and every follower's sync record it, so any replica previews (T-3820).
     last: Mutex<Option<Arc<Sources>>>,
+    /// Each document the broker was seen holding, by address, as a hash, and when: a run
+    /// asked the broker for every view on every sync to find one that changed nothing
+    /// (jc-smoke-logs: ~300 `GET /q/views/{slug}` a minute at a 10 s sync).
+    // ponytail: a document lost at the broker (a memory store restarted alone) is written
+    // again only once [`CONFIRMED_FOR`] has passed.
+    confirmed: Mutex<BTreeMap<String, (u64, std::time::Instant)>>,
+}
+
+/// How long a document the broker was seen holding is taken as still held before it is read.
+const CONFIRMED_FOR: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// The hash a confirmed document is remembered by.
+fn digest(doc: &Value) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    doc.to_string().hash(&mut hasher);
+    hasher.finish()
 }
 
 /// What a pipeline's write meets at one Endpoint ([`ViewSync::write_view`], T-4840).
@@ -1519,6 +1536,7 @@ impl ViewSync {
             written_schemas: Mutex::default(),
             compiled: Mutex::default(),
             last: Mutex::default(),
+            confirmed: Mutex::default(),
         }
     }
 
@@ -2151,11 +2169,25 @@ impl ViewSync {
         path: &str,
         doc: &Value,
     ) -> ViewOutcome {
-        match self.get(base, token, path).await {
+        let address = format!("{base}{path}");
+        let digest = digest(doc);
+        let held = lock(&self.confirmed)
+            .get(&address)
+            .is_some_and(|(seen, at)| *seen == digest && at.elapsed() < CONFIRMED_FOR);
+        if held {
+            return ViewOutcome::Written;
+        }
+        let outcome = match self.get(base, token, path).await {
             Ok(Some(stored)) if stored == *doc => ViewOutcome::Written,
             Ok(_) => self.put(base, token, path, doc).await,
             Err(reason) => ViewOutcome::Failed(reason),
-        }
+        };
+        let mut confirmed = lock(&self.confirmed);
+        match outcome {
+            ViewOutcome::Written => confirmed.insert(address, (digest, std::time::Instant::now())),
+            _ => confirmed.remove(&address),
+        };
+        outcome
     }
 
     /// The JSON at `path`, `None` on 404.
@@ -2336,6 +2368,7 @@ impl ViewSync {
     }
 
     async fn delete(&self, base: &str, token: &str, path: &str) -> Result<(), String> {
+        lock(&self.confirmed).remove(&format!("{base}{path}"));
         let response = self
             .http
             .delete(format!("{base}{path}"))
@@ -3974,6 +4007,52 @@ mod tests {
 
     async fn broker() -> MockServer {
         MockServer::start().await
+    }
+
+    /// A document the broker was seen holding is not read again on the next run; a changed
+    /// document is, and so is one deleted since.
+    #[tokio::test]
+    async fn a_document_the_broker_holds_is_read_once_until_it_changes() {
+        let server = broker().await;
+        let doc = json!({"id": SLUG, "tenant": "city-air"});
+        Mock::given(method("GET"))
+            .and(path(format!("/q/views/{SLUG}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&doc))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        let sync = ViewSync::new(server.uri(), token_file());
+        let reads = || async {
+            server
+                .received_requests()
+                .await
+                .unwrap_or_default()
+                .iter()
+                .filter(|r| r.method.as_str() == "GET")
+                .count()
+        };
+        let at = format!("/q/views/{SLUG}");
+        let base = server.uri();
+        for _ in 0..3 {
+            assert!(matches!(
+                sync.put_if_changed(&base, TOKEN, &at, &doc).await,
+                ViewOutcome::Written
+            ));
+        }
+        assert_eq!(reads().await, 1, "an unchanged document is read once");
+        let changed = json!({"id": SLUG, "tenant": "city-water"});
+        sync.put_if_changed(&base, TOKEN, &at, &changed).await;
+        assert_eq!(reads().await, 2, "a changed document is read again");
+        sync.delete(&base, TOKEN, &at).await.expect("deleted");
+        sync.put_if_changed(&base, TOKEN, &at, &changed).await;
+        assert_eq!(reads().await, 3, "a deleted document is read again");
     }
 
     fn json_at(server_path: &str, status: u16, body: Value) -> Mock {

@@ -1689,8 +1689,7 @@ pub async fn get_sample(
             "the endpoint of dataset '{name}' did not answer; try again in a minute"
         ))
     };
-    let response = HTTP
-        .get(&url)
+    let response = crate::request_id::forward(HTTP.get(&url))
         .query(&[
             ("type", entity_type.as_str()),
             ("limit", limit.as_str()),
@@ -1802,8 +1801,7 @@ async fn served(endpoint: &str) -> Vec<String> {
 /// One anonymous JSON GET of `url` on the Portal's own gateway: the only outbound call the map
 /// route makes, so its reads share one request shape; the reason as text when it did not answer.
 async fn anonymous_read(url: String, query: &[(&str, &str)]) -> Result<reqwest::Response, String> {
-    let response = HTTP
-        .get(url)
+    let response = crate::request_id::forward(HTTP.get(url))
         .query(query)
         .header(header::ACCEPT, "application/json")
         .send()
