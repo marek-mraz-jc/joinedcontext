@@ -280,20 +280,23 @@ class Suite:
         eid = series["id"]
         recent = ex.parse_time(series["newest"]) >= self.window
         path = f"{base}/{q(eid)}?timerel=after&timeAt={iso(self.window)}"
+        # CIM 009 6.3.10: a temporal answer cut at the broker's instance limit is 206 Partial
+        # Content with Content-Range, the instances of its first part in the body.
+        whole = (200, 206)
         if recent:
             st, _, raw = self.get(path, token)
-            n = instances(as_json(raw)) if st == 200 else 0
+            n = instances(as_json(raw)) if st in whole else 0
             self.r.check(f"{who}.temporal.last-24h", target, f"GET {path}", ">= 1 instance",
-                         f"{st} {n} instances {short(raw, 80) if st != 200 else ''}", st == 200 and n >= 1)
+                         f"{st} {n} instances {short(raw, 80) if st not in whole else ''}", st in whole and n >= 1)
         else:
             self.r.skip(f"{who}.temporal.last-24h", target, f"GET {path}", ">= 1 instance",
                         f"the newest exported instance ({series['newest']}) is older than 24 h now")
         path = f"{base}/{q(eid)}?timerel=before&timeAt={iso(self.stale)}"
         st, _, raw = self.get(path, token)
-        n = instances(as_json(raw)) if st == 200 else 0
+        n = instances(as_json(raw)) if st in whole else 0
         self.r.check(f"{who}.temporal.none-older", target, f"GET {path}",
                      f"no instance before now - 24 h - {self.a.sweep_minutes} min (200 empty or 404)",
-                     f"{st} {n} instances", st == 404 or (st == 200 and n == 0))
+                     f"{st} {n} instances", st == 404 or (st in whole and n == 0))
 
     def surfaces(self, e, token, who, want: dict, narrowed: str):
         base = f"/api/endpoint/{e.slug}"

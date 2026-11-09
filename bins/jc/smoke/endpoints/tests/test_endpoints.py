@@ -138,7 +138,9 @@ class Fake:
             return 404, {}, {"title": "ResourceNotFound"}
         if rest.startswith("ngsi-ld/v1/temporal/entities/"):
             if qs.get("timerel") == ["after"]:
-                return 200, {}, {"id": "x", "pm10": [{"type": "Property", "value": 3}]}
+                # a temporal answer cut at the instance limit (CIM 009 6.3.10)
+                st = 206 if self.broken == "partial-history" else 200
+                return st, {}, {"id": "x", "pm10": [{"type": "Property", "value": 3}]}
             old = [{"type": "Property", "value": 1}] if self.broken == "old-history" else []
             return 200, {}, {"id": "x", "pm10": old}
         if rest == "ngsi-ld/v1/entities" and "count" in qs:
@@ -269,6 +271,13 @@ def test_a_temporal_read_is_checked_where_a_grant_opens_it(tmp_path, serve, ops,
     res = json.loads((out / "results.json").read_text())
     got = {r["result"] for r in res["checks"] if r["id"].startswith("anon.temporal")}
     assert got == {result}, [r for r in res["checks"] if r["id"].startswith("anon.temporal")]
+
+
+def test_a_partial_history_is_history(tmp_path, serve):
+    """206 Partial Content with instances is a temporal answer (CIM 009 6.3.10)."""
+    code, res = run(tmp_path, serve(Fake("partial-history")), now_iso())
+    got = [r["result"] for r in res["checks"] if r["id"] == "anon.temporal.last-24h"]
+    assert got == ["pass"], got
 
 
 def test_a_stopped_gateway_fails_and_never_passes(tmp_path):
