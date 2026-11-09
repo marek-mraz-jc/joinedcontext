@@ -437,7 +437,11 @@ async fn a_members_only_endpoint_read_with_no_token_goes_out_anonymously_and_its
 
     let (status, view) = w.panel("members", None).await;
     assert!(readings(&view).is_empty(), "{view}");
-    assert!(view.to_string().contains("401"), "{status} {view}");
+    assert_ne!(status, StatusCode::OK, "{view}");
+    assert!(
+        view.to_string().contains("upstream status 401"),
+        "{status} {view}"
+    );
     let heads = std::mem::take(&mut *seen.lock());
     assert_eq!(heads.len(), 1, "{heads:?}");
     assert_eq!(bearer_of(&heads[0]), None, "{}", heads[0]);
