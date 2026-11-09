@@ -99,7 +99,8 @@ pub async fn build(
             ekiben::build(
                 &cfg.ekiben,
                 ctx.setup,
-                &ctx.secrets.ekiben_vars,
+                ctx.secrets,
+                ctx.siblings,
                 cfg.roles.contains(&Module::Portal),
             )
             .await

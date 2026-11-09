@@ -95,6 +95,16 @@ pub struct Cli {
     /// directory under the system temp dir).
     #[arg(long, env = "JCBIN_EKIBEN_FILE_ROOT")]
     pub ekiben_file_root: Option<PathBuf>,
+    /// ekiben: the directory holding each project's pipeline client secret as a file named by
+    /// the client, `<project>-pipelines` (default: kaisatsu's import secrets directory, where a
+    /// realm file's `$(file:...)` names the same file). Handed to streams as
+    /// `JC_CLIENT_SECRET_<PROJECT>`, read once at start.
+    #[arg(long, env = "JCBIN_EKIBEN_CLIENT_SECRETS_DIR")]
+    pub ekiben_client_secrets_dir: Option<PathBuf>,
+    /// ekiben: the pipeline client the pipeline-test harness runs as (`JC_CLIENT_ID` and
+    /// `JC_CLIENT_SECRET`), one of the client secrets directory's files.
+    #[arg(long, env = "JCBIN_EKIBEN_HARNESS_CLIENT")]
+    pub ekiben_harness_client: Option<String>,
     /// antares: file holding the `/q` admin token (required: the hosted broker never serves its
     /// admin surface without a credential). Everything else of Antares is its own `ANTARES_*`
     /// environment, as for the standalone broker.
@@ -186,6 +196,10 @@ pub struct KaisatsuSection {
 pub struct EkibenSection {
     pub token_file: Option<PathBuf>,
     pub file_root: Option<PathBuf>,
+    /// Each project's pipeline client secret, one file per client `<project>-pipelines`.
+    pub client_secrets_dir: Option<PathBuf>,
+    /// The pipeline client the pipeline-test harness runs as (`JC_CLIENT_ID`).
+    pub harness_client: Option<String>,
     /// Postgres for the stream definitions (else they live only in memory).
     pub database: Option<DatabaseSection>,
 }
@@ -398,6 +412,8 @@ pub enum ConfigError {
     ModelKeyValue(&'static str),
     #[error("[remote]: {0}")]
     Remote(String),
+    #[error("[ekiben] client_secrets_dir: {0}")]
+    ClientSecrets(String),
     #[error("[{module}.database]: {message}")]
     Database { module: Module, message: String },
 }
@@ -524,6 +540,11 @@ impl Config {
         let ekiben = EkibenSection {
             token_file: cli.ekiben_token_file.or(file.ekiben.token_file),
             file_root: cli.ekiben_file_root.or(file.ekiben.file_root),
+            client_secrets_dir: cli
+                .ekiben_client_secrets_dir
+                .or(file.ekiben.client_secrets_dir)
+                .or_else(|| kaisatsu.import_secrets_dir.clone()),
+            harness_client: cli.ekiben_harness_client.or(file.ekiben.harness_client),
             database: file.ekiben.database,
         };
         let antares = AntaresSection {
@@ -733,6 +754,9 @@ pub struct Secrets {
     pub module: BTreeMap<crate::setup::Secret, Given>,
     /// `EKIBEN_VAR_<NAME>` values, by `NAME` and by the whole variable name.
     pub ekiben_vars: BTreeMap<String, jc_secret::Secret>,
+    /// The pipeline client secrets of `[ekiben] client_secrets_dir`, by the variable a rendered
+    /// stream names (`JC_CLIENT_SECRET_<PROJECT>`, and `JC_CLIENT_SECRET` for the harness).
+    pub pipeline_client_secrets: BTreeMap<String, jc_secret::Secret>,
     /// The age identity the Portal decrypts project secrets with (a file: the Portal reads it
     /// per resolution).
     pub portal_age_key_file: Option<PathBuf>,
@@ -818,6 +842,7 @@ impl Secrets {
                 out.ekiben_vars.insert(name.clone(), value);
             }
         }
+        out.pipeline_client_secrets = pipeline_client_secrets(&cfg.ekiben)?;
         if env.contains_key("JCBIN_PORTAL_AGE_KEY") {
             return Err(ConfigError::FileOnly("JCBIN_PORTAL_AGE_KEY"));
         }
@@ -860,6 +885,9 @@ impl Secrets {
         if let Some(g) = &self.shako_signing_key {
             out.push(("shako-signing-key", g.source));
         }
+        if !self.pipeline_client_secrets.is_empty() {
+            out.push(("ekiben-pipeline-client-secrets", jc_secret::Source::File));
+        }
         if self.portal_age_key_file.is_some() {
             out.push(("portal-age-key", jc_secret::Source::File));
         }
@@ -871,6 +899,88 @@ impl Secrets {
         }
         out
     }
+}
+
+/// The suffix of a project's pipeline client, `{project}-pipelines` (the Portal's
+/// `PIPELINE_ACCOUNT` behind jc-core's `keycloak_client_id`).
+pub const PIPELINE_CLIENT_SUFFIX: &str = "-pipelines";
+
+/// The variable a rendered stream names for `project`'s pipeline client secret, as the Portal's
+/// reconciler writes it: `zilina-mesto` becomes `JC_CLIENT_SECRET_ZILINA_MESTO`.
+#[must_use]
+pub fn client_secret_var(project: &str) -> String {
+    let mut name = String::from("JC_CLIENT_SECRET_");
+    for ch in project.chars() {
+        name.push(if ch.is_ascii_alphanumeric() {
+            ch.to_ascii_uppercase()
+        } else {
+            '_'
+        });
+    }
+    name
+}
+
+/// Whether `name` is a DNS-1123 label, as every project name is.
+fn dns_label(name: &str) -> bool {
+    (1..=63).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+}
+
+/// Reads every `<project>-pipelines` file of the client secrets directory (other files are left
+/// alone: the directory is kaisatsu's import secrets too) and the harness client's. A symbolic
+/// link is refused, as kaisatsu's loader refuses one. Errors name files, never a value.
+fn pipeline_client_secrets(
+    cfg: &EkibenSection,
+) -> Result<BTreeMap<String, jc_secret::Secret>, ConfigError> {
+    let mut out = BTreeMap::new();
+    let Some(dir) = &cfg.client_secrets_dir else {
+        if cfg.harness_client.is_some() {
+            return Err(ConfigError::ClientSecrets(
+                "harness_client needs a client secrets directory".into(),
+            ));
+        }
+        return Ok(out);
+    };
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| ConfigError::ClientSecrets(format!("{}: {}", dir.display(), e.kind())))?;
+    let mut clients = BTreeMap::new();
+    for entry in entries {
+        let entry = entry
+            .map_err(|e| ConfigError::ClientSecrets(format!("{}: {}", dir.display(), e.kind())))?;
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Some(project) = name.strip_suffix(PIPELINE_CLIENT_SUFFIX) else {
+            continue;
+        };
+        if !dns_label(project) {
+            continue;
+        }
+        let path = entry.path();
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(ConfigError::ClientSecrets(format!(
+                "{} is a symbolic link",
+                path.display()
+            )));
+        }
+        let secret = jc_secret::read_file(&name, &path)?;
+        out.insert(client_secret_var(project), secret.clone());
+        clients.insert(name, secret);
+    }
+    if let Some(client) = &cfg.harness_client {
+        let secret = clients.get(client).ok_or_else(|| {
+            ConfigError::ClientSecrets(format!(
+                "harness_client {client} has no file in {}",
+                dir.display()
+            ))
+        })?;
+        out.insert("JC_CLIENT_SECRET".to_owned(), secret.clone());
+    }
+    Ok(out)
 }
 
 impl Config {
@@ -1323,6 +1433,85 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         assert_eq!(assistant_env("JC_MODEL_KEY"), None);
         assert_eq!(assistant_env("JC_MODEL_KEY_FILE"), None);
         assert_eq!(assistant_env("JC_OIDC_CLIENT_SECRET"), None);
+    }
+
+    #[test]
+    fn pipeline_client_secrets_come_from_the_directory_by_client_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str, value: &str| std::fs::write(dir.path().join(name), value).unwrap();
+        at("zilina-mesto-pipelines", "s-zilina\n");
+        at("praha-pipelines", "s-praha");
+        // kaisatsu's other import secrets and odd names are left alone.
+        at("e2e-person-password", "pw");
+        at("-pipelines", "x");
+        at("Upper-pipelines", "x");
+        let dir_arg = dir.path().to_str().unwrap();
+        let load = |args: &[&str]| {
+            let mut all = vec!["--role", "ekiben"];
+            all.extend_from_slice(args);
+            Secrets::load_from(
+                &Config::merge(cli(&all), FileConfig::default()).unwrap(),
+                &BTreeMap::new(),
+            )
+        };
+        let secrets = load(&["--ekiben-client-secrets-dir", dir_arg]).unwrap();
+        let names: Vec<&str> = secrets
+            .pipeline_client_secrets
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            names,
+            ["JC_CLIENT_SECRET_PRAHA", "JC_CLIENT_SECRET_ZILINA_MESTO"]
+        );
+        assert_eq!(
+            secrets.pipeline_client_secrets["JC_CLIENT_SECRET_ZILINA_MESTO"].expose(),
+            "s-zilina"
+        );
+        assert!(
+            !format!("{secrets:?}").contains("s-zilina"),
+            "Debug hides it"
+        );
+        // The default is kaisatsu's import secrets directory, the file a realm file names.
+        let shared = load(&["--kaisatsu-import-secrets-dir", dir_arg]).unwrap();
+        assert_eq!(shared.pipeline_client_secrets.len(), 2);
+        let harness = load(&[
+            "--ekiben-client-secrets-dir",
+            dir_arg,
+            "--ekiben-harness-client",
+            "praha-pipelines",
+        ])
+        .unwrap();
+        assert_eq!(
+            harness.pipeline_client_secrets["JC_CLIENT_SECRET"].expose(),
+            "s-praha"
+        );
+        let missing = load(&[
+            "--ekiben-client-secrets-dir",
+            dir_arg,
+            "--ekiben-harness-client",
+            "brno-pipelines",
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(missing.contains("brno-pipelines"), "{missing}");
+        assert!(load(&["--ekiben-harness-client", "praha-pipelines"]).is_err());
+        // An empty file and a symbolic link are refused, naming the file only.
+        at("brno-pipelines", " ");
+        let empty = load(&["--ekiben-client-secrets-dir", dir_arg])
+            .unwrap_err()
+            .to_string();
+        assert!(empty.contains("brno-pipelines"), "{empty}");
+        std::fs::remove_file(dir.path().join("brno-pipelines")).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/etc/hostname", dir.path().join("brno-pipelines")).unwrap();
+            let link = load(&["--ekiben-client-secrets-dir", dir_arg])
+                .unwrap_err()
+                .to_string();
+            assert!(link.contains("symbolic link"), "{link}");
+        }
+        assert!(load(&["--ekiben-client-secrets-dir", "/nonexistent/jc"]).is_err());
     }
 
     #[test]
