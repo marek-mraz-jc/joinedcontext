@@ -274,9 +274,9 @@ impl ForgeArchives {
         })
     }
 
-    /// The body of `GET {forge}/api/v1/repos/{owner}/{path}`, at most `ceiling` bytes. A
-    /// redirect is an error: the credential goes nowhere else.
-    fn get(&self, path: &str, ceiling: u64) -> Result<Vec<u8>, String> {
+    /// The body of `GET {forge}/api/v1/repos/{owner}/{path}`, at most `ceiling` bytes, or `None`
+    /// for a 404. A redirect is an error: the credential goes nowhere else.
+    fn get(&self, path: &str, ceiling: u64) -> Result<Option<Vec<u8>>, String> {
         use std::io::Read as _;
         let shown = format!("{}/{path}", self.owner);
         let answer = self
@@ -294,6 +294,9 @@ impl ForgeArchives {
                 "{shown}: the forge answered a redirect ({status}), which jc never follows"
             ));
         }
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if !status.is_success() {
             return Err(format!("{shown}: the forge answered {status}"));
         }
@@ -307,16 +310,17 @@ impl ForgeArchives {
                 "{shown} is larger than the {ceiling} bytes jc reads"
             ));
         }
-        Ok(body)
+        Ok(Some(body))
     }
 
-    /// The commit `git_ref` of `repo` names: itself when it is a commit id, else a branch's head.
+    /// The commit `git_ref` of `repo` names: itself when it is a commit id, else a branch's head,
+    /// else (no such branch) the commit a tag names, read from the commit list at `git_ref`.
     fn commit(&self, repo: &str, git_ref: &str) -> Result<String, String> {
         if commit_id(git_ref) {
             return Ok(git_ref.to_owned());
         }
         if !branch_name(git_ref) {
-            return Err(format!("`{git_ref}` is not a branch name jc reads"));
+            return Err(format!("`{git_ref}` is not a branch or tag name jc reads"));
         }
         #[derive(serde::Deserialize)]
         struct Branch {
@@ -326,13 +330,33 @@ impl ForgeArchives {
         struct Head {
             id: String,
         }
-        let body = self.get(&format!("{repo}/branches/{git_ref}"), MAX_ANSWER)?;
-        let branch: Branch = serde_json::from_slice(&body)
-            .map_err(|e| format!("{repo}: the branch `{git_ref}` does not read: {e}"))?;
-        if !commit_id(&branch.commit.id) {
-            return Err(format!("{repo}: the branch `{git_ref}` names no commit id"));
+        #[derive(serde::Deserialize)]
+        struct Commit {
+            sha: String,
         }
-        Ok(branch.commit.id)
+        let unread = |e: serde_json::Error| format!("{repo}: `{git_ref}` does not read: {e}");
+        let id = match self.get(&format!("{repo}/branches/{git_ref}"), MAX_ANSWER)? {
+            Some(body) => {
+                serde_json::from_slice::<Branch>(&body)
+                    .map_err(unread)?
+                    .commit
+                    .id
+            }
+            None => {
+                let body = self
+                    .get(&format!("{repo}/commits?sha={git_ref}&limit=1"), MAX_ANSWER)?
+                    .ok_or_else(|| format!("{repo}: `{git_ref}` names no branch or tag"))?;
+                let list: Vec<Commit> = serde_json::from_slice(&body).map_err(unread)?;
+                list.into_iter()
+                    .next()
+                    .map(|c| c.sha)
+                    .ok_or_else(|| format!("{repo}: `{git_ref}` names no commit"))?
+            }
+        };
+        if !commit_id(&id) {
+            return Err(format!("{repo}: `{git_ref}` names no commit id"));
+        }
+        Ok(id)
     }
 
     /// Removes the trees of `slug` other than `keep`, once the link points at `keep`.
@@ -379,7 +403,9 @@ impl jc_manifest::assemble::Resolver for ForgeArchives {
         if tree.is_dir() {
             return Ok(tree);
         }
-        let archive = self.get(&format!("{repo}/archive/{commit}.zip"), MAX_ARCHIVE)?;
+        let archive = self
+            .get(&format!("{repo}/archive/{commit}.zip"), MAX_ARCHIVE)?
+            .ok_or_else(|| format!("{}/{repo}: no archive of {commit}", self.owner))?;
         std::fs::create_dir_all(&self.cache).map_err(|e| e.to_string())?;
         let partial = self.cache.join(format!(".{slug}.tree-{commit}.partial"));
         let _ = std::fs::remove_dir_all(&partial);
@@ -908,6 +934,74 @@ mod tests {
         assert!(why.contains("401") && !why.contains("wrong"), "{why}");
     }
 
+    /// A layout 2 organization: its registry's forge project, pinned to a tag, is checked out
+    /// under `projects/` through `jcctl checkouts`, and an entry naming an outside `url` is
+    /// refused and linked nowhere.
+    #[test]
+    fn a_layout_2_organization_links_its_forge_projects_and_refuses_an_outside_one() {
+        use axum::http::{StatusCode, Uri};
+        const TAGGED: &str = "89abcdef0123456789abcdef0123456789abcdef";
+        let entry = |name: &str, repository: &str| {
+            format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata: {{ name: {name}, \
+                 namespace: org }}\nspec:\n  organizationRef: city\n  repository: {repository}\n  \
+                 ref: v1.0.0\n"
+            )
+        };
+        let (p, x) = (
+            entry("p", "{ name: proj }"),
+            entry("x", "{ url: \"https://elsewhere.example/city/x.git\" }"),
+        );
+        let org = zip_of(&[
+            ("conf-main/.jc/layout", b"2\n"),
+            ("conf-main/projects/p.yaml", p.as_bytes()),
+            ("conf-main/projects/x.yaml", x.as_bytes()),
+        ]);
+        let project = zip_of(&[("proj-v1.0.0/project.yaml", b"kind: Project\n")]);
+        let answers: BTreeMap<String, Vec<u8>> = BTreeMap::from([
+            (
+                "/api/v1/repos/city/conf/branches/main".to_owned(),
+                format!(r#"{{"commit":{{"id":"{SHA}"}}}}"#).into_bytes(),
+            ),
+            (format!("/api/v1/repos/city/conf/archive/{SHA}.zip"), org),
+            (
+                "/api/v1/repos/city/proj/commits?sha=v1.0.0&limit=1".to_owned(),
+                format!(r#"[{{"sha":"{TAGGED}"}}]"#).into_bytes(),
+            ),
+            (
+                format!("/api/v1/repos/city/proj/archive/{TAGGED}.zip"),
+                project,
+            ),
+        ]);
+        let base = serve(Router::new().fallback(move |uri: Uri| async move {
+            let key = uri.path_and_query().map(|p| p.as_str()).unwrap_or_default();
+            match answers.get(key) {
+                Some(body) => (StatusCode::OK, body.clone()),
+                None => (StatusCode::NOT_FOUND, Vec::new()),
+            }
+        }));
+        let work = tempfile::tempdir().unwrap();
+        let repo = setup::ForgeRepo {
+            owner: "city".into(),
+            repo: "conf".into(),
+        };
+        let token = jc_secret::Secret::new("forge-token-not-secret".to_owned());
+        let tree = sync_forge(&base, &repo, &token, work.path()).unwrap();
+        assert!(work.path().join("repo/current/projects/p.yaml").is_file());
+        assert_eq!(tree, work.path().join(format!("org-cache/org.tree-{SHA}")));
+        let linked = work.path().join("projects/p");
+        assert_eq!(
+            std::fs::read_to_string(linked.join("project.yaml")).unwrap(),
+            "kind: Project\n"
+        );
+        assert!(
+            std::fs::read_link(&linked)
+                .unwrap()
+                .ends_with(format!("p.tree-{TAGGED}"))
+        );
+        assert!(!work.path().join("projects/x").exists());
+    }
+
     #[test]
     fn a_ref_that_is_no_plain_branch_name_is_refused_before_any_request() {
         use jc_manifest::assemble::Resolver as _;
@@ -932,7 +1026,10 @@ mod tests {
         ] {
             let spec = entry(serde_json::json!({"repository": {"name": "conf"}, "ref": bad}));
             let why = resolver.checkout("org", &spec).unwrap_err();
-            assert!(why.contains("is not a branch name"), "{bad:?}: {why}");
+            assert!(
+                why.contains("is not a branch or tag name"),
+                "{bad:?}: {why}"
+            );
         }
         for bad in ["../conf", "conf/x", ".git", "a b"] {
             let spec = entry(serde_json::json!({"repository": {"name": bad}}));
