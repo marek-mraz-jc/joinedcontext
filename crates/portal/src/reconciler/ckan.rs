@@ -24,8 +24,10 @@
 //! - **An Endpoint is published when it is due, never every tick (T-4717).** Republishing every
 //!   dataset each sync came to about 1,000 requests a minute through the public edge, the edge
 //!   answered 429, and each refusal was retried on the next tick. So an unchanged Endpoint is
-//!   published again only after [`REFRESH`], a failed one backs off, and the calls of a run to
-//!   the catalogue keep [`CALL_GAP`] apart.
+//!   published again only after [`REFRESH`], a failed one backs off, and the calls of a run
+//!   through the public edge keep [`CALL_GAP`] apart, gateway reads included. Calls the operator
+//!   routed to the catalogue's in-cluster or loopback address take no gap, and a wave publishes
+//!   [`PUBLISH_CONCURRENCY`] Endpoints at once after each organization's first ([`wave`], C1).
 //! - **The catalogue is asked about an organization once a pass, on its Service (T-5314).** Every
 //!   publication asked `organization_show` through the public edge: 184 calls in two minutes for
 //!   one organization on prod, against the public's own limit. A pass remembers each organization
@@ -200,13 +202,14 @@ impl CkanSync {
         target: &Target,
         repository: &Path,
         source: publisher::TokenSource<'_>,
-    ) -> Result<(HttpCkan, String, Settings), String> {
+    ) -> Result<(HttpCkan, String, Settings, Duration), String> {
         let mut settings = self.settings.clone();
         let Some(catalogue) = self.organization_catalogue(&target.instance) else {
             let api_url = self.api_url(&target.instance);
             let token = project_token(target, repository, source)?;
             let api = HttpCkan::new(&api_url, token).map_err(|err| err.to_string())?;
-            return Ok((api, api_url, settings));
+            let gap = catalogue_gap(&api_url, target.instance.base_url());
+            return Ok((api, api_url, settings, gap));
         };
         let api_url = catalogue
             .api
@@ -227,7 +230,12 @@ impl CkanSync {
         if let Some(host) = &catalogue.data_host {
             settings.host = host.clone();
         }
-        Ok((api, api_url, settings))
+        let gap = if catalogue.reach.is_some() {
+            Duration::ZERO
+        } else {
+            catalogue_gap(&api_url, catalogue.url.as_str().trim_end_matches('/'))
+        };
+        Ok((api, api_url, settings, gap))
     }
 
     /// Publishes a public Endpoint of a project that declares no `CkanInstance` into the
@@ -375,6 +383,7 @@ impl CkanSync {
                 .insert(target.dataset_name().to_owned());
         }
 
+        let mut due_targets = Vec::new();
         for target in wanted {
             if let Some(reason) = refused.get(&owner(&target)) {
                 reports.push(Report::of(&target, Publication::Failed(reason.clone())));
@@ -387,17 +396,25 @@ impl CkanSync {
                 print,
                 Instant::now(),
             );
-            if !due {
-                continue;
+            if due {
+                due_targets.push(target);
             }
-            let measured = self.measured(repo, &target);
-            let report = self.one(&target, false, repository, measured, &known).await;
-            self.pacing
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .record(key, print, &report.publication, Instant::now());
-            reports.push(report);
         }
+        let published = wave(due_targets, PUBLISH_CONCURRENCY, |target| {
+            let known = &known;
+            async move {
+                let measured = self.measured(repo, &target);
+                let report = self.one(&target, false, repository, measured, known).await;
+                let print = fingerprint(&target, &self.settings);
+                self.pacing
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .record(claim(&target), print, &report.publication, Instant::now());
+                report
+            }
+        })
+        .await;
+        reports.extend(published);
         // Each dataset the previous run published and this one does not, by its catalogue and
         // name (EP-178): an entry removed from an Endpoint's list goes alone. A dataset a
         // current Endpoint still publishes (a renamed Endpoint keeping its dataset name, or
@@ -518,8 +535,10 @@ impl CkanSync {
                 env: None,
                 age_key_file: age_key_file.as_deref(),
             };
-            let (api, api_url, settings) = this.client(&target, &repository, source)?;
-            let mut api = Paced::new(api, last_call, CALL_GAP).remembering(&api_url, known);
+            let (api, api_url, settings, gap) = this.client(&target, &repository, source)?;
+            let mut api = Paced::new(api, last_call, gap)
+                .with_read_gap(read_gap(&settings.host))
+                .remembering(&api_url, known);
             if withdraw {
                 return withdraw_one(&mut api, &target);
             }
@@ -560,8 +579,8 @@ impl CkanSync {
                 env: None,
                 age_key_file: age_key_file.as_deref(),
             };
-            let (api, api_url, _) = this.client(&target, &repository, source)?;
-            let mut api = Paced::new(api, last_call, CALL_GAP).remembering(&api_url, known);
+            let (api, api_url, _, gap) = this.client(&target, &repository, source)?;
+            let mut api = Paced::new(api, last_call, gap).remembering(&api_url, known);
             sweep_with(&mut api, &organization, &kept)
         })
         .await;
@@ -592,6 +611,91 @@ pub const REFRESH: Duration = Duration::from_secs(3600);
 pub const MOST_BACKOFF: Duration = Duration::from_secs(3600);
 /// The least time between two calls to the catalogue: at most five a second (T-4717).
 pub const CALL_GAP: Duration = Duration::from_millis(200);
+
+/// How many Endpoints one wave publishes at once: a fixed number per deployment, never per
+/// organization (C1: 609 datasets one at a time took about 50 minutes).
+pub const PUBLISH_CONCURRENCY: usize = 8;
+
+/// The gap between catalogue calls made at `api_url` for the catalogue whose public URL is
+/// `public`: [`CALL_GAP`] through the public edge (T-4717), none on an in-cluster or loopback
+/// address the operator routed the calls to, which no edge limits (C1).
+pub fn catalogue_gap(api_url: &str, public: &str) -> Duration {
+    if api_url.trim_end_matches('/') == public.trim_end_matches('/') && !is_loopback(api_url) {
+        CALL_GAP
+    } else {
+        Duration::ZERO
+    }
+}
+
+/// The gap between gateway reads at the data host `host` (a host or an origin): [`CALL_GAP`]
+/// unless it is a loopback address.
+pub fn read_gap(host: &str) -> Duration {
+    if is_loopback(host) {
+        Duration::ZERO
+    } else {
+        CALL_GAP
+    }
+}
+
+/// Whether `address` (a host, `host:port` or a URL) names this machine.
+fn is_loopback(address: &str) -> bool {
+    let rest = address.split_once("://").map_or(address, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(v6),
+        None => authority.rsplit_once(':').map_or(authority, |(h, _)| h),
+    };
+    let host = host.to_ascii_lowercase();
+    host == "localhost"
+        || host.ends_with(".localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// The CKAN organisation a target publishes into, by its catalogue: two targets with one key
+/// share one `organization_show`/`organization_create`.
+fn organization_key(target: &Target) -> (String, Option<String>) {
+    (
+        target.instance.base_url().to_owned(),
+        target
+            .publication
+            .organization
+            .clone()
+            .or_else(|| target.instance.organization_default.clone()),
+    )
+}
+
+/// Runs `publish` over `targets` and answers each one's result in their order: the first target
+/// of each organization one at a time, so each organization is created once and the pass's
+/// [`Organizations`] holds it before anyone else asks (two first datasets would race
+/// `organization_create`), then every other target at most `concurrency` at once. One target's
+/// failure is its own result.
+pub async fn wave<T, F, Fut>(targets: Vec<Target>, concurrency: usize, publish: F) -> Vec<T>
+where
+    F: Fn(Target) -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    use futures_util::StreamExt;
+    let mut seen = BTreeSet::new();
+    let (first, rest): (Vec<_>, Vec<_>) = targets
+        .into_iter()
+        .enumerate()
+        .partition(|(_, t)| seen.insert(organization_key(t)));
+    let mut out: Vec<(usize, T)> = Vec::new();
+    for (i, target) in first {
+        out.push((i, publish(target).await));
+    }
+    let publish = &publish;
+    let mut done: Vec<(usize, T)> = futures_util::stream::iter(rest)
+        .map(|(i, target)| async move { (i, publish(target).await) })
+        .buffer_unordered(concurrency.max(1))
+        .collect()
+        .await;
+    out.append(&mut done);
+    out.sort_by_key(|(i, _)| *i);
+    out.into_iter().map(|(_, r)| r).collect()
+}
 
 /// What a target looks like to the publisher, so a changed Endpoint, instance or setting is due
 /// at once. In-process only: the hash is never stored, so a differing `Debug` between builds
@@ -672,7 +776,11 @@ fn refused_for_load(reason: &str) -> bool {
 pub struct Paced<A> {
     api: A,
     last: Arc<Mutex<Option<Instant>>>,
+    /// Between two catalogue calls; zero on the in-cluster or loopback route, which no edge
+    /// limits, so those calls never take the shared gate (C1).
     gap: Duration,
+    /// Between two gateway reads, which pass the public edge unless the data host is loopback.
+    read_gap: Duration,
     /// The catalogue this client calls and the organizations its pass has seen there (T-5314).
     known: Option<(String, Organizations)>,
 }
@@ -692,8 +800,16 @@ impl<A> Paced<A> {
             api,
             last,
             gap,
+            read_gap: gap,
             known: None,
         }
+    }
+
+    /// Gateway reads paced `read_gap` apart instead of the catalogue's gap.
+    #[must_use]
+    pub fn with_read_gap(mut self, read_gap: Duration) -> Self {
+        self.read_gap = read_gap;
+        self
     }
 
     /// Answers `organization_show` from `known` once `catalogue` has answered it in this pass,
@@ -729,17 +845,21 @@ impl<A> Paced<A> {
     /// and two schemas) went out unpaced and peaked at 25 a second on prod (T-4717).
     pub fn reads<T>(&self, calls: u32, read: impl FnOnce() -> T) -> T {
         if calls > 0 {
-            self.wait_for(calls);
+            self.wait_for(calls, self.read_gap);
         }
         read()
     }
 
     fn wait(&self) {
-        self.wait_for(1);
+        self.wait_for(1, self.gap);
     }
 
-    /// Waits until the last holder's gap has passed, then holds `calls` gaps from now.
-    fn wait_for(&self, calls: u32) {
+    /// Waits until the last holder's gap has passed, then holds `calls` gaps from now. A zero
+    /// gap takes no turn: it would move a public caller's reservation earlier.
+    fn wait_for(&self, calls: u32, gap: Duration) {
+        if gap.is_zero() {
+            return;
+        }
         let mut last = self.last.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(ready) = *last {
             let now = Instant::now();
@@ -747,7 +867,7 @@ impl<A> Paced<A> {
                 std::thread::sleep(ready - now);
             }
         }
-        *last = Some(Instant::now() + self.gap * calls);
+        *last = Some(Instant::now() + gap * calls);
     }
 }
 
@@ -1360,7 +1480,7 @@ mod tests {
             assert_eq!(routed.instance.url, own, "{project}");
             assert_eq!(routed.instance.organization_default.as_deref(), Some(org));
             assert_eq!(routed.publication.organization.as_deref(), Some(org));
-            let (_, api_url, settings) = sync
+            let (_, api_url, settings, _) = sync
                 .client(&routed, &dir, source)
                 .unwrap_or_else(|e| panic!("{project}: {e}"));
             assert_eq!(api_url, format!("http://opendata.{org}.localhost"));

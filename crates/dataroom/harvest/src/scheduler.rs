@@ -53,7 +53,7 @@ fn field_matches(field: &str, value: u32, min: u32, max: u32) -> Result<bool> {
         if lo < min || hi > max || lo > hi {
             return Err(bad());
         }
-        if (lo..=hi).contains(&value) && (value - lo) % step == 0 {
+        if (lo..=hi).contains(&value) && (value - lo).is_multiple_of(step) {
             return Ok(true);
         }
     }
