@@ -120,13 +120,14 @@ fn check_entries(mode: MountMode, module: Module, specs: &[MountSpec]) -> Result
             }
             _ => {}
         }
-        if let Some(prefix) = spec.path_prefix.as_deref() {
-            if !roots.is_empty() && !roots.contains(&prefix) {
-                return Err(refuse(format!(
-                    "prefix '{prefix}': {module} answers only at its own paths ({})",
-                    roots.join(", ")
-                )));
-            }
+        if let Some(prefix) = spec.path_prefix.as_deref()
+            && !roots.is_empty()
+            && !roots.contains(&prefix)
+        {
+            return Err(refuse(format!(
+                "prefix '{prefix}': {module} answers only at its own paths ({})",
+                roots.join(", ")
+            )));
         }
         if specs[..i].contains(spec) {
             return Err(refuse(format!(
