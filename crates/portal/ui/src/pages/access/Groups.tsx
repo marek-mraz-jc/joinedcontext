@@ -299,7 +299,7 @@ export function Groups({ project }: { project: string }): JSX.Element {
                     </TableCell>
                     <TableCell data-label={t("access.groups.sync")}>
                       {row.sync ? (
-                        <div className="flex flex-col gap-1">
+                        <div className="flex flex-col items-start gap-1">
                           {/* A member who has not signed in yet is a wait, not a fault (reconciler/groups.rs). */}
                           <Badge tone={row.sync.ok ? "warning" : row.sync.reason === "MemberUnknown" ? "neutral" : "danger"}>
                             {t(`access.groups.reason.${row.sync.reason}`, {
