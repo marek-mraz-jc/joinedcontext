@@ -6924,6 +6924,7 @@ dependencies = [
  "kaisatsu-core",
  "kaisatsu-crypto",
  "kaisatsu-store-memory",
+ "metrics",
  "parking_lot",
  "regex",
  "reqwest 0.12.28",
