@@ -20,10 +20,11 @@ on:
     branches: [main, "jc-*", "agent/**", "ship-proof/**"]
   workflow_dispatch:
 permissions: { contents: read }
-# A superseded branch run is cancelled; a main (or ship-proof) run never is: each is a release.
+# A superseded branch run is cancelled; a main, jc-portal-1 (the merge branch) or ship-proof run never
+# is: each merged head gets its own verdict and writes the cache.
 concurrency:
-  group: "ci-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ship-proof/')) && github.sha || github.ref }}"
-  cancel-in-progress: ${{ !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ship-proof/')) }}
+  group: "ci-${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/jc-portal-1' || startsWith(github.ref, 'refs/heads/ship-proof/')) && github.sha || github.ref }}"
+  cancel-in-progress: ${{ !(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/jc-portal-1' || startsWith(github.ref, 'refs/heads/ship-proof/')) }}
 env:
   CARGO_TERM_COLOR: always
   # Debuginfo off: the Portal's test binaries and jc's link everything; with line tables the
