@@ -163,7 +163,12 @@ def loopback_only(base: str) -> None:
 
 
 def read_secret(state: Path, name: str) -> str:
-    return (state / name).read_text().strip()
+    """A secret jc keeps in its state dir, or one up.sh gave jc from the secrets dir beside it
+    (the service tokens jc otherwise holds in memory only)."""
+    f = state / name
+    if not f.is_file():
+        f = state.parent / "secrets" / name
+    return f.read_text().strip()
 
 
 # --------------------------------------------------------------------------------------------
