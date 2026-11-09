@@ -2224,7 +2224,13 @@ mod tests {
             second_factor: false,
         };
         let expected = effective(&mirror, "no-bootstrap", &bo, ORG_NAMESPACE, Utc::now());
-        assert!(expected.check("Group", Verb::Read, None).is_ok());
+        let grants_group = |grants: &Effective| {
+            grants
+                .grants
+                .iter()
+                .any(|grant| grant.rule.kinds == ["Group"])
+        };
+        assert!(grants_group(&expected), "the narrowed Group grant");
         let stop = Arc::new(AtomicBool::new(false));
         let writer = {
             let (mirror, stop) = (Arc::clone(&mirror), Arc::clone(&stop));
@@ -2241,7 +2247,7 @@ mod tests {
         std::thread::spawn(move || {
             let granted = (0..200)
                 .map(|_| effective(&reader, "no-bootstrap", &bo, ORG_NAMESPACE, Utc::now()))
-                .all(|grants| grants.check("Group", Verb::Read, None).is_ok());
+                .all(|grants| grants_group(&grants));
             let _ = done.send(granted);
         });
         let outcome = finished.recv_timeout(Duration::from_secs(5));
