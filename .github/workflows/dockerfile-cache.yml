@@ -1,0 +1,54 @@
+name: dockerfile-cache
+# The writer of the caches ci.yml's `dockerfile` job reads: on every jc-portal-1 push (the default
+# branch, whose caches every branch reads) the full `docker build` of bins/jc/Dockerfile exports
+# the layer cache (scope jc, mode=max) and writes sccache from the Dockerfile's two cargo builds.
+# Without it the scope went stale between Dockerfile changes: a dependency change on jc-portal-1
+# (c79331ab, kaisatsu-server dev-dependencies) missed the dependency layer of every branch after it
+# (13 min, run 42655700338). It is its own workflow so it never gates or delays a merge: no ci
+# verdict waits on it and a newer push supersedes a queued one.
+# Then it drops the target caches .github/actions/rust saved under a superseded key (one per
+# lockfile hash): they hold the 10 GB Actions cache over its cap, and the eviction that follows takes
+# the oldest entries, the layer cache included. The layer cache and sccache entries are not touched.
+on:
+  push:
+    branches: [jc-portal-1]
+  workflow_dispatch:
+permissions: { contents: read }
+# One export per ref at a time; a push while one runs waits, and a newer push replaces it in the
+# queue. Cancelling the running export instead would starve: pushes come faster than a cold build.
+concurrency:
+  group: "dockerfile-cache-${{ github.ref }}"
+  cancel-in-progress: false
+jobs:
+  export:
+    if: github.ref == 'refs/heads/jc-portal-1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh .github/scripts/free-disk.sh --wait
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      # Exports ACTIONS_RESULTS_URL and ACTIONS_RUNTIME_TOKEN to the build's secrets.
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with: { version: v0.18.0 }
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        env: { SCCACHE_GHA_RW_MODE: READ_WRITE }
+        with:
+          context: .
+          file: bins/jc/Dockerfile
+          push: false
+          cache-from: type=gha,scope=jc
+          cache-to: type=gha,scope=jc,mode=max
+          secret-envs: |
+            ACTIONS_RUNTIME_TOKEN=ACTIONS_RUNTIME_TOKEN
+            ACTIONS_RESULTS_URL=ACTIONS_RESULTS_URL
+            SCCACHE_GHA_RW_MODE=SCCACHE_GHA_RW_MODE
+  prune:
+    if: github.ref == 'refs/heads/jc-portal-1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: { actions: write }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - env: { GH_TOKEN: "${{ github.token }}" }
+        run: sh .github/scripts/cache-prune.sh
