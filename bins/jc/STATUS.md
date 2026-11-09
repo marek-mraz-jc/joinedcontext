@@ -13,7 +13,8 @@ Branch `jc-one-binary-1` (from `daiya-argon-1`), local only, never pushed. Plan:
   `CancellationToken` and one `TaskTracker` for shutdown (SIGTERM/Ctrl-C in `main.rs`).
 - Mounting through `crates/shared/jc-router`: `--mode slug` (any host, `/<slug>`: `/id`, `/opendata`, `/dashboards`,
   later `/streams`, `/broker`, `/portal`) or `--mode host` (`<label>.<base_host>`), plus `[mounts.<module>]`
-  overrides (host and/or path prefix) to mix both. Overlap is refused before any module state is built
+  overrides (host and/or path prefix) to mix both, or `[[mounts.<module>]]` arrays for several entries per module
+  (the first is its own address; CUTOVER.md section 4 has dev's table). Overlap is refused before any module state is built
   (`app::plan_mounts` dry-runs the router table). Unknown slug or host: 404.
 - `jc --role all|<module>[,<module>]`; a module that is not compiled in is refused, not skipped.
 - Configuration: defaults < TOML file (`--config`/`JCBIN_CONFIG`, unknown keys refused) < `JCBIN_*` < flags. No key

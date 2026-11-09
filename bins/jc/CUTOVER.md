@@ -111,20 +111,55 @@ step 4.
 ## 4. Edge and DNS
 
 DNS does not change: every host name stays and keeps its HTTP-01 certificate. jc runs in host
-mode with an explicit mount per old host. jc's mount table takes a host and a prefix per module
-(`[mounts.<module>]`, `bins/jc/src/config.rs`), and the host-mode e2e proves the Portal on its
-own host (`tests/portal_siblings.rs::the_portal_runs_on_its_own_host_in_host_mode`).
+mode with an explicit mount per old host and prefix. `[mounts.<module>]` takes one table or an
+array `[[mounts.<module>]]` of `{host, path_prefix}` (`bins/jc/src/config.rs`). The first entry
+is the module's own address (issuer, absolute URLs); each later entry adds a router entry, and the
+module sees the request's own host in its `Mount`. The gateway and the assistant answer at whole
+paths on every entry, so their prefixes must be `""` or one of their own paths
+(`Module::root_paths`); every other module's later entries are stripped of their prefix as its
+first is. jc refuses at start two equal entries, a wildcard host, and in host mode an entry
+without a host.
+
+The rows dev's APISIX routes serve (deployment db7b9a38c, `components/*/apisix-routes.yaml`;
+App hosts and the `{domain}/apps/*` row come with the App-host slice):
+
+| Module | Host | Paths | jc entries |
+|---|---|---|---|
+| kaisatsu | `idm.{domain}` | `/*` | `idm.{domain}` `""` |
+| Portal | `portal.{domain}` | `/*` | `portal.{domain}` `""` |
+| gateway | `api.{domain}` | `/cs/*`, `/api/endpoint/*`, `/catalog*`, `/api/mcp*`, `/oauth/*`, `/.well-known/oauth-*` | `api.{domain}` `""` (first entry) |
+| gateway | `{domain}` | `/cs/*`, `/catalog*`, `/api/endpoint/*`, `/api/mcp*` | `/cs`, `/catalog`, `/catalog.jsonld`, `/catalog.ttl`, `/api/endpoint`, `/api/mcp` |
+| gateway | `portal.{domain}` | `/cs/*`, `/api/mcp*`, `/api/endpoint/*` | `/cs`, `/api/mcp`, `/api/endpoint` |
+| dataroom | `opendata.{domain}` | `/*` | `opendata.{domain}` `""` |
+| daiya | `{domain}` | `/grafana*` | `{domain}` `/grafana` |
+| shako | `{domain}` | `/git/*`, `/v2/*` | `{domain}` `/git`; `/v2` on every host (below) |
+| none: APISIX `redirect` | `{domain}` `/*`, `{domain}` `/ckan*`, `data.{domain}` `/*` | | no entry: jc answers 404 there |
+
+The router matches whole path segments (longest prefix first), not APISIX's suffix globs, so the
+three `/catalog*` spellings the gateway serves are three entries. Differences S4b keeps in APISIX
+or accepts:
+
+- `/catalog*` on `{domain}` and `api.{domain}` also matches `/catalogue`, `/catalogs` and the like
+  on dev; jc answers 404 on `{domain}` (on `api.{domain}` the gateway answers its own 404).
+- `/api/mcp*` and `/grafana*` match `/api/mcpx` and `/grafanax` on dev; jc answers 404.
+- shako's `/v2` answers on every host in jc, on `{domain}` only on dev.
+- `portal.{domain}/.well-known/oauth-protected-resource*` stays with the Portal, as on dev
+  (`portal-well-known`): the gateway has no entry there.
+
+The table as `jc.toml` (`bins/jc/tests/fixtures/dev-mounts.toml` with `city.test` for the
+domain; `tests/one_binary.rs::host_mode_answers_every_dev_row_from_its_module` sends one request
+per row with `Host` as APISIX sends it):
 
 ```toml
 mode = "host"
 base_host = "{domain}"
 
-[mounts.portal]
-host = "portal.{domain}"
-path_prefix = ""
-
 [mounts.kaisatsu]
 host = "idm.{domain}"
+path_prefix = ""
+
+[mounts.portal]
+host = "portal.{domain}"
 path_prefix = ""
 
 [mounts.dataroom]
@@ -138,9 +173,26 @@ path_prefix = "/grafana"
 [mounts.shako]
 host = "{domain}"
 path_prefix = "/git"
+
+[[mounts.gateway]]
+host = "api.{domain}"
+path_prefix = ""
+
+# One entry per (host, path): /cs, /api/endpoint, /api/mcp, /catalog, /catalog.jsonld and
+# /catalog.ttl on {domain}; /cs, /api/endpoint and /api/mcp on portal.{domain}.
+[[mounts.gateway]]
+host = "{domain}"
+path_prefix = "/cs"
+
+[[mounts.gateway]]
+host = "portal.{domain}"
+path_prefix = "/api/endpoint"
 ```
 
-shako's `/v2` is mounted at the host root by jc. The issuer stays
+jc forwards `X-Forwarded-Host` only from a peer in `trusted_proxies`: S4b sets APISIX's
+`pass_host: pass` and lists APISIX's addresses there, or a client could choose the module.
+
+The issuer stays
 `https://idm.{domain}/realms/<realm>`: tokens, clients' configured issuers and the gateway's
 `admit_on` keep working without a change.
 
