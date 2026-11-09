@@ -130,6 +130,18 @@ if [ -d "$export_dir/keycloak" ]; then
     [ -n "$client" ] || continue
     install -m 600 "$home/secrets/realm/$name" "$home/secrets/realm/$client"
   done < "$home/state/realm-pipeline-clients.txt"
+  # An imported realm keeps its clients' secrets (bins/jc STATUS.md, jc-realm-name): jc reads its
+  # state files portal-client-secret, portal-admin-client-secret and gateway-client-secret and
+  # never rewrites them, so each start puts the realm's value there first.
+  while read -r file name; do
+    [ -n "$file" ] || continue
+    install -m 600 "$home/secrets/realm/$name" "$home/state/$file"
+  done < "$home/state/realm-state-secrets.txt"
+fi
+# The deployment's realm is the export's (dev for dev, smartcity for prod); jc's own `jc` without one.
+realm_config=""
+if [ -s "$home/state/realm-name.txt" ]; then
+  realm_config=$(printf '\n[identity]\nrealm = "%s"\n' "$(cat "$home/state/realm-name.txt")")
 fi
 
 url() { printf 'postgres://%s:%s@127.0.0.1:%s/%s' "$1" "$(cat "$(secret "$1-pw")")" "$pg_port" "$2"; }
@@ -189,7 +201,7 @@ if compgen -G "$REHEARSAL_DASHBOARDS/*.datasource.*.json" >/dev/null; then
     --out "$home/daiya-provisioning"
   db_config+=$(printf '\n[daiya]\nprovisioning_dir = "%s"\n' "$home/daiya-provisioning")
 fi
-printf '[mounts.portal]\npath_prefix = ""\n%s\n' "$db_config" > "$home/jc.toml"
+printf '[mounts.portal]\npath_prefix = ""\n%s\n%s\n' "$db_config" "$realm_config" > "$home/jc.toml"
 nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" \

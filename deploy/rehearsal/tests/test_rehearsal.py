@@ -829,3 +829,39 @@ def test_each_pipelines_client_names_the_secret_the_runner_reads():
     ]}
     assert rh.pipeline_clients(realm) == [("bbsk-pipelines", "KC_BBSK_PIPELINES_SECRET"),
                                           ("praha-pipelines", "KC_PRAHA_PIPELINES_SECRET")]
+
+
+def test_an_imported_realm_hands_its_client_secrets_to_jcs_state_files():
+    realm = {"clients": [
+        {"clientId": "portal-api", "secret": "$(env:KC_PORTAL_API_SECRET)"},
+        {"clientId": "portal-reconciler", "secret": "$(env:KC_PORTAL_RECONCILER_SECRET)"},
+        {"clientId": "context-gateway", "secret": "$(env:KC_CONTEXT_GATEWAY_SECRET)"},
+        {"clientId": "edge", "secret": "$(env:KC_EDGE_SECRET)"},
+    ]}
+    assert rh.state_client_secrets(realm) == [
+        ("gateway-client-secret", "KC_CONTEXT_GATEWAY_SECRET"),
+        ("portal-admin-client-secret", "KC_PORTAL_RECONCILER_SECRET"),
+        ("portal-client-secret", "KC_PORTAL_API_SECRET")]
+
+
+def test_the_rehearsal_signs_in_at_the_realm_of_the_export(tmp_path):
+    assert rh.realm_of(tmp_path) == "jc"
+    (tmp_path / "realm-name.txt").write_text("smartcity\n")
+    assert rh.realm_of(tmp_path) == "smartcity"
+    (tmp_path / "portal-admin-client-secret").write_text("s\n")
+    seen = []
+
+    class H:
+        def json(self, method, path, form=None):
+            seen.append(path)
+            return 200, {"access_token": "t"}
+
+    assert rh.admin_token(H(), tmp_path) == "t"
+    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]
+
+
+def test_an_imported_realm_gets_the_test_persons_admin_group_once():
+    out = rh.add_tester({"realm": "smartcity", "groups": [{"name": "bbsk"}]})
+    assert [g["name"] for g in out["groups"]] == ["bbsk", "platform-admins"]
+    again = rh.add_tester({"groups": out["groups"]})
+    assert [g["name"] for g in again["groups"]].count("platform-admins") == 1

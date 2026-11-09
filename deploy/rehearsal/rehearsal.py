@@ -50,6 +50,13 @@ MAX_BATCH_BYTES = 900_000  # below Antares' 4 MiB body cap and shako's request l
 MAX_BATCH_ENTITIES = 500
 # jc's client that administers people in realm jc (bins/jc/src/setup.rs PORTAL_ADMIN_CLIENT).
 PORTAL_ADMIN_CLIENT = "portal-reconciler"
+# jc's state files of the clients an imported realm keeps (bins/jc STATUS.md, jc-realm-name): the
+# cutover writes the export's secret of each into them before jc's first start.
+STATE_CLIENT_SECRETS = {"portal-api": "portal-client-secret", PORTAL_ADMIN_CLIENT: "portal-admin-client-secret",
+                        "context-gateway": "gateway-client-secret"}
+# The Portal's default bootstrap admins (JC_PORTAL_BOOTSTRAP_ADMINS): the rehearsal's test persons
+# join it; an imported realm without it gets it, as it gets rehearsal-tester.
+ADMIN_GROUP = "platform-admins"
 IMPORT_WORKERS = 4  # parallel batch writes into the local broker
 MAX_REPORTED = 200  # refused calls kept in the report; the rest are only counted
 
@@ -429,7 +436,25 @@ def add_tester(realm: dict) -> dict:
               "emailVerified": True, "firstName": "Rehearsal", "lastName": "Tester",
               "credentials": [{"type": "password", "value": "$(env:REHEARSAL_TESTER_PASSWORD)", "temporary": False}]}
     out["users"] = list(out.get("users") or []) + [tester]
+    if not any(g.get("name") == ADMIN_GROUP for g in out.get("groups") or []):
+        out["groups"] = list(out.get("groups") or []) + [{"name": ADMIN_GROUP, "path": f"/{ADMIN_GROUP}"}]
     return out
+
+
+def state_client_secrets(realm: dict) -> list[tuple[str, str]]:
+    """(jc state file, NAME) for each client of STATE_CLIENT_SECRETS whose secret is `$(env:NAME)`."""
+    out = []
+    for c in realm.get("clients", []):
+        m = SECRET_VAR.fullmatch(str(c.get("secret", "")).strip())
+        if c.get("clientId") in STATE_CLIENT_SECRETS and m:
+            out.append((STATE_CLIENT_SECRETS[c["clientId"]], m[1]))
+    return sorted(out)
+
+
+def realm_of(state: Path) -> str:
+    """The deployment's realm the rehearsal's jc runs on (`realms` writes it), else jc's default."""
+    p = state / "realm-name.txt"
+    return p.read_text().strip() if p.exists() else "jc"
 
 
 SECRET_VAR = re.compile(r"\$\((?:env:)?([A-Z][A-Z0-9_]*)\)")
@@ -577,6 +602,9 @@ def cmd_realms(a):
         # The secret variables the realm names ($(env:NAME)): up.sh makes a value for each.
         names = sorted(set(SECRET_VAR.findall(json.dumps(clean))))
         (dst.parent / "realm-vars.txt").write_text("".join(n + "\n" for n in names))
+        (dst.parent / "realm-name.txt").write_text(name + "\n")
+        (dst.parent / "realm-state-secrets.txt").write_text(
+            "".join(f"{f} {var}\n" for f, var in state_client_secrets(clean)))
         (dst.parent / "realm-pipeline-clients.txt").write_text(
             "".join(f"{cid} {var}\n" for cid, var in pipeline_clients(clean)))
         if a.secrets_dir:
@@ -1238,7 +1266,7 @@ def sign_in(h: Http, username: str, password: str):
 
 
 def admin_token(h: Http, state: Path) -> str:
-    st, body = h.json("POST", "/id/realms/jc/protocol/openid-connect/token", form={
+    st, body = h.json("POST", f"/id/realms/{realm_of(state)}/protocol/openid-connect/token", form={
         "grant_type": "client_credentials", "client_id": PORTAL_ADMIN_CLIENT,
         "client_secret": read_secret(state, "portal-admin-client-secret")})
     if st != 200:
@@ -1318,11 +1346,11 @@ def cmd_smoke(a):
     # 1. a test person signs in (no person was imported)
     try:
         tok = admin_token(h, state)
-        _, pw = make_person(h, tok, "jc", "rehearsal-steward", groups=["/platform-admins"])
+        _, pw = make_person(h, tok, realm_of(state), "rehearsal-steward", groups=[f"/{ADMIN_GROUP}"])
         ok, detail = sign_in(h, "rehearsal-steward", pw)
         check("sign-in as a test person", ok, detail, "GET /api/v1/auth/login")
     except Exception as e:  # noqa: BLE001 - every failure is a report row
-        check("sign-in as a test person", False, str(e)[:300], "/id/admin/realms/jc/users")
+        check("sign-in as a test person", False, str(e)[:300], f"/id/admin/realms/{realm_of(state)}/users")
     st, me = h.json("GET", "/api/v1/auth/me")
     check("Portal knows the person", st == 200, f"{st}", "GET /api/v1/auth/me")
     # 2. Portal pages load (the SPA shell and its API reads)
@@ -1636,7 +1664,7 @@ def cmd_portal_dashboards(a):
     loopback_only(a.base)
     h, state = Http(a.base), Path(a.state)
     tok = admin_token(h, state)
-    _, pw = make_person(h, tok, "jc", "rehearsal-dashboards", groups=["/platform-admins"])
+    _, pw = make_person(h, tok, realm_of(state), "rehearsal-dashboards", groups=[f"/{ADMIN_GROUP}"])
     ok, detail = sign_in(h, "rehearsal-dashboards", pw)
     if not ok:
         raise SystemExit(f"sign-in failed: {detail}")
