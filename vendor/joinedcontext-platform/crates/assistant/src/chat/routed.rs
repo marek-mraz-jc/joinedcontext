@@ -1456,7 +1456,11 @@ impl AnswerCache {
             let (failures, _, tries) = backoff.get(slug).copied().unwrap_or((0, Instant::now(), 0));
             let starting = self.born.0.elapsed() < STARTUP_WINDOW && tries < STARTUP_TRIES;
             let held = match starting {
-                true => (failures, Instant::now() + startup_wait(slug, tries), tries + 1),
+                true => (
+                    failures,
+                    Instant::now() + startup_wait(slug, tries),
+                    tries + 1,
+                ),
                 false => {
                     let failures = failures.saturating_add(1);
                     let wait = BACKOFF_FIRST
