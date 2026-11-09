@@ -49,11 +49,28 @@ pub fn request_id(req: &Request) -> String {
 /// `router` behind the access layer of `module`.
 pub fn layer(module: &'static str, router: Router) -> Router {
     router.layer(axum::middleware::from_fn(
-        move |req: Request, next: Next| access(module, req, next),
+        move |req: Request, next: Next| access(module, Door::Outer, req, next),
     ))
 }
 
-async fn access(module: &'static str, mut req: Request, next: Next) -> Response {
+/// `router` behind the access layer of `module` on a hop inside `jc` (the gateway's way into the
+/// broker): the request's id and span as [`layer`], and an access line only for a refusal or a
+/// failure. The door the request came in at wrote its answered line under the same id: one line
+/// per request across modules (the gate of 2026-11-09 counted 39.5k of the broker's 61.8k access
+/// lines on the hop, each repeating a gateway line).
+pub fn hop_layer(module: &'static str, router: Router) -> Router {
+    router.layer(axum::middleware::from_fn(
+        move |req: Request, next: Next| access(module, Door::Hop, req, next),
+    ))
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Door {
+    Outer,
+    Hop,
+}
+
+async fn access(module: &'static str, door: Door, mut req: Request, next: Next) -> Response {
     let id = request_id(&req);
     // `plain` or hex: always a valid header value.
     let value = HeaderValue::from_str(&id).unwrap_or(HeaderValue::from_static("invalid"));
@@ -71,7 +88,7 @@ async fn access(module: &'static str, mut req: Request, next: Next) -> Response 
         if status.is_server_error() || status.is_client_error() {
             let reason = status.canonical_reason().unwrap_or("refused");
             tracing::info!(target: "jc::access", module, %method, path, status = code, ms, reason, "refused");
-        } else {
+        } else if door == Door::Outer {
             tracing::info!(target: "jc::access", module, %method, path, status = code, ms, "answered");
         }
     });
@@ -137,6 +154,10 @@ mod tests {
     }
 
     async fn call(path: &str, id: Option<&str>) -> (Response, String) {
+        call_at(layer("shako", module()), path, id).await
+    }
+
+    async fn call_at(app: Router, path: &str, id: Option<&str>) -> (Response, String) {
         let buf = Buffer::default();
         let writer = buf.clone();
         let subscriber = tracing_subscriber::fmt()
@@ -148,7 +169,6 @@ mod tests {
             req = req.header("x-request-id", id);
         }
         let req = req.body(Body::empty()).expect("request");
-        let app = layer("shako", module());
         let _guard = tracing::subscriber::set_default(subscriber);
         let response = app.oneshot(req).await.expect("answer");
         let log = String::from_utf8(buf.0.lock().expect("log").clone()).expect("utf8");
@@ -199,6 +219,29 @@ mod tests {
         assert_eq!(lines.len(), 1, "{log}");
         assert!(
             lines[0].contains("status=401") && lines[0].contains("reason=\"Unauthorized\""),
+            "{log}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_hop_logs_only_refusals_and_its_lines_keep_the_callers_id() {
+        let hop = || hop_layer("antares", module());
+        let (response, log) = call_at(hop(), "/open", Some("smokelogs-hop-answered")).await;
+        assert_eq!(echoed(&response), "smokelogs-hop-answered");
+        assert!(!log.contains("jc::access"), "{log}");
+        let inner = log
+            .lines()
+            .find(|l| l.contains("inner line"))
+            .expect("inner line");
+        assert!(inner.contains("request_id=smokelogs-hop-answered"), "{log}");
+        let (response, log) = call_at(hop(), "/closed", Some("smokelogs-hop-refused")).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let lines: Vec<_> = log.lines().filter(|l| l.contains("jc::access")).collect();
+        assert_eq!(lines.len(), 1, "{log}");
+        assert!(
+            lines[0].contains("request_id=smokelogs-hop-refused")
+                && lines[0].contains("status=401")
+                && lines[0].contains("reason=\"Unauthorized\""),
             "{log}"
         );
     }
