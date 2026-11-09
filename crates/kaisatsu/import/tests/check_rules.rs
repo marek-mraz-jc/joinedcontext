@@ -251,15 +251,27 @@ async fn secret_files_stay_inside_the_secrets_directory() {
             in_dir.clone(),
             "escapes the configured secrets directory",
         ),
+        // A relative name is read under the secrets directory, never past it.
+        (
+            with_file("../outside".to_owned()),
+            in_dir.clone(),
+            "escapes the configured secrets directory",
+        ),
     ];
     for (doc, o, want) in refusals {
         let e = check_realm_value(&doc, &o).unwrap_err().to_string();
         assert!(e.contains(want), "{want}: {e}");
     }
-    // Applied for real, the file's content becomes the client secret.
+    check_realm_value(
+        &with_file(secrets.join("edge").display().to_string()),
+        &in_dir,
+    )
+    .unwrap();
+    // Applied for real under a relative name, the file's content becomes the client secret:
+    // the cwd is not the secrets directory, so a cwd-relative read would miss it.
     let store = Arc::new(MemoryStore::default());
     let dyn_store: Arc<dyn Store> = store.clone();
-    let mut doc = with_file(secrets.join("edge").display().to_string());
+    let mut doc = with_file("edge".to_owned());
     // The other secrets come from literal values in this test.
     for u in doc["users"].as_array_mut().unwrap() {
         for c in u["credentials"].as_array_mut().unwrap() {

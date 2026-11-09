@@ -1279,6 +1279,12 @@ fn refuse_entity(
     if let Some(problem) = undeclared_type(entity, endpoint) {
         return Err(Box::new(problem));
     }
+    // The space's own models read an expanded type; never the request's context (F3).
+    let contexts: Vec<&Value> = endpoint
+        .models
+        .iter()
+        .filter_map(|model| model.context.as_deref())
+        .collect();
     if let (Some(path_id), Some(object)) = (addressed, entity.as_object()) {
         let named = object.get("id").or_else(|| object.get("@id"));
         if named.is_some_and(|id| id.as_str() != Some(path_id)) {
@@ -1288,8 +1294,12 @@ fn refuse_entity(
             ));
         }
         if let Some(kind) = object.get("type").or_else(|| object.get("@type")) {
-            write_guard::check_identifier(path_id, Some(kind.as_str().unwrap_or_default()))
-                .map_err(|refusal| Box::new(ProblemDetails::from(refusal)))?;
+            write_guard::check_identifier_in(
+                path_id,
+                Some(kind.as_str().unwrap_or_default()),
+                &contexts,
+            )
+            .map_err(|refusal| Box::new(ProblemDetails::from(refusal)))?;
         }
     }
     if let Some(problem) = entity
@@ -1304,7 +1314,7 @@ fn refuse_entity(
         write_guard::check_identifier(raw, None)
             .and_then(|()| write_guard::check_granted_id(raw, constraints))
     } else if entity.get("id").is_some() || entity.get("@id").is_some() {
-        write_guard::check(entity, constraints)
+        write_guard::check_in(entity, constraints, &contexts)
     } else {
         write_guard::check_fragment(entity, constraints)
     };

@@ -939,10 +939,14 @@ fn anonymous_subscription_refusal(
     })
 }
 
-/// A write no permission of the Endpoint grants this caller: 401 without a token, else 403,
-/// answered before the body is read or the view asked. The view would refuse it as well, but
-/// with a 405 whose `Allow` names the writes it serves to somebody else.
+/// A write the gateway's decision point refuses this caller outright: answered 403 before the
+/// body is read or the view asked, as every other refusal the decision point makes (GW1,
+/// `writes::refused`). The view would refuse it as well, but with a 405 whose `Allow` names the
+/// writes it serves to somebody else. The same decision as the rest of the request
+/// (`Gateway::pdp`, the Endpoint's bound Policies), with no request narrowing: a write any
+/// permit could pass goes on to the guards and the view, which decide the rest.
 fn ungranted_write_refusal(
+    gateway: &Gateway,
     endpoint: &Endpoint,
     subject: &Subject,
     operation: Operation,
@@ -950,34 +954,20 @@ fn ungranted_write_refusal(
     if !operation.is_write() {
         return None;
     }
-    // `PATCH …/attrs` is 5.6.2, which the broker also grants under `updateEntity`: this check
-    // refuses only what no permit could pass, the view still decides the rest.
+    // `PATCH …/attrs` is 5.6.2, which the broker also grants under `updateEntity`.
     let also = (operation == Operation::UpdateAttrs).then_some(Operation::UpdateEntity);
-    let now = crate::pdp::now();
-    let granted = endpoint.policies.iter().any(|policy| {
-        !policy.effect.is_prohibition()
-            && std::iter::once(operation)
-                .chain(also)
-                .any(|op| crate::pdp::evaluator::applies(policy, subject, op, now))
+    let request = crate::pdp::evaluator::Request::default();
+    let denied = std::iter::once(operation).chain(also).all(|op| {
+        gateway
+            .pdp
+            .decide(subject, op, &request, endpoint)
+            .is_deny()
     });
-    if granted {
-        return None;
-    }
-    if principal_of(subject) != "anonymous" {
-        return Some(
-            ProblemDetails::forbidden()
-                .with_detail("no Policy of this endpoint grants you this write")
-                .into_response(),
-        );
-    }
-    let mut answer = ProblemDetails::new(401, "unauthorized", "Unauthorized")
-        .with_detail("sign in with an account a Policy of this endpoint grants this write")
-        .into_response();
-    answer.headers_mut().insert(
-        axum::http::header::WWW_AUTHENTICATE,
-        axum::http::HeaderValue::from_static("Bearer"),
-    );
-    Some(answer)
+    denied.then(|| {
+        ProblemDetails::forbidden()
+            .with_detail("no Policy of this endpoint grants you this write")
+            .into_response()
+    })
 }
 
 /// The longest `JC-Reason` the gateway takes, in characters once decoded (DM-113).
@@ -1068,7 +1058,7 @@ pub(crate) async fn view_request(
         tracing::info!(slug = %endpoint.slug, %operation, "refused: an anonymous subscription");
         return Err(Box::new(refusal));
     }
-    if let Some(refusal) = ungranted_write_refusal(endpoint, subject, operation) {
+    if let Some(refusal) = ungranted_write_refusal(gateway, endpoint, subject, operation) {
         tracing::info!(slug = %endpoint.slug, %operation, "write refused: no Policy grants it");
         return Err(Box::new(refusal));
     }

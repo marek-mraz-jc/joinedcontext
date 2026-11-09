@@ -1,6 +1,6 @@
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{header, HeaderValue, StatusCode, Uri};
+use axum::http::{header, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use rust_embed::RustEmbed;
 
@@ -44,8 +44,17 @@ fn is_page(path: &str) -> bool {
 }
 
 /// Serves the UI: from the `portal-ui` bundle when `JC_PORTAL_UI_URL` names one (T-2485), else
-/// from the build embedded in the binary, with SPA routing either way.
-pub async fn static_handler(State(state): State<AppState>, uri: Uri) -> Response {
+/// from the build embedded in the binary, with SPA routing either way. Only GET and HEAD: another
+/// method on a path no route serves answers 405, so a misrouted write, such as a POST to an
+/// internal hook on the public base, never looks like a success (F8).
+pub async fn static_handler(State(state): State<AppState>, method: Method, uri: Uri) -> Response {
+    if method != Method::GET && method != Method::HEAD {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, "GET, HEAD")],
+        )
+            .into_response();
+    }
     let path = uri.path().trim_start_matches('/');
     let path = if is_page(path) { "index.html" } else { path };
     match state.config.ui_url.as_deref() {
@@ -64,7 +73,7 @@ pub async fn home(
     uri: Uri,
 ) -> Response {
     if user.is_ok() {
-        return static_handler(State(state), uri).await;
+        return static_handler(State(state), Method::GET, uri).await;
     }
     let target = match uri.query() {
         Some(query) => format!("/catalogue?{query}"),

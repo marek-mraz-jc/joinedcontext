@@ -522,8 +522,12 @@ pub fn sync_forge(
     std::fs::create_dir_all(&current).map_err(|e| e.to_string())?;
     let next = current.join(".current.next");
     let _ = std::fs::remove_file(&next);
+    // Relative to `repo/`, so a state dir restored at another path still reads its tree.
+    let target = tree
+        .strip_prefix(work)
+        .map_or_else(|_| tree.clone(), |inside| Path::new("..").join(inside));
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&tree, &next).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(&target, &next).map_err(|e| e.to_string())?;
     std::fs::rename(&next, current.join("current")).map_err(|e| e.to_string())?;
     resolver.prune("org", &tree);
     let layout = std::fs::read_to_string(tree.join(".jc/layout")).unwrap_or_default();
@@ -1235,6 +1239,13 @@ mod tests {
                 .ends_with(format!("p.tree-{TAGGED}"))
         );
         assert!(!work.path().join("projects/x").exists());
+        // A state dir moved elsewhere (a restore on another volume) still reads its tree.
+        let moved = tempfile::tempdir().unwrap();
+        let to = moved.path().join("gateway");
+        std::fs::rename(work.path(), &to).unwrap();
+        assert!(to.join("repo/current/projects/p.yaml").is_file());
+        assert!(to.join("projects/p/project.yaml").is_file());
+        std::fs::rename(&to, work.path()).unwrap();
     }
 
     #[test]
