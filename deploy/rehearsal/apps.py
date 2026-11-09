@@ -224,12 +224,24 @@ def with_member(text: str, user: str) -> str:
     for i, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith("members:"):
-            pad = " " * (len(line) - len(line.lstrip()) + 2)
+            nxt = lines[i + 1] if i + 1 < len(lines) else ""
+            # the list's own indent: YAML allows its items level with the key ("indentless")
+            pad = nxt[: len(nxt) - len(nxt.lstrip())] if nxt.lstrip().startswith("- ") else \
+                " " * (len(line) - len(line.lstrip()) + 2)
             item = f"{pad}- user: {user}\n"
             if stripped == "members:":
-                return "".join(lines[: i + 1] + [item] + lines[i + 1:])
-            if stripped.replace(" ", "") == "members:[]":
-                return "".join(lines[:i] + [line.split("members:")[0] + "members:\n", item] + lines[i + 1:])
+                out = "".join(lines[: i + 1] + [item] + lines[i + 1:])
+            elif stripped.replace(" ", "") == "members:[]":
+                out = "".join(lines[:i] + [line.split("members:")[0] + "members:\n", item] + lines[i + 1:])
+            else:
+                break
+            want = [*((doc.get("spec") or {}).get("members") or []), {"user": user}]
+            try:
+                if (yaml.safe_load(out).get("spec") or {}).get("members") == want:
+                    return out
+            except yaml.YAMLError:
+                pass
+            break
     doc.setdefault("spec", {}).setdefault("members", []).append({"user": user})
     return yaml.safe_dump(doc, sort_keys=False)
 

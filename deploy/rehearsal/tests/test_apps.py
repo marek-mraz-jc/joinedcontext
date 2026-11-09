@@ -153,3 +153,6 @@ def test_grant_names_the_holder_once_in_the_roles_apps_group_manifests(tmp_path)
     empty = GROUP.replace("  members:\n    - user: fc3b55df-5fd4-4679-af5e-bb9dca22b0d7\n", "  members: []\n")
     import yaml
     assert yaml.safe_load(apps.with_member(empty, holder))["spec"]["members"] == [{"user": holder}]
+    indentless = GROUP.replace("    - user: fc3b55df", "  - user: fc3b55df")
+    assert [m["user"] for m in yaml.safe_load(apps.with_member(indentless, holder))["spec"]["members"]] == [
+        "fc3b55df-5fd4-4679-af5e-bb9dca22b0d7", holder], "an indentless members list stays valid YAML"
