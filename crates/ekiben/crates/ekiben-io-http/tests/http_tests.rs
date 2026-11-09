@@ -254,6 +254,7 @@ async fn a_stream_reaches_the_hosts_broker_mount_and_no_other_loopback_target() 
     let target = ekiben_core::HostTarget {
         addr,
         path_prefixes: vec!["/broker".into()],
+        late: None,
     };
     let (reg, pctx) = host_target_contexts(Some(target));
 
@@ -306,6 +307,43 @@ async fn a_stream_reaches_the_hosts_broker_mount_and_no_other_loopback_target() 
     let (reg, pctx) = host_target_contexts(None);
     assert!(get_once(&reg, &pctx, &upsert).await.is_some());
     assert_eq!(*seen.lock().unwrap(), vec!["/broker/hop"]);
+}
+
+/// jc's Portal binds its internal listener after ekiben is built: a stream's report sinks reach
+/// it under its pipeline routes once the address is set, and nothing on it before or elsewhere.
+#[tokio::test]
+async fn a_stream_reaches_the_hosts_late_listener_once_bound_under_its_prefixes_only() {
+    let (addr, _) = two_mount_listener().await;
+    let (internal, seen) = two_mount_listener().await;
+    let late = std::sync::Arc::new(std::sync::OnceLock::new());
+    let target = ekiben_core::HostTarget {
+        addr,
+        path_prefixes: vec!["/broker".into()],
+        late: Some((late.clone(), vec!["/internal/pipelines".into()])),
+    };
+    let (reg, pctx) = host_target_contexts(Some(target));
+    let outcomes = format!("http://{internal}/internal/pipelines/p/n/outcomes");
+    assert!(
+        get_once(&reg, &pctx, &outcomes).await.is_some(),
+        "unset: refused"
+    );
+    late.set(internal).unwrap();
+    assert_eq!(get_once(&reg, &pctx, &outcomes).await, None);
+    for refused in [
+        format!("http://{internal}/internal/revocations"),
+        format!("http://{internal}/internal/pipelinesx/p"),
+        format!("http://{internal}/broker/x"),
+        format!("http://{internal}/internal/pipelines/%2e%2e/revocations"),
+    ] {
+        assert!(
+            get_once(&reg, &pctx, &refused).await.is_some(),
+            "{refused} must be refused"
+        );
+    }
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec!["/internal/pipelines/p/n/outcomes"]
+    );
 }
 
 #[tokio::test]

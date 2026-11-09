@@ -14,6 +14,14 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
+/// The Portal's internal listener once its state is built (`portal::build`): jc's ekiben lets a
+/// stream's report sinks post to its pipeline routes there (`ekiben::host_target`), as prod's
+/// runner reaches the Portal's internal port. ponytail: one Portal per process, as the Portal's
+/// own capture fallback assumes.
+#[cfg(any(feature = "ekiben", feature = "portal"))]
+pub(crate) static PORTAL_INTERNAL: std::sync::LazyLock<Arc<std::sync::OnceLock<SocketAddr>>> =
+    std::sync::LazyLock::new(Default::default);
+
 #[cfg(feature = "antares")]
 pub mod antares;
 #[cfg(feature = "assistant")]

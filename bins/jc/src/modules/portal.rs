@@ -85,6 +85,10 @@ pub async fn build(
         runner_reaches(&mut config, addr);
     }
     let state = AppState::from_config(config).await.map_err(err)?;
+    // Set once the state is built: a failed attempt's listener goes, the next binds anew.
+    if let Some(addr) = listener.as_ref().and_then(|l| l.local_addr().ok()) {
+        let _ = super::PORTAL_INTERNAL.set(addr);
+    }
     server::spawn_background(&state);
     let token = shutdown.clone();
     let internal = listener
