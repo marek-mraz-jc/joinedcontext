@@ -38,11 +38,36 @@ fn panel_ids(panels: &[PanelSpec], out: &mut Vec<(u32, String)>) {
     }
 }
 
+/// The page's only style, admitted by its hash: the page carries no script and loads nothing.
+const STYLE: &str = "\
+:root{color-scheme:light dark;--bg:#f4f5f5;--card:#fff;--fg:#24292e;--muted:#5b6168;--line:#d8dbdf}\
+@media (prefers-color-scheme:dark){:root{--bg:#111217;--card:#181b1f;--fg:#ccccdc;--muted:#9fa7b3;--line:#2c3235}}\
+*{box-sizing:border-box}\
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 Inter,system-ui,-apple-system,'Segoe UI',sans-serif}\
+main{max-width:1200px;margin:0 auto;padding:24px 16px}\
+h1{font-size:22px;font-weight:500;margin:0 0 16px}\
+h2{font-size:14px;font-weight:500;margin:0 0 8px}\
+section{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px 16px;margin:0 0 16px;overflow-x:auto}\
+p{color:var(--muted);margin:0 0 8px}\
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}\
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}\
+th{font-weight:500;color:var(--muted)}\
+a{color:#3d71d9}";
+
+/// The Content-Security-Policy: nothing from anywhere, except [`STYLE`] by its SHA-256.
+static CSP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    let hash = base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(STYLE));
+    format!("default-src 'none'; style-src 'sha256-{hash}'; frame-ancestors 'self'")
+});
+
 fn html(status: StatusCode, title: &str, body: &str) -> Response {
     let page = format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>{title}</title></head><body><main><h1>{title}</h1>{body}</main></body></html>",
+         <title>{title}</title><style>{STYLE}</style></head><body><main><h1>{title}</h1>{body}\
+         </main></body></html>",
         title = html_escape(title),
     );
     (
@@ -50,10 +75,7 @@ fn html(status: StatusCode, title: &str, body: &str) -> Response {
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8"),
             (header::CACHE_CONTROL, "private, no-store"),
-            (
-                header::CONTENT_SECURITY_POLICY,
-                "default-src 'none'; frame-ancestors 'self'",
-            ),
+            (header::CONTENT_SECURITY_POLICY, CSP.as_str()),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
             (header::REFERRER_POLICY, "no-referrer"),
         ],
@@ -65,7 +87,13 @@ fn html(status: StatusCode, title: &str, body: &str) -> Response {
 /// A refusal as a page: a hidden denial and a missing dashboard read the same (404).
 fn refused(err: &CrError) -> Response {
     let status = StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::NOT_FOUND);
-    html(status, "Dashboard not found", "")
+    html(
+        status,
+        "Dashboard not found",
+        "<section><p>This dashboard does not exist in this organization, or you may not open it. \
+         Check the address, or open the dashboard again from its project in the Portal.</p>\
+         <p><a href=\"/\">Go to the start page</a></p></section>",
+    )
 }
 
 async fn dashboard_page(

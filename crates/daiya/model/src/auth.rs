@@ -38,7 +38,7 @@ impl GrafanaRole {
 }
 
 /// Caller identity verified from the Portal session or kaisatsu bearer token (R9, §4.1).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Subject {
     /// Person or workload subject ID (`None` for anonymous callers).
@@ -55,6 +55,28 @@ pub struct Subject {
     /// Read-only connector / MCP flag.
     #[serde(default)]
     pub read_only: bool,
+    /// The person a server administrator reads for (the `sub` of the person's token the Portal
+    /// hands over with its credential): part of every cache key, so one person's frames never
+    /// serve another's.
+    #[serde(default, skip_serializing)]
+    pub on_behalf_of: Option<String>,
+}
+
+/// Debug never prints the bearer token.
+impl std::fmt::Debug for Subject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Subject")
+            .field("actor_id", &self.actor_id)
+            .field("organizations", &self.organizations)
+            .field("groups", &self.groups)
+            .field(
+                "bearer_token",
+                &self.bearer_token.as_ref().map(|_| "[redacted]"),
+            )
+            .field("read_only", &self.read_only)
+            .field("on_behalf_of", &self.on_behalf_of)
+            .finish()
+    }
 }
 
 impl Subject {
@@ -66,6 +88,7 @@ impl Subject {
             groups: Vec::new(),
             bearer_token: None,
             read_only: false,
+            on_behalf_of: None,
         }
     }
 
@@ -81,6 +104,7 @@ impl Subject {
             groups,
             bearer_token: None,
             read_only: false,
+            on_behalf_of: None,
         }
     }
 
@@ -96,6 +120,7 @@ impl Subject {
             groups: Vec::new(),
             bearer_token: None,
             read_only: true,
+            on_behalf_of: None,
         }
     }
 

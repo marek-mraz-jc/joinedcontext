@@ -114,8 +114,8 @@
                 <nav aria-label="{{ fg.title }}">
                   <ul class="list-unstyled nav nav-simple nav-facet">
                     {% for item in fg.items %}
-                    <li class="nav-item">
-                      <a href="{{ item.href }}">
+                    <li class="nav-item{% if item.active %} active{% endif %}">
+                      <a href="{{ item.href }}"{% if item.active %} aria-current="true"{% endif %}>
                         <span class="item-label">{{ item.label }}</span>
                         <span class="item-count badge">{{ item.count }}</span>
                       </a>
@@ -131,6 +131,7 @@
               </section>
               {% endfor %}
             </div>
+            <button type="button" class="hide-filters" aria-label="{{ labels.close }}"><i class="fa fa-times" aria-hidden="true"></i></button>
           </div>
         </aside>
         <div class="primary col-md-9 col-xs-12" role="main">
@@ -150,19 +151,29 @@
                     <i class="fa fa-search"></i>
                   </button>
                 </div>
+                {% if !hidden_params.is_empty() %}<span>{% for (hk, hv) in hidden_params %}<input type="hidden" name="{{ hk }}" value="{{ hv }}" />{% endfor %}</span>{% endif %}
                 <div class="form-group control-order-by">
                   <label for="field-order-by">{{ labels.order_by }}</label>
                   <select id="field-order-by" name="sort" class="form-control form-select">
-                    <option value="score desc, metadata_modified desc">{{ labels.sort_relevance }}</option>
-                    <option value="title_string asc">{{ labels.sort_name_asc }}</option>
-                    <option value="title_string desc">{{ labels.sort_name_desc }}</option>
-                    <option value="metadata_modified desc">{{ labels.sort_modified }}</option>
+                    <option value="score desc, metadata_modified desc"{% if sort == "score desc, metadata_modified desc" || sort.is_empty() %} selected="selected"{% endif %}>{{ labels.sort_relevance }}</option>
+                    <option value="title_string asc"{% if sort == "title_string asc" %} selected="selected"{% endif %}>{{ labels.sort_name_asc }}</option>
+                    <option value="title_string desc"{% if sort == "title_string desc" %} selected="selected"{% endif %}>{{ labels.sort_name_desc }}</option>
+                    <option value="metadata_modified desc"{% if sort == "metadata_modified desc" %} selected="selected"{% endif %}>{{ labels.sort_modified }}</option>
                   </select>
                   <button class="btn btn-default js-hide" type="submit">{{ labels.go }}</button>
                 </div>
                 <h1>{{ found_heading }}</h1>
-                <p class="filter-list"></p>
-                <a class="show-filters btn btn-default">{{ labels.filter_results }}</a>
+                {% if !filter_pills.is_empty() %}
+                <p class="filter-list">
+                  {% for pill in filter_pills %}
+                  <span class="facet">{{ pill.facet }}:</span>
+                  <span class="filtered pill">{{ pill.label }}
+                    <a href="{{ pill.remove_href }}" class="remove" title="{{ remove_label }}" aria-label="{{ remove_label }}: {{ pill.label }}"><i class="fa fa-times" aria-hidden="true"></i></a>
+                  </span>
+                  {% endfor %}
+                </p>
+                {% endif %}
+                <button type="button" class="show-filters btn btn-default">{{ labels.filter_results }}</button>
               </form>
               <div class="sdk-datagrid" data-grid-config="{{ dataset_grid_config }}">
                 {% if !datasets.is_empty() %}
@@ -187,6 +198,17 @@
                 {% endif %}
               </div>
             </div>
+            {% if !pager.is_empty() %}
+            <div class="pagination-wrapper">
+              <ul class="pagination justify-content-center">
+                {% for pl in pager %}
+                <li class="page-item{% if pl.active %} active{% endif %}">
+                  <a class="page-link" href="{{ pl.href }}"{% if pl.active %} aria-current="page"{% endif %}>{{ pl.label }}</a>
+                </li>
+                {% endfor %}
+              </ul>
+            </div>
+            {% endif %}
           </article>
         </div>
       </div>

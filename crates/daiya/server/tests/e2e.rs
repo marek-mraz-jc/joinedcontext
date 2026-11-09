@@ -1181,7 +1181,7 @@ async fn security_forged_identity_headers_grant_nothing() {
     .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 
-    // An unknown bearer token is anonymous too.
+    // An unknown bearer token is refused 401, as Grafana refuses an invalid API key.
     let (st, _, _) = send_req(
         &app,
         req(
@@ -1192,7 +1192,7 @@ async fn security_forged_identity_headers_grant_nothing() {
         ),
     )
     .await;
-    assert_eq!(st, StatusCode::NOT_FOUND);
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
 
     // Nothing was written in either organization.
     for (org, token) in [(org_a, "admin-a-token"), (org_b, "admin-b-token")] {

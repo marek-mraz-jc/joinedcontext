@@ -106,6 +106,22 @@ impl ColumnValues {
     }
 }
 
+/// A number cell: JSON has no NaN or infinity, so they travel as the words [`FieldColumn::f64_at`]
+/// reads back (`NaN`, `+Inf`, `-Inf`), as Grafana's frames keep them apart from a null.
+/// tests/grafana_parity.rs (daiya-expr) holds every expression to Grafana's answers.
+#[must_use]
+pub fn number_value(v: Option<f64>) -> Value {
+    match v {
+        None => Value::Null,
+        Some(x) if x.is_nan() => Value::String("NaN".into()),
+        Some(x) if x == f64::INFINITY => Value::String("+Inf".into()),
+        Some(x) if x == f64::NEG_INFINITY => Value::String("-Inf".into()),
+        // `-0` reads as Grafana writes it: 0.
+        Some(x) => serde_json::Number::from_f64(if x == 0.0 { 0.0 } else { x })
+            .map_or(Value::Null, Value::Number),
+    }
+}
+
 /// One column in a [`Frame`] (§3.2).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -149,13 +165,7 @@ impl FieldColumn {
             unit: None,
             display_name: None,
             labels,
-            values: vals
-                .into_iter()
-                .map(|v| {
-                    v.and_then(serde_json::Number::from_f64)
-                        .map_or(Value::Null, Value::Number)
-                })
-                .collect(),
+            values: vals.into_iter().map(number_value).collect(),
         }
     }
 

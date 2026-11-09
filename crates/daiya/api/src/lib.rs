@@ -23,12 +23,12 @@ pub use public::{
     rotate_public_dashboard_token, view_public_dashboard,
 };
 pub use render::{
-    PanelTimeRange, PanelView, execute_targets_and_expressions, panel_view,
+    PanelTimeRange, PanelView, execute_targets_and_expressions, format_picked, panel_view,
     render_frames_html_table,
 };
 pub use state::{
-    DaiyaState, MIN_SERVER_ADMIN_PASSWORD, ServerAdminCheck, SubjectResolver, TokenBinding,
-    resolve_request_ctx,
+    DaiyaState, MIN_SERVER_ADMIN_PASSWORD, PERSON_TOKEN_HEADER, PersonTokenExchanger,
+    ServerAdminCheck, SubjectResolver, TokenBinding, resolve_request_ctx, token_sub,
 };
 
 use axum::Router;
@@ -41,5 +41,9 @@ pub fn api_router(state: DaiyaState, _mount: Mount) -> Router {
         .merge(page::page_router())
         .merge(compat::compat_router())
         .merge(public::public_router())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            state::refuse_unknown_credential,
+        ))
         .with_state(state)
 }

@@ -314,6 +314,22 @@ async fn the_portal_saves_and_removes_a_visualization_in_a_provisioned_project()
     let (status, csp, page) = grafana.page(&link, Some(&basic(USER, PASSWORD))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(csp.starts_with("default-src 'none'"), "{csp}");
+    // The page's own style is admitted by its hash; nothing else may load or run.
+    assert!(
+        csp.contains("style-src 'sha256-") && !csp.contains("unsafe") && !csp.contains("script"),
+        "{csp}"
+    );
+    let style = page
+        .split_once("<style>")
+        .and_then(|(_, rest)| rest.split_once("</style>"))
+        .map(|(style, _)| style)
+        .expect("a style element");
+    let hash = {
+        use base64::Engine as _;
+        use sha2::Digest as _;
+        base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(style))
+    };
+    assert!(csp.contains(&format!("style-src 'sha256-{hash}'")), "{csp}");
     assert!(page.contains("<h1>NO2 over time</h1>"), "{page}");
     assert!(page.contains("<section><h2>NO2 over time</h2>"), "{page}");
     assert!(!page.contains("<script"), "{page}");
@@ -328,6 +344,15 @@ async fn the_portal_saves_and_removes_a_visualization_in_a_provisioned_project()
         let (status, _, page) = grafana.page(&link, auth).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{auth:?}");
         assert!(!page.contains("NO2"), "{page}");
+        // A refusal says what to do next, and reads the same as a dashboard that is not there.
+        assert!(
+            page.contains("open the dashboard again from its project"),
+            "{page}"
+        );
+        let (_, _, missing) = grafana
+            .page("/d/no-such-board", Some(&basic(USER, PASSWORD)))
+            .await;
+        assert_eq!(page, missing);
     }
     let (status, _, _) = grafana
         .page(
@@ -392,12 +417,13 @@ async fn only_the_server_admin_credential_reaches_a_project_organization() {
     let grafana = Grafana::new(Arc::new(FlakyStore::default()), None);
     let helsinki = grafana.provision("helsinki").await;
 
-    // A wrong password is anonymous: no organization, no datasource, no write.
+    // A wrong password is refused 401, as Grafana refuses it: no organization, no datasource,
+    // no write, and never read as anonymous.
     let wrong = basic(USER, "not-the-password-at-all");
     let (status, _) = grafana
         .call("GET", "/orgs/name/helsinki", None, Some(&wrong), None)
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, _) = grafana
         .call(
             "POST",
@@ -407,14 +433,12 @@ async fn only_the_server_admin_credential_reaches_a_project_organization() {
             Some(json!({ "name": "evil" })),
         )
         .await;
-    assert!(status.is_client_error(), "{status}");
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, body) = grafana
         .call("GET", "/datasources", Some(helsinki), Some(&wrong), None)
         .await;
-    assert!(
-        status == StatusCode::NOT_FOUND || portal_datasources(&body).is_empty(),
-        "{status} {body}"
-    );
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(body.get("error").is_some(), "a refusal, no list: {body}");
 
     // A person of the main organization does not learn about or write into the project.
     let viewer = "Bearer viewer-token";
@@ -577,7 +601,8 @@ async fn a_host_check_can_name_the_server_admin() {
             None,
         )
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    // A token the host's check does not name is refused, never read as anonymous.
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     // The Basic credential set before still works beside it.
     let (status, _) = host.admin("GET", "/orgs/name/helsinki", None, None).await;
     assert_eq!(status, StatusCode::OK);

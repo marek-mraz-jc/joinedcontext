@@ -75,8 +75,9 @@ pub async fn open_kaisatsu_store(
     }
 }
 
-/// Applies the realm files of `dir` (one realm, merged in file-name order). A directory without
-/// realm files is nothing to apply, not an error: a first start mounts an empty import dir.
+/// Applies the realm files of `dir` (one realm, merged in file-name order), their `$(file:...)`
+/// secrets read under `secrets_dir`. A directory without realm files is nothing to apply, not an
+/// error: a first start mounts an empty import dir.
 async fn apply_import_dir(
     store: &Arc<dyn Store>,
     dir: &std::path::Path,
@@ -87,8 +88,6 @@ async fn apply_import_dir(
     if files.is_empty() {
         return Ok(());
     }
-    // A realm file reads no environment here: its secrets are `$(file:...)` under the
-    // configured directory.
     let options = ApplyOptions {
         secrets_dir,
         ..ApplyOptions::default()
@@ -251,6 +250,8 @@ pub async fn build(
     let kek = Kek::from_raw_bytes(kek.as_bytes()).map_err(|e| err(&e))?;
     let store = open_kaisatsu_store(cfg, kek.clone()).await?;
     if let Some(dir) = &cfg.import_dir {
+        // A realm file reads no environment here: its secrets are `$(file:...)` under the
+        // configured directory.
         apply_import_dir(&store, dir, cfg.import_secrets_dir.clone()).await?;
     }
     apply_portal_realm(&store, ctx).await?;
@@ -268,23 +269,6 @@ pub async fn build(
 mod tests {
     use super::*;
     use crate::config::{Cli, Config};
-
-    /// An empty import dir (first start) applies nothing; a realm file in it is applied.
-    #[tokio::test]
-    async fn an_empty_import_dir_applies_nothing_and_a_realm_file_is_applied() {
-        let dir = tempfile::tempdir().unwrap();
-        let kek = Kek::from_raw_bytes(&[7u8; 32]).unwrap();
-        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek));
-        apply_import_dir(&store, dir.path(), None).await.unwrap();
-        assert!(store.list_realms().await.unwrap().is_empty());
-        std::fs::write(
-            dir.path().join("realm.json"),
-            r#"{"realm": "rehearsal", "enabled": true}"#,
-        )
-        .unwrap();
-        apply_import_dir(&store, dir.path(), None).await.unwrap();
-        assert!(store.get_realm("rehearsal").await.unwrap().is_some());
-    }
 
     fn scope(name: &str, mark: Option<&str>, mapper: bool) -> ClientScopeRepresentation {
         let mut s = ClientScopeRepresentation {
@@ -361,6 +345,23 @@ mod tests {
         // A second pass writes nothing.
         assert!(link_endpoint_scopes(&portal, &ours, false).is_none());
         assert!(link_endpoint_scopes(&hub, &ours, true).is_none());
+    }
+
+    /// An empty import dir (first start) applies nothing; a realm file in it is applied.
+    #[tokio::test]
+    async fn an_empty_import_dir_applies_nothing_and_a_realm_file_is_applied() {
+        let dir = tempfile::tempdir().unwrap();
+        let kek = Kek::from_raw_bytes(&[7u8; 32]).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek));
+        apply_import_dir(&store, dir.path(), None).await.unwrap();
+        assert!(store.list_realms().await.unwrap().is_empty());
+        std::fs::write(
+            dir.path().join("realm.json"),
+            r#"{"realm": "rehearsal", "enabled": true}"#,
+        )
+        .unwrap();
+        apply_import_dir(&store, dir.path(), None).await.unwrap();
+        assert!(store.get_realm("rehearsal").await.unwrap().is_some());
     }
 
     #[tokio::test]

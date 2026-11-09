@@ -1,0 +1,199 @@
+{
+ "dashboard": "project-helsinki",
+ "panel": 1,
+ "title": "Cyclists per day, by counting station",
+ "from": 1793512800000,
+ "to": 1794117600000,
+ "frames": [
+  {
+   "name": "Baana",
+   "refId": "A",
+   "fields": [
+    {
+     "name": "Time",
+     "type": "time",
+     "labels": {},
+     "values": [
+      1793599200000,
+      1793685600000,
+      1793772000000,
+      1793858400000,
+      1793944800000,
+      1794031200000,
+      1794117600000
+     ]
+    },
+    {
+     "name": "intensity",
+     "type": "number",
+     "displayName": "Baana",
+     "labels": {
+      "entity": "urn:ngsi-ld:TrafficFlowObserved:baana",
+      "type": "TrafficFlowObserved"
+     },
+     "values": [
+      2330,
+      2216,
+      1995,
+      2025,
+      1813,
+      1614,
+      1514
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Eläintarhanlahti",
+   "refId": "A",
+   "fields": [
+    {
+     "name": "Time",
+     "type": "time",
+     "labels": {},
+     "values": [
+      1793599200000,
+      1793685600000,
+      1793772000000,
+      1793858400000,
+      1793944800000,
+      1794031200000,
+      1794117600000
+     ]
+    },
+    {
+     "name": "intensity",
+     "type": "number",
+     "displayName": "Eläintarhanlahti",
+     "labels": {
+      "entity": "urn:ngsi-ld:TrafficFlowObserved:el-intarhanlahti",
+      "type": "TrafficFlowObserved"
+     },
+     "values": [
+      2134,
+      2009,
+      2025,
+      1886,
+      1675,
+      1544,
+      1436
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Kulosaaren silta",
+   "refId": "A",
+   "fields": [
+    {
+     "name": "Time",
+     "type": "time",
+     "labels": {},
+     "values": [
+      1793599200000,
+      1793685600000,
+      1793772000000,
+      1793858400000,
+      1793944800000,
+      1794031200000,
+      1794117600000
+     ]
+    },
+    {
+     "name": "intensity",
+     "type": "number",
+     "displayName": "Kulosaaren silta",
+     "labels": {
+      "entity": "urn:ngsi-ld:TrafficFlowObserved:kulosaaren-silta",
+      "type": "TrafficFlowObserved"
+     },
+     "values": [
+      2169,
+      2032,
+      1819,
+      1746,
+      1771,
+      1476,
+      1362
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Lauttasaaren silta",
+   "refId": "A",
+   "fields": [
+    {
+     "name": "Time",
+     "type": "time",
+     "labels": {},
+     "values": [
+      1793599200000,
+      1793685600000,
+      1793772000000,
+      1793858400000,
+      1793944800000,
+      1794031200000,
+      1794117600000
+     ]
+    },
+    {
+     "name": "intensity",
+     "type": "number",
+     "displayName": "Lauttasaaren silta",
+     "labels": {
+      "entity": "urn:ngsi-ld:TrafficFlowObserved:lauttasaaren-silta",
+      "type": "TrafficFlowObserved"
+     },
+     "values": [
+      2201,
+      2054,
+      1846,
+      1840,
+      1634,
+      1409,
+      1290
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Huopalahdentie",
+   "refId": "A",
+   "fields": [
+    {
+     "name": "Time",
+     "type": "time",
+     "labels": {},
+     "values": [
+      1793599200000,
+      1793685600000,
+      1793772000000,
+      1793858400000,
+      1793944800000,
+      1794031200000,
+      1794117600000
+     ]
+    },
+    {
+     "name": "intensity",
+     "type": "number",
+     "displayName": "Huopalahdentie",
+     "labels": {
+      "entity": "urn:ngsi-ld:TrafficFlowObserved:huopalahdentie",
+      "type": "TrafficFlowObserved"
+     },
+     "values": [
+      1997,
+      1840,
+      1872,
+      1700,
+      1499,
+      1346,
+      1222
+     ]
+    }
+   ]
+  }
+ ]
+}
