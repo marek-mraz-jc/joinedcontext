@@ -679,7 +679,7 @@ async fn tick(
     settings: &Settings,
     count: u32,
 ) -> Result<Pass, DispatchError> {
-    if count % TRIGGER_EVERY_PASSES == 0 && !mirror.is_empty() {
+    if count.is_multiple_of(TRIGGER_EVERY_PASSES) && !mirror.is_empty() {
         for (app, commit) in trigger_once(forge, db, mirror).await? {
             tracing::info!(%app, %commit, "a build of a new head of the App is queued");
         }

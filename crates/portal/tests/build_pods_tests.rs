@@ -291,7 +291,7 @@ async fn started(
     )
     .await
     .expect("the pass");
-    assert_eq!(pass.started, [job.clone()]);
+    assert_eq!(pass.started, std::slice::from_ref(&job));
     (id, token_of(server, &job).await)
 }
 
@@ -1042,6 +1042,39 @@ async fn a_token_of_one_build_never_writes_another_apps_status() {
             .state,
         "running"
     );
+}
+
+#[tokio::test]
+async fn an_upload_admitted_before_the_freeze_never_lands_after_it() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let server = publishing_forge("air-quality", COMMIT).await;
+    let state = state(
+        &server,
+        &db,
+        work.path(),
+        &[app_manifest("air-quality", None)],
+    );
+    let (id, _) = started(&server, &db, &state, "air-quality", COMMIT).await;
+    // An upload the listener admitted while the build ran lands only if the build still runs
+    // when its rename comes: the row lock orders it against the freeze.
+    let mut landed = false;
+    assert!(build_records::while_running(&db, id, || {
+        landed = true;
+        Ok(())
+    })
+    .await
+    .expect("held"));
+    assert!(landed);
+    assert!(build_records::freeze(&db, id).await.expect("frozen"));
+    let mut late = false;
+    assert!(!build_records::while_running(&db, id, || {
+        late = true;
+        Ok(())
+    })
+    .await
+    .expect("held"));
+    assert!(!late, "a rename after the freeze never runs");
 }
 
 #[tokio::test]
