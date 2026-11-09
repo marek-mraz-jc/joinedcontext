@@ -47,7 +47,15 @@ fn audience_mapper(key: &str, aud: &str) -> Value {
 }
 
 fn fixture_realm() -> Value {
-    let scopes = ["web-origins", "service_account", "acr", "profile", "roles", "basic", "email"];
+    let scopes = [
+        "web-origins",
+        "service_account",
+        "acr",
+        "profile",
+        "roles",
+        "basic",
+        "email",
+    ];
     json!({
         "realm": "fx", "enabled": true,
         "defaultRole": { "name": "default-roles-fx", "composite": true },
@@ -101,19 +109,35 @@ fn service_account_client_roles(realm: &Value, client: &str) -> BTreeMap<String,
     let default = realm["defaultRole"]["name"].as_str().unwrap_or_default();
     let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let users = realm["users"].as_array().cloned().unwrap_or_default();
-    for user in users.iter().filter(|u| u["serviceAccountClientId"] == client) {
+    for user in users
+        .iter()
+        .filter(|u| u["serviceAccountClientId"] == client)
+    {
         for (other, names) in user["clientRoles"].as_object().into_iter().flatten() {
-            for n in names.as_array().into_iter().flatten().filter_map(Value::as_str) {
+            for n in names
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
                 out.entry(other.clone()).or_default().insert(n.to_owned());
             }
         }
     }
-    let roles = realm["roles"]["realm"].as_array().cloned().unwrap_or_default();
+    let roles = realm["roles"]["realm"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     if let Some(role) = roles.iter().find(|r| r["name"] == default)
         && let Some(by_client) = role["composites"]["client"].as_object()
     {
         for (client, names) in by_client {
-            for n in names.as_array().into_iter().flatten().filter_map(Value::as_str) {
+            for n in names
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
                 out.entry(client.clone()).or_default().insert(n.to_owned());
             }
         }
@@ -145,14 +169,19 @@ fn keycloak_audiences(realm: &Value, client: &Value) -> BTreeSet<String> {
     for m in &mappers {
         if m["protocolMapper"] == "oidc-audience-mapper" {
             let cfg = &m["config"];
-            let value = [cfg["included.client.audience"].as_str(), cfg["included.custom.audience"].as_str()]
-                .into_iter()
-                .flatten()
-                .find(|v| !v.is_empty());
+            let value = [
+                cfg["included.client.audience"].as_str(),
+                cfg["included.custom.audience"].as_str(),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|v| !v.is_empty());
             aud.extend(value.map(str::to_owned));
         }
     }
-    let resolves = mappers.iter().any(|m| m["protocolMapper"] == "oidc-audience-resolve-mapper");
+    let resolves = mappers
+        .iter()
+        .any(|m| m["protocolMapper"] == "oidc-audience-resolve-mapper");
     let full_scope = client["fullScopeAllowed"].as_bool().unwrap_or(true);
     if resolves && full_scope {
         // With `fullScopeAllowed: false` and no scope mapping for this client, the token's
@@ -171,7 +200,11 @@ fn token_audiences(token: &str) -> BTreeSet<String> {
     let claims: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap();
     match &claims["aud"] {
         Value::String(a) => BTreeSet::from([a.clone()]),
-        Value::Array(list) => list.iter().filter_map(Value::as_str).map(str::to_owned).collect(),
+        Value::Array(list) => list
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
         _ => BTreeSet::new(),
     }
 }
@@ -217,7 +250,12 @@ async fn check_every_workload(realm: Value) -> usize {
     let k8s_kek = Kek::generate_for_tests();
     let k8s_key = KeyManager::generate_es256("k8s", &k8s_kek, 100, "ACTIVE").unwrap();
     let jwk: Value = serde_json::from_str(&k8s_key.public_jwk_json).unwrap();
-    let state = KaisatsuState::new(store, kek, OutboundGuard::default(), Arc::new(LocalAuthorizer));
+    let state = KaisatsuState::new(
+        store,
+        kek,
+        OutboundGuard::default(),
+        Arc::new(LocalAuthorizer),
+    );
     state.guard().insert_mock(
         format!("{K8S_ISSUER}/openid/v1/jwks"),
         200,
@@ -238,16 +276,26 @@ async fn check_every_workload(realm: Value) -> usize {
         let secret;
         let form: Vec<(&str, &str)> = if client["clientAuthenticatorType"] == "federated-jwt" {
             let sub = client["attributes"]["jwt.credential.sub"].as_str().unwrap();
-            assertion = sign_jwt(&k8s_key, &k8s_kek, Some("JWT"), &json!({
-                "iss": K8S_ISSUER, "sub": sub, "aud": issuer, "iat": now, "exp": now + 600 }))
+            assertion = sign_jwt(
+                &k8s_key,
+                &k8s_kek,
+                Some("JWT"),
+                &json!({
+                "iss": K8S_ISSUER, "sub": sub, "aud": issuer, "iat": now, "exp": now + 600 }),
+            )
             .unwrap();
             vec![
                 ("grant_type", "client_credentials"),
-                ("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"),
+                (
+                    "client_assertion_type",
+                    "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                ),
                 ("client_assertion", &assertion),
             ]
         } else {
-            let Some(raw) = client["secret"].as_str() else { continue };
+            let Some(raw) = client["secret"].as_str() else {
+                continue;
+            };
             let var = raw.trim_start_matches("$(").trim_end_matches(')');
             secret = secrets
                 .get(var.strip_prefix("env:").unwrap_or(var))
@@ -270,7 +318,12 @@ async fn check_every_workload(realm: Value) -> usize {
         }
         checked += 1;
     }
-    assert!(wrong.is_empty(), "{} of {checked} differ:\n{}", wrong.len(), wrong.join("\n"));
+    assert!(
+        wrong.is_empty(),
+        "{} of {checked} differ:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
     checked
 }
 
@@ -279,9 +332,21 @@ async fn a_workload_token_carries_exactly_the_audiences_keycloak_gives_it() {
     let realm = fixture_realm();
     // The rule above, spelled out for the fixture's three workloads.
     let clients = realm["clients"].as_array().unwrap();
-    let want = |id: &str| keycloak_audiences(&realm, clients.iter().find(|c| c["clientId"] == id).unwrap());
+    let want = |id: &str| {
+        keycloak_audiences(
+            &realm,
+            clients.iter().find(|c| c["clientId"] == id).unwrap(),
+        )
+    };
     let set = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<_>>();
-    assert_eq!(want("fx-pl-kataster"), set(&["rpfqszwlbp5bonvg7kckhdsne5qedjor", "portal-internal", "account"]));
+    assert_eq!(
+        want("fx-pl-kataster"),
+        set(&[
+            "rpfqszwlbp5bonvg7kckhdsne5qedjor",
+            "portal-internal",
+            "account"
+        ])
+    );
     assert_eq!(want("fx-hub"), set(&["portal-api", "account"]));
     assert_eq!(want("fx-narrow"), set(&["context-broker-main"]));
     assert_eq!(check_every_workload(realm.clone()).await, 3);

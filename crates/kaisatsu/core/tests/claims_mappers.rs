@@ -674,7 +674,10 @@ fn audience_resolve_follows_the_tokens_client_roles() {
         .collect();
     aud.sort_unstable();
     assert_eq!(aud, ["account", "app"]);
-    assert_eq!(at["resource_access"]["account"]["roles"], json!(["view-profile"]));
+    assert_eq!(
+        at["resource_access"]["account"]["roles"],
+        json!(["view-profile"])
+    );
     f.client.full_scope_allowed = false;
     let at = f.eval(TokenKind::AccessToken);
     assert!(at.get("aud").is_none(), "{at:?}");

@@ -14,12 +14,48 @@ use kaisatsu_core::{KaisatsuError, Result};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use url::Url;
 
 pub const MAX_OUTBOUND_BYTES: usize = 1024 * 1024;
 pub const OUTBOUND_TIMEOUT: Duration = Duration::from_secs(5);
+/// The most cluster JWKS URLs the cache holds.
+const CLUSTER_JWKS_ENTRIES: usize = 16;
+
+/// The pod's own credentials for the Kubernetes API server, read at each fetch (a projected
+/// ServiceAccount token rotates): its token, sent only to an in-cluster host, and the cluster CA,
+/// the one root such a fetch trusts.
+#[derive(Debug, Clone)]
+pub struct ClusterCredentials {
+    pub token: PathBuf,
+    pub ca: PathBuf,
+    /// How long a cluster JWKS answers from the cache before it is read again.
+    pub jwks_ttl: Duration,
+    /// The least time between two reads of one cluster JWKS: a token naming a `kid` the cached
+    /// set lacks reads it again (key rotation), a stream of made-up `kid`s one read per window.
+    pub jwks_min_refetch: Duration,
+}
+
+impl Default for ClusterCredentials {
+    fn default() -> Self {
+        let dir = PathBuf::from("/var/run/secrets/kubernetes.io/serviceaccount");
+        Self {
+            token: dir.join("token"),
+            ca: dir.join("ca.crt"),
+            jwks_ttl: Duration::from_secs(300),
+            jwks_min_refetch: Duration::from_secs(10),
+        }
+    }
+}
+
+/// A cluster JWKS read at `read`.
+#[derive(Debug, Clone)]
+struct CachedJwks {
+    read: Instant,
+    jwks: serde_json::Value,
+}
 
 /// Test-only canned answers by URL: `(status, body)`.
 pub type MockResponses = Arc<RwLock<HashMap<String, (u16, Vec<u8>)>>>;
@@ -33,6 +69,8 @@ pub struct OutboundPolicy {
     pub allowed_hosts: Option<Vec<String>>,
     /// Test-only mock responses keyed by URL so unit/e2e tests can run offline.
     pub mock_responses: MockResponses,
+    /// What a cluster JWKS fetch ([`OutboundGuard::cluster_jwks`]) authenticates and trusts with.
+    pub cluster: ClusterCredentials,
 }
 
 impl Default for OutboundPolicy {
@@ -45,6 +83,7 @@ impl Default for OutboundPolicy {
             ],
             allowed_hosts: None,
             mock_responses: Arc::new(RwLock::new(HashMap::new())),
+            cluster: ClusterCredentials::default(),
         }
     }
 }
@@ -56,6 +95,7 @@ pub type MockPosts = Arc<RwLock<HashMap<String, Vec<Vec<(String, String)>>>>>;
 pub struct OutboundGuard {
     pub policy: OutboundPolicy,
     mock_posts: MockPosts,
+    cluster_jwks: Arc<RwLock<HashMap<String, CachedJwks>>>,
 }
 
 impl OutboundGuard {
@@ -63,7 +103,7 @@ impl OutboundGuard {
     pub fn new(policy: OutboundPolicy) -> Self {
         Self {
             policy,
-            mock_posts: MockPosts::default(),
+            ..Self::default()
         }
     }
 
@@ -234,6 +274,62 @@ impl OutboundGuard {
         allowed_domains: Option<&[String]>,
         bearer_token: Option<&str>,
     ) -> Result<T> {
+        self.fetch_json(raw_url, allowed_domains, bearer_token, None)
+            .await
+    }
+
+    /// The JWKS at `raw_url` on an in-cluster host (the Kubernetes API server's
+    /// `/openid/v1/jwks`), read as Keycloak's kubernetes identity provider reads it: with the
+    /// pod's ServiceAccount token as bearer and the cluster CA as the only root, each file used
+    /// when it exists. Cached for [`ClusterCredentials::jwks_ttl`]; `refresh` (a token whose
+    /// `kid` the cached set lacks) reads it again, at most once per
+    /// [`ClusterCredentials::jwks_min_refetch`]. A URL on any other host is refused before a
+    /// request: the token never leaves the cluster.
+    pub async fn cluster_jwks(&self, raw_url: &str, refresh: bool) -> Result<serde_json::Value> {
+        let url = self.validate_url(raw_url, None)?;
+        let host = url.host_str().unwrap_or_default();
+        if !self.is_in_cluster_host(host) {
+            return Err(KaisatsuError::OutboundRefused(format!(
+                "host '{host}' is not an in-cluster host for a cluster JWKS"
+            )));
+        }
+        if let Some(hit) = self.cluster_jwks.read().get(url.as_str()) {
+            let age = hit.read.elapsed();
+            let cluster = &self.policy.cluster;
+            if age < cluster.jwks_ttl && (!refresh || age < cluster.jwks_min_refetch) {
+                return Ok(hit.jwks.clone());
+            }
+        }
+        let read = |path: &std::path::Path| std::fs::read(path).ok();
+        let token = read(&self.policy.cluster.token)
+            .map(|t| String::from_utf8_lossy(&t).trim().to_owned())
+            .filter(|t| !t.is_empty());
+        let ca = read(&self.policy.cluster.ca);
+        let jwks: serde_json::Value = self
+            .fetch_json(url.as_str(), None, token.as_deref(), ca.as_deref())
+            .await?;
+        let mut cache = self.cluster_jwks.write();
+        if cache.len() >= CLUSTER_JWKS_ENTRIES && !cache.contains_key(url.as_str()) {
+            cache.clear();
+        }
+        cache.insert(
+            url.as_str().to_owned(),
+            CachedJwks {
+                read: Instant::now(),
+                jwks: jwks.clone(),
+            },
+        );
+        Ok(jwks)
+    }
+
+    /// [`Self::get_json`], trusting only the PEM roots of `ca_pem` when given.
+    async fn fetch_json<T: serde::de::DeserializeOwned>(
+        &self,
+        raw_url: &str,
+        allowed_domains: Option<&[String]>,
+        bearer_token: Option<&str>,
+        ca_pem: Option<&[u8]>,
+    ) -> Result<T> {
         let url = self.validate_url(raw_url, allowed_domains)?;
         if let Some((status, body)) = self.policy.mock_responses.read().get(url.as_str()).cloned() {
             if !(200..300).contains(&status) {
@@ -278,10 +374,19 @@ impl OutboundGuard {
         }
 
         // Pin the resolved address so DNS rebinding cannot switch the target on connect (W12).
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .timeout(OUTBOUND_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
-            .resolve(&host, addrs[0])
+            .resolve(&host, addrs[0]);
+        if let Some(pem) = ca_pem {
+            let roots = reqwest::Certificate::from_pem_bundle(pem)
+                .map_err(|_| KaisatsuError::OutboundRefused("unreadable cluster CA".into()))?;
+            builder = builder.tls_built_in_root_certs(false);
+            for root in roots {
+                builder = builder.add_root_certificate(root);
+            }
+        }
+        let client = builder
             .build()
             .map_err(|e| KaisatsuError::OutboundRefused(e.to_string()))?;
 

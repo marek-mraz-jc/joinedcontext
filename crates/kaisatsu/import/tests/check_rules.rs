@@ -262,7 +262,11 @@ async fn secret_files_stay_inside_the_secrets_directory() {
         let e = check_realm_value(&doc, &o).unwrap_err().to_string();
         assert!(e.contains(want), "{want}: {e}");
     }
-    check_realm_value(&with_file(secrets.join("edge").display().to_string()), &in_dir).unwrap();
+    check_realm_value(
+        &with_file(secrets.join("edge").display().to_string()),
+        &in_dir,
+    )
+    .unwrap();
     // Applied for real under a relative name, the file's content becomes the client secret:
     // the cwd is not the secrets directory, so a cwd-relative read would miss it.
     let store = Arc::new(MemoryStore::default());
