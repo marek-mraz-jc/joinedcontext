@@ -20,7 +20,10 @@ judging it at every width by resizing the open page, as walker.spec.ts does. A p
   without a reason.
 
 Then, anonymously and as the admin: dataroom (/opendata: home, dataset list, the first dataset,
-the first organization), shako (/git: the repository list and the first repository, with
+the first organization; on the first dataset with a "live data" frame, `viz` rows: /viz/explore.html
+and /viz/embed.html answer a CSP sandbox without allow-same-origin when viz shares the Portal's
+origin, the framed explorer runs in an opaque origin that reads no cookie of the host, and its grid
+draws rows), shako (/git: the repository list and the first repository, with
 --shako-token-file; a browser person without one is reported), and the daiya dashboards the
 Portal lists for the project (/projects/{p}/grafana and every dashboard link on it).
 
@@ -295,8 +298,67 @@ def dataroom(w: Walker):
                           "the catalogue lists nothing to open")
         for a in addrs:
             w.judge(page, "anonymous", "dataroom", a, a, portal=False, viewer=False)
+        dataset = next((a for a in addrs if a.startswith("/opendata/dataset/")), None)
+        if dataset:
+            viz_sandbox(w, ctx, page, dataset)
     finally:
         ctx.close()
+
+
+SANDBOX_PAGES = ("/viz/explore.html", "/viz/embed.html")
+
+
+def frame_csp_rows(w: Walker, page, shared: bool):
+    """A direct GET of each explorer page: a CSP `sandbox` without allow-same-origin when viz shares
+    its origin with the Portal (the boundary is the header, not the frame's attribute)."""
+    for path in SANDBOX_PAGES:
+        r = page.request.get(w.base + path)
+        csp = r.headers.get("content-security-policy", "")
+        sandboxed = "sandbox allow-scripts" in csp and "allow-same-origin" not in csp
+        w.res.check(f"viz.csp:{path}", "viz", f"GET {path}",
+                    "CSP sandbox without allow-same-origin" if shared else "CSP without a sandbox (own origin)",
+                    f"{r.status} {csp[-120:]}", r.status == 200 and sandboxed == shared)
+
+
+def viz_sandbox(w: Walker, ctx, page, dataset: str):
+    """The explorer frame on one dataset page, with a cookie of the host set: its scripts run in an
+    opaque origin that reads no cookie, and the grid still draws rows."""
+    page.goto(w.base + dataset, wait_until="load", timeout=60000)
+    frame_el = page.locator("iframe.jc-explorer-frame")
+    if not frame_el.count():
+        w.res.skip("viz.grid", "viz", f"GET {dataset}", "the explorer frame", "the dataset page shows no live data frame")
+        return
+    src = frame_el.first.get_attribute("src") or ""
+    shared = src.startswith((w.base + "/", "/"))
+    frame_csp_rows(w, page, shared)
+    ctx.add_cookies([{"name": "jc_smoke_probe", "value": "secret", "url": w.base + "/"}])
+    page.goto(w.base + dataset, wait_until="load", timeout=60000)
+    frame = None
+    for _ in range(60):
+        frame = next((f for f in page.frames if "/explore.html" in f.url), None)
+        if frame:
+            break
+        page.wait_for_timeout(500)
+    if not frame:
+        w.res.check("viz.grid", "viz", f"GET {dataset}", "the explorer frame loads", "no frame", False)
+        return
+    seen = frame.evaluate("""() => {
+        let cookie;
+        try { cookie = document.cookie; } catch (e) { cookie = "refused: " + e.name; }
+        return { origin: self.origin, cookie: cookie };
+    }""")
+    opaque = seen["origin"] == "null" and "jc_smoke_probe" not in seen["cookie"]
+    w.res.check("viz.opaque", "viz", f"the explorer frame on {dataset}, a host cookie set",
+                "origin null, no cookie readable" if shared else "the viz origin (own host)",
+                f"origin {seen['origin']}, cookie: {seen['cookie'][:60]}", opaque if shared else True)
+    try:
+        frame.wait_for_selector("table tbody tr", timeout=45000)
+        rows = frame.locator("table tbody tr").count()
+    except Exception as e:  # noqa: BLE001 - the row says what the frame shows
+        status = frame.locator("#status").text_content() or ""
+        rows, why = 0, f"{type(e).__name__}; status: {status[:120]}"
+    w.res.check("viz.grid", "viz", f"the explorer grid on {dataset}", "rows drawn",
+                f"{rows} rows" if rows else why, rows > 0)
 
 
 def shako(w: Walker):

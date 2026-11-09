@@ -395,3 +395,34 @@
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* The popup's close control is MapLibre's own button, a 1 em glyph in a corner: big enough to see
+   and, on a touch screen, to tap (44 px). Unlayered for the reason above. */
+.maplibregl-popup .maplibregl-popup-close-button {
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+@media (pointer: coarse) {
+  .maplibregl-popup .maplibregl-popup-close-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+@media (max-width: 639px) {
+  /* A phone width: the finger's 44 px for the popup's close and the map's zoom buttons. */
+  .maplibregl-popup .maplibregl-popup-close-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .maplibregl-ctrl-group button.maplibregl-ctrl-zoom-in,
+  .maplibregl-ctrl-group button.maplibregl-ctrl-zoom-out,
+  .maplibregl-ctrl-group button.maplibregl-ctrl-compass {
+    width: 44px;
+    height: 44px;
+  }
+  [data-tables-link] {
+    min-height: 44px;
+  }
+}

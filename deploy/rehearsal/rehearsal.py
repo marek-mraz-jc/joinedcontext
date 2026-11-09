@@ -858,7 +858,9 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
     auth = {"Authorization": "Basic " + base64.b64encode(f"portal:{pw}".encode()).decode()}
     order = {"folder": 0, "datasource": 1, "dashboard": 2, "model": 2}
     src = dashboards or export / "grafana" / "dashboards"
-    files = sorted(src.glob("*.json"), key=lambda f: (order[_daiya_kind(f.name)], f.name))
+    # source-database files (org<N>-project-*, org<N>-pv-*) go through import_portal_made, not here
+    files = sorted((f for f in src.glob("*.json") if not SOURCE_ORG_FILE.match(f.name)),
+                   key=lambda f: (order[_daiya_kind(f.name)], f.name))
     rows, orgs = [], {}
     for f in files:
         kind = _daiya_kind(f.name)
@@ -921,7 +923,70 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
         else:
             row.update(result="refused", call=call, status=st, detail=answer)
         rows.append(row)
+    rows.extend(import_portal_made(h, auth, export, orgs))
     report["daiya"] = rows
+
+
+SOURCE_ORG_FILE = re.compile(r"^org(\d+)-(project-(?P<project>[a-z0-9-]+)|pv-[0-9a-f]+)\.json$")
+
+
+def portal_made(export: Path) -> list[tuple[Path, str | None]]:
+    """The dev bundle's Portal-made dashboards (`org<N>-pv-<id>.json`, read from the source Grafana's
+    database), each with the project of source organization N: the one `org<N>-project-<p>.json`
+    names. None when no such file names N."""
+    src = export / "grafana" / "dashboards"
+    projects, made = {}, []
+    for f in sorted(src.glob("org*.json")) if src.is_dir() else []:
+        m = SOURCE_ORG_FILE.match(f.name)
+        if m and m.group("project"):
+            projects[m.group(1)] = m.group("project")
+        elif m:
+            made.append((f, m.group(1)))
+    return [(f, projects.get(n)) for f, n in made]
+
+
+def portal_made_found(h: Http, auth: dict, made: list[tuple[Path, str | None]]) -> tuple[int, list[str]]:
+    """How many of the bundle's Portal-made dashboards daiya holds in their project's organization,
+    and the files of the ones it does not (a pv whose source org names no project is missing)."""
+    found, lost, orgs = 0, [], {}
+    for f, project in made:
+        uid = json.loads(f.read_text()).get("uid")
+        if project and project not in orgs:
+            st, o = h.json("GET", f"/dashboards/api/orgs/name/{urllib.parse.quote(project)}", headers=auth)
+            orgs[project] = str(o.get("id")) if st == 200 and isinstance(o, dict) else None
+        org = orgs.get(project) if project else None
+        if org:
+            st, hits = h.json("GET", "/dashboards/api/search?type=dash-db", headers={**auth, "X-Grafana-Org-Id": org})
+            if st == 200 and isinstance(hits, list) and any(d.get("uid") == uid for d in hits):
+                found += 1
+                continue
+        lost.append(f.name)
+    return found, lost
+
+
+def import_portal_made(h: Http, auth: dict, export: Path, orgs: dict) -> list[dict]:
+    """Each Portal-made dashboard into the daiya organization of its project, as the Portal
+    would save it there (POST /dashboards/api/dashboards/db, overwrite)."""
+    rows = []
+    for f, project in portal_made(export):
+        row = {"file": f.name, "kind": "portal-made", "project": project}
+        if not project:
+            rows.append({**row, "result": "refused", "reason": "its source organization names no project"})
+            continue
+        try:
+            if project not in orgs:
+                orgs[project] = daiya_org(h, auth, project)
+            doc = json.loads(f.read_text())
+        except (RuntimeError, ValueError) as e:
+            rows.append({**row, "result": "refused", "reason": str(e)})
+            continue
+        dash = {k: v for k, v in doc.get("dashboard", doc).items() if k != "id"}
+        st, answer = h.json("POST", "/dashboards/api/dashboards/db", body={"dashboard": dash, "overwrite": True},
+                            headers={**auth, "X-Grafana-Org-Id": str(orgs[project])})
+        row.update(org=orgs[project], uid=dash.get("uid"), status=st,
+                   result="imported" if st in (200, 201) else "refused", **({} if st in (200, 201) else {"detail": answer}))
+        rows.append(row)
+    return rows
 
 
 def bundle_settled(export: Path) -> str:
@@ -1316,6 +1381,13 @@ def cmd_smoke(a):
     want = sum(1 for f in files if _daiya_kind(f.name) in ("dashboard", "model"))
     check(f"daiya: {want} dashboards in their organizations", not missing and want > 0,
           "; ".join(missing[:8]) or f"{want} found", "GET /dashboards/api/search (per organization)")
+    # the bundle's Portal-made dashboards (org<N>-pv-*), each in the organization of its project
+    made = portal_made(export)
+    if made:
+        found, lost = portal_made_found(h, dauth, made)
+        check(f"daiya: {len(made)} Portal-made dashboards in their project organizations",
+              found == len(made), f"{found} of {len(made)} found" + (f"; missing {', '.join(lost[:5])}" if lost else ""),
+              "GET /dashboards/api/search (X-Grafana-Org-Id of the project)")
     if any(_daiya_kind(f.name) == "dashboard" for f in files):
         pd = portal_dashboards(h, dashdir)
         su = pd["summary"]
@@ -1344,14 +1416,22 @@ def cmd_smoke(a):
         text = f.read_text()
         if re.search(r"(?m)^  audience: public", text) and (m := re.search(r"(?m)^  slug: ([a-z2-7]+)", text)):
             eps.append(m.group(1))
-    bad = []
+    # The source's own anonymous answer, where it is not 200, recorded read-only (--source-answers):
+    # an `audience: public` Endpoint no Policy grants answers 403 on the source too, and the
+    # rehearsal must answer the same, not 200.
+    source = json.loads(Path(a.source_answers).read_text()) if a.source_answers else {}
+    bad, same_as_source = [], []
     for slug in sorted(set(eps)):
         st, hdrs, body = Http(a.base).call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types")
         ctype = hdrs.get("Content-Type") or hdrs.get("content-type") or ""
-        if st != 200 or "json" not in ctype:
-            bad.append(f"{slug}: {st} {ctype} {body[:80]!r}")
-    check(f"{len(set(eps))} public Endpoints answer a query", not bad and bool(eps),
-          f"{len(bad)} failed: {'; '.join(bad[:5])}", "GET /api/endpoint/{slug}/ngsi-ld/v1/types")
+        if why := endpoint_answer_problem(slug, st, ctype, body, source):
+            bad.append(why)
+        elif st != 200:
+            same_as_source.append(f"{slug} {st}")
+    check(f"{len(set(eps))} public Endpoints answer a query as the source does", not bad and bool(eps),
+          f"{len(bad)} failed: {'; '.join(bad[:5])}" + (f"; as the source, not 200: {', '.join(same_as_source)}"
+                                                        if same_as_source else ""),
+          "GET /api/endpoint/{slug}/ngsi-ld/v1/types")
     # 9. the 24 h rule holds in the broker: no instance older than the window (+ one sweep), read
     # in its database (the broker's reads need a subject on its default policy)
     # 10. the broker holds every exported entity (an import refused call by call stores none)
@@ -1454,6 +1534,15 @@ def org1_panels(h: Http, auth: dict, dashboards: Path) -> dict:
                 out["rows"].append({"dashboard": f.name, "panel": q.get("id"), "datasource": uid, "status": st,
                                     "class": "data" if ok else "red", "detail": "" if ok else str(ans)[:160]})
     return out
+
+
+def endpoint_answer_problem(slug: str, status: int, ctype: str, body: bytes, source: dict) -> str:
+    """Why a public Endpoint's anonymous answer differs from the source's, or "": 200 JSON unless
+    the source answered otherwise (recorded read-only, `source[slug]["status"]`)."""
+    want = (source.get(slug) or {}).get("status", 200)
+    if status == want and "json" in ctype:
+        return ""
+    return f"{slug}: {status} {ctype} {body[:80]!r}" + (f" (source {want})" if want != 200 else "")
 
 
 def portal_dashboards(h: Http, dashboards: Path) -> dict:
@@ -1579,6 +1668,7 @@ def main(argv=None):
     s.add_argument("--export", required=True); s.add_argument("--report", required=True); s.add_argument("--realms")
     s.add_argument("--pg-port"); s.add_argument("--antares-password-file")
     s.add_argument("--dashboards", help="the Grafana files imported into daiya (rehearsal.py dashboards)")
+    s.add_argument("--source-answers", help="JSON {slug: {status, ...}}: the source's own anonymous answer where not 200")
     s = sub.add_parser("portal-dashboards"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     s.add_argument("--dashboards", required=True); s.add_argument("--report", required=True)
     s = sub.add_parser("provisioning"); s.add_argument("--dashboards", required=True)

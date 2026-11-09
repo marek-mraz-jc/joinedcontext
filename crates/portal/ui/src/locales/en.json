@@ -3722,7 +3722,9 @@
       "timeAxisUnit": "Time in {zone}; values in {unit}."
     },
     "emptyHint": "A dashboard is a page of maps and numbers built from endpoints this project can read. Make one, or ask the assistant for a dashboard of what you already publish.",
-    "layerEndpointGone": "The endpoint “{name}” is not in this project any more, so this layer has no type or filter to choose from. Choose another endpoint for this layer."
+    "layerEndpointGone": "The endpoint “{name}” is not in this project any more, so this layer has no type or filter to choose from. Choose another endpoint for this layer.",
+    "moreHere": "{n} not listed: zoom in to tell them apart",
+    "stackedHere": "{n} at this spot, {shown} listed"
   },
   "access": {
     "title": "Access",
@@ -11899,7 +11901,20 @@
       "quick": "Quick ranges"
     },
     "refreshAuto": "Auto",
-    "none": "None"
+    "none": "None",
+    "geomap": {
+      "label": "Map of {title}: {n} markers",
+      "noneTitle": "No row has a location",
+      "none": "None of the {rows} rows has a location: a GeoJSON point (location, geometry) or latitude and longitude fields. The tables show the rows.",
+      "mode": "This map reads locations from a GeoJSON point or latitude and longitude fields, not by “{mode}”.",
+      "missing": "{n} of {rows} rows have no location and are not drawn.",
+      "basemap": "The “{type}” basemap is not drawn here.",
+      "view": "The saved view is not kept; the map fits its markers.",
+      "layers": "Only the first of {n} layers is drawn.",
+      "plain": "no basemap, positions only",
+      "count": "Markers: {n}, latest values; the time range does not narrow them",
+      "empty": "The data source answered no rows. This map shows latest values, so a longer time range brings no more."
+    }
   },
   "repositories": {
     "title": "Repositories",

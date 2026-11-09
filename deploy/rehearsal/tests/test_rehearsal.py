@@ -661,3 +661,129 @@ def test_a_service_token_jc_holds_in_memory_is_read_from_the_kit_secrets(tmp_pat
     (tmp_path / "state" / "antares-admin-token").write_text("on-disk\n")
     assert rh.read_secret(tmp_path / "state", "shako-token") == "given"
     assert rh.read_secret(tmp_path / "state", "antares-admin-token") == "on-disk"
+
+
+def test_a_portal_made_dashboard_goes_into_the_org_of_its_source_project(tmp_path):
+    seen = []
+
+    class Daiya(http.server.BaseHTTPRequestHandler):
+        def answer(self, st, body):
+            raw = json.dumps(body).encode()
+            self.send_response(st)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_POST(self):  # noqa: N802
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/dashboards/api/orgs":
+                return self.answer(409, {"message": "exists"})
+            seen.append((self.headers.get("X-Grafana-Org-Id"), body["dashboard"]["uid"], "id" in body["dashboard"]))
+            self.answer(200, {"status": "success"})
+
+        def do_GET(self):  # noqa: N802
+            self.answer(200, {"id": 6, "name": self.path.rsplit("/", 1)[-1]})
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Daiya)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    src = tmp_path / "grafana" / "dashboards"
+    src.mkdir(parents=True)
+    (src / "org3-project-helsinki.json").write_text(json.dumps({"uid": "project-helsinki"}))
+    (src / "org3-pv-ab12.json").write_text(json.dumps({"id": 41, "uid": "pv-ab12", "title": "Air"}))
+    (src / "org9-pv-cd34.json").write_text(json.dumps({"uid": "pv-cd34"}))
+    try:
+        rows = rh.import_portal_made(rh.Http(f"http://127.0.0.1:{server.server_port}"), {}, tmp_path, {})
+    finally:
+        server.shutdown()
+    assert seen == [("6", "pv-ab12", False)]
+    assert [(r["file"], r["project"], r["result"]) for r in rows] == [
+        ("org3-pv-ab12.json", "helsinki", "imported"), ("org9-pv-cd34.json", None, "refused")]
+
+
+@pytest.mark.parametrize("dist_age, bin_age, ok", [(-10, -5, False), (10, 20, True), (10, 5, False)])
+def test_a_jc_with_a_stale_portal_ui_does_not_start(tmp_path, dist_age, bin_age, ok):
+    """ui-fresh.sh: ui/dist older than the last UI commit, or a jc linked before ui/dist, fails."""
+    clone = tmp_path / "clone"
+    ui = clone / "crates/portal/ui"
+    (ui / "src").mkdir(parents=True)
+    (ui / "src" / "App.tsx").write_text("x")
+    g = ["git", "-C", str(clone), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*g, "init", "-q"], check=True)
+    subprocess.run([*g, "add", "-A"], check=True)
+    at = int(time.time()) - 1000
+    subprocess.run([*g, "commit", "-qm", "ui"], check=True,
+                   env=dict(os.environ, GIT_COMMITTER_DATE=f"@{at} +0000", GIT_AUTHOR_DATE=f"@{at} +0000"))
+    (ui / "dist").mkdir()
+    (ui / "dist" / "index.html").write_text("<html>")
+    os.utime(ui / "dist" / "index.html", (at + dist_age, at + dist_age))
+    jc = tmp_path / "jc"
+    jc.write_text("")
+    os.utime(jc, (at + bin_age, at + bin_age))
+    r = subprocess.run([str(HERE / "ui-fresh.sh"), str(clone), str(jc)], capture_output=True, text=True)
+    assert (r.returncode == 0) == ok, r.stderr
+
+
+def test_a_public_endpoint_answers_as_the_source_did():
+    src = {"efkkw7pka4bhc3igujpzhrs2ra": {"status": 403}}
+    j = "application/json"
+    assert rh.endpoint_answer_problem("aaaa", 200, j, b"[]", src) == ""
+    assert "aaaa: 403" in rh.endpoint_answer_problem("aaaa", 403, j, b"{}", src)
+    assert rh.endpoint_answer_problem("efkkw7pka4bhc3igujpzhrs2ra", 403, j, b"{}", src) == ""
+    # the source refused it: a 200 in the rehearsal is a difference too (a grant opened)
+    assert "(source 403)" in rh.endpoint_answer_problem("efkkw7pka4bhc3igujpzhrs2ra", 200, j, b"[]", src)
+    assert rh.endpoint_answer_problem("aaaa", 200, "text/html", b"<html>", src)
+
+
+def test_the_smoke_counts_each_portal_made_dashboard_in_its_project_org(tmp_path):
+    class Daiya(http.server.BaseHTTPRequestHandler):
+        def answer(self, body):
+            raw = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_GET(self):  # noqa: N802
+            if self.path.startswith("/dashboards/api/orgs/name/"):
+                return self.answer({"id": 6})
+            org = self.headers.get("X-Grafana-Org-Id")
+            self.answer([{"uid": "pv-ab12"}] if org == "6" else [{"uid": "pv-elsewhere"}])
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Daiya)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    src = tmp_path / "grafana" / "dashboards"
+    src.mkdir(parents=True)
+    (src / "org3-project-helsinki.json").write_text(json.dumps({"uid": "project-helsinki"}))
+    (src / "org3-pv-ab12.json").write_text(json.dumps({"uid": "pv-ab12"}))
+    (src / "org3-pv-ef56.json").write_text(json.dumps({"uid": "pv-ef56"}))
+    (src / "org9-pv-cd34.json").write_text(json.dumps({"uid": "pv-cd34"}))
+    try:
+        found, lost = rh.portal_made_found(rh.Http(f"http://127.0.0.1:{server.server_port}"), {},
+                                           rh.portal_made(tmp_path))
+    finally:
+        server.shutdown()
+    assert (found, sorted(lost)) == (1, ["org3-pv-ef56.json", "org9-pv-cd34.json"])
+
+
+DEV_BUNDLE = Path("/workspace/evidence/jc-rehearsal/export/dev")
+
+
+@pytest.mark.skipif(not (DEV_BUNDLE / "grafana/dashboards").is_dir(), reason="the dev bundle is not on this host")
+def test_the_dev_bundle_holds_two_portal_made_dashboards_of_helsinki():
+    made = rh.portal_made(DEV_BUNDLE)
+    assert len(made) == 2 and {p for _, p in made} == {"helsinki"}
+
+
+def test_a_jc_that_ignores_sigterm_is_killed_before_the_next_starts():
+    """The 2026-11-09 hang: a deadlocked jc never finishes its graceful shutdown and keeps its port."""
+    stuck = subprocess.Popen(["bash", "-c", "trap '' TERM; while :; do sleep 0.2; done"])
+    time.sleep(0.3)
+    r = subprocess.run([str(HERE / "stop-jc.sh"), str(stuck.pid)], capture_output=True, text=True, timeout=60)
+    stuck.wait(timeout=5)
+    assert r.returncode == 0 and "SIGKILL" in r.stderr and stuck.returncode == -9

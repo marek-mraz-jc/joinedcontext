@@ -9,6 +9,9 @@
 //! of each module (request and migration roles, no SUPERUSER, no BYPASSRLS) and the extensions.
 //! jc migrates every module itself, as its migration role, and serves as the request roles.
 
+mod common;
+
+use common::{free_port, lost_the_port};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -180,21 +183,31 @@ async fn prepare(dir: &Path, admin_url: &str, memory: &[&str]) -> PathBuf {
     config
 }
 
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
 /// Where the test keeps the service tokens it gives jc: beside the state directory, so a restart
 /// on the same state gives the same tokens.
 fn given_dir(state: &Path) -> PathBuf {
     state.with_file_name("given")
 }
 
+/// jc on a port of [`free_port`] the first time; another port when a bind took that one before
+/// jc did. The restart keeps the port its state names.
+fn first_start(config: &Path, state: &Path) -> (Jc, u16) {
+    for _ in 0..5 {
+        let port = free_port();
+        if let Some(jc) = start_once(config, state, port) {
+            return (jc, port);
+        }
+    }
+    panic!("jc lost its listen port to another bind 5 times");
+}
+
 fn start(config: &Path, state: &Path, port: u16) -> Jc {
+    start_once(config, state, port)
+        .unwrap_or_else(|| panic!("another bind took port {port} between jc's two starts"))
+}
+
+/// One jc; `None` when it stopped because another bind took `port` first.
+fn start_once(config: &Path, state: &Path, port: u16) -> Option<Jc> {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
     // The service tokens between modules live in jc's memory only (new per boot); the test acts
     // as the Portal with tokens it gives jc as files.
@@ -256,7 +269,8 @@ fn start(config: &Path, state: &Path, port: u16) -> Jc {
         log,
     };
     match rx.recv_timeout(Duration::from_secs(240)) {
-        Ok(Ok(())) => jc,
+        Ok(Ok(())) => Some(jc),
+        Ok(Err(())) if lost_the_port(&jc.log.lock().unwrap().join("\n")) => None,
         other => {
             let tail = jc.log.lock().unwrap().join("\n");
             panic!("jc did not start ({other:?}):\n{tail}");
@@ -477,9 +491,7 @@ async fn every_module_keeps_its_writes_across_a_restart_on_postgres() {
     let dir = tempfile::tempdir().unwrap();
     let config = prepare(dir.path(), &admin_url, &[]).await;
     let state = dir.path().join("state");
-    let port = free_port();
-
-    let first = start(&config, &state, port);
+    let (first, port) = first_start(&config, &state);
     write_everything(&first).await;
     // Every pool is capped at `max_connections = 3`; kaisatsu adds one LISTEN connection.
     let held = connections_per_role(&admin_url).await;
@@ -533,7 +545,8 @@ async fn a_module_whose_database_refuses_it_stops_jc() {
         .args(["--role", "daiya", "--log-format", "text"])
         .arg("--config")
         .arg(&config)
-        .args(["--listen", &format!("127.0.0.1:{}", free_port())])
+        // Port 0: jc refuses before it serves, so it needs no port named beforehand.
+        .args(["--listen", "127.0.0.1:0"])
         .arg("--state-dir")
         .arg(dir.path().join("state"))
         .output()
@@ -637,7 +650,8 @@ async fn a_superuser_request_role_is_refused_by_every_module() {
         cmd.args(["--role", module, "--log-format", "text"])
             .arg("--config")
             .arg(&config)
-            .args(["--listen", &format!("127.0.0.1:{}", free_port())])
+            // Port 0: jc refuses before it serves, so it needs no port named beforehand.
+            .args(["--listen", "127.0.0.1:0"])
             .arg("--state-dir")
             .arg(dir.path().join(format!("state-{module}")))
             .env("ANTARES_ALLOW_SHARED_LOCAL", "1");

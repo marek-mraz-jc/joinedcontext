@@ -1,3 +1,3 @@
-# portal: 57267437b37e7afe8d4be36b396307fbb1f21073
-a7f538ed6ad9816dc4138b0e797d3f9d0816868d0495b47ec157574bdd14f1e4  explorer.css
-55be9036589f7b78bab6c05d6ba3f61e17e71d00524917bb3caa3c40a5d85c59  explorer.js
+# monorepo joinedcontext: crates/portal/ui of f97706e433b7fda39ec9814326edf4684a68d99d, `pnpm exec vite build -c vite.explorer.config.ts` (reproducible)
+8dead8fd6abaad680cb1b41bd25b790cbeeb16094293ca07750e924c9f167fdb  explorer.css
+12f3b22fad890acd8a5f8be6f8b158801906973304cf6a482c8faf0ff5e2171b  explorer.js

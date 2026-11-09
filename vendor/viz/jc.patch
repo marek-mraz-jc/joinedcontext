@@ -1,7 +1,19 @@
 diff -ru a/site/embed.js site/embed.js
---- a/site/embed.js	2026-11-09 02:34:57.622526482 +0000
-+++ b/site/embed.js	2026-11-09 02:35:46.517517619 +0000
-@@ -57,7 +57,8 @@
+--- a/site/embed.js	2026-11-09 06:37:01.194717034 +0000
++++ site/embed.js	2026-11-09 07:07:06.111406083 +0000
+@@ -13,6 +13,11 @@
+   var VIEWS = ["both", "table"];
+   var HEIGHT = { min: 240, max: 2000, fallback: 640 };
+   var SANDBOX = "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox";
++  // jc's viz mount at /viz shares its host with the Portal: the server sandboxes the page to an
++  // opaque origin (CSP sandbox), and the frame asks for no origin either.
++  function sandboxOf(origin) {
++    return /\/viz$/.test(origin) ? "allow-scripts allow-popups allow-popups-to-escape-sandbox" : SANDBOX;
++  }
+ 
+   function attr(value) {
+     return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+@@ -57,7 +62,8 @@
    // `component` (our script plus <jc-data-explorer>, which grows the frame to its content).
    function snippet(kind, o, origin, title) {
      var s = settings(o);
@@ -11,16 +23,32 @@ diff -ru a/site/embed.js site/embed.js
      var name = attr(String(title || "Live data").slice(0, 200));
      if (kind === "component") {
        var a = ['endpoint="' + s.slug + '"'];
-@@ -107,7 +108,7 @@
+@@ -72,7 +78,7 @@
+       return '<script src="' + origin + '/embed.js" defer></script>\n<jc-data-explorer ' + a.join(" ") + "></jc-data-explorer>";
+     }
+     return '<iframe src="' + origin + "/embed.html" + attr(hash(o)) + '" title="' + name + '" width="100%" height="' + s.height +
+-      '" style="border:0;max-width:100%" loading="lazy" referrerpolicy="no-referrer" sandbox="' + SANDBOX + '"></iframe>';
++      '" style="border:0;max-width:100%" loading="lazy" referrerpolicy="no-referrer" sandbox="' + sandboxOf(origin) + '"></iframe>';
+   }
+ 
+   // The web component: reads its attributes once, refuses wrong ones with a visible message, and
+@@ -102,12 +108,13 @@
+         frame.title = get("title") || "Live data";
+         frame.loading = "lazy";
+         frame.referrerPolicy = "no-referrer";
+-        frame.setAttribute("sandbox", SANDBOX);
++        frame.setAttribute("sandbox", sandboxOf(origin));
+         frame.style.height = settings(o).height + "px";
          shadow.appendChild(frame);
          this._listen = function (event) {
            var h = event.data && event.data.type === "jc-viz-height" && Number(event.data.height);
 -          if (event.origin === origin && event.source === frame.contentWindow && h > 0) frame.style.height = Math.min(Math.max(h, HEIGHT.min), 4000) + "px";
-+          if (event.origin === new URL(origin).origin && event.source === frame.contentWindow && h > 0) frame.style.height = Math.min(Math.max(h, HEIGHT.min), 4000) + "px";
++          var from = /\/viz$/.test(origin) ? "null" : new URL(origin).origin;
++          if (event.origin === from && event.source === frame.contentWindow && h > 0) frame.style.height = Math.min(Math.max(h, HEIGHT.min), 4000) + "px";
          };
          win.addEventListener("message", this._listen);
        }
-@@ -122,7 +123,8 @@
+@@ -122,7 +129,8 @@
    else if (typeof document !== "undefined" && document.currentScript && /\/embed\.js(\?|$)/.test(document.currentScript.src)) {
      // Loaded by another site: the frames come from the host this script was served by. The
      // explorer loads it too, for the snippets alone.
@@ -32,21 +60,47 @@ diff -ru a/site/embed.js site/embed.js
    }
  })(typeof self !== "undefined" ? self : globalThis);
 diff -ru a/site/explore.js site/explore.js
---- a/site/explore.js	2026-11-09 02:34:57.622638490 +0000
-+++ b/site/explore.js	2026-11-09 02:35:15.032403711 +0000
-@@ -7,8 +7,9 @@
+--- a/site/explore.js	2026-11-09 06:37:01.194901061 +0000
++++ site/explore.js	2026-11-09 07:07:06.112214714 +0000
+@@ -7,8 +7,35 @@
  (function (root) {
    "use strict";
  
 -  var MAPLIBRE = "/vendor/maplibre-gl-6.14.0.mjs";
 -  var WORKER = "/vendor/maplibre-gl-worker-6.14.0.mjs";
-+  // Beside this page, so the explorer works under a path prefix too (jc serves it at /viz).
-+  var MAPLIBRE = "./vendor/maplibre-gl-6.14.0.mjs";
++  // Beside this page, so the explorer works under a path prefix too (jc serves it at /viz). Absolute:
++  // in a sandboxed page this script is cross-origin, so a relative import() resolves against about:blank.
++  var MAPLIBRE = typeof location !== "undefined" ? new URL("vendor/maplibre-gl-6.14.0.mjs", location.href).href : "/vendor/maplibre-gl-6.14.0.mjs";
 +  var WORKER = typeof location !== "undefined" ? new URL("vendor/maplibre-gl-worker-6.14.0.mjs", location.href).href : "/vendor/maplibre-gl-worker-6.14.0.mjs";
++  var workerReady = null;
++  // MapLibre with its worker. A sandboxed page (an opaque origin: jc serves the explorer beside the
++  // Portal) may start no worker from a URL, and Chromium starts no module worker from a blob there:
++  // the worker runs as a classic blob script, the module's text without its one trailing export.
++  // MapLibre asks for a module worker (wrapping the URL in a blob of its own), and it is the only
++  // worker this page starts, so every module worker here becomes that classic one.
++  function maplibreReady() {
++    return import(MAPLIBRE).then(function (maplibre) {
++      if (typeof self === "undefined" || self.origin !== "null") {
++        maplibre.setWorkerUrl(WORKER);
++        return maplibre;
++      }
++      if (!workerReady) workerReady = fetch(WORKER, { credentials: "omit" }).then(function (r) {
++        if (!r.ok) throw new Error("HTTP " + r.status);
++        return r.text();
++      }).then(function (code) {
++        var url = URL.createObjectURL(new Blob([code.replace(/export\s*\{[^}]*\};?\s*(\/\/#[^\n]*\s*)?$/, "")], { type: "text/javascript" }));
++        var Native = self.Worker;
++        self.Worker = function (u, o) { return o && o.type === "module" ? new Native(url) : new Native(u, o); };
++        self.Worker.prototype = Native.prototype;
++        return url;
++      });
++      return workerReady.then(function () { maplibre.setWorkerUrl(WORKER); return maplibre; });
++    });
++  }
    var MAP_DWELL = 500;
    var SLUG = /^[a-z0-9]{16,64}$/;
    var NAME = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
-@@ -123,6 +124,29 @@
+@@ -123,6 +150,29 @@
      return "https://api." + String(hostname).replace(/^viz\./, "") + "/api/endpoint/" + slug + "/";
    }
  
@@ -76,7 +130,7 @@ diff -ru a/site/explore.js site/explore.js
    function params(map) {
      return Object.keys(map)
        .filter(function (k) { return map[k] !== undefined && map[k] !== null && map[k] !== ""; })
-@@ -471,7 +495,9 @@
+@@ -471,7 +521,9 @@
        $("app").hidden = true;
        return tell(t.noAddress, "error");
      }
@@ -87,17 +141,31 @@ diff -ru a/site/explore.js site/explore.js
      var state = { types: [], type: where.type, q: where.q || "", sort: where.sort, all: where.all, card: null, map: null, mapData: null, mapAsk: 0, tiled: null, tilesets: {},
        infos: {}, mapping: null, mapRaw: {}, countKey: null, total: null, none: null, inView: null };
      ["geo", "color", "pop", "cluster"].forEach(function (k) { if (where[k] !== null) state.mapRaw[k] = where[k]; });
-@@ -554,8 +580,7 @@
-       import(MAPLIBRE).then(function (maplibre) {
+@@ -551,11 +603,9 @@
+         else state.mapAt = [at[0], at[1]];
+       } : null;
+       if (!ok) return;
+-      import(MAPLIBRE).then(function (maplibre) {
++      maplibreReady().then(function (maplibre) {
          if (box.hidden || !$("detail").open) return;
-         maplibre.setWorkerUrl(WORKER);
+-        maplibre.setWorkerUrl(WORKER);
 -        var domain = location.hostname.replace(/^viz\./, "");
 -        var m = new maplibre.Map({ container: box, style: "https://tiles." + domain + "/styles/light-" + (lang === "sk" ? "sk" : "en") + ".json", center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false });
 +        var m = new maplibre.Map({ container: box, style: styleOf(H.tiles, lang), center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false });
          m.addControl(new maplibre.AttributionControl({ compact: true }));
          new maplibre.Marker({ color: COLOUR }).setLngLat([at[0], at[1]]).addTo(m);
          state.cardMap = m;
-@@ -653,8 +678,7 @@
+@@ -641,8 +691,7 @@
+     }
+ 
+     function loadMap() {
+-      import(MAPLIBRE).then(function (maplibre) {
+-        maplibre.setWorkerUrl(WORKER);
++      maplibreReady().then(function (maplibre) {
+         if (root.pmtiles) maplibre.addProtocol("pmtiles", new root.pmtiles.Protocol().tile);
+         // The Endpoint's vector tiles, read like every other request here: anonymous, no referrer.
+         maplibre.addProtocol("jc-tile", function (request, controller) {
+@@ -653,8 +702,7 @@
                return r.arrayBuffer().then(function (data) { return { data: data }; });
              });
          });
@@ -107,7 +175,7 @@ diff -ru a/site/explore.js site/explore.js
          state.map = map;
          root.jcExploreMap = map; // for the browser journey
          state.maplibre = maplibre;
-@@ -955,7 +979,7 @@
+@@ -955,7 +1003,7 @@
      // The source line of an embed: the dataset's title, publisher and licence from the catalogue,
      // shown only when that dataset names this very Endpoint; else the catalogue itself.
      function attribute() {
@@ -116,16 +184,19 @@ diff -ru a/site/explore.js site/explore.js
        var line = $("attribution");
        var draw = function (title, href, publisher, licence, licenceHref) {
          line.textContent = "";
-@@ -992,7 +1016,7 @@
+@@ -992,8 +1040,9 @@
        $("embed-keep-hint").textContent = words.length ? say(t.keepHint, { view: words.join("; ") }) : t.keepNone;
        $("embed-copied").textContent = "";
        try {
 -        $("embed-code").value = E.snippet($("embed-form").querySelector("input[name=kind]:checked").value, o, location.origin, t.title + (state.type ? ": " + state.type : ""));
+-        $("embed-preview").href = location.origin + "/embed.html" + E.hash(o);
 +        $("embed-code").value = E.snippet($("embed-form").querySelector("input[name=kind]:checked").value, o, new URL(".", location.href).href.replace(/\/$/, ""), t.title + (state.type ? ": " + state.type : ""));
-         $("embed-preview").href = location.origin + "/embed.html" + E.hash(o);
++        // Beside this page: jc serves it under /viz.
++        $("embed-preview").href = new URL("embed.html", location.href).href + E.hash(o);
          $("embed-error").hidden = true;
          $("embed-height").removeAttribute("aria-invalid");
-@@ -1058,7 +1082,7 @@
+         $("embed-copy").disabled = false;
+@@ -1058,7 +1107,7 @@
      if (!root.jcExplorer || typeof root.jcExplorer.mount !== "function") return tell(t.noWidget, "error");
      try {
        root.jcExplorer.mount($("grid"), {
@@ -134,7 +205,14 @@ diff -ru a/site/explore.js site/explore.js
          slug: where.slug,
          lang: lang,
          link: { type: where.type || undefined, q: where.q || undefined, sort: where.sort || undefined, noDefault: where.all || undefined },
-@@ -1076,7 +1100,7 @@
+@@ -1071,12 +1120,14 @@
+         csv: true
+       });
+     } catch (e) {
++      // The text tells the administrators the cause is in the console: put it there.
++      if (typeof console !== "undefined") console.error("jcExplorer:", e);
+       tell(t.noWidget, "error");
+     }
      height();
    }
  
@@ -144,8 +222,8 @@ diff -ru a/site/explore.js site/explore.js
    else if (typeof document !== "undefined") main();
  })(typeof self !== "undefined" ? self : this);
 diff -ru a/site/map.html site/map.html
---- a/site/map.html	2026-11-09 02:34:57.622829746 +0000
-+++ b/site/map.html	2026-11-09 02:35:15.032830261 +0000
+--- a/site/map.html	2026-11-09 06:37:01.195175502 +0000
++++ site/map.html	2026-11-09 07:07:06.111840393 +0000
 @@ -8,8 +8,8 @@
  <link rel="stylesheet" href="vendor/maplibre-gl-6.14.0.css">
  <link rel="stylesheet" href="map.css">

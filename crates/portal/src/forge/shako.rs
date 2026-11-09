@@ -772,7 +772,7 @@ impl ShakoClient {
     }
 
     async fn send(&self, builder: reqwest::RequestBuilder) -> Result<reqwest::Response, GitError> {
-        builder
+        crate::request_id::forward(builder)
             .bearer_auth(&self.token)
             .header(reqwest::header::ACCEPT, "application/json")
             .send()

@@ -160,7 +160,16 @@ const SHOWCASE = {
   ],
 };
 
+// Dev's one geomap (org 3, "Air quality map"), its frame daiya's own answer for the 100 helsinki
+// AirQualityObserved of the dev export (crates/daiya/query/tests/ngsild.rs writes it).
+const GEOMAP = "pv-97058e3a30c95eb36b80743122d56561";
+const geomapFrames = JSON.parse(readFileSync(join(here, "../tests/fixtures/geomap_frame.json"), "utf8")) as Frame[];
+/** The geomap frame with the location of the first `n` rows gone. */
+const unlocated = (n: number): Frame[] =>
+  geomapFrames.map((frame) => ({ ...frame, fields: frame.fields.map((field) => (field.name === "location" ? { ...field, values: field.values.map((value, row) => (row < n ? null : value)) } : field)) }));
+
 const DASHBOARDS: Record<string, Record<string, unknown>> = {
+  [GEOMAP]: deployed("air-quality-map"),
   "jc-context-broker": deployed("context-broker"),
   "project-helsinki": deployed("helsinki"),
   "panel-types": SHOWCASE,
@@ -198,7 +207,7 @@ function view(uid: string) {
   };
 }
 
-type State = "filled" | "empty" | "error";
+type State = "filled" | "empty" | "error" | "unlocated" | "nolocation";
 
 interface World {
   state: State;
@@ -213,6 +222,9 @@ async function stubApi(page: Page, world: World): Promise<void> {
     if (panel) {
       world.asked.push(url.search);
       const [uid, id] = [decodeURIComponent(panel[1]), Number(panel[2])];
+      if (uid === GEOMAP && world.state !== "error") {
+        return json({ frames: world.state === "empty" ? geomapFrames.map((frame) => ({ ...frame, fields: frame.fields.map((field) => ({ ...field, values: [] })) })) : world.state === "unlocated" ? unlocated(12) : world.state === "nolocation" ? unlocated(100) : geomapFrames });
+      }
       if (world.state === "empty") return json({ frames: [{ name: "", refId: "A", fields: [{ name: "Time", type: "time", values: [] }, { name: "Value", type: "number", values: [] }] }] });
       if (world.state === "error") {
         // helsinki: one source refuses the person, one fails, the others answer; every other
@@ -238,6 +250,8 @@ async function stubApi(page: Page, world: World): Promise<void> {
         ],
       });
     }
+    // This installation configures no basemap, as jc's deployment does not: the route answers 404.
+    if (url.pathname.includes("/basemap/")) return json({ status: 404, title: "Resource Not Found", detail: "basemap is not configured on this platform" }, 404);
     if (url.pathname.endsWith("/grafana/options")) return json({ endpoints: [], types: [], attributes: [] });
     if (url.pathname.endsWith("/grafana")) return json({ ready: true, mayCreate: false, items: [] });
     if (url.pathname.endsWith("/auth/me")) return json(IDENTITY);
@@ -270,6 +284,63 @@ async function panelShot(panel: Locator, name: string, width: number): Promise<v
   if (!SHOTS) return;
   await panel.scrollIntoViewIfNeeded();
   await panel.screenshot({ path: `${SHOTS}/panel-${name}-${width}.png` });
+}
+
+/**
+ * Taps the densest marker spots of the map until one tooltip lists several stacked rows (the
+ * helsinki vehicles report one place several times), and shoots it.
+ */
+async function stackedPopup(page: Page, map: Locator, width: number): Promise<void> {
+  const canvas = map.locator("canvas");
+  const png = (await canvas.screenshot()).toString("base64");
+  const spots = await page.evaluate(async (data) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${data}`;
+    await image.decode();
+    const context = Object.assign(document.createElement("canvas"), { width: image.width, height: image.height }).getContext("2d")!;
+    context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, image.width, image.height).data;
+    const orange = (x: number, y: number) => {
+      const i = (y * image.width + x) * 4;
+      return pixels[i] > 200 && pixels[i + 1] > 110 && pixels[i + 1] < 190 && pixels[i + 2] < 120;
+    };
+    const found: { x: number; y: number; score: number }[] = [];
+    for (let y = 12; y < image.height - 12; y += 3)
+      for (let x = 12; x < image.width - 12; x += 3) {
+        if (!orange(x, y)) continue;
+        let score = 0;
+        for (let dy = -12; dy <= 12; dy += 3) for (let dx = -12; dx <= 12; dx += 3) if (orange(x + dx, y + dy)) score++;
+        found.push({ x, y, score });
+      }
+    // Every marker's centre once: the most orange spot of each 10 px neighbourhood.
+    found.sort((a, b) => b.score - a.score);
+    const kept: { x: number; y: number }[] = [];
+    for (const spot of found) if (kept.every((other) => Math.hypot(other.x - spot.x, other.y - spot.y) > 10)) kept.push(spot);
+    return { kept, ratio: image.width };
+  }, png);
+  const box = (await canvas.boundingBox())!;
+  const scale = spots.ratio / box.width;
+  const popup = page.locator(".maplibregl-popup");
+  for (const spot of spots.kept) {
+    await page.mouse.click(box.x + spot.x / scale, box.y + spot.y / scale);
+    if ((await popup.locator("dl").count()) > 1) break;
+  }
+  await expect(popup.locator("dl").nth(1)).toBeVisible();
+  await expect(popup.getByText(/Volvo \(pesuauto\)|Wille \(harjakone\)/).first()).toBeVisible();
+  // The popup stays inside the map, and on a phone width its close button is a finger's 44 px.
+  const shown = (await popup.boundingBox())!;
+  expect(shown.y).toBeGreaterThanOrEqual(box.y);
+  expect(shown.y + shown.height).toBeLessThanOrEqual(box.y + box.height);
+  const close = (await popup.locator(".maplibregl-popup-close-button").boundingBox())!;
+  if (width < 640) {
+    expect(Math.min(close.width, close.height)).toBeGreaterThanOrEqual(44);
+    const zoom = (await map.locator(".maplibregl-ctrl-zoom-in").boundingBox())!;
+    expect(Math.min(zoom.width, zoom.height)).toBeGreaterThanOrEqual(44);
+  }
+  await pageShot(page, "geomap-popup", width);
+  // A tap on the bare map closes the tooltip.
+  await page.mouse.click(box.x + 4, box.y + box.height - 4);
+  await expect(popup).toHaveCount(0);
 }
 
 const card = (page: Page, type: string) => page.locator(`section[data-panel-type="${type}"]`).first();
@@ -346,6 +417,50 @@ for (const width of [1440, 400]) {
       });
     }
 
+    test("dev's air quality geomap draws its markers, empty, with some rows and with no row located", async ({ page }) => {
+      for (const state of ["filled", "empty", "unlocated", "nolocation"] as const) {
+        await stubApi(page, { state, asked: [] });
+        await page.goto(`/projects/helsinki/grafana/dashboards/${GEOMAP}`);
+        await expect(page.getByRole("heading", { level: 1, name: "Air quality map (t6516-mw3xzrhm)" })).toBeVisible();
+        await settle(page);
+        const map = card(page, "geomap");
+        if (state === "empty") {
+          await expect(map.getByText("No data")).toBeVisible();
+          await expect(map.getByRole("button", { name: "Show a longer range" })).toHaveCount(0);
+        } else if (state === "nolocation") {
+          await expect(map.getByText("No row has a location")).toBeVisible();
+          await expect(map.getByText("None of the 100 rows has a location: a GeoJSON point (location, geometry) or latitude and longitude fields. The tables show the rows.")).toBeVisible();
+          await expect(map.getByRole("link", { name: "Open as tables" })).toHaveAttribute("href", /^\/dashboards\/d\/pv-97058e3a30c95eb36b80743122d56561\?/);
+          await expect(map.locator("canvas")).toHaveCount(0);
+        } else {
+          await expect(map.getByRole("application", { name: `Map of Air quality map (t6516-mw3xzrhm): ${state === "filled" ? 100 : 88} markers` })).toBeVisible();
+          await expect(map.locator("canvas")).toHaveCount(1);
+          await expect(map.getByText(`Markers: ${state === "filled" ? 100 : 88}, latest values; the time range does not narrow them · no basemap, positions only`)).toBeVisible();
+          await expect(map.getByText(/shown as a table/)).toHaveCount(0);
+          if (state === "unlocated") await expect(map.getByText("12 of 100 rows have no location and are not drawn.")).toBeVisible();
+          // The markers are drawn: a shot of the map holds the layer's orange (#FF9830).
+          await expect.poll(async () => {
+            const png = (await map.locator("canvas").screenshot()).toString("base64");
+            return page.evaluate(async (data) => {
+              const image = new Image();
+              image.src = `data:image/png;base64,${data}`;
+              await image.decode();
+              const context = Object.assign(document.createElement("canvas"), { width: image.width, height: image.height }).getContext("2d")!;
+              context.drawImage(image, 0, 0);
+              const pixels = context.getImageData(0, 0, image.width, image.height).data;
+              let orange = 0;
+              for (let i = 0; i < pixels.length; i += 4) if (pixels[i] > 200 && pixels[i + 1] > 110 && pixels[i + 1] < 190 && pixels[i + 2] < 120) orange++;
+              return orange;
+            }, png);
+          }, { timeout: 10_000 }).toBeGreaterThan(100);
+        }
+        await pageShot(page, `geomap-${state}`, width);
+        expect(await page.evaluate(pageFindings, { namespaces: NAMESPACES, layout: true })).toEqual([]);
+        if (state === "filled") await stackedPopup(page, map, width);
+        await page.unrouteAll({ behavior: "ignoreErrors" });
+      }
+    });
+
     test("the helsinki and context-broker dashboards, empty and failing", async ({ page }) => {
       for (const state of ["empty", "error"] as const) {
         await stubApi(page, { state, asked: [] });
@@ -396,5 +511,9 @@ test("the dashboard page has no axe violations", async ({ page }) => {
   await stubApi(page, { state: "filled", asked: [] });
   await page.goto("/projects/helsinki/grafana/dashboards/project-helsinki");
   await settle(page);
+  expect(await axeViolations(page)).toEqual([]);
+  await page.goto(`/projects/helsinki/grafana/dashboards/${GEOMAP}`);
+  await settle(page);
+  await expect(page.locator('section[data-panel-type="geomap"] canvas')).toHaveCount(1);
   expect(await axeViolations(page)).toEqual([]);
 });

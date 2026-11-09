@@ -26,7 +26,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use context_gateway::config::Config;
 use jc_router::Mount;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -221,13 +221,31 @@ pub fn sync_forge(
             secrets_dir: None,
             only: None,
         };
-        for linked in jcctl::commands::checkouts::sync(&tree, &work.join("projects"), &options)? {
-            if let Err(why) = linked.result {
-                tracing::warn!(project = %linked.slug, %why, "gateway: a project checkout failed");
-            }
+        let failed: BTreeSet<String> =
+            jcctl::commands::checkouts::sync(&tree, &work.join("projects"), &options)?
+                .into_iter()
+                .filter_map(|linked| Some(format!("{}: {}", linked.slug, linked.result.err()?)))
+                .collect();
+        for failure in newly_failed(failed) {
+            tracing::warn!(%failure, "gateway: a project checkout failed");
         }
     }
     Ok(tree)
+}
+
+/// The project checkouts the last pass found failing: a failure is logged when it first appears,
+/// not on every pass ([`SYNC_EVERY`]), which repeated each one per pass and hid other lines.
+static CHECKOUTS_FAILING: std::sync::Mutex<BTreeSet<String>> =
+    std::sync::Mutex::new(BTreeSet::new());
+
+/// Of this pass's `failed` checkouts, the ones the last pass did not have.
+fn newly_failed(failed: BTreeSet<String>) -> Vec<String> {
+    let mut last = CHECKOUTS_FAILING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let new = failed.difference(&last).cloned().collect();
+    *last = failed;
+    new
 }
 
 /// Fetches the forge every [`SYNC_EVERY`]; a failed pass keeps the last tree and says why.
@@ -271,6 +289,68 @@ async fn whole_path(mut req: Request, next: Next) -> Response {
         }
     }
     next.run(req).await
+}
+
+/// Endpoint reads from a sandboxed page (`Origin: null`): jc's viz module serves the catalogue's
+/// explorer in an opaque origin when it shares its host with the Portal (`modules::viz`), so its
+/// reads of the gateway on that same host are cross-origin. Such a read goes on anonymously (no
+/// cookie, no token: the page holds neither) and its answer carries CORS for `null` alone, no
+/// credentials, with the headers dev's edge exposes. Any other origin, method or path is untouched.
+async fn opaque_reads(mut req: Request, next: Next) -> Response {
+    use axum::http::{Method, StatusCode, header};
+    let opaque = req
+        .headers()
+        .get(header::ORIGIN)
+        .is_some_and(|o| o == "null")
+        && req.uri().path().starts_with("/api/endpoint/");
+    if !opaque {
+        return next.run(req).await;
+    }
+    let read = |m: &Method| m == Method::GET || m == Method::HEAD;
+    let preflight = req.method() == Method::OPTIONS
+        && req
+            .headers()
+            .get(header::ACCESS_CONTROL_REQUEST_METHOD)
+            .and_then(|m| Method::from_bytes(m.as_bytes()).ok())
+            .is_some_and(|m| read(&m));
+    if !preflight && !read(req.method()) {
+        return next.run(req).await;
+    }
+    let mut res = if preflight {
+        let mut res = Response::new(axum::body::Body::empty());
+        *res.status_mut() = StatusCode::NO_CONTENT;
+        let h = res.headers_mut();
+        h.insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("GET, HEAD"),
+        );
+        h.insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static("Accept, Content-Type"),
+        );
+        h.insert(
+            header::ACCESS_CONTROL_MAX_AGE,
+            HeaderValue::from_static("600"),
+        );
+        res
+    } else {
+        req.headers_mut().remove(header::COOKIE);
+        req.headers_mut().remove(header::AUTHORIZATION);
+        let mut res = next.run(req).await;
+        res.headers_mut().insert(
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            HeaderValue::from_static("NGSILD-Results-Count, Content-Range, Link"),
+        );
+        res
+    };
+    let h = res.headers_mut();
+    h.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("null"),
+    );
+    h.remove(header::ACCESS_CONTROL_ALLOW_CREDENTIALS);
+    h.append(header::VARY, HeaderValue::from_static("Origin"));
+    res
 }
 
 /// The router for the root paths of `Module::root_paths`: `router` behind [`whole_path`]. The
@@ -387,12 +467,25 @@ pub async fn build(
     let built = context_gateway::serve::build(&config, broker)
         .await
         .map_err(err)?;
-    Ok(built.app)
+    Ok(built.app.layer(axum::middleware::from_fn(opaque_reads)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failing_checkout_is_logged_when_it_first_fails() {
+        let set = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<_>>();
+        assert_eq!(
+            newly_failed(set(&["a: gone", "b: gone"])),
+            ["a: gone", "b: gone"]
+        );
+        assert!(newly_failed(set(&["b: gone", "a: gone"])).is_empty());
+        assert!(newly_failed(set(&["b: gone"])).is_empty());
+        assert_eq!(newly_failed(set(&["a: gone", "b: gone"])), ["a: gone"]);
+        assert!(newly_failed(BTreeSet::new()).is_empty());
+    }
     use crate::config::{Cli, Config as JcConfig, FileConfig};
 
     /// A router with routes of its own (the assistant's `/d/...`) answers at a root path: the
@@ -417,6 +510,84 @@ mod tests {
             .unwrap();
         let answer = app.oneshot(req).await.unwrap();
         assert_eq!(answer.status(), axum::http::StatusCode::OK);
+    }
+
+    /// A read from a sandboxed page reaches the gateway anonymously and gets CORS for `null`; a
+    /// read from any other origin, a write, and a path outside the Endpoints get none.
+    #[tokio::test]
+    async fn a_sandboxed_page_reads_endpoints_anonymously_and_nothing_else_gets_cors() {
+        use axum::http::{Request as HttpRequest, StatusCode, header};
+        use tower::ServiceExt;
+        // The inner router answers what credentials reached it.
+        let inner = Router::new().fallback(|req: Request| async move {
+            let seen = |name: header::HeaderName| req.headers().contains_key(name);
+            format!(
+                "cookie={} auth={}",
+                seen(header::COOKIE),
+                seen(header::AUTHORIZATION)
+            )
+        });
+        let app = inner.layer(axum::middleware::from_fn(opaque_reads));
+        let send = |method: &str, path: &str, origin: &str| {
+            let mut req = HttpRequest::builder()
+                .method(method)
+                .uri(path)
+                .header(header::COOKIE, "jc_session=s")
+                .header(header::AUTHORIZATION, "Bearer t")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET");
+            if !origin.is_empty() {
+                req = req.header(header::ORIGIN, origin);
+            }
+            app.clone()
+                .oneshot(req.body(axum::body::Body::empty()).unwrap())
+        };
+        let text = |res: Response| async move {
+            String::from_utf8_lossy(
+                &axum::body::to_bytes(res.into_body(), usize::MAX)
+                    .await
+                    .unwrap(),
+            )
+            .into_owned()
+        };
+        let read = "/api/endpoint/abc/ngsi-ld/v1/entities?type=GtfsStop";
+        let res = send("GET", read, "null").await.unwrap();
+        let h = res.headers().clone();
+        assert_eq!(h[header::ACCESS_CONTROL_ALLOW_ORIGIN], "null");
+        assert!(h.get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none());
+        assert!(
+            h[header::ACCESS_CONTROL_EXPOSE_HEADERS]
+                .to_str()
+                .unwrap()
+                .contains("NGSILD-Results-Count")
+        );
+        assert_eq!(h[header::VARY], "Origin");
+        assert_eq!(text(res).await, "cookie=false auth=false");
+
+        let pre = send("OPTIONS", read, "null").await.unwrap();
+        assert_eq!(pre.status(), StatusCode::NO_CONTENT);
+        assert_eq!(pre.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "null");
+        assert_eq!(
+            pre.headers()[header::ACCESS_CONTROL_ALLOW_METHODS],
+            "GET, HEAD"
+        );
+
+        for (method, path, origin) in [
+            ("GET", read, "https://evil.test"),
+            ("GET", read, ""),
+            ("POST", "/api/endpoint/abc/ngsi-ld/v1/entities", "null"),
+            ("DELETE", "/api/endpoint/abc/ngsi-ld/v1/entities/x", "null"),
+            ("GET", "/api/mcp", "null"),
+            ("GET", "/portal/api/v1/me", "null"),
+        ] {
+            let res = send(method, path, origin).await.unwrap();
+            assert!(
+                res.headers()
+                    .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                    .is_none(),
+                "{method} {path} {origin}"
+            );
+            assert_eq!(text(res).await, "cookie=true auth=true", "{method} {path}");
+        }
     }
 
     /// The siblings and secrets of `--role all` in slug mode, and the gateway's mount.
