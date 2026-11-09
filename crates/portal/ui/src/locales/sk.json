@@ -5457,7 +5457,7 @@
       "notPublishedTo": "nepublikované do {instance}",
       "needsCatalogue": "Najprv vyššie pridajte katalóg: dataset potrebuje portál CKAN, kam sa zverejní.",
       "mapAndTable": "Mapa a tabuľka na stránke datasetu",
-      "formats": "{count} spôsobov čítania: API, súbory a živé aktualizácie"
+      "formats": "Spôsoby čítania ({count}): API, súbory a živé aktualizácie"
     },
     "statusFailed": "Stav katalógov tohto projektu sa nepodarilo načítať, takže nižšie uvedené môže byť neúplné: {reason}. Obnovte stránku a skúste to znova.",
     "access": {
