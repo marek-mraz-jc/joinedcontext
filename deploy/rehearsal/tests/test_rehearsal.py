@@ -193,9 +193,10 @@ def test_entity_batches_keep_their_tenant_and_stay_under_the_caps():
     assert [(t, len(b)) for t, b in batches] == [("a", 500), ("a", 500), ("a", 203), ("b", 1), ("a", 1)]
 
 
-def test_the_import_never_sends_an_instance_older_than_the_window(tmp_path):
+def test_the_import_never_sends_an_instance_older_than_the_window(tmp_path, monkeypatch):
     """The real importer against a stub broker: the 25 h instance is refused in the report and
     never reaches the broker; the window ends at the export time, not at the import."""
+    monkeypatch.setattr(rh, "DISK_RESERVE", 0)  # this test is about the window, not the host disk
     seen = []
 
     class Broker(http.server.BaseHTTPRequestHandler):
@@ -217,6 +218,7 @@ def test_the_import_never_sends_an_instance_older_than_the_window(tmp_path):
         {"tenant": "t", "entity": {"id": "urn:ngsi-ld:X:1", "type": "X"}}) + "\n")
     (export / "antares" / "temporal.jsonl").write_text("".join(json.dumps(instance(d)) + "\n" for d in (25, 23, 1)))
     (export / "manifest.json").write_text(json.dumps({"env": "unit", "exportedAt": rh.iso(NOW)}))  # written last
+    (tmp_path / "antares-admin-token").write_text("unit-admin-token\n")
     report = tmp_path / "report.json"
     def run(now):
         seen.clear()
@@ -310,3 +312,352 @@ def test_a_bundle_still_being_written_is_not_imported(tmp_path):
     with pytest.raises(SystemExit):
         rh.main(["import", "--export", str(tmp_path), "--base", "http://127.0.0.1:1", "--state", str(tmp_path),
                  "--report", str(tmp_path / "r.json")])
+
+
+def test_the_broker_after_the_import_refuses_an_anonymous_write():
+    assert rh.policy_problems(401, "joinedcontext") == []
+    assert rh.policy_problems(201, "joinedcontext") == ["an anonymous write answered 201, not 401"]
+    assert rh.policy_problems(401, "allow-all") == ["the broker's policy engine is 'allow-all', not 'joinedcontext'"]
+    assert len(rh.policy_problems(403, None)) == 2
+
+
+def test_the_old_history_check_fails_when_it_cannot_read(tmp_path):
+    pw = tmp_path / "pw"
+    pw.write_text("x")
+    with pytest.raises(RuntimeError):
+        rh.old_history("127.0.0.1", 1, "antares", "antares", str(pw), dt.datetime(2026, 11, 7, tzinfo=dt.UTC))
+
+
+def test_a_datasource_reads_the_same_endpoint_on_the_rehearsal():
+    gw = "http://context-gateway.smartcity.svc.cluster.local:8080/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
+    assert rh.rehearsal_endpoint_url(gw, "http://localhost:42102/") == \
+        "http://localhost:42102/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
+    assert rh.rehearsal_endpoint_url("http://prometheus:9090", "http://localhost:42102") == "http://prometheus:9090"
+
+
+def test_each_project_dashboard_goes_into_its_own_organization(tmp_path):
+    """The real importer against a stub daiya: a project's folder, datasource and dashboard carry
+    its organization (made once, 409 -> by name), the datasource names the rehearsal's gateway, an
+    existing datasource is replaced, and a platform model stays in the main organization."""
+    seen = []
+
+    class Daiya(http.server.BaseHTTPRequestHandler):
+        def _answer(self, status, body):
+            raw = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _record(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n)) if n else None
+            seen.append((self.command, self.path, self.headers.get("X-Grafana-Org-Id"), body))
+            return body
+
+        def do_POST(self):  # noqa: N802
+            self._record()
+            if self.path == "/dashboards/api/orgs":
+                return self._answer(409, {"message": "exists"})
+            if self.path == "/dashboards/api/datasources":
+                return self._answer(409, {"message": "exists"})
+            self._answer(200, {"status": "success"})
+
+        def do_PUT(self):  # noqa: N802
+            self._record()
+            self._answer(200, {})
+
+        def do_GET(self):  # noqa: N802
+            self._record()
+            self._answer(200, {"id": 7, "name": "helsinki"})
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Daiya)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "dashboards-password").write_text("pw")
+    d = tmp_path / "dash"
+    d.mkdir()
+    (d / "helsinki.folder.json").write_text(json.dumps({"uid": "project-helsinki", "title": "Helsinki"}))
+    (d / "helsinki.datasource.air.json").write_text(json.dumps({
+        "uid": "air", "name": "air", "type": "ngsild-grafana-datasource",
+        "url": "http://context-gateway.dev.svc.cluster.local:8080/api/endpoint/abc"}))
+    (d / "helsinki.dashboard.json").write_text(json.dumps({"folderUid": "project-helsinki", "dashboard": {"uid": "h", "title": "H"}}))
+    (d / "portal.json").write_text(json.dumps({"uid": "portal", "title": "Portal"}))
+    report = {}
+    try:
+        rh.import_daiya(rh.Http(base), state, tmp_path, None, report, d)
+    finally:
+        server.shutdown()
+    assert {r["result"] for r in report["daiya"]} <= {"imported", "unchanged"}, report
+    org_calls = [s for s in seen if "/orgs" in s[1]]
+    assert [c[:2] for c in org_calls] == [("POST", "/dashboards/api/orgs"), ("GET", "/dashboards/api/orgs/name/helsinki")]
+    project = [s for s in seen if s[1].startswith(("/dashboards/api/folders", "/dashboards/api/datasources",
+                                                   "/dashboards/api/dashboards/db")) and s[3].get("dashboard", {}).get("uid") != "portal"]
+    assert project and all(s[2] == "7" for s in project), project
+    put = [s for s in seen if s[0] == "PUT"]
+    assert put and put[0][1] == "/dashboards/api/datasources/uid/air"
+    assert put[0][3]["url"] == f"{base}/api/endpoint/abc"
+    model = [s for s in seen if (s[3] or {}).get("dashboard", {}).get("uid") == "portal"]
+    assert model and model[0][2] is None
+
+
+def test_only_the_guard_refusing_the_own_listener_counts_as_expected():
+    base = "http://localhost:42101"
+    own = base + "/api/endpoint/abc"
+    refused = {"error": {"code": "cr.ssrf_blocked", "message": "disallowed URL scheme 'http' (https required)"}}
+    assert rh.panel_class(502, refused, own, base) == "expected"
+    loop = {"title": "Outbound Request Blocked", "detail": "blocked loopback address 127.0.0.1"}
+    assert rh.panel_class(502, loop, own, base) == "expected"
+    # the same refusal for a datasource elsewhere, another error, or a refusal text alone: red
+    assert rh.panel_class(502, refused, "http://prometheus:9090", base) == "red"
+    assert rh.panel_class(500, {"error": "the panel's datasource did not answer"}, own, base) == "red"
+    assert rh.panel_class(502, "disallowed URL scheme 'http'", own, base) == "red"
+    assert rh.panel_class(200, {"frames": []}, own, base) == "data"
+
+
+@pytest.mark.parametrize("script, ok", [
+    ("echo 'config file jc.toml: unknown field `database`' >> {log}; exit 2", False),
+    ("echo 'jc listening' >> {log}; sleep 1; exit 1", False),
+    ("echo 'jc listening' >> {log}; sleep 30", True),
+])
+def test_up_stops_when_jc_exits_at_start(tmp_path, script, ok):
+    log = tmp_path / "jc.log"
+    log.write_text("")
+    jc = subprocess.Popen(["bash", "-c", script.format(log=log)])
+    try:
+        r = subprocess.run([str(HERE / "wait-jc.sh"), str(jc.pid), str(log), "20"],
+                           env=dict(os.environ, REHEARSAL_SETTLE_SECS="3"), capture_output=True, text=True, timeout=60)
+    finally:
+        jc.kill()
+        jc.wait()
+    assert (r.returncode == 0) == ok, r.stderr
+
+
+def test_an_import_that_would_fill_the_shared_disk_does_not_start():
+    # the dev bundle of 2026-11-08 on 35 GB free: refused, naming the numbers
+    why = rh.disk_problem(1_822_836, 35 * 10**9)
+    assert "1,822,836 entities" in why and "35.0 GB are free" in why
+    assert rh.disk_problem(1_822_836, 100 * 10**9) == ""
+    assert rh.disk_problem(260, 30 * 10**9) == ""
+
+
+def clean_import():
+    return {"entities": 10, "exportEntities": 10, "refusedCallCount": 0, "temporal": 5, "temporalKept": 5,
+            "temporalRefusedByKind": {"cut-off": 3}}
+
+
+@pytest.mark.parametrize("change, word", [
+    ({"entities": 0}, "0 of 10 exported entities"),
+    ({"refusedCallCount": 4439}, "4,439 broker calls refused"),
+    ({"temporal": 4}, "4 of 5 temporal instances"),
+    ({"temporalRefusedByKind": {"cut-off": 3, "no-observedAt": 1}}, "no-observedAt"),
+])
+def test_a_short_or_refused_import_is_a_problem_and_the_cut_off_alone_is_not(change, word):
+    assert rh.antares_problems(clean_import()) == []
+    problems = rh.antares_problems({**clean_import(), **change})
+    assert len(problems) == 1 and word in problems[0], problems
+
+
+def stub_import(tmp_path, admit):
+    """The importer against a stub broker that admits a subject-less write only with the admin
+    bearer `admit` (jc's broker since T-5032); returns (rc, report, Authorization headers seen)."""
+    seen = []
+
+    class Broker(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.rfile.read(int(self.headers["Content-Length"]))
+            seen.append(self.headers.get("Authorization"))
+            ok = self.headers.get("Authorization") == f"Bearer {admit}"
+            body = b"" if ok else json.dumps({"status": 401, "detail": "a request without a subject needs "
+                                                                          "the broker's admin bearer token"}).encode()
+            self.send_response((201 if "temporal" in self.path else 204) if ok else 401)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Broker)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    export = tmp_path / "export"
+    (export / "antares").mkdir(parents=True)
+    (export / "antares" / "entities.jsonl").write_text("".join(json.dumps(
+        {"tenant": "t", "entity": {"id": f"urn:ngsi-ld:X:{i}", "type": "X"}}) + "\n" for i in range(3)))
+    (export / "antares" / "temporal.jsonl").write_text(json.dumps(instance(1)) + "\n")
+    (export / "manifest.json").write_text(json.dumps({"env": "unit", "exportedAt": rh.iso(NOW)}))
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "antares-admin-token").write_text("the-admin-token\n")
+    report = tmp_path / "report.json"
+    try:
+        rc = rh.main(["import", "--export", str(export), "--base", f"http://127.0.0.1:{server.server_port}",
+                      "--state", str(state), "--report", str(report), "--only", "antares", "--now", rh.iso(NOW)])
+    finally:
+        server.shutdown()
+    return rc, json.loads(report.read_text()), seen
+
+
+def test_the_import_sends_the_broker_admin_token_and_fails_when_the_broker_refuses(tmp_path, monkeypatch):
+    monkeypatch.setattr(rh, "DISK_RESERVE", 0)
+    rc, r, seen = stub_import(tmp_path / "ok", "the-admin-token")
+    assert rc == 0 and r["problems"] == [] and r["antares"]["entities"] == 3 and r["antares"]["temporal"] == 1
+    assert seen and set(seen) == {"Bearer the-admin-token"}
+    # the dev run of 2026-11-08 21:44: every call 401, 0 entities, and the import said rc 0
+    rc, r, _ = stub_import(tmp_path / "refused", "another-token")
+    assert rc == 1 and r["antares"]["entities"] == 0
+    assert any("0 of 3 exported entities" in p for p in r["problems"])
+
+
+def test_import_sh_stops_the_allow_all_jc_when_the_import_fails(tmp_path):
+    """import.sh with stand-ins: up.sh starts a 'jc' (sleep), rehearsal.py import fails; the
+    script must fail and the allow-all jc must be gone."""
+    kit = tmp_path / "kit"
+    kit.mkdir()
+    (kit / "import.sh").write_text((HERE / "import.sh").read_text())
+    home = tmp_path / "home"
+    (kit / "up.sh").write_text(f"#!/bin/bash\nmkdir -p {home}/e\nsetsid sleep 300 >/dev/null 2>&1 &\necho $! > {home}/e/jc.pid\n")
+    (kit / "rehearsal.py").write_text("import sys\nsys.exit(1)\n")
+    for f in ("import.sh", "up.sh"):
+        (kit / f).chmod(0o755)
+    r = subprocess.run([str(kit / "import.sh"), "e", "1", "2", str(tmp_path)], capture_output=True, text=True,
+                       env=dict(os.environ, REHEARSAL_HOME=str(home)), timeout=60)
+    pid = int((home / "e" / "jc.pid").read_text())
+    time.sleep(0.5)
+    alive = Path(f"/proc/{pid}").exists() and "Z" not in Path(f"/proc/{pid}/stat").read_text().split()[2]
+    if alive:
+        os.kill(pid, 9)
+    assert r.returncode != 0 and "import FAILED" in r.stderr
+    assert not alive, "jc on allow-all stayed up after a failed import"
+
+
+def test_people_come_with_ids_groups_and_roles_and_never_a_credential():
+    lines = [
+        {"id": "de300000-0000-4000-8000-000000000001", "username": "demo.steward@hel.fi",
+         "email": "demo.steward@hel.fi", "firstName": "Demo", "enabled": True,
+         "attributes": {"jc_org": ["hel"], "x": ["$(env:SECRET)"], "$(file:/etc/shadow)": ["y"]},
+         "groups": ["/helsinki/stewards"], "realmRoles": ["portal-approver"], "totp": True,
+         "requiredActions": ["VERIFY_EMAIL"],
+         "credentials": [{"type": "password", "secretData": "{\"value\":\"hash\"}"}],
+         "federatedIdentities": [{"identityProvider": "x"}], "access": {"manage": True}},
+        {"id": "u-2", "username": "service-account-c", "serviceAccountClientId": "c"},
+        {"id": "u-3", "username": "jane.roe@example.org", "email": "jane.roe@example.org",
+         "firstName": "Jane", "lastName": "Roe", "emailVerified": True, "enabled": True,
+         "groups": ["/bbsk"]},
+    ]
+    known = {"demo.steward", "de300000-0000-4000-8000-000000000001"}
+    realm, counts = rh.add_people({"realm": "dev", "users": [{"username": "service-account-c"}]}, lines, known)
+    assert counts == {"people": 2, "personas": 1, "pseudonymous": 1, "credentials": 0}
+    assert [u["username"] for u in realm["users"]] == ["service-account-c", "demo.steward@hel.fi", "person-u-3"]
+    steward, other = realm["users"][1], realm["users"][2]
+    assert steward["email"] == "demo.steward@hel.fi" and steward["groups"] == ["/helsinki/stewards"]
+    assert steward["realmRoles"] == ["portal-approver"] and steward["attributes"] == {"jc_org": ["hel"], "x": []}
+    assert steward["requiredActions"] == ["VERIFY_EMAIL", "UPDATE_PASSWORD", "CONFIGURE_TOTP"]
+    assert other == {"id": "u-3", "username": "person-u-3", "enabled": True, "groups": ["/bbsk"],
+                     "attributes": {}, "requiredActions": ["UPDATE_PASSWORD"]}
+    text = json.dumps(realm)
+    for leak in ("credentials", "secretData", "hash", "federatedIdentities", "totp", "access", "$(",
+                 "jane", "Roe", "example.org"):
+        assert leak not in text, leak
+
+
+def test_personas_are_the_demo_users_of_the_deployment(tmp_path):
+    f = tmp_path / "demo-users.yaml"
+    f.write_text("---\ndemo.steward:\n  id: de300000-0000-4000-8000-000000000001\n  firstName: Demo\n")
+    assert rh.personas(f) == {"demo.steward", "de300000-0000-4000-8000-000000000001"}
+    assert rh.personas(None) == set()
+
+
+def test_people_stay_in_a_private_dir_and_a_private_file(tmp_path):
+    export = tmp_path / "export"
+    (export / "keycloak").mkdir(parents=True)
+    (export / "keycloak" / "realm-dev.json").write_text(json.dumps({"realm": "dev"}))
+    people = tmp_path / "people"
+    people.mkdir(mode=0o755)
+    (people / "users-dev.jsonl").write_text(json.dumps({"id": "u-3", "username": "jane.roe@example.org"}) + "\n")
+    out = tmp_path / "state" / "realms"
+    argv = ["realms", "--export", str(export), "--out", str(out), "--people", str(people)]
+    os.chmod(people, 0o755)
+    with pytest.raises(SystemExit):
+        rh.main(argv)
+    os.chmod(people, 0o700)
+    rh.main(argv)
+    assert (out / "dev.json").stat().st_mode & 0o777 == 0o600 and out.stat().st_mode & 0o777 == 0o700
+    assert "person-u-3" in (out / "dev.json").read_text()
+    assert json.loads((out.parent / "realm-dev-people.json").read_text())["people"] == 1
+
+
+
+def test_datasources_are_provisioned_on_the_exact_own_address_in_org_1(tmp_path):
+    src = tmp_path / "dash"
+    src.mkdir()
+    (src / "bbsk.datasource.bbsk-kpi.json").write_text(json.dumps({
+        "name": "bbsk-kpi", "uid": "bbsk-kpi", "type": "ngsild-grafana-datasource", "access": "proxy",
+        "url": "http://context-gateway.dev.svc.cluster.local:8080/api/endpoint/qfhhh5no5wz4lk3rfjisdtx3chiyfig3",
+        "jsonData": {"tenant": "x"}}))
+    out = tmp_path / "prov"
+    assert rh.provisioning_files(src, 42101, out) == 1
+    doc = json.loads((out / "datasources" / "rehearsal.yaml").read_text())
+    (ds,) = doc["datasources"]
+    assert ds["url"] == "http://127.0.0.1:42101/api/endpoint/qfhhh5no5wz4lk3rfjisdtx3chiyfig3"
+    assert ds["orgId"] == 1 and ds["uid"] == "bbsk-kpi" and ds["jsonData"] == {"tenant": "x"}
+    assert (out / "dashboards").is_dir()
+    (src / "x.datasource.bad.json").write_text(json.dumps({"name": "b", "uid": "b", "type": "t",
+                                                            "url": "http://evil.example/other"}))
+    with pytest.raises(SystemExit):
+        rh.provisioning_files(src, 42101, out)
+
+
+def test_org_1_panels_count_data_and_red_apart(tmp_path):
+    class Daiya(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            q = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            uid = q["queries"][0]["datasource"]["uid"]
+            body = {"results": {"A": {"status": 200, "frames": []}}} if uid == "good" else \
+                {"message": "disallowed URL scheme 'http' (https required)"}
+            raw = json.dumps(body).encode()
+            self.send_response(200 if uid == "good" else 502)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Daiya)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    (tmp_path / "p.dashboard.json").write_text(json.dumps({"dashboard": {"panels": [
+        {"id": 1, "type": "timeseries", "datasource": {"uid": "good"}, "targets": [{"refId": "A"}]},
+        {"id": 2, "type": "row", "panels": [
+            {"id": 3, "type": "stat", "datasource": "bad", "targets": [{"refId": "A"}]}]},
+        {"id": 4, "type": "text"}]}}))
+    try:
+        o = rh.org1_panels(rh.Http(f"http://127.0.0.1:{server.server_port}"), {}, tmp_path)
+    finally:
+        server.shutdown()
+    assert (o["data"], o["red"]) == (1, 1) and [r["panel"] for r in o["rows"]] == [1, 3]
+
+
+def test_realm_secrets_become_files_under_the_import_secrets_dir(tmp_path):
+    text = json.dumps({"clients": [{"secret": "$(env:CLIENT_A)"}, {"secret": "$(CLIENT_B)"}],
+                       "users": [{"credentials": [{"value": "$(env:REHEARSAL_TESTER_PASSWORD)"}]}]})
+    out = json.loads(rh.secrets_as_files(text, tmp_path / "realm"))
+    base = (tmp_path / "realm").resolve()
+    assert out["clients"][0]["secret"] == f"$(file:{base / 'CLIENT_A'})"
+    assert out["clients"][1]["secret"] == f"$(file:{base / 'CLIENT_B'})"
+    assert out["users"][0]["credentials"][0]["value"] == f"$(file:{base / 'REHEARSAL_TESTER_PASSWORD'})"
+    assert "env:" not in json.dumps(out)
+
+
+def test_a_service_token_jc_holds_in_memory_is_read_from_the_kit_secrets(tmp_path):
+    (tmp_path / "state").mkdir(); (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets" / "shako-token").write_text("given\n")
+    (tmp_path / "state" / "antares-admin-token").write_text("on-disk\n")
+    assert rh.read_secret(tmp_path / "state", "shako-token") == "given"
+    assert rh.read_secret(tmp_path / "state", "antares-admin-token") == "on-disk"

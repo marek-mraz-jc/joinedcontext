@@ -52,6 +52,28 @@ struct LoginPageTemplate {
     submit_label: String,
     secondary_link_url: String,
     secondary_link_label: String,
+    /// Inline SVG QR code of the `otpauth://` URI on the authenticator set-up page (our own
+    /// markup, never user input), else empty.
+    qr_svg: String,
+    qr_hint: String,
+    extras: PageExtras,
+}
+
+/// Page parts beyond the form: the authenticator set-up steps and the labels of the small
+/// script that adds show/hide to password fields and a copy button to the key.
+#[derive(Default)]
+struct PageExtras {
+    otp_key: String,
+    otp_details: String,
+    otp_step1: String,
+    otp_step2: String,
+    otp_step3: String,
+    key_label: String,
+    copy_label: String,
+    copied_label: String,
+    show_label: String,
+    hide_label: String,
+    toggle_label: String,
 }
 
 pub fn login_router(state: OidcState) -> Router {
@@ -69,6 +91,7 @@ pub fn login_router(state: OidcState) -> Router {
             get(action_token_get).post(action_token_post),
         )
         .merge(kaisatsu_oidc::broker_router())
+        .merge(crate::account::account_router())
         .with_state(state)
 }
 
@@ -128,19 +151,8 @@ async fn build_policy_context(
         .iter()
         .any(|c| c.credential_type.starts_with("webauthn"));
     let user_groups = store.list_user_groups(&realm.id, &user.id).await?;
-    let all_roles = store.list_roles(&realm.id, None).await?;
-    let group_roles: Vec<String> = user_groups
-        .iter()
-        .flat_map(|g| g.realm_roles.iter().cloned())
-        .collect();
-    let eff_roles = kaisatsu_core::claims::resolve_effective_realm_roles(
-        &user.realm_roles,
-        &group_roles,
-        &all_roles,
-    );
-    let mfa_role = eff_roles.iter().any(|r| r == "mfa-required");
+    let realm_requires = second_factor_required(store, realm, user).await?;
     let step_up = auth_session.acr_requested.as_deref() == Some("mfa");
-    let is_master = realm.realm == "master";
 
     let memberships = store
         .list_memberships_for_person(&realm.id, &user.id)
@@ -202,14 +214,42 @@ async fn build_policy_context(
     }
 
     Ok(LoginPolicyContext {
-        second_factor_required: mfa_role || step_up || is_master,
+        second_factor_required: realm_requires || step_up,
         has_totp_credential: has_totp,
         has_webauthn_credential: has_webauthn,
         pending_actions: pending,
         org_choices,
         pinned_org,
         consent_required: client.consent_required && !has_consent,
+        app_action: auth_session
+            .kc_action
+            .clone()
+            .filter(|_| !auth_session.kc_action_done),
     })
+}
+
+/// True when the realm requires a second factor of this person at every sign-in: the
+/// `master` realm, or the effective realm role `mfa-required` (direct, composite or by group).
+pub(crate) async fn second_factor_required(
+    store: &Arc<dyn Store>,
+    realm: &RealmConfig,
+    user: &UserRepresentation,
+) -> Result<bool> {
+    if realm.realm == "master" {
+        return Ok(true);
+    }
+    let user_groups = store.list_user_groups(&realm.id, &user.id).await?;
+    let all_roles = store.list_roles(&realm.id, None).await?;
+    let group_roles: Vec<String> = user_groups
+        .iter()
+        .flat_map(|g| g.realm_roles.iter().cloned())
+        .collect();
+    let eff_roles = kaisatsu_core::claims::resolve_effective_realm_roles(
+        &user.realm_roles,
+        &group_roles,
+        &all_roles,
+    );
+    Ok(eff_roles.iter().any(|r| r == "mfa-required"))
 }
 
 async fn render_state_page(
@@ -268,6 +308,7 @@ async fn render_state_page(
         mount.path_prefix, realm.realm, auth_session.id, auth_session.client_id
     );
 
+    let mut enrol_secret: Option<String> = None;
     let (page_id, heading_text, instruction_text, fields, submit_label, sec_url, sec_label) =
         match login_state {
             LoginState::IdentityFirst | LoginState::Password { .. } => {
@@ -292,10 +333,15 @@ async fn render_state_page(
                         error: String::new(),
                     },
                 ];
+                let reauth = auth_session.kc_action.is_some() && !auth_session.kc_action_done;
                 (
                     "login".to_owned(),
                     h,
-                    String::new(),
+                    if reauth {
+                        bundle.get("reauthenticate").to_owned()
+                    } else {
+                        String::new()
+                    },
                     f,
                     bundle.get("doLogIn").to_owned(),
                     if realm.reset_password_allowed {
@@ -324,19 +370,12 @@ async fn render_state_page(
                             fresh
                         }
                     };
-                    bundle.format(
-                        "otpEnrolInstruction",
-                        &[
-                            &secret,
-                            &realm.otp_policy_algorithm,
-                            &realm.otp_policy_digits.to_string(),
-                            &realm.otp_policy_period.to_string(),
-                        ],
-                    )
+                    enrol_secret = Some(secret.clone());
+                    String::new()
                 } else {
                     String::new()
                 };
-                let f = vec![FormField {
+                let mut f = vec![FormField {
                     name: "otp".into(),
                     label: bundle.get("otpLabel").to_owned(),
                     input_type: "text".into(),
@@ -345,14 +384,31 @@ async fn render_state_page(
                     hint: bundle.get("otpHint").to_owned(),
                     error: String::new(),
                 }];
+                if is_enrol {
+                    f.push(FormField {
+                        name: "userLabel".into(),
+                        label: bundle.get("otpDeviceLabel").to_owned(),
+                        input_type: "text".into(),
+                        value: String::new(),
+                        autocomplete: "off".into(),
+                        hint: bundle.get("otpDeviceHint").to_owned(),
+                        error: String::new(),
+                    });
+                    f.push(logout_sessions_field(&bundle, false));
+                }
+                let (cancel_url, cancel_label) = cancel_link(auth_session, &bundle, is_enrol);
                 (
-                    "login-otp".to_owned(),
+                    if is_enrol { "config-totp" } else { "login-otp" }.to_owned(),
                     title,
                     instruction,
                     f,
-                    bundle.get("doLogIn").to_owned(),
-                    String::new(),
-                    String::new(),
+                    if is_enrol {
+                        bundle.get("doSubmit").to_owned()
+                    } else {
+                        bundle.get("doLogIn").to_owned()
+                    },
+                    cancel_url,
+                    cancel_label,
                 )
             }
             LoginState::RecoveryCode { .. } => {
@@ -376,23 +432,36 @@ async fn render_state_page(
                 )
             }
             LoginState::UpdatePassword { .. } => {
-                let f = vec![FormField {
-                    name: "new_password".into(),
-                    label: bundle.get("passwordLabel").to_owned(),
-                    input_type: "password".into(),
-                    value: String::new(),
-                    autocomplete: "new-password".into(),
-                    hint: bundle.get("passwordHint").to_owned(),
-                    error: String::new(),
-                }];
+                let f = vec![
+                    FormField {
+                        name: "new_password".into(),
+                        label: bundle.get("passwordNewLabel").to_owned(),
+                        input_type: "password".into(),
+                        value: String::new(),
+                        autocomplete: "new-password".into(),
+                        hint: bundle.get("passwordHint").to_owned(),
+                        error: String::new(),
+                    },
+                    FormField {
+                        name: "password_confirm".into(),
+                        label: bundle.get("passwordConfirmLabel").to_owned(),
+                        input_type: "password".into(),
+                        value: String::new(),
+                        autocomplete: "new-password".into(),
+                        hint: bundle.get("passwordConfirmHint").to_owned(),
+                        error: String::new(),
+                    },
+                    logout_sessions_field(&bundle, false),
+                ];
+                let (cancel_url, cancel_label) = cancel_link(auth_session, &bundle, true);
                 (
                     "update-password".to_owned(),
                     bundle.get("updatePasswordTitle").to_owned(),
                     String::new(),
                     f,
-                    bundle.get("proceedWithAction").to_owned(),
-                    String::new(),
-                    String::new(),
+                    bundle.get("doSubmit").to_owned(),
+                    cancel_url,
+                    cancel_label,
                 )
             }
             LoginState::OrganizationChoice { candidates, .. } => {
@@ -545,6 +614,43 @@ async fn render_state_page(
             ),
         };
 
+    // On the authenticator and password pages the error belongs to the field it is about, as
+    // Keycloak's templates show it; other pages keep the banner.
+    let mut fields = fields;
+    let mut alert_message = alert_message;
+    let error_field = match page_id.as_str() {
+        "config-totp" => Some("otp"),
+        "update-password" if alert_message == bundle.get("notMatchPasswordMessage") => {
+            Some("password_confirm")
+        }
+        "update-password" => Some("new_password"),
+        _ => None,
+    };
+    if let Some(field) = fields
+        .iter_mut()
+        .find(|f| !alert_message.is_empty() && Some(f.name.as_str()) == error_field)
+    {
+        field.error = alert_message.to_owned();
+        alert_message = "";
+    }
+    let qr_svg = match (&enrol_secret, login_state) {
+        (Some(secret), LoginState::EnrolTotp { user_id, .. }) => {
+            let account = state
+                .store
+                .get_user_by_id(&realm.id, None, user_id)
+                .await?
+                .map(|u| u.username)
+                .unwrap_or_default();
+            totp_qr_svg(
+                realm,
+                &org_display,
+                &account,
+                secret,
+                bundle.get("otpScanHint"),
+            )
+        }
+        _ => String::new(),
+    };
     let tpl = LoginPageTemplate {
         lang: bundle.locale.to_owned(),
         page_title: bundle.format("jcSignInTo", &[&app_name, &org_display]),
@@ -564,9 +670,192 @@ async fn render_state_page(
         submit_label,
         secondary_link_url: sec_url,
         secondary_link_label: sec_label,
+        qr_svg,
+        qr_hint: bundle.get("otpScanHint").to_owned(),
+        extras: page_extras(&bundle, realm, enrol_secret.as_deref()),
     };
 
     Ok(render_with_security_headers(&tpl, None))
+}
+
+/// The `otpauth://` URI of a new authenticator as an inline SVG QR code (Keycloak shows one on
+/// its set-up page). Every value is percent-encoded into the URI; the SVG holds only rects.
+fn totp_qr_svg(
+    realm: &RealmConfig,
+    issuer: &str,
+    account: &str,
+    secret: &str,
+    title: &str,
+) -> String {
+    let enc = |s: &str| url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>();
+    let algorithm = realm
+        .otp_policy_algorithm
+        .trim_start_matches("Hmac")
+        .to_ascii_uppercase();
+    let uri = format!(
+        "otpauth://totp/{}:{}?secret={}&issuer={}&algorithm={algorithm}&digits={}&period={}",
+        enc(issuer),
+        enc(account),
+        enc(secret),
+        enc(issuer),
+        realm.otp_policy_digits,
+        realm.otp_policy_period,
+    );
+    let Ok(qr) = qrcodegen::QrCode::encode_text(&uri, qrcodegen::QrCodeEcc::Medium) else {
+        return String::new();
+    };
+    let size = qr.size();
+    let border = 4;
+    let dim = size + 2 * border;
+    let mut path = String::new();
+    for y in 0..size {
+        for x in 0..size {
+            if qr.get_module(x, y) {
+                path.push_str(&format!("M{},{}h1v1h-1z", x + border, y + border));
+            }
+        }
+    }
+    let title = title
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {dim} {dim}\" width=\"180\" height=\"180\" role=\"img\" aria-labelledby=\"qr-title\" shape-rendering=\"crispEdges\"><title id=\"qr-title\">{title}</title><rect width=\"100%\" height=\"100%\" fill=\"#fff\"/><path d=\"{path}\" fill=\"#000\"/></svg>"
+    )
+}
+
+/// The label a person gives a new authenticator: trimmed, at most 64 characters, control
+/// characters dropped; "Authenticator" when left empty.
+/// The set-up steps (when `secret` is the key being enrolled) and the script labels.
+fn page_extras(bundle: &Bundle, realm: &RealmConfig, secret: Option<&str>) -> PageExtras {
+    let mut x = PageExtras {
+        show_label: bundle.get("doShow").to_owned(),
+        hide_label: bundle.get("doHide").to_owned(),
+        toggle_label: bundle.get("doShowPassword").to_owned(),
+        ..Default::default()
+    };
+    if let Some(secret) = secret {
+        x.otp_key = secret
+            .as_bytes()
+            .chunks(4)
+            .map(String::from_utf8_lossy)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let alg = realm.otp_policy_algorithm.trim_start_matches("Hmac");
+        x.otp_details = bundle.format(
+            "otpKeyDetails",
+            &[
+                &format!("HMAC-{alg}"),
+                &realm.otp_policy_digits.to_string(),
+                &realm.otp_policy_period.to_string(),
+            ],
+        );
+        x.otp_step1 = bundle.get("otpAppsHint").to_owned();
+        x.otp_step2 = bundle.get("otpStepScan").to_owned();
+        x.otp_step3 = bundle.get("otpStepCode").to_owned();
+        x.key_label = bundle.get("otpKeyLabel").to_owned();
+        x.copy_label = bundle.get("doCopy").to_owned();
+        x.copied_label = bundle.get("copiedMessage").to_owned();
+    }
+    x
+}
+
+/// The User-Agent a new SSO session keeps: control characters dropped, at most 256 characters.
+fn user_agent_of(headers: &HeaderMap) -> String {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(256)
+        .collect()
+}
+
+fn device_label(raw: Option<&String>) -> String {
+    let label: String = raw
+        .map(|s| s.trim())
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(64)
+        .collect();
+    if label.is_empty() {
+        "Authenticator".into()
+    } else {
+        label
+    }
+}
+
+/// The "sign out other devices" box of the password and authenticator pages (Keycloak's
+/// `logout-sessions`); `checked` presets it, as Keycloak does on the password page.
+fn logout_sessions_field(bundle: &Bundle, checked: bool) -> FormField {
+    FormField {
+        name: "logout-sessions".into(),
+        label: bundle.get("logoutOtherSessions").to_owned(),
+        input_type: "checkbox".into(),
+        value: if checked { "checked" } else { "" }.into(),
+        autocomplete: "off".into(),
+        hint: bundle.get("logoutOtherSessionsHint").to_owned(),
+        error: String::new(),
+    }
+}
+
+/// The cancel link of an application-initiated action page: back to the client's registered
+/// `redirect_uri` with `kc_action_status=cancelled`, nothing changed. Empty outside an action.
+fn cancel_link(
+    auth_session: &AuthSession,
+    bundle: &Bundle,
+    on_action_page: bool,
+) -> (String, String) {
+    if !on_action_page || auth_session.kc_action.is_none() || auth_session.kc_action_done {
+        return (String::new(), String::new());
+    }
+    let Ok(mut url) = url::Url::parse(&auth_session.redirect_uri) else {
+        return (String::new(), String::new());
+    };
+    url.query_pairs_mut()
+        .append_pair("kc_action_status", "cancelled");
+    if let Some(st) = &auth_session.state {
+        url.query_pairs_mut().append_pair("state", st);
+    }
+    (url.to_string(), bundle.get("doCancel").to_owned())
+}
+
+/// Ends every SSO session of the person except the one this browser holds (the "sign out other
+/// devices" box): their refresh tokens die with them and each client hears a back-channel logout.
+async fn sign_out_other_sessions(
+    state: &OidcState,
+    mount: &Mount,
+    realm: &RealmConfig,
+    user_id: &str,
+    headers: &HeaderMap,
+) -> Result<()> {
+    let current = read_cookie(headers, &mount.cookie_name("sso")).map(|raw| sha256_hex(&raw));
+    for sso in state
+        .store
+        .list_user_sso_sessions(&realm.id, user_id)
+        .await?
+    {
+        if current.as_deref() == Some(sso.handle_hash.as_str()) {
+            continue;
+        }
+        if let Some(ended) = state.store.delete_sso_session(&realm.id, &sso.id).await? {
+            let _ = kaisatsu_oidc::dispatch_backchannel_logout(state, mount, realm, &ended).await;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|s| s.split(';').map(str::trim))
+        .filter_map(|part| part.split_once('='))
+        .find(|(name, v)| *name == target && !v.is_empty())
+        .map(|(_, v)| v.to_owned())
 }
 
 pub(crate) fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
@@ -621,6 +910,9 @@ pub(crate) fn render_expired_session_page(realm: &RealmConfig, status: StatusCod
         submit_label: String::new(),
         secondary_link_url: String::new(),
         secondary_link_label: String::new(),
+        qr_svg: String::new(),
+        qr_hint: String::new(),
+        extras: PageExtras::default(),
     };
     let mut resp = render_with_security_headers(&tpl, None);
     *resp.status_mut() = status;
@@ -1026,7 +1318,7 @@ async fn authenticate_page_post(
                 realm_id: realm.id.clone(),
                 user_id: user.id.clone(),
                 credential_type: "otp".into(),
-                user_label: Some("Authenticator".into()),
+                user_label: Some(device_label(form.get("userLabel"))),
                 created_date: Utc::now().timestamp_millis(),
                 secret_data: serde_json::json!({ "value": new_secret }).to_string(),
                 credential_data: serde_json::json!({
@@ -1058,13 +1350,19 @@ async fn authenticate_page_post(
                     &auth_session,
                     &current_state,
                     &headers,
-                    bundle.get("invalidUserMessage"),
+                    bundle.get("invalidTotpMessage"),
                 )
                 .await;
             }
             state.store.upsert_credential(cred).await?;
+            if form.contains_key("logout-sessions") {
+                sign_out_other_sessions(&state, &mount, &realm, &user.id, &headers).await?;
+            }
             let mut auth_session = auth_session;
             auth_session.pending_totp_secret = None;
+            if auth_session.kc_action.as_deref() == Some("CONFIGURE_TOTP") {
+                auth_session.kc_action_done = true;
+            }
             let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
             let next = transition(current_state, LoginInput::CompleteEnrolTotpOk, &ctx)
                 .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
@@ -1180,6 +1478,21 @@ async fn authenticate_page_post(
             .into_iter()
             .filter(|c| c.credential_type.starts_with("password"))
             .collect();
+        if form
+            .get("password_confirm")
+            .is_some_and(|confirm| confirm != new_password)
+        {
+            return render_state_page(
+                &state,
+                &mount,
+                &realm,
+                &auth_session,
+                &current_state,
+                &headers,
+                bundle.get("notMatchPasswordMessage"),
+            )
+            .await;
+        }
         if let Err(e) = check_password_policy(
             &realm.password_policy,
             new_password,
@@ -1215,6 +1528,13 @@ async fn authenticate_page_post(
         if user.required_actions.iter().any(|a| a == "UPDATE_PASSWORD") {
             user.required_actions.retain(|a| a != "UPDATE_PASSWORD");
             user = state.store.update_user(user).await?;
+        }
+        if form.contains_key("logout-sessions") {
+            sign_out_other_sessions(&state, &mount, &realm, &user.id, &headers).await?;
+        }
+        let mut auth_session = auth_session;
+        if auth_session.kc_action.as_deref() == Some("UPDATE_PASSWORD") {
+            auth_session.kc_action_done = true;
         }
         let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::CompleteUpdatePasswordOk, &ctx)
@@ -1634,6 +1954,7 @@ async fn advance_or_render(
             user_id: user.id.clone(),
             username: user.username.clone(),
             ip_address: client_ip.for_audit(),
+            user_agent: user_agent_of(headers),
             start: now.timestamp_millis(),
             last_access: now.timestamp_millis(),
             auth_time: now.timestamp(),
@@ -1658,6 +1979,7 @@ async fn advance_or_render(
             sso_session_id: sso_id.clone(),
             redirect_uri: auth_session.redirect_uri.clone(),
             scope: auth_session.scope.clone(),
+            mapper_scopes: auth_session.mapper_scopes.clone(),
             code_challenge: auth_session.code_challenge.clone(),
             code_challenge_method: auth_session.code_challenge_method.clone(),
             nonce: auth_session.nonce.clone(),
@@ -1710,6 +2032,9 @@ async fn advance_or_render(
         let mut pairs = vec![("code", raw_code.as_str())];
         if let Some(st) = &auth_session.state {
             pairs.push(("state", st.as_str()));
+        }
+        if auth_session.kc_action.is_some() && auth_session.kc_action_done {
+            pairs.push(("kc_action_status", "success"));
         }
         let mut resp = kaisatsu_oidc::redirect_with_params(
             &auth_session.redirect_uri,
@@ -1775,6 +2100,9 @@ async fn reset_credentials_get(
         submit_label: bundle.get("proceedWithAction").to_owned(),
         secondary_link_url: String::new(),
         secondary_link_label: String::new(),
+        qr_svg: String::new(),
+        qr_hint: String::new(),
+        extras: PageExtras::default(),
     };
     Ok(render_with_security_headers(&tpl, None))
 }
@@ -1861,6 +2189,9 @@ async fn reset_credentials_post(
         submit_label: String::new(),
         secondary_link_url: String::new(),
         secondary_link_label: String::new(),
+        qr_svg: String::new(),
+        qr_hint: String::new(),
+        extras: PageExtras::default(),
     };
     Ok(render_with_security_headers(&tpl, None))
 }
@@ -1967,6 +2298,7 @@ async fn action_token_get(
             response_type: "action".into(),
             response_mode: "query".into(),
             scope: claims.actions.join(" "),
+            mapper_scopes: Vec::new(),
             state: None,
             nonce: None,
             code_challenge: String::new(),
@@ -1985,6 +2317,8 @@ async fn action_token_get(
             webauthn_challenge: None,
             pending_email_code_hash: None,
             broker_state_json: None,
+            kc_action: None,
+            kc_action_done: false,
             user_id: Some(user.id.clone()),
             amr: Vec::new(),
             acr_achieved: String::new(),
@@ -2056,6 +2390,9 @@ async fn action_token_get(
             submit_label: bundle.get("proceedWithAction").to_owned(),
             secondary_link_url: String::new(),
             secondary_link_label: String::new(),
+            qr_svg: String::new(),
+            qr_hint: String::new(),
+            extras: PageExtras::default(),
         };
         return Ok(render_with_security_headers(&tpl, Some(set_cookie)));
     }
@@ -2252,6 +2589,9 @@ fn finish_action_token_response(
         submit_label: String::new(),
         secondary_link_url: String::new(),
         secondary_link_label: String::new(),
+        qr_svg: String::new(),
+        qr_hint: String::new(),
+        extras: PageExtras::default(),
     };
     Ok(render_with_security_headers(&tpl, None))
 }

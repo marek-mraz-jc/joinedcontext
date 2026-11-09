@@ -392,7 +392,9 @@ pub struct BrokerConfig {
     /// its gateway and the platform's engine this way, never by writing the environment). An
     /// environment value always wins; an unknown key is refused by [`build_state`]. Read for
     /// `ANTARES_API_SURFACES`, `ANTARES_POLICY`, `ANTARES_PROVENANCE_FROM`,
-    /// `ANTARES_POLICY_SUBJECT_FROM` and `ANTARES_POLICY_SUBJECT_HEADERS`.
+    /// `ANTARES_POLICY_SUBJECT_FROM`, `ANTARES_POLICY_SUBJECT_HEADERS`,
+    /// `ANTARES_TEMPORAL_RECORD`, `ANTARES_HISTORY_BACKFILL`, `ANTARES_PG_POOL` and
+    /// `ANTARES_PG_BATCH_ASYNC_COMMIT`.
     pub defaults: std::collections::BTreeMap<String, String>,
     /// The Postgres URL, password included, a host gives in place of
     /// ANTARES_DATABASE_URL (that variable is read when this is `None`).
@@ -418,9 +420,12 @@ impl std::fmt::Debug for AdminToken {
 impl BrokerConfig {
     /// `key` from the environment, else from [`BrokerConfig::defaults`].
     fn var(&self, key: &str) -> Option<String> {
-        std::env::var(key)
-            .ok()
-            .or_else(|| self.defaults.get(key).cloned())
+        self.var_over(std::env::var(key).ok(), key)
+    }
+
+    /// `env` (the environment's value of `key`) when set, else the host's default.
+    fn var_over(&self, env: Option<String>, key: &str) -> Option<String> {
+        env.or_else(|| self.defaults.get(key).cloned())
     }
 }
 
@@ -531,6 +536,10 @@ struct PgSettings {
     url: Option<Secret>,
     require_rls: bool,
     pool: Option<u32>,
+    /// ANTARES_PG_POOL, from the environment or the host's defaults.
+    pool_var: Option<String>,
+    /// ANTARES_PG_BATCH_ASYNC_COMMIT, from the environment or the host's defaults.
+    async_commit_var: Option<String>,
 }
 
 /// ANTARES_PG_STATEMENT_TIMEOUT_MS → the per-session `statement_timeout`
@@ -967,7 +976,7 @@ async fn build_builtin(
             };
             let pool_size = match pg.pool {
                 Some(n) => n.max(1),
-                None => parse_pg_pool(std::env::var("ANTARES_PG_POOL").ok().as_deref())?,
+                None => parse_pg_pool(pg.pool_var.as_deref())?,
             };
             let write_reserve = parse_pg_write_reserve(
                 std::env::var("ANTARES_PG_WRITE_RESERVE").ok().as_deref(),
@@ -978,11 +987,7 @@ async fn build_builtin(
                     .ok()
                     .as_deref(),
             )?;
-            let async_batch = parse_pg_batch_async_commit(
-                std::env::var("ANTARES_PG_BATCH_ASYNC_COMMIT")
-                    .ok()
-                    .as_deref(),
-            )?;
+            let async_batch = parse_pg_batch_async_commit(pg.async_commit_var.as_deref())?;
             // T-5838: read before the pool opens, so a bad key fails the boot
             // before any connection exists; never echoed.
             let mut secret_key = match std::env::var("ANTARES_SECRET_KEY") {
@@ -1203,6 +1208,9 @@ pub async fn build_state(
     if let Some(names) = cfg.defaults.get("ANTARES_POLICY_SUBJECT_HEADERS") {
         antares_api::policy::default_subject_headers(names);
     }
+    if let Some(value) = cfg.defaults.get("ANTARES_HISTORY_BACKFILL") {
+        antares_api::history::default_backfill(value);
+    }
     let subject_from = subject_from(cfg.var("ANTARES_POLICY_SUBJECT_FROM"))?;
     let drivers = build_drivers(
         &cfg.store_name,
@@ -1210,6 +1218,8 @@ pub async fn build_state(
             url: cfg.database_url.clone(),
             require_rls: cfg.require_rls,
             pool: cfg.pg_pool,
+            pool_var: cfg.var("ANTARES_PG_POOL"),
+            async_commit_var: cfg.var("ANTARES_PG_BATCH_ASYNC_COMMIT"),
         },
     )
     .await?;
@@ -1268,7 +1278,8 @@ pub async fn build_state(
     budget.set_on(&mut state);
     state.temporal_name = temporal_name;
     state.delivery = antares_api::DeliveryPolicy::from_env().unwrap_or_default();
-    state.temporal_record = std::env::var("ANTARES_TEMPORAL_RECORD")
+    state.temporal_record = cfg
+        .var("ANTARES_TEMPORAL_RECORD")
         .as_deref()
         .unwrap_or("all")
         .parse()?;
@@ -2670,5 +2681,38 @@ mod pg_pool_tests {
         assert!(parse_pg_write_reserve(Some("-1"), 16).is_err());
         assert!(parse_pg_write_reserve(Some("four"), 16).is_err());
         assert!(!unknown_config_key("ANTARES_PG_WRITE_RESERVE"));
+    }
+}
+
+#[cfg(test)]
+mod host_defaults_tests {
+    use super::*;
+
+    /// A host default fills a key the environment leaves unset and never replaces one it sets;
+    /// the four write keys a host may default are known keys (`build_state` refuses others).
+    #[test]
+    fn host_defaults_fill_only_what_the_environment_leaves_unset() {
+        let mut cfg = config_from_env().expect("config");
+        cfg.defaults = [
+            ("ANTARES_PG_POOL", "40"),
+            ("ANTARES_TEMPORAL_RECORD", "ruled"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+        assert_eq!(cfg.var_over(None, "ANTARES_PG_POOL").as_deref(), Some("40"));
+        assert_eq!(
+            cfg.var_over(Some("8".into()), "ANTARES_PG_POOL").as_deref(),
+            Some("8")
+        );
+        assert_eq!(cfg.var_over(None, "ANTARES_PG_BATCH_ASYNC_COMMIT"), None);
+        for key in [
+            "ANTARES_TEMPORAL_RECORD",
+            "ANTARES_PG_BATCH_ASYNC_COMMIT",
+            "ANTARES_PG_POOL",
+            "ANTARES_HISTORY_BACKFILL",
+        ] {
+            assert!(!unknown_config_key(key), "{key}");
+        }
     }
 }

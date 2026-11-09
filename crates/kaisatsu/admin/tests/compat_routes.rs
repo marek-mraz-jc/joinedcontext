@@ -774,6 +774,7 @@ async fn people_lifecycle_through_the_compat_routes() {
             user_id: id.clone(),
             username: "new.person".into(),
             ip_address: "192.0.2.1".into(),
+            user_agent: String::new(),
             start: 1,
             last_access: 1,
             auth_time: 1,

@@ -129,6 +129,11 @@ pub struct BrandingBlock {
     pub mcp_server: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub samples: BTreeMap<String, Vec<String>>,
+    /// The assistant widget a host installation frames (`jc`, G2): `Some(url)` docks that page,
+    /// `Some("")` shows no launcher, `None` keeps `https://assistant.{domain}/d/data/widget`. Only
+    /// the host sets it: serde skips it, so no catalogue, override or API reads or writes it.
+    #[serde(skip)]
+    pub assistant_widget: Option<String>,
 }
 
 impl Default for BrandingBlock {
@@ -163,6 +168,7 @@ impl Default for BrandingBlock {
             site_issued: None,
             mcp_server: None,
             samples: BTreeMap::new(),
+            assistant_widget: None,
         }
     }
 }

@@ -701,6 +701,7 @@ async fn concurrent_code_redemption_has_exactly_one_winner() {
             sso_session_id: "s".into(),
             redirect_uri: "https://p/cb".into(),
             scope: "openid".into(),
+            mapper_scopes: Vec::new(),
             code_challenge: "c".into(),
             code_challenge_method: "S256".into(),
             nonce: None,

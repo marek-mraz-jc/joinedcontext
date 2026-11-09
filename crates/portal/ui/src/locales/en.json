@@ -145,6 +145,7 @@
     "notOpen": "This form cannot be opened: there is nothing called {name} here, or you may not change it.",
     "notOpenNew": "This page has no create form at this address, or you may not create anything here.",
     "mayNotCreate": "Your role lets you look at these, not create one here. A project steward or an administrator can give you that right.",
+    "projectHidden": "This project is not open to you: it does not exist, or nobody shared it with you. Check the name in the address, or ask whoever manages the project.",
     "required": "This field is required",
     "invalid": "Invalid value",
     "choose": "Choose…",
@@ -6645,6 +6646,7 @@
     "pickedClear": "Edit everything"
   },
   "permissions": {
+    "unchecked": "Your access could not be checked just now. You can still fill in the form: the server checks your rights again when you propose.",
     "checking": "Checking your access…",
     "denied": "Disabled: your role does not permit ''{verb}'' on ''{kind}'' in this project",
     "deniedOrganization": "Only an organization administrator can {action} {kinds}.",
@@ -8217,7 +8219,9 @@
     },
     "nav": {
       "back": "Back to the projects",
-      "notAdmin": "Administration is for organization administrators. Your projects are one step back."
+      "notAdmin": "Administration is for organization administrators. Your projects are one step back.",
+      "notAdminCatalogue": "Administration is for organization administrators. The catalogue is one step back.",
+      "toCatalogue": "Back to the catalogue"
     },
     "group": {
       "access": "People and access",

@@ -98,6 +98,50 @@ async fn apply_import_dir(
         .map_err(|e| err(&e))
 }
 
+/// The account console's client in the Portal's realm (Keycloak's `account-console`): public,
+/// authorization code + PKCE S256, redirects only under kaisatsu's own `/account/` path, CORS
+/// for that origin alone (`+`), and audience `account`, the only audience the account REST
+/// takes. No service account, no direct grants, no realm role in its tokens.
+fn account_console_realm_file(kaisatsu_public: &str) -> (String, serde_json::Value) {
+    let account = format!("{kaisatsu_public}/realms/{}/account", setup::PORTAL_REALM);
+    let client = serde_json::json!({
+        "realm": setup::PORTAL_REALM,
+        "clients": [{
+            "clientId": kaisatsu_server::ACCOUNT_CONSOLE_CLIENT,
+            "name": "Account Console",
+            "enabled": true,
+            "protocol": "openid-connect",
+            "publicClient": true,
+            "standardFlowEnabled": true,
+            "implicitFlowEnabled": false,
+            "directAccessGrantsEnabled": false,
+            "serviceAccountsEnabled": false,
+            "fullScopeAllowed": false,
+            "rootUrl": account,
+            "redirectUris": [format!("{account}/*")],
+            "webOrigins": ["+"],
+            "attributes": {
+                "pkce.code.challenge.method": "S256",
+                "post.logout.redirect.uris": "+"
+            },
+            "defaultClientScopes": ["basic", "email", "profile"],
+            "optionalClientScopes": [],
+            "protocolMappers": [{
+                "name": "audience resolve",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-audience-mapper",
+                "consentRequired": false,
+                "config": {
+                    "included.custom.audience": kaisatsu_server::ACCOUNT_AUDIENCE,
+                    "access.token.claim": "true",
+                    "id.token.claim": "false"
+                }
+            }]
+        }]
+    });
+    ("40-jc-account-console.json".to_owned(), client)
+}
+
 /// Applies the realm the Portal signs in through (first-start setup), when the Portal runs beside
 /// kaisatsu. Apply mode `no-delete`: a restart updates what changed and removes nothing an
 /// operator added. Secrets reach the importer as `$(env:...)` values from memory.
@@ -116,6 +160,17 @@ async fn apply_portal_realm(store: &Arc<dyn Store>, ctx: BuildCtx<'_>) -> Result
         .is_some()
     {
         files.push(setup::gateway_realm_file());
+    }
+    if ctx
+        .setup
+        .value(setup::Secret::AssistantClientSecret)
+        .is_some()
+    {
+        setup::add_assistant_audience(&mut files);
+        files.push(setup::assistant_realm_file());
+    }
+    if let Some(kaisatsu) = ctx.siblings.get(Module::Kaisatsu) {
+        files.push(account_console_realm_file(&kaisatsu.public));
     }
     let options = ApplyOptions {
         env_vars: setup::realm_env(ctx.setup),
@@ -347,6 +402,55 @@ mod tests {
         assert!(link_endpoint_scopes(&hub, &ours, true).is_none());
     }
 
+    /// The realm `apply_portal_realm` writes when the assistant runs: kaisatsu takes it, the
+    /// assistant's client asks scope `embedder` and introspects for the proxy, and portal-api's
+    /// tokens name `jc-assistant`.
+    #[tokio::test]
+    async fn the_assistants_clients_and_the_portals_audience_apply() {
+        let dir = tempfile::tempdir().unwrap();
+        let roles = crate::module::Module::ALL;
+        let setup = setup::Setup::prepare(dir.path(), &roles, &Default::default()).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(
+            Kek::from_raw_bytes("07".repeat(32).as_bytes()).unwrap(),
+        ));
+        let mut files = setup::portal_realm_files("https://portal.city.example/").unwrap();
+        setup::add_assistant_audience(&mut files);
+        files.push(setup::assistant_realm_file());
+        let options = ApplyOptions {
+            env_vars: setup::realm_env(&setup),
+            ..ApplyOptions::default()
+        };
+        apply_realm_files(&store, &files, &options).await.unwrap();
+        let realm = store.get_realm(setup::PORTAL_REALM).await.unwrap().unwrap();
+        let client = |id: &'static str| {
+            let store = store.clone();
+            let realm = realm.id.clone();
+            async move {
+                store
+                    .get_client_by_client_id(&realm, id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+            }
+        };
+        let assistant = client(setup::ASSISTANT_CLIENT).await;
+        assert!(assistant.service_accounts_enabled);
+        assert_eq!(
+            assistant.optional_client_scopes,
+            vec![setup::EMBEDDER_SCOPE.to_owned()]
+        );
+        let audience = |c: &kaisatsu_core::model::ClientRepresentation| -> Vec<String> {
+            c.protocol_mappers
+                .iter()
+                .filter_map(|m| m.config.get("included.custom.audience").cloned())
+                .collect()
+        };
+        assert_eq!(audience(&assistant), vec![setup::PROXY_CLIENT.to_owned()]);
+        assert!(client(setup::PROXY_CLIENT).await.service_accounts_enabled);
+        let portal = client(setup::PORTAL_CLIENT).await;
+        assert!(audience(&portal).contains(&setup::ASSISTANT_CLIENT.to_owned()));
+    }
+
     /// An empty import dir (first start) applies nothing; a realm file in it is applied.
     #[tokio::test]
     async fn an_empty_import_dir_applies_nothing_and_a_realm_file_is_applied() {
@@ -531,6 +635,28 @@ mod tests {
         .execute(&admin)
         .await
         .unwrap();
+    }
+
+    #[test]
+    fn the_account_console_client_is_public_pkce_and_bound_to_kaisatsus_own_path() {
+        let mount = Mount::new("kaisatsu", "https", "jc.example", "/id").unwrap();
+        let (name, file) = account_console_realm_file(&mount.public_base());
+        assert!(name.ends_with(".json"));
+        let client = &file["clients"][0];
+        assert_eq!(client["clientId"], "account-console");
+        assert_eq!(client["publicClient"], true);
+        assert_eq!(client["directAccessGrantsEnabled"], false);
+        assert_eq!(client["serviceAccountsEnabled"], false);
+        assert_eq!(client["attributes"]["pkce.code.challenge.method"], "S256");
+        assert_eq!(
+            client["redirectUris"],
+            serde_json::json!(["https://jc.example/id/realms/jc/account/*"])
+        );
+        assert_eq!(client["webOrigins"], serde_json::json!(["+"]));
+        assert_eq!(
+            client["protocolMappers"][0]["config"]["included.custom.audience"],
+            "account"
+        );
     }
 
     fn uuid_like() -> String {

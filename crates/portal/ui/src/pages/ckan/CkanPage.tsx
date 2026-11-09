@@ -17,6 +17,7 @@ import { CkanAccessPanel } from "./CkanAccessPanel";
 import { PublishDatasetDialog, useCatalogueFacets } from "../catalogue/PublishDataset";
 import { Combobox } from "../../components/pickers/Combobox";
 import { PermissionGuard } from "../../components/ui/PermissionGuard";
+import { ProjectHidden } from "../../components/ProjectHidden";
 import { usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
 import {
@@ -52,6 +53,7 @@ export function ckanStatusKey(project: string) {
 export function CkanPage({ project }: { project: string }): JSX.Element {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const permissions = usePermissions(project);
   const [change, setChange] = useState<Change | null>(null);
 
   // What the last runs did to each dataset: the reconciler says it in the activity feed, one
@@ -104,9 +106,25 @@ export function CkanPage({ project }: { project: string }): JSX.Element {
     },
   });
 
+  // A project out of reach: one refusal, no section that would fail or offer a write (PF-59).
+  if (permissions.denied) {
+    return (
+      <section aria-label={t("ckan.title")} className="space-y-8">
+        <PageHeader title={t("ckan.title")} description={t("ckan.intro")} />
+        <ProjectHidden />
+      </section>
+    );
+  }
+
   return (
     <section aria-label={t("ckan.title")} className="space-y-8">
       <PageHeader title={t("ckan.title")} description={t("ckan.intro")} />
+      {/* Said at the top while the access is checked: the page's writes wait for it. */}
+      {permissions.checking ? (
+        <Alert role="status" tone="info">
+          {t("permissions.checking")}
+        </Alert>
+      ) : null}
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
       {create.error ? (
@@ -234,7 +252,7 @@ function Instances({
   const { t } = useTranslation();
   const permissions = usePermissions(project);
   // A role that may not propose a catalogue reads why, not a form whose submit only refuses (T-4997).
-  const mayPropose = permissions.data === undefined || permissions.can("CkanInstance", "propose");
+  const mayPropose = permissions.can("CkanInstance", "propose");
   const [draft, setDraft] = useState<InstanceDraft>(EMPTY_DRAFT);
   const [shown, setShown] = useState<Partial<Record<Fault, string>>>({});
   // The CKAN organizations the Portal's catalogue lists; a new instance's own may be typed (T-4948).
@@ -303,7 +321,8 @@ function Instances({
         />
       ) : null}
 
-      {!mayPropose ? (
+      {/* Nothing to offer or refuse while the permissions are on their way. */}
+      {permissions.checking ? null : !mayPropose ? (
         <Alert role="status" tone="info">
           {t("form.mayNotCreate")}
         </Alert>

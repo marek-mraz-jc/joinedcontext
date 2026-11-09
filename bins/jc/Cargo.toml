@@ -15,7 +15,7 @@ name = "jc"
 path = "src/main.rs"
 
 [features]
-default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "gateway", "portal", "shako", "model-tools", "jemalloc"]
+default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "gateway", "portal", "shako", "model-tools", "assistant", "jemalloc"]
 shako = [
   "dep:shako-server",
   "dep:shako-core",
@@ -52,11 +52,15 @@ gateway = ["dep:context-gateway", "dep:jc-core", "dep:jc-manifest", "dep:jcctl"]
 portal = ["dep:joinedcontext-portal"]
 # POST /generate for the reconciler: broker schema and @context of a LinkML model.
 model-tools = ["dep:linkml-model", "dep:serde_norway"]
+# The knowledge assistant's page, widget and chat (vendor/joinedcontext-platform/crates/assistant)
+# with its model proxy (agent-proxy) on loopback. ONNX Runtime is loaded from a file at start.
+assistant = ["dep:assistant", "dep:agent-proxy", "dep:jc-core", "dep:ort", "gateway"]
 jemalloc = ["dep:tikv-jemallocator"]
 
 [dependencies]
 jc-router = { path = "../../crates/shared/jc-router" }
 jc-secret = { path = "../../crates/shared/jc-secret" }
+jc-door = { path = "../../crates/shared/jc-door" }
 axum = "0.8"
 clap = { version = "4.6", features = ["derive", "env"] }
 ipnet = { version = "2.12", features = ["serde"] }
@@ -78,7 +82,6 @@ age = { version = "0.12", default-features = false }
 serde_json = { version = "1", features = ["preserve_order"] }
 tower = { version = "0.5", features = ["util"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "json", "migrate"] }
 url = "2"
 futures = { version = "0.3", optional = true }
@@ -113,6 +116,11 @@ jc-manifest = { path = "../../vendor/joinedcontext-platform/crates/jc-manifest",
 jcctl = { path = "../../vendor/joinedcontext-platform/crates/jcctl", optional = true, default-features = false }
 
 joinedcontext-portal = { path = "../../crates/portal", optional = true }
+
+assistant = { path = "../../vendor/joinedcontext-platform/crates/assistant", optional = true }
+agent-proxy = { path = "../../vendor/joinedcontext-platform/crates/agent-proxy", optional = true }
+# The assistant's own pin and features; jc calls `ort::init_from` with the configured library.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "api-24", "load-dynamic"], optional = true }
 
 linkml-model = { path = "../../crates/antares/crates/linkml-model", optional = true }
 serde_norway = { version = "0.9", optional = true }

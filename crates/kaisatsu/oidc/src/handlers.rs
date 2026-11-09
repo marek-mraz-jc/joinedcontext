@@ -345,6 +345,50 @@ pub async fn resolve_scopes_for_client(
     Ok((active_scopes, granted_tokens.join(" ")))
 }
 
+/// The active scopes a code or refresh grant keeps beside its `scope` string: optional scopes
+/// outside the `scope` claim (include.in.token.scope=false, e.g. `gateway-hub`), whose mappers
+/// Keycloak still applies at the token endpoint. Default scopes come back by themselves.
+pub fn mapper_scope_names(
+    client: &ClientRepresentation,
+    active: &[ClientScopeRepresentation],
+) -> Vec<String> {
+    active
+        .iter()
+        .filter(|s| !s.include_in_token_scope() && !client.default_client_scopes.contains(&s.name))
+        .map(|s| s.name.clone())
+        .collect()
+}
+
+/// Re-resolves a stored grant: `scope` as at /authorize (a granted scope the client lost is
+/// refused, as before), plus the mapper scopes still optional on the client. One the client
+/// lost since is dropped, as Keycloak's `TokenManager.getRequestedClientScopes` drops it; the
+/// `scope` claim comes from `scope` alone.
+async fn resolve_stored_scopes(
+    store: &Arc<dyn Store>,
+    realm: &RealmConfig,
+    client: &ClientRepresentation,
+    scope: &str,
+    mapper_scopes: &[String],
+) -> Result<(Vec<ClientScopeRepresentation>, String)> {
+    let (mut active, granted) =
+        resolve_scopes_for_client(store, realm, client, Some(scope)).await?;
+    let linked: Vec<&str> = mapper_scopes
+        .iter()
+        .map(String::as_str)
+        .filter(|n| client.optional_client_scopes.iter().any(|s| s == n))
+        .collect();
+    if !linked.is_empty() {
+        let (extra, _) =
+            resolve_scopes_for_client(store, realm, client, Some(&linked.join(" "))).await?;
+        for sc in extra {
+            if !active.iter().any(|a| a.id == sc.id) {
+                active.push(sc);
+            }
+        }
+    }
+    Ok((active, granted))
+}
+
 /// Pushed Authorization Request (PAR, RFC 9126, W1).
 async fn par_endpoint(
     State(state): State<OidcState>,
@@ -547,6 +591,10 @@ fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
     None
 }
 
+/// Keycloak's maximum authentication age for `UPDATE_PASSWORD` and `CONFIGURE_TOTP` (5 min):
+/// a session signed in longer ago signs in again before the action.
+const KC_ACTION_MAX_AUTH_AGE: i64 = 300;
+
 /// `GET /realms/{realm}/protocol/openid-connect/auth` (W1, W7).
 async fn authorize_get(
     State(state): State<OidcState>,
@@ -594,6 +642,21 @@ async fn authorize_get(
     let prompt = params.get("prompt").cloned();
     let acr_requested = extract_requested_acr(&params);
     let max_age: Option<i64> = params.get("max_age").and_then(|s| s.parse().ok());
+    // Application-initiated action (Keycloak `kc_action`): only the actions the login pages run.
+    let kc_action = match params.get("kc_action").map(String::as_str) {
+        None | Some("") => None,
+        Some(a @ ("UPDATE_PASSWORD" | "CONFIGURE_TOTP")) => Some(a.to_owned()),
+        Some(_) => {
+            return Err(KaisatsuError::invalid_request(
+                "kc_action names no action this server runs",
+            ));
+        }
+    };
+    if kc_action.is_some() && prompt.as_deref() == Some("none") {
+        return Err(KaisatsuError::invalid_request(
+            "kc_action needs an interactive login (prompt=none)",
+        ));
+    }
 
     // Check existing SSO session cookie unless `prompt=login` or `prompt=select_account`
     let existing_sso = if let Some(raw_handle) = read_sso_cookie(&headers, &mount) {
@@ -610,9 +673,11 @@ async fn authorize_get(
         p.split_whitespace()
             .any(|t| matches!(t, "login" | "select_account"))
     }) || max_age.is_some_and(|ma| {
-        existing_sso
-            .as_ref()
-            .is_none_or(|sso| now_unix - sso.auth_time > ma)
+        // OIDC Core 3.1.2.1: `max_age=0` is `prompt=login`.
+        ma <= 0
+            || existing_sso
+                .as_ref()
+                .is_none_or(|sso| now_unix - sso.auth_time > ma)
     });
 
     let needs_step_up = acr_requested.as_deref() == Some("mfa")
@@ -636,7 +701,7 @@ async fn authorize_get(
                 return Ok(redirect_with_params(&redirect_uri, &response_mode, &pairs));
             }
         }
-        let (_, granted_scope) = resolve_scopes_for_client(
+        let (active, granted_scope) = resolve_scopes_for_client(
             &state.store,
             &realm,
             &client,
@@ -653,6 +718,7 @@ async fn authorize_get(
             sso_session_id: sso.id.clone(),
             redirect_uri: redirect_uri.clone(),
             scope: granted_scope,
+            mapper_scopes: mapper_scope_names(&client, &active),
             code_challenge: params.get("code_challenge").cloned().unwrap_or_default(),
             code_challenge_method: params
                 .get("code_challenge_method")
@@ -683,7 +749,7 @@ async fn authorize_get(
     // If an active SSO session already satisfies the request and requires no consent, issue code immediately (W8 SSO)
     if let Some(mut sso) = existing_sso
         .clone()
-        .filter(|_| !force_reauth && !needs_step_up)
+        .filter(|_| !force_reauth && !needs_step_up && kc_action.is_none())
     {
         let has_consent = if client.consent_required || prompt.as_deref() == Some("consent") {
             if prompt.as_deref() == Some("consent") {
@@ -700,7 +766,7 @@ async fn authorize_get(
             true
         };
         if has_consent {
-            let (_, granted_scope) = resolve_scopes_for_client(
+            let (active, granted_scope) = resolve_scopes_for_client(
                 &state.store,
                 &realm,
                 &client,
@@ -717,6 +783,7 @@ async fn authorize_get(
                 sso_session_id: sso.id.clone(),
                 redirect_uri: redirect_uri.clone(),
                 scope: granted_scope,
+                mapper_scopes: mapper_scope_names(&client, &active),
                 code_challenge: params.get("code_challenge").cloned().unwrap_or_default(),
                 code_challenge_method: params
                     .get("code_challenge_method")
@@ -746,7 +813,7 @@ async fn authorize_get(
     }
 
     // Create 30-min `auth_session` and redirect to the login page (W2, W7)
-    let (_, granted_scope) = resolve_scopes_for_client(
+    let (active, granted_scope) = resolve_scopes_for_client(
         &state.store,
         &realm,
         &client,
@@ -757,9 +824,42 @@ async fn authorize_get(
     let handle = random_handle_256();
     let csrf_token = random_handle_256();
 
+    let recent_sso = existing_sso.clone().filter(|sso| {
+        !force_reauth && !needs_step_up && now_unix - sso.auth_time <= KC_ACTION_MAX_AUTH_AGE
+    });
+    let mut login_hint = params.get("login_hint").cloned();
     let (initial_step_json, pre_user_id, pre_amr, pre_acr) = match existing_sso
+        .clone()
         .filter(|_| !force_reauth && needs_step_up)
     {
+        // An application-initiated action within the maximum authentication age goes straight
+        // to the action; an older (or no) session signs in again first (re-authentication).
+        None if kc_action.is_some() => match recent_sso {
+            Some(sso) => {
+                let step = if kc_action.as_deref() == Some("CONFIGURE_TOTP") {
+                    json!({ "step": "EnrolTotp", "user_id": sso.user_id, "first_factor_passed": true })
+                } else {
+                    json!({
+                        "step": "UpdatePassword",
+                        "user_id": sso.user_id,
+                        "first_factor_passed": true,
+                        "second_factor_passed": sso.acr == "mfa",
+                    })
+                };
+                (step.to_string(), Some(sso.user_id), sso.amr, sso.acr)
+            }
+            None => {
+                if login_hint.is_none() {
+                    login_hint = existing_sso.as_ref().map(|s| s.username.clone());
+                }
+                (
+                    json!({ "step": "IdentityFirst" }).to_string(),
+                    None,
+                    Vec::new(),
+                    String::new(),
+                )
+            }
+        },
         Some(sso) => (
             serde_json::to_string(&json!({ "step": "SecondFactorOtp", "user_id": sso.user_id }))
                 .unwrap_or_default(),
@@ -785,6 +885,7 @@ async fn authorize_get(
         response_type: "code".into(),
         response_mode,
         scope: granted_scope,
+        mapper_scopes: mapper_scope_names(&client, &active),
         state: state_param,
         nonce: params.get("nonce").cloned(),
         code_challenge: params.get("code_challenge").cloned().unwrap_or_default(),
@@ -794,7 +895,7 @@ async fn authorize_get(
             .unwrap_or_else(|| "S256".into()),
         acr_requested,
         prompt,
-        login_hint: params.get("login_hint").cloned(),
+        login_hint,
         ui_locales: params
             .get("ui_locales")
             .or_else(|| params.get("kc_locale"))
@@ -806,6 +907,8 @@ async fn authorize_get(
         webauthn_challenge: None,
         pending_email_code_hash: None,
         broker_state_json: None,
+        kc_action,
+        kc_action_done: false,
         user_id: pre_user_id,
         amr: pre_amr,
         acr_achieved: pre_acr,
@@ -1363,6 +1466,7 @@ async fn mint_tokens_for_principal(
                         user_id: user.id.clone(),
                         client_id: client.client_id.clone(),
                         scope: granted_scope_str.to_owned(),
+                        mapper_scopes: mapper_scope_names(client, active_scopes),
                         acr: acr.to_owned(),
                         amr: amr.to_vec(),
                         auth_time: auth_time.unwrap_or(now),
@@ -1750,8 +1854,14 @@ async fn handle_authorization_code_grant(
         .filter(|u| u.enabled)
         .ok_or_else(|| KaisatsuError::invalid_grant("User disabled or not found"))?;
 
-    let (active_scopes, granted_scope_str) =
-        resolve_scopes_for_client(&state.store, realm, client, Some(&code_rec.scope)).await?;
+    let (active_scopes, granted_scope_str) = resolve_stored_scopes(
+        &state.store,
+        realm,
+        client,
+        &code_rec.scope,
+        &code_rec.mapper_scopes,
+    )
+    .await?;
 
     state
         .store
@@ -1892,8 +2002,14 @@ async fn handle_refresh_token_grant(
         .filter(|u| u.enabled)
         .ok_or_else(|| KaisatsuError::invalid_grant("User disabled or not found"))?;
 
-    let (active_scopes, granted_scope_str) =
-        resolve_scopes_for_client(&state.store, realm, client, Some(&family.scope)).await?;
+    let (active_scopes, granted_scope_str) = resolve_stored_scopes(
+        &state.store,
+        realm,
+        client,
+        &family.scope,
+        &family.mapper_scopes,
+    )
+    .await?;
 
     let sso_id = family.sso_session_id.clone();
     let acr = family.acr.clone();
@@ -2469,6 +2585,7 @@ async fn handle_password_grant(
         user_id: user.id.clone(),
         username: user.username.clone(),
         ip_address: client_ip.for_audit(),
+        user_agent: String::new(),
         start: now.timestamp_millis(),
         last_access: now.timestamp_millis(),
         auth_time: now.timestamp(),
@@ -2595,6 +2712,24 @@ async fn introspect_endpoint(
         return Ok(Json(json!({ "active": false })));
     }
 
+    // Keycloak answers `username` on every live access token; callers that admit a service
+    // account by name (agent-proxy, the assistant's Portal check) read it there.
+    if !claims.contains_key("username") {
+        let name = match claims.get("preferred_username").and_then(Value::as_str) {
+            Some(name) => Some(name.to_owned()),
+            None => match claims.get("sub").and_then(Value::as_str) {
+                Some(sub) => state
+                    .store
+                    .get_user_by_id(&realm.id, None, sub)
+                    .await?
+                    .map(|user| user.username),
+                None => None,
+            },
+        };
+        if let Some(name) = name.filter(|name| !name.is_empty()) {
+            claims.insert("username".into(), Value::String(name));
+        }
+    }
     claims.insert("active".into(), Value::Bool(true));
     if let Some(azp) = claims.get("azp").cloned() {
         claims.insert("client_id".into(), azp);

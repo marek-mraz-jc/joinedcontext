@@ -826,28 +826,51 @@ const ORGANIZATION_FORMS: Partial<Record<OrganizationTab, string>> = {
   "service-accounts": "serviceaccounts",
 };
 
-function OrganizationView({ tab, form }: { tab: string; form: FormTarget | null }): React.JSX.Element {
+/**
+ * The shell of an Administration page: on the project the person last worked in, or on the
+ * organization's own namespace for a person who reads no project (PF-61). An outsider then reads
+ * the page's own refusal inside the Portal's frame, and an administrator of an installation with
+ * no project yet opens the page itself; "no project" stays for a list that is pending or failed.
+ */
+function AdminFrame({
+  active,
+  children,
+}: {
+  active?: OrganizationTab;
+  children: (anchor: string) => React.ReactNode;
+}): React.JSX.Element {
   const projects = useProjects();
   const first = usePreferredProject();
-  if (!isOrganizationTab(tab)) {
-    return <NotFound />;
-  }
-  if (!first) {
+  const anchor = first ?? (projects.isSuccess ? ORG_NAMESPACE : undefined);
+  if (!anchor) {
     return <NoProject projects={projects} />;
   }
   return (
-    <Shell project={first} sidebar={(close) => <AdminNav project={first} active={tab} onNavigate={close} />}>
-      <HandOff>
-        <FormRouteHost
-          project={ORG_NAMESPACE}
-          plural={ORGANIZATION_FORMS[tab] ?? tab}
-          base={`/organization/${tab}`}
-          form={form}
-        >
-          <OrganizationPage tab={tab} anchor={first} />
-        </FormRouteHost>
-      </HandOff>
+    <Shell project={anchor} sidebar={(close) => <AdminNav project={anchor} active={active} onNavigate={close} />}>
+      {children(anchor)}
     </Shell>
+  );
+}
+
+function OrganizationView({ tab, form }: { tab: string; form: FormTarget | null }): React.JSX.Element {
+  if (!isOrganizationTab(tab)) {
+    return <NotFound />;
+  }
+  return (
+    <AdminFrame active={tab}>
+      {(anchor) => (
+        <HandOff>
+          <FormRouteHost
+            project={ORG_NAMESPACE}
+            plural={ORGANIZATION_FORMS[tab] ?? tab}
+            base={`/organization/${tab}`}
+            form={form}
+          >
+            <OrganizationPage tab={tab} anchor={anchor} />
+          </FormRouteHost>
+        </HandOff>
+      )}
+    </AdminFrame>
   );
 }
 
@@ -891,44 +914,17 @@ function groupOfRest(rest: string): string | null {
 
 /** A group's page in the Organization's shell (PF-95, T-2685). */
 function OrganizationGroupView({ name }: { name: string }): React.JSX.Element {
-  const projects = useProjects();
-  const first = usePreferredProject();
-  if (!first) {
-    return <NoProject projects={projects} />;
-  }
-  return (
-    <Shell project={first} sidebar={(close) => <AdminNav project={first} active="groups" onNavigate={close} />}>
-      <GroupPage name={name} />
-    </Shell>
-  );
+  return <AdminFrame active="groups">{() => <GroupPage name={name} />}</AdminFrame>;
 }
 
 /** An agent's page in the Organization's shell (AG-128, T-4849): `agents/{project}/{kind}/{name}`. */
 function OrganizationAgentView({ path }: { path: string }): React.JSX.Element {
-  const projects = useProjects();
-  const first = usePreferredProject();
-  if (!first) {
-    return <NoProject projects={projects} />;
-  }
-  return (
-    <Shell project={first} sidebar={(close) => <AdminNav project={first} active="agents" onNavigate={close} />}>
-      <AgentPage path={path} />
-    </Shell>
-  );
+  return <AdminFrame active="agents">{() => <AgentPage path={path} />}</AdminFrame>;
 }
 
 /** A person's page in the Organization's shell (PF-93, T-2684); `new` stays the new-person form. */
 function OrganizationPersonView({ id }: { id: string }): React.JSX.Element {
-  const projects = useProjects();
-  const first = usePreferredProject();
-  if (!first) {
-    return <NoProject projects={projects} />;
-  }
-  return (
-    <Shell project={first} sidebar={(close) => <AdminNav project={first} active="people" onNavigate={close} />}>
-      <PersonPage id={id} anchor={first} />
-    </Shell>
-  );
+  return <AdminFrame active="people">{(anchor) => <PersonPage id={id} anchor={anchor} />}</AdminFrame>;
 }
 
 /** `new` or `{name}/edit` after a tab's address; anything else names no form. */

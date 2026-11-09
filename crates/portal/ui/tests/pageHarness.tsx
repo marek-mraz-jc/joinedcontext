@@ -58,6 +58,8 @@ export interface RouteOptions {
   answer?: (path: string, request: Request) => Response | Promise<Response> | undefined;
   identity?: Record<string, unknown> | null;
   permissions?: Record<string, unknown>;
+  /** What `permissions/me` of one project answers (a 404, a 500, a read that never ends); `undefined` falls back to `permissions`. */
+  permissionsFor?: (project: string) => Response | Promise<Response> | undefined;
   /** The page's own requests never settle, so it stays in its loading state for the assertion. */
   pending?: boolean;
   locale?: (typeof LOCALES)[number];
@@ -122,8 +124,9 @@ export async function renderRoute(options: RouteOptions): Promise<Rendered> {
       return Promise.resolve(jsonResponse(options.brand ?? DEFAULT_BRAND));
     }
     if (path.endsWith("/permissions/me")) {
+      const own = options.permissionsFor?.(decodeURIComponent(path.split("/")[4] ?? ""));
       return Promise.resolve(
-        jsonResponse(options.permissions ?? { project: "helsinki", bootstrap: true, grants: [] }),
+        own ?? jsonResponse(options.permissions ?? { project: "helsinki", bootstrap: true, grants: [] }),
       );
     }
     if (path === "/api/v1/projects") {

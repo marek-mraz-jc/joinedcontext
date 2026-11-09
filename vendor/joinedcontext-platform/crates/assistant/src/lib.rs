@@ -29,6 +29,8 @@ pub mod embed;
 pub mod extract;
 /// A `guide` source: the platform's User Guide, shipped with this crate.
 pub mod guide;
+/// What a host runs beside the chat: settings from one lookup, the probe, the minute's work.
+pub mod host;
 /// When a source is read again: its cron, matched against the minute.
 pub mod schedule;
 /// The chat's settings, checked, and the state built from them; no environment read.
@@ -39,7 +41,7 @@ pub mod upload;
 pub mod worker;
 
 /// The dimension of every embedding: `multilingual-e5-small` (ADR-N-040 §3.1).
-pub const DIMENSIONS: usize = 384;
+pub const DIMENSIONS: usize = jc_embedder::DIMENSIONS;
 
 /// How many candidates each ranking contributes before fusion.
 pub const CANDIDATES: i64 = 50;

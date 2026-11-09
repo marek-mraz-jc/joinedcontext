@@ -588,6 +588,7 @@ async fn userinfo_refusals() {
             user_id: member.clone(),
             username: "demo.orgmember@hel.fi".into(),
             ip_address: "127.0.0.1".into(),
+            user_agent: String::new(),
             start: start.timestamp_millis(),
             last_access: start.timestamp_millis(),
             auth_time: start.timestamp(),

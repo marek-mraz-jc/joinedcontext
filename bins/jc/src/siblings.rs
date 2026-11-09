@@ -85,6 +85,19 @@ impl Siblings {
         );
     }
 
+    /// Points a mounted module's internal address at a loopback listener of its own, keeping its
+    /// public mount (the assistant's administration paths answer only there).
+    pub fn set_internal(&mut self, module: Module, addr: SocketAddr) {
+        if let Some(sibling) = self.modules.get_mut(&module) {
+            sibling.internal = format!("http://{}", reach(addr));
+        }
+    }
+
+    /// Drops a module that did not start, so no sibling setting points at it.
+    pub fn remove(&mut self, module: Module) {
+        self.modules.remove(&module);
+    }
+
     #[must_use]
     pub fn get(&self, module: Module) -> Option<&Sibling> {
         self.modules.get(&module)
@@ -98,7 +111,7 @@ impl Siblings {
 }
 
 /// The origin (`scheme://host:port`) of a URL string without a path.
-fn origin(url: &str) -> String {
+pub(crate) fn origin(url: &str) -> String {
     match url.find("://") {
         Some(i) => {
             let rest = &url[i + 3..];
@@ -121,6 +134,7 @@ fn origin(url: &str) -> String {
 /// | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | antares |
 /// | `JC_PORTAL_GATEWAY_URL`, `JC_PORTAL_GATEWAY_CLIENT_ID` | gateway |
 /// | `JC_PORTAL_MODEL_TOOLS_URL` | model-tools (its loopback listener) |
+/// | `JC_PORTAL_KNOWLEDGE_URL` | assistant (its loopback listener; absent while the module is off) |
 #[must_use]
 pub fn portal_vars(
     siblings: &Siblings,
@@ -279,6 +293,12 @@ pub fn portal_vars(
         group(
             "JC_PORTAL_MODEL_TOOLS_URL",
             vec![("JC_PORTAL_MODEL_TOOLS_URL", Some(tools.internal.clone()))],
+        );
+    }
+    if let Some(assistant) = siblings.get(Module::Assistant) {
+        group(
+            "JC_PORTAL_KNOWLEDGE_URL",
+            vec![("JC_PORTAL_KNOWLEDGE_URL", Some(assistant.internal.clone()))],
         );
     }
     // The Portal's own secret backend (SOPS + age) unless the environment names a backend: the
@@ -442,6 +462,27 @@ mod tests {
             (k == key).then(|| "http://model-tools.example:8080".to_owned())
         });
         assert!(!explicit.contains_key(key));
+    }
+
+    #[test]
+    fn knowledge_row_follows_the_assistant_and_an_explicit_url_wins() {
+        let (mut siblings, setup, _d) = fixture("https");
+        let key = "JC_PORTAL_KNOWLEDGE_URL";
+        siblings.set_internal(Module::Assistant, "0.0.0.0:40124".parse().unwrap());
+        let filled = portal_vars(&siblings, &setup, none);
+        assert_eq!(filled[key], "http://127.0.0.1:40124");
+        assert_eq!(
+            siblings.get(Module::Assistant).unwrap().public,
+            "https://city.example",
+            "the public mount stays"
+        );
+        let explicit = portal_vars(&siblings, &setup, |k| {
+            (k == key).then(|| "http://jc-assistant.example:8080".to_owned())
+        });
+        assert!(!explicit.contains_key(key));
+        // Off: no knowledge address at all.
+        siblings.remove(Module::Assistant);
+        assert!(!portal_vars(&siblings, &setup, none).contains_key(key));
     }
 
     #[test]

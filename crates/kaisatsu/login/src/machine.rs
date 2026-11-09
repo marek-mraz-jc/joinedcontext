@@ -155,6 +155,10 @@ pub struct LoginPolicyContext {
     pub pinned_org: Option<String>,
     /// True when the client requires user consent and no prior consent exists.
     pub consent_required: bool,
+    /// Application-initiated action (`kc_action`) still to run: `UPDATE_PASSWORD` or
+    /// `CONFIGURE_TOTP`. It runs after the required actions, also for a person who already
+    /// passed a second factor (adding another authenticator), and is `None` once done.
+    pub app_action: Option<String>,
 }
 
 impl LoginPolicyContext {
@@ -231,6 +235,23 @@ fn advance_post_factors(
             }
             _ => {}
         }
+    }
+
+    match ctx.app_action.as_deref() {
+        Some("CONFIGURE_TOTP") => {
+            return Ok(LoginState::EnrolTotp {
+                user_id,
+                first_factor_passed,
+            });
+        }
+        Some("UPDATE_PASSWORD") => {
+            return Ok(LoginState::UpdatePassword {
+                user_id,
+                first_factor_passed,
+                second_factor_passed,
+            });
+        }
+        _ => {}
     }
 
     let resolved_org = chosen_org.or_else(|| ctx.pinned_org.clone());
@@ -511,6 +532,7 @@ mod tests {
             org_choices: vec!["helsinki".into(), "zilina".into()],
             pinned_org: None,
             consent_required: true,
+            app_action: None,
         };
 
         // 1. IdentityFirst -> Password -> EnrolTotp (since has_totp_credential == false and second_factor_required == true)
@@ -634,6 +656,66 @@ mod tests {
         );
     }
 
+    /// An application-initiated action runs after the factors and the required actions, also
+    /// when the second factor already passed, and the login ends once the handler clears it.
+    #[test]
+    fn an_application_initiated_action_runs_after_the_factors_and_once() {
+        let ctx = LoginPolicyContext {
+            has_totp_credential: true,
+            pending_actions: vec!["TERMS_AND_CONDITIONS".into()],
+            app_action: Some("CONFIGURE_TOTP".into()),
+            ..Default::default()
+        };
+        let otp = LoginState::SecondFactorOtp {
+            user_id: "u1".into(),
+            first_factor_passed: true,
+        };
+        let terms = transition(otp, LoginInput::VerifyOtpOk, &ctx).unwrap();
+        assert!(matches!(terms, LoginState::TermsAndConditions { .. }));
+        let mut after_terms = ctx.clone();
+        after_terms.pending_actions.clear();
+        let enrol = transition(terms, LoginInput::AcceptTermsOk, &after_terms).unwrap();
+        assert_eq!(
+            enrol,
+            LoginState::EnrolTotp {
+                user_id: "u1".into(),
+                first_factor_passed: true
+            }
+        );
+        let mut done = after_terms.clone();
+        done.app_action = None;
+        let code = transition(enrol, LoginInput::CompleteEnrolTotpOk, &done).unwrap();
+        assert!(matches!(code, LoginState::Code { ref acr, .. } if acr == "mfa"));
+
+        let pw = LoginPolicyContext {
+            app_action: Some("UPDATE_PASSWORD".into()),
+            ..Default::default()
+        };
+        let update = transition(
+            LoginState::Password {
+                user_id: "u2".into(),
+            },
+            LoginInput::VerifyPasswordOk,
+            &pw,
+        )
+        .unwrap();
+        assert!(matches!(update, LoginState::UpdatePassword { .. }));
+        // An unknown action name never stops the login.
+        let other = LoginPolicyContext {
+            app_action: Some("delete_account".into()),
+            ..Default::default()
+        };
+        let code = transition(
+            LoginState::Password {
+                user_id: "u2".into(),
+            },
+            LoginInput::VerifyPasswordOk,
+            &other,
+        )
+        .unwrap();
+        assert!(matches!(code, LoginState::Code { .. }));
+    }
+
     /// Property test (W7): Exhaustively explores every sequence of `LoginInput`s from `IdentityFirst`
     /// up to depth 7 under an MFA-required policy and proves that NO sequence reaches `LoginState::Code`
     /// without passing both a first factor (`VerifyPasswordOk` / `UpstreamAssertionVerified` /
@@ -649,6 +731,7 @@ mod tests {
             org_choices: vec!["helsinki".into(), "zilina".into()],
             pinned_org: None,
             consent_required: true,
+            app_action: None,
         };
 
         let all_inputs = [
