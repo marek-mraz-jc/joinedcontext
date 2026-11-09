@@ -140,9 +140,12 @@ pub(crate) fn apps_vars(cfg: &crate::config::Config) -> BTreeMap<String, String>
         .get(&Module::Portal)
         .into_iter()
         .flatten()
-        .find_map(|entry| crate::app::apps_wildcard(entry.host.as_deref()?.trim()))
+        .find_map(|entry| {
+            let host = entry.host.as_deref()?.trim().to_ascii_lowercase();
+            crate::app::apps_wildcard(&host).map(str::to_owned)
+        })
         .map(|domain| {
-            let url = format!("{}://{}", cfg.scheme, domain.to_ascii_lowercase());
+            let url = format!("{}://{}", cfg.scheme, domain);
             [
                 ("JC_PORTAL_APPS_URL".to_owned(), url),
                 ("JC_PORTAL_SERVE_APP_HOSTS".to_owned(), "true".to_owned()),
