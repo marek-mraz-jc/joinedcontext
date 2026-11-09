@@ -145,6 +145,12 @@ export function markersOf(frames: Frame[], options: Record<string, unknown> | un
         const instant = typeof value === "string" && ISO_INSTANT.test(value) ? Date.parse(value) : NaN;
         properties[label] = Number.isNaN(instant) || settings.unit ? displayValue(settings, value, locale).text : displayValue({ ...settings, unit: "dateTimeAsIso" }, instant, locale).text;
       }
+      // Readings of one vehicle stack under one name: the heading carries the row's time beside it.
+      const time = name && frame.fields.find((field) => field.type === "time");
+      if (name && time && time.values[row] != null) {
+        const label = displayNameOf(name, frame);
+        properties[label] = `${properties[label]} · ${displayValue(settingsFor(fieldConfig, time, frame.refId), time.values[row], locale).text}`;
+      }
       features.push({ type: "Feature", geometry: { type: "Point", coordinates: at }, properties });
     }
   }
@@ -163,7 +169,7 @@ export function MapFrame({ height, children }: { height: number; children: React
   return (
     // The state's badge and title a size up: on a desktop they stand in a whole map's room.
     <div
-      className="h-full rounded-sm border border-dashed border-border bg-surface-subtle sm:[&_[data-empty-state]>p:first-of-type]:text-title sm:[&_[data-empty-state]>span]:size-14 sm:[&_[data-empty-state]>span>svg]:size-7"
+      className="h-full rounded-sm border border-dashed border-border bg-surface-subtle [&_[data-empty-state]>p+p]:text-body [&_[data-empty-state]>p+p]:text-fg sm:[&_[data-empty-state]>p:first-of-type]:text-title [&_[data-empty-state]>span]:size-12 [&_[data-empty-state]>span>svg]:size-6 sm:[&_[data-empty-state]>span]:size-14 sm:[&_[data-empty-state]>span>svg]:size-7"
       style={phone ? undefined : { height }}
     >
       {children}

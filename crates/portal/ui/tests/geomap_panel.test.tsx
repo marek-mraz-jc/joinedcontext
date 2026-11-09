@@ -134,7 +134,7 @@ describe("the helsinki air quality geomap", () => {
     draw(frames);
     calls.clicks.get("markers")!({ features: [{ properties: calls.sources[0].source.data.features[0].properties }], lngLat: [0, 0] });
     const terms = [...calls.popups[0].querySelectorAll("dt")].map((term) => term.textContent);
-    expect(calls.popups[0].querySelector("p")!.textContent).toBe("Volvo (pesuauto)");
+    expect(calls.popups[0].querySelector("p")!.textContent).toMatch(/^Volvo \(pesuauto\) · \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
     expect(terms).not.toContain("name");
     expect(terms).toContain("pm10");
     expect(terms).not.toContain("location");
