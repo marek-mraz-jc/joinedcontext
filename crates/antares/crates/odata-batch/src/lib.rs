@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! OData 4.01 `$batch` (ADR-0024 decision 1 and 5, row `odata-batch`): the request bodies of
 //! a `multipart/mixed` batch (Protocol 4.01 section 11.7.7, [`parse_multipart`]) and a JSON
 //! batch (JSON Format 4.01 section 19, [`parse_json`]) read into one [`Batch`] under the caller's

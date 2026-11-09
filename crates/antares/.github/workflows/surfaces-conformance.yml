@@ -117,8 +117,11 @@ env:
   # conformance main d581c6d since T-4879: tests/ws/test_rfc6455.py (RFC 6455
   # close handshake and protocol-error codes) joins ws-conformance;
   # conformance main 4ab75bd since T-5905: the duration/binary literals move
-  # from REJECTED (501) to MISMATCHED (400) in tests/odata/test_parity.py
-  CONFORMANCE_REF: 4ab75bdae432ebc1ca67ad17d6b9dc8ac2a46d90
+  # from REJECTED (501) to MISMATCHED (400) in tests/odata/test_parity.py;
+  # conformance e75e62c since T-6631 (4ab75bd plus only the parity rows, on
+  # branch agent/worker-t6631/T-6631): id, scope, createdAt and geo.distance
+  # rows into ROWS and RESIDUAL, geometry literals into MISMATCHED
+  CONFORMANCE_REF: e75e62c1435a921ce929ba76edcd316e48d23465
   NIGHTLY: ${{ github.event_name != 'pull_request' && !inputs.fast }}
 
 jobs:

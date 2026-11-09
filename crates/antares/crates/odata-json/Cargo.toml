@@ -4,7 +4,7 @@ description = "OData 4.01 JSON format: entity, collection, reference, service-do
 version.workspace = true
 edition.workspace = true
 publish = false
-license.workspace = true
+license = "MIT"
 rust-version.workspace = true
 
 # ADR-0024 decision 1 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.

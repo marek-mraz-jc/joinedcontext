@@ -13,7 +13,7 @@ pub(crate) fn lane_drops() -> u64 {
 /// request's N writes arrive as N events back to back and leave as ONE
 /// notification per matching subscription. Bounded so a flood cannot hold
 /// the first notification back indefinitely.
-pub(super) const CHANGE_BATCH: usize = 256;
+pub const CHANGE_BATCH: usize = 256;
 
 /// The estimated heap one drain's groups may hold before they leave for their
 /// lanes (T-4562): an eighth of what the lanes hold together.
@@ -45,7 +45,7 @@ pub async fn process_change(
 /// match" — every change of one drain that matches the same subscription
 /// travels in one notification, so a batch of N entities is one POST with N
 /// data entries (and timesSent moves by one), never N POSTs.
-pub(crate) async fn process_changes(st: &AppState, changes: Vec<Change>) {
+pub async fn process_changes(st: &AppState, changes: Vec<Change>) {
     process_queued(
         st,
         changes.into_iter().map(|c| (u64::MAX, c)).collect(),

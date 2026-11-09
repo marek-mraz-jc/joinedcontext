@@ -438,6 +438,9 @@ pub struct PolicyReach {
     /// The narrowing's expanded rules: an Entity none of them holds for is
     /// not admitted (ADR-0023 rule 11).
     pub rules: Option<std::sync::Arc<crate::policy::Filter>>,
+    /// A write's post-image refusal, recorded inside the store closure for
+    /// the handler's 403 (`Condition::post`, `Condition::verdict`).
+    pub refused: std::sync::OnceLock<&'static str>,
 }
 
 /// Whether the narrowing admits the INTERNAL document `doc`; no narrowing
@@ -806,7 +809,7 @@ pub fn apply(doc: &Value, r: &Repr) -> Value {
         {
             continue;
         }
-        let raw: Vec<Value> = v.as_array().cloned().unwrap_or_else(|| vec![v.clone()]);
+        let raw = v.as_array().map_or(std::slice::from_ref(v), Vec::as_slice);
         let kept: Vec<&Value> = raw
             .iter()
             .filter(|inst| match (&r.dataset_id, inst.get("datasetId")) {

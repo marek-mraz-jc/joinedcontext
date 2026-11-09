@@ -1029,8 +1029,11 @@ fn capabilities(
                     Expr::Collection(
                         unserved
                             .iter()
+                            // the residual compares the system stamps (F33); a collection
+                            // (`scope`, a ListProperty) stays listed, served by a lambda only (C11)
                             .filter(|p| {
-                                !matches!(p, Expr::PropertyPath(n) if members.get(n).is_some_and(|m| m.untyped))
+                                !matches!(p, Expr::PropertyPath(n) if members.get(n).is_some_and(|m| m.untyped)
+                                    || n == "createdAt" || n == "modifiedAt")
                             })
                             .cloned()
                             .collect(),

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! OData 4.01 over axum: HTTP to the library types and back (ADR-0024 decision 1, row
 //! `odata-axum`).
 //!
@@ -23,6 +23,7 @@
 //!     csdl_limits: odata_csdl::Limits::strict(),
 //!     max_header_len: 1024,
 //!     metadata_etag: None,
+//!     metadata: Arc::default(),
 //!     custom_options: vec![],
 //! };
 //! // `nest_service`, so both `/odata` and the service root URL `/odata/` reach `GET /`.
@@ -30,6 +31,10 @@
 //! ```
 
 #![forbid(unsafe_code)]
+
+mod table;
+
+pub use table::table_router;
 
 use std::sync::Arc;
 
@@ -56,6 +61,7 @@ use odata_url::{EdmModel, Format, LimitKind, ODataUri, QueryOptions, UrlError, U
 ///     csdl_limits: odata_csdl::Limits::strict(),
 ///     max_header_len: 1024,
 ///     metadata_etag: None,
+///     metadata: Arc::default(),
 ///     custom_options: vec![],
 /// };
 /// assert!(state.service_root.ends_with('/'));
@@ -79,10 +85,59 @@ pub struct ODataState {
     /// The XML metadata document's `ETag` ([`metadata_etag`]), written as
     /// `@odata.metadataEtag` in every JSON answer; `None` writes none.
     pub metadata_etag: Option<String>,
+    /// `$metadata` as written from `model` under `csdl_limits`, once per form: a service that
+    /// keeps one state per model shares it, and every request after the first serves the
+    /// bytes (T-6619 R3-014).
+    pub metadata: Arc<MetadataDocuments>,
     /// The custom query options (URL Conventions 5.2: no `$`, no `@`) the service reads on a
     /// resource path, by their exact name; a request naming any other one, or any one on the
     /// service document, `$metadata`, `$batch` or `$entity`, is 400.
     pub custom_options: Vec<String>,
+}
+
+/// The metadata documents of one model under one set of limits, each written on its first
+/// request and served from memory after: `None` when the model is past the writer's limits.
+#[derive(Debug, Default)]
+pub struct MetadataDocuments {
+    xml: std::sync::OnceLock<Option<Written>>,
+    json: std::sync::OnceLock<Option<Written>>,
+}
+
+/// One written metadata document and its strong `ETag`.
+#[derive(Debug, Clone)]
+pub struct Written {
+    /// The document.
+    pub body: axum::body::Bytes,
+    /// Its strong `ETag`.
+    pub etag: String,
+}
+
+impl MetadataDocuments {
+    /// The CSDL XML document of `model`, written on the first call.
+    pub fn xml(&self, model: &odata_csdl::Model, limits: &odata_csdl::Limits) -> Option<&Written> {
+        self.xml
+            .get_or_init(|| written_by(|out| odata_csdl::write_xml(model, limits, out)))
+            .as_ref()
+    }
+
+    /// The CSDL JSON document of `model`, written on the first call.
+    pub fn json(&self, model: &odata_csdl::Model, limits: &odata_csdl::Limits) -> Option<&Written> {
+        self.json
+            .get_or_init(|| written_by(|out| odata_csdl::write_json(model, limits, out)))
+            .as_ref()
+    }
+}
+
+fn written_by<E>(write: impl FnOnce(&mut Vec<u8>) -> Result<(), E>) -> Option<Written> {
+    #[cfg(test)]
+    tests::WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut out = Vec::new();
+    write(&mut out).ok()?;
+    let etag = etag_of(&out);
+    Some(Written {
+        body: out.into(),
+        etag,
+    })
 }
 
 impl ODataState {
@@ -115,6 +170,7 @@ impl ODataState {
 /// #     csdl_limits: odata_csdl::Limits::strict(),
 /// #     max_header_len: 1024,
 /// #     metadata_etag: None,
+/// #     metadata: Arc::default(),
 /// #     custom_options: vec![],
 /// # };
 /// let app: Router = Router::new().route("/{*rest}", get(handler)).with_state(Arc::new(state));
@@ -345,6 +401,7 @@ pub fn not_implemented(construct: &str) -> ODataErrorResponse {
 /// #     csdl_limits: odata_csdl::Limits::strict(),
 /// #     max_header_len: 1024,
 /// #     metadata_etag: None,
+/// #     metadata: Arc::default(),
 /// #     custom_options: vec![],
 /// # };
 /// let app: axum::Router = axum::Router::new().nest_service("/odata", odata_axum::metadata_router(Arc::new(state)));
@@ -397,13 +454,15 @@ async fn metadata(
     let format = options(&request.uri).and_then(|o| o.format.as_ref());
     let chosen =
         body(format, &headers, state.max_header_len, true).map_err(|e| e.with_version(version))?;
-    let mut out = Vec::new();
-    let content_type = match chosen {
-        Body::Xml => {
-            odata_csdl::write_xml(&state.model, &state.csdl_limits, &mut out)
-                .map_err(|_| unwritable().with_version(version))?;
-            "application/xml"
-        }
+    let unwritable = || unwritable().with_version(version);
+    let (content_type, written) = match chosen {
+        Body::Xml => (
+            "application/xml",
+            state
+                .metadata
+                .xml(&state.model, &state.csdl_limits)
+                .ok_or_else(unwritable)?,
+        ),
         // CSDL JSON is an OData 4.01 format (CSDL JSON 4.01 section 1): a 4.0 client asking
         // for it gets 406, not a document it cannot read.
         Body::Json(_) if version == ODataVersion::V4_0 => {
@@ -414,13 +473,15 @@ async fn metadata(
             )
             .with_version(version));
         }
-        Body::Json(_) => {
-            odata_csdl::write_json(&state.model, &state.csdl_limits, &mut out)
-                .map_err(|_| unwritable().with_version(version))?;
-            "application/json"
-        }
+        Body::Json(_) => (
+            "application/json",
+            state
+                .metadata
+                .json(&state.model, &state.csdl_limits)
+                .ok_or_else(unwritable)?,
+        ),
     };
-    Ok(revalidated(&headers, version, content_type, out))
+    Ok(revalidated(&headers, version, content_type, written))
 }
 
 /// The metadata document with its strong `ETag` and `Cache-Control:
@@ -430,9 +491,9 @@ fn revalidated(
     headers: &HeaderMap,
     version: ODataVersion,
     content_type: &'static str,
-    body: Vec<u8>,
+    written: &Written,
 ) -> Response {
-    let etag = etag_of(&body);
+    let etag = &written.etag;
     // If-None-Match compares weakly (RFC 9110 13.1.2).
     let matched = headers
         .get_all(IF_NONE_MATCH)
@@ -440,7 +501,7 @@ fn revalidated(
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(','))
         .map(str::trim)
-        .any(|tag| tag == "*" || tag.trim_start_matches("W/") == etag);
+        .any(|tag| tag == "*" || tag.trim_start_matches("W/") == etag.as_str());
     let mut response = if matched {
         let mut response = StatusCode::NOT_MODIFIED.into_response();
         response
@@ -448,13 +509,13 @@ fn revalidated(
             .insert("odata-version", HeaderValue::from_static(version.as_str()));
         response
     } else {
-        respond(version, content_type, body)
+        respond(version, content_type, written.body.clone())
     };
     let headers = response.headers_mut();
     // Hex digits between quotes: always a header value.
     headers.insert(
         ETAG,
-        HeaderValue::from_str(&etag).unwrap_or(HeaderValue::from_static("\"\"")),
+        HeaderValue::from_str(etag).unwrap_or(HeaderValue::from_static("\"\"")),
     );
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, no-cache"));
     response
@@ -508,8 +569,12 @@ pub fn json_response(version: ODataVersion, level: MetadataLevel, body: Vec<u8>)
     respond(version, json_type(version, level), body)
 }
 
-fn respond(version: ODataVersion, content_type: &'static str, body: Vec<u8>) -> Response {
-    let mut response = (StatusCode::OK, body).into_response();
+fn respond(
+    version: ODataVersion,
+    content_type: &'static str,
+    body: impl Into<axum::body::Body>,
+) -> Response {
+    let mut response = (StatusCode::OK, body.into()).into_response();
     let headers = response.headers_mut();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
     headers.insert("odata-version", HeaderValue::from_static(version.as_str()));
@@ -713,7 +778,61 @@ fn quality(media: &str) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::quality;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use odata_csdl::{CsdlVersion, Model};
+    use tower::ServiceExt as _;
+
+    use super::{metadata_router, quality, ODataState};
+
+    /// Metadata documents written in this test binary.
+    pub(super) static WRITES: AtomicUsize = AtomicUsize::new(0);
+
+    #[tokio::test]
+    async fn the_metadata_document_is_written_once_per_model() {
+        let state = Arc::new(ODataState {
+            model: Arc::new(Model {
+                version: CsdlVersion::V4_01,
+                references: vec![],
+                schemas: vec![],
+            }),
+            url_model: None,
+            service_root: "https://example.org/odata/".into(),
+            url_limits: odata_url::Limits::strict(),
+            csdl_limits: odata_csdl::Limits::strict(),
+            max_header_len: 1024,
+            metadata_etag: None,
+            metadata: Arc::default(),
+            custom_options: vec![],
+        });
+        let before = WRITES.load(Ordering::Relaxed);
+        let mut tags = Vec::new();
+        for accept in [
+            "application/xml",
+            "application/json",
+            "application/xml",
+            "application/json",
+        ] {
+            let request = Request::get("/$metadata")
+                .header("accept", accept)
+                .header("odata-maxversion", "4.01")
+                .body(Body::empty())
+                .unwrap_or_default();
+            let Ok(response) = metadata_router(state.clone()).oneshot(request).await;
+            assert_eq!(response.status(), StatusCode::OK, "{accept}");
+            tags.push(response.headers().get("etag").cloned());
+        }
+        assert_eq!(
+            WRITES.load(Ordering::Relaxed).saturating_sub(before),
+            2,
+            "one XML and one JSON write for four requests"
+        );
+        assert_eq!(tags.first(), tags.get(2), "the XML tag stays");
+        assert_ne!(tags.first(), tags.get(1), "each form has its own tag");
+    }
 
     #[test]
     fn quality_reads_rfc_9110_values_and_refuses_the_rest() {

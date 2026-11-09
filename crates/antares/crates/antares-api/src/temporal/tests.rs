@@ -1428,3 +1428,45 @@ mod f_ant2_014_scope_window {
         assert_eq!(doc["speed"].as_array().map(Vec::len), Some(1));
     }
 }
+
+#[cfg(test)]
+mod t6612 {
+    use crate::policy::{Filter, Rule, TimeBound, Window, RENDERS};
+    use serde_json::{json, Value};
+
+    /// T-6612, R1-021: a window's bounds are rendered once per read, not once per instance.
+    #[test]
+    fn a_window_is_resolved_once_per_read() {
+        let from = "2026-01-01T00:00:00Z".parse().ok().map(TimeBound::At);
+        let rules = Filter {
+            rules: vec![Rule {
+                types: vec!["Car".to_owned()],
+                every_attribute: true,
+                temporal: vec![Window { from, to: None }],
+                ..Rule::default()
+            }],
+            ..Filter::default()
+        };
+        let instances: Vec<Value> = (0_u32..1_000)
+            .map(|i| {
+                let day = if i.checked_rem(2) == Some(0) {
+                    "2025-12-31"
+                } else {
+                    "2026-01-02"
+                };
+                json!({"type": "Property", "value": i, "observedAt": format!("{day}T00:00:00Z")})
+            })
+            .collect();
+        let doc = json!({"id": "urn:ngsi-ld:Car:a", "type": "Car", "speed": instances});
+        let before = RENDERS.with(std::cell::Cell::get);
+        let out = crate::temporal::filter::rules_per_instance(&doc, &rules);
+        let renders = RENDERS.with(std::cell::Cell::get).saturating_sub(before);
+        let kept = out
+            .as_ref()
+            .and_then(|o| o.get("speed"))
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        assert_eq!(kept, 500, "the instances inside the window stay");
+        assert!(renders <= 1, "{renders} bound renders for 1000 instances");
+    }
+}

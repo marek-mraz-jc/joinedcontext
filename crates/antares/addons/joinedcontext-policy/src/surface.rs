@@ -133,6 +133,13 @@ fn caller_of(caller: &Caller) -> JcCaller {
     })
 }
 
+/// What the view shows, type by type; `None` when it shows every name.
+fn shown(
+    view: &ViewOps,
+) -> Option<std::collections::BTreeMap<String, std::collections::BTreeSet<String>>> {
+    (!view.shows_every_name()).then(|| view.shown_by_type())
+}
+
 /// Whether the view serves the operation-matrix row `row`.
 fn serves(view: &ViewOps) -> impl Fn(&str) -> bool + '_ {
     move |row| OperationId::from_id(row).is_some_and(|op| view.allows(op))
@@ -154,7 +161,8 @@ fn document(
         table.as_deref().map(|t| t.through(Some(id))),
         &who,
         chrono::Utc::now(),
-    );
+    )
+    .through(shown(&view));
     let served = serves(&view);
     let accept = headers.get(ACCEPT).and_then(|v| v.to_str().ok());
     match representation(accept) {
@@ -273,7 +281,8 @@ fn decide(
         table.as_deref().map(|t| t.through(Some(id))),
         &who,
         chrono::Utc::now(),
-    );
+    )
+    .through(shown(&view));
     let answered = answer(&grants, &query, &serves(&view));
     match answered {
         Ok(answer) => typed(&answer.to_string(), "application/json"),

@@ -67,7 +67,8 @@ Gates: ekiben workspace `cargo test -p ekiben-server -p ekiben-core -p ekiben-bl
 ## Stage 3: Antares (done)
 
 - Imported with `git subtree add --squash --prefix crates/antares /workspace/Antares-NGSI-LD-Context-Broker b683bfc3`
-  (origin/dev sha, not the old working tree). Own workspace and lockfile, excluded from the root workspace like
+  (origin/dev sha, not the old working tree); re-vendored with `git subtree pull --squash` at origin/dev `a8ff4dcc`
+  (2026-11-09, jc-memory-cut: T-6677's one Router per surface, migration 0032). Own workspace and lockfile, excluded from the root workspace like
   ekiben. Root `Cargo.toml` copies Antares' `[patch.crates-io] rumqttc` (a patch only works from the root).
 - `antares-broker`: `src/main.rs` -> `src/lib.rs`; new `src/main.rs` (allocator + `main_entry()`). `run()` split into
   `config_from_env() -> BrokerConfig`, `build_state(&cfg, metrics_render) -> Broker`, `spawn_background(&mut Broker)`

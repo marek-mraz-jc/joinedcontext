@@ -94,12 +94,10 @@ pub(crate) async fn serve(
     } else {
         format!("{path}?{}", encode(&inverted.pairs))
     };
-    let mut inner = OpsRequest::new(parts.method, target)
+    let inner = OpsRequest::new(parts.method, target)
         .body(body)
-        .context(mapping.inner_context().clone());
-    for (name, value) in &parts.headers {
-        inner = inner.header(name.clone(), value.clone());
-    }
+        .context(mapping.inner_context().clone())
+        .headers(parts.headers);
     let history = mapping::HISTORY.contains(&op);
     answer(view, mapping, op, caller, inner, |json| match attribute {
         Some(slot) => mapping.rebuild_attribute(slot, json),
@@ -148,10 +146,9 @@ async fn discover(
     } else {
         format!("{path}?{}", encode(pairs))
     };
-    let mut inner = OpsRequest::new(parts.method, target).context(mapping.inner_context().clone());
-    for (name, value) in &parts.headers {
-        inner = inner.header(name.clone(), value.clone());
-    }
+    let inner = OpsRequest::new(parts.method, target)
+        .context(mapping.inner_context().clone())
+        .headers(parts.headers);
     answer(view, mapping, op, caller, inner, |json| {
         mapping.rebuild_discovery(json, slot);
         true

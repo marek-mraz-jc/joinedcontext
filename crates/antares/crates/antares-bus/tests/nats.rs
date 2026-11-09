@@ -393,3 +393,71 @@ async fn core_request_reaches_the_replier_and_is_none_without_one() {
     let _aborted = task.await;
     assert_eq!(asker.request(subject, b"late".to_vec(), within).await, None);
 }
+
+/// A page written whole before its acks are awaited (T-6608) reaches the
+/// stream complete and in page order, so the matcher still sees an entity's
+/// changes in the order the outbox holds them. The run prints the drain's
+/// before/after cost: one awaited ack per event against one per page.
+#[tokio::test(flavor = "multi_thread")]
+async fn publish_all_keeps_page_order_and_acks_every_event() {
+    let url = require_nats!();
+    let bus = NatsBus::connect(&url).await.expect("connect");
+    let n = nonce();
+    let tenant = TenantId::new(&format!("pa{n}")).expect("tenant");
+    let c = bus
+        .consume_balanced(&format!("pa-{n}"))
+        .await
+        .expect("consumer");
+
+    const PAGES: i64 = 10;
+    const PAGE: i64 = 64;
+    let page = |p: i64| -> Vec<ChangeEvent> {
+        (0..PAGE)
+            .map(|i| {
+                let seq = p * PAGE + i + 1;
+                event(&tenant, &format!("urn:pa:{n}:{}", seq % 3), seq)
+            })
+            .collect()
+    };
+    let started = std::time::Instant::now();
+    for p in 0..PAGES {
+        let events = page(p);
+        let (published, failed) = bus.publish_all(&events).await;
+        assert!(failed.is_none(), "page {p} failed: {failed:?}");
+        assert_eq!(published, events.len(), "every event of page {p} acked");
+    }
+    let paged = started.elapsed();
+
+    // the same number of events one awaited ack at a time, as the drain did
+    let one_by_one = TenantId::new(&format!("pb{n}")).expect("tenant");
+    let started = std::time::Instant::now();
+    for seq in 1..=PAGES * PAGE {
+        bus.publish(&event(&one_by_one, &format!("urn:pb:{n}:{seq}"), seq))
+            .await
+            .expect("publish");
+    }
+    let serial = started.elapsed();
+    eprintln!(
+        "{} events: publish_all in pages of {PAGE} {paged:?}, one awaited ack each {serial:?}",
+        PAGES * PAGE
+    );
+
+    let mut seqs = Vec::new();
+    let mut s = c.messages().await.expect("stream");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while seqs.len() < (PAGES * PAGE) as usize && tokio::time::Instant::now() < deadline {
+        tokio::select! {
+            Some(Ok(m)) = s.next() => {
+                if let Some(got) = antares_bus::nats::decode(&m) {
+                    if got.tenant.as_str() == tenant.as_str() {
+                        seqs.push(got.seq);
+                    }
+                }
+                m.ack().await.expect("ack");
+            }
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+        }
+    }
+    let want: Vec<i64> = (1..=PAGES * PAGE).collect();
+    assert_eq!(seqs, want, "every event once, in outbox order");
+}

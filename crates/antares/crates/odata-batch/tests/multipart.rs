@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! `multipart/mixed` batches: the Protocol 4.01 section 11.7.7 examples, and every framing a
 //! second parser could read differently refused (threat model O10).
 

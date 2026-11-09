@@ -161,14 +161,22 @@ pub(crate) fn rules_per_instance(doc: &Value, rules: &crate::policy::Filter) -> 
         .filter(|r| !per_instance(r))
         .flat_map(|r| r.attributes.iter().map(String::as_str))
         .collect();
-    let conditional: Vec<(&crate::policy::Rule, Vec<String>)> = typed
+    let now = chrono::Utc::now();
+    // each rule's windows resolved once, not per instance (T-6612, R1-021)
+    let conditional: Vec<(
+        &crate::policy::Rule,
+        Vec<String>,
+        Vec<crate::policy::Resolved>,
+    )> = typed
         .iter()
         .filter(|r| per_instance(r) && r.scope_q.is_none())
-        .map(|r| (*r, r.reads(ctx)))
+        .map(|r| {
+            let windows = r.temporal.iter().map(|w| w.resolve(now)).collect();
+            (*r, r.reads(ctx), windows)
+        })
         .collect();
     // an unconditioned rule over every Attribute keeps every instance
     let every = typed.iter().any(|r| !per_instance(r) && r.every_attribute);
-    let now = chrono::Utc::now();
     let Some(obj) = doc.as_object() else {
         return Some(doc.clone());
     };
@@ -185,9 +193,9 @@ pub(crate) fn rules_per_instance(doc: &Value, rules: &crate::policy::Filter) -> 
             out.insert(k.clone(), v.clone());
             continue;
         }
-        let deciding: Vec<&(&crate::policy::Rule, Vec<String>)> = conditional
+        let deciding: Vec<_> = conditional
             .iter()
-            .filter(|(r, _)| r.every_attribute || r.attributes.iter().any(|a| a == k))
+            .filter(|(r, _, _)| r.every_attribute || r.attributes.iter().any(|a| a == k))
             .collect();
         let Some(instances) = v.as_array().filter(|_| !deciding.is_empty()) else {
             continue;
@@ -197,21 +205,21 @@ pub(crate) fn rules_per_instance(doc: &Value, rules: &crate::policy::Filter) -> 
         // up under one. A rule without a condition reads no state: `typed`
         // already selected the Entity by its types and ids, which is all
         // `holds` reads of it, so only its windows decide (T-4246).
-        let reads_state = deciding.iter().any(|(r, _)| r.is_conditional());
+        let reads_state = deciding.iter().any(|(r, _, _)| r.is_conditional());
         let kept: Vec<Value> = instances
             .iter()
             .filter(|inst| {
                 instant(inst).is_some_and(|t| {
                     let state = reads_state.then(|| state_at(doc, t));
                     let observed = inst.get("observedAt").and_then(Value::as_str);
-                    deciding.iter().any(|(r, reads)| {
+                    deciding.iter().any(|(r, reads, windows)| {
                         (!r.is_conditional()
                             || state.as_ref().is_some_and(|state| {
                                 reads.iter().all(|a| state.get(a).is_some()) && r.holds(state, ctx)
                             }))
-                            && r.temporal
+                            && windows
                                 .iter()
-                                .all(|w| observed.is_some_and(|o| w.admits(o, now)))
+                                .all(|w| observed.is_some_and(|o| w.admits(o)))
                     })
                 })
             })

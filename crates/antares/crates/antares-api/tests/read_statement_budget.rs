@@ -88,13 +88,13 @@ impl PolicyEngine for View {
 
     fn decide<'a>(&'a self, _s: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
         let answer = if antares_api::policy::FILTERABLE.contains(&op.clause) {
-            Decision::Filter(Filter {
+            Decision::Filter(std::sync::Arc::new(Filter {
                 rules: vec![Rule {
                     types: vec![format!("{DEFAULT}Car")],
                     ..Rule::default()
                 }],
                 ..Filter::default()
-            })
+            }))
         } else {
             Decision::Allow
         };

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! What a parse answers when it does not answer an [`ODataUri`](crate::ODataUri).
 
 use std::fmt;
@@ -166,7 +166,7 @@ pub enum Feature {
     PathInExpression,
     /// `has` (F13).
     Has,
-    /// `totalseconds`, `geo.distance`, `geo.length`, `hassubset`, `hassubsequence`, `case`
+    /// `totalseconds`, `geo.length`, `hassubset`, `hassubsequence`, `case`
     /// (F18, F19, F30).
     Method,
     /// `cast`, `isof` (F19).

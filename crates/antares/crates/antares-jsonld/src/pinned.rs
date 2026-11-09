@@ -94,9 +94,26 @@ pub fn core_context_url(version: &str) -> Option<&'static str> {
 /// anything a request can cause —
 /// `every_pinned_context_parses_and_carries_an_at_context` fails on it.
 pub(crate) fn pinned(url: &str) -> Option<Value> {
-    let (_, body) = PINNED.iter().find(|(u, _)| *u == url)?;
-    let doc: Value = serde_json::from_str(body).ok()?;
-    doc.get("@context").cloned()
+    // parsed once per process: a resolve that rebuilt its context parsed
+    // the ~30 KB core document on every call (T-6605)
+    static PARSED: std::sync::LazyLock<Vec<(&str, Option<Value>)>> =
+        std::sync::LazyLock::new(|| {
+            PINNED
+                .iter()
+                .map(|(u, body)| {
+                    let doc = serde_json::from_str::<Value>(body).ok();
+                    (*u, doc.and_then(|d| d.get("@context").cloned()))
+                })
+                .collect()
+        });
+    PARSED.iter().find(|(u, _)| *u == url)?.1.clone()
+}
+
+/// Is `url` one of the compiled-in documents? A name lookup, no parse. Only the
+/// `fetch` loader asks it.
+#[cfg(any(test, feature = "fetch"))]
+pub(crate) fn is_pinned(url: &str) -> bool {
+    PINNED.iter().any(|(u, _)| *u == url)
 }
 
 /// Merge a pre-parsed Core @context value (4.4: merged last, so it wins).
@@ -370,7 +387,9 @@ mod tests {
                 pinned(url).is_some(),
                 "pinned document {url} does not parse, or carries no @context"
             );
+            assert!(is_pinned(url), "the name lookup agrees with the table");
         }
+        assert!(!is_pinned("https://ctx.example/not-pinned.jsonld"));
         let core = pinned(CORE_CONTEXT).expect("the Core @context is pinned");
         assert!(
             matches!(core, Value::Object(_) | Value::Array(_) | Value::String(_)),

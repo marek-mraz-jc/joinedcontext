@@ -22,13 +22,46 @@ use antares_sql::store::pg;
 macro_rules! require_db {
     () => {
         match std::env::var("ANTARES_TEST_DATABASE_URL") {
-            Ok(url) => url,
+            Ok(url) => own_database(&url).await,
             Err(_) => {
                 eprintln!("SKIP: ANTARES_TEST_DATABASE_URL not set");
                 return;
             }
         }
     };
+}
+
+/// The database this binary plans in, beside the one ANTARES_TEST_DATABASE_URL
+/// names (T-6610). Every plan here follows the statistics of `entities`, and
+/// in a CI cell the other binaries nextest deals there write the same table:
+/// their rows moved the type page's estimate (972 of 2000 B Entities, fast
+/// 42513954812) and the plans of `every_query_shape` once the type page was
+/// skipped. One database per migration set, shared by every process of this
+/// binary, so the rows here are only the ones its own seeds write; a changed
+/// migration gets a new one rather than a checksum refusal.
+async fn own_database(shared: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for m in pg::MIGRATOR.iter() {
+        m.checksum.hash(&mut h);
+    }
+    let name = format!("antares_pg_explain_{:016x}", h.finish());
+    let admin = sqlx::PgPool::connect(shared).await.expect("connect");
+    // Processes of this binary race to create it: the loser's duplicate is
+    // the database the winner made.
+    if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+        .execute(&admin)
+        .await
+    {
+        let code = e.as_database_error().and_then(|d| d.code());
+        assert!(
+            matches!(code.as_deref(), Some("42P04" | "23505")),
+            "own database {name}: {e}"
+        );
+    }
+    admin.close().await;
+    let (base, _) = shared.rsplit_once('/').expect("a database URL");
+    format!("{base}/{name}")
 }
 
 /// The plan the broker's role gets: `antares_app` (created and granted as
@@ -411,6 +444,10 @@ async fn every_query_shape_reads_an_index_under_rls() {
         ("q at most probe", probe("attr = 'https://x/speed' AND (f <= 1 OR f = 'NaN')"), "i_entity_values_num"),
         ("q string probe", probe("attr = 'https://x/brand' AND (txt = 'b7' OR f = 'NaN')"), "i_entity_values_txt"),
         ("attrs probe", probe("attr = ANY(ARRAY['https://x/rare'])"), "i_entity_values_num"),
+        // T-6610: a scopeQ's probe of the scope rows (0032, `scope_probe`);
+        // this seed holds few, so the planner may read them all by
+        // (tenant, attr) instead of the txt range: either is no Tenant walk
+        ("scopeQ probe", probe("attr = 'scope' AND (txt = '/A' OR (txt >= '/A/' AND txt < '/A0') OR f = 'NaN')"), "i_entity_values_txt|i_entity_values_num"),
         (
             "geo near",
             format!(
@@ -1155,10 +1192,18 @@ async fn a_type_page_reads_its_type_through_an_index_under_rls() {
     // while VACUUM runs (a parallel test's transaction) keeps the new rows
     // from being all-visible, and the count then plans bitmap heap scans
     // (strict run 39362539144): vacuum again until the map covers the table.
+    // VACUUM waits for a seed's ANALYZE, which holds its lock until the seed
+    // commits: the pool's 30 s statement_timeout cut it (57014, fast
+    // 42532943337), so it runs on a connection of its own without one.
+    let mut vacuum = pool.acquire().await.expect("vacuum connection");
+    sqlx::query("SET statement_timeout = 0")
+        .execute(&mut *vacuum)
+        .await
+        .expect("no statement timeout for VACUUM");
     let mut visible = (0, 0);
     for _ in 0..60 {
         sqlx::query("VACUUM ANALYZE entities")
-            .execute(&pool)
+            .execute(&mut *vacuum)
             .await
             .expect("vacuum");
         visible = sqlx::query_as::<_, (i32, i32)>(
@@ -1172,6 +1217,8 @@ async fn a_type_page_reads_its_type_through_an_index_under_rls() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
+    // Back to the pool it would carry no statement timeout: close it.
+    let _ = sqlx::Connection::close(vacuum.detach()).await;
 
     // The plan follows the estimate: guessed as independent, the Tenant and
     // its first type gave 18-204 of the 2000 B rows on a shared table, and

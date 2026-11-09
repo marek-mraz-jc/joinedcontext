@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! Threat O7 (URL parser exhaustion): every limit of `Limits` is refused before the parser reads,
 //! and so before it copies or allocates for, anything past the bound. The proof is black-box:
 //! whatever follows the point where a limit is exceeded never changes the answer, so those bytes

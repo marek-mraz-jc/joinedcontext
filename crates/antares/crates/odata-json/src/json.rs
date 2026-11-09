@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! A request body to a `serde_json::Value` under [`BodyLimits`]: the bounds are counted while the
 //! body is read, so an object with a million members stops at the first one over the bound, and
 //! a member named twice is refused instead of the last one winning.

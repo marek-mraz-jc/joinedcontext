@@ -55,6 +55,7 @@ async fn batch_query_inner(
         geo: named.geo.as_ref(),
     )
     .await?;
+    crate::policy::Metadata::refuse_body(&filter, &vp, &parsed.ctx)?;
     refuse_too_wide(&vp)?;
     // ADR-0020: the engine's narrowing joins the Query's own filters here,
     // after the "too wide" judgement — which is about what the client asked

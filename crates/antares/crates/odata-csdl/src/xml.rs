@@ -1,12 +1,12 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! CSDL XML (OData CSDL XML Representation 4.01).
 
 use std::io::Write;
 
 use crate::error::CsdlError;
 use crate::model::{
-    line_ends, Annotation, EntityContainer, EntityType, Expr, Model, NavigationProperty, Property,
-    Scale, Schema, Srid, Term, TypeRef,
+    line_ends, Annotation, EntityContainer, EntityType, Expr, Model, NavigationProperty, Operation,
+    OperationKind, Property, Scale, Schema, Srid, Term, TypeRef,
 };
 use crate::validate::{validate, Limits};
 
@@ -50,7 +50,7 @@ pub fn write_xml<W: Write>(model: &Model, limits: &Limits, out: W) -> Result<(),
     }
     xml.open("edmx:DataServices", &[])?;
     for schema in &model.schemas {
-        xml.schema(schema)?;
+        xml.schema(model, schema)?;
     }
     xml.close("edmx:DataServices")?;
     xml.close("edmx:Edmx")?;
@@ -117,7 +117,7 @@ impl<W: Write> Xml<W> {
         }
     }
 
-    fn schema(&mut self, schema: &Schema) -> std::io::Result<()> {
+    fn schema(&mut self, model: &Model, schema: &Schema) -> std::io::Result<()> {
         let mut attrs = vec![("xmlns", EDM), ("Namespace", schema.namespace.as_str())];
         if let Some(alias) = &schema.alias {
             attrs.push(("Alias", alias));
@@ -126,6 +126,7 @@ impl<W: Write> Xml<W> {
             schema.entity_types.is_empty(),
             schema.complex_types.is_empty(),
             schema.terms.is_empty(),
+            schema.operations.is_empty(),
             schema.entity_container.is_none(),
             schema.annotations.is_empty(),
         ]
@@ -152,8 +153,11 @@ impl<W: Write> Xml<W> {
         for term in &schema.terms {
             self.term(term)?;
         }
+        for operation in &schema.operations {
+            self.operation(operation)?;
+        }
         if let Some(container) = &schema.entity_container {
-            self.container(container)?;
+            self.container(container, &kinds(model, container))?;
         }
         self.annotations(&schema.annotations)?;
         self.close("Schema")
@@ -247,10 +251,40 @@ impl<W: Write> Xml<W> {
         self.annotated("Term", &attrs, &term.annotations)
     }
 
-    fn container(&mut self, container: &EntityContainer) -> std::io::Result<()> {
+    fn operation(&mut self, operation: &Operation) -> std::io::Result<()> {
+        let tag = operation.kind.as_str();
+        let has_children = !operation.parameters.is_empty()
+            || operation.return_type.is_some()
+            || !operation.annotations.is_empty();
+        self.element(tag, &[("Name", operation.name.as_str())], has_children)?;
+        if !has_children {
+            return Ok(());
+        }
+        for parameter in &operation.parameters {
+            let ty = type_name(&parameter.ty);
+            let mut attrs = vec![("Name", parameter.name.as_str()), ("Type", ty.as_str())];
+            attrs.extend(nullable(&parameter.ty, parameter.nullable));
+            self.empty("Parameter", &attrs)?;
+        }
+        if let Some(returned) = &operation.return_type {
+            let ty = type_name(returned);
+            let mut attrs = vec![("Type", ty.as_str())];
+            attrs.extend(nullable(returned, operation.return_nullable));
+            self.empty("ReturnType", &attrs)?;
+        }
+        self.annotations(&operation.annotations)?;
+        self.close(tag)
+    }
+
+    fn container(
+        &mut self,
+        container: &EntityContainer,
+        kinds: &[OperationKind],
+    ) -> std::io::Result<()> {
         let attrs = [("Name", container.name.as_str())];
         let has_children = [
             container.entity_sets.is_empty(),
+            container.imports.is_empty(),
             container.annotations.is_empty(),
         ]
         .contains(&false);
@@ -274,6 +308,25 @@ impl<W: Write> Xml<W> {
                 }
                 self.annotations(&set.annotations)?;
                 self.close("EntitySet")?;
+            }
+        }
+        for (import, kind) in container.imports.iter().zip(kinds) {
+            let (tag, member) = match kind {
+                OperationKind::Action => ("ActionImport", "Action"),
+                OperationKind::Function => ("FunctionImport", "Function"),
+            };
+            let mut attrs = vec![
+                ("Name", import.name.as_str()),
+                (member, import.operation.as_str()),
+            ];
+            if *kind == OperationKind::Function && import.in_service_document {
+                attrs.push(("IncludeInServiceDocument", "true"));
+            }
+            let has_children = !import.annotations.is_empty();
+            self.element(tag, &attrs, has_children)?;
+            if has_children {
+                self.annotations(&import.annotations)?;
+                self.close(tag)?;
             }
         }
         self.annotations(&container.annotations)?;
@@ -392,6 +445,20 @@ fn structured_attrs<'a>(
 
 /// `Nullable` as CSDL XML 7.2.1 reads it: absent is `true` for a single value, so only `false`
 /// is written there; for a collection absence means "unknown" in 4.01, so both are written.
+/// The kind of each import's operation, looked up in the model (validation made sure each
+/// resolves).
+fn kinds(model: &Model, container: &EntityContainer) -> Vec<OperationKind> {
+    container
+        .imports
+        .iter()
+        .map(|import| {
+            model
+                .operation(&import.operation)
+                .map_or(OperationKind::Function, |operation| operation.kind)
+        })
+        .collect()
+}
+
 fn nullable(ty: &TypeRef, nullable: bool) -> Option<(&'static str, &'static str)> {
     match (ty.collection, nullable) {
         (_, false) => Some(("Nullable", "false")),

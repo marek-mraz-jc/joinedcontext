@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The response writers: both formats, every refusal that keeps a response from changing the
 //! framing, and a sink that fails at every byte.
 

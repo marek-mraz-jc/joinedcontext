@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! Writes the `$metadata` of one NGSI-LD view (the test fixture) as `metadata.xml` and
 //! `metadata.json` into the directory given as the only argument. `dev/odata-csdl-conformance.py`
 //! validates both against the pinned OASIS schemas (ADR-0024 decision 6).

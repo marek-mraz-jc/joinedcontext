@@ -34,7 +34,7 @@ impl PolicyEngine for RedOnly {
     }
     fn decide<'a>(&'a self, _s: &'a Subject, _op: &'a Operation<'a>) -> DecisionFuture<'a> {
         let d = match q_filter("colour==\"red\"") {
-            Ok(f) => Decision::Filter(f),
+            Ok(f) => Decision::Filter(std::sync::Arc::new(f)),
             Err(e) => Decision::Deny(e),
         };
         Box::pin(std::future::ready(d))

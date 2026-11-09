@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The body reader against the City model: every mapped write form, and every refusal by the
 //! error it answers (ADR-0024 decision 5, mapping rows W1, W2, W4, W6, W10, W11, W16, W20).
 

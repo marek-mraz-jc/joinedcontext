@@ -127,10 +127,10 @@ references), T-3737 (one `Content-Length` on `HEAD`), T-3738 (`$entity`
 |---|---:|---:|---:|---:|
 | Minimal | 232 | 41 | 20 | 85.0 % |
 | Intermediate | 268 | 68 | 14 | 79.8 % |
-| Advanced | 323 | 206 | 38 | 61.1 % |
-| **All** (suite summary) | 823 | 315 | 72 | 72.3 % |
+| Advanced | 324 | 205 | 38 | 61.2 % |
+| **All** (suite summary) | 824 | 314 | 72 | 72.4 % |
 
-Measured by surfaces-conformance 41546302927 on `c364c02` (train 20261102-2330), written by tasks/train.
+Measured by surfaces-conformance 42544740278 on `45dcb77` (train 20261109-0108), written by tasks/train.
 
 `$metadata` declares `Capabilities.ConformanceLevel` `Minimal` (row C19). The table above is
 the measured level: the claim is not proven while Minimal stays under 100 %, and each failing

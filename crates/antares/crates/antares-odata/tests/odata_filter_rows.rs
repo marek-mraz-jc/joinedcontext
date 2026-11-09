@@ -211,6 +211,61 @@ async fn the_mapped_rows_select_what_their_ngsi_ld_query_selects() {
     }
 }
 
+/// T-6631: the base members through the residual, a distance as `near` in metres.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_base_members_and_a_distance_select_as_their_ngsi_ld_query() {
+    let (_b, app) = broker().await.expect("broker");
+    for (row, filter, want) in [
+        (
+            "F16",
+            "matchesPattern(id,'1%24')".to_owned(),
+            vec!["urn:ngsi-ld:Car:1"],
+        ),
+        (
+            "F17",
+            "length(id)%20eq%2017".to_owned(),
+            vec!["urn:ngsi-ld:Car:1", "urn:ngsi-ld:Car:2"],
+        ),
+        // no Car has a scope: the empty collection, `all` true and `any` false
+        (
+            "F23",
+            "scope/all(s:s%20eq%20'%2Fx')".to_owned(),
+            vec!["urn:ngsi-ld:Car:1", "urn:ngsi-ld:Car:2"],
+        ),
+        ("F22", "scope/any(s:s%20eq%20'%2Fx')".to_owned(), vec![]),
+        (
+            "F33",
+            "createdAt%20gt%202000-01-01T00:00:00Z".to_owned(),
+            vec!["urn:ngsi-ld:Car:1", "urn:ngsi-ld:Car:2"],
+        ),
+        (
+            "F33",
+            "modifiedAt%20lt%202000-01-01T00:00:00Z".to_owned(),
+            vec![],
+        ),
+        (
+            "F30",
+            "geo.distance(location,geography'SRID=4326;Point(0.5%200.6)')%20lt%2020000".to_owned(),
+            vec!["urn:ngsi-ld:Car:1"],
+        ),
+        (
+            "F30",
+            "20000%20le%20geo.distance(geography'SRID=4326;Point(0.5%200.6)',location)".to_owned(),
+            vec!["urn:ngsi-ld:Car:2"],
+        ),
+    ] {
+        let (status, answer) = send(
+            &app,
+            Method::GET,
+            &format!("{ROOT}/Car?$filter={filter}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{row} {filter}: {answer}");
+        assert_eq!(ids(&answer), want, "{row} {filter}: {answer}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_vocab_value_matches_as_the_read_shows_it() {
     let (_b, app) = broker().await.expect("broker");
@@ -373,6 +428,25 @@ async fn a_callers_geoq_moves_the_geo_filter_to_the_residual() {
         .filter_map(|e| e["id"].as_str())
         .collect();
     assert_eq!(ids, ["urn:ngsi-ld:Car:1"], "{answer}");
+    // a distance has no evaluator: beside the caller's geoQ it is refused, not dropped (F30)
+    let (status, answer) = send(
+        &app,
+        Method::GET,
+        &format!("{ROOT}/Car?$filter=geo.distance(location,geography'SRID=4326;Point(0%200)')%20lt%201&{near}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{answer}");
+    // a planar literal meets no GeoProperty (F27)
+    let flat = "geometry'SRID=0;Polygon((0%200,1%200,1%201,0%201,0%200))'";
+    let (status, answer) = send(
+        &app,
+        Method::GET,
+        &format!("{ROOT}/Car?$filter=geo.intersects(location,{flat})"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
     let outside = "geography'SRID=4326;Polygon((0%200,500%200,500%201,0%201,0%200))'";
     let (status, answer) = send(
         &app,
