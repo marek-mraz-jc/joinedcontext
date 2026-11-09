@@ -119,6 +119,12 @@ export function CkanPage({ project }: { project: string }): JSX.Element {
   return (
     <section aria-label={t("ckan.title")} className="space-y-8">
       <PageHeader title={t("ckan.title")} description={t("ckan.intro")} />
+      {/* Said at the top while the access is checked: the page's writes wait for it. */}
+      {permissions.checking ? (
+        <Alert role="status" tone="info">
+          {t("permissions.checking")}
+        </Alert>
+      ) : null}
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
       {create.error ? (

@@ -96,6 +96,15 @@ describe("the create form of a project out of reach", () => {
     expect(screen.getByText(en.permissions.unchecked)).toBeInTheDocument();
   });
 
+  it("refuses a role that proposes nothing here with a way back to the list", async () => {
+    await newEndpoint("helsinki", () =>
+      jsonResponse({ project: "helsinki", bootstrap: false, grants: [{ role: "viewer", binding: "v", rule: { kinds: ["*"], verbs: ["read"] } }] }),
+    );
+    const refusal = (await screen.findByText(en.form.mayNotCreate)).closest("[role=status]")?.parentElement as HTMLElement;
+    expect(within(refusal).getAllByRole("button", { name: en.form.backToList }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: PROPOSE })).toBeNull();
+  });
+
   it("offers the bootstrap administrator the whole form, with no refusal", async () => {
     await newEndpoint("helsinki", () => jsonResponse(BOOTSTRAP));
     const propose = await screen.findByRole("button", { name: PROPOSE });
@@ -103,6 +112,24 @@ describe("the create form of a project out of reach", () => {
     expect(propose).not.toHaveAccessibleDescription(/Endpoint/);
     expect(screen.queryByText(en.form.mayNotCreate)).toBeNull();
     expect(screen.queryByText(en.permissions.unchecked)).toBeNull();
+  });
+});
+
+describe("a list the person may not read", () => {
+  it("is a calm refusal in their words, with nothing to quote or report", async () => {
+    await renderRoute({
+      path: "/projects/zilina/endpoints",
+      projects: () => jsonResponse(list([])),
+      permissionsFor: () => notFound("zilina"),
+      answer: (path) =>
+        path.startsWith("/api/v1/projects/zilina/")
+          ? problem(404, `plural '${path.split("/")[5]}' not found in project 'zilina'`)
+          : undefined,
+    });
+    const refusal = (await screen.findByText(en.app.listHidden.replace("{project}", "zilina"))).closest("[role=status]");
+    expect(refusal).not.toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(en.app.error.reference)).toBeNull();
   });
 });
 
@@ -123,9 +150,11 @@ describe("the catalogue form of the CKAN page", () => {
     expect(screen.queryByRole("button", { name: en.ckan.instances.propose })).toBeNull();
   });
 
-  it("is neither offered nor refused while the permissions are on their way", async () => {
+  it("is neither offered nor refused while the permissions are on their way, and says so", async () => {
     await ckan(() => new Promise<Response>(() => {}));
     await screen.findByRole("heading", { level: 1 });
+    // Said at the top in its own status line, not only as a disabled control's hidden reason.
+    expect(screen.getAllByRole("status").some((el) => el.textContent?.includes(en.permissions.checking))).toBe(true);
     expect(screen.queryByRole("button", { name: en.ckan.instances.propose })).toBeNull();
     expect(screen.queryByText(en.form.mayNotCreate)).toBeNull();
   });

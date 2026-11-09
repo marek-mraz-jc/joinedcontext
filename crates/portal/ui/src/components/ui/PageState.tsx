@@ -166,6 +166,15 @@ export function PageFailed({
     window.addEventListener("online", retry);
     return () => window.removeEventListener("online", retry);
   }, [kind, retry]);
+  // A list the person may not read is a refusal, not a failure: said calmly, with nothing to
+  // quote or report, as every other project out of reach is (PF-50, PF-59).
+  if (error instanceof ApiError && error.hidden) {
+    return (
+      <Alert tone="info" role="status">
+        {reason}
+      </Alert>
+    );
+  }
   return (
     <Alert
       tone="danger"

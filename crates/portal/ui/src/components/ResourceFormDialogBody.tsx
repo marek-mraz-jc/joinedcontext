@@ -379,9 +379,14 @@ export function ResourceFormDialogBody<T>({
         {denied ? (
           <ProjectHidden />
         ) : (
-          <Alert role="status" tone="info">
-            {t("form.mayNotCreate")}
-          </Alert>
+          <div className="flex flex-col gap-3">
+            <Alert role="status" tone="info">
+              {t("form.mayNotCreate")}
+            </Alert>
+            <div>
+              <Button onClick={() => handleOpenChange(false)}>{t("form.backToList")}</Button>
+            </div>
+          </div>
         )}
       </FormFrame>
     );
