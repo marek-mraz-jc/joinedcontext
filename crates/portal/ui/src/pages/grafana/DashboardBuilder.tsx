@@ -842,12 +842,14 @@ export function PanelEditor({ project, board, panel, start, onChange, onPlace, o
   const [asking, setAsking] = useState(false);
   const id = `builder-panel-${panel.id}`;
   const aggregated = (panel.aggregation ?? "none") !== "none";
+  const kindRefused = useContext(Invalid)[`${id}-kind`];
   return (
     <Card as="section" aria-labelledby={`${id}-heading`} className="flex flex-col gap-4">
       <CardHeader as="h2" titleId={`${id}-heading`} title={t("builder.panelTitle", { title: panel.title.trim() || t("builder.untitledPanel") })} />
       <RadioGroup<PanelKind>
         name={`${id}-kind`}
         id={`${id}-kind`}
+        errors={kindRefused ? [kindRefused] : undefined}
         legend={t("builder.field.kind")}
         layout="row"
         value={panel.kind}

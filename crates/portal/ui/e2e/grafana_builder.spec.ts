@@ -146,6 +146,8 @@ interface World {
   save: "ok" | "slow" | "conflict" | "refused";
   /** The lines a refused save answers, when not the default ones. */
   refusal?: string[];
+  /** The saved board, when not BOARD. */
+  board?: typeof BOARD;
   preview: "ok" | "fail";
   sent: { method: string; path: string; body: unknown }[];
 }
@@ -256,7 +258,7 @@ async function stubApi(page: Page, w: World): Promise<void> {
     if (path === `${BUILDER}/values`) return json({ values: ["closed", "full", "open"] });
     if (path === `${BUILDER}/${UID}` && request.method() === "GET") {
       if (!w.mayEdit) return problem(403, "you may not propose a Dashboard in helsinki");
-      return json({ uid: UID, base: "blob-7", board: BOARD, pending });
+      return json({ uid: UID, base: "blob-7", board: w.board ?? BOARD, pending });
     }
     if ((path === BUILDER && request.method() === "POST") || (path === `${BUILDER}/${UID}` && request.method() === "PUT")) {
       if (w.save === "slow") return new Promise<void>(() => undefined);
@@ -370,18 +372,19 @@ for (const width of [1440, 400]) {
     const REFUSALS = {
       bargauge: { id: 5, title: "Free bikes per station", line: "panels[4].max: the maximum must be above the minimum 50", field: "#builder-panel-5-max", words: "Panel “Free bikes per station”, Maximum:" },
       piechart: { id: 6, title: "Where the free bikes are", line: "panels[5].kind: a pie chart cannot draw availableBikeNumber; choose another kind", field: "#builder-panel-6-kind", words: "Panel “Where the free bikes are”, Panel type:" },
-      barchart: { id: 7, title: "Free docks by station", line: "panels[6].barchart.xField: status is not a text attribute of BikeHireDockingStation; name the bars by one such as name", field: "#builder-panel-7-xField", words: "Panel “Free docks by station”, Bars named by:" },
+      barchart: { id: 7, title: "Free docks by station", line: "panels[6].barchart.xField: stationCode is not a text attribute of BikeHireDockingStation; name the bars by one such as name", field: "#builder-panel-7-xField", words: "Panel “Free docks by station”, Bars named by:" },
       text: { id: 8, title: "About these stations", line: "panels[7].text.content: this reads like a credential; write something else", field: "#builder-panel-8-content", words: "Panel “About these stations”, Text:" },
     } as const;
     for (const [kind, refused] of Object.entries(REFUSALS)) {
       test(`a refused ${kind} names its own field`, async ({ page }) => {
-        await stubApi(page, world({ save: "refused", refusal: [refused.line] }));
+        // The saved bar chart names its bars by stationCode, which the model has since lost.
+        const board = kind === "barchart" ? { ...BOARD, panels: BOARD.panels.map((p) => (p.kind === "barchart" ? { ...p, barchart: { xField: "stationCode" } } : p)) } : BOARD;
+        await stubApi(page, world({ save: "refused", refusal: [refused.line], board }));
         await page.goto(`/projects/helsinki/grafana/dashboards/${UID}/edit`);
         await page.getByRole("button", { name: new RegExp(`^${refused.title}`) }).click();
         const form = panelForm(page);
         if (kind === "bargauge") await form.locator("#builder-panel-5-min").fill("50");
-        if (kind === "barchart") await form.locator("#builder-panel-7-xField").selectOption("status");
-        if (kind === "text") await form.locator("#builder-panel-8-content").fill("Readings from the counter API; the token we were given is pasted below.");
+        if (kind === "text") await form.locator("#builder-panel-8-content").fill(`Readings from the counter API: https://counters.example/v1/readings?token=${"q7Zr".repeat(6)}`);
         await save(page).click();
         await expect(page.getByText("The dashboard was not proposed")).toBeVisible();
         await page.getByRole("button", { name: refused.words }).click();

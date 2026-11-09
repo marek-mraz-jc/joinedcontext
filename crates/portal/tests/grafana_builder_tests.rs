@@ -639,6 +639,12 @@ async fn each_shape_rule_is_refused_by_its_field_before_anything_is_written() {
     let mut silent = board();
     silent["panels"][7]["text"]["content"] = json!("  ");
     cases.push((silent, "panels[7].text.content"));
+    let mut keyed = board();
+    keyed["panels"][7]["text"]["content"] = json!(format!(
+        "Readings from https://counters.example/v1/readings?token={}",
+        "q7Zr".repeat(6)
+    ));
+    cases.push((keyed, "panels[7].text.content"));
     // A kind's own choices take only their own members and words.
     for (at, block) in [
         ("bargauge", json!({ "displayMode": "lcd", "fill": 1 })),
