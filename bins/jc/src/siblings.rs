@@ -357,6 +357,15 @@ mod tests {
         assert_eq!(siblings.listener, "[::1]:1".parse().unwrap());
     }
 
+    #[test]
+    fn the_portal_signs_in_at_the_configured_realm() {
+        let (siblings, mut setup, _d) = fixture("https");
+        let issuer = |setup: &Setup| portal_vars(&siblings, setup, none)["JC_OIDC_ISSUER"].clone();
+        assert_eq!(issuer(&setup), "https://city.example/id/realms/jc");
+        setup.realm = setup::Realm::parse("dev").unwrap();
+        assert_eq!(issuer(&setup), "https://city.example/id/realms/dev");
+    }
+
     /// Asserts the keys of one row come from the sibling and an explicit URL keeps the whole row
     /// (credentials included) out of the fill.
     fn row(url_key: &str, keys: &[&str], scheme: &str) -> BTreeMap<String, String> {

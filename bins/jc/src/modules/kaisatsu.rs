@@ -90,9 +90,23 @@ async fn apply_import_dir(
     let files = load_realm_files_from_path(dir).map_err(|e| err(&e))?;
     let mut by_realm: std::collections::BTreeMap<String, Vec<(String, serde_json::Value)>> =
         std::collections::BTreeMap::new();
+    let mut unnamed = Vec::new();
     for (name, file) in files {
-        let of = file["realm"].as_str().unwrap_or_default().to_owned();
-        by_realm.entry(of).or_default().push((name, file));
+        match file["realm"].as_str() {
+            Some(of) => by_realm.entry(of.to_owned()).or_default().push((name, file)),
+            None => unnamed.push((name, file)),
+        }
+    }
+    // A file naming no realm belongs to the one the others name, as when they were all merged.
+    if !unnamed.is_empty() {
+        if by_realm.len() > 1 {
+            return Err(err(&format!(
+                "{} names no realm while the import dir holds several",
+                unnamed[0].0
+            )));
+        }
+        let key = by_realm.keys().next().cloned().unwrap_or_default();
+        by_realm.entry(key).or_default().extend(unnamed);
     }
     let options = ApplyOptions {
         secrets_dir,
@@ -496,15 +510,64 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let kek = Kek::from_raw_bytes(&[7u8; 32]).unwrap();
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek));
-        apply_import_dir(&store, dir.path(), None).await.unwrap();
+        let dev = setup::Realm::parse("dev").unwrap();
+        assert!(!apply_import_dir(&store, dir.path(), None, &dev).await.unwrap());
         assert!(store.list_realms().await.unwrap().is_empty());
         std::fs::write(
             dir.path().join("realm.json"),
             r#"{"realm": "rehearsal", "enabled": true}"#,
         )
         .unwrap();
-        apply_import_dir(&store, dir.path(), None).await.unwrap();
+        assert!(!apply_import_dir(&store, dir.path(), None, &dev).await.unwrap());
         assert!(store.get_realm("rehearsal").await.unwrap().is_some());
+    }
+
+    /// Each realm of the import dir is applied on its own, and only the configured realm's
+    /// `portal-api` says the deployment brings that realm.
+    #[tokio::test]
+    async fn every_realm_of_the_import_dir_is_applied_on_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let store: Arc<dyn Store> =
+            Arc::new(MemoryStore::new(Kek::from_raw_bytes(&[7u8; 32]).unwrap()));
+        let client = |realm: &str, id: &str| {
+            serde_json::json!({
+                "realm": realm,
+                "enabled": true,
+                "clients": [{ "clientId": id, "enabled": true, "protocol": "openid-connect" }]
+            })
+        };
+        for (file, value) in [
+            ("00-dev.json", client("dev", "portal-api")),
+            ("10-dev-more.json", client("dev", "extra")),
+            ("20-jc.json", client("jc", "portal-api")),
+        ] {
+            std::fs::write(dir.path().join(file), value.to_string()).unwrap();
+        }
+        let dev = setup::Realm::parse("dev").unwrap();
+        let other = setup::Realm::parse("smartcity").unwrap();
+        assert!(apply_import_dir(&store, dir.path(), None, &dev).await.unwrap());
+        assert!(!apply_import_dir(&store, dir.path(), None, &other).await.unwrap());
+        for (realm, id) in [("dev", "portal-api"), ("dev", "extra"), ("jc", "portal-api")] {
+            assert!(
+                store
+                    .get_client_by_client_id(realm, id)
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "{realm}/{id}"
+            );
+        }
+        assert!(
+            store
+                .get_client_by_client_id("jc", "extra")
+                .await
+                .unwrap()
+                .is_none(),
+            "one realm's files never merge into another's"
+        );
+        // A file naming no realm is ambiguous among several.
+        std::fs::write(dir.path().join("30-none.json"), r#"{"enabled": true}"#).unwrap();
+        assert!(apply_import_dir(&store, dir.path(), None, &dev).await.is_err());
     }
 
     #[tokio::test]
@@ -756,8 +819,12 @@ mod tests {
                     .optional_client_scopes
             }
         };
-        assert_eq!(linked("dev").await, vec!["endpoint:aaaa".to_owned()]);
-        assert!(linked("jc").await.is_empty(), "the other realm is left alone");
+        let scope = "endpoint:aaaa".to_owned();
+        assert!(linked("dev").await.contains(&scope));
+        assert!(
+            !linked("jc").await.contains(&scope),
+            "the other realm is left alone"
+        );
     }
 
     #[test]
