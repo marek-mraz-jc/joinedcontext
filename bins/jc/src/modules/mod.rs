@@ -36,6 +36,8 @@ pub mod model_tools;
 pub mod portal;
 #[cfg(feature = "shako")]
 pub mod shako;
+#[cfg(feature = "viz")]
+pub mod viz;
 
 /// The gateway's identity at the broker, what Linkerd names it on dev: the only caller whose
 /// subject and provenance headers Antares believes inside `jc`.
@@ -88,7 +90,7 @@ pub async fn build(
         Module::Dataroom => {
             let widget =
                 dataroom::assistant_widget(ctx.siblings, &cfg.assistant.catalogue_deployment);
-            dataroom::build(&cfg.dataroom, ctx.setup, mount, widget).await
+            dataroom::build(&cfg.dataroom, ctx.setup, ctx.siblings, mount, widget).await
         }
         #[cfg(feature = "daiya")]
         Module::Daiya => daiya::build(&cfg.daiya, ctx.setup, ctx.siblings.listener, mount)
@@ -122,6 +124,11 @@ pub async fn build(
             let state = shako::build_state(&cfg.shako, ctx.setup, ctx.secrets).await?;
             Ok(shako::build(state, mount).0)
         }
+        #[cfg(feature = "viz")]
+        Module::Viz => Ok(viz::build(
+            &crate::siblings::live_addresses(&cfg.dataroom.addresses, ctx.siblings),
+            &mount,
+        )),
         #[allow(unreachable_patterns)]
         other => Err(StartError::module(
             other,

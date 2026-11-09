@@ -108,6 +108,7 @@ fn probe(module: Module) -> (&'static str, &'static str) {
         Module::ModelTools => ("/healthz", "\"status\":\"ok\""),
         // Off in these tests (no embedding model, no model key): the loops check its 404.
         Module::Assistant => ("/d/data/widget", "jc-assistant"),
+        Module::Viz => ("/healthz", "ok"),
     }
 }
 

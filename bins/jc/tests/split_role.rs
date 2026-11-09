@@ -142,7 +142,8 @@ async fn call(base: &str, module: Module, auth: Option<&str>) -> StatusCode {
         | Module::Portal
         | Module::Gateway
         | Module::ModelTools
-        | Module::Assistant => unreachable!(),
+        | Module::Assistant
+        | Module::Viz => unreachable!(),
     };
     let req = match auth {
         Some(value) => req.header("authorization", value),

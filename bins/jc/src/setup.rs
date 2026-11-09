@@ -138,7 +138,8 @@ impl Secret {
             | Module::Portal
             | Module::Gateway
             | Module::ModelTools
-            | Module::Assistant => None,
+            | Module::Assistant
+            | Module::Viz => None,
         }
     }
 
