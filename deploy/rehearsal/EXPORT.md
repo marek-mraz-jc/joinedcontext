@@ -28,6 +28,16 @@ grafana/dashboards/<file>.json      a dashboard model, or <project>.folder.json,
                                     <project>.dashboard.json (an /api/dashboards/db body) as the deployment provisions them
 ```
 
+## Next time: the broker's admin move
+
+Antares has an admin pair made for this (ADR-0030): `GET /q/tenants/{tenant}/export` streams a
+Tenant's Entities and history as stored, system attributes kept, and `POST
+/q/tenants/{tenant}/import` loads that stream into an empty Tenant, all or nothing; `GET
+/q/tenants/{tenant}/digest` on both sides proves the copy. An export made that way, its
+`temporal` lines cut to the last 24 hours, imports through the admin token with no policy
+bypass. The bundles of 2026-11-08 hold API-normalized entities, which that import does not take,
+so they go through `import.sh` (REHEARSAL.md).
+
 ## Making it
 
 - Realm: `kc.sh export --realm <name> --users skip` (or the admin API's partial export without users),

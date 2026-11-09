@@ -2880,3 +2880,20 @@ async fn a_profile_write_after_a_password_reset_keeps_the_new_password() {
         );
     }
 }
+
+/// The Portal asks the gateway's `access/simulate` (api/access_simulate.rs) with its own
+/// client-credentials token, and the gateway takes that route only for audience
+/// `context-gateway-simulate` from `portal-api` (context-gateway auth/subject.rs
+/// SIMULATE_AUDIENCE, PORTAL_CLIENT). Without the mapper every simulate answered 401 and the
+/// readable catalogue lost every organization Endpoint.
+#[tokio::test]
+async fn the_portals_service_token_reaches_access_simulate() {
+    let realm = realm().await;
+    let claims = payload(&portal_api(&realm.app).await);
+    assert_eq!(claims["azp"], json!("portal-api"), "{claims}");
+    let aud = match &claims["aud"] {
+        Value::Array(list) => list.clone(),
+        one => vec![one.clone()],
+    };
+    assert!(aud.contains(&json!("context-gateway-simulate")), "{claims}");
+}
