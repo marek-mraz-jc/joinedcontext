@@ -3,8 +3,6 @@
 # matches any more is listed under "known and now passing", so the line can go.
 # Each reason names where the gap is filed. Keep the list short: a new failure is a red gate.
 
-^endpoints/anon\.ogc\.collections$  # jc runs no Model Tools: no /q/schemas, no OGC (jc-smoke-endpoints gap 1)
-^endpoints/anon\.odata\.metadata$  # jc runs no Model Tools: no /q/schemas, no OData (jc-smoke-endpoints gap 1)
 ^endpoints/dataset$  # the Portal publishes no catalogue into dataroom in jc (jc-smoke-endpoints gap 2)
 ^endpoints/anon\.temporal\.last-\d+h$  # the synthetic bundle's DataService rows carry no history in the window (bundle, jc-smoke-gate)
 ^endpoints/listing$  # 5 catalog Endpoints of the bundle are not listed by the hub (jc-smoke-endpoints)
