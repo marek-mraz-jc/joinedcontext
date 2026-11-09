@@ -159,4 +159,3 @@ mod tests {
         );
     }
 }
-// ci timing probe (jc-ci-fast), reverted in the next commit
