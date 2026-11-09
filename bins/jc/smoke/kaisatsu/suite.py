@@ -56,6 +56,8 @@ from fetch_prod_identity import (
 FIXTURES = HERE / "fixtures"
 ADMIN_CLIENT = "portal-reconciler"
 EXCHANGE_CLIENT = "portal-api"
+GATEWAY_CLIENT = "context-gateway"
+BROKER_SCOPE = "context-broker-main"  # prod realm smartcity's broker scope
 PKCE_CLIENT = "mcp-local"
 LOOPBACK_CALLBACK = "http://localhost/callback"
 HUB_AUDIENCE = "mcp-hub"
@@ -524,6 +526,34 @@ class Live:
                  bool(tok) and HUB_AUDIENCE in aud and claims.get("azp") == EXCHANGE_CLIENT
                  and f"endpoint:{own}" in str(claims.get("scope", "")).split())
         read = "/api/endpoint/{}/ngsi-ld/v1/types"
+        # The exchange prod's realm enables (context-gateway: standard.token.exchange.enabled): a
+        # federated read's broker token (federation/exchange.rs). admit_on takes that audience only
+        # inside a federated read, so on a plain Endpoint it is a foreign audience.
+        gst, gbody, _ = self.form(f"{self.kc}/token", {
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange", "client_id": GATEWAY_CLIENT,
+            "client_secret": self.secret("gateway-client-secret"), "subject_token": subject,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "requested_token_type": "urn:ietf:params:oauth:token-type:access_token", "scope": BROKER_SCOPE})
+        gtok = (gbody or {}).get("access_token") if gst == 200 else None
+        gc = jwt_claims(gtok)
+        # Keycloak 26's standard exchange (and kaisatsu's) refuses a subject token whose aud lacks
+        # the requester (knowledge/deployment.md, T-5954): the person's mcp-local token decides.
+        saud = jwt_claims(subject).get("aud")
+        named = GATEWAY_CLIENT in (saud if isinstance(saud, list) else [saud])
+        got = (f"{gst} {(gbody or {}).get('error', '')} {(gbody or {}).get('error_description', '')}".strip()
+               + (f", azp {gc.get('azp')}, sub {'the person' if gc.get('sub') == self.uid else gc.get('sub')}" if gtok else ""))
+        if named:
+            self.row("exchange.gateway.issued", GATEWAY_CLIENT, f"token exchange by {GATEWAY_CLIENT}, scope {BROKER_SCOPE}",
+                     f"200, azp {GATEWAY_CLIENT}, the person's sub", got,
+                     bool(gtok) and gc.get("azp") == GATEWAY_CLIENT and gc.get("sub") == self.uid)
+        else:
+            self.row("refuse.exchange-not-in-audience", GATEWAY_CLIENT,
+                     f"token exchange by {GATEWAY_CLIENT} of a token whose aud {saud} lacks it",
+                     "400 (the requester is not in the subject token's audience)", got, gst == 400 and not gtok)
+        if gtok:
+            gs, _, _ = self.http.call("GET", read.format(own), token=gtok)
+            self.row("refuse.broker-audience", own, f"GET {read.format(own)} with the broker token, outside a federated read",
+                     "401 (a foreign audience here)", str(gs), gs == 401)
         st0, _, _ = self.http.call("GET", read.format(other))
         self.row("exchange.control-anonymous", other, f"GET {read.format(other)} without a token",
                  "200 (a public Endpoint)", str(st0), st0 == 200)
@@ -557,7 +587,7 @@ class Live:
             return
         st, _, raw = b.call("GET", "/api/v1/auth/me")
         me = as_json(raw) or {}
-        ident = me.get("identity") or {}
+        ident = me.get("identity") or me  # Me flattens the identity (auth/oidc.rs me)
         self.row("portal.signin", "portal", "/api/v1/auth/login -> login -> callback, GET /api/v1/auth/me",
                  "200, the person", f"{st}, {'the person' if ident.get('subject') == self.uid else ident.get('subject')}",
                  st == 200 and ident.get("subject") == self.uid)
@@ -664,11 +694,14 @@ def run(a, res: Results) -> dict:
         for id, want, got, ok, why in compare_gateway(prod["gatewayMetadata"], gw):
             res.check(f"gateway.{id}", "gateway", "GET /.well-known/oauth-authorization-server", want, got, ok, why)
 
+    from personas import Browser, _follow
     for pid, (door, client, redirect, scope) in PROBES.items():
         url = (f"/id/realms/{realm}/protocol/openid-connect/auth" if door == "kc" else "/oauth/authorize")
         q = authorize_query(client, redirect or base + "/", scope)
-        st, h, raw = http.call("GET", f"{url}?{q}")
-        got = page_kind(st, h, raw)
+        # A browser follows the realm's own redirects (kaisatsu answers 303 to its login page,
+        # Keycloak the page at once); a redirect to the client's address is the answer itself.
+        at, st, raw = _follow(Browser(base), f"{url}?{q}", stop=(redirect or base + "/") + "?")
+        got = page_kind(st, {"location": at} if st in (301, 302, 303, 307, 308) else {}, raw)
         want = prod["authorize"][pid]
         call = f"GET {url} client_id={client}" + (f" scope={scope}" if scope else "")
         if pid == "cimd-claude":
