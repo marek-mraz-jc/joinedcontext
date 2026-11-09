@@ -31,6 +31,27 @@ use crate::error::{ApiError, ProblemDetails};
 use crate::resource::is_dns1123;
 use crate::state::AppState;
 
+/// Where this process's internal listener took its port, set once it is bound
+/// (`server::spawn_internal_listener`).
+static INTERNAL_LISTENER: std::sync::OnceLock<std::net::SocketAddr> = std::sync::OnceLock::new();
+
+/// Records the internal listener's address, the capture route's fallback.
+pub(crate) fn internal_listener_bound(addr: std::net::SocketAddr) {
+    let _ = INTERNAL_LISTENER.set(addr);
+}
+
+/// The capture route's base: `JC_PORTAL_PIPELINE_TEST_CAPTURE_URL`, else this process's own
+/// internal listener when it is bound on loopback, so a runner beside the Portal in one process
+/// (jc, which binds `127.0.0.1:0`) reaches it with no setting; never a guess at a remote address.
+// ponytail: one Portal per process; a second one would capture on the first's listener.
+fn capture_base(configured: Option<&str>, bound: Option<std::net::SocketAddr>) -> Option<String> {
+    configured.map(str::to_owned).or_else(|| {
+        bound
+            .filter(|addr| addr.ip().is_loopback())
+            .map(|addr| format!("http://{addr}"))
+    })
+}
+
 /// How long the runner has to produce the trace (Architecture/08 §7).
 const DEADLINE: Duration = Duration::from_secs(3);
 /// The age past which the project's test stream is a left-over of a failed delete, not a test.
@@ -480,13 +501,13 @@ pub(crate) async fn run_stream_within(
         .replace("{project}", project)
         .trim_end_matches('/')
         .to_owned();
-    let capture = state
-        .config
-        .pipeline_test_capture_url
-        .as_deref()
-        .ok_or_else(|| {
-            ApiError::Unavailable("no capture route is configured for pipeline tests".into())
-        })?;
+    let capture = capture_base(
+        state.config.pipeline_test_capture_url.as_deref(),
+        INTERNAL_LISTENER.get().copied(),
+    )
+    .ok_or_else(|| {
+        ApiError::Unavailable("no capture route is configured for pipeline tests".into())
+    })?;
 
     let id = share::slug();
     let config = config(&format!("{capture}/internal/pipeline-tests/{id}"))?;
@@ -834,6 +855,24 @@ mod tests {
     use axum::body::Bytes;
     use axum::http::StatusCode;
     use serde_json::json;
+
+    /// jc binds the internal listener on a free loopback port and sets no capture URL: the test
+    /// route captures there; a setting wins, and an address off loopback is never guessed.
+    #[test]
+    fn the_capture_route_is_the_setting_else_the_loopback_internal_listener() {
+        let loopback: std::net::SocketAddr = "127.0.0.1:41234".parse().unwrap();
+        let any: std::net::SocketAddr = "0.0.0.0:9090".parse().unwrap();
+        assert_eq!(
+            capture_base(None, Some(loopback)).as_deref(),
+            Some("http://127.0.0.1:41234")
+        );
+        assert_eq!(
+            capture_base(Some("http://portal:9090"), Some(loopback)).as_deref(),
+            Some("http://portal:9090")
+        );
+        assert_eq!(capture_base(None, Some(any)), None);
+        assert_eq!(capture_base(None, None), None);
+    }
 
     /// UI-07: the request the document publishes is the one the route reads, and it reaches the
     /// harness as jcctl's own `Sample`, field for field.
