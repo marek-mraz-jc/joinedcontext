@@ -1,0 +1,109 @@
+{
+ "dashboard": "project-bbsk",
+ "frames": [
+  {
+   "fields": [
+    {
+     "labels": {},
+     "name": "id",
+     "type": "string",
+     "values": [
+      "urn:ngsi-ld:KeyPerformanceIndicator:emisie-tuhe-km2-0",
+      "urn:ngsi-ld:KeyPerformanceIndicator:emisie-tuhe-km2-1",
+      "urn:ngsi-ld:KeyPerformanceIndicator:emisie-tuhe-km2-2",
+      "urn:ngsi-ld:KeyPerformanceIndicator:emisie-tuhe-km2-3",
+      "urn:ngsi-ld:KeyPerformanceIndicator:emisie-tuhe-km2-4"
+     ]
+    },
+    {
+     "labels": {},
+     "name": "type",
+     "type": "string",
+     "values": [
+      "KeyPerformanceIndicator",
+      "KeyPerformanceIndicator",
+      "KeyPerformanceIndicator",
+      "KeyPerformanceIndicator",
+      "KeyPerformanceIndicator"
+     ]
+    },
+    {
+     "labels": {},
+     "name": "observedAt",
+     "type": "time",
+     "unit": "dateTimeAsIso",
+     "values": [
+      1794031200000,
+      1794031200000,
+      1794031200000,
+      1794031200000,
+      1794031200000
+     ]
+    },
+    {
+     "labels": {},
+     "name": "title",
+     "type": "string",
+     "values": [
+      "Banskobystrický kraj, okres Banská Bystrica",
+      "Banskobystrický kraj, okres Brezno",
+      "Banskobystrický kraj, okres Detva",
+      "Banskobystrický kraj, okres Lučenec",
+      "Banskobystrický kraj, okres Zvolen"
+     ]
+    },
+    {
+     "labels": {},
+     "name": "currentValue",
+     "type": "number",
+     "values": [
+      1.5191,
+      1.3891,
+      1.2488,
+      1.6512,
+      1.8598
+     ]
+    }
+   ],
+   "name": "A",
+   "refId": "A"
+  }
+ ],
+ "from": 1791525600000,
+ "panel": 2,
+ "served": [
+  {
+   "fields": [
+    {
+     "displayName": "Územie",
+     "name": "Územie",
+     "type": "string",
+     "values": [
+      "Banskobystrický kraj, okres Banská Bystrica",
+      "Banskobystrický kraj, okres Brezno",
+      "Banskobystrický kraj, okres Detva",
+      "Banskobystrický kraj, okres Lučenec",
+      "Banskobystrický kraj, okres Zvolen"
+     ]
+    },
+    {
+     "displayName": "t/km²",
+     "name": "t/km²",
+     "type": "number",
+     "values": [
+      1.5191,
+      1.3891,
+      1.2488,
+      1.6512,
+      1.8598
+     ]
+    }
+   ],
+   "meta": {},
+   "name": "A",
+   "refId": "A"
+  }
+ ],
+ "title": "Emisie tuhých látok, t/km²",
+ "to": 1794117600000
+}

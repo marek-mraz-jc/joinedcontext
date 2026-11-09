@@ -15,12 +15,13 @@ import { ProjectDashboards } from "../src/pages/grafana/GrafanaPage";
 const BASE = "/api/v1/projects/helsinki/grafana/dashboards";
 const VIEW = {
   uid: "k6",
+  orgId: 4,
   title: "k6 load",
   description: null,
   from: "now-6h",
   to: "now",
   refresh: null,
-  variables: [{ name: "testid", label: "Test run", kind: "query", multi: true, includeAll: true, options: [], current: "$__all" }],
+  variables: [{ name: "testid", label: "Test run", kind: "query", multi: true, includeAll: true, options: [], current: ["$__all"] }],
   panels: [{ id: 3, type: "stat", title: "Checks passed", gridPos: { x: 0, y: 0, w: 6, h: 4 }, fieldConfig: { defaults: { unit: "percent" }, overrides: [] } }],
 };
 
@@ -69,20 +70,33 @@ describe("the dashboard page", () => {
     renderAt(() => <DashboardPage project="helsinki" uid="k6" />);
     expect(await screen.findByRole("heading", { level: 1, name: "k6 load" })).toBeInTheDocument();
     expect(await screen.findByText("99.1%")).toBeInTheDocument();
-    expect(asked[0]).toBe("?from=now-6h&to=now&maxDataPoints=1000&var-testid=%24__all");
-    const picker = screen.getByLabelText("Test run");
-    await waitFor(() => expect(picker).toBeEnabled());
-    expect([...(picker as HTMLSelectElement).options].map((option) => option.value)).toEqual(["$__all", "run-41", "run-42"]);
-    await userEvent.setup().selectOptions(picker, "run-42");
-    await waitFor(() => expect(asked.at(-1)).toContain("var-testid=run-42"));
+    // Grafana asks a datasource with the range as epochs: six hours back from now.
+    const first = new URLSearchParams(asked[0]);
+    expect([...first.keys()]).toEqual(["from", "to", "maxDataPoints", "var-testid"]);
+    expect(Number(first.get("to")) - Number(first.get("from"))).toBe(6 * 3_600_000);
+    expect(first.getAll("var-testid")).toEqual(["$__all"]);
+    const user = userEvent.setup();
+    await user.click(screen.getByText("All", { selector: "summary" }));
+    const picker = screen.getByRole("group", { name: "Test run" });
+    await waitFor(() => expect(picker).toHaveTextContent("run-42"));
+    expect([...picker.querySelectorAll("label")].map((label) => label.textContent)).toEqual(["All", "run-41", "run-42"]);
+    await user.click(screen.getByRole("checkbox", { name: "run-41" }));
+    await user.click(screen.getByRole("checkbox", { name: "run-42" }));
+    // A multi-value variable sends one var- per value, as Grafana's frontend does.
+    await waitFor(() => expect(new URLSearchParams(asked.at(-1)).getAll("var-testid")).toEqual(["run-41", "run-42"]));
   });
 
   it("asks again over a new range and on Refresh now", async () => {
     const user = userEvent.setup();
     renderAt(() => <DashboardPage project="helsinki" uid="k6" />);
     await screen.findByText("99.1%");
-    await user.selectOptions(screen.getByLabelText("Time range", { selector: "select" }), "now-24h");
-    await waitFor(() => expect(asked.at(-1)).toContain("from=now-24h"));
+    await user.click(screen.getAllByText("Last 6 hours")[0]);
+    await user.click(screen.getByRole("button", { name: "Last 24 hours" }));
+    await waitFor(() => {
+      const last = new URLSearchParams(asked.at(-1));
+      expect(Number(last.get("to")) - Number(last.get("from"))).toBe(24 * 3_600_000);
+    });
+    expect(window.location.search).toBe("?from=now-24h&to=now");
     const before = asked.length;
     await user.click(screen.getByRole("button", { name: "Refresh now" }));
     await waitFor(() => expect(asked.length).toBeGreaterThan(before));
@@ -115,6 +129,14 @@ describe("the dashboard page", () => {
     await waitFor(() => expect(asked.length).toBeGreaterThan(before));
   });
 
+  it("opens the tables page in the organization that holds the dashboard, over the asked range", async () => {
+    renderAt(() => <DashboardPage project="helsinki" uid="k6" />);
+    const link = await screen.findByRole("link", { name: /Open as tables/ });
+    const href = new URL(link.getAttribute("href") ?? "", "http://portal");
+    expect(href.pathname).toBe("/dashboards/d/k6");
+    expect(Object.fromEntries(href.searchParams)).toEqual({ orgId: "4", from: "now-6h", to: "now" });
+  });
+
   it("says a dashboard without panels is empty", async () => {
     answers[`${BASE}/k6`] = { body: { ...VIEW, variables: [], panels: [] } };
     renderAt(() => <DashboardPage project="helsinki" uid="k6" />);
@@ -126,7 +148,46 @@ describe("the project's dashboards on the Grafana page", () => {
   it("links each dashboard to its page", async () => {
     renderAt(() => <ProjectDashboards project="helsinki" />);
     expect(await screen.findByRole("link", { name: "k6 load" })).toHaveAttribute("href", "/projects/helsinki/grafana/dashboards/k6");
-    expect(screen.getByText("load")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Dashboards by folder" })).toHaveTextContent("load");
+  });
+
+  it("browses folders, searches, filters by tag and sorts, as Grafana's list does", async () => {
+    const user = userEvent.setup();
+    answers[BASE] = {
+      body: {
+        ready: true,
+        items: [
+          { uid: "air", title: "Air quality", tags: ["city"], folder: "Environment" },
+          { uid: "noise", title: "Noise", tags: [], folder: "Environment" },
+          { uid: "k6", title: "k6 load", tags: ["load"] },
+          { uid: "bus", title: "Buses", tags: ["city"], folder: "Transport" },
+        ],
+      },
+    };
+    renderAt(() => <ProjectDashboards project="helsinki" />);
+    const tree = await screen.findByRole("list", { name: "Dashboards by folder" });
+    // Folders first, closed, then General's dashboards.
+    const folders = screen.getAllByRole("button", { expanded: false });
+    expect(folders.map((button) => button.textContent)).toEqual(["Environment2 dashboards", "Transport1 dashboard"]);
+    expect(tree).toHaveTextContent("k6 load");
+    expect(screen.queryByRole("link", { name: "Air quality" })).toBeNull();
+    await user.click(folders[0]);
+    expect(screen.getByRole("link", { name: "Air quality" })).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Search dashboards"), "BU");
+    const results = screen.getByRole("list", { name: "Search results" });
+    expect(results).toHaveTextContent("Buses");
+    expect(results).toHaveTextContent("Transport");
+    expect(screen.queryByRole("link", { name: "Noise" })).toBeNull();
+    await user.clear(screen.getByLabelText("Search dashboards"));
+
+    await user.selectOptions(screen.getByLabelText("Tag"), "city");
+    await user.selectOptions(screen.getByLabelText("Sort"), "alpha-desc");
+    const links = screen.getAllByRole("link").map((link) => link.textContent);
+    expect(links).toEqual(["Buses", "Air quality"]);
+
+    await user.type(screen.getByLabelText("Search dashboards"), "nothing like it");
+    expect(screen.getByRole("status")).toHaveTextContent("No dashboard matches this search.");
   });
 
   it("says why there are none", async () => {

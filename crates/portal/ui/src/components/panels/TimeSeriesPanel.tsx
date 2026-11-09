@@ -5,15 +5,19 @@
 import { useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { clsx } from "clsx";
 import { Button, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "../ui";
 import type { Frame, Series } from "./frames";
 import { reduce, seriesOf } from "./frames";
+import { percentSuffix, REDUCERS, reducerId } from "./reducers";
 import type { FieldConfigSource } from "./fieldConfig";
 import { displayValue, settingsFor } from "./fieldConfig";
 import { formatWith, timeSeriesSpec } from "./specs";
 import { chartTheme, VegaChart } from "./VegaChart";
 import { Swatch } from "./paint";
+import { useIsPhone } from "../../phone";
+import { useWidth } from "./ValuePanels";
 
 export interface LegendOptions {
   displayMode?: string;
@@ -24,20 +28,12 @@ export interface LegendOptions {
   sortDesc?: boolean;
 }
 
-/** The words of Grafana's reducers, as a legend's column heads read them. */
-const CALC_KEYS: Record<string, string> = {
-  lastNotNull: "last",
-  last: "last",
-  max: "max",
-  min: "min",
-  mean: "mean",
-  sum: "sum",
-  first: "first",
-  firstNotNull: "first",
-  count: "count",
-  range: "range",
-  delta: "delta",
-};
+/** A reducer's column head: Grafana's name for it, in the page's language. */
+function calcWords(calc: string, t: TFunction): string {
+  const percent = /^p(\d+)$/.exec(calc);
+  if (percent) return t("dashboardView.calc.percentile", { n: percent[1], suffix: percentSuffix(Number(percent[1])) });
+  return t(`dashboardView.calc.${calc}`);
+}
 
 export interface LegendProps {
   series: Series[];
@@ -52,8 +48,10 @@ export interface LegendProps {
 /** A series' swatch, its name and its calcs; a click shows or hides it on the chart. */
 export function Legend({ series, colors, fieldConfig, legend, locale, hidden, onToggle }: LegendProps): JSX.Element | null {
   const { t } = useTranslation();
+  // A phone's card grows with its legend, so every series stays in sight without a scroll inside the card.
+  const phone = useIsPhone();
   if (legend.showLegend === false || legend.displayMode === "hidden" || series.length === 0) return null;
-  const calcs = (legend.calcs ?? []).filter((calc) => calc in CALC_KEYS);
+  const calcs = (legend.calcs ?? []).map(reducerId).filter((calc) => calc in REDUCERS);
   const rows = series.map((one, index) => {
     const settings = settingsFor(fieldConfig, one.field);
     const values = one.points.map((point) => point.v);
@@ -67,7 +65,8 @@ export function Legend({ series, colors, fieldConfig, legend, locale, hidden, on
     };
   });
   if (legend.sortBy) {
-    const at = calcs.findIndex((calc) => t(`dashboardView.calc.${CALC_KEYS[calc]}`) === legend.sortBy || legend.sortBy?.toLowerCase().startsWith(CALC_KEYS[calc]));
+    // Grafana saves the sort as the reducer's English name (`Last *`, `Max`).
+    const at = calcs.findIndex((calc) => REDUCERS[calc].name === legend.sortBy || calcWords(calc, t) === legend.sortBy);
     if (at >= 0) {
       rows.sort((a, b) => ((a.calcs[at].value ?? -Infinity) - (b.calcs[at].value ?? -Infinity)) * (legend.sortDesc ? -1 : 1));
     }
@@ -86,12 +85,12 @@ export function Legend({ series, colors, fieldConfig, legend, locale, hidden, on
   );
   if (legend.displayMode === "table" && calcs.length > 0) {
     return (
-      <Table caption={t("dashboardView.legend")} zebra={false} maxHeight={legend.placement === "right" ? "max-h-80" : "max-h-48"} className="text-caption [&_td]:py-1 [&_td]:align-middle [&_th]:py-1.5">
+      <Table caption={t("dashboardView.legend")} zebra={false} maxHeight={phone ? undefined : legend.placement === "right" ? "max-h-80" : "max-h-48"} className="text-caption [&_td]:py-1 [&_td]:align-middle [&_th]:py-1.5">
         <TableHead>
           <TableHeaderCell>{t("dashboardView.series")}</TableHeaderCell>
           {calcs.map((calc) => (
             <TableHeaderCell key={calc} align="right">
-              {t(`dashboardView.calc.${CALC_KEYS[calc]}`)}
+              {calcWords(calc, t)}
             </TableHeaderCell>
           ))}
         </TableHead>
@@ -117,7 +116,7 @@ export function Legend({ series, colors, fieldConfig, legend, locale, hidden, on
           {toggle(row.one.name, hidden.has(row.one.name))}
           {row.calcs.map((calc) => (
             <span key={calc.calc} className="text-caption tabular-nums text-fg-muted">
-              {t(`dashboardView.calc.${CALC_KEYS[calc.calc]}`)} {calc.text}
+              {calcWords(calc.calc, t)}: {calc.text}
             </span>
           ))}
         </li>
@@ -125,9 +124,6 @@ export function Legend({ series, colors, fieldConfig, legend, locale, hidden, on
     </ul>
   );
 }
-
-/** A legend asked on the right needs more series than this to stay there; fewer go below the chart. */
-const FEW = 6;
 
 export interface TimeSeriesPanelProps {
   title: string;
@@ -145,15 +141,18 @@ export function TimeSeriesPanel({ title, frames, fieldConfig, options, from, to,
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const asked = (options?.legend ?? {}) as LegendOptions;
   const count = useMemo(() => seriesOf(frames).length, [frames]);
-  // A right-hand legend of a few rows leaves the panel's lower half blank beside it: below the
-  // chart it gives the chart the whole width instead.
-  const right = asked.placement === "right" && count > FEW;
+  // On the right where the dashboard asks, as Grafana draws it; below the chart on a phone, as Grafana's.
+  const phone = useIsPhone();
+  const right = asked.placement === "right" && !phone;
   const legend = right ? asked : { ...asked, placement: "bottom" };
-  const rows = legend.showLegend === false || legend.displayMode === "hidden" ? 0 : legend.displayMode === "table" ? 30 + 26 * Math.min(count, 6) : 36;
+  const [measure, panelWidth] = useWidth();
+  // A right legend takes two fifths of the panel.
+  const width = right ? Math.round(panelWidth * 0.6) : panelWidth;
+  const rows = legend.showLegend === false || legend.displayMode === "hidden" ? 0 : legend.displayMode === "table" ? 30 + 26 * (phone ? count : Math.min(count, 6)) : 36;
   const chartHeight = Math.max(120, right ? height : height - rows);
   const built = useMemo(
-    () => timeSeriesSpec(frames, { fieldConfig, options, from, to, locale, theme: chartTheme(), height: chartHeight, hidden }),
-    [frames, fieldConfig, options, from, to, locale, chartHeight, hidden],
+    () => timeSeriesSpec(frames, { fieldConfig, options, from, to, locale, theme: chartTheme(), height: chartHeight, width: width || undefined, hidden }),
+    [frames, fieldConfig, options, from, to, locale, chartHeight, width, hidden],
   );
   const dateTime = useMemo(
     () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
@@ -184,7 +183,7 @@ export function TimeSeriesPanel({ title, frames, fieldConfig, options, from, to,
     );
   };
   return (
-    <div className={clsx("flex h-full min-w-0 gap-3", right ? "flex-col sm:flex-row" : "flex-col")}>
+    <div ref={measure} className={clsx("flex h-full min-w-0 gap-3", right ? "flex-row" : "flex-col")}>
       <VegaChart
         className="min-w-0 flex-1"
         spec={built.spec}
@@ -192,7 +191,7 @@ export function TimeSeriesPanel({ title, frames, fieldConfig, options, from, to,
         label={t("dashboardView.chartLabel", { title, n: built.series.length })}
         tooltip={tooltip}
       />
-      <div className={clsx("min-w-0", right && "sm:w-2/5 sm:shrink-0")}>
+      <div className={clsx("min-w-0", right && "w-2/5 shrink-0")}>
         <Legend
           series={built.series}
           colors={built.colors}

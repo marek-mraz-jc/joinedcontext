@@ -184,7 +184,7 @@ function view(uid: string) {
     multi: v.multi === true,
     includeAll: v.includeAll === true,
     options: ((v.options as { text: string; value: string }[] | undefined) ?? []).map((o) => ({ text: o.text, value: o.value })),
-    current: (v.current as { value?: string } | undefined)?.value ?? null,
+    current: [(v.current as { value?: string } | undefined)?.value].filter((value) => value !== undefined),
   }));
   return {
     uid,
@@ -250,6 +250,8 @@ const SHOTS = process.env.DASHBOARD_SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 
 async function settle(page: Page): Promise<void> {
+  // The page first: before it renders there is no "Reading" status to wait out either.
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   await expect(page.getByRole("status", { name: /^Reading / })).toHaveCount(0);
   // Vega draws on the next frames after its module loads.
   await page.waitForTimeout(600);
@@ -296,7 +298,8 @@ for (const width of [1440, 400]) {
       await expect(page.locator('section[data-panel-type="timeseries"]')).toHaveCount(7);
       await expect(page.getByRole("img", { name: /Transactions per second by status class: chart of 3 series/ })).toBeVisible();
       await expect(page.locator("canvas")).toHaveCount(7);
-      expect(world.asked.every((search) => /from=now-6h&to=now&maxDataPoints=\d+$/.test(search))).toBe(true);
+      // Each panel asks the dashboard's six hours as epochs, as Grafana asks its datasources.
+      expect(world.asked.every((search) => { const query = new URLSearchParams(search); return Number(query.get("to")) - Number(query.get("from")) === 6 * HOUR && [...query.keys()].join() === "from,to,maxDataPoints"; })).toBe(true);
       await pageShot(page, "context-broker-filled", width);
       await panelShot(card(page, "timeseries"), "timeseries-filled", width);
       expect(await page.evaluate(pageFindings, { namespaces: NAMESPACES, layout: true })).toEqual([]);
@@ -370,8 +373,9 @@ test("a time range, a variable and a refresh ask the panels again with them", as
   await page.goto("/projects/helsinki/grafana/dashboards/panel-types");
   await settle(page);
   world.asked.length = 0;
-  await page.getByLabel("Time range", { exact: true }).selectOption("now-24h");
-  await expect.poll(() => world.asked.some((search) => search.includes("from=now-24h"))).toBe(true);
+  await page.getByText("Last 1 hour", { exact: true }).first().click();
+  await page.getByRole("button", { name: "Last 24 hours" }).click();
+  await expect.poll(() => world.asked.some((search) => { const query = new URLSearchParams(search); return Number(query.get("to")) - Number(query.get("from")) === 24 * HOUR; })).toBe(true);
   await page.getByLabel("Station").selectOption("$__all");
   await expect.poll(() => world.asked.some((search) => search.includes("var-station=%24__all"))).toBe(true);
   const before = world.asked.length;

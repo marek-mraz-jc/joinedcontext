@@ -139,6 +139,10 @@ pub fn router(state: DaiyaState, mount: Mount) -> Router {
         .route("/mcp/tools", get(http_mcp_list))
         .route("/mcp/call", post(http_mcp_call))
         .route("/mount-info", get(http_mount_info))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            daiya_api::state::refuse_unknown_credential,
+        ))
         .with_state(state.clone());
 
     Router::new()

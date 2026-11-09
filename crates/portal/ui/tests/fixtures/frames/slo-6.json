@@ -1,0 +1,72 @@
+{
+ "dashboard": "jc-slo",
+ "panel": 6,
+ "title": "Days until certificates and domains expire",
+ "from": 1791525600000,
+ "to": 1794117600000,
+ "frames": [
+  {
+   "name": "A",
+   "refId": "A",
+   "fields": [
+    {
+     "name": "Time",
+     "type": "time",
+     "labels": {},
+     "values": [
+      1794117600000,
+      1794117600000
+     ]
+    },
+    {
+     "name": "host",
+     "type": "string",
+     "labels": {},
+     "values": [
+      "dev.joinedcontext.com",
+      "api.dev.joinedcontext.com"
+     ]
+    },
+    {
+     "name": "Value #A",
+     "type": "number",
+     "labels": {},
+     "values": [
+      49.704,
+      53.163
+     ]
+    }
+   ]
+  },
+  {
+   "name": "B",
+   "refId": "B",
+   "fields": [
+    {
+     "name": "Time",
+     "type": "time",
+     "labels": {},
+     "values": [
+      1794117600000
+     ]
+    },
+    {
+     "name": "domain",
+     "type": "string",
+     "labels": {},
+     "values": [
+      "joinedcontext.com"
+     ]
+    },
+    {
+     "name": "Value #B",
+     "type": "number",
+     "labels": {},
+     "values": [
+      64.243
+     ]
+    }
+   ]
+  }
+ ]
+}
