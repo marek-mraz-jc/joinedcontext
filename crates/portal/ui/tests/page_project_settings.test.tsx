@@ -150,6 +150,9 @@ describe("Project settings", () => {
       (section) => section.querySelector("h2")?.textContent,
     );
     expect(named).toEqual([en.projectSettings.access.title, en.access.matrix.title]);
+    // Each grant a card on a phone (jc-ui-tables): the From column was past the edge at 400 px.
+    const yours = screen.getByRole("table", { name: en.projectSettings.access.caption.replace("{project}", PROJECT) });
+    expect(yours).toHaveClass("table-stack");
   });
 
   // The loading state: a skeleton, and a table that says it is still loading rather than

@@ -77,6 +77,21 @@ describe("a hidden section", () => {
     },
   );
 
+  // UI judge on the prod rehearsal (jc-ui-tables): the visit landed on Context Spaces without a
+  // word, so the page looked like the wrong one. It says why it is there.
+  it("says on arrival why a dashboards address shows the spaces", async () => {
+    renderAt("/projects/helsinki/dashboards", ["dashboards"]);
+    expect(await screen.findByText(en.hiddenSection.title)).toBeInTheDocument();
+    expect(screen.getByText(en.hiddenSection.body)).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/projects/helsinki/spaces");
+  });
+
+  it("says nothing of the kind on a plain visit to the spaces", async () => {
+    renderAt("/projects/helsinki/spaces", ["dashboards"]);
+    await menu();
+    expect(screen.queryByText(en.hiddenSection.title)).toBeNull();
+  });
+
   it("is back, menu and page, when the installation shows it", async () => {
     renderAt("/projects/helsinki/dashboards", []);
     const nav = await menu();

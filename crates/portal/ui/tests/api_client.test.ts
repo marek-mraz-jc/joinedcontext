@@ -7,6 +7,7 @@ import {
   loginRedirectUrl,
   queryKeys,
   readCsrfToken,
+  retryTransient,
   unwrap,
 } from "../src/api/client";
 import type { ProblemDetails } from "../src/api/client";
@@ -44,6 +45,17 @@ describe("readCsrfToken", () => {
     document.cookie = `__Host-jc_csrf=${encodeURIComponent("token/with+special=chars")}; Secure; path=/`;
 
     expect(readCsrfToken()).toBe("token/with+special=chars");
+  });
+});
+
+describe("retryTransient", () => {
+  it("asks once more after a 5xx, a 429 or no answer, and never after a refusal or a missing project", () => {
+    expect(retryTransient(0, new ApiError(503, "away"))).toBe(true);
+    expect(retryTransient(0, new ApiError(429, "slow down"))).toBe(true);
+    expect(retryTransient(0, new TypeError("Failed to fetch"))).toBe(true);
+    expect(retryTransient(1, new ApiError(503, "away"))).toBe(false);
+    expect(retryTransient(0, new ApiError(404, "project 'zilina' not found"))).toBe(false);
+    expect(retryTransient(0, new ApiError(403, "no role grants read"))).toBe(false);
   });
 });
 

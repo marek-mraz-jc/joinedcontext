@@ -5,10 +5,32 @@ to the page's scrollHeight, so a sticky sidebar is not cut)."""
 from __future__ import annotations
 
 import contextlib
+import re
 import urllib.parse
 from pathlib import Path
 
 WIDTHS = (1440, 400)
+
+
+def app_host(base: str, name: str) -> str:
+    """The App's own origin, `{name}.apps.{host}` (AP-133); Chromium resolves `*.localhost` to loopback."""
+    u = urllib.parse.urlparse(base)
+    return f"{u.scheme}://{name}.apps.{u.netloc}"
+
+
+def edge_rewrite(base: str, name: str, url: str) -> str | None:
+    """Where the edge sends a request on the App's host, by the two rules the Portal's edge file
+    gives APISIX (crates/portal/src/reconciler/edge_file.rs, static App): `/api/endpoint/*` to the
+    gateway with any `/apps/{name}` prefix stripped, everything else to `/apps/{name}/`. The
+    rehearsal runs no APISIX, so the suite stands in for it. `None` for a request off that host."""
+    u = urllib.parse.urlparse(url)
+    if f"{u.scheme}://{u.netloc}" != app_host(base, name):
+        return None
+    path = u.path + (f"?{u.query}" if u.query else "")
+    n = re.escape(name)
+    if m := re.match(rf"^(?:/apps/{n})?(/api/endpoint/.*)$", path):
+        return base.rstrip("/") + m.group(1)
+    return base.rstrip("/") + re.sub(rf"^/(?:apps/{n}/)?(.*)$", rf"/apps/{name}/\1", path)
 
 
 class Browser:
@@ -26,8 +48,10 @@ class Browser:
         self._browser.close()
         self._pw.stop()
 
-    def _page(self, width: int):
-        ctx = self._browser.new_context(viewport={"width": width, "height": 900}, locale="en-GB")
+    def _page(self, width: int, token: str | None = None):
+        headers = {"Authorization": f"Bearer {token}"} if token else None
+        ctx = self._browser.new_context(viewport={"width": width, "height": 900}, locale="en-GB",
+                                        extra_http_headers=headers)
         ctx.add_cookies(self.cookies)
         page = ctx.new_page()
         page.set_default_timeout(self.timeout)
@@ -73,10 +97,19 @@ class Browser:
             rows.append(row)
         return rows
 
-    def app(self, path: str, name: str, out_dir: Path) -> list[dict]:
-        rows = []
+    def app(self, name: str, out_dir: Path, token: str | None = None) -> list[dict]:
+        """The App on its own host, as prod serves it. `token`: a person's token of the App's own
+        client, sent as the edge sends it on prod."""
+        rows, path = [], app_host(self.base, name) + "/"
         for width in WIDTHS:
-            ctx, page = self._page(width)
+            ctx, page = self._page(width, token)
+
+            def edge(route, request, base=self.base):
+                # fetched and fulfilled under the App's URL: a continue_ to another URL would
+                # move the document off its origin, and its own CSP `'self'` refuse its assets
+                route.fulfill(response=route.fetch(url=edge_rewrite(base, name, request.url), max_redirects=0))
+
+            ctx.route(lambda url, base=self.base: edge_rewrite(base, name, url) is not None, edge)
             data, bad, console = [], [], []
             page.on("console", lambda m, errors=console: errors.append(m.text[:160]) if m.type == "error" else None)
 
@@ -88,7 +121,7 @@ class Browser:
             page.on("response", seen)
             row = {"width": width, "url": path}
             try:
-                resp = page.goto(self.base + path)
+                resp = page.goto(path)
                 row["status"] = resp.status if resp else 0
                 self._settle(page)
                 row["title"] = page.title()

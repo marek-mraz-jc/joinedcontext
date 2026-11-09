@@ -9,11 +9,12 @@ import { ErrorBoundary, mayReloadForChunk, reloadForChunk } from "./components/E
 import { PublicApp } from "./PublicApp";
 import { isPublicPath } from "./publicRouter";
 import { preloadSpacePage } from "./pages/spaces/preload";
+import { retryTransient } from "./api/client";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
+      retry: retryTransient,
       refetchOnWindowFocus: false,
     },
   },

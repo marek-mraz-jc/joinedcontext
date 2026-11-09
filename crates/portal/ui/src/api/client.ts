@@ -57,6 +57,18 @@ export function forPeople(text: string): string {
   return text.replace(REFS, "");
 }
 
+/**
+ * The query retry of the whole Portal: once, and only for an answer that may differ the second
+ * time (a 5xx, 408, 429 or no answer). A refusal or a missing project answers the same again; the
+ * retry only kept an outsider on a skeleton for its second (UI judge 2026-11-09).
+ */
+export function retryTransient(failures: number, error: unknown): boolean {
+  if (error instanceof ApiError && error.status < 500 && error.status !== 408 && error.status !== 429) {
+    return false;
+  }
+  return failures < 1;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly problem?: ProblemDetails;

@@ -1049,21 +1049,75 @@ pub enum Op {
     UpdatePullRequest(PullRequestRecord),
     CreateReview(ReviewRecord),
     UpsertCommitStatus(CommitStatusRecord),
-    CreateWebhook(WebhookRecord),
+    CreateWebhook(#[serde(with = "hidden::webhook")] WebhookRecord),
     RecordDelivery(DeliveryRecord),
-    UpsertPushMirror(PushMirrorRecord),
+    UpsertPushMirror(#[serde(with = "hidden::push_mirror")] PushMirrorRecord),
     DeletePushMirror {
         repo_id: RepoId,
         remote_name: String,
     },
     UpsertPackage(PackageRecord),
-    UpsertPackageVersion(PackageVersionRecord),
+    UpsertPackageVersion(#[serde(with = "hidden::package_version")] PackageVersionRecord),
     InsertPackageFile(PackageFileRecord),
     UpsertBlob(BlobRecord),
     AppendOutbox(OutboxEvent),
     MarkOutboxDispatched {
         event_id: uuid::Uuid,
     },
+}
+
+/// The fields a record keeps out of every API answer (`skip_serializing` in shako-core) are state
+/// all the same: the store log writes them beside the rest, or a replay loses them (a package
+/// version without `manifestBytes` stopped the store from starting).
+mod hidden {
+    use serde::{Serialize, Serializer, ser::Error as _};
+    use serde_json::{Value, json};
+
+    fn with<S: Serializer>(
+        record: &impl Serialize,
+        fields: Value,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut doc = serde_json::to_value(record).map_err(S::Error::custom)?;
+        if let (Some(doc), Value::Object(fields)) = (doc.as_object_mut(), fields) {
+            doc.extend(fields);
+        }
+        doc.serialize(s)
+    }
+
+    macro_rules! hidden {
+        ($module:ident, $ty:ty, |$r:ident| $fields:expr) => {
+            pub mod $module {
+                use super::*;
+                pub fn serialize<S: Serializer>($r: &$ty, s: S) -> Result<S::Ok, S::Error> {
+                    with($r, $fields, s)
+                }
+                // Deserialize reads every field, the hidden ones included.
+                pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+                    d: D,
+                ) -> Result<$ty, D::Error> {
+                    serde::Deserialize::deserialize(d)
+                }
+            }
+        };
+    }
+
+    hidden!(
+        package_version,
+        shako_core::PackageVersionRecord,
+        |r| json!({"manifestBytes": r.manifest_bytes})
+    );
+    hidden!(
+        webhook,
+        shako_core::WebhookRecord,
+        |r| json!({"secretRef": r.secret_ref,
+        "previousSecretRef": r.previous_secret_ref})
+    );
+    hidden!(
+        push_mirror,
+        shako_core::PushMirrorRecord,
+        |r| json!({"credentialSecretRef": r.credential_secret_ref})
+    );
 }
 
 /// What an operation answers, so one apply path serves the request and the replay.
@@ -1268,5 +1322,59 @@ impl PgStore {
             }
         }
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod store_log_tests {
+    use super::Op;
+    use serde_json::json;
+
+    fn replayed(op: &Op) -> Op {
+        let logged = serde_json::to_value(op).expect("log entry");
+        serde_json::from_value(logged).expect("a log entry reads back")
+    }
+
+    // The fields no API answer shows (`skip_serializing`) are still state: a replay without
+    // them refused to start (`missing field manifestBytes`) or served an empty OCI manifest.
+    #[test]
+    fn a_replay_keeps_the_fields_the_api_never_shows() {
+        let ids = json!({"instanceId": "0190a000-0000-7000-8000-000000000001",
+                         "orgId": "0190a000-0000-7000-8000-000000000002"});
+        let mut ver = json!({"id": "0190a000-0000-7000-8000-000000000003",
+            "packageId": "0190a000-0000-7000-8000-000000000004", "owner": "jc-apps",
+            "packageType": "container", "packageName": "app-x", "version": "v1",
+            "digest": "sha256:00", "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "manifestBytes": [123, 125], "subjectDigest": null, "artifactType": null,
+            "sizeBytes": 2, "signed": false, "createdAt": "2026-11-09T00:00:00Z"});
+        let mut hook = json!({"id": "0190a000-0000-7000-8000-000000000005",
+            "repoId": "0190a000-0000-7000-8000-000000000006", "url": "https://hook.example/",
+            "events": ["push"], "active": true, "secretRef": "hooks/a", "previousSecretRef": "hooks/b",
+            "format": "shako", "createdAt": "2026-11-09T00:00:00Z"});
+        let mut mirror = json!({"id": "0190a000-0000-7000-8000-000000000007",
+            "repoId": "0190a000-0000-7000-8000-000000000006", "remoteName": "up",
+            "remoteAddress": "https://git.example/x.git", "credentialSecretRef": "mirrors/up",
+            "interval": "8h", "syncOnCommit": false, "lastSync": null, "lastError": "",
+            "createdAt": "2026-11-09T00:00:00Z"});
+        for v in [&mut ver, &mut hook, &mut mirror] {
+            v.as_object_mut()
+                .expect("object")
+                .extend(ids.as_object().expect("ids").clone());
+        }
+        let ops = [
+            Op::UpsertPackageVersion(serde_json::from_value(ver).expect("version")),
+            Op::CreateWebhook(serde_json::from_value(hook).expect("hook")),
+            Op::UpsertPushMirror(serde_json::from_value(mirror).expect("mirror")),
+        ];
+        for op in &ops {
+            assert_eq!(format!("{:?}", replayed(op)), format!("{op:?}"));
+        }
+        // A version logged before the bytes were kept still reads, so the store starts.
+        let mut old = serde_json::to_value(&ops[0]).expect("log entry");
+        old["args"]
+            .as_object_mut()
+            .expect("args")
+            .remove("manifestBytes");
+        assert!(serde_json::from_value::<Op>(old).is_ok());
     }
 }

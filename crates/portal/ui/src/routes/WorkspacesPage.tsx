@@ -5,21 +5,21 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { ManifestGrid } from "../components/grid/ManifestGrid";
-import { api, ApiError, queryKeys, unwrap } from "../api/client";
+import { api, queryKeys, unwrap } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
 import { WorkOnCopyAction } from "../components/WorkOnCopyDialog";
 import {
-  Alert,
   Badge,
   Button,
   buttonClass,
   ConfirmDialog,
   EmptyState,
-  Icon,
   PageHeader,
   Skeleton,
 } from "../components/ui";
 import type { components } from "../api/schema";
+import { ProjectHidden, projectOutOfReach } from "../components/ProjectHidden";
+import { PageFailed } from "../components/ui/PageState";
 
 type WorkspaceView = components["schemas"]["WorkspaceView"];
 
@@ -122,29 +122,12 @@ export function WorkspacesPage({
           <Skeleton className="h-24" />
         </div>
       ) : null}
-      {/* A list that could not be asked for is not "you have no copies" (T-1763): the API's own
-          sentence, and one more try, so "you may not read this project" and "the database is
-          away" do not read the same. */}
+      {/* A list that could not be asked for is not "you have no copies" (T-1763), and "you may
+          not read this project" does not read like "the database is away": a project out of
+          reach says so without a retry (UI judge 2026-11-09), any other failure is the shared
+          one with its retry. */}
       {list.isError ? (
-        <Alert
-          role="alert"
-          tone="danger"
-          actions={
-            <Button
-              size="sm"
-              icon={<Icon name="refresh" className="size-4" />}
-              onClick={() => {
-                void list.refetch();
-              }}
-            >
-              {t("app.error.retry")}
-            </Button>
-          }
-        >
-          {list.error instanceof ApiError
-            ? (list.error.problem?.detail ?? list.error.message)
-            : t("app.error.generic")}
-        </Alert>
+        projectOutOfReach(list.error) ? <ProjectHidden /> : <PageFailed error={list.error} onRetry={() => void list.refetch()} />
       ) : null}
 
       {list.isPending || list.isError ? null : items.length === 0 ? (

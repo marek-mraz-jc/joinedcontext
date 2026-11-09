@@ -204,6 +204,7 @@ class App:
     visibility: str
     git: str  # owner/repo of spec.source.git, or ""
     file: str
+    built: bool = False  # status.build names a build (the lane published one on the source)
 
 
 def load_apps(files: Path) -> list[App]:
@@ -224,5 +225,5 @@ def load_apps(files: Path) -> list[App]:
             out.append(App(str(meta.get("namespace") or f.relative_to(files).parts[1]), str(meta.get("name")),
                            str(spec.get("kind") or ""), str(spec.get("lifecycle") or ""),
                            str(spec.get("visibility") or ""), f"{m.group(1)}/{m.group(2)}" if m else "",
-                           str(f.relative_to(files))))
+                           str(f.relative_to(files)), bool(((d.get("status") or {}).get("build") or {}).get("digest"))))
     return out

@@ -2777,6 +2777,10 @@
     "emptyHint": "Add a data source and a pipeline with the button, or ask the assistant to build one from what you already have.",
     "expiryRemoves": "Entities not updated for {window} are removed",
     "expiryRefused": "Nothing is removed: the runner refused the sweep: {reason}",
+    "errorReason": "Why: {reason}",
+    "errorOpen": "Open the pipeline",
+    "errorShared": "Why: the reason above the list",
+    "sharedFailure": "Pipelines stopped for one shared reason ({count}): {reason}. One fix in the setting it names restarts them all.",
     "writesType": "Writes",
     "notWriting": "Writes nothing",
     "rejected": {
@@ -2911,6 +2915,7 @@
         "fileHint": "The processors this pipeline runs, as the repository holds them beside its manifest. Credentials appear as references the runner fills, never as values.",
         "fileEdit": "Edit the mapping file; Propose sends it with the manifest",
         "fileEditDisabled": "You can edit the mapping file once it has loaded.",
+        "fileEditHint": "Ticked, the file above is yours to change; unticked, the form's mapping writes it.",
         "type": "Type the mapping writes",
         "typeHint": "The model has several classes: pick the one each record becomes, for example an air quality reading. The list below shows what it takes."
       },
@@ -3206,6 +3211,7 @@
     "lastRun": {
       "unavailable": "Runs could not be read",
       "never": "Has not run yet",
+      "noneWritten": "Nothing written yet: the status says why",
       "runFailedBadge": "Run failed",
       "written": "{count, plural, one {# written} other {# written}}",
       "rejected": "{n} rejected",
@@ -5451,8 +5457,11 @@
       "emptyHint": "Press \"Publish a dataset\", pick an endpoint, check its description and propose it. The dataset appears here and in CKAN after the approval.",
       "lastChange": "Last change {time}: {summary}",
       "lastFailed": "Last run failed {time}: {summary}. Fix the cause, then publish again.",
+      "lastFailedAsk": "Last run failed {time}: {summary}. A project steward publishes it again once the cause is fixed.",
+      "notPublishedTo": "not published to {instance}",
       "needsCatalogue": "Add a catalogue above first: a dataset needs a CKAN portal to land in.",
-      "mapAndTable": "Map and table on the dataset page"
+      "mapAndTable": "Map and table on the dataset page",
+      "formats": "Ways to read it ({count}): API, files and feeds"
     },
     "statusFailed": "The catalogue status of this project could not be read, so what is listed below may be incomplete: {reason}. Reload the page to try again.",
     "access": {
@@ -12363,5 +12372,13 @@
       "pie": "Pie",
       "donut": "Donut"
     }
+  },
+  "personName": {
+    "unknown": "Unknown person",
+    "firstSignIn": "Joins the group at their first sign-in; nothing to do until then."
+  },
+  "hiddenSection": {
+    "title": "Dashboards are not part of this installation",
+    "body": "The address you opened is for dashboards, which this Portal does not offer, so you are on the project's Context Spaces instead."
   }
 }

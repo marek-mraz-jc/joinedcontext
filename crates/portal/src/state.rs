@@ -862,7 +862,7 @@ impl AppState {
                 }
                 None => {
                     tracing::warn!("no internal listener address for the runner: pipelines are not validated before they write");
-                    deployer
+                    deployer.with_models(Arc::clone(&self.model_schemas))
                 }
             };
             let deployer = Arc::new(deployer);
