@@ -89,6 +89,9 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   state files `portal-client-secret`, `portal-admin-client-secret` and `gateway-client-secret`, and
   each `<project>-pipelines` client's secret into `secrets/realm/<project>-pipelines`, which jc's
   `--ekiben-client-secrets-dir` reads for the runner's `JC_CLIENT_SECRET_<PROJECT>`.
+  Those three clients sign in by `federated-jwt` on dev and prod (Keycloak trusts the pod's
+  Kubernetes service account token); jc has no Kubernetes issuer, so `realms` switches only them to
+  `client-secret` and drops their `jwt.credential.*` attributes. Every other client keeps its own.
 - Test persons: `smoke` and `shots.py` create their own (`rehearsal-*`, random passwords kept in
   memory) in that realm, in group `platform-admins` (the Portal's default bootstrap admins; added
   to an imported realm without it, as `rehearsal-tester` is).

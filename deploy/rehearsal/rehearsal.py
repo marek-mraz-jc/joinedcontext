@@ -451,6 +451,24 @@ def state_client_secrets(realm: dict) -> list[tuple[str, str]]:
     return sorted(out)
 
 
+def jc_clients_by_secret(realm: dict) -> tuple[dict, list[str]]:
+    """The realm with each client of STATE_CLIENT_SECRETS signing in by its secret: prod and dev
+    give them `federated-jwt` (Keycloak trusts the Kubernetes service account token of the pod),
+    and jc, one process with no Kubernetes issuer, signs in as them with the secret of its state
+    file. Every other client keeps its authenticator. Answers the realm and the clients changed."""
+    out, changed = dict(realm), []
+    clients = []
+    for c in realm.get("clients", []):
+        if c.get("clientId") in STATE_CLIENT_SECRETS and c.get("clientAuthenticatorType") == "federated-jwt":
+            attrs = {k: v for k, v in (c.get("attributes") or {}).items() if not k.startswith("jwt.credential.")}
+            c = {**c, "clientAuthenticatorType": "client-secret", "attributes": attrs}
+            changed.append(c["clientId"])
+        clients.append(c)
+    if "clients" in realm:
+        out["clients"] = clients
+    return out, sorted(changed)
+
+
 def realm_of(state: Path) -> str:
     """The deployment's realm the rehearsal's jc runs on (`realms` writes it), else jc's default."""
     p = state / "realm-name.txt"
@@ -591,6 +609,9 @@ def cmd_realms(a):
             (dst.parent / f"realm-{name}-people.json").write_text(json.dumps(counts))
             print(f"realm {name}: {counts}")
         clean = add_tester(clean)
+        clean, by_secret = jc_clients_by_secret(clean)
+        if by_secret:
+            print(f"realm {name}: {by_secret} sign in by their secret (federated-jwt has no Kubernetes issuer in jc)")
         if a.kaisatsu_bin:
             tmp = dst.parent / f".check-{name}.json"
             clean, dropped = drop_refused_mappers(clean, kaisatsu_check(a.kaisatsu_bin, tmp))

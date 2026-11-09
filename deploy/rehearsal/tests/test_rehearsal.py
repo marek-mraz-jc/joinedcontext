@@ -875,3 +875,23 @@ def test_up_sh_gives_jc_every_secret_it_holds_only_in_memory():
     for var in ("JCBIN_SHAKO_TOKEN_FILE", "JCBIN_DATAROOM_PORTAL_TOKEN_FILE", "JCBIN_EKIBEN_TOKEN_FILE",
                 "JCBIN_DAIYA_PORTAL_PASSWORD_FILE"):
         assert re.search(rf"\bexport {var}\b|{var}=.*; export {var}\b", text), var
+
+
+def test_only_the_clients_jc_signs_in_as_trade_federated_jwt_for_their_secret():
+    k8s = {"jwt.credential.sub": "system:serviceaccount:smartcity:portal", "jwt.credential.issuer": "kubernetes"}
+    realm = {"clients": [
+        {"clientId": "portal-api", "clientAuthenticatorType": "federated-jwt", "secret": "$(env:A)",
+         "attributes": {**k8s, "post.logout.redirect.uris": "+"}},
+        {"clientId": "context-gateway", "clientAuthenticatorType": "federated-jwt", "attributes": dict(k8s)},
+        {"clientId": "pl-zilina-osm", "clientAuthenticatorType": "federated-jwt", "attributes": dict(k8s)},
+        {"clientId": "praha-pipelines", "clientAuthenticatorType": "client-secret"},
+    ]}
+    out, changed = rh.jc_clients_by_secret(realm)
+    by = {c["clientId"]: c for c in out["clients"]}
+    assert changed == ["context-gateway", "portal-api"]
+    assert by["portal-api"]["clientAuthenticatorType"] == "client-secret"
+    assert by["portal-api"]["attributes"] == {"post.logout.redirect.uris": "+"}
+    assert by["portal-api"]["secret"] == "$(env:A)"
+    assert by["pl-zilina-osm"] == realm["clients"][2]
+    assert by["praha-pipelines"] == realm["clients"][3]
+    assert realm["clients"][0]["clientAuthenticatorType"] == "federated-jwt"
