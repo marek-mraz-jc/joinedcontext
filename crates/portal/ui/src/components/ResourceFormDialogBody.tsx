@@ -6,6 +6,7 @@ import { errorMessageKey } from "./forms/errorMessages";
 import { SchemaForm } from "./forms/LazySchemaForm";
 import { namesOfRefs } from "../schemas/pickers";
 import type { JsonSchema, ManifestSource, UiSchema } from "./forms/types";
+import { ProjectHidden } from "./ProjectHidden";
 import { Alert, Button, Checkbox, deniedReason as refusal, Tabs, tabPanelProps, PageLoading } from "./ui";
 import { FormFrame } from "./forms/FormRoute";
 import type { DialogSize } from "./ui";
@@ -154,7 +155,7 @@ export function ResourceFormDialogBody<T>({
   // A role that may not propose the kind reads the form and is told why it cannot send it, as
   // `PermissionGuard` says it of a button (UI-44, PF-51); the API refuses the same proposal anyway.
   // Nothing is sent while the permissions are on their way, as `PermissionGuard` holds a button.
-  const { can, checking, isLoading: permissionsLoading } = usePermissions(project ?? "");
+  const { can, checking, denied, unchecked, isLoading: permissionsLoading } = usePermissions(project ?? "");
   const deniedReason =
     kind && project && checking
       ? t("permissions.checking")
@@ -364,7 +365,8 @@ export function ResourceFormDialogBody<T>({
 
   // A person who may not create the kind is told so at the top, in words, instead of a whole
   // form greyed out with the reason in API terms under its last field (T-4165, audit T-4158).
-  if (deniedReason !== undefined && lockedName === undefined && !permissionsLoading) {
+  // A project out of reach shows no form at all, an edit's included (PF-59).
+  if (deniedReason !== undefined && (denied || (lockedName === undefined && !permissionsLoading))) {
     return (
       <FormFrame
         open={open}
@@ -374,9 +376,13 @@ export function ResourceFormDialogBody<T>({
         size={size}
         closeLabel={t("resourceDelete.close")}
       >
-        <Alert role="status" tone="info">
-          {t("form.mayNotCreate")}
-        </Alert>
+        {denied ? (
+          <ProjectHidden />
+        ) : (
+          <Alert role="status" tone="info">
+            {t("form.mayNotCreate")}
+          </Alert>
+        )}
       </FormFrame>
     );
   }
@@ -428,6 +434,16 @@ export function ResourceFormDialogBody<T>({
                 {t("resourceHistory.loaded", { id: restored })}
               </Alert>
             ) : null}
+            {/* Said where the form starts, not only beside its submit (jc-portal-refusals). */}
+            {checking && project ? (
+              <Alert role="status" tone="info">
+                {t("permissions.checking")}
+              </Alert>
+            ) : unchecked && project ? (
+              <Alert role="status" tone="warning">
+                {t("permissions.unchecked")}
+              </Alert>
+            ) : null}
             {children ? (
               <div className="flex flex-col gap-3">{children}</div>
             ) : null}
@@ -453,7 +469,17 @@ export function ResourceFormDialogBody<T>({
                 check.clearSchemaErrors();
                 onChange?.(next);
               }}
-              afterFields={afterFields}
+              // What a page adds below the fields is held with them: a native disabled fieldset
+              // disables every control inside it.
+              afterFields={
+                disabled && afterFields ? (
+                  <fieldset disabled className="contents">
+                    {afterFields}
+                  </fieldset>
+                ) : (
+                  afterFields
+                )
+              }
               actions={
                 <ResourceFormFooter {...footer} className="justify-end">
                   {arrangement.advancedFields ? (

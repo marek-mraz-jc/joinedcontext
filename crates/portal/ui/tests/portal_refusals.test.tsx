@@ -57,19 +57,22 @@ async function newEndpoint(project: string, permissionsFor: (project: string) =>
 describe("the create form of a project out of reach", () => {
   it("refuses an outsider in words and offers no control that writes", async () => {
     await newEndpoint("zilina", () => notFound("zilina"));
-    expect(await screen.findByText(en.form.mayNotCreate)).toBeInTheDocument();
+    // Not "your role lets you look": an outsider holds no role here and reads nothing.
+    const refusal = (await screen.findByText(en.form.projectHidden)).closest("[role=status]") as HTMLElement;
+    expect(screen.queryByText(en.form.mayNotCreate)).toBeNull();
+    expect(within(refusal).getByRole("link", { name: en.app.notFound.home })).toHaveAttribute("href", "/");
     expect(screen.queryByRole("button", { name: PROPOSE })).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
   it("refuses a hidden project in the very words of a project that does not exist", async () => {
     const hidden = await newEndpoint("zilina", () => notFound("zilina"));
-    await screen.findByText(en.form.mayNotCreate);
+    await screen.findByText(en.form.projectHidden);
     const main = (await screen.findByRole("main")).textContent?.replaceAll("zilina", "P");
     hidden.unmount();
     vi.unstubAllGlobals();
     await newEndpoint("nowhere", () => notFound("nowhere"));
-    await screen.findByText(en.form.mayNotCreate);
+    await screen.findByText(en.form.projectHidden);
     expect((await screen.findByRole("main")).textContent?.replaceAll("nowhere", "P")).toBe(main);
   });
 
@@ -78,6 +81,8 @@ describe("the create form of a project out of reach", () => {
     const propose = await screen.findByRole("button", { name: PROPOSE });
     expect(propose).toHaveAttribute("aria-disabled", "true");
     expect(propose).toHaveAccessibleDescription(en.permissions.checking);
+    // Said where the form starts too, not only beside its submit.
+    expect(screen.getAllByText(en.permissions.checking).length).toBeGreaterThan(1);
     expect(screen.queryByText(en.form.mayNotCreate)).toBeNull();
   });
 
@@ -87,6 +92,8 @@ describe("the create form of a project out of reach", () => {
     await waitFor(() => expect(propose).not.toHaveAccessibleDescription(en.permissions.checking));
     expect(screen.queryByText(en.form.mayNotCreate)).toBeNull();
     expect(propose).not.toHaveAccessibleDescription(/Endpoint/);
+    // The person is told the check failed and the server checks again.
+    expect(screen.getByText(en.permissions.unchecked)).toBeInTheDocument();
   });
 
   it("offers the bootstrap administrator the whole form, with no refusal", async () => {
@@ -95,6 +102,7 @@ describe("the create form of a project out of reach", () => {
     await waitFor(() => expect(propose).not.toHaveAccessibleDescription(en.permissions.checking));
     expect(propose).not.toHaveAccessibleDescription(/Endpoint/);
     expect(screen.queryByText(en.form.mayNotCreate)).toBeNull();
+    expect(screen.queryByText(en.permissions.unchecked)).toBeNull();
   });
 });
 
@@ -103,9 +111,15 @@ describe("the catalogue form of the CKAN page", () => {
     return renderRoute({ path: "/projects/helsinki/ckan", permissionsFor });
   }
 
-  it("is refused to an outsider", async () => {
-    await ckan(() => notFound("helsinki"));
-    expect(await screen.findByText(en.form.mayNotCreate)).toBeInTheDocument();
+  it("is refused to an outsider in one sentence, with no section that fails or writes", async () => {
+    await renderRoute({
+      path: "/projects/helsinki/ckan",
+      permissionsFor: () => notFound("helsinki"),
+      answer: (path) => (path.startsWith("/api/v1/projects/helsinki/") ? notFound("helsinki") : undefined),
+    });
+    expect(await screen.findByText(en.form.projectHidden)).toBeInTheDocument();
+    expect(screen.queryByText(en.form.mayNotCreate)).toBeNull();
+    expect(screen.queryByText(/not found/)).toBeNull();
     expect(screen.queryByRole("button", { name: en.ckan.instances.propose })).toBeNull();
   });
 

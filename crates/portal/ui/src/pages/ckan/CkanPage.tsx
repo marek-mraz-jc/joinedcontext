@@ -17,6 +17,7 @@ import { CkanAccessPanel } from "./CkanAccessPanel";
 import { PublishDatasetDialog, useCatalogueFacets } from "../catalogue/PublishDataset";
 import { Combobox } from "../../components/pickers/Combobox";
 import { PermissionGuard } from "../../components/ui/PermissionGuard";
+import { ProjectHidden } from "../../components/ProjectHidden";
 import { usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
 import {
@@ -52,6 +53,7 @@ export function ckanStatusKey(project: string) {
 export function CkanPage({ project }: { project: string }): JSX.Element {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const permissions = usePermissions(project);
   const [change, setChange] = useState<Change | null>(null);
 
   // What the last runs did to each dataset: the reconciler says it in the activity feed, one
@@ -103,6 +105,16 @@ export function CkanPage({ project }: { project: string }): JSX.Element {
       void queryClient.invalidateQueries({ queryKey: ckanStatusKey(project) });
     },
   });
+
+  // A project out of reach: one refusal, no section that would fail or offer a write (PF-59).
+  if (permissions.denied) {
+    return (
+      <section aria-label={t("ckan.title")} className="space-y-8">
+        <PageHeader title={t("ckan.title")} description={t("ckan.intro")} />
+        <ProjectHidden />
+      </section>
+    );
+  }
 
   return (
     <section aria-label={t("ckan.title")} className="space-y-8">

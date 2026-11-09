@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { Alert, Button, Card, Dialog, PageHeader, PageLoading } from "../ui";
 import type { DialogSize } from "../ui";
 import { failureKind } from "../ui/PageState";
+import { ProjectHidden } from "../ProjectHidden";
 import { usePermissions } from "../../api/permissions";
 
 /**
@@ -365,7 +366,8 @@ export function FormRouteHost({
 }): JSX.Element {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const mayPropose = usePermissions(project).proposesAnything();
+  const permissions = usePermissions(project);
+  const mayPropose = permissions.proposesAnything();
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(0);
   const [notice, setNotice] = useState<ReactNode>(null);
@@ -458,7 +460,9 @@ export function FormRouteHost({
         {unopened && form !== null ? (
           <div className="mb-4 flex flex-col gap-3">
             {/* A role that may propose nothing here reads why, not a red warning (T-4263). */}
-            {form.mode === "new" && !mayPropose ? (
+            {permissions.denied ? (
+              <ProjectHidden />
+            ) : form.mode === "new" && !mayPropose ? (
               <Alert tone="info" role="status">
                 {t("form.mayNotCreate")}
               </Alert>

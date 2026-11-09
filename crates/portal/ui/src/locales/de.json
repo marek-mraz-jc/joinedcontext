@@ -145,6 +145,7 @@
     "notOpen": "Dieses Formular lässt sich nicht öffnen: Hier gibt es nichts namens {name}, oder Sie dürfen es nicht ändern.",
     "notOpenNew": "Unter dieser Adresse gibt es kein Formular zum Anlegen, oder Sie dürfen hier nichts anlegen.",
     "mayNotCreate": "Ihre Rolle erlaubt Ihnen, diese anzusehen, aber hier keine anzulegen. Ein Projektverantwortlicher oder eine Administration kann Ihnen dieses Recht geben.",
+    "projectHidden": "Dieses Projekt ist für Sie nicht zugänglich: Es existiert nicht, oder niemand hat es für Sie freigegeben. Prüfen Sie den Namen in der Adresse oder fragen Sie, wer das Projekt verwaltet.",
     "required": "Dieses Feld ist erforderlich",
     "invalid": "Ungültiger Wert",
     "choose": "Auswählen…",
@@ -6637,6 +6638,7 @@
     "pickedClear": "Alles bearbeiten"
   },
   "permissions": {
+    "unchecked": "Ihre Berechtigungen konnten gerade nicht geprüft werden. Sie können das Formular trotzdem ausfüllen: Der Server prüft Ihre Rechte erneut, wenn Sie die Änderung vorschlagen.",
     "checking": "Ihr Zugriff wird geprüft…",
     "denied": "Deaktiviert: Ihre Rolle erlaubt ''{verb}'' auf ''{kind}'' in diesem Projekt nicht",
     "deniedOrganization": "Nur die Organisationsadministration kann {kinds} {action}.",

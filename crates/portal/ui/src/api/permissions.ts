@@ -179,12 +179,15 @@ export function usePermissions(project: string) {
   const checking = query.isLoading;
   // The 404 of a project no binding of the caller covers (PF-59): a known answer, reading nothing.
   const denied = query.error instanceof ApiError && query.error.status === 404;
+  // Any other failure (500, network): no document, and the API re-checks every write.
+  const unchecked = query.isError && !denied && data === undefined;
   // One value per answer, so a page memoising on `can` or `canIn` recomputes only when it moves.
   return useMemo(() => {
     const read: PermissionsRead = { data, checking, denied };
     return {
       ...read,
       isLoading: isPending,
+      unchecked,
       // A project out of reach, or a document still on its way, allows nothing: `allows` alone
       // would offer every control, and the API's 404 would be the first the person hears of it.
       can: (kind: string, verb: Verb) => offered(read, (effective) => allows(effective, kind, verb)),
@@ -192,7 +195,7 @@ export function usePermissions(project: string) {
         offered(read, (effective) => allowsIn(effective, kind, verb, space)),
       proposesAnything: () => offered(read, proposesAnything),
     };
-  }, [data, isPending, checking, denied]);
+  }, [data, isPending, checking, denied, unchecked]);
 }
 
 /**
