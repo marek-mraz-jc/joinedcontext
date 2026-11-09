@@ -203,7 +203,8 @@ def prod_with_an_orphan():
             d, h = "http://www.w3.org/ns/dcat#", "http://www.w3.org/ns/hydra/core#"
             return 200, [{"@id": "c", "@type": [f"{d}Catalog"]}] + [
                 {"@id": f"u/dataset/{i}", "@type": [f"{d}Dataset"], f"{d}distribution": [{"@id": "x"}] * k}
-                for _, i, k in rows] + [{"@id": "p", "@type": [f"{h}PagedCollection"],
+                for _, i, k in rows] + [{"@id": "https://src.example/datasets/1", "@type": [f"{d}Dataset"]},
+                                        {"@id": "p", "@type": [f"{h}PagedCollection"],
                                         f"{h}totalItems": [{"@value": len(rows)}]}]
         return 404, {}
     return answer

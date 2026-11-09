@@ -182,8 +182,9 @@ def main(argv=None) -> int:
                           "resources": len(pk.get("resources") or []),
                           "dcatDistributions": dist.get(pk.get("id"), dist.get(name)), "inSearch": False}
     feed["datasetNodes"] = sum(1 for d in datasets.values() if d["dcatDistributions"] is not None)
-    # The feed's datasets by name, an orphan's node counted under the name it shares.
-    feed["distinctDatasets"] = len({names_by_id.get(k, k) for k in dist})
+    # The feed's own datasets by name, an orphan's node counted under the name it shares; a source
+    # dataset a node points to (typed dcat:Dataset too, prod 2026-11-09: 1 094) is none of them.
+    feed["distinctDatasets"] = len({n for i, n in names_by_id.items() if i in dist})
     doc = {"fetchedAt": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), "base": a.base,
            "organizations": sorted(orgs), "packageList": sorted(names), "searchCount": len(packages),
            "listedNotFound": unshown, "searchDuplicates": duplicates,
