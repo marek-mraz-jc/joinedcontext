@@ -1266,7 +1266,10 @@ fn a_host_widget_replaces_the_domain_widget_and_an_empty_one_shows_no_launcher()
     ));
     assert!(on.contains("/data/jc-assistant.js"), "the launcher script");
     // The theme shows this icon in place of the words on a narrow screen (a blank tile without it).
-    assert!(on.contains("<svg class=\"jc-assistant-icon\""), "the launcher icon");
+    assert!(
+        on.contains("<svg class=\"jc-assistant-icon\""),
+        "the launcher icon"
+    );
     assert!(
         !on.contains(&format!("assistant.{DOMAIN}")),
         "no domain widget"
