@@ -930,6 +930,25 @@ def portal_made(export: Path) -> list[tuple[Path, str | None]]:
     return [(f, projects.get(n)) for f, n in made]
 
 
+def portal_made_found(h: Http, auth: dict, made: list[tuple[Path, str | None]]) -> tuple[int, list[str]]:
+    """How many of the bundle's Portal-made dashboards daiya holds in their project's organization,
+    and the files of the ones it does not (a pv whose source org names no project is missing)."""
+    found, lost, orgs = 0, [], {}
+    for f, project in made:
+        uid = json.loads(f.read_text()).get("uid")
+        if project and project not in orgs:
+            st, o = h.json("GET", f"/dashboards/api/orgs/name/{urllib.parse.quote(project)}", headers=auth)
+            orgs[project] = str(o.get("id")) if st == 200 and isinstance(o, dict) else None
+        org = orgs.get(project) if project else None
+        if org:
+            st, hits = h.json("GET", "/dashboards/api/search?type=dash-db", headers={**auth, "X-Grafana-Org-Id": org})
+            if st == 200 and isinstance(hits, list) and any(d.get("uid") == uid for d in hits):
+                found += 1
+                continue
+        lost.append(f.name)
+    return found, lost
+
+
 def import_portal_made(h: Http, auth: dict, export: Path, orgs: dict) -> list[dict]:
     """Each Portal-made dashboard into the daiya organization of its project, as the Portal
     would save it there (POST /dashboards/api/dashboards/db, overwrite)."""
@@ -1347,6 +1366,13 @@ def cmd_smoke(a):
     want = sum(1 for f in files if _daiya_kind(f.name) in ("dashboard", "model"))
     check(f"daiya: {want} dashboards in their organizations", not missing and want > 0,
           "; ".join(missing[:8]) or f"{want} found", "GET /dashboards/api/search (per organization)")
+    # the bundle's Portal-made dashboards (org<N>-pv-*), each in the organization of its project
+    made = portal_made(export)
+    if made:
+        found, lost = portal_made_found(h, dauth, made)
+        check(f"daiya: {len(made)} Portal-made dashboards in their project organizations",
+              found == len(made), f"{found} of {len(made)} found" + (f"; missing {', '.join(lost[:5])}" if lost else ""),
+              "GET /dashboards/api/search (X-Grafana-Org-Id of the project)")
     if any(_daiya_kind(f.name) == "dashboard" for f in files):
         pd = portal_dashboards(h, dashdir)
         su = pd["summary"]

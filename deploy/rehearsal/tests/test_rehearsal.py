@@ -716,3 +716,46 @@ def test_a_public_endpoint_answers_as_the_source_did():
     # the source refused it: a 200 in the rehearsal is a difference too (a grant opened)
     assert "(source 403)" in rh.endpoint_answer_problem("efkkw7pka4bhc3igujpzhrs2ra", 200, j, b"[]", src)
     assert rh.endpoint_answer_problem("aaaa", 200, "text/html", b"<html>", src)
+
+
+def test_the_smoke_counts_each_portal_made_dashboard_in_its_project_org(tmp_path):
+    class Daiya(http.server.BaseHTTPRequestHandler):
+        def answer(self, body):
+            raw = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_GET(self):  # noqa: N802
+            if self.path.startswith("/dashboards/api/orgs/name/"):
+                return self.answer({"id": 6})
+            org = self.headers.get("X-Grafana-Org-Id")
+            self.answer([{"uid": "pv-ab12"}] if org == "6" else [{"uid": "pv-elsewhere"}])
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Daiya)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    src = tmp_path / "grafana" / "dashboards"
+    src.mkdir(parents=True)
+    (src / "org3-project-helsinki.json").write_text(json.dumps({"uid": "project-helsinki"}))
+    (src / "org3-pv-ab12.json").write_text(json.dumps({"uid": "pv-ab12"}))
+    (src / "org3-pv-ef56.json").write_text(json.dumps({"uid": "pv-ef56"}))
+    (src / "org9-pv-cd34.json").write_text(json.dumps({"uid": "pv-cd34"}))
+    try:
+        found, lost = rh.portal_made_found(rh.Http(f"http://127.0.0.1:{server.server_port}"), {},
+                                           rh.portal_made(tmp_path))
+    finally:
+        server.shutdown()
+    assert (found, sorted(lost)) == (1, ["org3-pv-ef56.json", "org9-pv-cd34.json"])
+
+
+DEV_BUNDLE = Path("/workspace/evidence/jc-rehearsal/export/dev")
+
+
+@pytest.mark.skipif(not (DEV_BUNDLE / "grafana/dashboards").is_dir(), reason="the dev bundle is not on this host")
+def test_the_dev_bundle_holds_two_portal_made_dashboards_of_helsinki():
+    made = rh.portal_made(DEV_BUNDLE)
+    assert len(made) == 2 and {p for _, p in made} == {"helsinki"}
