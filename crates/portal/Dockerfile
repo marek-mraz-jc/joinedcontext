@@ -20,6 +20,8 @@ COPY ui/package.json ui/pnpm-lock.yaml ./ui/
 RUN corepack enable && cd sdk && pnpm install --frozen-lockfile && cd ../ui && pnpm install --frozen-lockfile
 COPY sdk/ ./sdk/
 COPY ui/ ./ui/
+# `tsc -b` type-checks ui/tests, which read the builder fixture as ../../tests/fixtures/.
+COPY tests/fixtures/grafana-builder/ ./tests/fixtures/grafana-builder/
 WORKDIR /work/ui
 # An empty dist embeds as nothing and the placeholder page comes back silently, so the
 # image build is where that is caught, not the demo.
