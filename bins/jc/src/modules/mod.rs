@@ -28,6 +28,8 @@ mod ekiben_pg;
 pub mod gateway;
 #[cfg(feature = "kaisatsu")]
 mod kaisatsu;
+#[cfg(feature = "model-tools")]
+pub mod model_tools;
 #[cfg(feature = "portal")]
 pub mod portal;
 #[cfg(feature = "shako")]

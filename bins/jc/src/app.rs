@@ -87,6 +87,10 @@ impl MountPlan {
 pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
     let mut plans = Vec::with_capacity(cfg.roles.len());
     for &module in &cfg.roles {
+        // Model Tools has no public mount: it listens on loopback only (`start`).
+        if module == Module::ModelTools {
+            continue;
+        }
         let roots = module.root_paths();
         if cfg.mode == MountMode::Slug && !roots.is_empty() && !cfg.mounts.contains_key(&module) {
             let mount = Mount::new(module.name(), cfg.scheme.clone(), cfg.base_host.clone(), "")?;
@@ -608,6 +612,15 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     let listener = bind(cfg.listen).await?;
     let addr = listener.local_addr().map_err(StartError::Serve)?;
     let mut siblings = Siblings::new(&plans, addr);
+    let tasks = TaskTracker::new();
+    #[cfg(feature = "model-tools")]
+    if cfg.roles.contains(&Module::ModelTools) {
+        let at = modules::model_tools::spawn(shutdown.clone(), &tasks)
+            .await
+            .map_err(|e| StartError::module(Module::ModelTools, e))?;
+        tracing::info!(%at, "model-tools: listening on loopback");
+        siblings.insert_loopback(Module::ModelTools, at);
+    }
     let forwarders = remote_forwarders(cfg, &secrets, &setup, &mut siblings).await?;
     let door = match &cfg.door {
         Some(section) => Some(Arc::new(
@@ -621,7 +634,6 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         secrets: &secrets,
         door: door.as_ref(),
     };
-    let tasks = TaskTracker::new();
     let built = build_router(cfg, ctx, plans, &shutdown, &tasks).await?;
     // A Portal setting that cannot parse refuses the start here; only what needs a sibling to
     // answer (discovery, the forge) is retried after jc serves.

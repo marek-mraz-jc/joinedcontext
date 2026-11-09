@@ -195,6 +195,7 @@ turns it all off.
 | Grafana | daiya | `JC_GRAFANA_URL`, `_PUBLIC_URL`, `_USER=portal`, `_PASSWORD` | works as server admin; the Portal makes each opened project's org and folder (`grafana::spawn_provisioning`, jc-charts) |
 | broker | antares | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | works: views, rule documents and space views written and loaded (stage 8) |
 | gateway | gateway | `JC_PORTAL_GATEWAY_URL`, `JC_PORTAL_GATEWAY_CLIENT_ID=context-gateway` | works: the internal listener admits the gateway's revocation poll (stage 8) |
+| Model Tools | model-tools | `JC_PORTAL_MODEL_TOOLS_URL` (its own loopback listener; no public mount) | works for the views: `POST /generate` gives `brokerSchema` and `context`, the reconciler writes `/q/schemas/{tenant}` and Endpoints serve OGC and OData; the save path's `jsonSchema`, `docs` and `example` are not rendered (evidence/jc-model-tools) |
 
 The Portal's forge client reads its `JC_SHAKO_*` through `Config::forge_var` (environment first, then the values jc
 filled), so the process environment is never written.
@@ -640,6 +641,11 @@ Root `deny.toml` and `cargo audit` carry no ignore. Fixed on branch `jc-ship`:
 
 Still red, with no fixed release to take:
 
+- RUSTSEC-2026-0444 `astral-tl 0.8.0` (unmaintained since 2026-10-05, no patched release) <-
+  `html-to-markdown-rs 3.17.1` (its HTML parser, not optional) <- `kreuzberg 4.10.4` feature `html` <-
+  `assistant` (vendor/joinedcontext-platform/crates/assistant), which reads every crawled page through it
+  (`extract::extract`). The platform workspace carries the same finding. Clears with a kreuzberg whose
+  html-to-markdown-rs moves to `astral-html`, or an owner decision (no ignore is added here).
 - RUSTSEC-2026-0387 `crypto-bigint 0.5.5` <- `elliptic-curve 0.13.8` <- `p256 0.13.2` (and `hpke 0.12.0`,
   `ecdsa`, `primeorder`) <- `age-core 0.12.0` / `age 0.12.1` <- `jcctl` (vendor/joinedcontext-platform) and
   `joinedcontext-portal` <- `jc`. age 0.12.1 (2026-07-14) is the newest release and requires hpke 0.12 with p256;

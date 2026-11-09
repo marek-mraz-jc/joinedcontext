@@ -45,10 +45,13 @@ members = [
   "crates/shako/web",
   "crates/shako/server",
   "bins/jc",
+  # The knowledge assistant, from joinedcontext-platform (vendor/SOURCES.md); a member here, not of
+  # the vendored platform workspace, so jc and its modules link the one copy.
+  "vendor/joinedcontext-platform/crates/assistant",
 ]
 # Joined repositories keep their own workspace (lockfile, lints, standalone binaries) for now; jc
 # depends on their crates by path. Making them members is a later step (bins/jc/STATUS.md).
-exclude = ["crates/ekiben", "crates/antares", "crates/portal", "vendor/joinedcontext-platform", "vendor/ngsild", "vendor/oxrdfxml", "vendor/tikv-jemalloc-ctl"]
+exclude = ["crates/ekiben", "crates/antares", "crates/portal", "vendor/joinedcontext-platform", "vendor/ngsild", "vendor/oxrdfxml", "vendor/tikv-jemalloc-ctl", "vendor/paste"]
 
 # Antares pins rumqttc 0.25.1 with rustls-webpki 0.103 (crates/antares/vendor/rumqttc/README.md); a
 # patch only takes effect from the root manifest.
@@ -58,6 +61,12 @@ rumqttc = { path = "crates/antares/vendor/rumqttc" }
 oxrdfxml = { path = "vendor/oxrdfxml" }
 # tikv-jemalloc-ctl 0.7.0 without paste (RUSTSEC-2024-0436; vendor/SOURCES.md).
 tikv-jemalloc-ctl = { path = "vendor/tikv-jemalloc-ctl" }
+# kreuzberg 4.10.4 with zip 9.0.5 and calamine 0.37 for the assistant (CVE-2026-115905 /
+# GHSA-m665-v7pm-7grj, critical; vendor/joinedcontext-platform/vendor/kreuzberg.patch), as the
+# platform workspace patches it.
+kreuzberg = { path = "vendor/joinedcontext-platform/vendor/kreuzberg" }
+# paste 1.0.15 as a re-export of pastey 0.1.1 (RUSTSEC-2024-0436; vendor/SOURCES.md).
+paste = { path = "vendor/paste" }
 
 [workspace.package]
 edition = "2024"

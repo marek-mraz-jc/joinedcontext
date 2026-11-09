@@ -1,0 +1,13 @@
+# paste's interface on pastey 0.1.1, the fork RUSTSEC-2024-0436 names as its drop-in replacement
+# (vendor/SOURCES.md). tokenizers and biblatex (kreuzberg) call `paste::paste!`; the root
+# [patch.crates-io] hands them this crate. Drop it when both move off paste.
+[package]
+name = "paste"
+version = "1.0.15"
+edition = "2018"
+license = "MIT OR Apache-2.0"
+description = "paste's macros re-exported from pastey"
+publish = false
+
+[dependencies]
+pastey = "=0.1.1"
