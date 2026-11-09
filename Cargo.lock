@@ -5247,8 +5247,10 @@ dependencies = [
  "jc-core",
  "jc-manifest",
  "jc-router",
+ "jc-secret",
  "jcctl",
  "joinedcontext-portal",
+ "jsonwebtoken 11.1.0",
  "kaisatsu-core",
  "kaisatsu-crypto",
  "kaisatsu-import",
@@ -5322,6 +5324,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "jc-core",
+ "jc-secret",
  "jsonschema",
  "serde",
  "serde_json",
@@ -5363,6 +5366,18 @@ dependencies = [
  "tokio",
  "tower",
  "url",
+]
+
+[[package]]
+name = "jc-secret"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "zeroize",
 ]
 
 [[package]]

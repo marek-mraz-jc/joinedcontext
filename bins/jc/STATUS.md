@@ -459,6 +459,128 @@ ekiben without its boot check).
 - ekiben run-once streams, org quotas and resources are not persisted.
 - shako's op log grows without compaction; replay sets `updated_at` to the replay time.
 
+## Secrets (jc-secrets, owner design of 2026-11-08)
+
+### One reader
+
+`src/config.rs` is the only code in `jc` and the module crates that reads the environment (`process_env`, `portal_env`)
+or a secret file (`Secrets::load`). Each secret comes from `NAME` (an environment value) or `NAME_FILE` (or the config
+file's key naming the file); both set refuses the start. The value is a `jc_secret::Secret`
+(`crates/shared/jc-secret`): `Debug`, `Display` and `Serialize` print `<redacted>`, equality is constant time, the bytes
+are zeroed on drop. A module builder gets its own entries only.
+
+| secret | `NAME` | `NAME_FILE` / file key | when neither is set |
+|---|---|---|---|
+| admin listener token | `JCBIN_ADMIN_TOKEN` | `JCBIN_ADMIN_TOKEN_FILE`, `admin_token_file` | start refused with `--admin-listen` |
+| kaisatsu KEK | `JCBIN_KAISATSU_KEK` | `JCBIN_KAISATSU_KEK_FILE`, `kaisatsu.kek_file` | generated, 0600 file |
+| shako signing key | `JCBIN_SHAKO_SIGNING_KEY` | `JCBIN_SHAKO_SIGNING_KEY_FILE` | generated per boot |
+| shako service token | `JCBIN_SHAKO_TOKEN` | `JCBIN_SHAKO_TOKEN_FILE` | generated per boot, memory only |
+| ekiben API token | `JCBIN_EKIBEN_TOKEN` | `JCBIN_EKIBEN_TOKEN_FILE` | generated per boot, memory only |
+| dataroom Portal token | `JCBIN_DATAROOM_PORTAL_TOKEN` | `JCBIN_DATAROOM_PORTAL_TOKEN_FILE` | generated per boot, memory only |
+| daiya Portal password | `JCBIN_DAIYA_PORTAL_PASSWORD` | `JCBIN_DAIYA_PORTAL_PASSWORD_FILE` | generated per boot, memory only |
+| Antares admin token | `JCBIN_ANTARES_ADMIN_TOKEN` | `JCBIN_ANTARES_ADMIN_TOKEN_FILE` | memory only; a 0600 file while the Portal runs beside it |
+| Portal age identity | refused (file only) | `JCBIN_PORTAL_AGE_KEY_FILE`, `portal.age_key_file` | the Portal's `JC_PORTAL_SOPS_AGE_KEY_FILE` |
+| `[remote]` client secret | `JCBIN_REMOTE_CLIENT_SECRET` | `JCBIN_REMOTE_CLIENT_SECRET_FILE`, `remote.client_secret_file` | start refused with `[remote]` |
+| ekiben stream variables | `EKIBEN_VAR_<NAME>` | none | none |
+
+The start report logs one line per secret with its name and source (`env`, `file`, `generated`), never the value
+(`app::report_secrets`); with `--profile production` a secret from `env` is a warning.
+
+A realm file of `--kaisatsu-import-dir` no longer reads `jc`'s environment through `$(env:NAME)` (it read the whole
+process environment before): its secrets are `$(file:...)` under `--kaisatsu-import-secrets-dir`. The standalone
+kaisatsu CLI keeps reading the environment (`ApplyOptions::with_process_env`).
+
+Database passwords (jc-pg's `[<module>.database] password_file` and `migrate_password_file`) are
+read through the same reader (`jc_secret::read_file`) at connect, held as `jc_secret::Secret`, and
+listed in the start report as `<module>-db-password` / `<module>-db-migrate-password`, source `file`.
+Antares gets its URL with the password as a `Secret` (`DatabaseSection::app_url_with_password`).
+The Portal's age identity is the operator's `--portal-age-key-file` (checked at start) when given,
+else the one setup generates (`portal-age-key`, an age identity in a 0600 file).
+
+### Enforced by clippy
+
+`clippy.toml` in `crates/{dataroom,kaisatsu,daiya,shako,shared}` and `bins/jc` disallows `std::env::var`, `var_os`,
+`vars`, `vars_os` and `std::process::Command::new`. Children start through `jc_secret::spawn::command`: a cleared
+environment plus `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`, `SSL_CERT_FILE`, `SSL_CERT_DIR`
+(jc-manifest's `git` in `assemble.rs` uses it). Tests reading their database URL carry a file-level allow.
+
+### Fewer secrets
+
+In one process the Portal's credentials for shako, ekiben, daiya and dataroom are made per boot in memory; a file of
+an older start is removed. The Antares admin token stays a 0600 file while the Portal runs beside Antares, because the
+Portal reads it per call from `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` (`crates/portal/src/config.rs`, not ours to change).
+
+### Project secrets (`secretRef`)
+
+- The Portal resolves a pipeline's `secretRef` from `projects/{project}/secrets` only (`pipeline_secrets::secrets_folder`,
+  T-6227). The CKAN `apiTokenRef` resolved against every SOPS file of the staged tree; `reconciler/ckan.rs`
+  `project_token` now scopes it to the Endpoint's project too.
+- `jc` checks the age identity at start (`app::portal_age_key`): a missing or unusable file refuses the start, naming
+  the file only. It fills `JC_PORTAL_SOPS_AGE_KEY_FILE` for the Portal.
+- With ekiben beside the Portal, the reconciler hands the resolved runner environment to ekiben's default organization
+  (`pipeline_secrets::hand_runner_secrets_to`, `modules::ekiben::HostRunner`) instead of writing a Kubernetes Secret; a
+  variable `jc` was given (`EKIBEN_VAR_*`) wins over a pipeline's.
+
+### Endpoint scopes (`src/modules/kaisatsu.rs`)
+
+The Portal's token exchange for a data read (`jc_data_query`, audience `mcp-hub`, scope
+`gateway-hub endpoint:{slug}`) needs `endpoint:{slug}` as an optional scope of `portal-api`. On
+dev the deployment's keycloak-admin-permissions-sync CronJob links it as the realm admin; jc's
+kaisatsu does the same in process every 5 s: every Portal-made `endpoint:` scope (marked
+`managed-by: joinedcontext`, no protocol mapper) becomes an optional scope of `mcp-hub`, `jcctl`
+and `portal-api` (whichever exist); an unmarked, removed or default-linked `endpoint:` scope is
+unlinked, and `endpoint:*` stays only as the hub's default. No realm-wide optional scope (T-6301).
+`tests/gateway_endpoints.rs` reads the closed Endpoint through `/api/v1/mcp` as a member, and a
+person in no group gets the exchanged token and is still refused by the gateway's Policy.
+
+### Role split (`src/door.rs`)
+
+- Module container, `[door]` (`issuer`, `jwks_url`, `clients`): a bearer JWT that kaisatsu signed (ES256, RS256 or
+  EdDSA, key from the JWKS, refetched at most every 30 s), with `iss` the issuer, `aud` the module's name, `exp` in
+  the future and `azp` in `clients`, is swapped for the module's per-boot credential (Bearer; Basic `portal:` for
+  daiya). Every other request reaches the module unchanged. No client named admits nobody.
+- Portal container, `[remote]` (`token_url`, `client_id`, client secret, `modules.<name> = <base>`): each remote module
+  gets a loopback forwarder; the Portal is pointed at it with a per-boot credential, and the forwarder swaps exactly
+  that credential for a client-credentials token with scope and audience the module's name, cached until 30 s before
+  it expires. A remote module may not also run locally; only a jc with the Portal takes `[remote]`.
+- kaisatsu: one client scope per module with an `oidc-audience-mapper` to the module's name, as optional scopes of
+  the caller's service-account client (`tests/split_role.rs` builds that realm).
+
+### Production
+
+Environment values stay visible in `docker inspect` and in the pod spec. Production gives every secret as a file
+(compose `secrets:` or a mounted Kubernetes Secret) and runs kaisatsu and the Portal in their own containers (same
+image, `--role`), with `[door]` and `[remote]` between them.
+
+### Guards and their red proofs (`/workspace/evidence/jc-secrets/red-*.txt`)
+
+| guard | test | red (guard reverted once) |
+|---|---|---|
+| child environment cleared | `jc-secret spawn::tests::a_child_sees_only_the_passed_variables` | failed: CARGO_MANIFEST_DIR reached the child |
+| `NAME` and `NAME_FILE` both set refused | `jc-secret tests::name_and_name_file_both_set_is_refused` | failed |
+| `Debug` redaction | `jc-secret tests::every_formatting_is_redacted` | failed: the value printed |
+| in-process tokens off disk, new per boot | `setup::tests::in_process_service_tokens_are_not_on_disk_and_change_per_boot` | failed |
+| age identity checked at start | `one_binary::a_missing_or_unusable_age_key_file_refuses_start` | failed: jc started |
+| a given variable wins over a pipeline's | `modules::ekiben::tests::a_given_variable_wins_*` | failed |
+| module crate reads env or spawns | clippy `-p daiya-server` with a deliberate call | 2 errors |
+| door audience | `split_role` | admitted for all 5 modules: shako, ekiben, daiya, dataroom, antares |
+| door client allow-list | `split_role` | shako admitted a token of `other-service` |
+| forwarder swaps only the local credential | `split_role` | shako admitted another credential |
+| CKAN token from its own project | `portal reconciler::ckan::tests::an_api_token_resolves_only_*` | failed: project `oulu` resolved `helsinki`'s token |
+| runner environment to the host | `portal tests/host_runner_secrets_tests.rs` | failed: nothing handed |
+
+### Gaps
+
+- No `clippy.toml` in `crates/portal` (15 source files read the environment), `crates/antares` (34), `crates/ekiben`
+  (5) or `vendor/joinedcontext-platform` (14): the Portal reads its own `JC_*` keys, Antares its `ANTARES_*`. Moving
+  them onto `jc`'s reader needs each module's config to take values, starting with `crates/portal/src/config.rs`.
+- `Command::new` remains in jcctl CLI commands (`changelog.rs:103`, `migrate.rs:63`, `git_bundle.rs:56`,
+  `apply.rs:188`) and Antares' `build.rs`; the Portal reaches none of them.
+- The Antares admin token remains a file beside the Portal (above).
+- The CKAN `apiTokenRef.envVar` path still reads `CKAN_*` from the process environment inside jcctl (one deployment
+  value for all projects, as on dev).
+- The forwarder buffers bodies whole (64 MiB cap); a git push through it would need streaming.
+
 ## Stage 9: merge round on jc-portal-1 (jc-portal-integrate, 2026-11-08)
 
 Merged into `jc-portal-1`, each followed by the jc gates (fmt, clippy, lib/bins, one_binary, outbound_guard,
@@ -473,6 +595,7 @@ gateway_endpoints, portal_siblings on memory and Postgres 17, restart_pg on Post
 | jc-charts dab4a277 | d2837531 | `server.rs`: jc-charts' `spawn_provisioning` replaces this branch's duplicate `spawn_organizations` |
 | jc-shako-odata 603229b4 | 5ed3bf22 | none; jc fills `JC_SHAKO_*` (was `JC_GITEA_*`), hooks name `/api/v1/webhooks/shako` |
 | jc-shako-ui edcb53ba | 8243e19e | `ops/mod.rs` both registries, four locales both blocks, MCP byte ratchet 73,062; `ops/repositories.rs` moved from the deleted `GiteaClient` to `ShakoClient` |
+| jc-secrets 04ccea80 | (this merge) | `gateway.rs` takes the in-memory shako token and this branch's `forge_repo`; `provision.rs` reads through `config::portal_env`; the ekiben bearer goes to the Portal by value (below) |
 
 Fixes in this round, each with a red proof under `/workspace/evidence/jc-portal-integrate/red/`:
 
@@ -484,6 +607,10 @@ Fixes in this round, each with a red proof under `/workspace/evidence/jc-portal-
   IP literal and port, while the stored record matches the files. API-made or changed datasources, another port
   and a host name stay refused (`crates/daiya/server/tests/own_listener.rs`, `daiya-own-listener.txt`).
   Provisioning writes organization 1 only, so per-project organizations cannot be file-provisioned yet.
+- The Portal called jc's ekiben without its bearer, so stream deletes got 401 (jc-migrate's rehearsal, G15). The
+  Portal now sends `JC_PORTAL_PIPELINE_RUNNER_TOKEN` (or the file `JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE` names,
+  read at start) on every runner call, through its own client only; jc hands it the in-memory ekiben token
+  (`modules::ekiben::tests::a_portal_issued_delete_reaches_ekiben`, `ekiben-runner-bearer.txt`).
 - Antares `q_admin_sweep` and `dev/new-surface.py` named `antares-broker/src/main.rs`, whose mounts 6387a8da moved
   to `lib.rs` (`antares-broker-lib-paths.txt`).
 

@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL; jc runs none of this.
 //! A restart keeps state: a new `PgStore` on the same database serves the instance and the
 //! repositories an earlier one wrote, once `hydrate_tenant` loaded them under the tenant's RLS
 //! context, and loads nothing of another tenant.

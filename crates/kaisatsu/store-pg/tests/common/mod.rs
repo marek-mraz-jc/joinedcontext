@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! Throwaway PostgreSQL databases for the `kaisatsu-store-pg` tests.
 //!
 //! `KAISATSU_TEST_DATABASE_URL` names a superuser connection to a server the tests may use. Each

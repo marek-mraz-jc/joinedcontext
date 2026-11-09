@@ -33,6 +33,8 @@ pub struct Options {
     pub forge: String,
     /// A file holding the forge's read-only token, a mounted Secret.
     pub token_file: Option<PathBuf>,
+    /// The forge's token held in memory by a host process (`jc`), in place of `token_file`.
+    pub token: Option<Secret>,
     /// The mounted Secrets an external entry's `secretRef` names: `{dir}/{name}/username` and
     /// `{dir}/{name}/password`.
     pub secrets_dir: Option<PathBuf>,
@@ -70,9 +72,10 @@ pub fn mounted_secret(dir: Option<&Path>, secret: &SecretRef) -> Result<Basic, S
 /// One pass: every registry entry of `org_dir` linked under `projects` at its ref.
 pub fn sync(org_dir: &Path, projects: &Path, options: &Options) -> Result<Vec<Linked>, String> {
     let registry = read_registry(org_dir).map_err(|err| err.to_string())?;
-    let forge_credential = match &options.token_file {
-        Some(file) => Some(("jcctl".to_owned(), Secret::new(read_trimmed(file)?))),
-        None => None,
+    let forge_credential = match (&options.token, &options.token_file) {
+        (Some(token), _) => Some(("jcctl".to_owned(), token.clone())),
+        (None, Some(file)) => Some(("jcctl".to_owned(), Secret::new(read_trimmed(file)?))),
+        (None, None) => None,
     };
     let secrets_dir = options.secrets_dir.clone();
     let secrets = move |secret: &SecretRef| mounted_secret(secrets_dir.as_deref(), secret);

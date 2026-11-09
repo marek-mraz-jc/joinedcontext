@@ -66,6 +66,12 @@ impl Siblings {
         }
     }
 
+    /// Adds a module that runs in another container: `public` is its mount there, `internal` the
+    /// loopback forwarder that carries the Portal's calls to it ([`crate::door::Remote`]).
+    pub fn insert_remote(&mut self, module: Module, sibling: Sibling) {
+        self.modules.insert(module, sibling);
+    }
+
     #[must_use]
     pub fn get(&self, module: Module) -> Option<&Sibling> {
         self.modules.get(&module)
@@ -96,7 +102,7 @@ fn origin(url: &str) -> String {
 /// |---|---|
 /// | `JC_OIDC_ISSUER`, `JC_OIDC_CLIENT_*`, `JC_KEYCLOAK_ADMIN_URL`, `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_*`, `JC_PORTAL_COOKIE_KEY` | kaisatsu |
 /// | `JC_SHAKO_URL`, `_PUBLIC_URL`, `_OWNER`, `_REPO`, `_TOKEN`, `_APPS_OWNER`, `_APPS_TOKEN`, `_WEBHOOK_SECRET` | shako |
-/// | `JC_PORTAL_PIPELINE_RUNNER_URL`, `JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE` | ekiben |
+/// | `JC_PORTAL_PIPELINE_RUNNER_URL`, `JC_PORTAL_PIPELINE_RUNNER_TOKEN` | ekiben |
 /// | `JC_PORTAL_CKAN_URL`, `JC_PORTAL_CKAN_API_URL` (https, EP-67; http only with `JC_PORTAL_CKAN_ALLOW_HTTP=true`) | dataroom |
 /// | `JC_PORTAL_GRAFANA_URL`, `_PUBLIC_URL`, `_USER`, `_PASSWORD` | daiya |
 /// | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | antares |
@@ -173,11 +179,9 @@ pub fn portal_vars(
         );
     }
     if let Some(streams) = siblings.get(Module::Ekiben) {
-        // ekiben refuses every call without its bearer: the Portal sends jc's ekiben token file
-        // (an `[ekiben] token_file` of the operator's needs this key set to the same file).
-        let token = setup
-            .path(Secret::EkibenToken)
-            .map(|p| p.display().to_string());
+        // ekiben refuses every call without its bearer: the Portal sends jc's ekiben token,
+        // handed over from memory as the shako token is.
+        let token = secret(Secret::EkibenToken);
         group(
             "JC_PORTAL_PIPELINE_RUNNER_URL",
             vec![
@@ -185,7 +189,7 @@ pub fn portal_vars(
                     "JC_PORTAL_PIPELINE_RUNNER_URL",
                     Some(streams.internal.clone()),
                 ),
-                ("JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE", token),
+                ("JC_PORTAL_PIPELINE_RUNNER_TOKEN", token),
             ],
         );
     }
@@ -257,11 +261,14 @@ pub fn portal_vars(
             ],
         );
     }
-    // The Portal's own secret backend (SOPS + age, its identity a setup file) unless the
-    // environment names a backend.
+    // The Portal's own secret backend (SOPS + age) unless the environment names a backend: the
+    // identity the operator gave (checked at start), else the one setup generated.
     if unset("JC_PORTAL_SOPS_AGE_KEY_FILE")
         && unset("JC_PORTAL_OPENBAO_ADDR")
-        && let Some(path) = setup.path(Secret::PortalAgeKey)
+        && let Some(path) = setup
+            .age_key_file
+            .as_deref()
+            .or_else(|| setup.path(Secret::PortalAgeKey))
     {
         out.insert(
             "JC_PORTAL_SOPS_AGE_KEY_FILE".to_owned(),
@@ -296,7 +303,7 @@ mod tests {
     fn fixture(scheme: &str) -> (Siblings, Setup, tempfile::TempDir) {
         let siblings = Siblings::new(&plans(BTreeMap::new(), scheme), LISTEN.parse().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let setup = Setup::prepare(dir.path(), &Module::ALL).unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
         (siblings, setup, dir)
     }
 
@@ -444,7 +451,7 @@ mod tests {
             "JC_PORTAL_PIPELINE_RUNNER_URL",
             &[
                 "JC_PORTAL_PIPELINE_RUNNER_URL",
-                "JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE",
+                "JC_PORTAL_PIPELINE_RUNNER_TOKEN",
             ],
             "https",
         );
@@ -452,9 +459,7 @@ mod tests {
             v["JC_PORTAL_PIPELINE_RUNNER_URL"],
             "http://127.0.0.1:8443/streams"
         );
-        // The file ekiben reads its bearer from, never the token itself.
-        let file = &v["JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE"];
-        assert!(file.ends_with(Secret::EkibenToken.file_name()), "{file}");
+        assert!(!v["JC_PORTAL_PIPELINE_RUNNER_TOKEN"].trim().is_empty());
     }
 
     #[test]

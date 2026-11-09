@@ -98,31 +98,18 @@ pub enum StreamOutcome {
 }
 
 /// A client that calls the pipeline runner and nothing else: each request carries the runner's
-/// bearer from `token_file` (`JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE`, jc's ekiben token), read when
-/// the client is built, as a sensitive header. No file sends none (a Bento runner on the cluster
-/// network); a file that cannot be read leaves it out too, so the runner refuses the calls.
-/// ponytail: read per client, so the deployer takes a rotated token at its next start.
-pub fn runner_client(
-    builder: reqwest::ClientBuilder,
-    token_file: Option<&std::path::Path>,
-) -> reqwest::Client {
+/// bearer `token` (`Config::pipeline_runner_token`, jc's ekiben token) as a sensitive header.
+/// No token sends none (a Bento runner on the cluster network).
+pub fn runner_client(builder: reqwest::ClientBuilder, token: Option<&str>) -> reqwest::Client {
     let mut headers = reqwest::header::HeaderMap::new();
-    if let Some(file) = token_file {
-        let bearer = std::fs::read_to_string(file)
-            .ok()
-            .map(|token| token.trim().to_owned())
-            .filter(|token| !token.is_empty())
-            .and_then(|token| {
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")).ok()
-            });
-        match bearer {
-            Some(mut value) => {
+    if let Some(token) = token {
+        match reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
+            Ok(mut value) => {
                 value.set_sensitive(true);
                 headers.insert(reqwest::header::AUTHORIZATION, value);
             }
-            None => tracing::warn!(
-                file = %file.display(),
-                "the pipeline runner's token file holds no token: runner calls go without it"
+            Err(_) => tracing::warn!(
+                "the pipeline runner's token is no header value: runner calls go without it"
             ),
         }
     }
@@ -133,8 +120,8 @@ pub fn runner_client(
 pub struct StreamDeployer {
     runner_url: String,
     http: reqwest::Client,
-    /// The runner's token file ([`runner_client`]).
-    runner_token: Option<std::path::PathBuf>,
+    /// The runner's bearer ([`runner_client`]).
+    runner_token: Option<String>,
     deployed: Mutex<HashSet<(String, String)>>,
     /// The hash of the config each live stream was last PUT with: an unchanged render is not
     /// sent again, because the runner restarts a stream on every PUT and a periodic pipeline
@@ -383,13 +370,13 @@ impl StreamDeployer {
         }
     }
 
-    /// Sends the runner's bearer from `token_file` on every call ([`runner_client`]).
-    pub fn with_runner_token(mut self, token_file: Option<std::path::PathBuf>) -> Self {
+    /// Sends the runner's bearer `token` on every call ([`runner_client`]).
+    pub fn with_runner_token(mut self, token: Option<String>) -> Self {
         self.http = runner_client(
             reqwest::Client::builder().timeout(RUNNER_TIMEOUT),
-            token_file.as_deref(),
+            token.as_deref(),
         );
-        self.runner_token = token_file;
+        self.runner_token = token;
         self
     }
 

@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! The `kaisatsu` binary (W1b, W2, W9): `check`, `plan`, `apply`, `diff` and `export` on realm
 //! files in JSON and YAML, `migrate` and `serve` on PostgreSQL with the password read from a file.
 //! The PostgreSQL cases print `SKIP` without `KAISATSU_TEST_DATABASE_URL`.

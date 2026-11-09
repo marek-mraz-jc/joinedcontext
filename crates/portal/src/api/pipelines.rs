@@ -306,7 +306,7 @@ pub(crate) fn runner_http(config: &crate::config::Config) -> reqwest::Client {
         reqwest::Client::builder()
             .timeout(SCRAPE_TIMEOUT)
             .pool_max_idle_per_host(0),
-        config.pipeline_runner_token_file.as_deref(),
+        config.pipeline_runner_token.as_deref(),
     )
 }
 

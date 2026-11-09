@@ -8,6 +8,8 @@ description = "The manifest repository: loading, assembly, validation and model 
 
 [dependencies]
 jc-core = { path = "../jc-core", version = "0.1.0" }
+# The one helper that starts a child process with a cleared environment (jc secrets design).
+jc-secret = { path = "../../../../crates/shared/jc-secret" }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 jsonschema = { version = "0.54", default-features = false }

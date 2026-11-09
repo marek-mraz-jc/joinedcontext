@@ -55,7 +55,7 @@ pub async fn build(
     mount: Mount,
     shutdown: &CancellationToken,
 ) -> Result<(Router, Option<std::net::SocketAddr>), StartError> {
-    let env = |key: &str| std::env::var(key).ok();
+    let env = crate::config::portal_env;
     let siblings = if wire_siblings {
         crate::siblings::portal_vars(ctx.siblings, ctx.setup, env)
     } else {

@@ -790,10 +790,12 @@ impl GitCheckouts<'_> {
 
 /// One git invocation. A credential goes to its repository's URL alone (T-5702): the header is
 /// scoped as `http.<url>.extraHeader`, and redirects are not followed, because git keeps
-/// sending a header to the host a redirect named for every request after the first.
+/// sending a header to the host a redirect named for every request after the first. git starts
+/// with a cleared environment (`jc_secret::spawn`): the host process holds other secrets, which
+/// the child must not inherit.
 fn git_command(credential: Option<(&Basic, &str)>, args: &[&str]) -> std::process::Command {
     use base64::Engine as _;
-    let mut command = std::process::Command::new("git");
+    let mut command = jc_secret::spawn::command("git");
     command
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -923,6 +925,21 @@ mod tests {
                 Some((key.to_str()?.to_owned(), value?.to_str()?.to_owned()))
             })
             .collect()
+    }
+
+    /// The host's environment holds other modules' secrets (`jc`): git sees only the allow-list.
+    /// Cargo sets `CARGO_MANIFEST_DIR` in this test process; a git that inherited the
+    /// environment would print it through the alias.
+    #[cfg(unix)]
+    #[test]
+    fn git_starts_with_a_cleared_environment() {
+        let out = git_command(None, &["-c", "alias.e=!env", "e"])
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "{out:?}");
+        let shown = String::from_utf8_lossy(&out.stdout);
+        assert!(shown.contains("PATH="), "{shown}");
+        assert!(!shown.contains("CARGO_MANIFEST_DIR="), "{shown}");
     }
 
     /// T-5702 (F-PLT3-008): an unscoped `http.extraHeader` went with every request of the

@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! The real `daiya` binary end to end (R2, R3, R8, R11): started with a configuration file,
 //! it loads provisioning, accepts the configured API token, answers a query from a
 //! provisioned datasource against a mock Prometheus, and (on Postgres) keeps what was written

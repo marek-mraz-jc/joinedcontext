@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! Shared multi-tenant isolation test suite (R8, §5.3 tests 1–8 and boot RLS check).
 //!
 //! Runs against `MemoryStore` unconditionally and against `PgStore` when
