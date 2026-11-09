@@ -127,6 +127,9 @@ class FakeOps:
     def fresh(self):
         return self.held
 
+    def relocate(self):
+        return []
+
     def restore_roles(self):
         pass
 
@@ -154,7 +157,7 @@ def args(tmp_path, **kw):
     os.symlink(home / "state" / "portal-admin-client-secret", home / "smoke-state" / "portal-admin-client-secret")
     a = SimpleNamespace(base_url="http://localhost:42310", home=str(home), suites="endpoints,names", extra={},
                         backup_dir=None, restore_env=None, restore_port=42311, restore_pg_port=55461,
-                        jc_bin="/bin/true", converge=1, suite_timeout=10, keep=False, export="/e",
+                        jc_bin="/bin/true", converge=1, max_disk=0.92, suite_timeout=10, keep=False, export="/e",
                         state=str(home / "smoke-state"), log_file=str(home / "jc.log"), admin_url=None, admin_token_file=None)
     for k, v in kw.items():
         setattr(a, k, v)
@@ -178,7 +181,7 @@ def test_a_faithful_copy_passes_every_row_and_times_each_step(tmp_path, monkeypa
     res, meta, ops = run_fake(tmp_path, monkeypatch)
     rows = by_id(res)
     assert [r for r in res.rows if r["result"] != "pass"] == []
-    for step in ("before", "dump.roles", "dump.antares", "dump.portal", "files", "fresh", "restore.roles",
+    for step in ("before", "dump.roles", "dump.antares", "dump.portal", "files", "fresh", "relocate", "restore.roles",
                  "restore.antares", "restore.portal", "start", "converge", "after"):
         assert rows[f"step.{step}"]["result"] == "pass" and step in meta["steps"]
     assert {"control.fresh-empty", "control.data.antares", "control.own-process", "control.unknown-slug",
@@ -232,3 +235,33 @@ def test_main_writes_results_and_answers_0_on_a_named_skip(tmp_path):
     assert suite.main(["--base-url", "http://localhost:1", "--out", str(tmp_path / "o")]) == 0
     doc = json.loads((tmp_path / "o" / "results.json").read_text())
     assert doc["totals"] == {"pass": 0, "fail": 0, "skip": 1}
+
+
+def test_relocate_names_and_rewrites_every_path_of_the_source_home(tmp_path):
+    src, dst = tmp_path / "prod", tmp_path / "prod-restore"
+    (dst / "state" / "realms").mkdir(parents=True)
+    (dst / "state" / "realms" / "r.json").write_text(f'{{"secret": "$(file:{src}/secrets/realm/K)"}}')
+    (dst / "state" / "plain.txt").write_text("nothing here")
+    (dst / "state" / "gateway").mkdir()
+    os.symlink(f"{src}/state/gateway/org-cache/t1", dst / "state" / "gateway" / "current")
+    os.symlink("org-cache/t2", dst / "state" / "gateway" / "relative")
+    (dst / "pgdata").mkdir()
+    (dst / "pgdata" / "x").write_text(str(src) + "/")  # not a part of the backup: left alone
+    found = suite.relocate(dst, src)
+    assert len(found) == 2
+    assert (dst / "state" / "realms" / "r.json").read_text() == f'{{"secret": "$(file:{dst}/secrets/realm/K)"}}'
+    assert os.readlink(dst / "state" / "gateway" / "current") == f"{dst}/state/gateway/org-cache/t1"
+    assert os.readlink(dst / "state" / "gateway" / "relative") == "org-cache/t2"
+    assert suite.relocate(dst, src) == []
+
+
+def test_a_restored_file_naming_the_source_home_fails_the_relocatable_control(tmp_path, monkeypatch):
+    class Pinned(FakeOps):
+        def relocate(self):
+            return ["state/realms/smartcity.json: 3x /old/home/"]
+    monkeypatch.setenv("REHEARSAL_HOME", str(tmp_path / "rh"))
+    monkeypatch.setattr(suite, "unknown_slug", lambda base: (404, "/x"))
+    res = Results("restore", "http://localhost:42310")
+    suite.execute(args(tmp_path), res, tmp_path / "out", Pinned)
+    bad = [r["id"] for r in res.rows if r["result"] == "fail"]
+    assert bad == ["control.relocatable"] and by_id(res)["step.after"]["result"] == "pass"

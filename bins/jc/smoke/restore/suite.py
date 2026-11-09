@@ -293,6 +293,27 @@ class Pg:
         return p.stdout.strip() == "true"
 
 
+def relocate(rhome: Path, home: Path) -> list[str]:
+    old, new = str(home) + "/", str(rhome) + "/"
+    found = []
+    for f in sorted(rhome.rglob("*")):
+        rel = f.relative_to(rhome)
+        if rel.parts[0] not in HOME_PARTS:
+            continue
+        if f.is_symlink():
+            target = os.readlink(f)
+            if target.startswith(old):
+                found.append(f"{rel} -> {target}")
+                f.unlink()
+                os.symlink(new + target[len(old):], f)
+        elif f.is_file() and f.stat().st_size < (8 << 20):
+            text = f.read_bytes()
+            if old.encode() in text:
+                found.append(f"{rel}: {text.count(old.encode())}x {old}")
+                f.write_bytes(text.replace(old.encode(), new.encode()))
+    return found
+
+
 def run(argv: list[str], env: dict | None = None, timeout: float = 3600, cwd: str | None = None) -> str:
     p = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=timeout, cwd=cwd, check=False)
     if p.returncode:
@@ -316,12 +337,12 @@ class Ops:
         if not self.src.running():
             raise Refused(f"container {self.src.container} does not run: this suite backs up a rehearsal up.sh started")
         dbs = self.src.databases()
-        need = int(self.src.size(dbs) * 2.3)  # the dumps (< 0.3x) and the restored copy (1x), plus slack
+        need = int(self.src.size(dbs) * 1.5)  # the dumps (< 0.3x) and the restored copy (1x), plus slack
         st = shutil.disk_usage(self.backup)
         used_after = (st.total - st.free + need) / st.total
-        if used_after > 0.90:
-            raise Refused(f"needs ~{need >> 20} MiB; the disk would be {used_after:.0%} full (> 90 %: the host "
-                          f"sweeper deletes build dirs at 93 %)")
+        if used_after > self.a.max_disk:
+            raise Refused(f"needs ~{need >> 20} MiB; the disk would be {used_after:.1%} full (> {self.a.max_disk:.0%}: "
+                          f"the host sweeper deletes build dirs at 93 %)")
         return {"databases": dbs, "needBytes": need}
 
     def suite(self, name: str, argv: list[str], out: Path) -> tuple[int, str]:
@@ -375,6 +396,13 @@ class Ops:
             time.sleep(1)
         raise RuntimeError(f"no PostgreSQL on {self.dst.port} after 120 s")
 
+    def relocate(self) -> list[str]:
+        """Paths of the source home inside the restored files, rewritten to the copy's home.
+
+        A backup restored at another path (a new volume, a second host) only starts when nothing in
+        it names the old path: answers what did, each rewritten so the rest can still be compared."""
+        return relocate(self.rhome, self.home)
+
     def restore_roles(self) -> None:
         self.dst.restore_roles(self.backup / "roles.sql")
 
@@ -390,8 +418,14 @@ class Ops:
                "REHEARSAL_DEMO_USERS": str(self.rhome / "no-demo-users.yaml")}
         env.pop("REHEARSAL_ROLE", None)
         env.pop("REHEARSAL_IMPORT_POLICY", None)
-        run([str(REPO / "deploy" / "rehearsal" / "up.sh"), self.rhome.name, str(self.a.restore_port),
-             str(self.dst.port)], env=env, timeout=900)
+        try:
+            run([str(REPO / "deploy" / "rehearsal" / "up.sh"), self.rhome.name, str(self.a.restore_port),
+                 str(self.dst.port)], env=env, timeout=900)
+        except RuntimeError as e:
+            log = self.rhome / "jc.log"
+            errors = [ln for ln in (log.read_text(errors="replace").splitlines() if log.exists() else [])
+                      if " ERROR " in ln or "panicked" in ln]
+            raise RuntimeError(" / ".join(errors[-3:])[-600:] or str(e)) from e
         return int((self.rhome / "jc.pid").read_text().strip())
 
     def converge(self, timeout: float) -> int:
@@ -488,6 +522,10 @@ def pipeline(a, res: Results, ops: Ops, out: Path) -> dict:
         held = steps.run("fresh", "an empty PostgreSQL of the source's image", ops.fresh)
         res.check("control.fresh-empty", "restore", f"databases of {ops.dst.container} before the restore",
                   f"none of {', '.join(dbs)}", ", ".join(held) or "none", not set(held) & set(dbs))
+        moved = steps.run("relocate", "the source home's path in the restored files", ops.relocate)
+        res.check("control.relocatable", "restore", f"files of the copy naming {ops.home}",
+                  "none (a backup restores at any path)", f"{len(moved)} rewritten" if moved else "none",
+                  not moved, "; ".join(moved[:6])[:600])
         steps.run("restore.roles", "psql < roles.sql", ops.restore_roles)
         for db in dbs:
             got = steps.run(f"restore.{db}", f"pg_restore --create {db}", ops.restore, db)
@@ -540,6 +578,7 @@ def main(argv=None) -> int:
     p.add_argument("--restore-pg-port", type=int, default=0, help="the copy's PostgreSQL port (default: a free one)")
     p.add_argument("--jc-bin", help="default: the source jc's executable, else $JC_BIN")
     p.add_argument("--converge", type=float, default=300)
+    p.add_argument("--max-disk", type=float, default=0.92, help="refuse when the disk would be fuller (0..1)")
     p.add_argument("--suite-timeout", type=float, default=3600)
     p.add_argument("--keep", action="store_true", help="leave the copy running")
     a = p.parse_args(argv)
@@ -594,6 +633,10 @@ def execute(a, res: Results, out: Path, ops_class) -> dict:
     try:
         meta.update(pipeline(a, res, ops, out))
     finally:
+        log = rhome / "jc.log"
+        if log.exists():  # the copy's log outlives the copy (the logs suite scans it with the results)
+            out.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(log, out / "copy-jc.log")
         if not a.keep:
             ops.teardown()
     return meta
