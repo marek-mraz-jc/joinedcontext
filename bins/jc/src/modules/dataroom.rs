@@ -631,6 +631,8 @@ mod tests {
                 "{name}: {}",
                 ds.distributions.len()
             );
+            // the dataset is the catalogue's own (its DCAT IRI), the source its landing page.
+            assert_eq!(ds.canonical_uri(SITE), format!("{SITE}/dataset/{name}"));
             assert_eq!(
                 ds.extras.get("harvest_source").map(String::as_str),
                 Some(if *org == "bbsk" {

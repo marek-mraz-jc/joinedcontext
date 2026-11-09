@@ -713,6 +713,9 @@ impl HarvestEngine {
                 continue;
             }
             ds.distributions = dists;
+            // The platform's own dataset, not a copy of the source's: its IRI is the catalogue's
+            // (prod's DCAT names it by its CKAN address), the source stays its landing page.
+            ds.uri = None;
             ds.endpoint_url = Some(root.clone());
             ds.extras.insert("endpoint".into(), root);
             let hash = crate::sources::compute_harvest_hash(&ds);
