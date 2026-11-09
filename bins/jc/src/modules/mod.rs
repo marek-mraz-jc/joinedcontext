@@ -19,7 +19,7 @@ pub mod antares;
 #[cfg(feature = "assistant")]
 pub mod assistant;
 #[cfg(feature = "daiya")]
-mod daiya;
+pub(crate) mod daiya;
 #[cfg(feature = "dataroom")]
 pub mod dataroom;
 #[cfg(feature = "ekiben")]
@@ -93,7 +93,7 @@ pub async fn build(
             dataroom::build(&cfg.dataroom, ctx.setup, ctx.siblings, mount, widget).await
         }
         #[cfg(feature = "daiya")]
-        Module::Daiya => daiya::build(&cfg.daiya, ctx.setup, ctx.siblings.listener, mount)
+        Module::Daiya => daiya::build(&cfg.daiya, ctx.setup, ctx.siblings, mount)
             .await
             .map_err(|e| StartError::module(Module::Daiya, e)),
         #[cfg(feature = "ekiben")]
