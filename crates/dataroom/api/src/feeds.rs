@@ -326,7 +326,7 @@ async fn serve_catalog(
                     StatusCode::PERMANENT_REDIRECT,
                     &format!(
                         "{}/publisher/{merged_target}/catalog.{ext}",
-                        state.mount_prefix
+                        state.mount_prefix()
                     ),
                 );
             }

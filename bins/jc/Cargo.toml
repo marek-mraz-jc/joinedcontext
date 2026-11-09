@@ -37,6 +37,7 @@ dataroom = [
   "dep:dataroom-core",
   "dep:dataroom-store-memory",
   "dep:dataroom-store-pg",
+  "dep:chrono",
 ]
 daiya = [
   "dep:daiya-server",
@@ -101,6 +102,7 @@ dataroom-api = { path = "../../crates/dataroom/api", optional = true }
 dataroom-core = { path = "../../crates/dataroom/core", optional = true }
 dataroom-store-memory = { path = "../../crates/dataroom/store-memory", optional = true }
 dataroom-store-pg = { path = "../../crates/dataroom/store-pg", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
 
 daiya-server = { path = "../../crates/daiya/server", optional = true }
 daiya-model = { path = "../../crates/daiya/model", optional = true }

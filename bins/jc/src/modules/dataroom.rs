@@ -9,17 +9,20 @@
 //! (`dataroom_api::portal_publisher`).
 
 use crate::app::StartError;
-use crate::config::DataroomSection;
+use crate::config::{DataroomSection, Given, OrganizationSection};
 use crate::module::Module;
 use crate::setup::{Secret, Setup};
 use crate::siblings::Siblings;
 use axum::Router;
 use dataroom_api::DataroomState;
 use dataroom_core::branding::{BrandingAddresses, BrandingBlock};
-use dataroom_core::{CatalogueId, OrgId, PolicyAuthorizer, Store};
+use dataroom_core::{
+    CatalogueId, OrgId, PolicyAuthorizer, Publisher, RecordState, RequestCtx, Store, Subject,
+};
 use dataroom_store_memory::MemoryStore;
 use dataroom_store_pg::PgStore;
 use jc_router::Mount;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The configured store: Postgres (refused unless the boot check passes) or memory.
@@ -89,6 +92,8 @@ fn installation_branding(
 
 pub async fn build(
     cfg: &DataroomSection,
+    organizations: &[OrganizationSection],
+    tokens: &BTreeMap<String, Given>,
     setup: &Setup,
     siblings: &Siblings,
     mount: Mount,
@@ -101,21 +106,127 @@ pub async fn build(
     dataroom_server::ensure_default_catalogue(store.as_ref(), org_id, catalogue_id, &mount.host)
         .await
         .map_err(|e| err(&e))?;
-    let (authorizer, tokens) = match setup.value(Secret::CatalogueToken) {
-        None => (PolicyAuthorizer::default(), Vec::new()),
+    let (mut grants, mut bindings) = match setup.value(Secret::CatalogueToken) {
+        None => (Vec::new(), Vec::new()),
         Some(token) => {
             let (binding, grant) =
                 dataroom_api::portal_publisher(token, org_id, catalogue_id).map_err(|e| err(&e))?;
-            (PolicyAuthorizer::new(vec![grant]), vec![binding])
+            (vec![grant], vec![binding])
         }
     };
-    let state = DataroomState::new(store, Arc::new(authorizer), org_id, catalogue_id)
-        .with_tokens(tokens)
-        .with_installation_branding(installation_branding(
-            &crate::siblings::live_addresses(&cfg.addresses, siblings),
-            assistant_widget,
-        ))
-        .with_public_base(mount.public_base())
-        .with_mount_prefix(mount.path_prefix);
+    let live = crate::siblings::live_addresses(&cfg.addresses, siblings);
+    let mut by_catalogue = BTreeMap::new();
+    for org in organizations {
+        let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?;
+        if id == catalogue_id {
+            return Err(err(&format!(
+                "[[organizations]] {}: catalogue {id} is the [dataroom] default catalogue",
+                org.name
+            )));
+        }
+        let host = bare_host(&org.hosts.opendata);
+        dataroom_server::ensure_catalogue(store.as_ref(), org_id, id, &org.name, host)
+            .await
+            .map_err(|e| err(&e))?;
+        ensure_publisher(store.as_ref(), org_id, id, org, &mount.scheme)
+            .await
+            .map_err(|e| err(&e))?;
+        if let Some(token) = tokens.get(&org.name) {
+            let token = token.secret.expose();
+            if bindings
+                .iter()
+                .any(|b: &dataroom_api::TokenBinding| b.token == token.trim())
+            {
+                return Err(err(&format!(
+                    "[[organizations]] {}: its Portal token is another catalogue's",
+                    org.name
+                )));
+            }
+            let (binding, grant) = dataroom_api::portal_publisher_on(token, org_id, id, &org.name)
+                .map_err(|e| err(&e))?;
+            bindings.push(binding);
+            grants.push(grant);
+        }
+        by_catalogue.insert(
+            id,
+            organization_branding(&live, org, &mount.scheme, assistant_widget.clone()),
+        );
+    }
+    let state = DataroomState::new(
+        store,
+        Arc::new(PolicyAuthorizer::new(grants)),
+        org_id,
+        catalogue_id,
+    )
+    .with_tokens(bindings)
+    .with_installation_branding(installation_branding(&live, assistant_widget))
+    .with_catalogue_branding(by_catalogue)
+    // Several catalogues by host: a loopback name names none of them.
+    .with_loopback_default(organizations.is_empty())
+    .with_public_base(mount.public_base())
+    .with_mount_prefix(mount.path_prefix);
     Ok(dataroom_api::router(state))
+}
+
+fn bare_host(host: &str) -> &str {
+    host.split(':').next().unwrap_or(host)
+}
+
+/// An Organization's catalogue frames its own Portal and API: the installation's other live
+/// parts stay as they are.
+fn organization_branding(
+    live: &crate::siblings::LiveAddresses,
+    org: &OrganizationSection,
+    scheme: &str,
+    assistant_widget: Option<String>,
+) -> BrandingBlock {
+    let mut block = installation_branding(live, assistant_widget);
+    block.addresses.api = format!("{scheme}://{}", org.hosts.api);
+    block.addresses.portal = format!("{scheme}://{}", org.hosts.portal);
+    block
+}
+
+/// The CKAN organisation of the JC Organization in its catalogue (ADR-N-058 2.6), held by its
+/// name: the one publisher the Portal's grant there may publish under.
+async fn ensure_publisher(
+    store: &dyn Store,
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    org: &OrganizationSection,
+    scheme: &str,
+) -> dataroom_core::Result<()> {
+    let ctx = RequestCtx::new(org_id, catalogue_id, Subject::anonymous());
+    if store.get_publisher(&ctx, &org.name).await?.is_some() {
+        return Ok(());
+    }
+    let now = chrono::Utc::now();
+    store
+        .upsert_publisher(
+            &ctx,
+            Publisher {
+                org_id,
+                catalogue_id,
+                id: String::new(),
+                name: org.name.clone(),
+                title: BTreeMap::from([("en".to_owned(), org.name.clone())]),
+                description: BTreeMap::new(),
+                uri: format!("{scheme}://{}/publisher/{}", org.hosts.opendata, org.name),
+                publisher_type: None,
+                identifier: None,
+                email: None,
+                homepage: None,
+                logo_url: None,
+                contact_point: None,
+                state: RecordState::Active,
+                merged_into: None,
+                editor_grants: Vec::new(),
+                badge_initials: None,
+                badge_colour: None,
+                declared_by_instance: None,
+                created: now,
+                modified: now,
+            },
+        )
+        .await?;
+    Ok(())
 }

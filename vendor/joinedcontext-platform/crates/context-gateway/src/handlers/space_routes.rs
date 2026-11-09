@@ -22,6 +22,7 @@ pub(crate) async fn space_catalog(
     request: Request,
 ) -> Response<Body> {
     let headers = request.headers();
+    let host = request.extensions().get();
     // A token is minted for one resource, so a token that names space A does not verify
     // against space B. That is not an error here, it is the narrowing: a space whose
     // authentication the caller cannot satisfy is a space they cannot discover.
@@ -29,6 +30,7 @@ pub(crate) async fn space_catalog(
         .resolver
         .spaces()
         .into_iter()
+        .filter(|space| gateway.on_host(host, &space.endpoint.project))
         .filter(|space| {
             authenticate(&gateway, &space.endpoint, headers)
                 .is_ok_and(|subject| discoverable(&gateway, space, &subject))

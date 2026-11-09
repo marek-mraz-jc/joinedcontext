@@ -17,11 +17,13 @@ dataroom-rdf = { path = "../rdf" }
 dataroom-search = { path = "../search" }
 dataroom-shacl = { path = "../shacl" }
 dataroom-web = { path = "../web" }
+jc-router = { path = "../../shared/jc-router" }
 odata-csdl = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-csdl" }
 odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
 odata-url = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-url" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
+tokio = { version = "1.44.1", features = ["rt"] }
 tower = { version = "0.5.2", features = ["util"] }
 url = "2.5.4"
 uuid = { version = "1.11.0", features = ["v4", "v5", "v7", "serde"] }

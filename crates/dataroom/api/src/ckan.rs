@@ -120,11 +120,11 @@ async fn dispatch_ckan_action(
     let (ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => {
-            let base = state
-                .public_base
-                .as_deref()
-                .unwrap_or("https://dataroom.local");
-            return ckan_err(base, &action, e);
+            let base = crate::request_origin()
+                .map(|o| o.base())
+                .or_else(|| state.public_base.clone())
+                .unwrap_or_else(|| "https://dataroom.local".into());
+            return ckan_err(&base, &action, e);
         }
     };
     let base = cat.base_url();
