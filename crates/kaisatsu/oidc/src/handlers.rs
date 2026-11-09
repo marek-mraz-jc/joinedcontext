@@ -345,6 +345,50 @@ pub async fn resolve_scopes_for_client(
     Ok((active_scopes, granted_tokens.join(" ")))
 }
 
+/// The active scopes a code or refresh grant keeps beside its `scope` string: optional scopes
+/// outside the `scope` claim (include.in.token.scope=false, e.g. `gateway-hub`), whose mappers
+/// Keycloak still applies at the token endpoint. Default scopes come back by themselves.
+pub fn mapper_scope_names(
+    client: &ClientRepresentation,
+    active: &[ClientScopeRepresentation],
+) -> Vec<String> {
+    active
+        .iter()
+        .filter(|s| !s.include_in_token_scope() && !client.default_client_scopes.contains(&s.name))
+        .map(|s| s.name.clone())
+        .collect()
+}
+
+/// Re-resolves a stored grant: `scope` as at /authorize (a granted scope the client lost is
+/// refused, as before), plus the mapper scopes still optional on the client. One the client
+/// lost since is dropped, as Keycloak's `TokenManager.getRequestedClientScopes` drops it; the
+/// `scope` claim comes from `scope` alone.
+async fn resolve_stored_scopes(
+    store: &Arc<dyn Store>,
+    realm: &RealmConfig,
+    client: &ClientRepresentation,
+    scope: &str,
+    mapper_scopes: &[String],
+) -> Result<(Vec<ClientScopeRepresentation>, String)> {
+    let (mut active, granted) =
+        resolve_scopes_for_client(store, realm, client, Some(scope)).await?;
+    let linked: Vec<&str> = mapper_scopes
+        .iter()
+        .map(String::as_str)
+        .filter(|n| client.optional_client_scopes.iter().any(|s| s == n))
+        .collect();
+    if !linked.is_empty() {
+        let (extra, _) =
+            resolve_scopes_for_client(store, realm, client, Some(&linked.join(" "))).await?;
+        for sc in extra {
+            if !active.iter().any(|a| a.id == sc.id) {
+                active.push(sc);
+            }
+        }
+    }
+    Ok((active, granted))
+}
+
 /// Pushed Authorization Request (PAR, RFC 9126, W1).
 async fn par_endpoint(
     State(state): State<OidcState>,
@@ -636,7 +680,7 @@ async fn authorize_get(
                 return Ok(redirect_with_params(&redirect_uri, &response_mode, &pairs));
             }
         }
-        let (_, granted_scope) = resolve_scopes_for_client(
+        let (active, granted_scope) = resolve_scopes_for_client(
             &state.store,
             &realm,
             &client,
@@ -653,6 +697,7 @@ async fn authorize_get(
             sso_session_id: sso.id.clone(),
             redirect_uri: redirect_uri.clone(),
             scope: granted_scope,
+            mapper_scopes: mapper_scope_names(&client, &active),
             code_challenge: params.get("code_challenge").cloned().unwrap_or_default(),
             code_challenge_method: params
                 .get("code_challenge_method")
@@ -700,7 +745,7 @@ async fn authorize_get(
             true
         };
         if has_consent {
-            let (_, granted_scope) = resolve_scopes_for_client(
+            let (active, granted_scope) = resolve_scopes_for_client(
                 &state.store,
                 &realm,
                 &client,
@@ -717,6 +762,7 @@ async fn authorize_get(
                 sso_session_id: sso.id.clone(),
                 redirect_uri: redirect_uri.clone(),
                 scope: granted_scope,
+                mapper_scopes: mapper_scope_names(&client, &active),
                 code_challenge: params.get("code_challenge").cloned().unwrap_or_default(),
                 code_challenge_method: params
                     .get("code_challenge_method")
@@ -746,7 +792,7 @@ async fn authorize_get(
     }
 
     // Create 30-min `auth_session` and redirect to the login page (W2, W7)
-    let (_, granted_scope) = resolve_scopes_for_client(
+    let (active, granted_scope) = resolve_scopes_for_client(
         &state.store,
         &realm,
         &client,
@@ -785,6 +831,7 @@ async fn authorize_get(
         response_type: "code".into(),
         response_mode,
         scope: granted_scope,
+        mapper_scopes: mapper_scope_names(&client, &active),
         state: state_param,
         nonce: params.get("nonce").cloned(),
         code_challenge: params.get("code_challenge").cloned().unwrap_or_default(),
@@ -1363,6 +1410,7 @@ async fn mint_tokens_for_principal(
                         user_id: user.id.clone(),
                         client_id: client.client_id.clone(),
                         scope: granted_scope_str.to_owned(),
+                        mapper_scopes: mapper_scope_names(client, active_scopes),
                         acr: acr.to_owned(),
                         amr: amr.to_vec(),
                         auth_time: auth_time.unwrap_or(now),
@@ -1750,8 +1798,14 @@ async fn handle_authorization_code_grant(
         .filter(|u| u.enabled)
         .ok_or_else(|| KaisatsuError::invalid_grant("User disabled or not found"))?;
 
-    let (active_scopes, granted_scope_str) =
-        resolve_scopes_for_client(&state.store, realm, client, Some(&code_rec.scope)).await?;
+    let (active_scopes, granted_scope_str) = resolve_stored_scopes(
+        &state.store,
+        realm,
+        client,
+        &code_rec.scope,
+        &code_rec.mapper_scopes,
+    )
+    .await?;
 
     state
         .store
@@ -1892,8 +1946,14 @@ async fn handle_refresh_token_grant(
         .filter(|u| u.enabled)
         .ok_or_else(|| KaisatsuError::invalid_grant("User disabled or not found"))?;
 
-    let (active_scopes, granted_scope_str) =
-        resolve_scopes_for_client(&state.store, realm, client, Some(&family.scope)).await?;
+    let (active_scopes, granted_scope_str) = resolve_stored_scopes(
+        &state.store,
+        realm,
+        client,
+        &family.scope,
+        &family.mapper_scopes,
+    )
+    .await?;
 
     let sso_id = family.sso_session_id.clone();
     let acr = family.acr.clone();
