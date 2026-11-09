@@ -1382,6 +1382,10 @@ mod tests {
                 "only a later Portal entry",
             ),
             (
+                "[[mounts.gateway]]\nhost = \"api.city.test\"\n[[mounts.gateway]]\nhost = \"*.apps.city.test\"\n",
+                "only a later Portal entry",
+            ),
+            (
                 "[[mounts.portal]]\nhost = \"*.city.test\"\n",
                 "wildcard hosts are refused",
             ),
