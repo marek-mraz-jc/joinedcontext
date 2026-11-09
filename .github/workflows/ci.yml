@@ -12,7 +12,8 @@ name: ci
 # unsigned as soon as `changes` ran, `scan` (image-scan.yml) scans it while the tests still run,
 # and `promote` signs it only when every gate here and the scan passed; deploy-pin.yml then pins
 # the signed digest for dev. clippy and the tests of a workspace are separate jobs, so the two
-# builds run side by side; caches (.github/actions/rust) are written by main only.
+# builds run side by side; caches (.github/actions/rust) are written by jc-portal-1 (the default
+# branch, whose caches every branch reads), main and ship-proof/** only.
 on:
   pull_request:
   push:
