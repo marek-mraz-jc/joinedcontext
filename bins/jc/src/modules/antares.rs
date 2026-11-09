@@ -43,6 +43,9 @@ fn err(e: impl std::fmt::Display) -> StartError {
 /// `parquet` and `tabular` (OGC `f=parquet|csv|zip`), which this build leaves out.
 pub const SURFACES: &str = "admin,views,mcp,access,ws,ws-views,ogc,linkml,odata,sta,ical,feed";
 
+/// The largest Tenant schema the broker stores, dev's 1 MiB (`linkml_model::SURFACE_LIMITS`).
+pub const SCHEMA_MAX_BYTES: &str = "1048576";
+
 /// The subject headers the gateway sends and the engine reads, as dev names them.
 pub const SUBJECT_HEADERS: &str = "x-jc-subject,x-jc-groups,x-jc-roles,x-jc-client,x-jc-restricted,x-jc-did,x-jc-read-only,x-jc-member";
 
@@ -58,6 +61,9 @@ pub fn defaults() -> BTreeMap<String, String> {
             "ANTARES_POLICY_SUBJECT_FROM",
             crate::modules::GATEWAY_IDENTITY,
         ),
+        // The Portal PUTs each Tenant's schema to /q/schemas/{tenant}; unset, the broker takes
+        // none and serves no OGC or OData collection (dev's value).
+        ("ANTARES_SCHEMA_MAX_BYTES", SCHEMA_MAX_BYTES),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_owned(), v.to_owned()))
@@ -246,6 +252,7 @@ mod tests {
         );
         assert_eq!(d["ANTARES_POLICY"], "joinedcontext");
         assert!(d["ANTARES_API_SURFACES"].split(',').any(|s| s == "views"));
+        assert_eq!(d["ANTARES_SCHEMA_MAX_BYTES"], "1048576");
     }
 
     /// The `l5d-client-id` a request reaches the broker with, behind `guard`.

@@ -195,6 +195,7 @@ turns it all off.
 | Grafana | daiya | `JC_GRAFANA_URL`, `_PUBLIC_URL`, `_USER=portal`, `_PASSWORD` | works as server admin; the Portal makes each opened project's org and folder (`grafana::spawn_provisioning`, jc-charts) |
 | broker | antares | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | works: views, rule documents and space views written and loaded (stage 8) |
 | gateway | gateway | `JC_PORTAL_GATEWAY_URL`, `JC_PORTAL_GATEWAY_CLIENT_ID=context-gateway` | works: the internal listener admits the gateway's revocation poll (stage 8) |
+| Model Tools | model-tools | `JC_PORTAL_MODEL_TOOLS_URL` (its own loopback listener; no public mount) | works for the views: `POST /generate` gives `brokerSchema` and `context`, the reconciler writes `/q/schemas/{tenant}` and Endpoints serve OGC and OData; the save path's `jsonSchema`, `docs` and `example` are not rendered (evidence/jc-model-tools) |
 
 The Portal's forge client reads its `JC_SHAKO_*` through `Config::forge_var` (environment first, then the values jc
 filled), so the process environment is never written.
