@@ -18,7 +18,9 @@ portal-reconciler client of --state, signed in by the browser flow, deleted at t
              runs (skip), and so is a run-once one: no clock and an http or gtfs-rt source (skip)
   run        POST /api/v1/projects/{p}/pipelines/{n}/runs        202 (the first --runs runnable
              Pipelines; a resident source is a skip)
-  history    GET  /api/v1/projects/{p}/pipelines/{n}/runs        the started run appears and ends
+  history    GET  /api/v1/projects/{p}/pipelines/{n}/runs        the started run appears and ends;
+             one still Queued after --wait is waited for as long as the runs the statuses report
+             queued ahead of it take, at most 15 min (prod's RUN_TIMEOUT)
   log        GET  .../runs/{run}/log                             one line per record
   landed     GET  /api/endpoint/{slug}/ngsi-ld/v1/entities/{id}  a record the run sent, modifiedAt
              not before the run started; entities?type=T&count=true at least the run's sent
@@ -117,7 +119,37 @@ def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline) 
     return item
 
 
-def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float) -> None:
+# prod's run_queue.rs RUN_TIMEOUT: the longest a run-now is waited for behind the queue.
+RUN_TIMEOUT = 15 * 60
+QUEUED = re.compile(r"queued, due (\S+?Z)")
+RAN = re.compile(r"the last run ended \S+ after (\d+) s")
+
+
+def queue_wait(http: Http, projects, base: str, wait: float):
+    """How long a run still queued after `wait` may take, from what the Portal's statuses report:
+    (seconds, runs ahead, seconds a run takes), or None when the pipeline is not Queued.
+
+    The queue starts waiting runs by due time (run_queue.rs settle), so the runs ahead are the
+    pipelines Queued with a due time not after this one's, and each takes what the statuses' last
+    runs took (their median, 60 s without one). One lane is assumed, at least `wait`, at most
+    RUN_TIMEOUT; ponytail: jc's Portal runs three, read jc_pipeline_queue_depth if this is too long."""
+    st, _, raw = http.call("GET", base)
+    own = QUEUED.search(" ".join(c.get("message") or "" for c in conditions(as_json(raw) or {})))
+    if st != 200 or not own:
+        return None
+    ahead, took = 0, []
+    for project in projects:
+        st, _, raw = http.call("GET", f"/api/v1/projects/{project}/pipelines?limit=1000")
+        for item in (as_json(raw) or {}).get("items") or [] if st == 200 else []:
+            said = " ".join(c.get("message") or "" for c in conditions(item))
+            due = QUEUED.search(said)
+            ahead += bool(due and due.group(1) <= own.group(1))
+            took += [int(m) for m in RAN.findall(said)]
+    each = sorted(took)[len(took) // 2] if took else 60
+    return min(RUN_TIMEOUT, max(wait, ahead * each)), ahead, each
+
+
+def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, projects=()) -> None:
     base = f"/api/v1/projects/{p.project}/pipelines/{p.name}"
     st, _, raw = http.call("GET", base + "/runs?limit=5")
     before = {x.get("run"): x for x in (as_json(raw) or {}).get("items") or []} if st == 200 else {}
@@ -129,24 +161,34 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float) -
             r.skip(x, p.key, "", "", f"the run did not start ({st})")
         return
     started = (as_json(raw) or {}).get("run")
-    run, deadline = None, time.time() + wait
-    while time.time() < deadline:
-        time.sleep(5)
-        st, _, raw = http.call("GET", base + "/runs?limit=5")
-        items = (as_json(raw) or {}).get("items") or [] if st == 200 else []
-        fresh = [x for x in items if x.get("run") == started
-                 or (x.get("run") not in before) or x != before.get(x.get("run"))]
-        if fresh:
-            run = fresh[0]
-            # The run ended when its last line is older than 20 s.
-            last = _ts(run.get("lastAt"))
-            if last and time.time() - last > 20:
-                break
+    run, deadline, extended = None, time.time() + wait, None
+    while True:
+        while time.time() < deadline:
+            time.sleep(5)
+            st, _, raw = http.call("GET", base + "/runs?limit=5")
+            items = (as_json(raw) or {}).get("items") or [] if st == 200 else []
+            fresh = [x for x in items if x.get("run") == started
+                     or (x.get("run") not in before) or x != before.get(x.get("run"))]
+            if fresh:
+                run = fresh[0]
+                # The run ended when its last line is older than 20 s.
+                last = _ts(run.get("lastAt"))
+                if last and time.time() - last > 20:
+                    break
+        if run or extended is not None:
+            break
+        # Still queued: wait as long as the queue says the runs ahead take, once.
+        extended = queue_wait(http, projects, base, wait)
+        if not extended:
+            break
+        deadline = time.time() + extended[0] - wait
     why = ""
     if not run:
         st, _, raw = http.call("GET", base)
         said = [f"{c.get('reason')}: {c.get('message')}" for c in conditions(as_json(raw) or {})]
-        why = f"none within {wait:.0f} s; status {'; '.join(said)[:200]}"
+        waited = (f"{extended[0]:.0f} s ({extended[1]} queued ahead, the queue's runs {extended[2]:.0f} s each)"
+                  if extended else f"{wait:.0f} s")
+        why = f"none within {waited}; status {'; '.join(said)[:200]}"
     r.check("history", p.key, f"GET {base}/runs", "the started run listed with its counts",
             json.dumps(run)[:240] if run else why, run is not None)
     if not run:
@@ -252,7 +294,7 @@ def main(argv):
                     r.skip("run", p.key, "", "", f"resident {p.source_type} source: runs continuously, no one-shot run")
                 elif ran < a.runs:
                     ran += 1
-                    run_pipeline(r, admin.browser, http, p, a.wait)
+                    run_pipeline(r, admin.browser, http, p, a.wait, sorted({q.project for q in pipelines}))
         finally:
             admin.close()
     meta = {"export": a.export, "pipelines": len(pipelines),

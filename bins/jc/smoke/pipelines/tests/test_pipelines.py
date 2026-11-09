@@ -273,3 +273,70 @@ def test_a_step_reading_its_own_sources_credential_is_a_same_on_prod_skip_and_an
     assert status(refusal("DS_GOLEMIO_POLICE_TOKEN"))["result"] == "fail"
     assert status(refusal("JC_PORTAL_TOKEN"))["result"] == "fail"
     assert status(refusal("DS_GOLEMIO_MR_PARKIT_TOKEN"), refusal("DS_OTHER"))["result"] == "fail"
+
+
+class Clock:
+    """time.time and time.sleep of the suite on a fake clock."""
+
+    def __init__(self, monkeypatch):
+        import suite
+        self.now = 1_000_000.0
+        monkeypatch.setattr(suite.time, "time", lambda: self.now)
+        monkeypatch.setattr(suite.time, "sleep", lambda s: setattr(self, "now", self.now + s))
+
+
+def queue_portal(clock, ahead: int, starts_at: float | None):
+    """A Portal whose run-now is Queued behind `ahead` runs of 50 s and starts at `starts_at`
+    (never when None); the run then lasts 10 s."""
+    import suite
+
+    class P:
+        polls = 0
+
+        def call(self, method, path, *a, **k):
+            started = starts_at is not None and clock.now >= starts_at
+            if method == "POST":
+                return 202, {}, b'{"run":"2026-11-09T15:59:15Z"}'
+            if path.endswith("/runs?limit=5"):
+                P.polls += 1
+                if not started:
+                    return 200, {}, b'{"items":[]}'
+                run = {"run": "2026-11-09T15:59:15Z", "sent": 0, "failed": 0,
+                       "lastAt": suite.time.strftime("%Y-%m-%dT%H:%M:%SZ", suite.time.gmtime(starts_at + 10))}
+                return 200, {}, json.dumps({"items": [run]}).encode()
+            if path.endswith("/log?limit=50"):
+                return 200, {}, b'{"items":[{"outcome":"failed","message":"x"}]}'
+            if "/pipelines?" in path:
+                items = [{"status": {"conditions": [{"message": f"queued, due 2026-11-09T14:49:{i % 60:02d}Z; "
+                                                                "the last run ended 2026-11-09T14:40:00Z after 50 s"}]}}
+                         for i in range(ahead)]
+                return 200, {}, json.dumps({"items": items}).encode()
+            msg = "running since x" if started else "queued, due 2026-11-09T15:59:15Z"
+            return 200, {}, json.dumps({"status": {"conditions": [{"reason": "Queued", "message": msg}]}}).encode()
+    return P()
+
+
+def history(monkeypatch, ahead, starts_after):
+    import suite
+    clock = Clock(monkeypatch)
+    portal = queue_portal(clock, ahead, None if starts_after is None else clock.now + starts_after)
+    r = suite.Results("pipelines", "http://x")
+    p = manifests.Pipeline("banskabystrica", "kataster", "p.yaml", {"period": "168h"}, True)
+    t0 = clock.now
+    suite.run_pipeline(r, portal, portal, p, 300, ["banskabystrica"])
+    return next(c for c in r.rows if c["id"] == "history"), clock.now - t0
+
+
+def test_a_run_queued_behind_the_queue_is_waited_for_as_long_as_the_runs_ahead_take(monkeypatch):
+    """Gate 2026-11-09T155017Z: a run-now behind a queue of runs due earlier (prod's queue order)
+    started after the suite's 300 s. Eight runs of 50 s ahead are waited for (400 s); the wait
+    never drops below --wait nor passes prod's RUN_TIMEOUT, and a run that never starts is red."""
+    row, took = history(monkeypatch, 8, 380)
+    assert row["result"] == "pass", row
+    row, took = history(monkeypatch, 8, None)
+    assert row["result"] == "fail" and "none within 400 s (8 queued ahead" in row["actual"], row
+    assert 400 <= took < 420
+    row, took = history(monkeypatch, 2, None)
+    assert row["result"] == "fail" and "none within 300 s" in row["actual"] and took < 320
+    row, took = history(monkeypatch, 500, None)
+    assert row["result"] == "fail" and "none within 900 s" in row["actual"] and took < 920
