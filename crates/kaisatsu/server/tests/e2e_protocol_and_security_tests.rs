@@ -290,9 +290,9 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
             .unwrap()
             .contains("endpoint:counters1234")
     );
-    // Verify `mcp-hub` is in `aud` (as `context-gateway/src/auth/subject.rs` `scoped_subject` requires)
-    let aud_list = exchanged_claims["aud"].as_array().unwrap();
-    assert!(aud_list.contains(&json!("mcp-hub")));
+    // `aud` is the requested `mcp-hub` alone, as Keycloak 26 issues it (`context-gateway/src/auth/
+    // subject.rs` `scoped_subject` requires it; jc-core reads one string or a list)
+    assert_eq!(exchanged_claims["aud"], json!("mcp-hub"));
 
     // 7. Refresh token rotation and reuse detection:
     // First refresh succeeds and rotates the refresh token
