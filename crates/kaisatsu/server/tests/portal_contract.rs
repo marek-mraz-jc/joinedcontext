@@ -880,6 +880,58 @@ async fn authorize_error(app: &Router, scope: &str) -> String {
     }
 }
 
+/// The mcp-hub authorization request a connector sends, with the PKCE pair given, unsent.
+fn hub_authorize(redirect: &str, pkce: &[(&str, &str)]) -> String {
+    let mut authorize = url::Url::parse(&format!("{ISSUER}/protocol/openid-connect/auth")).unwrap();
+    authorize
+        .query_pairs_mut()
+        .append_pair("response_type", "code")
+        .append_pair("client_id", "mcp-hub")
+        .append_pair("state", "h1")
+        .append_pair("redirect_uri", redirect)
+        .append_pair("scope", "openid offline_access")
+        .extend_pairs(pkce);
+    authorize.to_string()
+}
+
+/// The shipped mcp-hub is prod's: public, no secret, PKCE S256 required, the connector callbacks
+/// of the prod realm export (`clients[mcp-hub]`), and nothing else.
+#[tokio::test]
+async fn the_shipped_mcp_hub_is_public_and_requires_pkce_s256() {
+    let realm = realm().await;
+    let app = &realm.app;
+    let jc = realm.store.get_realm("jc").await.unwrap().expect("realm jc");
+    let hub = realm
+        .store
+        .get_client_by_client_id(&jc.id, "mcp-hub")
+        .await
+        .unwrap()
+        .expect("mcp-hub is shipped");
+    assert!(hub.public_client && !hub.bearer_only, "{hub:?}");
+    assert_eq!(hub.secret, None);
+
+    let claude = "https://claude.ai/api/mcp/auth_callback";
+    let (challenge, _) = pkce();
+    let s256 = [("code_challenge", challenge.as_str()), ("code_challenge_method", "S256")];
+    let answer = get_page(app, &hub_authorize(claude, &s256), None).await;
+    assert_eq!(answer.status, StatusCode::SEE_OTHER, "{}", answer.text);
+    assert!(answer.location().contains("/login-actions/authenticate"), "{}", answer.location());
+
+    // Refused with invalid_request and no code: no PKCE, and PKCE `plain`.
+    let plain = [("code_challenge", challenge.as_str()), ("code_challenge_method", "plain")];
+    for (name, pair) in [("no PKCE", &[][..]), ("plain", &plain[..])] {
+        let answer = get_page(app, &hub_authorize(claude, pair), None).await;
+        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{name}: {}", answer.text);
+        assert_eq!(answer.json()["error"], "invalid_request", "{name}");
+        assert!(answer.headers.get(header::LOCATION).is_none(), "{name}");
+    }
+
+    // An unregistered redirect URI is refused on the page: no redirect anywhere.
+    let answer = get_page(app, &hub_authorize("https://evil.example/cb", &s256), None).await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
+    assert!(answer.headers.get(header::LOCATION).is_none());
+}
+
 #[tokio::test]
 async fn an_optional_scope_outside_the_scope_claim_keeps_its_mappers_in_the_code_flow() {
     let realm = realm().await;
