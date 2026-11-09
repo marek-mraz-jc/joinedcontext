@@ -166,6 +166,14 @@ describe("a project page an outsider opens", () => {
     expect(screen.queryByRole("button", { name: en.app.error.retry })).toBeNull();
   });
 
+  it("Conversations says the project is not open, without the usage read's own refusal", async () => {
+    // UI judge 2026-11-09: "no role grants approve on AssistantDeployment" was the outsider's answer.
+    await outsider("/projects/zilina/knowledge/conversations");
+    expect(await screen.findByText(en.form.projectHidden)).toBeInTheDocument();
+    expect(screen.queryByText(/no role grants/)).toBeNull();
+    expect(screen.queryByText(en.conversations.usage.title)).toBeNull();
+  });
+
   it("Explore says the project is not open instead of two empty pickers", async () => {
     await outsider("/projects/zilina/explore");
     expect(await screen.findByText(en.form.projectHidden)).toBeInTheDocument();

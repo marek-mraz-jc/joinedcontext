@@ -24,6 +24,7 @@ import { CodeBlock,
 } from "../../components/ui";
 import { LocalRecordLink } from "../../components/RecordLink";
 import { UsageSummary } from "./UsageSummary";
+import { ProjectHidden } from "../../components/ProjectHidden";
 import { timeText } from "./knowledge";
 import {
   aligned,
@@ -61,7 +62,7 @@ export function ConversationsPage({
   against?: string;
 }): JSX.Element {
   const { t, i18n } = useTranslation();
-  const { data: permissions, can } = usePermissions(project);
+  const { data: permissions, can, checking, denied } = usePermissions(project);
   const [filter, setFilter] = useState<ConversationFilter>({});
   const [open, setOpen] = useState<string | null>(opened ?? null);
   const allowed = can("AssistantDeployment", "approve");
@@ -78,6 +79,16 @@ export function ConversationsPage({
     setFilter((now) => ({ ...now, ...change, cursor: undefined }));
   };
 
+  // An outsider met the filters and the usage read's own refusal, "no role grants approve on
+  // AssistantDeployment" (UI judge 2026-11-09): the project is not theirs to read at all.
+  if (denied) {
+    return (
+      <section aria-label={t("conversations.title")} className="space-y-6">
+        <PageHeader title={t("conversations.title")} description={t("conversations.intro")} />
+        <ProjectHidden />
+      </section>
+    );
+  }
   if (permissions !== undefined && !allowed) {
     return (
       <section aria-label={t("conversations.title")} className="space-y-6">
@@ -163,7 +174,7 @@ export function ConversationsPage({
           className="mb-2"
         />
       </div>
-      <UsageSummary project={project} filter={shown} />
+      {checking ? <p role="status">{t("permissions.checking")}</p> : <UsageSummary project={project} filter={shown} />}
       {list.isError ? (
         <PageFailed error={list.error} onRetry={() => void list.refetch()}>
           {reasonOf(list.error, t("app.error.generic"))}
