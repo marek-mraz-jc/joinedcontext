@@ -201,10 +201,14 @@ class Suite:
         self.ok_json(f"{who}.attributes", e.slug, f"{base}/ngsi-ld/v1/attributes", token)
         temporal = any(g.temporal() for g in grants)
         for t, count in sorted(want.items()):
-            self.one_type(e, token, who, t, count, narrowed, tenant[t], temporal)
+            # Retrieve Entity is a grant of its own: a Policy of queryEntity alone finds the
+            # entity by query and answers its id 404 (CIM 009 Table 4.20-1; prod answers so).
+            retrieve = any(g.operations & ex.RETRIEVE_OPS and (not g.selectors or any(
+                s.type in (t, "*") for s in g.selectors)) for g in grants)
+            self.one_type(e, token, who, t, count, narrowed, tenant[t], temporal, retrieve)
         self.surfaces(e, token, who, want, narrowed)
 
-    def one_type(self, e, token, who, t, count, narrowed, slot, temporal):
+    def one_type(self, e, token, who, t, count, narrowed, slot, temporal, retrieve=True):
         base = f"/api/endpoint/{e.slug}/ngsi-ld/v1"
         target = f"{e.slug} {t}"
         path = f"{base}/entities?type={q(t)}&count=true&limit=0"
@@ -235,6 +239,11 @@ class Suite:
                 sample = (slot.get("psample") or {}).get(sel[0].pattern)
             if not sample:
                 self.r.skip(f"{who}.by-id", target, "", "", "no exported id matches the grant")
+            elif not retrieve:
+                st, _, raw = self.get(f"{base}/entities/{q(sample)}", token)
+                self.r.check(f"{who}.by-id", target, f"GET {base}/entities/{q(sample)}",
+                             "404, as for an id that does not exist (the grant has queryEntity, no retrieveEntity)",
+                             f"{st} {short(raw, 80)}", st == 404)
             elif slot.get("expires"):
                 st, _, raw = self.get(f"{base}/entities/{q(sample)}", token)
                 self.r.check(f"{who}.by-id", target, f"GET {base}/entities/{q(sample)}", "200 or 404 (expired)",

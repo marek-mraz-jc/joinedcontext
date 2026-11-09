@@ -139,6 +139,8 @@ class Fake:
         if rest == "ngsi-ld/v1/entities":
             return 200, {}, {"type": "FeatureCollection", "features": []}
         if rest.startswith("ngsi-ld/v1/entities/"):
+            if self.broken == "query-only":
+                return 404, {}, {"title": "ResourceNotFound"}
             eid = urllib.parse.unquote(rest.split("/", 3)[3])
             return 200, {}, {"id": eid, "type": "AirQualityObserved"}
         if rest == "ogc/features/collections":
@@ -214,6 +216,18 @@ def test_each_broken_rule_turns_its_check_red(tmp_path, serve, broken, check):
     code, res = run(tmp_path, serve(Fake(broken)), now_iso())
     red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
     assert code == 1 and check in red, red
+
+
+def test_a_query_only_grant_answers_an_id_404_as_prod_does(tmp_path, serve, monkeypatch):
+    # A Policy of queryEntity alone (an App's own grant on prod) finds entities by query only.
+    monkeypatch.setattr(sys.modules[__name__], "POLICY", POLICY.replace(
+        "[retrieveOps, retrieveEntityTypes,", "[queryEntity, retrieveEntityTypes,"))
+    _, res = run(tmp_path / "hidden", serve(Fake("query-only")), now_iso())
+    by_id = [r for r in res["checks"] if r["id"] == "anon.by-id"]
+    assert by_id and all(r["result"] == "pass" for r in by_id), by_id
+    # The same grant answering the entity by id serves more than the Policy grants.
+    _, res = run(tmp_path / "served", serve(Fake()), now_iso())
+    assert {r["result"] for r in res["checks"] if r["id"] == "anon.by-id"} == {"fail"}
 
 
 def test_a_stopped_gateway_fails_and_never_passes(tmp_path):

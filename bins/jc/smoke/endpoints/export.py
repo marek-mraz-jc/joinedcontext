@@ -15,6 +15,7 @@ from pathlib import Path
 import yaml  # PyYAML ships with /opt/jc-py (and every python the sandbox runs)
 
 READ_OPS = {"retrieveOps", "queryEntity", "retrieveEntity", "queryBatch"}
+RETRIEVE_OPS = {"retrieveOps", "retrieveEntity"}
 # CIM 009 Table 4.20-2: retrieveOps is retrieveEntity and queryEntity, no history (Antares
 # operations.rs RETRIEVE; prod's describe_access lists no temporal action for it).
 TEMPORAL_OPS = {"queryTemporal", "retrieveTemporal"}
