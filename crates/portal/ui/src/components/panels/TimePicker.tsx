@@ -178,7 +178,7 @@ export function TimePicker({ from, to, now, onChange }: TimePickerProps): JSX.El
           <Input type="search" aria-label={t("dashboardView.timePicker.search")} placeholder={t("dashboardView.timePicker.search")} value={search} onChange={(event) => setSearch(event.target.value)} />
           {quick.length === 0 ? <p className="text-caption text-fg-muted">{t("dashboardView.timePicker.noQuick")}</p> : null}
           {/* A height that cuts a row in half, so the list reads as one that scrolls, as Grafana's. */}
-          <ul className="flex max-h-60 flex-col overflow-y-auto sm:max-h-55">
+          <ul className="flex max-h-60 flex-col overflow-y-auto sm:max-h-75">
             {quick.map((range) => {
               const current = range.from === from && range.to === to;
               return (

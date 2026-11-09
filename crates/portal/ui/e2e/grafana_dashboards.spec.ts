@@ -250,6 +250,8 @@ const SHOTS = process.env.DASHBOARD_SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 
 async function settle(page: Page): Promise<void> {
+  // The page first: before it renders there is no "Reading" status to wait out either.
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   await expect(page.getByRole("status", { name: /^Reading / })).toHaveCount(0);
   // Vega draws on the next frames after its module loads.
   await page.waitForTimeout(600);

@@ -214,6 +214,8 @@ describe("table", () => {
     expect(within(table).getAllByRole("columnheader").map((head) => head.textContent)).toEqual(columns.map((column) => column.label));
     expect(within(table).getAllByRole("row")).toHaveLength(entities.length + 1);
     expect(within(table).queryByRole("button")).toBeNull();
+    // Heads keep the field's own case, so a unit such as t/km² keeps its meaning.
+    expect(table).toHaveClass("[&_th]:normal-case");
   });
 
   it("puts a number at the cell's right edge and text at the left, unless custom.align says", () => {

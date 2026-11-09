@@ -117,10 +117,10 @@ export function DashboardList({ project, items }: { project: string; items: read
           </Select>
         </Field>
         <div role="group" aria-label={t("grafana.dashboards.view")} className="flex items-start gap-1 sm:pt-6">
-          <Button variant="secondary" aria-pressed={!flat} aria-label={t("grafana.dashboards.folderView")} title={t("grafana.dashboards.folderView")} onClick={() => setFlat(false)} className={!flat ? "bg-primary-soft text-primary-soft-fg" : undefined}>
+          <Button variant={flat ? "secondary" : "primary"} aria-pressed={!flat} aria-label={t("grafana.dashboards.folderView")} title={t("grafana.dashboards.folderView")} onClick={() => setFlat(false)}>
             <Icon name="folder" className="size-4" />
           </Button>
-          <Button variant="secondary" aria-pressed={flat} aria-label={t("grafana.dashboards.listView")} title={t("grafana.dashboards.listView")} onClick={() => setFlat(true)} className={flat ? "bg-primary-soft text-primary-soft-fg" : undefined}>
+          <Button variant={flat ? "primary" : "secondary"} aria-pressed={flat} aria-label={t("grafana.dashboards.listView")} title={t("grafana.dashboards.listView")} onClick={() => setFlat(true)}>
             <Icon name="menu" className="size-4" />
           </Button>
         </div>

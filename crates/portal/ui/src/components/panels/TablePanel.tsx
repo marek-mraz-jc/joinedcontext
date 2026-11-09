@@ -97,7 +97,7 @@ export function PhoneTable({ title, columns, entities, locale }: { title: string
   const valueOf = (entity: Record<string, unknown>, attr: string): unknown => (entity[attr] as { value?: unknown } | undefined)?.value;
   const right = columns.map((column) => entities.some((entity) => numeric(column.settings, valueOf(entity, column.attr))));
   return (
-    <Table caption={title} zebra={false} className="text-caption [&_td]:px-2 [&_td]:py-1.5 [&_th]:px-2 [&_th]:py-1.5">
+    <Table caption={title} zebra={false} className="text-body [&_td]:px-2 [&_td]:py-2 [&_th]:px-2 [&_th]:py-2 [&_th]:normal-case [&_th]:tracking-normal">
       <TableHead>
         {columns.map((column, index) => (
           <TableHeaderCell key={column.attr} align={right[index] ? "right" : "left"}>
