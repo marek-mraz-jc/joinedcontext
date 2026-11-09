@@ -42,8 +42,10 @@ const DELETE_IDS: usize = 1000;
 const QUERY_ID_BYTES: usize = 8192;
 /// How long a delete stream is left on the runner before it is removed.
 const STREAM_WINDOW: Duration = Duration::from_secs(120);
-/// The longest entity id the ledger keeps.
-const MAX_ID: usize = 256;
+/// The longest entity id the ledger keeps: the longest Antares stores (antares-model `id.rs`
+/// `MAX_ENTITY_ID_BYTES`), so every Entity a pipeline wrote can be swept. A ledger key of this id
+/// with 253-byte project and pipeline names still fits a btree row (2,704 B on an 8 KB page).
+const MAX_ID: usize = 2048;
 /// How often the marks of a pipeline without runs (a push source) go to their delete stream.
 pub const SWEEP: Duration = Duration::from_secs(300);
 /// Seconds a `modifiedAt` may pass the pipeline's last write before it counts as someone else's
@@ -1301,7 +1303,7 @@ fn reason_header(cause: Cause, pipeline: &str, run: &str) -> String {
 
 /// Splits `ids` into chunks whose comma-joined ids fit [`QUERY_ID_BYTES`] and whose count fits
 /// [`DELETE_IDS`]; an id too long for the query alone is a chunk of its own (the ledger keeps
-/// none that long, `MAX_ID`).
+/// none that long, `MAX_ID`; three ids of `MAX_ID` fill a chunk).
 fn chunk_ends(ids: &[String]) -> Vec<usize> {
     let mut ends = Vec::new();
     let (mut count, mut bytes) = (0usize, 0usize);
@@ -1779,6 +1781,9 @@ mod tests {
         assert!(chunk_ends(&[]).is_empty());
         // An id past the cap alone is a chunk of its own (the ledger keeps none: MAX_ID).
         assert_eq!(chunk_ends(&[id_of(9000, 0), id_of(50, 1)]), [1, 2]);
+        // The longest id the ledger keeps: three fill a chunk (6,146 B), a fourth would pass.
+        let longest: Vec<String> = (0..7).map(|n| id_of(MAX_ID, n)).collect();
+        assert_eq!(chunk_ends(&longest), [3, 6, 7]);
     }
 
     fn rule(misses: u8, max_share: u8) -> SourceDeletes {
@@ -1911,7 +1916,8 @@ mod tests {
         ] {
             assert!(!deletable(bad), "{bad:?}");
         }
-        assert!(!deletable(&format!("urn:{}", "a".repeat(MAX_ID))));
+        assert!(deletable(&format!("urn:{}", "a".repeat(MAX_ID - 4))));
+        assert!(!deletable(&format!("urn:{}", "a".repeat(MAX_ID - 3))));
     }
 
     #[test]
