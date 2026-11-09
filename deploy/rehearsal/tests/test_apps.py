@@ -55,6 +55,11 @@ def test_the_holder_gets_the_published_roles_apps_groups_and_no_credential_value
                                                   {"name": "alerts-steward", "path": "/city/alerts-steward"}]}],
              "users": [{"username": "rehearsal-tester"}, {"username": apps.PERSON, "groups": ["/old"]}]}
     assert apps.role_groups(exp / "gitea" / "files") == ["alerts-steward", "alerts-viewer"]  # the draft's left out
+    users = exp / "gitea" / "files" / "joinedcontext" / "configuration" / "users"
+    users.mkdir(parents=True)
+    (users / "rb.yaml").write_text("kind: RoleBinding\nspec: {role: viewer, subjects: [{group: readers}]}\n---\n"
+                                   "kind: RoleBinding\nspec: {role: editor, subjects: [{group: editors}]}\n")
+    assert apps.viewer_groups(exp / "gitea" / "files") == ["readers"]
     out, missing = apps.with_person(realm, ["alerts-steward", "alerts-viewer", "gone"], Path("/s/pw"))
     holders = [u for u in out["users"] if u["username"] == apps.PERSON]
     assert len(holders) == 1, "made again, never twice"

@@ -10,7 +10,8 @@
 # 3. The export's prod builds (<export>/apps, made read only by prod-deployer) published as generic
 #    packages of shako's jc-apps owner, once jc answers, in the background (apps-publish.log).
 # 4. rehearsal-app-roles: a person of the imported realm holding the access groups of every
-#    `visibility: roles` App, for the suite's 403/200 pair (rehearsal-tester holds none).
+#    `visibility: roles` App and every viewer RoleBinding, for the suite's refused/served pairs
+#    (rehearsal-tester holds none).
 # REHEARSAL_APPS=off leaves all of it out.
 # shellcheck disable=SC2154  # here, home, port, export_dir: up.sh's
 

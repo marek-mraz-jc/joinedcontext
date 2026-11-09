@@ -4,8 +4,9 @@
     apps.py publish --base http://localhost:P --export <export> --token-file <shako token> [--report F]
 
 person   adds rehearsal-app-roles to the realm file kaisatsu imports: a member of every group the
-         `spec.access` of a published `visibility: roles` App names, with a password from a file
-         (`$(file:...)`, never the value). rehearsal-tester stays the person holding no role.
+         `spec.access` of a published `visibility: roles` App names and of every group a `viewer`
+         RoleBinding names (what opens a `project` or `organization` App), with a password from a
+         file (`$(file:...)`, never the value). rehearsal-tester stays the person in no group.
 publish  publishes each prod build the export carries (<export>/apps/<name>/bundle.tar.gz, read only
          from prod by prod-deployer) as shako's generic package `app-<name>`, version
          `<commit>-<digest12>` of the App's `status.build`, under the applications' owner (jc-apps),
@@ -58,6 +59,23 @@ def role_groups(files: Path) -> list[str]:
     return sorted(out)
 
 
+def viewer_groups(files: Path) -> list[str]:
+    """The groups the `viewer` RoleBindings of the export's repositories name."""
+    import yaml
+
+    out = set()
+    for f in sorted(files.glob("*/*/**/*.yaml")):
+        try:
+            docs = list(yaml.safe_load_all(f.read_text()))
+        except yaml.YAMLError:
+            continue
+        for d in docs:
+            spec = d.get("spec") or {} if isinstance(d, dict) else {}
+            if isinstance(d, dict) and d.get("kind") == "RoleBinding" and spec.get("role") == "viewer":
+                out.update(s["group"] for s in spec.get("subjects") or [] if s.get("group"))
+    return sorted(out)
+
+
 def group_paths(realm: dict) -> dict[str, str]:
     """name -> path of every group of the realm (subgroups too)."""
     out, todo = {}, list(realm.get("groups") or [])
@@ -85,7 +103,7 @@ def with_person(realm: dict, groups: list[str], password_file: Path) -> tuple[di
 def cmd_person(a) -> int:
     path = Path(a.realm_file)
     realm = json.loads(path.read_text())
-    groups = role_groups(Path(a.files))
+    groups = sorted(set(role_groups(Path(a.files))) | set(viewer_groups(Path(a.files))))
     realm, missing = with_person(realm, groups, Path(a.password_file))
     fd = os.open(path, os.O_WRONLY | os.O_TRUNC)  # the file keeps its 0600
     with os.fdopen(fd, "w") as f:

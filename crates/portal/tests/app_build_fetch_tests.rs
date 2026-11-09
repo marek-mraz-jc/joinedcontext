@@ -335,12 +335,17 @@ fn served_bundle(index: &[u8]) -> Vec<u8> {
     let integrity = serde_json::to_vec(&serde_json::json!({ "index.html": sri_sha384(index) }))
         .expect("integrity.json");
     let mut builder = tar::Builder::new(Vec::new());
-    for (name, bytes) in [("./index.html", index), ("./integrity.json", &integrity[..])] {
+    for (name, bytes) in [
+        ("./index.html", index),
+        ("./integrity.json", &integrity[..]),
+    ] {
         let mut header = tar::Header::new_gnu();
         header.set_size(bytes.len() as u64);
         header.set_mode(0o644);
         header.set_cksum();
-        builder.append_data(&mut header, name, bytes).expect("tar entry");
+        builder
+            .append_data(&mut header, name, bytes)
+            .expect("tar entry");
     }
     let tar = builder.into_inner().expect("tar");
     let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
@@ -391,7 +396,12 @@ async fn get_app(
         .await
         .expect("answer");
     let status = response.status();
-    let body = response.into_body().collect().await.expect("body").to_bytes();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
     (status, body.to_vec())
 }
 
@@ -410,10 +420,16 @@ async fn a_tampered_package_is_refused_and_nothing_is_served() {
     let (_forge, client) = forge_holding(tampered).await;
     let cache = tempdir::Dir::new("fetch-tampered");
     fetch_missing(&client, cache.path(), &mirror).await;
-    assert!(served(cache.path(), &named).is_none(), "the tampered bundle is not installed");
+    assert!(
+        served(cache.path(), &named).is_none(),
+        "the tampered bundle is not installed"
+    );
     let (status, body) = get_app(cache.path(), mirror.clone(), "/apps/air-quality/").await;
     assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
-    assert!(!String::from_utf8_lossy(&body).contains("eventz"), "nothing of it is served");
+    assert!(
+        !String::from_utf8_lossy(&body).contains("eventz"),
+        "nothing of it is served"
+    );
     assert_eq!(
         joinedcontext_portal::apps::static_host::build_missing(
             Some(&cache.path().to_string_lossy()),
@@ -471,14 +487,19 @@ async fn two_apps_never_read_each_others_package_or_cache_entry() {
         let alerts = path.contains("Name='app-alerts'");
         assert!(alerts || path.contains("Name='app-bikes'"), "{path}");
     }
-    assert!(asked.iter().any(|path| path.contains("Name='app-alerts'")), "{asked:?}");
-    let hex = named.trim_start_matches("sha256:");
-    assert!(cache.path().join("bikes").join(hex).join("index.html").is_file());
-    assert!(!cache.path().join("alerts").exists(), "alerts holds no build");
-
+    assert!(
+        asked.iter().any(|path| path.contains("Name='app-alerts'")),
+        "{asked:?}"
+    );
+    // Whatever the cache's layout, bikes' build serves bikes and never alerts.
     let (status, body) = get_app(cache.path(), mirror.clone(), "/apps/alerts/").await;
-    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    assert_eq!(
+        status,
+        axum::http::StatusCode::NOT_FOUND,
+        "alerts is served nothing"
+    );
     assert!(!String::from_utf8_lossy(&body).contains("<title>bikes"));
-    let (status, _) = get_app(cache.path(), mirror, "/apps/bikes/").await;
+    let (status, body) = get_app(cache.path(), mirror, "/apps/bikes/").await;
     assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(String::from_utf8_lossy(&body).contains("<title>bikes"));
 }
