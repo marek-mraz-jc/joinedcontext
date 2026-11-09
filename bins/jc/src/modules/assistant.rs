@@ -665,6 +665,33 @@ mod tests {
         assert!(why.contains("gateway"), "{why}");
     }
 
+    /// The catalogue's origin joins the named deployment's allowedOrigins over https only: the
+    /// widget's frame-ancestors never names a plain-http page.
+    #[test]
+    fn the_catalogue_origin_joins_its_deployment_over_https_only() {
+        let (mut cfg, siblings, _setup, _dir) = fixture();
+        let origins = catalogue_origin(&cfg, &siblings);
+        assert_eq!(
+            origins,
+            BTreeMap::from([("data".to_owned(), vec!["https://city.example".to_owned()])])
+        );
+        cfg.assistant.catalogue_deployment = "visitors".into();
+        assert!(catalogue_origin(&cfg, &siblings).contains_key("visitors"));
+        let http = Config::merge(
+            Cli {
+                role: Some("all".into()),
+                base_host: Some("city.example".into()),
+                scheme: Some("http".into()),
+                ..Cli::default()
+            },
+            FileConfig::default(),
+        )
+        .unwrap();
+        let plans = crate::app::plan_mounts(&http).unwrap();
+        let plain = Siblings::new(&plans, "0.0.0.0:8080".parse().unwrap());
+        assert!(catalogue_origin(&http, &plain).is_empty());
+    }
+
     /// With the shared embedder named, neither the model nor ONNX Runtime is asked for, and the
     /// embedder is the service, with the token URL and the client's secret file setup gave.
     #[tokio::test]
