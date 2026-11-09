@@ -654,6 +654,10 @@ jc's dataroom, reading the wave's report.
   `allowedOrigins` at run time (`Minute::extra_origins`).
 - kaisatsu introspection answers `username` as Keycloak does: agent-proxy and the assistant admit service
   accounts by it (`token_endpoint::client_credentials_refusals_and_introspection_and_revocation`).
+- Shared embedder (jc-embedder): `[assistant] embedder_url` fills `JC_ASSISTANT_EMBEDDER_URL`, the realm's token
+  URL, client `jc-assistant` and its setup secret file; the client asks scope `embedder` (audience `embedder`).
+  Named, the module needs no model dir or ONNX Runtime and uses the service only; unnamed, the in-process model
+  stays (`modules::assistant::tests::the_embedder_service_needs_no_model_and_is_the_one_used`).
 - Image: `bins/jc/Dockerfile` fetches PDFium, e5-small and ONNX Runtime with the platform's pinned scripts and sets
   `JC_ASSISTANT_MODEL_DIR` and `ORT_DYLIB_PATH`.
 
