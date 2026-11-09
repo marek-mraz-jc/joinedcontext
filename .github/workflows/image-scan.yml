@@ -1,27 +1,29 @@
 name: image-scan
-# After each green ship run (image.yml) on main: the CycloneDX SBOM of the jc image that run
-# pushed, attested to its digest, then the vulnerability gate (HIGH/CRITICAL with a fix), and on a
-# pass a vuln-scan attestation, as the platform's image-scan.yml. A production apply refuses a
-# digest without both attestations of this workflow on main (deployment
-# scripts/verify-pinned-images.py --scanned).
+# The CycloneDX SBOM of a jc image ship (image.yml) pushed, attested to its digest, then the
+# vulnerability gate (HIGH/CRITICAL with a fix), and on a pass a vuln-scan attestation, as the
+# platform's image-scan.yml. A production apply refuses a digest without both attestations of
+# this workflow on main (deployment scripts/verify-pinned-images.py --scanned).
+#
+# ci.yml calls it on a push to main (or ship-proof/**) as soon as the image is pushed, in parallel
+# with the tests; its `promote` job signs the image only after this passed, so a HIGH/CRITICAL
+# finding with a fix still blocks the digest from being signed and pinned. A called workflow
+# attests under its own name (`.github/workflows/image-scan.yml@refs/heads/main`).
 on:
-  workflow_run: { workflows: [ship], types: [completed], branches: [main] }
+  workflow_call:
+    inputs:
+      digest: { description: "the sha256 digest of ghcr.io/<owner>/jc:<this commit>", type: string, required: true }
   workflow_dispatch:
     inputs:
       sha: { description: "main commit whose image to scan (40 hex)", required: true, type: string }
 permissions: { contents: read }
-concurrency: { group: "image-scan-${{ github.event.workflow_run.head_sha || github.event.inputs.sha }}", cancel-in-progress: false }
 jobs:
   scan:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write, id-token: write }
     timeout-minutes: 20
     env:
-      SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.sha }}
+      SHA: ${{ github.event.inputs.sha || github.sha }}
+      DIGEST: ${{ inputs.digest }}
       IMAGE: ghcr.io/${{ github.repository_owner }}/jc
       TRIVY_USERNAME: ${{ github.actor }}
       TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
@@ -34,6 +36,8 @@ jobs:
           printf '%s' "$SHA" | grep -qxE '[0-9a-f]{40}' || { echo "::error::'$SHA' is no commit"; exit 1; }
           digest=$(docker buildx imagetools inspect "$IMAGE:$SHA" --format '{{json .Manifest}}' | jq -r '.digest // empty')
           [ -n "$digest" ] || { echo "::error::$IMAGE:$SHA is not published"; exit 1; }
+          # A caller names the digest it pushed: the tag must still point at it.
+          [ -z "$DIGEST" ] || [ "$DIGEST" = "$digest" ] || { echo "::error::$IMAGE:$SHA is $digest, not $DIGEST"; exit 1; }
           echo "ref=$IMAGE@$digest" >> "$GITHUB_OUTPUT"
       - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -48,7 +52,7 @@ jobs:
       - run: |
           cosign verify-attestation --type cyclonedx \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/image-scan.yml@refs/heads/main" \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/image-scan.yml@${{ github.ref }}" \
             "${{ steps.image.outputs.ref }}" > /dev/null
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with: { image-ref: "${{ steps.image.outputs.ref }}", severity: "HIGH,CRITICAL", exit-code: "1", ignore-unfixed: true, cache-dir: "${{ runner.temp }}/trivy" }

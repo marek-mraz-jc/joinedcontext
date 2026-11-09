@@ -122,11 +122,39 @@ async fn ui_build(ui_url: Option<&str>) -> Option<Build> {
                 .ok()?;
             crate::capped::bytes(answer, VERSION_BYTES).await.ok()?
         }
-        None => crate::assets::Assets::get("version.json")?
-            .data
-            .into_owned(),
+        None => {
+            let bytes = crate::assets::Assets::get("version.json")?.data;
+            let mut build: Build = serde_json::from_slice(&bytes).ok()?;
+            // The embedded bundle was built with this binary: a bundle that names no commit
+            // (the jc image keeps version.json commit-free, bins/jc/Dockerfile) is this one's.
+            if build.commit.is_empty() {
+                build.commit = built_commit();
+            }
+            return Some(build);
+        }
     };
     serde_json::from_slice(&bytes).ok()
+}
+
+/// The commit this binary was built from: the `JC_PORTAL_COMMIT` build argument (the Portal's own
+/// image), else `JC_COMMIT` from the environment (the jc image sets it in its last layer, so a new
+/// commit recompiles nothing); empty when neither names one.
+fn built_commit() -> String {
+    commit_of(
+        option_env!("JC_PORTAL_COMMIT"),
+        std::env::var("JC_COMMIT").ok().as_deref(),
+    )
+}
+
+/// The first of the two that is a commit id (1 to 64 hex digits); anything else is not shown.
+fn commit_of(compiled: Option<&str>, runtime: Option<&str>) -> String {
+    [compiled, runtime]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|c| !c.is_empty() && c.len() <= 64 && c.bytes().all(|b| b.is_ascii_hexdigit()))
+        .unwrap_or_default()
+        .to_owned()
 }
 
 #[utoipa::path(
@@ -143,10 +171,7 @@ pub async fn version(
     axum::extract::State(state): axum::extract::State<crate::state::AppState>,
 ) -> Json<Version> {
     let portal = Build {
-        commit: option_env!("JC_PORTAL_COMMIT")
-            .unwrap_or_default()
-            .trim()
-            .to_owned(),
+        commit: built_commit(),
         openapi: openapi_sha().to_owned(),
     };
     let ui = ui_build(state.config.ui_url.as_deref()).await;
@@ -163,4 +188,25 @@ pub fn router() -> axum::Router<crate::state::AppState> {
         .route("/health", axum::routing::get(health))
         .route("/ready", axum::routing::get(ready))
         .route("/version", axum::routing::get(version))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::commit_of;
+
+    #[test]
+    fn the_build_argument_wins_and_the_environment_fills_in() {
+        let sha = "2d9a2259aa53b0f6c8b5d4e7f1a2b3c4d5e6f7a8";
+        assert_eq!(commit_of(Some("abc123"), Some(sha)), "abc123");
+        assert_eq!(commit_of(None, Some(sha)), sha);
+        assert_eq!(commit_of(Some(" "), Some(sha)), sha);
+        assert_eq!(commit_of(None, None), "");
+    }
+
+    #[test]
+    fn a_value_that_is_no_commit_is_not_shown() {
+        assert_eq!(commit_of(None, Some("<script>")), "");
+        assert_eq!(commit_of(None, Some(&"a".repeat(65))), "");
+        assert_eq!(commit_of(Some("main"), Some("abc")), "abc");
+    }
 }

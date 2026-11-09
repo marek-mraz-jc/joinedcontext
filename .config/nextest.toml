@@ -1,0 +1,41 @@
+# cargo-nextest for the root workspace (ci.yml root-test). nextest runs every test in its own
+# process and binaries side by side, where `cargo test` ran one binary at a time: the tests that
+# share one module's test database, or that serialized themselves with an in-process lock
+# (daiya-query postgres.rs SETUP, jc one_binary.rs ONE_JC_AT_A_TIME), run one at a time in their
+# module's group, as they never overlapped before. Different modules' databases still run in
+# parallel. A new test reading a *_TEST_DATABASE_URL joins its module's filter here.
+
+[test-groups]
+pg-kaisatsu = { max-threads = 1 }
+pg-dataroom = { max-threads = 1 }
+pg-daiya = { max-threads = 1 }
+pg-shako = { max-threads = 1 }
+jc-serial = { max-threads = 1 }
+
+[profile.ci]
+fail-fast = false
+failure-output = "immediate-final"
+status-level = "fail"
+final-status-level = "slow"
+# The runner has two cores and most tests wait on Postgres or a socket.
+test-threads = 4
+
+[[profile.default.overrides]]
+filter = 'package(kaisatsu-store-pg) or (package(kaisatsu-server) and binary(cli)) or (package(jc) and (binary(portal_siblings) or binary(jc)))'
+test-group = 'pg-kaisatsu'
+
+[[profile.default.overrides]]
+filter = 'package(dataroom-store-pg) or (package(dataroom-server) and (binary(cli) or binary(host_routing)))'
+test-group = 'pg-dataroom'
+
+[[profile.default.overrides]]
+filter = 'package(daiya-store-pg) or (package(daiya-server) and (binary(config) or binary(binary))) or (package(daiya-query) and (binary(postgres) or binary(factory)))'
+test-group = 'pg-daiya'
+
+[[profile.default.overrides]]
+filter = 'package(shako-store-pg)'
+test-group = 'pg-shako'
+
+[[profile.default.overrides]]
+filter = 'package(jc) and binary(one_binary)'
+test-group = 'jc-serial'
