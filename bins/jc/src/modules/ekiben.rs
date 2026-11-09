@@ -105,6 +105,16 @@ pub async fn build(
         Some(root),
         EnvAccess::None,
     );
+    // The deployment's shared resources first (Bento's `streams -r`): a restored or posted
+    // stream may name any of them (`helsinki__gtfs`, `events_tail`).
+    if let Some(path) = &cfg.resources_file {
+        let raw = std::fs::read_to_string(path)
+            .map_err(|e| err(format!("resources file {}: {e}", path.display())))?;
+        let count = manager
+            .register_resources(&OrgId::default(), &raw)
+            .map_err(|e| err(format!("resources file {}: {e}", path.display())))?;
+        tracing::info!(file = %path.display(), count, "ekiben shared resources loaded");
+    }
     if let Some(db) = &cfg.database {
         if let Some(opts) = db.migrate_options().map_err(err)? {
             let pool = crate::pg::connect(opts, 1).await.map_err(err)?;
@@ -492,6 +502,50 @@ mod tests {
     /// file siblings.rs hands the Portal (`JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE`); a deployer
     /// without it is refused 401 and the stream stays (jc-migrate's rehearsal, G15).
     #[cfg(feature = "portal")]
+    /// The deployment's resources file is the runner's `-r`: without it every stream naming a
+    /// project cache or a shared processor was refused (`events_tail` 774 times in the prod
+    /// rehearsal's jc.log).
+    #[tokio::test]
+    async fn a_stream_naming_a_resource_of_the_resources_file_is_taken() {
+        use crate::setup::{Secret, Setup};
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &[Module::Ekiben], &Default::default()).unwrap();
+        let resources = dir.path().join("resources.yaml");
+        std::fs::write(
+            &resources,
+            "cache_resources:\n  - label: helsinki__gtfs\n    memory:\n      default_ttl: 72h\n",
+        )
+        .unwrap();
+        let cfg = EkibenSection {
+            file_root: Some(dir.path().join("files")),
+            resources_file: Some(resources),
+            ..Default::default()
+        };
+        let siblings = Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        let app = build(&cfg, &setup, &Default::default(), &siblings, false)
+            .await
+            .unwrap();
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let runner = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await });
+        let stream = serde_json::json!({
+            "input": {"generate": {"interval": "1h", "mapping": "root = {}"}},
+            "pipeline": {"processors": [
+                {"cache": {"resource": "helsinki__gtfs", "operator": "get", "key": "k"}}
+            ]},
+            "output": {"drop": {}}
+        });
+        let r = reqwest::Client::new()
+            .post(format!("{runner}/streams/helsinki.hsl-hfp-vehicles"))
+            .bearer_auth(setup.value(Secret::EkibenToken).unwrap())
+            .json(&stream)
+            .send()
+            .await
+            .unwrap();
+        let status = r.status();
+        assert!(status.is_success(), "{status}: {}", r.text().await.unwrap());
+    }
+
     #[tokio::test]
     async fn a_portal_issued_delete_reaches_ekiben() {
         use crate::setup::{Secret, Setup};
