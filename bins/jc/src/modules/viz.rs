@@ -199,8 +199,11 @@ impl Site {
                 "default-src 'none'; script-src {own}; style-src {own}; img-src {own} data:; connect-src {}; frame-src {own}; {tail}; frame-ancestors *",
                 join(&[&api, &cat])
             ),
+            // The chart host frames the renderer. Sandboxed, the host is an opaque origin, which no
+            // `frame-ancestors` source matches (`*` included): the renderer then names none.
             render: format!(
-                "default-src 'none'; script-src {own}; style-src {own} 'unsafe-inline'; img-src {own} data:; connect-src 'none'; {tail}; frame-ancestors *"
+                "default-src 'none'; script-src {own}; style-src {own} 'unsafe-inline'; img-src {own} data:; connect-src 'none'; {tail}{}",
+                if shared { "" } else { "; frame-ancestors *" }
             ),
             map: page(&tiles_img, &join(&[&tiles]), "*"),
             explore: page(
@@ -519,7 +522,13 @@ mod tests {
             ] {
                 let res = serve(&site, &Method::GET, path);
                 let csp = header(&res, "content-security-policy");
-                assert!(csp.contains(sandbox), "{path}: {csp}");
+                // The renderer ends on its sandbox: it names no `frame-ancestors` (below).
+                let held = if path == "/render.html" {
+                    csp.ends_with(sandbox.trim_end_matches(';'))
+                } else {
+                    csp.contains(sandbox)
+                };
+                assert!(held, "{path}: {csp}");
                 if path.ends_with("e.html") {
                     assert!(
                         csp.contains(" http://localhost:42102/vendor/;"),
@@ -535,6 +544,49 @@ mod tests {
             let csp = header(&res, "content-security-policy");
             assert!(!csp.contains("sandbox"), "{path}: {csp}");
         }
+    }
+
+    /// Sandboxed, the chart host `/` is an opaque origin and frames `/render.html`: a
+    /// `frame-ancestors` there, `*` included, matches no opaque ancestor and the browser blocks
+    /// every chart of a dataset page (rehearsal 2026-11-09, helsinki-weather). On an origin of its
+    /// own the renderer keeps `frame-ancestors *`.
+    #[test]
+    fn a_sandboxed_chart_host_may_frame_its_renderer() {
+        let shared = LiveAddresses {
+            catalogue: "http://localhost:42102/opendata".into(),
+            ..LiveAddresses::default()
+        };
+        let site = Site::new("http://localhost:42102", &shared);
+        let res = serve(&site, &Method::GET, "/render.html");
+        // The whole header, pinned: only `frame-ancestors *` left it; it still runs nothing but
+        // its own scripts, connects nowhere and stays sandboxed without `allow-same-origin`.
+        assert_eq!(
+            header(&res, "content-security-policy"),
+            "default-src 'none'; script-src http://localhost:42102; style-src http://localhost:42102 'unsafe-inline'; img-src http://localhost:42102 data:; connect-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"
+        );
+        assert!(res.headers().get("x-frame-options").is_none());
+        // Every other page answers the framing rule it answered before.
+        let ancestors = |path: &str| {
+            let res = serve(&site, &Method::GET, path);
+            let csp = header(&res, "content-security-policy").to_owned();
+            csp.split(';')
+                .map(str::trim)
+                .find_map(|d| d.strip_prefix("frame-ancestors "))
+                .map(str::to_owned)
+        };
+        for (path, rule) in [
+            ("/", "*"),
+            ("/map.html", "*"),
+            ("/embed.html", "*"),
+            ("/explore.html", "http://localhost:42102"),
+            ("/explore.js", "'none'"),
+        ] {
+            assert_eq!(ancestors(path).as_deref(), Some(rule), "{path}");
+        }
+        let own = Site::new("https://viz.city.test", &live());
+        let res = serve(&own, &Method::GET, "/render.html");
+        let csp = header(&res, "content-security-policy");
+        assert!(csp.ends_with("frame-ancestors *"), "{csp}");
     }
 
     /// A sandboxed page asks MapLibre's module and worker as `Origin: null`: the releases answer

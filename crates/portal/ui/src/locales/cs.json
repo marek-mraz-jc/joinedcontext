@@ -2880,6 +2880,8 @@
         "title": "Vzorek",
         "hint": "První záznamy, které zdroj vrátí, tak jak je pipeline přečte.",
         "waiting": "Vyberte zdroj nebo dejte soubor a uvidíte jeho záznamy.",
+        "generated": "{source} vytváří záznamy až při běhu pipeline, takže předem není co číst. Mapování vyzkoušíte, když v kroku 1, Zdroj, přidáte soubor se záznamy.",
+        "credential": "{source} se přihlašuje uloženým přístupovým údajem, který ukázka nikdy nepoužije. Mapování vyzkoušíte, když v kroku 1, Zdroj, přidáte soubor s jeho záznamy.",
         "empty": "Zdroj nevrátil žádný záznam.",
         "count": "{count, plural, one {# záznam} few {# záznamy} other {# záznamů}} s {fields, plural, one {# polem} other {# poli}}",
         "countFirst": "Prvních {count, plural, one {# záznam} few {# záznamy} other {# záznamů}} s {fields, plural, one {# polem} other {# poli}}; zdroj má více",
