@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)] // These tests start the jc binary and read their database URL.
 //! End to end on real Postgres: `jc --role all` with every module's `[<module>.database]`
 //! section, a write through each public mount (a shako repository and a commit, a daiya
 //! dashboard, a dataroom dataset, an ekiben stream, a kaisatsu user, an Antares entity), a stop,
@@ -30,11 +31,15 @@ impl Jc {
         format!("{}{path}", self.base)
     }
 
+    /// A secret the test gave jc as a file (beside the state directory), else jc's state file.
     fn secret(&self, name: &str) -> String {
-        std::fs::read_to_string(self.state.join(name))
-            .unwrap()
-            .trim()
-            .to_owned()
+        let given = given_dir(&self.state).join(name);
+        let path = if given.exists() {
+            given
+        } else {
+            self.state.join(name)
+        };
+        std::fs::read_to_string(path).unwrap().trim().to_owned()
     }
 
     /// SIGTERM, then waits for the exit (a clean stop is part of what a restart means).
@@ -183,8 +188,30 @@ fn free_port() -> u16 {
         .port()
 }
 
+/// Where the test keeps the service tokens it gives jc: beside the state directory, so a restart
+/// on the same state gives the same tokens.
+fn given_dir(state: &Path) -> PathBuf {
+    state.with_file_name("given")
+}
+
 fn start(config: &Path, state: &Path, port: u16) -> Jc {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+    // The service tokens between modules live in jc's memory only (new per boot); the test acts
+    // as the Portal with tokens it gives jc as files.
+    let given = given_dir(state);
+    std::fs::create_dir_all(&given).unwrap();
+    for (name, flag) in [
+        ("shako-token", "--shako-token-file"),
+        ("ekiben-token", "--ekiben-token-file"),
+        ("catalogue-token", "--dataroom-portal-token-file"),
+        ("dashboards-password", "--daiya-portal-password-file"),
+    ] {
+        let file = given.join(name);
+        if !file.exists() {
+            std::fs::write(&file, format!("test-{name}-{:032x}", std::process::id())).unwrap();
+        }
+        cmd.arg(flag).arg(file);
+    }
     for (key, _) in std::env::vars() {
         if key.starts_with("JCBIN_") || key.starts_with("JC_") || key.starts_with("ANTARES_") {
             cmd.env_remove(key);

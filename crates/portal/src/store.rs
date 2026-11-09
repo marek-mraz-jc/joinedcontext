@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use crate::resource::selector::{FieldSelector, LabelSelector};
 use crate::resource::{is_dns1123, is_manifest_name, ResourceEnvelope, ResourceKey};
@@ -24,7 +24,12 @@ pub struct ListPage {
 /// moves, so a request never reads Git.
 #[derive(Default)]
 pub struct Mirror {
-    resources: RwLock<BTreeMap<ResourceKey, ResourceEnvelope>>,
+    ///
+    /// Values sit behind an `Arc` so a read takes its candidates under the guard by a refcount
+    /// and drops the guard before any caller code runs (T-6692): a predicate that reads the
+    /// mirror again (an Organization check listing Organizations) would otherwise wait behind a
+    /// queued writer that waits for this reader, and freeze every route of the Portal.
+    resources: RwLock<BTreeMap<ResourceKey, Arc<ResourceEnvelope>>>,
     /// Layout 2: each registered project's own repository in the forge, by slug (PF-86). Empty
     /// in layout 1, where every project lives in the organization repository.
     repositories: RwLock<BTreeMap<String, String>>,
@@ -100,12 +105,12 @@ impl Mirror {
             return;
         }
         let mut lock = self.resources.write().unwrap_or_else(|p| p.into_inner());
-        lock.insert(key, env);
+        lock.insert(key, Arc::new(env));
     }
 
     pub fn remove(&self, key: &ResourceKey) -> Option<ResourceEnvelope> {
         let mut lock = self.resources.write().unwrap_or_else(|p| p.into_inner());
-        lock.remove(key)
+        lock.remove(key).map(Arc::unwrap_or_clone)
     }
 
     pub fn len(&self) -> usize {
@@ -165,11 +170,18 @@ impl Mirror {
         &self,
         mut predicate: impl FnMut(&ResourceEnvelope) -> bool,
     ) -> Vec<ResourceEnvelope> {
-        let lock = self.resources.read().unwrap_or_else(|p| p.into_inner());
-        lock.values()
+        self.values()
+            .into_iter()
             .filter(|env| predicate(env))
-            .cloned()
+            .map(|env| (*env).clone())
             .collect()
+    }
+
+    /// Every resource held now, taken under the read guard and released before the caller
+    /// looks at one (T-6692).
+    fn values(&self) -> Vec<Arc<ResourceEnvelope>> {
+        let lock = self.resources.read().unwrap_or_else(|p| p.into_inner());
+        lock.values().cloned().collect()
     }
 
     /// The first resource matching a predicate. Used where a name identifies a resource on its
@@ -178,8 +190,10 @@ impl Mirror {
         &self,
         mut predicate: impl FnMut(&ResourceEnvelope) -> bool,
     ) -> Option<ResourceEnvelope> {
-        let lock = self.resources.read().unwrap_or_else(|p| p.into_inner());
-        lock.values().find(|env| predicate(env)).cloned()
+        self.values()
+            .into_iter()
+            .find(|env| predicate(env))
+            .map(|env| (*env).clone())
     }
 
     pub fn get(&self, namespace: &str, kind: &str, name: &str) -> Option<ResourceEnvelope> {
@@ -189,7 +203,7 @@ impl Mirror {
             kind: kind.to_string(),
             name: name.to_string(),
         };
-        lock.get(&key).cloned()
+        lock.get(&key).map(|env| (**env).clone())
     }
 
     /// The resources of `kind` in `namespace` that `keep` accepts, by name. The map is ordered by
@@ -202,16 +216,22 @@ impl Mirror {
         kind: &str,
         mut keep: impl FnMut(&ResourceEnvelope) -> bool,
     ) -> Vec<ResourceEnvelope> {
-        let lock = self.resources.read().unwrap_or_else(|p| p.into_inner());
         let from = ResourceKey {
             namespace: namespace.to_owned(),
             kind: kind.to_owned(),
             name: String::new(),
         };
-        lock.range(from..)
-            .take_while(|(key, _)| key.namespace == namespace && key.kind == kind)
-            .filter(|(_, env)| keep(env))
-            .map(|(_, env)| env.clone())
+        let range: Vec<Arc<ResourceEnvelope>> = {
+            let lock = self.resources.read().unwrap_or_else(|p| p.into_inner());
+            lock.range(from..)
+                .take_while(|(key, _)| key.namespace == namespace && key.kind == kind)
+                .map(|(_, env)| Arc::clone(env))
+                .collect()
+        };
+        range
+            .into_iter()
+            .filter(|env| keep(env))
+            .map(|env| (*env).clone())
             .collect()
     }
 
@@ -254,15 +274,19 @@ impl Mirror {
     /// What `fresh` holds of `kinds` that this mirror lacks or holds with another spec, as
     /// `fresh` has it.
     pub fn behind(&self, fresh: &Mirror, kinds: &[&str]) -> Vec<ResourceEnvelope> {
+        // One guard at a time: `fresh` first, copied by refcount, then this mirror's.
+        let fresh: Vec<(ResourceKey, Arc<ResourceEnvelope>)> = {
+            let lock = fresh.resources.read().unwrap_or_else(|p| p.into_inner());
+            lock.iter()
+                .filter(|(key, _)| kinds.contains(&key.kind.as_str()))
+                .map(|(key, env)| (key.clone(), Arc::clone(env)))
+                .collect()
+        };
         let held = self.resources.read().unwrap_or_else(|p| p.into_inner());
-        let fresh = fresh.resources.read().unwrap_or_else(|p| p.into_inner());
         fresh
-            .iter()
-            .filter(|(key, env)| {
-                kinds.contains(&key.kind.as_str())
-                    && held.get(*key).is_none_or(|old| old.spec != env.spec)
-            })
-            .map(|(_, env)| env.clone())
+            .into_iter()
+            .filter(|(key, env)| held.get(key).is_none_or(|old| old.spec != env.spec))
+            .map(|(_, env)| (*env).clone())
             .collect()
     }
 
@@ -511,5 +535,45 @@ mod tests {
         mirror.upsert(sample("org", "Project", "e2e-city", &[]));
         mirror.upsert(sample("org", "RoleBinding", "e2e-city-creator", &[]));
         assert_eq!(mirror.namespaces(), vec!["e2e-city", "helsinki"]);
+    }
+
+    /// T-6692: a predicate that reads the mirror again while a writer is queued. std's RwLock
+    /// holds a new reader behind a waiting writer, so with the guard held across the predicate
+    /// the inner read waits on the writer, which waits on the outer read: the Portal froze.
+    #[test]
+    fn a_predicate_reading_the_mirror_while_a_write_is_queued_finishes() {
+        use std::sync::{mpsc, Arc, Barrier};
+        use std::time::Duration;
+        let mirror = Arc::new(Mirror::new());
+        mirror.upsert(sample("org", "Organization", "hel", &[]));
+        let barrier = Arc::new(Barrier::new(2));
+        let writer = {
+            let (mirror, barrier) = (Arc::clone(&mirror), Arc::clone(&barrier));
+            std::thread::spawn(move || {
+                barrier.wait();
+                mirror.upsert(sample("org", "Organization", "ba", &[]));
+            })
+        };
+        let (done, finished) = mpsc::channel();
+        let reader = Arc::clone(&mirror);
+        std::thread::spawn(move || {
+            let mut first = true;
+            let held = reader.matching(|_| {
+                if std::mem::take(&mut first) {
+                    barrier.wait();
+                    // Long enough for the writer to queue for the write lock.
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                reader.get("org", "Organization", "hel").is_some()
+            });
+            let _ = done.send(held.len());
+        });
+        assert_eq!(
+            finished.recv_timeout(Duration::from_secs(5)),
+            Ok(1),
+            "a nested read behind a queued write deadlocked the mirror"
+        );
+        writer.join().expect("writer");
+        assert_eq!(mirror.len(), 2);
     }
 }

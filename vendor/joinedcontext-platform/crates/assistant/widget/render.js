@@ -1,0 +1,1238 @@
+// What the widget shows of an answer (T-3325): a small, safe part of Markdown read into a plain
+// tree, and the answer's citations grouped into its sources. Nothing here touches the page: the
+// widget builds DOM nodes from the tree with createElement and textContent alone, so no HTML the
+// model writes is ever parsed. Loaded before widget.js; `node --test` reads it as a module.
+"use strict";
+var JCRender = (function () {
+  // Bold, italic, inline code, an http(s) link, and a citation marker `[1]` or `[1, 2]`.
+  var INLINE = /\*\*(.+?)\*\*|__(.+?)__|`([^`]+)`|\[([^\]\n]+)\]\((https?:\/\/[^\s()]+)\)|\[(\d+(?:\s*,\s*\d+)*)\]|\*(?=\S)(.+?)\*|(^|[^\w])_(?=\S)(.+?)_(?!\w)/g;
+
+  function inline(text, known, linkable) {
+    var out = [];
+    var last = 0;
+    var match;
+    var re = new RegExp(INLINE.source, "g");
+    while ((match = re.exec(text)) !== null) {
+      // `_em_` takes the character before it, so a snake_case name stays one word.
+      out.push(text.slice(last, match.index) + (match[8] || ""));
+      if (match[1] !== undefined || match[2] !== undefined) {
+        out.push({ tag: "strong", children: inline(match[1] !== undefined ? match[1] : match[2], known, linkable) });
+      } else if (match[3] !== undefined) {
+        out.push({ tag: "code", children: [match[3]] });
+      } else if (match[4] !== undefined) {
+        var words = inline(match[4], known, linkable);
+        // A link off the allowlist is its words alone (T-4149): an address a passage planted is
+        // never one click away. `![alt](url)` is a "!" and the same link or words: never an image.
+        if (linkable(match[5])) out.push({ tag: "a", href: match[5], children: words });
+        else out = out.concat(words);
+      } else if (match[6] !== undefined) {
+        var numbers = match[6].split(",").map(function (n) { return Number(n.trim()); })
+          .filter(function (n) { return known(n); });
+        // A marker no citation stands behind is dropped, never shown as typed.
+        if (numbers.length > 0) out.push({ tag: "cite", numbers: numbers });
+      } else {
+        out.push({ tag: "em", children: inline(match[7] !== undefined ? match[7] : match[9], known, linkable) });
+      }
+      last = re.lastIndex;
+    }
+    out.push(text.slice(last));
+    return out.filter(function (node) { return node !== ""; });
+  }
+
+  var BULLET = /^\s*[-*+]\s+(.*)$/;
+  var NUMBERED = /^\s*\d{1,3}[.)]\s+(.*)$/;
+  var HEADING = /^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$/;
+
+  // The citation numbers an item carries at its own level, as one key; "" when it cites nothing.
+  function citeKey(item) {
+    var numbers = [];
+    item.children.forEach(function (node) {
+      if (node && node.tag === "cite") numbers = numbers.concat(node.numbers);
+    });
+    return numbers.filter(function (n, i) { return numbers.indexOf(n) === i; }).sort(function (a, b) { return a - b; }).join(",");
+  }
+
+  // An item without its markers, and without the commas and spaces that only joined them.
+  function uncited(item) {
+    var kept = item.children.filter(function (node) { return !(node && node.tag === "cite"); });
+    var at = kept.length - 1;
+    while (at >= 0 && typeof kept[at] === "string" && /^[\s,;]*$/.test(kept[at])) at -= 1;
+    kept = kept.slice(0, at + 1);
+    if (typeof kept[at] === "string") kept[at] = kept[at].replace(/[\s,;]+$/, "");
+    item.children = kept.filter(function (node) { return node !== ""; });
+  }
+
+  /**
+   * Consecutive items of a list that cite the same sources keep the markers on the last of them
+   * only (T-4278): "[1],[2]" after every weekday of the opening hours was noise on a phone.
+   */
+  function collapseCites(list) {
+    var items = list.children;
+    for (var i = 0; i < items.length - 1; i += 1) {
+      var key = citeKey(items[i]);
+      if (key !== "" && key === citeKey(items[i + 1])) uncited(items[i]);
+    }
+  }
+
+  var FENCE = /^\s{0,3}(```|~~~)/;
+  var ROW = /^\s*\|.*\|\s*$/;
+  var RULE = /^\s*\|?(\s*:?-+:?\s*\|)+\s*(:?-+:?\s*)?$/;
+
+  // A table row's cells: the text between its pipes, a `\|` kept as a pipe.
+  function cells(line, tag, known, linkable) {
+    return line.trim().replace(/\\\|/g, "\u0000").replace(/^\|/, "").replace(/\|$/, "").split("|").map(function (cell) {
+      return { tag: tag, children: inline(cell.trim().replace(/\u0000/g, "|"), known, linkable) };
+    });
+  }
+
+  /**
+   * The answer as blocks: paragraphs (lines joined by line breaks), bullet and numbered lists,
+   * headings read as bold paragraphs, pipe tables (T-4649) and fenced code. `known(n)` says
+   * whether citation n exists, `linkable(url)` whether a link to `url` stays a link (none does
+   * without it).
+   */
+  function markdown(text, known, linkable) {
+    known = known || function () { return false; };
+    linkable = linkable || function () { return false; };
+    var blocks = [];
+    var paragraph = null;
+    var list = null;
+    var table = null;
+    var fence = null;
+    String(text || "").replace(/\r\n?/g, "\n").split("\n").forEach(function (line) {
+      if (fence) {
+        if (FENCE.test(line)) fence = null;
+        else fence.lines.push(line);
+        return;
+      }
+      if (FENCE.test(line)) {
+        fence = { tag: "pre", children: [{ tag: "code", children: [] }], lines: [] };
+        blocks.push(fence);
+        paragraph = list = table = null;
+        return;
+      }
+      if (ROW.test(line) || (table && RULE.test(line))) {
+        paragraph = list = null;
+        if (table && table.children.length === 1 && RULE.test(line)) {
+          // The rule under the first row makes it the header.
+          table.children[0].children.forEach(function (cell) { cell.tag = "th"; });
+          return;
+        }
+        if (!table) {
+          table = { tag: "table", children: [] };
+          blocks.push(table);
+        }
+        table.children.push({ tag: "tr", children: cells(line, "td", known, linkable) });
+        return;
+      }
+      table = null;
+      var item = BULLET.exec(line);
+      var number = item ? null : NUMBERED.exec(line);
+      var heading = HEADING.exec(line);
+      if (item || number) {
+        var tag = item ? "ul" : "ol";
+        if (!list || list.tag !== tag) {
+          list = { tag: tag, children: [] };
+          blocks.push(list);
+        }
+        list.children.push({ tag: "li", children: inline((item || number)[1], known, linkable) });
+        paragraph = null;
+      } else if (line.trim() === "") {
+        paragraph = null;
+        list = null;
+      } else if (heading) {
+        blocks.push({ tag: "p", children: [{ tag: "strong", children: inline(heading[1], known, linkable) }] });
+        paragraph = null;
+        list = null;
+      } else if (list && /^\s{2,}\S/.test(line)) {
+        // An indented line goes on with the list item above it.
+        var last = list.children[list.children.length - 1];
+        last.children = last.children.concat([{ tag: "br" }], inline(line.trim(), known, linkable));
+      } else {
+        list = null;
+        if (!paragraph) {
+          paragraph = { tag: "p", children: [] };
+          blocks.push(paragraph);
+        } else {
+          paragraph.children.push({ tag: "br" });
+        }
+        paragraph.children = paragraph.children.concat(inline(line.trim(), known, linkable));
+      }
+    });
+    blocks.forEach(function (block) {
+      if (block.lines) {
+        block.children[0].children = [block.lines.join("\n")];
+        delete block.lines;
+      }
+      if (block.tag === "ul" || block.tag === "ol") collapseCites(block);
+    });
+    return blocks;
+  }
+
+  /**
+   * The text so far of an answer still streaming, cut where `markdown` would show a marker the
+   * model has not closed yet (T-4649): an open fence is closed, and of the unfinished last line a
+   * table row or a bare `#`/`-` waits for its line, an unpaired `**`, `` ` `` or `*` is dropped,
+   * a half link shows its words and a half citation nothing. What is complete is untouched, so
+   * the streamed view and the final view are the same render of the same lines.
+   */
+  function streamable(text) {
+    text = String(text || "").replace(/\r\n?/g, "\n");
+    var lines = text.split("\n");
+    var open = lines.filter(function (line) { return FENCE.test(line); }).length % 2 === 1;
+    var last = lines.pop();
+    if (open) return lines.concat([last, "```"]).join("\n");
+    if (ROW.test(last) || /^\s*\|/.test(last) || /^\s{0,3}(#{1,6}|[-*+]|\d{1,3}[.)]?)?\s*$/.test(last) || /^\s{0,3}(`{1,3}|~{1,3})/.test(last)) {
+      last = "";
+    } else {
+      last = last.replace(/\[([^\]\n]*)\]\([^)\s]*$/, "$1").replace(/\[[\d,\s]*$/, "").replace(/\[([^\]\n]*)$/, "$1");
+      if ((last.match(/\*\*/g) || []).length % 2 === 1) last = last.replace(/\*\*(?!.*\*\*)/, "");
+      if ((last.match(/`/g) || []).length % 2 === 1) last = last.replace(/`(?!.*`)/, "");
+      var bullet = /^(\s*[-*+]\s+)?(.*)$/.exec(last);
+      if ((bullet[2].replace(/\*\*/g, "").match(/\*/g) || []).length % 2 === 1) {
+        last = (bullet[1] || "") + bullet[2].replace(/\*(?!.*\*)/, "");
+      }
+    }
+    return lines.concat([last]).join("\n");
+  }
+
+  function domain(url) {
+    var match = /^https?:\/\/([^/?#:]+)/i.exec(url);
+    return match ? match[1].replace(/^www\./, "") : "";
+  }
+
+  /**
+   * Whether `url` goes to one of `hosts` itself, `www.` aside (T-4149): never a host under one, as
+   * a city's subdomains are not all the city's own pages (T-4654). A host with anything but
+   * letters, digits, dots and dashes (a `user@host`, a backslash) never matches.
+   */
+  function linkHost(url, hosts) {
+    if (machine(url)) return false;
+    var match = /^https?:\/\/([^/?#]+)(?:[/?#]|$)/i.exec(String(url || ""));
+    if (!match) return false;
+    var host = match[1].toLowerCase();
+    if (!/^[a-z0-9.-]+$/.test(host)) return false;
+    host = host.replace(/^www\./, "");
+    return (hosts || []).some(function (h) {
+      h = String(h || "").toLowerCase().replace(/^www\./, "");
+      return h !== "" && host === h;
+    });
+  }
+
+  /**
+   * The citations as the sources a visitor reads: one per address, the numbers that share it
+   * merged, each with its title and domain. A citation of live data reads as live data and never
+   * by its tool's name. `position[n]` is the 1-based place of citation n in `sources`.
+   */
+  function sources(citations) {
+    var list = [];
+    var byKey = {};
+    var position = {};
+    (citations || []).forEach(function (c) {
+      if (!c || typeof c.n !== "number") return;
+      var url = typeof c.url === "string" && /^https?:\/\//i.test(c.url) ? c.url : null;
+      var live = Boolean(c.tool);
+      var key = url || (live ? "live:" + (c.endpoint || "") : null);
+      if (!key) return;
+      if (!(key in byKey)) {
+        byKey[key] = list.length;
+        list.push({
+          url: url,
+          title: typeof c.title === "string" && c.title.trim() ? c.title.trim() : null,
+          live: live,
+          endpoint: typeof c.endpoint === "string" ? c.endpoint : null,
+          domain: url ? domain(url) : "",
+          numbers: [],
+          cards: []
+        });
+      }
+      var entry = list[byKey[key]];
+      cards(c.cards).forEach(function (card) {
+        var same = JSON.stringify(card);
+        if (entry.cards.length < 3 && !entry.cards.some(function (k) { return JSON.stringify(k) === same; })) {
+          entry.cards.push(card);
+        }
+      });
+      if (!entry.title && typeof c.title === "string" && c.title.trim()) entry.title = c.title.trim();
+      entry.numbers.push(c.n);
+      position[c.n] = byKey[key] + 1;
+    });
+    return { list: list, position: position };
+  }
+
+  /** What a source's link says: its title, else the address without its scheme. */
+  function label(source) {
+    if (source.title) return source.title;
+    // An uploaded file is named by its file name (T-4184).
+    if (source.url && /^upload:/.test(source.url)) return source.url.replace(/^upload:[^/]*\//, "").replace(/#page=\d+$/, "");
+    if (source.url) return source.url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+    return source.endpoint || "";
+  }
+
+  /**
+   * Whether a source is rows of a type no catalogue dataset publishes (T-4802): live data named
+   * by its type with no page a person can open. Its card says so instead of linking anything.
+   */
+  function unlisted(source) {
+    return Boolean(source && source.live && source.title && !safeUrl(source.url));
+  }
+
+  /**
+   * Whether `url` is an address for programs (T-4761): a schema, an MCP or NGSI-LD path, a JSON,
+   * JSON-LD or GeoJSON file, or a JSON format parameter. A person who clicks it gets raw JSON.
+   */
+  function machine(url) {
+    var parts = /^[^?#]*/.exec(String(url || ""))[0].toLowerCase();
+    var query = /\?([^#]*)/.exec(String(url || ""));
+    return /\/(schema|mcp|ngsi-ld)(\/|$)|\.(json|jsonld|geojson)$/.test(parts) ||
+      Boolean(query && /(^|&)(f|format)=(geo)?json(-?ld)?(&|$)/i.test(query[1]));
+  }
+
+  /**
+   * An `http(s)` address a person can open, as given; anything else (a `javascript:` link, a
+   * relative path, an address for programs) null.
+   */
+  function safeUrl(url) {
+    return typeof url === "string" && /^https?:\/\/[^\s]+$/i.test(url) && !machine(url) ? url : null;
+  }
+
+  /**
+   * The complete Server-Sent Events in `buffer` (T-4138): each `{name, data}` with its data parsed
+   * as JSON, a malformed one skipped, and the unfinished tail returned as `rest` for the next read.
+   */
+  function events(buffer) {
+    var out = [];
+    var text = String(buffer).replace(/\r\n?/g, "\n");
+    var at;
+    while ((at = text.indexOf("\n\n")) >= 0) {
+      var block = text.slice(0, at);
+      text = text.slice(at + 2);
+      var name = "";
+      var data = [];
+      block.split("\n").forEach(function (line) {
+        if (line.indexOf("event:") === 0) name = line.slice(6).trim();
+        else if (line.indexOf("data:") === 0) data.push(line.slice(5).replace(/^ /, ""));
+      });
+      if (!name) continue;
+      try {
+        out.push({ name: name, data: JSON.parse(data.join("\n")) });
+      } catch (e) {
+        // A malformed event is skipped and the stream goes on.
+      }
+    }
+    return { events: out, rest: text };
+  }
+
+  /**
+   * The language the chat opens in (T-4343), by the deployment's `widget.language` (`mode`): the
+   * page's `?lang=` (`requested`) when the deployment offers it; with `fixed` then the first of the
+   * deployment's languages; otherwise the language the visitor picked with the toggle (`chosen`),
+   * then the first of the browser's `navigator.languages` (`browser`) whose primary subtag the
+   * deployment offers (`cs` falls back to `sk` only when it offers no `cs`), then its first
+   * language. Only languages the widget has words for (`known`) count; Slovak, else English, when
+   * the deployment lists none of them.
+   */
+  function language(requested, offered, known, chosen, browser, mode) {
+    var has = function (l) { return Object.prototype.hasOwnProperty.call(known, l); };
+    var pick = function (l) { return String(l || "").split("-")[0].toLowerCase(); };
+    var list = (offered || []).map(pick).filter(has);
+    var offers = function (l) { return has(l) && (list.length === 0 || list.indexOf(l) >= 0); };
+    var first = list.length > 0 ? list[0] : has("sk") ? "sk" : "en";
+    if (offers(pick(requested))) return pick(requested);
+    if (mode === "fixed") return first;
+    if (offers(pick(chosen))) return pick(chosen);
+    var tags = Array.isArray(browser) ? browser : [];
+    for (var i = 0; i < tags.length; i += 1) {
+      var tag = pick(tags[i]);
+      if (list.indexOf(tag) >= 0) return tag;
+      if (tag === "cs" && list.indexOf("sk") >= 0) return "sk";
+    }
+    return first;
+  }
+
+  /**
+   * A `data` event as a table to show (T-4138, T-4140): its columns and at most 50 rows of
+   * text, and its dataset, download and GeoJSON links when they are http(s); null when nothing to show.
+   */
+  // Headers a person reads (T-4650): the common Smart Data Models attributes and types in the
+  // widget's languages; any other key is spelt out from its camelCase.
+  // One label table with the CKAN publisher and theme (T-4661): jc-core's field-order.json,
+  // which the server puts before this script as JC_FIELDS and `node --test` reads as a file.
+  var FIELDS = typeof JC_FIELDS !== "undefined" ? JC_FIELDS : require("../../jc-core/data/field-order.json");
+  var LABELS = FIELDS.labels;
+  var TYPES = {
+    AirQualityObserved: { sk: "Kvalita ovzdušia", cs: "Kvalita ovzduší", en: "Air quality", de: "Luftqualität" },
+    WeatherObserved: { sk: "Počasie", cs: "Počasí", en: "Weather", de: "Wetter" },
+    School: { sk: "Školy", cs: "Školy", en: "Schools", de: "Schulen" },
+    PointOfInterest: { sk: "Miesta", cs: "Místa", en: "Places", de: "Orte" },
+    OffStreetParking: { sk: "Parkoviská", cs: "Parkoviště", en: "Car parks", de: "Parkplätze" },
+    WaterQualityObserved: { sk: "Kvalita vody", cs: "Kvalita vody", en: "Water quality", de: "Wasserqualität" },
+    TrafficFlowObserved: { sk: "Doprava", cs: "Doprava", en: "Traffic", de: "Verkehr" },
+    KeyPerformanceIndicator: { sk: "Ukazovatele", cs: "Ukazatele", en: "Indicators", de: "Kennzahlen" },
+    Bridge: { sk: "Mosty", cs: "Mosty", en: "Bridges", de: "Brücken" },
+    GtfsStop: { sk: "Zastávky", cs: "Zastávky", en: "Stops", de: "Haltestellen" },
+    BikeHireDockingStation: { sk: "Stanice bicyklov", cs: "Stanice kol", en: "Bike stations", de: "Fahrradstationen" },
+    Event: { sk: "Podujatia", cs: "Akce", en: "Events", de: "Veranstaltungen" },
+    Vehicle: { sk: "Vozidlá", cs: "Vozidla", en: "Vehicles", de: "Fahrzeuge" },
+    Proposal: { sk: "Návrhy", cs: "Návrhy", en: "Proposals", de: "Vorschläge" },
+    ParticipatoryProcess: { sk: "Procesy", cs: "Procesy", en: "Processes", de: "Prozesse" },
+    BudgetProject: { sk: "Rozpočtové projekty", cs: "Rozpočtové projekty", en: "Budget projects", de: "Budgetprojekte" },
+    Result: { sk: "Výsledky", cs: "Výsledky", en: "Results", de: "Ergebnisse" },
+    Meeting: { sk: "Stretnutia", cs: "Setkání", en: "Meetings", de: "Treffen" },
+    Debate: { sk: "Diskusie", cs: "Diskuse", en: "Debates", de: "Debatten" },
+    Survey: { sk: "Dotazníky", cs: "Dotazníky", en: "Surveys", de: "Umfragen" }
+  };
+  var YES_NO = { sk: ["Áno", "Nie"], cs: ["Ano", "Ne"], en: ["Yes", "No"], de: ["Ja", "Nein"] };
+  var OF = { sk: "z", cs: "z", en: "of", de: "von" };
+  var FIRST = { sk: "prvých", cs: "prvních", en: "first", de: "die ersten" };
+  // A long address in a cell reads as this word, a link (T-4682).
+  var LINK = { sk: "Zdroj", cs: "Zdroj", en: "Source", de: "Quelle" };
+  // The rows a table shows in the panel; the dataset holds the rest (T-4682).
+  var ROWS = 20;
+  // A row measured a day or more before the table's newest says so beside its time (T-4682).
+  var STALE = { sk: "neaktuálne", cs: "neaktuální", en: "out of date", de: "veraltet" };
+  var STALE_MS = 24 * 3600 * 1000;
+
+  // `dateObserved` → "Date observed", `AirQualityObserved` → "Air quality observed".
+  function spelt(key) {
+    var words = String(key).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").trim().toLowerCase();
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
+
+  function word(map, key, lang) {
+    var entry = Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null;
+    return entry ? entry[lang] || entry.en : spelt(key);
+  }
+
+  /** The chart renderer the widget frames (T-4657): `https://viz.{domain}` exactly, else null. */
+  function vizOrigin(value) {
+    return typeof value === "string" && /^https:\/\/viz(\.[a-z0-9-]+)+$/.test(value) ? value : null;
+  }
+
+  /**
+   * A spec as the visitor reads it (T-4657): a map's popup labels and a chart's axis titles in
+   * `lang`, a unit in brackets kept. A copy; the renderer checks it again and sets it as text.
+   */
+  function vizSpec(spec, lang, labels) {
+    var copy = JSON.parse(JSON.stringify(spec || {}));
+    // The model's words for a column (T-4682) before the shared table's.
+    var named = function (key) {
+      var own = labels && typeof labels === "object" && labels[key] && typeof labels[key] === "object" ? labels[key] : null;
+      return (own && (entry(own, lang) || entry(own, "en"))) || word(LABELS, key, lang);
+    };
+    if (Array.isArray(copy.popup)) {
+      copy.popup.forEach(function (f) {
+        if (f && typeof f.field === "string") f.label = named(f.field);
+      });
+    }
+    var encoding = copy.encoding && typeof copy.encoding === "object" ? copy.encoding : {};
+    Object.keys(encoding).forEach(function (channel) {
+      var title = encoding[channel] && encoding[channel].title;
+      if (typeof title !== "string") return;
+      var parts = /^(.*?)( \([^()]*\))?$/.exec(title);
+      encoding[channel].title = named(parts[1]) + (parts[2] || "");
+    });
+    return copy;
+  }
+
+  /** Whether a data card opens on its map (T-4657): every row of the table has a place. */
+  function mapFirst(data) {
+    var features = data && data.map && data.map.data && data.map.data.features;
+    var rows = data && Array.isArray(data.rows) ? data.rows.length : 0;
+    return Array.isArray(features) && rows > 0 && features.length >= rows;
+  }
+
+  /** A time as "pred 5 min.", "dnes 18:40" or "17. 10. 2026 18:40" in `lang`. */
+  function when(stamp, lang, now) {
+    var t = Date.parse(stamp);
+    if (!isFinite(t)) return String(stamp);
+    var minutes = Math.round((t - now) / 60000);
+    var day = function (x) { var d = new Date(x); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    var clock = new Intl.DateTimeFormat(lang, { hour: "2-digit", minute: "2-digit" }).format(t);
+    if (minutes <= 0 && minutes > -60) return new Intl.RelativeTimeFormat(lang, { numeric: "auto", style: "short" }).format(minutes, "minute");
+    var days = Math.round((day(t) - day(now)) / 86400000);
+    if (days === 0 || days === -1) return new Intl.RelativeTimeFormat(lang, { numeric: "auto" }).format(days, "day") + " " + clock;
+    return new Intl.DateTimeFormat(lang, { day: "numeric", month: "numeric", year: "numeric" }).format(t) + " " + clock;
+  }
+
+  /**
+   * A `data` event as the table the widget shows (T-4650, T-4682): the caption is the type's name
+   * and the row count, each header its label and unit, each cell text in `lang`. Numbers take the
+   * locale's separator and at most three decimals, but a year or a code (a column named for one)
+   * is never grouped: 1953, not "1 953". Times read as `when` says, booleans as words, and an enum
+   * as the words the table's `enums` give it. An http(s) address becomes `{text, href}`, a short
+   * link. An empty cell stays empty. The entity's URN is never a column: an unnamed row is called
+   * by the URN's last segment, and a column of references is left out. At most 20 rows; the
+   * caption says how many more the dataset holds. Everything is text; nothing here becomes HTML.
+   */
+  function table(data, lang, now) {
+    if (!data || !Array.isArray(data.columns) || data.columns.length === 0) return null;
+    lang = YES_NO[lang] ? lang : "en";
+    now = typeof now === "number" ? now : Date.now();
+    var numbers = new Intl.NumberFormat(lang, { maximumFractionDigits: 3 });
+    var units = Array.isArray(data.units) ? data.units : [];
+    // A measured value to one decimal (11,5 µg/m³, never 11,506), a plain number to two (T-4711).
+    var measured = new Intl.NumberFormat(lang, { maximumFractionDigits: 1 });
+    var plainNumber = new Intl.NumberFormat(lang, { maximumFractionDigits: 2 });
+    var small = new Intl.NumberFormat(lang, { maximumSignificantDigits: 2 });
+    var modelled = Array.isArray(data.labels) ? data.labels : [];
+    var enums = Array.isArray(data.enums) ? data.enums : [];
+    var raw = (Array.isArray(data.rows) ? data.rows : []).filter(Array.isArray).slice(0, ROWS);
+    var urn = function (v) { return typeof v === "string" && /^urn:/i.test(v); };
+    // The columns shown: an `id` column becomes the row's name, a column of references goes.
+    var keep = [];
+    data.columns.forEach(function (c, i) {
+      var filled = raw.filter(function (row) { return row[i] !== null && row[i] !== undefined && row[i] !== ""; });
+      if (c !== "id" && filled.length > 0 && filled.every(function (row) { return urn(row[i]); })) return;
+      keep.push(i);
+    });
+    var plain = function (column) { return /year|code$/i.test(String(column)) || /Id$|^id$/.test(String(column)); };
+    var cell = function (v, column, i) {
+      if (v === null || v === undefined || v === "") return "";
+      // A row's own name per language (T-5330) and an enum's words come before the URN tail.
+      var words = enums[i] && typeof enums[i] === "object" && (typeof v === "string" || typeof v === "number") && Object.prototype.hasOwnProperty.call(enums[i], v) ? enums[i][v] : null;
+      if (words && typeof words === "object") return entry(words, lang) || entry(words, "en") || entry(words, Object.keys(words)[0]) || String(v);
+      if (column === "id" && urn(v)) return String(v).split(":").pop();
+      if (typeof v === "number") {
+        if (!isFinite(v)) return "";
+        if (plain(column) && Number.isInteger(v)) return String(v);
+        // Below 1, two significant digits: 0,04 mg/m³ never reads as 0 (integrator, T-4711).
+        if (v !== 0 && Math.abs(v) < 1) return small.format(v);
+        return (typeof units[i] === "string" && units[i] ? measured : plainNumber).format(v);
+      }
+      if (typeof v === "boolean") return YES_NO[lang][v ? 0 : 1];
+      if (typeof v === "object") return JSON.stringify(v);
+      if (safeUrl(v)) return { text: LINK[lang], href: v };
+      if (column === "observedAt" || (TIME.test(v) && v.length > 10)) return when(v, lang, now);
+      return String(v);
+    };
+    var at = data.columns.indexOf("observedAt");
+    var times = raw.map(function (row) { return at < 0 || typeof row[at] !== "string" ? NaN : Date.parse(row[at]); });
+    var newest = Math.max.apply(null, times.filter(isFinite).concat([-Infinity]));
+    var rows = raw.map(function (row, r) {
+      return keep.map(function (i) {
+        var shown = cell(row[i], data.columns[i], i);
+        return i === at && newest - times[r] >= STALE_MS ? shown + " · " + STALE[lang] : shown;
+      });
+    });
+    var numeric = keep.map(function (i) {
+      return raw.length > 0 && raw.every(function (row) {
+        return row[i] === null || row[i] === undefined || typeof row[i] === "number";
+      });
+    });
+    // The data model's labels where the table carries them (T-4672), else the shared table's.
+    var columns = keep.map(function (i) {
+      var c = data.columns[i];
+      var own = modelled[i] && typeof modelled[i] === "object" ? entry(modelled[i], lang) || entry(modelled[i], "en") : "";
+      var label = own || word(LABELS, c === "id" ? "name" : String(c), lang);
+      return typeof units[i] === "string" && units[i] ? label + " (" + units[i] + ")" : label;
+    });
+    var named = typeof data.type === "string" && data.type ? word(TYPES, data.type, lang) : "";
+    var caption = "";
+    if (named && typeof data.total === "number" && data.total > rows.length) {
+      caption = named + " — " + FIRST[lang] + " " + numbers.format(rows.length) + " " + OF[lang] + " " + numbers.format(data.total);
+    } else if (named) {
+      caption = named + " (" + numbers.format(rows.length) + ")";
+    }
+    return {
+      caption: caption,
+      columns: columns,
+      numeric: numeric,
+      rows: rows,
+      dataset: safeUrl(data.dataset),
+      download: safeUrl(data.download),
+      // An address for programs is neither a link nor text: the dataset page names it (T-4799).
+      geojson: safeUrl(data.geojson)
+    };
+  }
+
+  /**
+   * The greeting the empty chat shows (T-4199): the deployment's own, which its author writes in
+   * its first language, when the chat speaks that language or the deployment names none; else the
+   * widget's greeting in the visitor's language.
+   */
+  function greeting(own, languages, lang, fallback) {
+    // One per language (T-4365): this language's, else the widget's own.
+    if (own && typeof own === "object") return Array.isArray(own) ? fallback : entry(own, lang) || fallback;
+    if (!own) return "";
+    return !Array.isArray(languages) || languages.length === 0 || languages[0] === lang ? own : fallback;
+  }
+
+  function entry(map, key) {
+    var text = Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null;
+    return typeof text === "string" && text.trim() ? text.trim() : "";
+  }
+
+  /**
+   * The header's title (T-4365): the one string, or of a map per language this language's, else
+   * the first of `languages`'s, else any; "" when there is none.
+   */
+  function title(own, languages, lang) {
+    if (typeof own === "string") return own.trim();
+    if (!own || typeof own !== "object" || Array.isArray(own)) return "";
+    var first = Array.isArray(languages) ? languages[0] : undefined;
+    var keys = [lang, first].concat(Object.keys(own).sort());
+    for (var i = 0; i < keys.length; i++) {
+      if (entry(own, keys[i])) return entry(own, keys[i]);
+    }
+    return "";
+  }
+
+  var TIME = /^\d{4}-\d{2}-\d{2}(?:[T ][\d:.]+(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
+  /**
+   * A `data` event as a small chart (T-4198): when exactly one column holds numbers and another
+   * names them, its points: a line over time when every name is a date, else bars, at most 50,
+   * a value that is no finite number skipped. Null in any other case, and under two points.
+   */
+  function chart(data) {
+    if (!data || !Array.isArray(data.columns) || !Array.isArray(data.rows)) return null;
+    var rows = data.rows.filter(Array.isArray);
+    var finite = function (v) { return typeof v === "number" && isFinite(v); };
+    var numeric = data.columns.map(function (_, i) {
+      var numbers = 0, words = 0;
+      rows.forEach(function (row) {
+        if (finite(row[i])) numbers += 1;
+        else if (typeof row[i] === "string" && row[i].trim()) words += 1;
+      });
+      return numbers > 0 && numbers > words;
+    });
+    var values = numeric.reduce(function (found, yes, i) { return yes ? found.concat([i]) : found; }, []);
+    if (values.length !== 1) return null;
+    var named = data.columns.map(function (_, i) { return i; }).filter(function (i) { return !numeric[i]; });
+    var isTime = function (i) {
+      return rows.every(function (row) { return typeof row[i] === "string" && TIME.test(row[i]) && isFinite(Date.parse(row[i])); });
+    };
+    // T-4711, owner 04:46Z: no chart unless every check passes; a failed check is no chart, never
+    // a repaired one. A line needs time with 3 distinct moments; one moment is categories (bars).
+    var time = named.filter(isTime)[0];
+    if (time !== undefined) {
+      var moments = {};
+      rows.forEach(function (row) { moments[Date.parse(row[time])] = true; });
+      var distinct = Object.keys(moments).length;
+      if (distinct === 2) return null;
+      if (distinct < 3) {
+        named = named.filter(function (i) { return i !== time; });
+        time = undefined;
+      }
+    }
+    var by = time !== undefined ? time : named[0];
+    if (by === undefined) return null;
+    // Nothing truncated: a chart of the first rows of more would mislead.
+    if (typeof data.total === "number" && data.total > rows.length) return null;
+    var v = values[0];
+    var points = rows.filter(function (row) { return finite(row[v]); }).slice(0, 50).map(function (row) {
+      var name = row[by] === null || row[by] === undefined ? "" : String(row[by]);
+      return { label: name.slice(0, 40), value: row[v] };
+    });
+    if (time !== undefined) points.sort(function (a, b) { return Date.parse(a.label) - Date.parse(b.label); });
+    if (points.length < (time !== undefined ? 3 : 2)) return null;
+    if (time === undefined) {
+      // Bars name each category once, by a person's name, never a slug or an id.
+      var labels = points.map(function (p) { return p.label; });
+      var SLUG = /^[a-z0-9]+(-[a-z0-9]+){2,}$|^urn:/i;
+      if (labels.some(function (l) { return !l.trim() || SLUG.test(l); })) return null;
+      if (labels.some(function (l, i) { return labels.indexOf(l) !== i; })) return null;
+      // No total drawn beside its own parts: one bar that is the sum of the others.
+      var sum = points.reduce(function (a, p) { return a + p.value; }, 0);
+      if (points.length > 2 && points.some(function (p) { return Math.abs(p.value * 2 - sum) <= Math.abs(p.value) * 0.005; })) return null;
+    }
+    return { kind: time !== undefined ? "line" : "bar", value: String(data.columns[v]), by: String(data.columns[by]), points: points };
+  }
+
+  var EMAIL = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/;
+
+  /** A phone as a `tel:` link: 9 to 15 digits, a leading `+` and spaces, `/`, `-` aside; else null. */
+  function tel(phone) {
+    var compact = String(phone || "").replace(/[\s\/-]/g, "");
+    return /^\+?\d{9,15}$/.test(compact) ? "tel:" + compact : null;
+  }
+
+  /** An e-mail address as a `mailto:` link, null unless it is one address and nothing else. */
+  function mailto(address) {
+    return EMAIL.test(String(address || "")) ? "mailto:" + address : null;
+  }
+
+  function text(value, max) {
+    return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, max) : "";
+  }
+
+  /**
+   * A citation's cards (T-4155) as the chat shows them: each field text, each link checked
+   * (`tel:`, `mailto:`, an OpenStreetMap search), an empty field left out and an empty card dropped.
+   */
+  function cards(raw) {
+    return (Array.isArray(raw) ? raw : []).map(function (card) {
+      if (!card || typeof card !== "object") return null;
+      var list = function (values, link) {
+        return (Array.isArray(values) ? values : []).map(function (v) { return text(v, 300); })
+          .filter(Boolean).slice(0, 5).map(function (v) { return { text: v, href: link(v) }; });
+      };
+      if (card.kind === "contact") {
+        var phones = list(card.phones, tel);
+        var emails = list(card.emails, mailto);
+        if (phones.length + emails.length === 0) return null;
+        return { kind: "contact", name: text(card.name, 300), phones: phones, emails: emails };
+      }
+      if (card.kind === "place") {
+        var address = text(card.address, 300);
+        return address ? { kind: "place", address: address,
+          href: "https://www.openstreetmap.org/search?query=" + encodeURIComponent(address) } : null;
+      }
+      if (card.kind === "procedure") {
+        var steps = (Array.isArray(card.steps) ? card.steps : []).map(function (v) { return text(v, 300); })
+          .filter(Boolean).slice(0, 10);
+        return steps.length > 0 ? { kind: "procedure", steps: steps } : null;
+      }
+      return null;
+    }).filter(Boolean);
+  }
+
+  var STAGES = {
+    sk: { understanding: "Rozmýšľam nad otázkou…", searching: "Hľadám v zdrojoch", reading: "Čítam živé údaje",
+      history: "Čítam históriu údajov", schema: "Čítam schému údajov", answering: "Pripravujem odpoveď…",
+      steps: "Postup" },
+    en: { understanding: "Reading your question…", searching: "Searching the sources", reading: "Reading live data",
+      history: "Reading the data's history", schema: "Reading the data's schema", answering: "Preparing the answer…",
+      steps: "Steps" },
+    cs: { understanding: "Přemýšlím nad otázkou…", searching: "Hledám ve zdrojích", reading: "Čtu živá data",
+      history: "Čtu historii dat", schema: "Čtu schéma dat", answering: "Připravuji odpověď…",
+      steps: "Postup" }
+  };
+  // The stages that are one step of the answer's work, listed under it (T-4294).
+  var STEPS = ["searching", "reading", "history", "schema"];
+  // The `done` event's `stagesMs`, in the order they run, by name (T-4729).
+  var TIMED = ["route", "search", "judge", "answer"];
+  var TIMED_WORDS = {
+    sk: { route: "Výber zdroja", search: "Vyhľadávanie v zdrojoch", judge: "Kontrola nájdeného", answer: "Odpoveď" },
+    en: { route: "Choosing the sources", search: "Searching the sources", judge: "Checking what was found", answer: "Answer" },
+    cs: { route: "Výběr zdroje", search: "Vyhledávání ve zdrojích", judge: "Kontrola nalezeného", answer: "Odpověď" }
+  };
+
+  /**
+   * The progress line of a `stage` event (T-4155): fixed words per step, a search or a read
+   * naming its topic (`Hľadám v zdrojoch: „…“…`); null for a step the chat does not know.
+   */
+  function stage(data, lang) {
+    var words = STAGES[lang] || STAGES.en;
+    var name = data && data.stage;
+    if (name === "steps" || !Object.prototype.hasOwnProperty.call(words, name)) return null;
+    var topic = text(data.topic, 60);
+    // A search names the visitor's own words; a read names its data in words or nothing, never an
+    // Endpoint slug or a type name (T-4682).
+    if (name !== "searching") topic = Object.prototype.hasOwnProperty.call(TYPES, topic) ? word(TYPES, topic, lang) : "";
+    if (STEPS.indexOf(name) >= 0) {
+      return words[name] + (topic ? ": „" + topic + "“…" : "…");
+    }
+    return words[name];
+  }
+
+
+  // The words of a read's step (T-4801); a date bound of its `q` as words (T-5343).
+  var READ_WORDS = {
+    sk: { read: "Hľadal som v", all: "všetky záznamy", from: "od", until: "do" },
+    en: { read: "Searched", all: "all records", from: "from", until: "until" },
+    cs: { read: "Hledal jsem v", all: "všechny záznamy", from: "od", until: "do" },
+    de: { read: "Gesucht in", all: "alle Einträge", from: "ab", until: "bis" }
+  };
+  var OPS = { "==": "=", "!=": "≠", ">=": "≥", "<=": "≤", ">": ">", "<": "<", "~=": "~", "!~=": "≁" };
+  var CLAUSE = /^([A-Za-z_][\w.\[\]]*)\s*(==|!=|>=|<=|!~=|~=|>|<)\s*(.+)$/;
+  var DAY = /^(\d{4}-\d{2}-\d{2})(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+
+  /**
+   * A read's `q` in words (T-5343): `endDate>="2026-10-20T00:00:00Z"` → `od 20. 10. 2026`,
+   * `yearBuilt<1900` → `Year built < 1900`; a `q` with `|` or parentheses, or a clause this does
+   * not know, stays as written.
+   */
+  function query(q, lang) {
+    var words = READ_WORDS[lang] || READ_WORDS.en;
+    if (/[|()]/.test(q)) return q;
+    var said = q.split(";").map(function (clause) {
+      var m = CLAUSE.exec(clause.trim());
+      if (!m) return null;
+      var value = m[3].trim().replace(/^"(.*)"$/, "$1");
+      var day = DAY.exec(value);
+      var at = day ? Date.parse(day[2] ? value : day[1] + "T00:00:00Z") : NaN;
+      if (isFinite(at)) {
+        // Midnight UTC is a day; any other instant also says its local time.
+        var midnight = !day[2] || new Date(at).getUTCHours() + new Date(at).getUTCMinutes() + new Date(at).getUTCSeconds() === 0;
+        var shown = new Intl.DateTimeFormat(lang, midnight
+          ? { day: "numeric", month: "numeric", year: "numeric", timeZone: "UTC" }
+          : { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(at);
+        if (m[2] === ">=" || m[2] === ">") return words.from + " " + shown;
+        if (m[2] === "<=" || m[2] === "<") return words.until + " " + shown;
+        value = shown;
+      }
+      return word(LABELS, m[1], lang) + " " + OPS[m[2]] + " " + value;
+    });
+    return said.every(Boolean) ? said.join(", ") : q;
+  }
+
+  /**
+   * A `step` event (T-4801) as the steps list reads it: the source's title, its title per
+   * language (T-5343), the type, the `q`, the count the source returned and the dataset page,
+   * each checked; null when it names neither a source nor a type.
+   */
+  function read(data) {
+    if (!data || typeof data !== "object") return null;
+    var count = typeof data.count === "number" && isFinite(data.count) && data.count >= 0 ? Math.floor(data.count) : null;
+    var titles = {};
+    if (data.titles && typeof data.titles === "object" && !Array.isArray(data.titles)) {
+      Object.keys(data.titles).forEach(function (l) {
+        var t = text(data.titles[l], 80);
+        if (/^[a-z]{2,3}$/.test(l) && t) titles[l] = t;
+      });
+    }
+    var out = { source: text(data.source, 80), titles: titles, type: text(data.type, 80), q: text(data.q, 200), count: count, url: safeUrl(data.url) };
+    return out.source || out.type ? out : null;
+  }
+
+  /**
+   * A read's line: `Hľadal som v: Podujatia — Banská Bystrica · od 20. 10. 2026 → 55`; the source
+   * in the visitor's language, the type in words unless the title already says it (T-5343).
+   */
+  function readLine(r, lang) {
+    var words = READ_WORDS[lang] || READ_WORDS.en;
+    var source = entry(r.titles, lang) || r.source;
+    var kind = r.type ? word(TYPES, r.type, lang) : "";
+    var says = function (w) { return source.toLowerCase().indexOf(w.toLowerCase()) >= 0; };
+    if (source && kind && [kind, word(TYPES, r.type, "en"), r.type].some(says)) kind = "";
+    var line = words.read + ": " + [source, kind].filter(Boolean).join(" / ");
+    if (r.count === null) return line;
+    var n = new Intl.NumberFormat(YES_NO[lang] ? lang : "en").format(r.count);
+    return line + " · " + (r.q ? query(r.q, lang) : words.all) + " → " + n;
+  }
+
+  /**
+   * The reads worth a line (T-5343): one that says what another already said is dropped, and so is
+   * one without a count of a source and type another read counted.
+   */
+  function distinct(reads, lang) {
+    var lines = [];
+    return reads.filter(function (r) {
+      var line = readLine(r, lang);
+      var counted = r.count === null && reads.some(function (o) {
+        return o.count !== null && o.source === r.source && o.type === r.type;
+      });
+      if (counted || lines.indexOf(line) >= 0) return false;
+      lines.push(line);
+      return true;
+    });
+  }
+
+  /**
+   * Whether an answer shows a `data` event's table (T-5343): a second read of the same Endpoint
+   * and type would repeat the first one's heading, so only the first is shown. `seen` keeps the
+   * shown ones.
+   */
+  function firstTable(seen, data) {
+    if (!data || typeof data !== "object" || typeof data.type !== "string" || !data.type) return true;
+    var key = String(data.endpoint || "") + "\n" + data.type;
+    if (seen.indexOf(key) >= 0) return false;
+    seen.push(key);
+    return true;
+  }
+
+  /**
+   * The steps an answer took, for the collapsed list under it (T-4294): with the `step` events
+   * of its reads, each read by its source, query and count, with the dataset page in `links`
+   * (T-4801); else with the `done` event's `stagesMs`, each stage that ran by its name and how
+   * long it took (T-4729); without them, the line of each stage that did work, in order; null for
+   * fewer than two stages, which need no list.
+   */
+  function steps(stages, lang, timed, reads) {
+    var checked = distinct((Array.isArray(reads) ? reads : []).map(read).filter(Boolean), lang);
+    if (checked.length > 0) {
+      return { summary: (STAGES[lang] || STAGES.en).steps + " (" + checked.length + ")",
+        lines: checked.map(function (r) { return readLine(r, lang); }),
+        links: checked.map(function (r) { return r.url; }) };
+    }
+    var seconds = new Intl.NumberFormat(YES_NO[lang] ? lang : "en", { maximumFractionDigits: 1 });
+    var words = TIMED_WORDS[lang] || TIMED_WORDS.en;
+    var named = TIMED.filter(function (name) {
+      var ms = timed && typeof timed === "object" ? timed[name] : undefined;
+      return typeof ms === "number" && isFinite(ms) && ms > 0;
+    }).map(function (name) { return words[name] + " " + seconds.format(timed[name] / 1000) + " s"; });
+    if (named.length >= 2) {
+      return { summary: (STAGES[lang] || STAGES.en).steps + " (" + named.length + ")", lines: named };
+    }
+    var lines = (Array.isArray(stages) ? stages : [])
+      .filter(function (data) { return data && STEPS.indexOf(data.stage) >= 0; })
+      .map(function (data) {
+        var line = stage(data, lang);
+        // Each step with when it began, in seconds after the question (T-4682).
+        var ms = data.ms;
+        if (!line || typeof ms !== "number" || !isFinite(ms) || ms < 0) return line;
+        return line + " (" + new Intl.NumberFormat(YES_NO[lang] ? lang : "en", { maximumFractionDigits: 1 }).format(ms / 1000) + " s)";
+      })
+      .filter(Boolean);
+    if (lines.length < 2) return null;
+    return { summary: (STAGES[lang] || STAGES.en).steps + " (" + lines.length + ")", lines: lines };
+  }
+
+
+  /** A `followups` event's questions (T-4174): strings, trimmed, 1 to 120 characters, at most 3. */
+  function followups(data) {
+    var out = [];
+    ((data && Array.isArray(data.questions)) ? data.questions : []).forEach(function (q) {
+      if (typeof q !== "string") return;
+      q = q.replace(/\s+/g, " ").trim();
+      if (q && q.length <= 120 && out.indexOf(q) < 0 && out.length < 3) out.push(q);
+    });
+    return out;
+  }
+
+  // What the panel keeps in its sessionStorage (T-4174): the conversation's id, how many questions
+  // it asked, and the visible turns, at most MAX_KEPT, each question and answer with its citations.
+  var MAX_KEPT = 20;
+  var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  /** The kept conversation read back from `raw`, or null when it is missing or not of its shape. */
+  function restore(raw) {
+    var kept;
+    try { kept = JSON.parse(raw); } catch (e) { return null; }
+    if (!kept || typeof kept !== "object" || typeof kept.conversation !== "string" ||
+        !UUID.test(kept.conversation) || !Array.isArray(kept.turns)) return null;
+    var turns = kept.turns.filter(function (t) {
+      return t && typeof t.question === "string" && typeof t.text === "string" &&
+        Number.isInteger(t.turn) && t.turn >= 1 && Array.isArray(t.citations);
+    }).slice(-MAX_KEPT).map(function (t) {
+      var turn = { question: t.question.slice(0, 4000), text: t.text.slice(0, 4000), turn: t.turn, citations: t.citations };
+      var askedAt = typeof t.askedAt === "string" && stamp(t.askedAt);
+      var at = typeof t.at === "string" && stamp(t.at);
+      if (askedAt) turn.askedAt = askedAt.datetime;
+      if (at) turn.at = at.datetime;
+      var opened = t.opened && dataset([{ url: t.opened.url, title: t.opened.title }]);
+      if (opened) turn.opened = opened;
+      var more = followups({ questions: t.followups });
+      if (more.length > 0) turn.followups = more;
+      return turn;
+    });
+    var asked = Number.isInteger(kept.asked) && kept.asked >= 0 ? kept.asked : 0;
+    turns.forEach(function (t) { if (t.turn > asked) asked = t.turn; });
+    return { conversation: kept.conversation, asked: asked, turns: turns };
+  }
+
+  /**
+   * A message's time (T-4339): `text` HH:MM, a 24-hour clock in every language as the answer
+   * writes it, in the visitor's own time zone, `datetime` and `title`
+   * the UTC minute; null when `at` is no moment.
+   */
+  function stamp(at, locale) {
+    var d = new Date(at);
+    if (at === null || at === undefined || at === "" || isNaN(d.getTime())) return null;
+    var utc = d.toISOString().slice(0, 16);
+    var text;
+    try {
+      text = d.toLocaleTimeString(locale || undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+    } catch (e) {
+      text = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+    }
+    return { datetime: utc + "Z", text: text, title: utc.replace("T", " ") + " UTC" };
+  }
+
+  /** `kept` with one more answered turn, the oldest dropped past MAX_KEPT. */
+  function remember(kept, conversation, asked, entry) {
+    var turns = (kept && kept.conversation === conversation ? kept.turns : []).concat([entry]);
+    return { conversation: conversation, asked: asked, turns: turns.slice(-MAX_KEPT) };
+  }
+
+  // The copy the visitor chose to keep in this browser (T-4670): at most 90 days after its last
+  // change, then gone.
+  var REMEMBER_MS = 90 * 24 * 3600 * 1000;
+
+  /** What `localStorage` holds for a remembered conversation, stamped `now`; `kept` may be null. */
+  function lasting(kept, now) {
+    return JSON.stringify({ savedAt: now.toISOString(), kept: kept || null });
+  }
+
+  /**
+   * The remembered copy read back from `raw`: null when the visitor never switched it on, the
+   * value is not of its shape, or it is older than 90 days (the caller deletes it then); else
+   * `{ kept }`, the conversation or null when there was none yet.
+   */
+  function recalled(raw, now) {
+    var held;
+    try { held = JSON.parse(raw); } catch (e) { return null; }
+    if (!held || typeof held !== "object" || typeof held.savedAt !== "string") return null;
+    var at = new Date(held.savedAt).getTime();
+    if (isNaN(at) || at > now.getTime() + 60000 || now.getTime() - at > REMEMBER_MS) return null;
+    return { kept: held.kept ? restore(JSON.stringify(held.kept)) : null };
+  }
+
+  /**
+   * The paragraphs of the privacy dialog (API/05 §1.6, T-4670) in `words`: the deployment's
+   * `disclaimer`, else the widget's own; what is kept for how many `days` (none when 0); and,
+   * only when the deployment names a contact, whom to write (`mail`) with the page of its privacy
+   * documents (`href`, https only).
+   */
+  function privacyLines(words, days, privacy, disclaimer) {
+    var own = typeof disclaimer === "string" ? disclaimer.trim() : "";
+    var lines = [{ text: own || words.aboutAi }];
+    var n = Number.isInteger(days) && days > 0 ? days : 0;
+    lines.push({ heading: words.keptHeading, text: n > 0 ? words.keptDays.replace("{days}", String(n)) : words.keptNone });
+    var contact = privacy && typeof privacy.contact === "string" ? privacy.contact.trim() : "";
+    if (!contact || !mailto(contact)) return lines;
+    lines.push({ heading: words.askHeading, text: words.askData, mail: contact });
+    var docs = safeUrl(privacy.documentsUrl);
+    if (docs && /^https:/i.test(docs)) lines.push({ text: words.documents, href: docs });
+    return lines;
+  }
+
+  /**
+   * The questions an empty chat offers (T-4253): the deployment's own in the language the chat
+   * speaks, else the widget's own, never another language's; at most four distinct ones.
+   */
+  function suggestions(own, lang, fallback) {
+    var list = own && Array.isArray(own[lang]) && own[lang].length > 0 ? own[lang] : fallback || [];
+    var seen = [];
+    list.forEach(function (q) {
+      var text = typeof q === "string" ? q.trim() : "";
+      if (text && seen.indexOf(text) < 0 && seen.length < 4) seen.push(text);
+    });
+    return seen;
+  }
+
+  // The service's error titles (API/05 §1.6), English and stable, to the widget's own words.
+  var TROUBLE = {
+    "Conversation Budget Spent": "full", "Model Unavailable": "unreachable",
+    "No Answer": "unanswered", "Answer Took Too Long": "slow", "Declined": "declined",
+    "Daily Limit Reached": "limit", "Monthly Limit Reached": "limit", "Visitor Limit Reached": "limit"
+  };
+
+  /**
+   * The widget's own word for a failed answer (T-4253), so the visitor reads it in the chat's
+   * language and never an English detail: by the service's title, else by the status, a lost
+   * connection (no status) as offline.
+   */
+  function trouble(status, title) {
+    if (Object.prototype.hasOwnProperty.call(TROUBLE, title)) return TROUBLE[title];
+    if (status === 429) return "busy";
+    if (status === 503) return "paused";
+    if (!status) return "offline";
+    return "failed";
+  }
+
+  /**
+   * Whether asking the same again can help: not once the conversation's share is spent, and not
+   * past a limit before it resets (T-4671).
+   */
+  function retryable(word) {
+    return word !== "full" && word !== "declined" && word !== "limit";
+  }
+
+  /**
+   * The line a failed answer shows: the service's own sentence for a limit, which names when it
+   * resets, while the chat reads the service's language (Slovak); the widget's word otherwise.
+   */
+  function said(word, detail, lang, words) {
+    return word === "limit" && lang === "sk" && typeof detail === "string" && detail.trim()
+      ? detail.trim()
+      : words[word];
+  }
+
+  /**
+   * What Retry sends again (T-4253): the last question and the history without it, which the
+   * failed request already carried; null when the history does not end on a question.
+   */
+  function retry(history) {
+    var last = Array.isArray(history) ? history[history.length - 1] : null;
+    if (!last || last.role !== "user" || typeof last.text !== "string" || !last.text.trim()) return null;
+    return { question: last.text, history: history.slice(0, -1) };
+  }
+
+  // The count's noun per plural category; which category a number takes is Intl.PluralRules' (T-4364).
+  var SOURCE_FORMS = {
+    sk: { one: "zdroj", few: "zdroje", other: "zdrojov" },
+    cs: { one: "zdroj", few: "zdroje", other: "zdrojů" },
+    en: { one: "source", other: "sources" }
+  };
+
+  /** The footer's count (T-4364): `1 zdroj`, `2 zdroje`, `5 zdrojov`; English for an unknown language. */
+  function sourceCount(n, lang) {
+    var forms = SOURCE_FORMS[lang] ? SOURCE_FORMS[lang] : SOURCE_FORMS.en;
+    var category;
+    try {
+      category = new Intl.PluralRules(SOURCE_FORMS[lang] ? lang : "en").select(n);
+    } catch (e) {
+      category = n === 1 ? "one" : "other";
+    }
+    return n + " " + (forms[category] || forms.other);
+  }
+
+  /**
+   * The footer's source kinds (T-4740): "page" when the answer cites a web page or a document,
+   * "table" when it cites a dataset or live data, each once, the page first.
+   */
+  function badges(list) {
+    var kinds = {};
+    (list || []).forEach(function (source) {
+      kinds[source.live || (source.url && DATASET.test(source.url.split(/[?#]/)[0])) ? "table" : "page"] = true;
+    });
+    return ["page", "table"].filter(function (kind) { return kinds[kind]; });
+  }
+
+  /** The language this browser chose before, when the deployment still offers it; else null. */
+  function chosen(stored, offered) {
+    return typeof stored === "string" && (offered || []).indexOf(stored) >= 0 ? stored : null;
+  }
+
+  /**
+   * Whether the panel asks for the language first (T-4283 item 13), only with `widget.language:
+   * ask` (T-4343): on a first open where there
+   * is a choice to make, never on the full page that names `?lang=`, never over a conversation
+   * already open or a paused deployment.
+   */
+  function asksLanguage(at) {
+    if (!at || at.mode !== "ask" || at.stored || at.kept || at.enabled === false) return false;
+    if ((at.offered || []).length < 2) return false;
+    return !(at.page && at.requested);
+  }
+
+  /** Slovak first, then the deployment's order: the chooser's and the toggle's buttons. */
+  function ordered(offered) {
+    var list = (offered || []).slice();
+    var sk = list.indexOf("sk");
+    if (sk > 0) list.unshift(list.splice(sk, 1)[0]);
+    return list;
+  }
+
+
+  /**
+   * The origins the chat's close message goes to, never `*` (T-4654): the framing page's own,
+   * where the browser records it (`ancestorOrigins`), else each origin the deployment may be
+   * framed by (its `frame-ancestors`); a target that is not the parent drops the message.
+   * Anything but an http(s) origin is left out.
+   */
+  // A catalogue dataset page (T-4685): https (http on this machine alone), a path
+  // /dataset/{name}, nothing after it.
+  var DATASET = /^(?:https:\/\/[a-z0-9.-]+|http:\/\/(?:localhost|127\.0\.0\.1))(?::\d{1,5})?\/dataset\/[a-z0-9_-]{2,100}\/?$/i;
+
+  /**
+   * The one dataset an answer is about (T-4685, API/05 §1.6.1): `{ url, title }` when the
+   * citations link exactly one catalogue dataset page and the first citation is it; null for a
+   * broad answer that links several, or none.
+   */
+  function dataset(citations) {
+    var pages = (Array.isArray(citations) ? citations : []).filter(function (c) {
+      return c && typeof c.url === "string" && DATASET.test(c.url.split(/[?#]/)[0]);
+    }).map(function (c) {
+      return { url: c.url.split(/[?#]/)[0].replace(/\/$/, ""), title: typeof c.title === "string" ? c.title.slice(0, 200) : "" };
+    });
+    if (pages.length === 0 || !citations[0] || typeof citations[0].url !== "string") return null;
+    var first = pages[0];
+    var one = pages.every(function (p) { return p.url === first.url; });
+    return one && citations[0].url.split(/[?#]/)[0].replace(/\/$/, "") === first.url ? first : null;
+  }
+
+  /**
+   * The panel's view kept across a page change (T-4685) read back from `raw`: the draft, its
+   * caret, the scroll, whether the input had focus and an answer still streaming; null when it
+   * is not of that shape.
+   */
+  function view(raw) {
+    var v;
+    try { v = JSON.parse(raw); } catch (e) { return null; }
+    if (!v || typeof v !== "object") return null;
+    var draft = typeof v.draft === "string" ? v.draft.slice(0, 4000) : "";
+    var out = {
+      draft: draft,
+      caret: Number.isInteger(v.caret) ? Math.max(0, Math.min(v.caret, draft.length)) : draft.length,
+      scroll: typeof v.scroll === "number" && isFinite(v.scroll) && v.scroll >= 0 ? v.scroll : null,
+      focused: v.focused === true,
+      streaming: null
+    };
+    var s = v.streaming;
+    if (s && typeof s === "object" && typeof s.turn === "string" && UUID.test(s.turn) &&
+        typeof s.conversation === "string" && UUID.test(s.conversation) &&
+        Number.isInteger(s.number) && s.number >= 1 && typeof s.question === "string") {
+      out.streaming = { turn: s.turn, conversation: s.conversation, number: s.number,
+        question: s.question.slice(0, 4000), text: typeof s.text === "string" ? s.text.slice(0, 64000) : "" };
+      var askedAt = typeof s.askedAt === "string" && stamp(s.askedAt);
+      if (askedAt) out.streaming.askedAt = askedAt.datetime;
+    }
+    return out;
+  }
+
+  function closeTargets(ancestors, frameOrigins) {
+    var origin = function (value) {
+      var match = /^(https?:\/\/[a-z0-9.-]+(?::\d{1,5})?)\/?$/i.exec(String(value || ""));
+      return match ? match[1].toLowerCase() : null;
+    };
+    var listed = ancestors && ancestors.length ? [ancestors[0]] : frameOrigins || [];
+    return Array.prototype.map.call(listed, origin).filter(Boolean);
+  }
+
+  // "Add to your AI assistant" (T-4694): the steps each client documents, as they read on
+  // 2026-10-19 (Claude's help centre, OpenAI's, VS Code's and Cursor's docs). No client publishes
+  // a link that adds a connector in one click, so none is shown.
+  var CONNECT = {
+    sk: {
+      open: "Pridať do svojho AI asistenta",
+      title: "Pridať do svojho AI asistenta",
+      lead: "Tie isté údaje a dokumenty, z ktorých odpovedá tento asistent, môžete čítať aj vo vlastnom AI asistentovi. Konektor len číta, netreba účet ani kľúč.",
+      address: "Adresa konektora", copy: "Kopírovať adresu", copied: "Adresa je skopírovaná.", selected: "Adresa je označená: stlačte Ctrl+C.", tryIt: "Skúste sa tam opýtať:",
+      claude: ["V Claude otvorte Customize → Connectors.", "Zvoľte + Add a potom Add custom connector.", "Zadajte názov, vložte adresu a zvoľte Continue.", "Pri prihlásení zvoľte No sign in a potom Add.", "V rozhovore ho zapnete cez + → Connectors. Plán Free dovoľuje jeden vlastný konektor."],
+      chatgpt: ["V ChatGPT otvorte Plugins, zvoľte + a potom Add custom MCP server.", "Zadajte názov, adresu vložte pod Connection a zvoľte prihlásenie bez autentifikácie.", "Potvrďte upozornenie (I understand and want to continue).", "Staršia verzia: Settings → Connectors → Advanced → Developer mode, potom Create. Vlastné servery ChatGPT ponúka len v niektorých plánoch a len na webe."],
+      code: ["VS Code: súbor .vscode/mcp.json v projekte:", "Cursor: súbor .cursor/mcp.json v projekte alebo ~/.cursor/mcp.json:", "Claude Code: v termináli spustite:"]
+    },
+    cs: {
+      open: "Přidat do svého AI asistenta",
+      title: "Přidat do svého AI asistenta",
+      lead: "Stejná data a dokumenty, ze kterých odpovídá tento asistent, můžete číst i ve vlastním AI asistentovi. Konektor jen čte, není potřeba účet ani klíč.",
+      address: "Adresa konektoru", copy: "Kopírovat adresu", copied: "Adresa je zkopírovaná.", selected: "Adresa je označená: stiskněte Ctrl+C.", tryIt: "Zkuste se tam zeptat:",
+      claude: ["V Claude otevřete Customize → Connectors.", "Zvolte + Add a potom Add custom connector.", "Zadejte název, vložte adresu a zvolte Continue.", "U přihlášení zvolte No sign in a potom Add.", "V konverzaci ho zapnete přes + → Connectors. Plán Free dovoluje jeden vlastní konektor."],
+      chatgpt: ["V ChatGPT otevřete Plugins, zvolte + a potom Add custom MCP server.", "Zadejte název, adresu vložte pod Connection a zvolte přihlášení bez autentizace.", "Potvrďte upozornění (I understand and want to continue).", "Starší verze: Settings → Connectors → Advanced → Developer mode, potom Create. Vlastní servery ChatGPT nabízí jen v některých plánech a jen na webu."],
+      code: ["VS Code: soubor .vscode/mcp.json v projektu:", "Cursor: soubor .cursor/mcp.json v projektu nebo ~/.cursor/mcp.json:", "Claude Code: v terminálu spusťte:"]
+    },
+    en: {
+      open: "Add to your AI assistant",
+      title: "Add to your AI assistant",
+      lead: "The same data and documents this assistant answers from, in your own AI assistant. The connector only reads; it needs no account and no key.",
+      address: "Connector address", copy: "Copy the address", copied: "The address is copied.", selected: "The address is selected: press Ctrl+C.", tryIt: "Try asking there:",
+      claude: ["In Claude, open Customize → Connectors.", "Choose + Add, then Add custom connector.", "Enter a name, paste the address and choose Continue.", "Under authentication choose No sign in, then Add.", "Turn it on in a chat under + → Connectors. The Free plan allows one custom connector."],
+      chatgpt: ["In ChatGPT, open Plugins, choose + and then Add custom MCP server.", "Enter a name, paste the address under Connection and choose no authentication.", "Confirm the warning (I understand and want to continue).", "An older version: Settings → Connectors → Advanced → Developer mode, then Create. ChatGPT offers custom servers on some plans only, and on the web only."],
+      code: ["VS Code: the file .vscode/mcp.json in your project:", "Cursor: the file .cursor/mcp.json in your project or ~/.cursor/mcp.json:", "Claude Code: run in a terminal:"]
+    }
+  };
+
+  /**
+   * The panel's text for connector `url` (an https address, else null) of deployment `publicId`
+   * in `lang` (Slovak when it has none): the words, and per client its steps, with the snippet a
+   * developer tool takes. The server's name in a snippet is the publicId, which is [a-z0-9-].
+   */
+  function connector(url, publicId, lang) {
+    if (!/^https:\/\/[a-z0-9.-]+(?::\d{1,5})?\/[\x21-\x7e]*$/i.test(String(url || ""))) return null;
+    var name = /^[a-z0-9-]{1,63}$/.test(String(publicId || "")) ? publicId : "assistant";
+    var t = CONNECT[lang] || CONNECT.sk;
+    var server = {};
+    server[name] = { type: "http", url: url };
+    var cursor = {};
+    cursor[name] = { url: url };
+    return {
+      open: t.open, title: t.title, lead: t.lead, address: t.address, copy: t.copy, copied: t.copied, selected: t.selected, tryIt: t.tryIt,
+      clients: [
+        { name: "Claude", steps: t.claude.map(function (text) { return { text: text }; }) },
+        { name: "ChatGPT", steps: t.chatgpt.map(function (text) { return { text: text }; }) },
+        { name: "VS Code, Cursor, Claude Code", steps: [
+          { text: t.code[0], code: JSON.stringify({ servers: server }, null, 2) },
+          { text: t.code[1], code: JSON.stringify({ mcpServers: cursor }, null, 2) },
+          { text: t.code[2], code: "claude mcp add --transport http " + name + " " + url }
+        ] }
+      ]
+    };
+  }
+
+  return {
+    closeTargets: closeTargets, connector: connector, dataset: dataset, view: view,
+    sourceCount: sourceCount, badges: badges, chosen: chosen, asksLanguage: asksLanguage, ordered: ordered,
+    followups: followups, restore: restore, remember: remember, stamp: stamp,
+    lasting: lasting, recalled: recalled, privacyLines: privacyLines,
+    cards: cards, stage: stage, steps: steps, firstTable: firstTable, tel: tel, mailto: mailto,
+    markdown: markdown, streamable: streamable, sources: sources, label: label, unlisted: unlisted, linkHost: linkHost,
+    safeUrl: safeUrl, events: events, language: language, table: table, chart: chart, greeting: greeting, title: title,
+    suggestions: suggestions, trouble: trouble, retryable: retryable, said: said, retry: retry,
+    vizOrigin: vizOrigin, vizSpec: vizSpec, mapFirst: mapFirst
+  };
+})();
+if (typeof module !== "undefined") module.exports = JCRender;

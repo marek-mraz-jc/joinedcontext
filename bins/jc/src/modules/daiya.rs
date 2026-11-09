@@ -58,7 +58,7 @@ pub async fn build(
     let mut state = state(cfg, setup).await?;
     if let Some(dir) = &cfg.provisioning_dir {
         state.own_addresses = vec![own];
-        let vars = provisioning_vars_from(std::env::vars());
+        let vars = provisioning_vars_from(crate::config::process_env());
         let report = provision(&state, dir, &vars)
             .await
             .map_err(|e| e.to_string())?;

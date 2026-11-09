@@ -49,6 +49,12 @@ const AccessibilityPage = lazy(() =>
 const GlossaryPage = lazy(() => import("./pages/glossary/GlossaryPage").then((module) => ({ default: module.GlossaryPage })));
 const ConnectPage = lazy(() => import("./pages/connect/ConnectPage").then((module) => ({ default: module.ConnectPage })));
 import { HomePage } from "./pages/home/HomePage";
+const RepositoriesPage = lazy(() =>
+  import("./pages/repositories/RepositoriesPage").then((module) => ({ default: module.RepositoriesPage })),
+);
+const RepositoryPage = lazy(() =>
+  import("./pages/repositories/RepositoryPage").then((module) => ({ default: module.RepositoryPage })),
+);
 const KnowledgePage = lazy(() => import("./pages/knowledge/KnowledgePage").then((module) => ({ default: module.KnowledgePage })));
 const SourcePage = lazy(() => import("./pages/knowledge/SourcePage").then((module) => ({ default: module.SourcePage })));
 const ConversationsPage = lazy(() =>
@@ -105,6 +111,7 @@ import type { OrganizationTab } from "./pages/organization/AdminNav";
 import { isProjectSettingsTab } from "./pages/projectSettings/tabs";
 import type { ProjectSettingsTab } from "./pages/projectSettings/tabs";
 import type { AuthState } from "./auth/AuthProvider";
+import { repositorySearch } from "./pages/repositories/links";
 
 export interface RouterContext {
   auth: AuthState;
@@ -1040,6 +1047,36 @@ const ckanRoute = createRoute({
   },
 });
 
+/** The repositories the project owns on the forge (shako): files, commits, branches, pull requests. */
+const repositoriesRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/projects/$project/repositories",
+  component: function RepositoriesRoute() {
+    const { project } = repositoriesRoute.useParams();
+    return (
+      <Shell project={project}>
+        <RepositoriesPage project={project} />
+      </Shell>
+    );
+  },
+});
+
+/** One repository; the tab, ref, folder, file, commit and pull request live in the address. */
+const repositoryRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/projects/$project/repositories/$name",
+  validateSearch: repositorySearch,
+  component: function RepositoryRoute() {
+    const { project, name } = repositoryRoute.useParams();
+    const search = repositoryRoute.useSearch();
+    return (
+      <Shell project={project}>
+        <RepositoryPage project={project} name={name} search={search} />
+      </Shell>
+    );
+  },
+});
+
 /** What the knowledge assistant holds of the project's sources (T-3057, API/01 §34). */
 const knowledgeRoute = createRoute({
   getParentRoute: () => protectedRoute,
@@ -1526,6 +1563,8 @@ export const routeTree = rootRoute.addChildren([
     modelCanvasRoute,
     exploreRoute,
     ckanRoute,
+    repositoriesRoute,
+    repositoryRoute,
     knowledgeRoute,
     inboxRoute,
     knowledgeConversationsRoute,

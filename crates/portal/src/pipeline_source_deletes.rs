@@ -1250,7 +1250,7 @@ pub async fn launch(
         crate::reconciler::streams::with_pipeline_identity(&mut config, project, pipeline);
     }
     let stream = delete_stream(&runner, project, pipeline);
-    let http = crate::api::pipelines::http();
+    let http = crate::api::pipelines::runner_http(&state.config);
     match http.post(&stream).json(&config).send().await {
         Ok(answer) if answer.status().is_success() => {}
         Ok(answer) => return Err(format!("the runner answered {}", answer.status())),
@@ -1258,7 +1258,7 @@ pub async fn launch(
     }
     tokio::spawn(async move {
         tokio::time::sleep(STREAM_WINDOW).await;
-        if let Err(error) = crate::api::pipelines::http().delete(&stream).send().await {
+        if let Err(error) = http.delete(&stream).send().await {
             tracing::warn!(%error, "a source-delete stream was not removed");
         }
     });

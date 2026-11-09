@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! Error paths of realm file loading, the `--import-dir` digest (K17) and the CLI: unreadable
 //! files and directories, dangling symlinks, a tampered saved plan (stale, exit 3) and a serve
 //! whose import directory cannot be applied.

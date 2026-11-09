@@ -2576,6 +2576,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "jc-core",
+ "jc-secret",
  "jsonschema",
  "serde",
  "serde_json",
@@ -2602,6 +2603,16 @@ version = "0.1.0"
 dependencies = [
  "jc-core",
  "serde_json",
+]
+
+[[package]]
+name = "jc-secret"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "hex",
+ "serde",
+ "zeroize",
 ]
 
 [[package]]

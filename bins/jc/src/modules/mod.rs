@@ -28,6 +28,8 @@ mod ekiben_pg;
 pub mod gateway;
 #[cfg(feature = "kaisatsu")]
 mod kaisatsu;
+#[cfg(feature = "model-tools")]
+pub mod model_tools;
 #[cfg(feature = "portal")]
 pub mod portal;
 #[cfg(feature = "shako")]
@@ -62,6 +64,9 @@ impl std::fmt::Debug for Hop {
 pub struct BuildCtx<'a> {
     pub setup: &'a Setup,
     pub siblings: &'a Siblings,
+    pub secrets: &'a crate::config::Secrets,
+    /// `[door]`: verifies kaisatsu tokens for the modules this container serves to others.
+    pub door: Option<&'a std::sync::Arc<crate::door::Door>>,
 }
 
 /// Builds the router of `module` mounted at `mount`.
@@ -76,7 +81,7 @@ pub async fn build(
     let _ = (shutdown, tasks, &ctx);
     match module {
         #[cfg(feature = "kaisatsu")]
-        Module::Kaisatsu => kaisatsu::build(&cfg.kaisatsu, ctx, mount).await,
+        Module::Kaisatsu => kaisatsu::build(&cfg.kaisatsu, ctx, mount, shutdown, tasks).await,
         #[cfg(feature = "dataroom")]
         Module::Dataroom => dataroom::build(&cfg.dataroom, ctx.setup, mount).await,
         #[cfg(feature = "daiya")]
@@ -84,7 +89,15 @@ pub async fn build(
             .await
             .map_err(|e| StartError::module(Module::Daiya, e)),
         #[cfg(feature = "ekiben")]
-        Module::Ekiben => ekiben::build(&cfg.ekiben, ctx.setup).await,
+        Module::Ekiben => {
+            ekiben::build(
+                &cfg.ekiben,
+                ctx.setup,
+                &ctx.secrets.ekiben_vars,
+                cfg.roles.contains(&Module::Portal),
+            )
+            .await
+        }
         #[cfg(feature = "antares")]
         Module::Antares => antares::build(&cfg.antares, ctx.setup, None, shutdown)
             .await
@@ -99,7 +112,7 @@ pub async fn build(
             .map(|(router, _)| router),
         #[cfg(feature = "shako")]
         Module::Shako => {
-            let state = shako::build_state(&cfg.shako, ctx.setup).await?;
+            let state = shako::build_state(&cfg.shako, ctx.setup, ctx.secrets).await?;
             Ok(shako::build(state, mount).0)
         }
         #[allow(unreachable_patterns)]

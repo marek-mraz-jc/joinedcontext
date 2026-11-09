@@ -66,6 +66,25 @@ impl Siblings {
         }
     }
 
+    /// Adds a module that runs in another container: `public` is its mount there, `internal` the
+    /// loopback forwarder that carries the Portal's calls to it ([`crate::door::Remote`]).
+    pub fn insert_remote(&mut self, module: Module, sibling: Sibling) {
+        self.modules.insert(module, sibling);
+    }
+
+    /// Adds a module that serves a loopback listener of its own and no public mount: both its
+    /// addresses are that listener.
+    pub fn insert_loopback(&mut self, module: Module, addr: SocketAddr) {
+        let url = format!("http://{}", reach(addr));
+        self.modules.insert(
+            module,
+            Sibling {
+                public: url.clone(),
+                internal: url,
+            },
+        );
+    }
+
     #[must_use]
     pub fn get(&self, module: Module) -> Option<&Sibling> {
         self.modules.get(&module)
@@ -96,11 +115,12 @@ fn origin(url: &str) -> String {
 /// |---|---|
 /// | `JC_OIDC_ISSUER`, `JC_OIDC_CLIENT_*`, `JC_KEYCLOAK_ADMIN_URL`, `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_*`, `JC_PORTAL_COOKIE_KEY` | kaisatsu |
 /// | `JC_SHAKO_URL`, `_PUBLIC_URL`, `_OWNER`, `_REPO`, `_TOKEN`, `_APPS_OWNER`, `_APPS_TOKEN`, `_WEBHOOK_SECRET` | shako |
-/// | `JC_PORTAL_PIPELINE_RUNNER_URL` | ekiben |
+/// | `JC_PORTAL_PIPELINE_RUNNER_URL`, `JC_PORTAL_PIPELINE_RUNNER_TOKEN` | ekiben |
 /// | `JC_PORTAL_CKAN_URL`, `JC_PORTAL_CKAN_API_URL` (https, EP-67; http only with `JC_PORTAL_CKAN_ALLOW_HTTP=true`) | dataroom |
 /// | `JC_PORTAL_GRAFANA_URL`, `_PUBLIC_URL`, `_USER`, `_PASSWORD` | daiya |
 /// | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | antares |
 /// | `JC_PORTAL_GATEWAY_URL`, `JC_PORTAL_GATEWAY_CLIENT_ID` | gateway |
+/// | `JC_PORTAL_MODEL_TOOLS_URL` | model-tools (its loopback listener) |
 #[must_use]
 pub fn portal_vars(
     siblings: &Siblings,
@@ -173,13 +193,18 @@ pub fn portal_vars(
         );
     }
     if let Some(streams) = siblings.get(Module::Ekiben) {
-        // The runner bearer has no Portal setting yet (compat gap in STATUS.md).
+        // ekiben refuses every call without its bearer: the Portal sends jc's ekiben token,
+        // handed over from memory as the shako token is.
+        let token = secret(Secret::EkibenToken);
         group(
             "JC_PORTAL_PIPELINE_RUNNER_URL",
-            vec![(
-                "JC_PORTAL_PIPELINE_RUNNER_URL",
-                Some(streams.internal.clone()),
-            )],
+            vec![
+                (
+                    "JC_PORTAL_PIPELINE_RUNNER_URL",
+                    Some(streams.internal.clone()),
+                ),
+                ("JC_PORTAL_PIPELINE_RUNNER_TOKEN", token),
+            ],
         );
     }
     if let Some(catalogue) = siblings.get(Module::Dataroom) {
@@ -250,11 +275,20 @@ pub fn portal_vars(
             ],
         );
     }
-    // The Portal's own secret backend (SOPS + age, its identity a setup file) unless the
-    // environment names a backend.
+    if let Some(tools) = siblings.get(Module::ModelTools) {
+        group(
+            "JC_PORTAL_MODEL_TOOLS_URL",
+            vec![("JC_PORTAL_MODEL_TOOLS_URL", Some(tools.internal.clone()))],
+        );
+    }
+    // The Portal's own secret backend (SOPS + age) unless the environment names a backend: the
+    // identity the operator gave (checked at start), else the one setup generated.
     if unset("JC_PORTAL_SOPS_AGE_KEY_FILE")
         && unset("JC_PORTAL_OPENBAO_ADDR")
-        && let Some(path) = setup.path(Secret::PortalAgeKey)
+        && let Some(path) = setup
+            .age_key_file
+            .as_deref()
+            .or_else(|| setup.path(Secret::PortalAgeKey))
     {
         out.insert(
             "JC_PORTAL_SOPS_AGE_KEY_FILE".to_owned(),
@@ -289,7 +323,7 @@ mod tests {
     fn fixture(scheme: &str) -> (Siblings, Setup, tempfile::TempDir) {
         let siblings = Siblings::new(&plans(BTreeMap::new(), scheme), LISTEN.parse().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let setup = Setup::prepare(dir.path(), &Module::ALL).unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
         (siblings, setup, dir)
     }
 
@@ -397,6 +431,20 @@ mod tests {
     }
 
     #[test]
+    fn model_tools_row_comes_from_its_loopback_listener_and_an_explicit_url_wins() {
+        let (mut siblings, setup, _d) = fixture("https");
+        let key = "JC_PORTAL_MODEL_TOOLS_URL";
+        assert!(!portal_vars(&siblings, &setup, none).contains_key(key));
+        siblings.insert_loopback(Module::ModelTools, "0.0.0.0:40123".parse().unwrap());
+        let filled = portal_vars(&siblings, &setup, none);
+        assert_eq!(filled[key], "http://127.0.0.1:40123");
+        let explicit = portal_vars(&siblings, &setup, |k| {
+            (k == key).then(|| "http://model-tools.example:8080".to_owned())
+        });
+        assert!(!explicit.contains_key(key));
+    }
+
+    #[test]
     fn an_explicit_key_inside_a_filled_row_wins() {
         let (siblings, setup, _d) = fixture("https");
         let v = portal_vars(&siblings, &setup, |k| {
@@ -435,13 +483,17 @@ mod tests {
     fn ekiben_row() {
         let v = row(
             "JC_PORTAL_PIPELINE_RUNNER_URL",
-            &["JC_PORTAL_PIPELINE_RUNNER_URL"],
+            &[
+                "JC_PORTAL_PIPELINE_RUNNER_URL",
+                "JC_PORTAL_PIPELINE_RUNNER_TOKEN",
+            ],
             "https",
         );
         assert_eq!(
             v["JC_PORTAL_PIPELINE_RUNNER_URL"],
             "http://127.0.0.1:8443/streams"
         );
+        assert!(!v["JC_PORTAL_PIPELINE_RUNNER_TOKEN"].trim().is_empty());
     }
 
     #[test]
@@ -514,7 +566,8 @@ mod tests {
         let v = portal_vars(&siblings, &Setup::default(), none);
         assert!(!v.contains_key("JC_SHAKO_URL"));
         assert!(!v.contains_key("JC_OIDC_ISSUER"));
-        assert!(v.contains_key("JC_PORTAL_PIPELINE_RUNNER_URL"));
+        // A runner URL without its bearer only meets 401s.
+        assert!(!v.contains_key("JC_PORTAL_PIPELINE_RUNNER_URL"));
     }
 
     #[test]

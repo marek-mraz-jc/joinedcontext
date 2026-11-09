@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)] // These tests start the jc binary.
 //! End to end: Endpoints inside `jc --role all`, as on dev. The test writes a project to shako's
 //! organization repository (one space, a public and a closed Endpoint, their Policies), waits for
 //! the Portal's reconciler to write the views and rule documents into Antares and for the gateway
@@ -26,6 +27,8 @@ const CLOSED: &str = "e2eclosedendpointaaaaaaaaa";
 const ELSEWHERE: &str = "e2eotherendpointaaaaaaaaaa";
 const PERSON: &str = "e2e.person";
 const PERSON_PASSWORD: &str = "e2e-person-password-not-secret";
+/// A person in none of the project's groups: no Policy of the space names them.
+const STRANGER: &str = "e2e.stranger";
 const READER_SECRET: &str = "e2e-reader-client-secret-not-secret";
 /// The organization repository, not jc's default `jc/config`: the gateway must check out the
 /// repository the Portal is told to use (`JC_SHAKO_OWNER`, `JC_SHAKO_REPO`).
@@ -57,11 +60,15 @@ impl Drop for Jc {
 }
 
 impl Jc {
+    /// A secret the test gave jc as a file, else jc's state file.
     fn secret(&self, name: &str) -> String {
-        std::fs::read_to_string(self.state.join(name))
-            .unwrap()
-            .trim()
-            .to_owned()
+        let given = self._dir.path().join("given").join(name);
+        let path = if given.exists() {
+            given
+        } else {
+            self.state.join(name)
+        };
+        std::fs::read_to_string(path).unwrap().trim().to_owned()
     }
 
     fn log_has(&self, needle: &str) -> bool {
@@ -93,8 +100,16 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// The test's people and clients, imported into realm `jc` before the Portal's own files.
-fn realm_file(dir: &Path) {
+/// The test's people and clients, imported into realm `jc` before the Portal's own files. Their
+/// secrets are `$(file:...)` under `secrets` (`--kaisatsu-import-secrets-dir`).
+fn realm_file(dir: &Path, secrets: &Path) {
+    std::fs::create_dir_all(secrets).unwrap();
+    let client_secret = secrets.join("e2e-client-secret");
+    let person_password = secrets.join("e2e-person-password");
+    std::fs::write(&client_secret, READER_SECRET).unwrap();
+    std::fs::write(&person_password, PERSON_PASSWORD).unwrap();
+    let client_secret = format!("$(file:{})", client_secret.display());
+    let person_password = format!("$(file:{})", person_password.display());
     let audience = |name: &str, slug: &str| {
         json!({
             "name": name,
@@ -127,7 +142,7 @@ fn realm_file(dir: &Path) {
             "protocol": "openid-connect",
             "publicClient": false,
             "clientAuthenticatorType": "client-secret",
-            "secret": "$(env:E2E_CLIENT_SECRET)",
+            "secret": client_secret,
             "standardFlowEnabled": false,
             "directAccessGrantsEnabled": true,
             "serviceAccountsEnabled": false,
@@ -145,8 +160,27 @@ fn realm_file(dir: &Path) {
             { "name": format!("{PROJECT}-readers") },
             { "name": format!("{PROJECT}-writers") }
         ],
-        "clients": [client("e2e-reader", CLOSED), client("e2e-elsewhere", ELSEWHERE)],
+        // `e2e-mcp` stands in for an MCP client: its person tokens name the Portal's client, which
+        // `/api/v1/mcp` takes and exchanges for one Endpoint (`endpoint:{slug}`).
+        "clients": [
+            client("e2e-reader", CLOSED),
+            client("e2e-elsewhere", ELSEWHERE),
+            client("e2e-mcp", "portal-api"),
+        ],
         "users": [{
+            "username": STRANGER,
+            "enabled": true,
+            "email": "e2e.stranger@jc.invalid",
+            "emailVerified": true,
+            "firstName": "No",
+            "lastName": "Grant",
+            "groups": [],
+            "credentials": [{
+                "type": "password",
+                "value": person_password.clone(),
+                "temporary": false
+            }]
+        }, {
             "username": PERSON,
             "enabled": true,
             "email": "e2e.person@jc.invalid",
@@ -156,7 +190,7 @@ fn realm_file(dir: &Path) {
             "groups": [format!("/{PROJECT}-readers"), format!("/{PROJECT}-writers")],
             "credentials": [{
                 "type": "password",
-                "value": "$(env:E2E_PERSON_PASSWORD)",
+                "value": person_password,
                 "temporary": false
             }]
         }]
@@ -169,12 +203,24 @@ async fn start() -> Jc {
     let dir = tempfile::tempdir().unwrap();
     let state = dir.path().join("state");
     let realms = dir.path().join("realms");
-    realm_file(&realms);
+    let realm_secrets = dir.path().join("realm-secrets");
+    realm_file(&realms, &realm_secrets);
     let port = free_port();
     let base_host = format!("localhost:{port}");
     let config = dir.path().join("jc.toml");
     std::fs::write(&config, "[mounts.portal]\npath_prefix = \"\"\n").unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+    // The service tokens between modules live in jc's memory only; the test acts as the Portal
+    // with a shako token it gives jc as a file.
+    let given = dir.path().join("given");
+    std::fs::create_dir(&given).unwrap();
+    let shako = given.join("shako-token");
+    std::fs::write(
+        &shako,
+        format!("test-shako-token-{:032x}", std::process::id()),
+    )
+    .unwrap();
+    cmd.arg("--shako-token-file").arg(&shako);
     for (key, _) in std::env::vars() {
         if key.starts_with("JCBIN_") || key.starts_with("JC_") || key.starts_with("ANTARES_") {
             cmd.env_remove(key);
@@ -189,8 +235,8 @@ async fn start() -> Jc {
         .arg(&state)
         .arg("--kaisatsu-import-dir")
         .arg(&realms)
-        .env("E2E_CLIENT_SECRET", READER_SECRET)
-        .env("E2E_PERSON_PASSWORD", PERSON_PASSWORD)
+        .arg("--kaisatsu-import-secrets-dir")
+        .arg(&realm_secrets)
         .env("JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR", "false")
         .env("JC_PORTAL_SYNC_INTERVAL", "3")
         .env("JC_SHAKO_OWNER", FORGE_OWNER)
@@ -306,26 +352,38 @@ fn manifests() -> Vec<(String, String)> {
 }
 
 /// Writes `path` on `main` of shako's organization repository (Gitea contents API).
+/// jc provisions that repository beside the Portal after it listens, so a first write waits for it.
 async fn put_file(jc: &Jc, path: &str, content: &str) {
-    let resp = Client::new()
-        .put(jc.url(&format!(
-            "/git/api/v1/repos/{FORGE_OWNER}/{FORGE_REPO}/contents/{path}"
-        )))
-        .header(
-            "authorization",
-            format!("token {}", jc.secret("shako-token")),
-        )
-        .json(&json!({
-            "content": base64::engine::general_purpose::STANDARD.encode(content),
-            "message": format!("Add {path}"),
-            "branch": "main",
-        }))
-        .send()
-        .await
-        .unwrap();
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    assert!(status.is_success(), "PUT contents/{path}: {status} {body}");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let resp = Client::new()
+            .put(jc.url(&format!(
+                "/git/api/v1/repos/{FORGE_OWNER}/{FORGE_REPO}/contents/{path}"
+            )))
+            .header(
+                "authorization",
+                format!("token {}", jc.secret("shako-token")),
+            )
+            .json(&json!({
+                "content": base64::engine::general_purpose::STANDARD.encode(content),
+                "message": format!("Add {path}"),
+                "branch": "main",
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if status == StatusCode::NOT_FOUND
+            && body.contains("repository not found")
+            && Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            continue;
+        }
+        assert!(status.is_success(), "PUT contents/{path}: {status} {body}");
+        return;
+    }
 }
 
 async fn eventually<F, Fut, T>(what: &str, jc: &Jc, secs: u64, mut probe: F) -> T
@@ -347,13 +405,17 @@ where
 
 /// A person's token from `client` by the password grant.
 async fn token(jc: &Jc, client: &str) -> String {
+    token_of(jc, client, PERSON).await
+}
+
+async fn token_of(jc: &Jc, client: &str, username: &str) -> String {
     let resp = Client::new()
         .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
         .form(&[
             ("grant_type", "password"),
             ("client_id", client),
             ("client_secret", READER_SECRET),
-            ("username", PERSON),
+            ("username", username),
             ("password", PERSON_PASSWORD),
         ])
         .send()
@@ -402,6 +464,29 @@ fn entity(kind: &str, local: &str) -> Value {
 async fn endpoints_answer_inside_jc_as_on_dev() {
     let jc = start().await;
     let started = Instant::now();
+    // jc creates the organization repository in the Portal's background start, after it
+    // listens: write once shako holds it.
+    eventually(
+        "shako holds the organization repository",
+        &jc,
+        120,
+        || async {
+            let resp = Client::new()
+                .get(jc.url(&format!("/git/api/v1/repos/{FORGE_OWNER}/{FORGE_REPO}")))
+                .header(
+                    "authorization",
+                    format!("token {}", jc.secret("shako-token")),
+                )
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            match resp.status() {
+                s if s.is_success() => Ok(()),
+                s => Err(s.to_string()),
+            }
+        },
+    )
+    .await;
     for (path, content) in manifests() {
         put_file(&jc, &path, &content).await;
     }
@@ -516,6 +601,63 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+    // `jc_data_query` through the Portal's MCP: the Portal exchanges the person's token for
+    // `endpoint:{slug}` (the scope jc's kaisatsu links to portal-api, as the deployment's
+    // admin-permissions Job does on dev) and reads as them through the gateway.
+    let data_query = |id: u32| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {
+                "name": "jc_data_query",
+                "arguments": { "project": PROJECT, "endpoint": "closed", "type": "Thing" }
+            }
+        })
+    };
+    let member = token(&jc, "e2e-mcp").await;
+    let body = eventually(
+        "a member's jc_data_query reads the closed Endpoint",
+        &jc,
+        60,
+        || async {
+            let (status, body) = call(
+                &jc,
+                post.clone(),
+                "/api/v1/mcp",
+                Some(&member),
+                Some(&data_query(3)),
+            )
+            .await;
+            (status == StatusCode::OK && body.contains("urn:ngsi-ld:Thing:one"))
+                .then_some(body.clone())
+                .ok_or(format!("{status} {body}"))
+        },
+    )
+    .await;
+    assert!(!body.contains("not open to data reads"), "{body}");
+    // A person with no grant on the Endpoint gets a token exchanged the same way, and the
+    // gateway's Policy still refuses them: the scope names the Endpoint, never a right to it.
+    let stranger = token_of(&jc, "e2e-mcp", STRANGER).await;
+    let (status, body) = call(
+        &jc,
+        post.clone(),
+        "/api/v1/mcp",
+        Some(&stranger),
+        Some(&data_query(4)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        !body.contains("urn:ngsi-ld:Thing:one"),
+        "a person without a grant read the closed Endpoint: {body}"
+    );
+    assert!(
+        jc.log_has("the gateway refused a shared Endpoint read"),
+        "the stranger's read never reached the gateway's refusal:\n{}",
+        jc.tail()
+    );
 
     // A caller who claims the gateway's mesh identity or a subject on the public broker mount
     // is nobody but itself: the claim reaches no rule, and the admin token is still asked for.
@@ -632,4 +774,123 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     println!("refused {:?} after the revocation", revoked.elapsed());
+}
+
+const MODELLED: &str = "modelled";
+const MODELLED_SLUG: &str = "e2emodelledendpointaaaaaaa";
+
+/// A space with a data model and its public Endpoint serving OGC API Features and OData.
+fn modelled_manifests() -> Vec<(String, String)> {
+    let space = |rel: &str| format!("projects/{PROJECT}/spaces/{MODELLED}/{rel}");
+    let linkml = "\
+id: https://jc.invalid/models/things
+name: things
+default_prefix: things
+default_range: string
+prefixes:
+  things: https://jc.invalid/models/things/
+  linkml: https://w3id.org/linkml/
+imports:
+  - linkml:types
+  - ngsi-ld-core
+classes:
+  Thing:
+    is_a: Entity
+    slots: [name, location]
+slots:
+  name:
+    range: string
+    annotations:
+      ngsi_ld_kind: Property
+";
+    vec![
+        (
+            format!("projects/{PROJECT}/project.yaml"),
+            format!(
+                "{HEADER}\nkind: Project\nmetadata:\n  name: {PROJECT}\n  namespace: org\nspec:\n  \
+                 organizationRef: jc\n"
+            ),
+        ),
+        (
+            space("space.yaml"),
+            format!(
+                "{HEADER}\nkind: ContextSpace\nmetadata:\n  name: {MODELLED}\n  namespace: {PROJECT}\n\
+                 spec:\n  isSandbox: false\n  urnSegment: {MODELLED}\n  \
+                 dataModelRef: {{ kind: DataModel, name: things }}\n"
+            ),
+        ),
+        (
+            space("datamodels/things.yaml"),
+            format!(
+                "{HEADER}\nkind: DataModel\nmetadata:\n  name: things\n  namespace: {PROJECT}\n\
+                 spec:\n  contextSpaceRef: {MODELLED}\n  linkml: ./things.linkml.yaml\n  \
+                 version: 1.0.0\n  lifecycle: draft\n  classes: [Thing]\n"
+            ),
+        ),
+        (space("datamodels/things.linkml.yaml"), linkml.to_owned()),
+        (
+            space("endpoints/modelled.yaml"),
+            format!(
+                "{HEADER}\nkind: Endpoint\nmetadata:\n  name: modelled\n  namespace: {PROJECT}\n\
+                 spec:\n  contextSpaceRef: {MODELLED}\n  slug: {MODELLED_SLUG}\n  audience: public\n  \
+                 enabledRepresentations: [ngsi-ld, ogc-features, odata]\n"
+            ),
+        ),
+        (
+            space("policies/public-read.yaml"),
+            format!(
+                "{HEADER}\nkind: Policy\nmetadata:\n  name: public-read\n  namespace: {PROJECT}\n\
+                 spec:\n  contextSpaceRef: {MODELLED}\n  assigner: did:web:jc.invalid\n  \
+                 assignee: {{ kind: role, id: public }}\n  operations: [retrieveOps]\n  \
+                 information:\n    - entities:\n        - type: Thing\n      \
+                 propertyNames: [name, location]\n"
+            ),
+        ),
+    ]
+}
+
+/// jc's Model Tools compiles the space's model, the reconciler writes the Tenant's schema to
+/// Antares, and the Endpoint then answers OGC API Features and OData through the public mount
+/// (without a schema both answer 404 "no such resource").
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_modelled_endpoint_answers_ogc_and_odata_inside_jc() {
+    let jc = start().await;
+    for (path, content) in modelled_manifests() {
+        put_file(&jc, &path, &content).await;
+    }
+    let get = reqwest::Method::GET;
+    let base = format!("/api/endpoint/{MODELLED_SLUG}");
+    let collections = eventually("the OGC collections answer", &jc, 120, || async {
+        let (status, body) = call(
+            &jc,
+            get.clone(),
+            &format!("{base}/ogc/features/collections"),
+            None,
+            None,
+        )
+        .await;
+        (status == StatusCode::OK)
+            .then(|| body.clone())
+            .ok_or(format!("{status} {body}"))
+    })
+    .await;
+    let collections: Value = serde_json::from_str(&collections).unwrap();
+    let ids: Vec<&str> = collections["collections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["id"].as_str())
+        .collect();
+    assert!(ids.contains(&"Thing"), "{collections}");
+    let (status, metadata) = call(
+        &jc,
+        get.clone(),
+        &format!("{base}/odata/v4/$metadata"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{metadata}");
+    assert!(metadata.contains("EntitySet"), "{metadata}");
+    assert!(metadata.contains("Thing"), "{metadata}");
 }

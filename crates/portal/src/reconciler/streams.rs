@@ -97,10 +97,31 @@ pub enum StreamOutcome {
     Scheduled(&'static str, String),
 }
 
+/// A client that calls the pipeline runner and nothing else: each request carries the runner's
+/// bearer `token` (`Config::pipeline_runner_token`, jc's ekiben token) as a sensitive header.
+/// No token sends none (a Bento runner on the cluster network).
+pub fn runner_client(builder: reqwest::ClientBuilder, token: Option<&str>) -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(token) = token {
+        match reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
+            Ok(mut value) => {
+                value.set_sensitive(true);
+                headers.insert(reqwest::header::AUTHORIZATION, value);
+            }
+            Err(_) => tracing::warn!(
+                "the pipeline runner's token is no header value: runner calls go without it"
+            ),
+        }
+    }
+    builder.default_headers(headers).build().unwrap_or_default()
+}
+
 /// Deploys and retires streams on project-specific pipeline runners.
 pub struct StreamDeployer {
     runner_url: String,
     http: reqwest::Client,
+    /// The runner's bearer ([`runner_client`]).
+    runner_token: Option<String>,
     deployed: Mutex<HashSet<(String, String)>>,
     /// The hash of the config each live stream was last PUT with: an unchanged render is not
     /// sent again, because the runner restarts a stream on every PUT and a periodic pipeline
@@ -331,13 +352,11 @@ fn interpolated(rendered: &str, held: &str) -> bool {
 impl StreamDeployer {
     /// Creates a new deployer targeting the specified runner URL template (may contain `{project}`).
     pub fn new(runner_url: impl Into<String>) -> Self {
-        let http = reqwest::Client::builder()
-            .timeout(RUNNER_TIMEOUT)
-            .build()
-            .unwrap_or_default();
+        let http = runner_client(reqwest::Client::builder().timeout(RUNNER_TIMEOUT), None);
         Self {
             runner_url: runner_url.into(),
             http,
+            runner_token: None,
             deployed: Mutex::new(HashSet::new()),
             rendered: Mutex::new(HashMap::new()),
             backoff: Mutex::new(HashMap::new()),
@@ -349,6 +368,16 @@ impl StreamDeployer {
             run_ends: None,
             report_drops: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Sends the runner's bearer `token` on every call ([`runner_client`]).
+    pub fn with_runner_token(mut self, token: Option<String>) -> Self {
+        self.http = runner_client(
+            reqwest::Client::builder().timeout(RUNNER_TIMEOUT),
+            token.as_deref(),
+        );
+        self.runner_token = token;
+        self
     }
 
     /// Tells `ends` of every run the queue saw end (T-4891).
@@ -1611,10 +1640,10 @@ mod tests {
     impl StreamDeployer {
         /// The same deployer with other timeouts, so a test need not wait out the real ones.
         fn with_timeouts(mut self, request: Duration, replace: Duration) -> Self {
-            self.http = reqwest::Client::builder()
-                .timeout(request)
-                .build()
-                .unwrap_or_default();
+            self.http = runner_client(
+                reqwest::Client::builder().timeout(request),
+                self.runner_token.as_deref(),
+            );
             self.replace_timeout = replace;
             self
         }

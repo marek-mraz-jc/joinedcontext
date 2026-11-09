@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! Records for the web tests, built from the JSON the store and harvest write.
 
 use dataroom_core::{BrandingBlock, Catalogue, Dataset, Distribution, Publisher, ResourceView};
