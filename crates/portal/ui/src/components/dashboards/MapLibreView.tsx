@@ -431,7 +431,7 @@ export function MapLibreView({
         counted();
         // A phone map is narrow: the popup keeps to it, a wider map lets a heading and its time share a line.
         // z-10 puts it above the map's own controls (the scale, the attribution).
-        new Popup({ className: "z-10", maxWidth: (container.current?.clientWidth ?? 0) < 500 ? "18rem" : "20rem" })
+        const popup = new Popup({ className: "z-10", maxWidth: (container.current?.clientWidth ?? 0) < 500 ? "18rem" : "20rem" })
           .setLngLat(event.lngLat)
           .setDOMContent(features.length === 1 ? popupNode(features[0], layer.popupProperties, layer.open, layer.titleProperty) : stacked)
           .addTo(instance);
@@ -444,6 +444,8 @@ export function MapLibreView({
           root.lastElementChild!.remove();
         }
         counted();
+        // MapLibre placed the popup at its full size: placing it again keeps the shorter one inside the map.
+        popup.setLngLat(event.lngLat);
       });
       drawn.current.set(layer.name, layer);
     }

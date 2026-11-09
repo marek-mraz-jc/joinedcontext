@@ -327,6 +327,12 @@ async function stackedPopup(page: Page, map: Locator, width: number): Promise<vo
   }
   await expect(popup.locator("dl").nth(1)).toBeVisible();
   await expect(popup.getByText(/Volvo \(pesuauto\)|Wille \(harjakone\)/).first()).toBeVisible();
+  // The popup stays inside the map, and on a phone width its close button is a finger's 44 px.
+  const shown = (await popup.boundingBox())!;
+  expect(shown.y).toBeGreaterThanOrEqual(box.y);
+  expect(shown.y + shown.height).toBeLessThanOrEqual(box.y + box.height);
+  const close = (await popup.locator(".maplibregl-popup-close-button").boundingBox())!;
+  if (width < 640) expect(Math.min(close.width, close.height)).toBeGreaterThanOrEqual(44);
   await pageShot(page, "geomap-popup", width);
   // A tap on the bare map closes the tooltip.
   await page.mouse.click(box.x + 4, box.y + box.height - 4);

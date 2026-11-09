@@ -398,23 +398,24 @@
 
 /* The popup's close control is MapLibre's own button, a 1 em glyph in a corner: big enough to see
    and, on a touch screen, to tap (44 px). Unlayered for the reason above. */
-.maplibregl-popup-close-button {
+.maplibregl-popup .maplibregl-popup-close-button {
   min-width: 1.75rem;
   min-height: 1.75rem;
   font-size: 1.25rem;
   line-height: 1;
 }
 @media (pointer: coarse) {
-  .maplibregl-popup-close-button {
+  .maplibregl-popup .maplibregl-popup-close-button {
     min-width: 44px;
     min-height: 44px;
   }
 }
 @media (max-width: 639px) {
   /* A phone width: the finger's 44 px, drawn as a box so the target reads as one. */
-  .maplibregl-popup-close-button {
+  .maplibregl-popup .maplibregl-popup-close-button {
     min-width: 44px;
     min-height: 44px;
+    border: 1px solid var(--color-border);
     border-radius: 0.5rem;
     background-color: var(--color-surface-muted);
   }
