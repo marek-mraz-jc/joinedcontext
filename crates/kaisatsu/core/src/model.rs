@@ -839,6 +839,10 @@ pub struct AuthSession {
     pub response_type: String,
     pub response_mode: String,
     pub scope: String,
+    /// Requested optional scopes kept out of `scope` (include.in.token.scope=false): their
+    /// mappers still run at the token endpoint, as in Keycloak.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mapper_scopes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -891,6 +895,10 @@ pub struct AuthorizationCodeRecord {
     pub sso_session_id: String,
     pub redirect_uri: String,
     pub scope: String,
+    /// Requested optional scopes kept out of `scope` (include.in.token.scope=false): their
+    /// mappers still run at the token endpoint, as in Keycloak.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mapper_scopes: Vec<String>,
     pub code_challenge: String,
     pub code_challenge_method: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -986,6 +994,10 @@ pub struct RefreshTokenFamily {
     pub user_id: String,
     pub client_id: String,
     pub scope: String,
+    /// Requested optional scopes kept out of `scope` (include.in.token.scope=false): their
+    /// mappers still run at the token endpoint, as in Keycloak.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mapper_scopes: Vec<String>,
     pub acr: String,
     pub amr: Vec<String>,
     pub auth_time: i64,

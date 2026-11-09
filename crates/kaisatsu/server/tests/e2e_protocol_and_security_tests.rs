@@ -635,6 +635,7 @@ async fn e2e_w9_mount_under_slug_and_dedicated_host_and_w12_attack_regression_su
             sso_session_id: "sso-replay-1".into(),
             redirect_uri: "https://portal.dev.example.test/cb".into(),
             scope: "openid profile".into(),
+            mapper_scopes: Vec::new(),
             code_challenge: sha256_base64url(verifier),
             code_challenge_method: "S256".into(),
             nonce: None,

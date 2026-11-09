@@ -641,6 +641,7 @@ async fn issue_broker_session_and_code(
         sso_session_id: sso_id.clone(),
         redirect_uri: auth_session.redirect_uri.clone(),
         scope: auth_session.scope.clone(),
+        mapper_scopes: auth_session.mapper_scopes.clone(),
         code_challenge: auth_session.code_challenge.clone(),
         code_challenge_method: auth_session.code_challenge_method.clone(),
         nonce: auth_session.nonce.clone(),
