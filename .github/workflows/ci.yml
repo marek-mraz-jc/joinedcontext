@@ -162,9 +162,26 @@ jobs:
         with: { key: root-test }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: cargo-nextest }
-      - run: cargo nextest run --workspace --locked --profile ci --no-fail-fast --partition "slice:${{ matrix.part }}/${{ strategy.job-total }}"
-      - if: matrix.part == 1
-        run: cargo test --workspace --locked --no-fail-fast --doc
+      # Build once, then run the slice from the built binaries (no cargo call, so no build lock):
+      # job 1 compiles and runs the doc tests beside it instead of after it (1-2 min when a crate
+      # every lib links changed, run 42617984832).
+      - run: |
+          cargo nextest list --workspace --locked --profile ci --list-type binaries-only --message-format json > "$RUNNER_TEMP/binaries.json"
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
+          doc=
+          if [ "${{ matrix.part }}" = 1 ]; then
+            cargo test --workspace --locked --no-fail-fast --doc > "$RUNNER_TEMP/doc.log" 2>&1 & doc=$!
+          fi
+          tests=0
+          cargo nextest run --profile ci --no-fail-fast --partition "slice:${{ matrix.part }}/${{ strategy.job-total }}" \
+            --binaries-metadata "$RUNNER_TEMP/binaries.json" --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" || tests=$?
+          docs=0
+          if [ -n "$doc" ]; then
+            wait "$doc" || docs=$?
+            echo "::group::doc tests (exit $docs)"; cat "$RUNNER_TEMP/doc.log"; echo "::endgroup::"
+            [ "$docs" = 0 ] || echo "::error::doc tests failed (exit $docs)"
+          fi
+          [ "$tests" = 0 ] && [ "$docs" = 0 ]
       - if: always()
         run: du -sh target/debug/deps
       - if: always()
@@ -257,7 +274,7 @@ jobs:
   # cargo test, not nextest: the Portal's database tests serialize on in-process locks
   # (KNOWLEDGE: the DATABASE mutex), which separate processes would not hold. The test binaries
   # are split in two jobs, each with its own Postgres (.github/scripts/test-part.py: round robin
-  # over every tests/*.rs, the libs and bins in the first, which also runs the doc tests); binaries
+  # over every tests/*.rs, the libs and bins in the first, the doc tests in the second); binaries
   # of one job still run one after another, as before.
   portal-test:
     name: portal-test-${{ matrix.part }}
@@ -303,7 +320,8 @@ jobs:
           targets=$(python3 ../../.github/scripts/test-part.py ${{ matrix.part }} ${{ strategy.job-total }})
           # shellcheck disable=SC2086
           cargo test --workspace --locked --no-fail-fast -j 4 $targets
-      - if: matrix.part == 1
+      # in the second job: the first runs the lib tests and compiles the lib's test build
+      - if: matrix.part == 2
         run: cargo test --workspace --locked --no-fail-fast --doc
       - if: always()
         run: du -sh target/debug/deps
