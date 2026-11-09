@@ -77,26 +77,9 @@ pub struct DaiyaState {
     /// Checks that recognise the server administrator ([`DaiyaState::with_server_admin`],
     /// [`DaiyaState::with_server_admin_check`]); none by default.
     pub server_admin: Vec<ServerAdminCheck>,
-    /// The host's own listener, reachable only by the datasources it provisioned from files
-    /// ([`DaiyaState::trust_provisioned`]); every other datasource keeps [`Self::outbound_policy`].
-    pub own_addresses: Vec<std::net::SocketAddr>,
-    /// What each file-provisioned datasource reaches, as the files wrote it: a record changed
-    /// since (through the API, say) no longer matches and loses [`Self::own_addresses`].
-    pub provisioned: Arc<RwLock<BTreeMap<(OrgId, String), serde_json::Value>>>,
-}
-
-/// What a datasource reaches and with which credentials: the fields a provisioned record must
-/// still hold to reach the host's own listener.
-fn reach_of(record: &DatasourceRecord) -> serde_json::Value {
-    serde_json::json!([
-        record.kind,
-        record.access,
-        record.url,
-        record.allow_hosts,
-        record.json_data,
-        record.secret_refs,
-        record.wasm_digest,
-    ])
+    /// The host's own gateway Endpoints, reachable by every NGSI-LD and OData datasource that
+    /// names one (see [`daiya_query::OwnReach`]); empty by default.
+    pub own_reach: Vec<daiya_query::OwnReach>,
 }
 
 /// A host-supplied check that a request comes from the server administrator, e.g. a kaisatsu
@@ -168,17 +151,7 @@ impl DaiyaState {
             outbound_policy: OutboundPolicy::default(),
             built_drivers: Arc::new(RwLock::new(BTreeMap::new())),
             server_admin: Vec::new(),
-            own_addresses: Vec::new(),
-            provisioned: Arc::new(RwLock::new(BTreeMap::new())),
-        }
-    }
-
-    /// Lets `records`, as provisioning files wrote them, reach [`Self::own_addresses`] while
-    /// the stored record still matches. Records created or changed through the API never do.
-    pub fn trust_provisioned(&self, records: &[DatasourceRecord]) {
-        let mut provisioned = self.provisioned.write();
-        for record in records {
-            provisioned.insert((record.org_id, record.uid.clone()), reach_of(record));
+            own_reach: Vec::new(),
         }
     }
 
@@ -346,23 +319,14 @@ impl DaiyaState {
             return Ok(driver);
         }
         let key = (record.org_id, record.uid.clone());
-        let own = !self.own_addresses.is_empty()
-            && self.provisioned.read().get(&key) == Some(&reach_of(record));
-        let revision = format!(
-            "{}@{}{}",
-            record.version,
-            record.updated_at.to_rfc3339(),
-            if own { "+own" } else { "" }
-        );
+        let revision = format!("{}@{}", record.version, record.updated_at.to_rfc3339());
         if let Some((built_rev, driver)) = self.built_drivers.read().get(&key)
             && *built_rev == revision
         {
             return Ok(driver.clone());
         }
         let mut policy = self.outbound_policy.clone();
-        if own {
-            policy.own_addresses.clone_from(&self.own_addresses);
-        }
+        policy.own_reach.clone_from(&self.own_reach);
         let deps = DriverDeps {
             secrets: self.secret_resolver.clone(),
             token_exchanger: self.token_exchanger.clone(),
