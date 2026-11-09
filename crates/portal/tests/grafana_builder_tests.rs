@@ -668,6 +668,21 @@ async fn a_uid_the_builder_did_not_mint_or_another_project_holds_is_not_found() 
         .with_priority(1)
         .mount(&shako)
         .await;
+    // A dashboard made by hand in this project's folder is there, but no builder uid: only the
+    // uid rule keeps the builder's doors off it.
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param(
+            "@p",
+            format!("'projects/{PROJECT}/grafana/abc-0123456789abcdef.json'"),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "Sha": "b", "Content": content("{}") })),
+        )
+        .with_priority(1)
+        .mount(&shako)
+        .await;
     for uid in [UID, "abc-0123456789abcdef", "jcd-0123", "jcd-..%2Fsecrets"] {
         for verb in ["GET", "DELETE"] {
             let answer = send(
