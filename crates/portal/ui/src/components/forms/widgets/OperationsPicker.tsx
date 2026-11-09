@@ -9,6 +9,7 @@ import {
   expandOperations,
   groupOf,
 } from "../../endpoints/operationGroups";
+import type { OperationGroupName } from "../../endpoints/operationGroups";
 import { Badge, Checkbox } from "../../ui";
 import { useShownErrors } from "../touched";
 import { AccessPresetChoice } from "./AccessPresetChoice";
@@ -61,8 +62,14 @@ export function OperationsPicker(props: WidgetProps): JSX.Element {
     ? new Set(options.enumOptions.map((option) => String(option.value)))
     : undefined;
 
+  /** A group named, or every one of its operations granted by name (a generated policy writes them so). */
+  const holds = (name: OperationGroupName): boolean =>
+    chosen.includes(name) || OPERATION_GROUPS[name].operations.every((op) => chosen.includes(op));
+
   const toggle = (name: string, on: boolean): void => {
-    const next = on ? [...chosen, name] : chosen.filter((held) => held !== name);
+    // Unticking a group takes away what made it ticked: its name and its operations granted by name.
+    const members: readonly string[] = groupOf(name)?.operations ?? [];
+    const next = on ? [...chosen, name] : chosen.filter((held) => held !== name && !members.includes(held));
     // The order a person ticked them in is not the order the manifest reads best: the groups
     // first, then the individual operations, so two policies written the same way look the same.
     const sorted = [
@@ -81,7 +88,7 @@ export function OperationsPicker(props: WidgetProps): JSX.Element {
     >
       {OPERATION_GROUP_NAMES.map((name) => {
         const group = OPERATION_GROUPS[name];
-        const ticked = chosen.includes(name);
+        const ticked = holds(name);
         return (
           <div key={name} className="flex flex-col gap-1">
             <Checkbox

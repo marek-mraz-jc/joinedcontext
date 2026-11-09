@@ -103,6 +103,44 @@ async fn ri_and_all_keycloak_clients_apply_cleanly_and_second_apply_is_idempoten
     assert_eq!(report2.exit_code(), EXIT_NO_CHANGE);
 }
 
+/// CIMD follows the realm's client policies, as in Keycloak: dev's `client-id-uri` policy gives
+/// its domains; a realm file without it (prod's smartcity export) gets none, so no https
+/// client_id signs in there.
+#[tokio::test]
+async fn cimd_domains_come_from_the_realm_client_policy_and_default_to_none() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    apply_realm_files(
+        &store,
+        &[("ri_dev.json".into(), ri_fixture())],
+        &default_opts(),
+    )
+    .await
+    .expect("dev applies");
+    let dev = store.get_realm("dev").await.unwrap().unwrap();
+    assert_eq!(dev.cimd_allowed_client_domains, ["claude.ai", "vscode.dev"]);
+    assert!(
+        dev.cimd_allowed_redirect_domains
+            .iter()
+            .any(|d| d == "claude.ai")
+    );
+
+    let mut prod = ri_fixture();
+    let map = prod.as_object_mut().unwrap();
+    map.remove("clientPolicies");
+    map.remove("clientProfiles");
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    apply_realm_files(&store, &[("prod.json".into(), prod)], &default_opts())
+        .await
+        .expect("a realm without the policy applies");
+    let prod = store.get_realm("dev").await.unwrap().unwrap();
+    assert!(
+        prod.cimd_allowed_client_domains.is_empty(),
+        "{:?}",
+        prod.cimd_allowed_client_domains
+    );
+    assert!(prod.cimd_allowed_redirect_domains.is_empty());
+}
+
 #[tokio::test]
 async fn prune_deletes_only_apply_managed_objects_and_preserves_portal_created_objects() {
     let store: Arc<dyn Store> = Arc::new(MemoryStore::default());

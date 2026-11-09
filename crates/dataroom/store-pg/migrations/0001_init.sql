@@ -247,6 +247,11 @@ CREATE TABLE IF NOT EXISTS dataroom.cat_harvest_run (
     PRIMARY KEY (org_id, catalogue_id, id)
 );
 
+-- One Running run per source: the lock scheduled and manual harvests take (claim_harvest_run).
+CREATE UNIQUE INDEX IF NOT EXISTS cat_harvest_run_one_running
+    ON dataroom.cat_harvest_run (org_id, catalogue_id, source_id)
+    WHERE state = 'running';
+
 ALTER TABLE dataroom.cat_harvest_run ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dataroom.cat_harvest_run FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_harvest_run_isolation ON dataroom.cat_harvest_run;

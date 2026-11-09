@@ -384,6 +384,7 @@ pub async fn spawn_internal_listener(
     }
     let internal = tokio::net::TcpListener::bind(state.config.internal_bind).await?;
     let addr = internal.local_addr()?;
+    crate::api::pipeline_test::internal_listener_bound(addr);
     tracing::info!(bind = %addr, "portal internal listener listening");
     let internal_router = internal_app(state.clone());
     tokio::spawn(async move {

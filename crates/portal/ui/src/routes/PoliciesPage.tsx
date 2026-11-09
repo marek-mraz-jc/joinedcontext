@@ -13,6 +13,7 @@ import { proposeChecked } from "../api/proposal";
 import { asManifests, isChange, localized, storedMetadata } from "../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../api/manifest";
 import { useOrgDomain } from "../api/projects";
+import { usePersonNames } from "../api/personNames";
 import { ChangeNotice } from "../components/ChangeNotice";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
 import { ResourceFormDialog } from "../components/ResourceFormDialog";
@@ -250,6 +251,16 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
           return words.every((word) => haystack.includes(word));
         });
 
+  // The people the policies grant to, by name in the sentences as in the "Granted to" column.
+  const names = usePersonNames(
+    policies.flatMap((policy) =>
+      policyRules(policy).flatMap((rule) => {
+        const assignee = (rule.assignee ?? {}) as { kind?: string; id?: string };
+        return assignee.kind === "user" && assignee.id ? [assignee.id] : [];
+      }),
+    ),
+  );
+
   return (
     <div className="flex flex-col gap-section">
       <PageHeader compact title={t("policies.title")} description={t("policies.lead")} actions={addButton} />
@@ -279,6 +290,7 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
       <ResourceList
         query={list}
         caption={t("policies.title")}
+        stack
         head={
           <TableHead>
             <TableHeaderCell>{t("policies.field.name")}</TableHeaderCell>
@@ -329,12 +341,12 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
                   ) : null}
                 </div>
                 {/* What the policy grants, as a sentence (T-3276). */}
-                <p className="mt-0.5 line-clamp-2 max-w-prose text-caption text-fg-muted">{policySentence(shape, t, locale)}</p>
+                <p className="mt-0.5 line-clamp-2 max-w-prose text-caption text-fg-muted">{policySentence(shape, t, locale, names)}</p>
               </TableCell>
-              <TableCell>
+              <TableCell data-label={t("policies.field.space")}>
                 <span className="font-mono text-caption">{shape.contextSpaceRef || "—"}</span>
               </TableCell>
-              <TableCell>
+              <TableCell data-label={t("policies.field.assignee")}>
                 {/* Every rule's grantee, not only a single-rule Policy's (F-UI3-015). */}
                 <div className="flex flex-col gap-0.5">
                   {policyRules(policy).map((rule, index) => {
@@ -343,11 +355,11 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
                   })}
                 </div>
               </TableCell>
-              <TableCell>
+              <TableCell data-label={t("policies.field.grants")}>
                 {/* The areas first, the CIM 009 names they stand for one click away (T-2282, T-4990). */}
                 <OperationsInWords operations={[...new Set(policyRules(policy).flatMap((rule) => (rule.operations as string[] | undefined) ?? []))]} />
               </TableCell>
-              <TableCell>
+              <TableCell data-label={t("resourceList.phase")}>
                 <LifecycleBadge kind="phase" value={policy.status?.phase} />
               </TableCell>
               <TableCell align="right">

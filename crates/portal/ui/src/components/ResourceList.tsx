@@ -15,6 +15,7 @@ export function ResourceList({
   columns,
   count,
   empty,
+  stack,
   children,
 }: {
   query: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
@@ -25,6 +26,8 @@ export function ResourceList({
   count: number;
   /** An `EmptyState`, `bare`, with the page's create action when it has one (T-1381). */
   empty: ReactNode;
+  /** Each row a card below 640 px (`Table`'s `stack`): give every cell after the first a `data-label`. */
+  stack?: boolean;
   children: ReactNode;
 }): JSX.Element {
   const { t } = useTranslation();
@@ -41,7 +44,7 @@ export function ResourceList({
     );
   }
   return (
-    <Table data-records="" caption={caption} status={query.isPending ? t("app.loading") : undefined}>
+    <Table data-records="" stack={stack} caption={caption} status={query.isPending ? t("app.loading") : undefined}>
       {head}
       {query.isPending ? (
         <TableSkeleton columns={columns} />

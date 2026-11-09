@@ -16,9 +16,9 @@ use jcctl::commands::publish_ckan::{Models, Target};
 use jcctl::loader::{RawManifest, RawMetadata, ResourceId};
 use jcctl::publish::ckan::{InMemoryCkan, Outcome, Settings};
 use joinedcontext_portal::reconciler::ckan::{
-    claimed_twice, fingerprint, publish_with, publish_without_models, sweep_with, withdrawn,
-    CkanSync, Organizations, Paced, Pacing, Publication, Report, CALL_GAP, MODELS_READS,
-    MOST_BACKOFF, RECORD_READS, REFRESH,
+    catalogue_gap, claimed_twice, fingerprint, publish_with, publish_without_models, read_gap,
+    sweep_with, wave, withdrawn, CkanSync, Organizations, Paced, Pacing, Publication, Report,
+    CALL_GAP, MODELS_READS, MOST_BACKOFF, PUBLISH_CONCURRENCY, RECORD_READS, REFRESH,
 };
 use joinedcontext_portal::resource::ResourceEnvelope;
 use joinedcontext_portal::store::Mirror;
@@ -1064,6 +1064,157 @@ fn an_organization_the_catalogue_answers_with_nothing_usable_is_asked_again() {
         calls,
         ["organization_show hel-fi", "organization_show hel-fi"]
     );
+}
+
+/// [`Shared`] taking a little time per call, as a catalogue does, so publications overlap.
+struct Slow(Shared);
+
+impl jcctl::publish::ckan::CkanApi for Slow {
+    fn show(
+        &self,
+        action: &str,
+        name: &str,
+    ) -> Result<Option<Value>, jcctl::publish::ckan::CkanError> {
+        std::thread::sleep(Duration::from_millis(15));
+        self.0.show(action, name)
+    }
+
+    fn action(
+        &mut self,
+        action: &str,
+        payload: &Value,
+    ) -> Result<Value, jcctl::publish::ckan::CkanError> {
+        std::thread::sleep(Duration::from_millis(15));
+        self.0.action(action, payload)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_wave_publishes_side_by_side_and_creates_each_organization_once() {
+    // C1: 609 datasets one at a time took about 50 minutes. Side by side, the first datasets of
+    // one organization would each find it missing and each create it: the organization's first
+    // goes alone, the pass's `Organizations` holds it, the rest follow at once.
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let catalogue = Arc::new(Mutex::new((
+        InMemoryCkan::new().with_token(TOKEN),
+        Vec::new(),
+    )));
+    let known = Organizations::default();
+    let (now, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let targets: Vec<Target> = (0..24)
+        .map(|n| target(&format!("helsinki-bikes-{n}"), "public", dataset_only()))
+        .collect();
+    let names: Vec<String> = targets.iter().map(|t| t.id.name.clone()).collect();
+    let results = wave(targets, PUBLISH_CONCURRENCY, |target| {
+        let (catalogue, known, now, most) =
+            (catalogue.clone(), known.clone(), now.clone(), most.clone());
+        async move {
+            tokio::task::spawn_blocking(move || {
+                let running = now.fetch_add(1, Ordering::SeqCst) + 1;
+                most.fetch_max(running, Ordering::SeqCst);
+                let mut api = Paced::new(Slow(Shared(catalogue)), Arc::default(), Duration::ZERO)
+                    .remembering("http://127.0.0.1:42301", known);
+                let out = publish_with(&mut api, &target, &record(), None, &settings());
+                now.fetch_sub(1, Ordering::SeqCst);
+                (target.id.name.clone(), out)
+            })
+            .await
+            .expect("the publication finishes")
+        }
+    })
+    .await;
+    // Each result in its target's place, each its own.
+    assert_eq!(
+        results.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
+        names
+    );
+    assert!(results
+        .iter()
+        .all(|(_, r)| matches!(r, Ok(Publication::Published { .. }))));
+    let held = catalogue.lock().expect("catalogue");
+    let creates = held
+        .0
+        .actions()
+        .iter()
+        .filter(|a| **a == "organization_create")
+        .count();
+    assert_eq!(creates, 1, "{:?}", held.0.actions());
+    assert!(
+        most.load(Ordering::SeqCst) > 1,
+        "the wave ran one at a time"
+    );
+    assert!(most.load(Ordering::SeqCst) <= PUBLISH_CONCURRENCY);
+}
+
+#[tokio::test]
+async fn one_failing_target_of_a_wave_is_its_own_result() {
+    let targets: Vec<Target> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|n| target(n, "public", dataset_only()))
+        .collect();
+    let results = wave(targets, 2, |target| async move {
+        if target.id.name == "b" {
+            Err(format!("{} failed", target.id.name))
+        } else {
+            Ok(target.id.name)
+        }
+    })
+    .await;
+    assert_eq!(
+        results,
+        vec![
+            Ok("a".to_owned()),
+            Err("b failed".to_owned()),
+            Ok("c".to_owned()),
+            Ok("d".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn the_gap_holds_on_the_public_route_and_not_on_the_in_cluster_or_loopback_one() {
+    use jcctl::publish::ckan::CkanApi;
+    let public = "https://data.example.fi";
+    assert_eq!(catalogue_gap(public, public), CALL_GAP);
+    assert_eq!(catalogue_gap("https://data.example.fi/", public), CALL_GAP);
+    assert_eq!(
+        catalogue_gap("http://ckan.ckan.svc.cluster.local:5000", public),
+        Duration::ZERO
+    );
+    assert_eq!(
+        catalogue_gap(
+            "http://127.0.0.1:42301/opendata",
+            "http://127.0.0.1:42301/opendata"
+        ),
+        Duration::ZERO
+    );
+    assert_eq!(read_gap("api.example.fi"), CALL_GAP);
+    assert_eq!(read_gap("https://api.example.fi"), CALL_GAP);
+    assert_eq!(read_gap("http://127.0.0.1:42301"), Duration::ZERO);
+    assert_eq!(read_gap("http://api.hel.localhost:42301"), Duration::ZERO);
+    assert_eq!(read_gap("[::1]:8080"), Duration::ZERO);
+
+    // An unspaced call never moves the public route's reservation earlier.
+    let gap = Duration::from_millis(60);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let last = Arc::new(Mutex::new(None));
+    let mut public_api = Paced::new(Clocked(calls.clone()), last.clone(), gap);
+    let loopback = Paced::new(Clocked(calls.clone()), last.clone(), Duration::ZERO);
+    public_api
+        .action("package_patch", &json!({}))
+        .expect("call");
+    loopback.show("package_show", "x").expect("call");
+    public_api.show("package_show", "y").expect("call");
+    let at = calls.lock().expect("calls").clone();
+    assert!(at[1] - at[0] < gap, "the loopback call waited");
+    assert!(at[2] - at[0] >= gap, "{:?}", at[2] - at[0]);
+
+    // Gateway reads on a public data host keep the gap even when the catalogue is in-cluster.
+    let reads = Paced::new(Clocked(calls.clone()), last, Duration::ZERO).with_read_gap(gap);
+    let before = Instant::now();
+    reads.reads(1, || ());
+    reads.reads(1, || ());
+    assert!(before.elapsed() >= gap);
 }
 
 #[test]

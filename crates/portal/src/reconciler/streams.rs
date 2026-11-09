@@ -134,8 +134,12 @@ pub struct StreamDeployer {
     backoff: Mutex<HashMap<(String, String), Backoff>>,
     /// Where a refused record is posted (the Portal's internal listener, as the runner reaches
     /// it) and the compiled model of each space: with both, every stream into a space that
-    /// names a model carries the validation stage (PL-60, PL-61).
-    validation: Option<(String, Arc<crate::pipeline_validation::ModelSchemas>)>,
+    /// names a model carries the validation stage (PL-60, PL-61). `None` for the address: the
+    /// models load for the editor and the checks, and no stream is validated.
+    validation: Option<(
+        Option<String>,
+        Arc<crate::pipeline_validation::ModelSchemas>,
+    )>,
     /// The projects whose streams under the bare pipeline name were removed from the runner
     /// since this Portal started (T-3002): once per project, then never asked again.
     unqualified_retired: Mutex<HashSet<String>>,
@@ -483,8 +487,22 @@ impl StreamDeployer {
         internal: impl Into<String>,
         schemas: Arc<crate::pipeline_validation::ModelSchemas>,
     ) -> Self {
-        self.validation = Some((internal.into(), schemas));
+        self.validation = Some((Some(internal.into()), schemas));
         self
+    }
+
+    /// Loads the spaces' models without validating any stream: a Portal with no listener
+    /// address (jc) still knows them; the pipeline editor read "names no data model this Portal
+    /// holds" (UI judge 2026-11-09). Streams keep rendering as they did, with no report sinks.
+    pub fn with_models(mut self, schemas: Arc<crate::pipeline_validation::ModelSchemas>) -> Self {
+        self.validation = Some((None, schemas));
+        self
+    }
+
+    /// The validation's listener address and models, when an address is set.
+    fn validation(&self) -> Option<(&str, &Arc<crate::pipeline_validation::ModelSchemas>)> {
+        let (internal, schemas) = self.validation.as_ref()?;
+        Some((internal.as_deref()?, schemas))
     }
 
     /// The compiled models this deployer renders stages from, when it validates.
@@ -508,7 +526,7 @@ impl StreamDeployer {
     /// different models is left without it and says so.
     /// ponytail: one stage per stream; per-output stages are the upgrade when a fan-out needs them.
     fn validated(&self, stream: &mut Value, project: &str, pipeline: &str, spaces: &[String]) {
-        let Some((internal, schemas)) = &self.validation else {
+        let Some((internal, schemas)) = self.validation() else {
             return;
         };
         let Some(space) = spaces.first() else {
@@ -540,7 +558,7 @@ impl StreamDeployer {
 
     /// Sends the outcome of every batch the stream's write took to the pipeline's log (PL-62).
     fn logged(&self, stream: &mut Value, project: &str, pipeline: &str) {
-        let Some((internal, _)) = &self.validation else {
+        let Some((internal, _)) = self.validation() else {
             return;
         };
         let Some(output) = stream.get_mut("output") else {
@@ -1411,10 +1429,7 @@ impl StreamDeployer {
             Ok(StreamOutcome::Live)
         } else {
             let body = response.text().await.unwrap_or_default();
-            let truncated = truncate_body(&body, 500);
-            Ok(StreamOutcome::Error(format!(
-                "runner answered {status}: {truncated}"
-            )))
+            Ok(StreamOutcome::Error(runner_refusal(status, &body)))
         }
     }
 }
@@ -1621,6 +1636,29 @@ pub fn make_condition(
     }
 }
 
+/// The runner's refusal in words: its lint errors when it sent them (the row said "Why: ... 400
+/// Bad Request: {\"lint_errors\":[...]}", raw JSON, UI judge 2026-11-09), else its body cut short.
+fn runner_refusal(status: reqwest::StatusCode, body: &str) -> String {
+    let lints: Vec<String> = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| v.get("lint_errors").and_then(Value::as_array).cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|e| e.as_str().map(str::to_owned))
+        .collect();
+    if lints.is_empty() {
+        format!("runner answered {status}: {}", truncate_body(body, 500))
+    } else {
+        truncate_body(
+            &format!(
+                "the runner found errors in the pipeline: {}",
+                lints.join("; ")
+            ),
+            500,
+        )
+    }
+}
+
 fn truncate_body(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
@@ -1636,6 +1674,19 @@ fn truncate_body(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_runner_refusal_reads_as_its_lint_errors_not_as_json() {
+        let body = r#"{"lint_errors":["environment variable 'JC_MQTT_NAMESPACE' was not defined"],"linting_errors":["environment variable 'JC_MQTT_NAMESPACE' was not defined"]}"#;
+        assert_eq!(
+            runner_refusal(reqwest::StatusCode::BAD_REQUEST, body),
+            "the runner found errors in the pipeline: environment variable 'JC_MQTT_NAMESPACE' was not defined"
+        );
+        assert_eq!(
+            runner_refusal(reqwest::StatusCode::BAD_GATEWAY, "upstream down"),
+            "runner answered 502 Bad Gateway: upstream down"
+        );
+    }
 
     impl StreamDeployer {
         /// The same deployer with other timeouts, so a test need not wait out the real ones.
@@ -3449,6 +3500,19 @@ output:
             &["BikeHireDockingStation".to_owned()],
             false,
         ))
+    }
+
+    /// A Portal with no listener address setting (jc) still loads the spaces' models: the
+    /// pipeline editor read "names no data model this Portal holds" (UI judge 2026-11-09).
+    #[test]
+    fn a_deployer_with_no_listener_address_still_carries_the_models() {
+        let schemas = Arc::new(crate::pipeline_validation::ModelSchemas::default());
+        let deployer = StreamDeployer::new("http://runner").with_models(Arc::clone(&schemas));
+        assert!(deployer
+            .model_schemas()
+            .is_some_and(|carried| Arc::ptr_eq(carried, &schemas)));
+        // No address, no validation stage and no report sinks: the streams render as before.
+        assert!(deployer.validation().is_none());
     }
 
     /// PL-60, PL-61: a stream into a space that names a model carries the stage and the

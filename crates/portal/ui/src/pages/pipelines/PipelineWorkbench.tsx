@@ -1012,11 +1012,15 @@ export function PipelineWorkbench({
               </Field>
               <Checkbox
                 label={t("pipelines.workbench.mapping.fileEdit")}
+                aria-describedby="workbench-bento-edit-hint"
                 checked={mappingFile.editing}
                 disabled={mappingFile.state !== "loaded"}
                 disabledReason={t("pipelines.workbench.mapping.fileEditDisabled")}
                 onChange={(event) => mappingFile.onEditing(event.target.checked)}
               />
+              <p id="workbench-bento-edit-hint" className="text-caption text-fg-muted">
+                {t("pipelines.workbench.mapping.fileEditHint")}
+              </p>
             </div>
           ) : (
           <Field id="workbench-bloblang" label={t("pipelines.field.bloblang")} description={t("pipelines.workbench.mapping.bloblangHint")}>

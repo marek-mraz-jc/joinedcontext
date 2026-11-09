@@ -327,3 +327,179 @@ async fn the_applications_organization_comes_first_and_only_a_missing_package_fa
     .await;
     assert!(served(other.path(), &named_old).is_none());
 }
+
+/// A bundle as the lane publishes it: its files and the `integrity.json` of their digests
+/// (AP-12), so the static host would serve it as it stands.
+fn served_bundle(index: &[u8]) -> Vec<u8> {
+    use joinedcontext_portal::apps::static_host::sri_sha384;
+    let integrity = serde_json::to_vec(&serde_json::json!({ "index.html": sri_sha384(index) }))
+        .expect("integrity.json");
+    let mut builder = tar::Builder::new(Vec::new());
+    for (name, bytes) in [
+        ("./index.html", index),
+        ("./integrity.json", &integrity[..]),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, name, bytes)
+            .expect("tar entry");
+    }
+    let tar = builder.into_inner().expect("tar");
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    std::io::Write::write_all(&mut gz, &tar).expect("gzip");
+    gz.finish().expect("gzip")
+}
+
+/// A published public App `name` of project `helsinki` whose lane wrote back `digest` at `COMMIT`.
+fn published_naming(mirror: &Mirror, name: &str, digest: &str) {
+    let mut app = common::envelope(
+        "App",
+        name,
+        "helsinki",
+        serde_json::json!({ "kind": "static", "source": { "path": "." }, "build": { "node": "22" },
+            "visibility": "public", "lifecycle": "published", "dataNeeds": [] }),
+    );
+    app.status = mirror_naming(digest)
+        .get("ovzdusie", "App", "air-quality")
+        .and_then(|held| held.status);
+    mirror.upsert(app);
+}
+
+/// `GET {uri}` on a Portal serving `/apps/*` from `cache` alone: the image ships no bundle.
+async fn get_app(
+    cache: &std::path::Path,
+    mirror: std::sync::Arc<Mirror>,
+    uri: &str,
+) -> (axum::http::StatusCode, Vec<u8>) {
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let shipped = cache.join("shipped-none");
+    std::fs::create_dir_all(&shipped).expect("shipped dir");
+    let config = joinedcontext_portal::config::Config {
+        apps_dir: Some(shipped.to_string_lossy().into_owned()),
+        apps_cache_dir: Some(cache.to_string_lossy().into_owned()),
+        ..joinedcontext_portal::config::Config::for_tests()
+    };
+    let app = joinedcontext_portal::server::app(
+        joinedcontext_portal::state::AppState::new(config, None).with_mirror(mirror),
+    );
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(uri)
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("answer");
+    let status = response.status();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (status, body.to_vec())
+}
+
+/// AP-72, AP-102 (fetch.rs digest check): a package whose bytes are not the build status.build
+/// names, a whole servable bundle with its own consistent integrity.json, is refused at fetch,
+/// so the host serves nothing for the App and reports its build missing; the genuine package of
+/// the same digest serves.
+#[tokio::test]
+async fn a_tampered_package_is_refused_and_nothing_is_served() {
+    let genuine = served_bundle(b"<!doctype html><title>helsinki events</title>");
+    let named = digest(&genuine);
+    let tampered = served_bundle(b"<!doctype html><title>helsinki eventz</title>");
+    let mirror = std::sync::Arc::new(Mirror::new());
+    published_naming(&mirror, "air-quality", &named);
+
+    let (_forge, client) = forge_holding(tampered).await;
+    let cache = tempdir::Dir::new("fetch-tampered");
+    fetch_missing(&client, cache.path(), &mirror).await;
+    assert!(
+        served(cache.path(), &named).is_none(),
+        "the tampered bundle is not installed"
+    );
+    let (status, body) = get_app(cache.path(), mirror.clone(), "/apps/air-quality/").await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    assert!(
+        !String::from_utf8_lossy(&body).contains("eventz"),
+        "nothing of it is served"
+    );
+    assert_eq!(
+        joinedcontext_portal::apps::static_host::build_missing(
+            Some(&cache.path().to_string_lossy()),
+            &mirror
+        ),
+        vec!["air-quality".to_owned()],
+        "the App says its build is missing"
+    );
+
+    let (_forge, client) = forge_holding(genuine).await;
+    fetch_missing(&client, cache.path(), &mirror).await;
+    let (status, body) = get_app(cache.path(), mirror, "/apps/air-quality/").await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(String::from_utf8_lossy(&body).contains("helsinki events"));
+}
+
+/// AP-102: two Apps never read each other's package or cache entry. App `alerts` whose
+/// status.build names the digest and commit of App `bikes`' build asks the registry for
+/// `app-alerts` alone, and the host never serves it from `bikes`' cache entry, though the bytes
+/// it names are there.
+#[tokio::test]
+async fn two_apps_never_read_each_others_package_or_cache_entry() {
+    let bikes = served_bundle(b"<!doctype html><title>bikes</title>");
+    let named = digest(&bikes);
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path_regex(
+            r"^/odata/PackageFiles\(Owner='test-owner',Name='app-bikes',.*",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(bikes))
+        .mount(&server)
+        .await;
+    let client = ShakoClient::new(
+        url::Url::parse(&server.uri()).expect("forge url"),
+        "test-owner",
+        "configuration",
+        "portal-read-token",
+    )
+    .expect("client");
+    let mirror = std::sync::Arc::new(Mirror::new());
+    published_naming(&mirror, "bikes", &named);
+    published_naming(&mirror, "alerts", &named);
+    let cache = tempdir::Dir::new("fetch-two-apps");
+
+    fetch_missing(&client, cache.path(), &mirror).await;
+
+    let asked: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect();
+    for path in &asked {
+        let alerts = path.contains("Name='app-alerts'");
+        assert!(alerts || path.contains("Name='app-bikes'"), "{path}");
+    }
+    assert!(
+        asked.iter().any(|path| path.contains("Name='app-alerts'")),
+        "{asked:?}"
+    );
+    // Whatever the cache's layout, bikes' build serves bikes and never alerts.
+    let (status, body) = get_app(cache.path(), mirror.clone(), "/apps/alerts/").await;
+    assert_eq!(
+        status,
+        axum::http::StatusCode::NOT_FOUND,
+        "alerts is served nothing"
+    );
+    assert!(!String::from_utf8_lossy(&body).contains("<title>bikes"));
+    let (status, body) = get_app(cache.path(), mirror, "/apps/bikes/").await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(String::from_utf8_lossy(&body).contains("<title>bikes"));
+}

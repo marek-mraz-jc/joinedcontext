@@ -595,6 +595,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
       <ResourceList
         query={list}
         caption={t("datasources.title")}
+        stack
         head={
           <TableHead>
             <TableHeaderCell>{t("datasources.field.name")}</TableHeaderCell>
@@ -631,17 +632,17 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
                   <RecordLink project={project} plural="datasources" name={source.metadata.name} className="font-mono" />
                 )}
               </TableCell>
-              <TableCell className="whitespace-nowrap">
+              <TableCell className="whitespace-nowrap" data-label={t("datasources.field.type")}>
                 {isTypedDataSource(typeOf(source.spec))
                   ? t(`datasources.type.${typeOf(source.spec)}`, { defaultValue: typeOf(source.spec) })
                   : inputLabel(typeOf(source.spec))}
               </TableCell>
               {/* At least 12rem wide, so a phone scrolls the table sideways instead of breaking
                   the address every nine characters into a 25-line row (T-4992). */}
-              <TableCell className="min-w-60">
+              <TableCell className="min-w-60" data-label={t("datasources.field.endpoint")}>
                 <EndpointCell raw={endpointOf(source.spec)} />
               </TableCell>
-              <TableCell className="text-caption">
+              <TableCell className="text-caption" data-label={t("datasources.field.secrets")}>
                 {/* The names of the references, never a value: the store holds the rest. */}
                 {used.length > 0 ? used.join(", ") : t("datasources.noSecret")}
               </TableCell>

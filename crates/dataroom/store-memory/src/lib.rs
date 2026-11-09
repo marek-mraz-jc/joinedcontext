@@ -8,9 +8,9 @@ use dataroom_core::odata_defs::{
 };
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
-    ActivityRow, Catalogue, CatalogueId, CataloguePlugin, DataroomError, Dataset, Distribution,
-    HarvestRun, HarvestSource, OrgId, ProfileRecord, Publisher, RecordState, RequestCtx,
-    ResourceView, Result, ShaclValidationReport, StaticPage, Store,
+    abandon_run, ActivityRow, Catalogue, CatalogueId, CataloguePlugin, DataroomError, Dataset,
+    Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord, Publisher, RecordState,
+    RequestCtx, ResourceView, Result, ShaclValidationReport, StaticPage, Store,
 };
 use odata_table::{MemoryTable, Table};
 use std::collections::BTreeMap;
@@ -577,6 +577,38 @@ impl Store for MemoryStore {
             .harvest_runs
             .insert((ctx.org_id, ctx.catalogue_id, run.id.clone()), run.clone());
         Box::pin(std::future::ready(Ok(run)))
+    }
+
+    fn claim_harvest_run<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        mut run: HarvestRun,
+        stale_before: chrono::DateTime<Utc>,
+    ) -> BoxFuture<'a, Result<bool>> {
+        run.org_id = ctx.org_id;
+        run.catalogue_id = ctx.catalogue_id;
+        let mut inner = self.write_inner();
+        let mut held = false;
+        for ((oid, cid, _), r) in inner.harvest_runs.iter_mut() {
+            if *oid != ctx.org_id
+                || *cid != ctx.catalogue_id
+                || r.source_id != run.source_id
+                || r.state != dataroom_core::HarvestRunState::Running
+            {
+                continue;
+            }
+            if r.started_at < stale_before {
+                abandon_run(r);
+            } else {
+                held = true;
+            }
+        }
+        if !held {
+            inner
+                .harvest_runs
+                .insert((ctx.org_id, ctx.catalogue_id, run.id.clone()), run);
+        }
+        Box::pin(std::future::ready(Ok(!held)))
     }
 
     fn record_activity<'a>(

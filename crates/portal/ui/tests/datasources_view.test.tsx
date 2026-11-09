@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import { expectOpen } from "./checks";
 import en from "../src/locales/en.json";
+import { expectStacked } from "./stacked";
 import { App } from "../src/App";
 import { endpointOf, endpointView, toEnvelope } from "../src/pages/datasources/DataSourcesPage";
 import { rememberPrefill } from "../src/assistant/state";
@@ -180,6 +181,12 @@ describe("data sources view", () => {
     expect(cells[1]).toHaveTextContent(en.datasources.type.mqtt);
     expect(cells[2]).toHaveTextContent("mqtt.banskabystrica.sk:8883");
     expect(cells[3]).toHaveTextContent("mqtt-mesto");
+    // A card per source on a phone: the credentials and the row's menu were past the edge.
+    expectStacked(row.closest("table") as HTMLElement, [
+      en.datasources.field.type,
+      en.datasources.field.endpoint,
+      en.datasources.field.secrets,
+    ]);
 
     const feed = (await screen.findByText("mhd-vehicles")).closest("tr") as HTMLElement;
     expect(within(feed).getByText(en.datasources.type["gtfs-rt"])).toBeInTheDocument();

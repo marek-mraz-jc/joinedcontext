@@ -13,12 +13,17 @@ Dashboards (the export's grafana/dashboards and every --dashboards dir, once per
   Whether a panel should have rows comes from the export: entities of its type in the
   Endpoint's tenant, or for a temporal query an instance observed inside the window.
 Apps (every App manifest of the export's repositories, every joinedcontext-apps repository):
-  the Portal reads the App, shako holds its repository, /apps/{name}/ serves it and its main page
-  reads data. jc has no App build runner (owner decision open): an App that is not served skips
-  naming it.
+  the Portal reads the App, shako holds its repository, /apps/{name}/ serves it (the image's
+  bundles, and the prod builds deploy/rehearsal/apps.sh publishes into shako) and its main page
+  reads data. A public App is opened anonymously; any other on a token of the App's own client
+  (app-{name}, the code flow the edge runs on prod) as rehearsal-app-roles, and refused to
+  rehearsal-tester: 403 for a roles App, 404 for the others. Named skips: a wasm App's page
+  (kept component wasm-host), a ui-rust App (kept component, a Kubernetes Service), an App the
+  source never built.
 
 Credentials come from the rehearsal's state dir (0600 files written by up.sh): dashboards-password
-(daiya Basic), portal-admin-client-secret (makes the suite's person), shako-token. --admin-token-file
+(daiya Basic), portal-admin-client-secret (makes the suite's person), shako-token, and realms/*.json
+(the App clients' secrets and the rehearsal persons' passwords, each by its $(file:...) reference). --admin-token-file
 takes a portal-reconciler token instead of the secret. No secret value is written anywhere."""
 
 from __future__ import annotations
@@ -41,11 +46,17 @@ import export as ex
 from common import FAIL, PASS, SKIP, Results, loopback_only, read_token, realm_of
 
 import inventory as inv
-from session import Session, admin_token, make_person, sign_in
+from session import HOLDER, TESTER, Realm, Session, admin_token, app_token, make_person, sign_in
 
 APPS_OWNER = "joinedcontext-apps"
-NO_RUNNER = ("jc has no App build runner (App builds runner is an open owner decision: shako-native "
-             "runner, supervisor 2026-11-08)")
+# Rows the rehearsal cannot prove, each named with its reason (CUTOVER.md keeps these components
+# beside jc; dev-smoke and jc-smoke prove them on dev).
+NEVER_BUILT = ("same on prod: never built (status.build unset in the export; prod's host has no build to "
+               "serve either)")
+KEPT = {"ui-rust": ("kept component: Kubernetes Service (a ui-rust App's server runs as its own Service "
+                    "beside jc, stamped by the Portal through the cluster API; the rehearsal has no Kubernetes)")}
+KEPT_WASM = ("kept component: wasm-host (the static half is served and checked above; its /api/* reads go "
+             "to jc-wasm-host with apps-db and the artifact store, which the rehearsal does not run)")
 
 
 def frame_rows(frames) -> int:
@@ -139,8 +150,12 @@ def main(argv=None) -> int:
     s = Session(a.base_url, a.timeout)
 
     def secret(name):
-        f = state / name if state else None
-        return f.read_text().strip() if f and f.exists() else None
+        # jc's state dir, else the files up.sh gives jc for the tokens jc keeps in memory only
+        # (deploy/rehearsal/rehearsal.py read_secret)
+        for f in ((state / name, state.parent / "secrets" / name) if state else ()):
+            if f.exists():
+                return f.read_text().strip()
+        return None
 
     manifest = json.loads((export / "manifest.json").read_text())
     now = dt.datetime.now(dt.UTC)
@@ -292,6 +307,7 @@ def main(argv=None) -> int:
         shako = secret("shako-token")
         sauth = {"Authorization": f"token {shako}"} if shako else None
         named = {x.git for x in apps}
+        app_realm = Realm(state)
         counts.update(apps=len(apps), appRepos=len(repos))
         for r in repos:
             full = f"{r['owner']}/{r['name']}"
@@ -327,19 +343,40 @@ def main(argv=None) -> int:
             if app.lifecycle != "published":
                 res.skip("app.served", tgt, f"GET /apps/{app.name}/", "-", f"lifecycle {app.lifecycle!r}: not served by design")
                 continue
-            st, hdrs, _ = s.call("GET", f"/apps/{urllib.parse.quote(app.name)}/")
+            call = f"GET /apps/{app.name}/"
+            if app.git and not app.built:
+                for check_id in ("app.served", "app.page"):
+                    res.skip(check_id, tgt, call, "-", NEVER_BUILT)
+                continue
+            if app.kind in KEPT:
+                for check_id in ("app.served", "app.page"):
+                    res.skip(check_id, tgt, call, "-", KEPT[app.kind])
+                continue
+            # Who opens it: anyone for a public App; else a person on a token of the App's own
+            # client, which the edge holds on prod: rehearsal-app-roles (the roles Apps' groups)
+            # gets in, rehearsal-tester (no group) is refused: 403 for a roles App, 404 otherwise.
+            token = None
+            if app.visibility != "public":
+                try:
+                    refused = app_token(a.base_url, app_realm, f"app-{app.name}", TESTER, a.timeout)
+                    token = app_token(a.base_url, app_realm, f"app-{app.name}", HOLDER, a.timeout)
+                except RuntimeError as e:
+                    res.check("app.served", tgt, call, "a person's token of the App's client", str(e)[:200], False)
+                    continue
+                want = 403 if app.visibility == "roles" else 404
+                st, _, _ = s.call("GET", f"/apps/{urllib.parse.quote(app.name)}/",
+                                  headers={"Authorization": f"Bearer {refused}"})
+                res.check("app.refused", tgt, f"{call} as {TESTER} (no group)", f"{want}", f"{st}", st == want)
+            hdr = {"Authorization": f"Bearer {token}"} if token else {}
+            st, hdrs, _ = s.call("GET", f"/apps/{urllib.parse.quote(app.name)}/", headers=hdr)
             served = st == 200 and "html" in hdrs.get("content-type", "")
-            bst, build = s.json("GET", f"{path}/build")
-            status = (held or {}).get("status") if isinstance(held, dict) else None
-            state_txt = (f"/apps/{app.name}/ {st}; build {bst} {json.dumps(build)[:140] if isinstance(build, dict) else ''}; "
-                         f"status {json.dumps(status)[:160] if status else 'none'}")
-            if served:
-                res.check("app.served", tgt, f"GET /apps/{app.name}/", "200 text/html", f"{st} {hdrs.get('content-type')}", True)
-            else:
-                res.skip("app.served", tgt, f"GET /apps/{app.name}/", "200 text/html (built and served as before)",
-                         f"{NO_RUNNER}: {state_txt}")
+            who = f" as {HOLDER}" if token else " anonymously"
+            res.check("app.served", tgt, call + who, "200 text/html", f"{st} {hdrs.get('content-type')}", served)
             if not served:
-                res.skip("app.page", tgt, f"browser /apps/{app.name}/", "main page reads data", f"not served: {NO_RUNNER}")
+                res.skip("app.page", tgt, f"browser /apps/{app.name}/", "main page reads data", "not served (app.served failed)")
+                continue
+            if app.kind == "wasm":
+                res.skip("app.page", tgt, f"browser /apps/{app.name}/", "main page reads data", KEPT_WASM)
                 continue
             if not a.shots:
                 res.skip("app.page", tgt, f"browser /apps/{app.name}/", "main page reads data", "--no-shots")
@@ -347,7 +384,9 @@ def main(argv=None) -> int:
             if browser is None:
                 from shots import Browser
                 browser = Browser(a.base_url, s.jar)
-            for row in browser.app(f"/apps/{urllib.parse.quote(app.name)}/", app.name, shots_dir):
+            if token:  # a fresh one: the App's tokens live 60 s
+                token = app_token(a.base_url, app_realm, f"app-{app.name}", HOLDER, a.timeout)
+            for row in browser.app(app.name, shots_dir, token):
                 ok = row.get("status") == 200 and row.get("dataCount", 0) > 0 and not row.get("bad") and not row.get("error")
                 res.check(f"app.page.{row['width']}", tgt, f"browser {row['url']} at {row['width']} px",
                           "200, at least one /api/ read 2xx, none failed",

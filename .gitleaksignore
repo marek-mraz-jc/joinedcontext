@@ -4,3 +4,4 @@ e15cb30978bff4d5a3aab89ead3a21be6f110aad:crates/shako/server/tests/odata_ops.rs:
 8353ae16efea5b33cd427427a06c01cc83f7458b:vendor/joinedcontext-platform/crates/assistant/src/chat/redact.rs:jwt:199
 8353ae16efea5b33cd427427a06c01cc83f7458b:vendor/joinedcontext-platform/crates/assistant/src/chat/redact.rs:private-key:187
 8353ae16efea5b33cd427427a06c01cc83f7458b:vendor/joinedcontext-platform/crates/assistant/tests/fixtures/mcp/linkml-public-endpoints.json:generic-api-key:1
+2531d37e132c9b62aeb5aa52a5e4297eb76702d6:crates/antares/crates/antares-api/src/policy.rs:generic-api-key:2243
