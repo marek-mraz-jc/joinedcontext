@@ -18,6 +18,8 @@ COPY crates/portal/ui/package.json crates/portal/ui/pnpm-lock.yaml ./ui/
 RUN corepack enable && cd sdk && pnpm install --frozen-lockfile && cd ../ui && pnpm install --frozen-lockfile
 COPY crates/portal/sdk/ ./sdk/
 COPY crates/portal/ui/ ./ui/
+# `tsc -b` type-checks ui/tests, which read the Portal's builder fixture as ../../tests/fixtures/.
+COPY crates/portal/tests/fixtures/grafana-builder/ ./tests/fixtures/grafana-builder/
 # An empty dist embeds as nothing and the Portal serves its placeholder page silently: fail here.
 RUN cd ui && pnpm build && test -s dist/index.html && ls dist/assets/*.js >/dev/null
 RUN cd sdk && pnpm build && test -s dist/kit.js && test -s dist/kit.css && test -s dist/kit-worker.js \
@@ -190,8 +192,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends make cmake jq g
 COPY vendor/joinedcontext-platform/scripts/ci/pdfium.sh vendor/joinedcontext-platform/scripts/ci/e5-small.sh vendor/joinedcontext-platform/scripts/ci/onnxruntime.sh /tmp/
 RUN sh /tmp/pdfium.sh /opt/pdfium && sh /tmp/e5-small.sh /opt/e5-small && sh /tmp/onnxruntime.sh /opt/onnxruntime
 ENV KREUZBERG_PDFIUM_PREBUILT=/opt/pdfium
-# Empty = cargo's default (one job per core); a shared build host passes a lower number.
-ARG CARGO_BUILD_JOBS=
+# `default` = one job per core (cargo refuses an empty value); a shared build host passes a number.
+ARG CARGO_BUILD_JOBS=default
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 
 # The dependency layer's input: every manifest and lockfile, and a stub file for each target of

@@ -35,6 +35,20 @@ fn bento_ids(project: &str, name: &str) -> Option<BTreeSet<String>> {
     Some(ids)
 }
 
+/// The latest time Bento ran a parity case (`bento.started`, unix seconds): the recorded sources
+/// answered as of then, and a mapping that judges their age by `now()` (the Bratislava counters
+/// refuse rows older than three days) must replay on that clock, or the test expires with them.
+fn recorded_at() -> chrono::DateTime<chrono::Utc> {
+    let dir = portal_contract_common::root().join("tests/e2e-parity");
+    let latest = std::fs::read_dir(dir)
+        .expect("e2e-parity")
+        .filter_map(|d| std::fs::read_to_string(d.ok()?.path().join("case.json")).ok())
+        .filter_map(|text| serde_json::from_str::<Value>(&text).ok()?["bento"]["started"].as_f64())
+        .fold(0.0, f64::max);
+    assert!(latest > 0.0, "no parity case names when Bento ran");
+    chrono::DateTime::from_timestamp(latest as i64, 0).expect("a unix time")
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn portal_streams_run_once_and_write_ngsild_with_the_pipeline_token() {
     let (stub_url, seen) = stub().await;
@@ -50,6 +64,7 @@ async fn portal_streams_run_once_and_write_ngsild_with_the_pipeline_token() {
     ] {
         std::env::set_var(format!("EKIBEN_VAR_{k}"), v);
     }
+    ekiben_bloblang::functions::freeze_clock(recorded_at());
     // The stub is on loopback: this organization may reach private addresses.
     let (runner, _root) = runner(true).await;
     let client = reqwest::Client::new();
