@@ -89,7 +89,9 @@ async fn two_deployments_index_while_a_question_is_asked() {
     let index = |r: Arc<Remote>, tag: &'static str| {
         let passage = passage.clone();
         tokio::spawn(async move {
-            let batch: Vec<String> = (0..per_deployment).map(|i| format!("{tag}{i} {passage}")).collect();
+            let batch: Vec<String> = (0..per_deployment)
+                .map(|i| format!("{tag}{i} {passage}"))
+                .collect();
             r.embed(Kind::Passage, &batch).await.expect("indexed").len()
         })
     };
@@ -110,7 +112,10 @@ async fn two_deployments_index_while_a_question_is_asked() {
         "threads {threads}, host load {:?}: model ready in {loaded:?}, RSS {} MiB idle, peak {} MiB; \
          {done} passages of {} bytes from two deployments in {took:.1?} = {:.1} texts/s; \
          a question during indexing took {:?} (max {:?})",
-        std::fs::read_to_string("/proc/loadavg").unwrap_or_default().split_whitespace().next(),
+        std::fs::read_to_string("/proc/loadavg")
+            .unwrap_or_default()
+            .split_whitespace()
+            .next(),
         idle / 1024,
         peak / 1024,
         passage.len() + 4,

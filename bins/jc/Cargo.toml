@@ -79,7 +79,6 @@ age = { version = "0.12", default-features = false }
 serde_json = { version = "1", features = ["preserve_order"] }
 tower = { version = "0.5", features = ["util"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "json", "migrate"] }
 url = "2"
 futures = { version = "0.3", optional = true }
