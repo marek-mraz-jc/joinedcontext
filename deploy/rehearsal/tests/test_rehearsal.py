@@ -1285,3 +1285,15 @@ def test_mains_realm_lines_go_over_the_export_and_nothing_else_moves():
     assert "users" not in out, "no person comes in with the realm lines"
     assert "clients[grafana] (added)" in lines and "defaultOptionalClientScopes" in lines
     assert export["clients"][0]["optionalClientScopes"] == ["address"], "the export is not changed in place"
+
+
+def test_up_sh_gives_dataroom_prods_publish_gate_hidden_list():
+    """jc.toml carries [dataroom.hidden] beside the aliases, and the two parse as one file."""
+    import tomllib
+    text = (HERE / "up.sh").read_text()
+    m = re.search(r'^cat "\$here/(\S+catalogue-hidden\.toml)" >> "\$home/jc\.toml"$', text, re.M)
+    assert m, "up.sh appends no [dataroom.hidden] to jc.toml"
+    aliases = subprocess.run([sys.executable, "-I", str(HERE / "rehearsal.py"), "aliases"],
+                             capture_output=True, text=True, check=True).stdout
+    doc = tomllib.loads(aliases + "\n" + (HERE / m.group(1)).read_text())
+    assert len(doc["dataroom"]["hidden"]) == 62 and doc["dataroom"]["aliases"]

@@ -253,6 +253,9 @@ fi
 # The datasets this kit renames answer their old names too (RENAMES.md, rehearsal.py CKAN_NAMES).
 alias_config=$(python3 -I "$here/rehearsal.py" aliases)
 printf '[mounts.portal]\npath_prefix = ""\n%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_config" > "$home/jc.toml"
+# prod's publish-gate hidden list ([dataroom.hidden]): dataroom leaves those datasets out of search
+# and DCAT as prod's catalogue does (jc-catalogue-parity).
+cat "$here/../../bins/jc/docs/catalogue-hidden.toml" >> "$home/jc.toml"
 # REHEARSAL_JC_TOML_EXTRA: a file appended to jc.toml as is, e.g. the [[organizations]] of a
 # host-mode multiorg run (each Organization on its own *.localhost hosts).
 if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then
