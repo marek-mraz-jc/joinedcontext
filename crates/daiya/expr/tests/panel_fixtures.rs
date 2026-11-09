@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // The test reads JC_WRITE_SERVED to rewrite its fixtures; jc runs none of this.
 //! The Portal's dashboard e2e replays a panel's frames as daiya answers them: after the panel's
 //! transformations. Each fixture of a transformed panel
 //! (`crates/portal/ui/tests/fixtures/frames/<dashboard>-<panel>.json`) carries that answer as
