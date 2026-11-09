@@ -186,9 +186,10 @@ fn variables(
 
 /// What dev's runner Deployment sets (joinedcontext-deployment
 /// `components/pipeline-runner/values/runner/development-values.yaml.gotmpl`), from `jc`'s mounts:
-/// the gateway as the Portal reaches it, kaisatsu's token endpoint of the Portal's realm (its
-/// `iss` is the public issuer whatever address asks), the Organization's domain and the harness
-/// client. None is a secret. `JC_MQTT_NAMESPACE` stays unset: `jc` runs no MQTT broker.
+/// the gateway as the Portal reaches it, kaisatsu's public token endpoint of the Portal's realm
+/// (kaisatsu names the issuer by the host a request reached it on, and the gateway verifies the
+/// public one, as dev's runner asks the public `idm` host), the Organization's domain and the
+/// harness client. None is a secret. `JC_MQTT_NAMESPACE` stays unset: `jc` runs no MQTT broker.
 fn runner_defaults(
     siblings: &Siblings,
     harness_client: Option<&str>,
@@ -208,7 +209,7 @@ fn runner_defaults(
             "JC_TOKEN_URL".to_owned(),
             format!(
                 "{}/realms/{}/protocol/openid-connect/token",
-                id.internal,
+                id.public,
                 crate::setup::PORTAL_REALM
             ),
         );
@@ -224,8 +225,10 @@ fn runner_defaults(
 }
 
 /// The part of `jc`'s listener a stream may call: the gateway's Endpoint door and kaisatsu's
-/// token endpoint, when they are served on that listener (slug mode). A module on a host of its
-/// own is called by name and passes ekiben's ordinary checks.
+/// token endpoint, where their URLs name that listener's own address (the gateway's internal URL
+/// in slug mode; the token endpoint only when the public base is that address, as in a loopback
+/// rehearsal with `--base-host 127.0.0.1:<port>`). Any other URL is a public name and passes
+/// ekiben's ordinary checks; a loopback name (`localhost`) stays refused.
 fn host_target(siblings: &Siblings, defaults: &BTreeMap<String, String>) -> Option<HostTarget> {
     let origin = format!("http://{}", siblings.listener);
     let prefixes: Vec<String> = [
@@ -268,11 +271,15 @@ mod tests {
 
     /// jc's slug-mode siblings: every module on one listener.
     fn slug_siblings() -> Siblings {
+        siblings_at("city.example", "https")
+    }
+
+    fn siblings_at(base_host: &str, scheme: &str) -> Siblings {
         let cfg = crate::config::Config::merge(
             crate::config::Cli {
                 role: Some("all".into()),
-                base_host: Some("city.example".into()),
-                scheme: Some("https".into()),
+                base_host: Some(base_host.into()),
+                scheme: Some(scheme.into()),
                 ..Default::default()
             },
             Default::default(),
@@ -290,7 +297,7 @@ mod tests {
         assert_eq!(vars["JC_GATEWAY_HOST"], "127.0.0.1:8443");
         assert_eq!(
             vars["JC_TOKEN_URL"],
-            "http://127.0.0.1:8443/id/realms/jc/protocol/openid-connect/token"
+            "https://city.example/id/realms/jc/protocol/openid-connect/token"
         );
         // The domain first-start provisioning gives the Organization.
         assert_eq!(vars["JC_ORG_DOMAIN"], "city.example");
@@ -314,7 +321,12 @@ mod tests {
 
     #[test]
     fn streams_reach_only_the_gateway_door_and_the_token_endpoint_of_jcs_listener() {
+        // The public token endpoint is a name: only the gateway door is on the listener.
         let siblings = slug_siblings();
+        let target = host_target(&siblings, &runner_defaults(&siblings, None, None)).unwrap();
+        assert_eq!(target.path_prefixes, ["/api/endpoint"]);
+        // A loopback rehearsal whose public base is the listener's own address.
+        let siblings = siblings_at("127.0.0.1:8443", "http");
         let target = host_target(&siblings, &runner_defaults(&siblings, None, None)).unwrap();
         let admits = |u: &str| target.admits(&url::Url::parse(u).unwrap());
         assert!(admits(
