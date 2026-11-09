@@ -164,3 +164,15 @@ def test_retrieve_ops_alone_grants_no_history():
     x = _expect({"O": {"count": 1, "sample": "urn:ngsi-ld:O:1"}},
                 {"O": {"id": "urn:ngsi-ld:O:1", "attr": "n", "newest": "2026-11-08T18:00:00Z"}})
     assert x.temporal(_endpoint([read]), ["O"]) is None
+
+
+def test_a_narrowed_count_past_the_broker_deadline_is_a_skip_and_any_other_miss_fails():
+    late = answer({"jsonrpc": "2.0", "id": 1, "result": {"isError": True, "content": [{"type": "text", "text":
+                   "the broker did not answer within ten seconds; narrow the window or the types and ask again"}]}})
+    counted = answer({"jsonrpc": "2.0", "id": 1, "result": {"structuredContent": {"entities": [], "total": 4}}})
+    lost = answer({"jsonrpc": "2.0", "id": 1, "result": {"structuredContent": {"entities": []}}})
+    assert suite.narrowed_count(counted)[0] == "pass"
+    assert suite.narrowed_count(late)[0] == "skip"
+    # A count that answers without a total, or a door that breaks, still fails.
+    assert suite.narrowed_count(lost)[0] == "fail"
+    assert suite.narrowed_count(answer(b"boom", status=500))[0] == "fail"
