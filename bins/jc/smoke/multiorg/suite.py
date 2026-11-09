@@ -774,9 +774,12 @@ class Suite:
             # The gateway on this Organization's API host links its own hosts alone.
             api = self.client(org, "api")
             for path in ("/api/endpoints", "/catalog.jsonld", "/cs"):
-                st, _, raw = api.call("GET", path)
-                if st == 503:  # a cold feed past the gateway's 10 s read limit: once more, warm
-                    st, _, raw = api.call("GET", path)
+                st, hdrs, raw = api.call("GET", path)
+                for _ in range(3):  # a cold feed past the gateway's 10 s read limit: again, warm
+                    if st != 503:
+                        break
+                    time.sleep(min(int((hdrs or {}).get("retry-after") or (hdrs or {}).get("Retry-After") or 2), 10))
+                    st, hdrs, raw = api.call("GET", path)
                 text = raw.decode(errors="replace")
                 links = set(re.findall(r"https?://([a-z0-9.-]+(?::\d+)?)", text))
                 theirs = sorted(l for l in links if l in {h for o, hs in self.hosts.items() if o != org for h in hs.values()}
