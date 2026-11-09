@@ -12127,7 +12127,11 @@
       "timeseries": "Zeitreihe",
       "stat": "Kennzahl",
       "table": "Tabelle",
-      "gauge": "Messanzeige"
+      "gauge": "Messanzeige",
+      "bargauge": "Balkenanzeige",
+      "piechart": "Kreisdiagramm",
+      "barchart": "Balkendiagramm",
+      "text": "Text"
     },
     "aggregation": {
       "none": "Letzter Wert",
@@ -12213,6 +12217,7 @@
     "preview": "Vorschau",
     "previewing": "Wird gelesen…",
     "previewHelp": "Liest dieses Panel jetzt mit Ihren eigenen Rechten.",
+    "previewHelpText": "Zeigt die Worte wie die Dashboard-Seite im Portal, ohne Markdown; Grafana zeichnet das Markdown. Ein Textpanel liest keine Daten.",
     "previewFailedTitle": "Die Vorschau konnte nicht gelesen werden",
     "removePanel": "Panel entfernen",
     "removePanelAsk": "Dieses Panel entfernen?",
@@ -12225,7 +12230,9 @@
       "filter": "Vervollständigen oder entfernen Sie zuerst jeden Filter.",
       "boardTitle": "Geben Sie dem Dashboard zuerst einen Titel.",
       "panel": "Fügen Sie zuerst ein Panel hinzu.",
-      "panels": "Vervollständigen Sie zuerst jedes Panel: Jedes braucht Titel, Endpoint, Typ und Attribut."
+      "panels": "Vervollständigen Sie zuerst jedes Panel: jedes braucht einen Titel und was es zeigt, ein Attribut oder einen Text.",
+      "content": "Schreiben Sie zuerst den Text des Panels.",
+      "xField": "Wählen Sie zuerst, was jeden Balken benennt."
     },
     "pending": "Wartet auf Genehmigung",
     "pendingTitle": "Eine Änderung dieses Dashboards wartet auf Genehmigung",
@@ -12270,7 +12277,14 @@
       "filterVariable": "Variable",
       "filterOp": "Vergleich",
       "panel": "Panel",
-      "inFilter": "Filter: {field}"
+      "inFilter": "Filter: {field}",
+      "min": "Minimum",
+      "max": "Maximum",
+      "displayMode": "Balkenstil",
+      "orientation": "Richtung",
+      "pieType": "Form",
+      "xField": "Balken benannt nach",
+      "content": "Text"
     },
     "hint": {
       "title": "Steht oben im Dashboard, zum Beispiel Radstationen im Zentrum.",
@@ -12295,11 +12309,44 @@
       "aggregationGauge": "Letzter Wert oder eine Zahl über den Zeitraum, zum Beispiel der Mittelwert.",
       "variableEndpoint": "Die Daten, aus denen die Variable Werte anbietet, zum Beispiel Fahrradstationen.",
       "variableType": "Wessen Werte ausgewählt werden, zum Beispiel eine Dockingstation.",
-      "variableAttribute": "Ein Text, dessen aktuelle Werte ausgewählt werden, zum Beispiel status."
+      "variableAttribute": "Ein Text, dessen aktuelle Werte ausgewählt werden, zum Beispiel status.",
+      "content": "Markdown; das Portal zeigt ihn als einfachen Text. Zum Beispiel ## Über, dann eine Zeile zu den Daten. Höchstens {max} Zeichen, {left} übrig.",
+      "min": "Wo die Skala beginnt, zum Beispiel 0; leer folgt den Daten.",
+      "max": "Wo die Skala endet, zum Beispiel 40; es muss über dem Minimum liegen.",
+      "displayMode": "Wie sich jeder Balken füllt: Verlauf mischt die Schwellenfarben, die der Balken passiert, Einfach und Retro-LCD füllen ihn in einer Farbe. Zum Beispiel Verlauf.",
+      "orientation": "In welche Richtung die Balken laufen, zum Beispiel Waagerecht; automatisch folgt der Form des Panels.",
+      "pieType": "Ein voller Kreis oder ein Ring, zum Beispiel Ring.",
+      "xField": "Ein Textattribut, das jeden Balken benennt, zum Beispiel name.",
+      "aggregationPie": "Der letzte Wert jeder Entität oder eine Zahl über den Zeitraum, zum Beispiel die Summe."
     },
     "conflictLead": "Jemand hat dieses Dashboard gespeichert, nachdem Sie es geöffnet haben. Die gespeicherte Version zu öffnen verwirft Ihre Änderungen.",
     "readOnlyHeading": "Dashboard-Baukasten",
     "lockedConflict": "Gesperrt, bis Sie die gespeicherte Version öffnen.",
-    "readOnlyLead": "Hier gebaute Dashboards lesen die Daten des Projekts und öffnen sich neben seinen anderen Dashboards."
+    "readOnlyLead": "Hier gebaute Dashboards lesen die Daten des Projekts und öffnen sich neben seinen anderen Dashboards.",
+    "kindHint": {
+      "timeseries": "Linien über die Zeit, zum Beispiel freie Räder pro Stunde.",
+      "stat": "Eine große Zahl, zum Beispiel die freien Räder jetzt.",
+      "table": "Die aktuellen Werte jeder Entität in Zeilen, zum Beispiel eine Zeile pro Station.",
+      "gauge": "Eine Zahl auf einer Skala zwischen Minimum und Maximum, zum Beispiel 0 bis 40 Räder.",
+      "bargauge": "Ein Balken pro Entität bis zu ihrem Wert gefüllt, zum Beispiel freie Räder pro Station.",
+      "piechart": "Der Anteil jeder Entität am Ganzen, zum Beispiel wo die freien Räder stehen.",
+      "barchart": "Ein Balken pro Entität, benannt nach einem Textattribut, zum Beispiel freie Räder nach Stationsname.",
+      "text": "Worte ohne Daten, zum Beispiel was das Dashboard zeigt und wen man fragt."
+    },
+    "notWritten": "Noch kein Text",
+    "displayMode": {
+      "gradient": "Verlauf",
+      "lcd": "Retro-LCD",
+      "basic": "Einfach"
+    },
+    "orientation": {
+      "auto": "Automatisch",
+      "horizontal": "Waagerecht",
+      "vertical": "Senkrecht"
+    },
+    "pieType": {
+      "pie": "Kreis",
+      "donut": "Ring"
+    }
   }
 }

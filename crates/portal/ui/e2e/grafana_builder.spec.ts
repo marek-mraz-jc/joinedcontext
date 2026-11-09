@@ -85,15 +85,71 @@ const BOARD = {
       aggregation: "max",
       interval: "auto",
       unit: "short",
-      thresholds: { base: "green", steps: [{ value: 80, color: "orange" }] },
+      min: 0,
+      max: 40,
+      thresholds: { base: "green", steps: [{ value: 30, color: "orange" }] },
+    },
+    {
+      id: 5,
+      kind: "bargauge",
+      title: "Free bikes per station",
+      grid: { x: 0, y: 18, w: 8, h: 9 },
+      endpoint: "bikes",
+      type: "BikeHireDockingStation",
+      attribute: "availableBikeNumber",
+      aggregation: "none",
+      interval: "auto",
+      min: 0,
+      max: 40,
+      // Few bikes is bad: the gradient blends red to green along a well-stocked station's bar.
+      thresholds: { base: "red", steps: [{ value: 5, color: "orange" }, { value: 10, color: "green" }] },
+      bargauge: { displayMode: "gradient", orientation: "horizontal" },
+    },
+    {
+      id: 6,
+      kind: "piechart",
+      title: "Where the free bikes are",
+      grid: { x: 8, y: 18, w: 8, h: 9 },
+      endpoint: "bikes",
+      type: "BikeHireDockingStation",
+      attribute: "availableBikeNumber",
+      aggregation: "none",
+      interval: "auto",
+      piechart: { pieType: "donut" },
+    },
+    {
+      id: 7,
+      kind: "barchart",
+      title: "Free docks by station",
+      grid: { x: 16, y: 18, w: 8, h: 9 },
+      endpoint: "bikes",
+      type: "BikeHireDockingStation",
+      attribute: "freeSlotNumber",
+      aggregation: "none",
+      interval: "auto",
+      barchart: { xField: "name" },
+    },
+    {
+      id: 8,
+      kind: "text",
+      title: "About these stations",
+      grid: { x: 0, y: 27, w: 24, h: 5 },
+      text: { content: "## City bikes\nFree bikes and docks of the **centre's** stations, read every five minutes. Ask the [mobility team](https://hel.fi) about a station that stays empty." },
     },
   ],
 };
+
+/** The stations a per-station panel draws, as the NGSI-LD plugin names each series. */
+const STATIONS = ["Kamppi (M)", "Rautatientori", "Kaivopuisto", "Hakaniemi (M)", "Töölöntori"];
 
 interface World {
   mayEdit: boolean;
   pending: boolean;
   save: "ok" | "slow" | "conflict" | "refused";
+  /** The lines a refused save answers, when not the default ones. */
+  refusal?: string[];
+  /** The saved board, when not BOARD. */
+  board?: typeof BOARD;
   preview: "ok" | "fail";
   sent: { method: string; path: string; body: unknown }[];
 }
@@ -104,8 +160,37 @@ const wave = (n: number, base: number, swing: number) => Array.from({ length: n 
 const times = (n: number) => Array.from({ length: n }, (_, i) => Date.now() - 24 * HOUR + (i * 24 * HOUR) / (n - 1));
 
 /** What the Portal's preview answers for a panel: the panel as compiled, and its frames. */
+type Panel = (typeof BOARD.panels)[number] & {
+  min?: number;
+  max?: number;
+  bargauge?: { displayMode: string; orientation: string };
+  piechart?: { pieType: string };
+  barchart?: { xField: string };
+  text?: { content: string };
+};
+
+/** The options the server compiles for a panel's kind (grafana_builder.rs compiled_panel). */
+function optionsOf(panel: Panel): Record<string, unknown> {
+  const reduce = { reduceOptions: { calcs: ["lastNotNull"], fields: "", values: false } };
+  switch (panel.kind) {
+    case "stat":
+    case "gauge":
+      return reduce;
+    case "bargauge":
+      return { ...reduce, ...panel.bargauge, showUnfilled: true };
+    case "piechart":
+      return { ...reduce, ...panel.piechart, legend: { displayMode: "list", placement: "right", showLegend: true } };
+    case "barchart":
+      return { xField: panel.barchart?.xField, orientation: "auto", showValue: "auto" };
+    case "text":
+      return { mode: "markdown", content: panel.text?.content ?? "" };
+    default:
+      return {};
+  }
+}
+
 function previewOf(board: typeof BOARD, id: number) {
-  const panel = board.panels.find((each) => each.id === id) ?? board.panels[0];
+  const panel: Panel = board.panels.find((each) => each.id === id) ?? board.panels[0];
   const type = panel.kind;
   const thresholds = panel.thresholds
     ? { mode: "absolute", steps: [{ color: panel.thresholds.base, value: null }, ...panel.thresholds.steps.map((step) => ({ color: step.color, value: step.value }))] }
@@ -115,9 +200,22 @@ function previewOf(board: typeof BOARD, id: number) {
     type,
     title: panel.title,
     gridPos: panel.grid,
-    fieldConfig: { defaults: { unit: panel.unit, decimals: panel.decimals, ...(thresholds ? { thresholds, color: { mode: "thresholds" } } : {}) }, overrides: [] },
-    options: type === "stat" || type === "gauge" ? { reduceOptions: { calcs: ["lastNotNull"] } } : {},
+    fieldConfig: { defaults: { unit: panel.unit, decimals: panel.decimals, min: panel.min, max: panel.max, ...(thresholds ? { thresholds, color: { mode: "thresholds" } } : {}) }, overrides: [] },
+    options: optionsOf(panel),
   };
+  if (type === "text") return { panel: compiled, frames: [] };
+  if (type === "bargauge" || type === "piechart") {
+    return {
+      panel: compiled,
+      frames: STATIONS.map((name, at) => ({ name, refId: "A", fields: [{ name: "Time", type: "time", values: times(3) }, { name: panel.attribute, type: "number", displayName: name, values: [[12, 14, 15], [8, 6, 5], [20, 22, 24], [3, 2, 4], [9, 11, 10]][at] }] })),
+    };
+  }
+  if (type === "barchart") {
+    return {
+      panel: compiled,
+      frames: [{ name: "BikeHireDockingStation", refId: "A", fields: [{ name: "name", type: "string", values: STATIONS }, { name: panel.attribute, type: "number", values: [6, 14, 3, 11, 8] }] }],
+    };
+  }
   if (type === "table") {
     return {
       panel: compiled,
@@ -162,12 +260,12 @@ async function stubApi(page: Page, w: World): Promise<void> {
     if (path === `${BUILDER}/values`) return json({ values: ["closed", "full", "open"] });
     if (path === `${BUILDER}/${UID}` && request.method() === "GET") {
       if (!w.mayEdit) return problem(403, "you may not propose a Dashboard in helsinki");
-      return json({ uid: UID, base: "blob-7", board: BOARD, pending });
+      return json({ uid: UID, base: "blob-7", board: w.board ?? BOARD, pending });
     }
     if ((path === BUILDER && request.method() === "POST") || (path === `${BUILDER}/${UID}` && request.method() === "PUT")) {
       if (w.save === "slow") return new Promise<void>(() => undefined);
       if (w.save === "conflict") return problem(409, "the dashboard changed since you opened it; open it again to edit the saved version");
-      if (w.save === "refused") return problem(422, "the dashboard was refused", ["panels[2].filters[0].value: freeSlotNumber holds numbers; write a number, for example 3", "variables[0].attribute: status holds no text in BikeHireDockingStation any more; choose another attribute"]);
+      if (w.save === "refused") return problem(422, "the dashboard was refused", w.refusal ?? ["panels[2].filters[0].value: freeSlotNumber holds numbers; write a number, for example 3", "variables[0].attribute: status holds no text in BikeHireDockingStation any more; choose another attribute"]);
       w.pending = true;
       return json({ uid: UID, change: { metadata: { name: "chg-0000004f" } } }, 202);
     }
@@ -196,6 +294,8 @@ async function shot(page: Page, name: string, width: number): Promise<void> {
   await page.screenshot({ path: `${SHOTS}/${name}-${width}.png` });
   await page.setViewportSize({ width, height: 900 });
 }
+
+const KIND_WORDS = { bargauge: "Bar gauge", piechart: "Pie chart", barchart: "Bar chart", text: "Text" } as const;
 
 const save = (page: Page) => page.getByRole("button", { name: /^(Propose dashboard|Proposing…)$/ });
 const panelForm = (page: Page) => page.locator("section").filter({ has: page.getByRole("heading", { level: 2, name: /^Panel: / }) });
@@ -231,7 +331,7 @@ for (const width of [1440, 400]) {
       await expect(save(page)).not.toHaveAttribute("aria-disabled", "true");
     });
 
-    for (const [index, kind] of (["timeseries", "stat", "table", "gauge"] as const).entries()) {
+    for (const [index, kind] of (["timeseries", "stat", "table", "gauge", "bargauge", "piechart", "barchart", "text"] as const).entries()) {
       test(`the ${kind} form reads its choices and previews as the person`, async ({ page }) => {
         const w = world();
         await stubApi(page, w);
@@ -240,12 +340,59 @@ for (const width of [1440, 400]) {
         await page.getByRole("button", { name: new RegExp(`^${title}`) }).click();
         const form = panelForm(page);
         await expect(form.getByRole("heading", { name: `Panel: ${title}` })).toBeVisible();
-        await expect(form.locator(`#builder-panel-${index + 1}-attribute`)).toHaveValue(BOARD.panels[index].attribute);
+        if (kind === "text") await expect(form.locator("#builder-panel-8-content")).toHaveValue(/^## City bikes/);
+        else await expect(form.locator(`#builder-panel-${index + 1}-attribute`)).toHaveValue(BOARD.panels[index].attribute ?? "");
         await form.getByRole("button", { name: "Preview" }).click();
         await expect(form.locator(`section[data-panel-type="${kind}"]`)).toBeVisible();
         const asked = w.sent.find((each) => each.path.endsWith("/preview"));
         expect(JSON.stringify(asked?.body)).not.toMatch(/customQuery|targets|"q"/);
         await shot(page, `form-${kind}`, width);
+      });
+    }
+
+    for (const kind of ["bargauge", "piechart", "barchart", "text"] as const) {
+      test(`a new ${kind} panel asks for what it needs`, async ({ page }) => {
+        await stubApi(page, world());
+        await page.goto("/projects/helsinki/grafana/new");
+        await page.locator("#builder-title").fill("Bike stations in the centre");
+        await page.getByRole("button", { name: "Add panel" }).click();
+        const form = panelForm(page);
+        await form.getByRole("radio", { name: KIND_WORDS[kind] }).check();
+        if (kind === "text") {
+          await expect(form.locator("#builder-panel-1-content")).toHaveValue("");
+          await expect(form.locator("#builder-panel-1-endpoint")).toHaveCount(0);
+        } else {
+          await expect(form.locator("#builder-panel-1-endpoint")).toBeVisible();
+        }
+        if (kind === "barchart") await expect(form.locator("#builder-panel-1-xField")).toBeDisabled();
+        if (kind === "bargauge") await expect(form.locator("#builder-panel-1-max")).toBeVisible();
+        await expect(save(page)).toHaveAttribute("aria-disabled", "true");
+        await shot(page, `empty-${kind}`, width);
+      });
+    }
+
+    const REFUSALS = {
+      bargauge: { id: 5, title: "Free bikes per station", line: "panels[4].max: the maximum must be above the minimum 50", field: "#builder-panel-5-max", words: "Panel “Free bikes per station”, Maximum:" },
+      piechart: { id: 6, title: "Where the free bikes are", line: "panels[5].kind: a pie chart cannot draw availableBikeNumber: the data model holds it as text; choose an attribute it can draw or another kind", field: "#builder-panel-6-kind", words: "Panel “Where the free bikes are”, Panel type:" },
+      barchart: { id: 7, title: "Free docks by station", line: "panels[6].barchart.xField: stationCode is not a text attribute of BikeHireDockingStation; name the bars by one such as name", field: "#builder-panel-7-xField", words: "Panel “Free docks by station”, Bars named by:" },
+      text: { id: 8, title: "About these stations", line: "panels[7].text.content: a link in it carries a credential in its address; take the key out", field: "#builder-panel-8-content", words: "Panel “About these stations”, Text:" },
+    } as const;
+    for (const [kind, refused] of Object.entries(REFUSALS)) {
+      test(`a refused ${kind} names its own field`, async ({ page }) => {
+        // The saved bar chart names its bars by stationCode, which the model has since lost.
+        const board = kind === "barchart" ? { ...BOARD, panels: BOARD.panels.map((p) => (p.kind === "barchart" ? { ...p, barchart: { xField: "stationCode" } } : p)) } : BOARD;
+        await stubApi(page, world({ save: "refused", refusal: [refused.line], board }));
+        await page.goto(`/projects/helsinki/grafana/dashboards/${UID}/edit`);
+        await page.getByRole("button", { name: new RegExp(`^${refused.title}`) }).click();
+        const form = panelForm(page);
+        if (kind === "bargauge") await form.locator("#builder-panel-5-min").fill("50");
+        if (kind === "text") await form.locator("#builder-panel-8-content").fill(`Readings from the counter API: https://counters.example/v1/readings?token=${"q7Zr".repeat(6)}`);
+        await save(page).click();
+        await expect(page.getByText("The dashboard was not proposed")).toBeVisible();
+        await page.getByRole("button", { name: refused.words }).click();
+        await expect(page.locator(refused.field)).toBeFocused();
+        await expect(page.getByText(/panels\[/)).toHaveCount(0);
+        await shot(page, `refused-${kind}`, width);
       });
     }
 

@@ -165,7 +165,10 @@
         "uid": "bikes-open-ds"
       },
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "max": 40.0,
+          "min": 0.0
+        },
         "overrides": []
       },
       "gridPos": {
@@ -207,6 +210,182 @@
       ],
       "title": "Panel 4",
       "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "bikes-open-ds"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "max": 40.0,
+          "min": 0.0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 8
+      },
+      "id": 5,
+      "options": {
+        "displayMode": "lcd",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "attributes": [
+            "availableBikeNumber"
+          ],
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "bikes-open-ds"
+          },
+          "entityName": "name",
+          "entityType": "BikeHireDockingStation",
+          "format": "timeseries",
+          "limit": 100,
+          "namePattern": "entity_name",
+          "queryType": "entity",
+          "refId": "A"
+        }
+      ],
+      "title": "Panel 5",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "bikes-open-ds"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 8
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "aggrMethod": "sum",
+          "aggrPeriodDuration": "auto",
+          "attributes": [
+            "availableBikeNumber"
+          ],
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "bikes-open-ds"
+          },
+          "entityName": "name",
+          "entityType": "BikeHireDockingStation",
+          "limit": 100,
+          "namePattern": "entity_name",
+          "queryType": "temporal",
+          "refId": "A"
+        }
+      ],
+      "title": "Panel 6",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "bikes-open-ds"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 8
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "xField": "name"
+      },
+      "targets": [
+        {
+          "attributes": [
+            "name",
+            "availableBikeNumber"
+          ],
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "bikes-open-ds"
+          },
+          "entityType": "BikeHireDockingStation",
+          "format": "table",
+          "limit": 100,
+          "queryType": "entity",
+          "refId": "A"
+        }
+      ],
+      "title": "Panel 7",
+      "type": "barchart"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 8
+      },
+      "id": 8,
+      "options": {
+        "content": "## Bike stations\nFree bikes per station, read every **5 minutes**.",
+        "mode": "markdown"
+      },
+      "title": "About these stations",
+      "type": "text"
     }
   ],
   "refresh": "5m",

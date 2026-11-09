@@ -8153,6 +8153,15 @@ export interface components {
             /** @description The JWT the provider signed, carrying the `logout_events` claim. */
             logout_token: string;
         };
+        /** @description A bar chart's own choices: the text attribute that names each bar, one bar per entity. */
+        BarChartOptions: {
+            xField: string;
+        };
+        /** @description A bar gauge's own choices. */
+        BarGaugeOptions: {
+            displayMode?: components["schemas"]["DisplayMode"];
+            orientation?: components["schemas"]["Orientation"];
+        };
         /** @description One topic filter's way to an attribute; it ends at the first hop the caller may not read. */
         Binding: {
             /** @description The output mapper's map; absent for a step written by hand. */
@@ -8182,21 +8191,32 @@ export interface components {
         /** @description One panel, as choices. */
         BoardPanel: {
             aggregation?: components["schemas"]["Aggregation"];
-            attribute: string;
+            attribute?: string;
+            barchart?: null | components["schemas"]["BarChartOptions"];
+            bargauge?: null | components["schemas"]["BarGaugeOptions"];
             /** Format: int32 */
             decimals?: number | null;
             description?: string;
-            /** @description An Endpoint of the project, by name. */
-            endpoint: string;
+            /** @description An Endpoint of the project, by name; a text panel names none. */
+            endpoint?: string;
             filters?: components["schemas"]["Filter"][];
             grid: components["schemas"]["Grid"];
             /** Format: int32 */
             id: number;
             interval?: components["schemas"]["Interval"];
             kind: components["schemas"]["PanelKind"];
+            /** Format: double */
+            max?: number | null;
+            /**
+             * Format: double
+             * @description The scale of a gauge or bar gauge; Grafana scales to the data where none is given.
+             */
+            min?: number | null;
+            piechart?: null | components["schemas"]["PieChartOptions"];
+            text?: null | components["schemas"]["TextOptions"];
             thresholds?: null | components["schemas"]["Thresholds"];
             title: string;
-            type: string;
+            type?: string;
             unit?: string;
         };
         /** @description A variable over the current values of one attribute. */
@@ -9525,6 +9545,11 @@ export interface components {
             passed?: string[];
             run?: string | null;
         };
+        /**
+         * @description How a bar gauge fills its bars, Grafana's `displayMode`.
+         * @enum {string}
+         */
+        DisplayMode: "gradient" | "lcd" | "basic";
         /** @description `status.domainVerification` of an Organization (PF-41, Architecture/03 §3). */
         DomainVerification: {
             /** @description What the TXT record carries after `jc-verify=`. Not a secret: it is published in DNS. */
@@ -11060,6 +11085,11 @@ export interface components {
             name: string;
             title?: components["schemas"]["Text"];
         };
+        /**
+         * @description Which way bars run, Grafana's `orientation`; `auto` follows the panel's shape.
+         * @enum {string}
+         */
+        Orientation: "auto" | "horizontal" | "vertical";
         /** @description One grant of this broker the account carries that is not in force now. */
         OutOfWindow: {
             /** @description The binding's role, e.g. `mqtt/air/sensor`. */
@@ -11117,7 +11147,7 @@ export interface components {
          * @description What a panel draws.
          * @enum {string}
          */
-        PanelKind: "timeseries" | "stat" | "table" | "gauge";
+        PanelKind: "timeseries" | "stat" | "table" | "gauge" | "bargauge" | "piechart" | "barchart" | "text";
         /** @description The preview of one panel: the panel as the dashboard page draws it, and its data. */
         PanelPreview: components["schemas"]["PanelData"] & {
             panel: Record<string, never>;
@@ -11211,6 +11241,15 @@ export interface components {
          * @description Lifecycle phase enumeration.
          */
         Phase: "Draft" | "Pending" | "Deploying" | "Live" | "Error" | "Drifted";
+        /** @description A pie chart's own choices. */
+        PieChartOptions: {
+            pieType?: components["schemas"]["PieType"];
+        };
+        /**
+         * @description A pie chart's shape, Grafana's `pieType`.
+         * @enum {string}
+         */
+        PieType: "pie" | "donut";
         /** @description How many of the records the runs of an hour took did not reach the space (T-5291). */
         PipelineErrorRatio: {
             /**
@@ -12964,6 +13003,10 @@ export interface components {
         /** @description A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string. */
         Text: string | {
             [key: string]: string;
+        };
+        /** @description A text panel's own choice: what it says, in Markdown. The Portal shows it as plain text. */
+        TextOptions: {
+            content: string;
         };
         /** @description One threshold step above the base colour. */
         ThresholdStep: {

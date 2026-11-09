@@ -99,6 +99,20 @@ function Body({ panel, data, from, to, locale, height }: Required<Pick<PanelView
   }
 }
 
+/**
+ * A text panel's Markdown as the plain text the Portal shows: links and images by their words,
+ * no tags, heading or quote marks, emphasis or code ticks; list items keep a bullet.
+ */
+export function plainText(markdown: string): string {
+  return markdown
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/<[^>]*>/g, "")
+    .replace(/^ {0,3}(#{1,6}|>)\s*/gm, "")
+    .replace(/^ {0,3}[-*+]\s+/gm, "• ")
+    .replace(/[*_`~]/g, "")
+    .trim();
+}
+
 /** What the service said, folded: the operator's detail, not the person's next step. */
 function Reason({ text }: { text: string }): JSX.Element {
   const { t } = useTranslation();
@@ -145,7 +159,7 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
   let body: ReactNode;
   if (panel.type === "text") {
     const content = typeof panel.options?.content === "string" ? panel.options.content : "";
-    body = <p className="whitespace-pre-line text-body text-fg">{content.replace(/[#*_`>]/g, "").trim()}</p>;
+    body = <p className="whitespace-pre-line text-body text-fg [overflow-wrap:anywhere]">{plainText(content)}</p>;
   } else if (failure || data?.error) {
     const reason = failure ?? data?.error ?? "";
     body = quiet ? (

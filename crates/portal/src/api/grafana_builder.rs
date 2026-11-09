@@ -322,6 +322,11 @@ fn check_choices(
     let mut kinds = Vec::new();
     for (i, panel) in board.panels.iter().enumerate() {
         let at = format!("panels[{i}].");
+        let Some(drawn) = panel.kind.drawn_as() else {
+            // A text panel reads nothing.
+            kinds.push(Vec::new());
+            continue;
+        };
         let found = endpoint(&format!("{at}endpoint"), &panel.endpoint)?;
         let space = space_of(&found);
         let (kind, value_type) = model_attribute(
@@ -332,15 +337,42 @@ fn check_choices(
             &panel.attribute,
             &at,
         )?;
-        if !panel.kind.drawn_as().draws(&kind, value_type.as_deref()) {
+        if !drawn.draws(&kind, value_type.as_deref()) {
             return Err(refused(
                 &format!("{at}kind"),
                 format!(
-                    "a {} cannot draw {}; choose another kind",
-                    panel.kind.as_str(),
-                    panel.attribute
+                    "{} cannot draw {}: the data model holds it as {}; choose an attribute it can draw or another kind",
+                    panel.kind.words(),
+                    panel.attribute,
+                    held_as(&kind, value_type.as_deref())
                 ),
             ));
+        }
+        if let Some(bars) = &panel.barchart {
+            // The type is the model's: the attribute check above found it.
+            let text = state
+                .model_schemas
+                .get(project, space)
+                .and_then(|model| model.attributes(&panel.entity_type))
+                .and_then(|class| {
+                    class
+                        .attributes
+                        .iter()
+                        .find(|found| found.name == bars.x_field)
+                        .map(|found| {
+                            found.kind == "Property"
+                                && ValueKind::of(found.value_type.as_deref()) == ValueKind::Text
+                        })
+                });
+            if text != Some(true) {
+                return Err(refused(
+                    &format!("{at}barchart.xField"),
+                    format!(
+                        "{} is not a text attribute of {}; name the bars by one such as name",
+                        bars.x_field, panel.entity_type
+                    ),
+                ));
+            }
         }
         let mut filters = Vec::new();
         for (k, filter) in panel.filters.iter().enumerate() {
@@ -382,6 +414,14 @@ async fn sources(
     let mut held: BTreeMap<String, String> = BTreeMap::new();
     let mut out = Vec::new();
     for ((i, panel), filters) in board.panels.iter().enumerate().zip(filters) {
+        if panel.kind.drawn_as().is_none() {
+            out.push(Source {
+                datasource: String::new(),
+                named: false,
+                filters,
+            });
+            continue;
+        }
         let endpoint = state
             .mirror
             .get(project, "Endpoint", &panel.endpoint)
@@ -666,6 +706,13 @@ pub async fn builder_preview(
     checked_query(&dashboard, &words)?;
     let panel = dashboard["panels"][0].clone();
     let view = panel_view(&panel);
+    if one.panels[0].kind.drawn_as().is_none() {
+        // A text panel says what it holds and reads nothing.
+        return Ok(Json(PanelPreview {
+            panel: view,
+            data: PanelData::default(),
+        }));
+    }
     let token = match person(&state, &headers, &project, &one.panels[0].endpoint).await {
         Ok(token) => token,
         Err(error) => {
@@ -1074,4 +1121,15 @@ pub fn router() -> Router<AppState> {
             "/projects/{project}/grafana/builder/{uid}",
             get(builder_get).put(builder_update).delete(builder_delete),
         )
+}
+
+/// What the data model holds an attribute as, in a refusal's words: text, a number, a link.
+fn held_as(kind: &str, value_type: Option<&str>) -> String {
+    match (kind, value_type) {
+        ("Property", Some("string")) => "text".to_owned(),
+        ("Property", Some(other)) => format!("a {other}"),
+        ("Relationship", _) => "a link to another entity".to_owned(),
+        ("GeoProperty", _) => "a location".to_owned(),
+        (other, _) => format!("a {other}"),
+    }
 }

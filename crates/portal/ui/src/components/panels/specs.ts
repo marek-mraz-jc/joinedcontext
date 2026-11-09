@@ -295,7 +295,14 @@ export function barChartSpec(frames: Frame[], opts: CategoryOptions): { spec: Sp
   const formatKey = formatterKey(settings.unit, settings.decimals, opts.locale);
   const colors = valueNames.map((_, index) => seriesColor(index));
   const horizontal = opts.options?.orientation === "horizontal";
-  const category = { field: "x", type: columns[names.indexOf(xField)]?.type === "time" ? "ordinal" : "nominal", sort: null, axis: { title: null, labelLimit: 120, labelAngle: 0 } };
+  // Under the bars, more than three names slant so neighbours never run into each other.
+  const slanted = !horizontal && new Set(values.map((value) => value.x)).size > 3;
+  const category = {
+    field: "x",
+    type: columns[names.indexOf(xField)]?.type === "time" ? "ordinal" : "nominal",
+    sort: null,
+    axis: slanted ? { title: null, labelLimit: 120, labelAngle: -35, labelAlign: "right", labelBaseline: "top" } : { title: null, labelLimit: 120, labelAngle: 0 },
+  };
   const value = { field: "v", type: "quantitative", axis: valueAxis(formatKey, undefined, opts.height) };
   const offset = valueNames.length > 1 ? { field: "s" } : undefined;
   return {

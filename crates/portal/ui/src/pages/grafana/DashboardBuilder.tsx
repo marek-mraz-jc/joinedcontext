@@ -36,7 +36,7 @@ import {
 import { ROW_PX } from "../../components/panels/DashboardGrid";
 import type { Frame } from "../../components/panels/frames";
 import type { PanelDefinition } from "../../components/panels/PanelView";
-import { PanelView } from "../../components/panels/PanelView";
+import { PanelView, plainText } from "../../components/panels/PanelView";
 import { panelRange } from "../../components/panels/timeRange";
 import { COLUMNS, clamp, dragged, settle } from "./builderGrid";
 import type { Grid } from "./builderGrid";
@@ -49,9 +49,15 @@ import {
   emptyBoard,
   fieldWords,
   INTERVALS,
+  currentOnly,
+  DISPLAY_MODES,
   isNumber,
   isText,
+  MAX_CONTENT,
   missing,
+  ORIENTATIONS,
+  PIE_TYPES,
+  SCALED,
   newPanel,
   OPS,
   PANEL_KINDS,
@@ -77,7 +83,11 @@ const AGGREGATION_HINTS: Record<PanelKind, string> = {
   timeseries: "builder.hint.aggregationTimeseries",
   stat: "builder.hint.aggregationStat",
   gauge: "builder.hint.aggregationGauge",
+  bargauge: "builder.hint.aggregationGauge",
+  piechart: "builder.hint.aggregationPie",
   table: "builder.hint.aggregationStat",
+  barchart: "builder.hint.aggregationStat",
+  text: "builder.hint.aggregationStat",
 };
 
 const builderKey = (project: string) => ["projects", project, "grafana", "builder"];
@@ -120,7 +130,7 @@ export function SourcePicker({
   return (
     <div className="@container">
     <div className="grid gap-3 @2xl:grid-cols-3 [&>*]:min-w-0">
-      <BField id={`${id}-endpoint`} label={t("builder.field.endpoint")} help={choices.isError ? reasonOf(choices.error) : hints === "variable" ? t("builder.hint.variableEndpoint") : t("builder.hint.endpoint")}>
+      <BField id={`${id}-endpoint`} label={t("builder.field.endpoint")} required help={choices.isError ? reasonOf(choices.error) : hints === "variable" ? t("builder.hint.variableEndpoint") : t("builder.hint.endpoint")}>
         <Select id={`${id}-endpoint`} value={value.endpoint} onChange={(event) => onChange({ endpoint: event.target.value, type: "", attribute: "" })}>
           <option value="">{t("builder.choose")}</option>
           {endpoints.map((endpoint) => (
@@ -131,7 +141,7 @@ export function SourcePicker({
           {value.endpoint && !endpoints.some((endpoint) => endpoint.name === value.endpoint) ? <option value={value.endpoint}>{value.endpoint}</option> : null}
         </Select>
       </BField>
-      <BField id={`${id}-type`} label={t("builder.field.type")} help={hints === "variable" ? t("builder.hint.variableType") : t("builder.hint.type")}>
+      <BField id={`${id}-type`} label={t("builder.field.type")} required help={hints === "variable" ? t("builder.hint.variableType") : t("builder.hint.type")}>
         <Select id={`${id}-type`} value={value.type} disabled={!value.endpoint} title={value.endpoint ? undefined : t("builder.chooseEndpointFirst")} onChange={(event) => onChange({ ...value, type: event.target.value, attribute: "" })}>
           <option value="">{t("builder.choose")}</option>
           {(choices.data?.types ?? []).map((type) => (
@@ -142,7 +152,7 @@ export function SourcePicker({
           {value.type && !(choices.data?.types ?? []).includes(value.type) ? <option value={value.type}>{value.type}</option> : null}
         </Select>
       </BField>
-      <BField id={`${id}-attribute`} label={t("builder.field.attribute")} help={hints === "variable" ? t("builder.hint.variableAttribute") : t("builder.hint.attribute")}>
+      <BField id={`${id}-attribute`} label={t("builder.field.attribute")} required help={hints === "variable" ? t("builder.hint.variableAttribute") : t("builder.hint.attribute")}>
         <Select id={`${id}-attribute`} value={value.attribute} disabled={!value.type} title={value.type ? undefined : t("builder.chooseTypeFirst")} onChange={(event) => onChange({ ...value, attribute: event.target.value })}>
           <option value="">{t("builder.choose")}</option>
           {attributes.map((attribute) => (
@@ -297,10 +307,15 @@ function useWidth(): [React.RefObject<HTMLDivElement | null>, number] {
   return [ref, width];
 }
 
+/** A text panel's first line on its tile, each address cut to its host: no query (or key in it) shows. */
+export function textGist(content: string): string {
+  return plainText(content).split("\n")[0].replace(/\b[a-z][a-z0-9+.-]*:\/\/([^/\s?#]+)\S*/gi, "$1");
+}
+
 /** One panel on the canvas: its title, what it reads, and its drag and resize handles. */
 function CanvasCard({ panel, selected, onSelect, onDrag }: { panel: BoardPanel; selected: boolean; onSelect: () => void; onDrag?: (event: ReactPointerEvent, mode: Drag["mode"]) => void }): JSX.Element {
   const { t } = useTranslation();
-  const reads = panel.attribute ? `${panel.type} · ${panel.attribute}` : t("builder.notChosen");
+  const reads = panel.kind === "text" ? textGist(panel.text?.content ?? "") || t("builder.notWritten") : panel.attribute ? `${panel.type} · ${panel.attribute}` : t("builder.notChosen");
   return (
     <div className={`flex h-full min-w-0 flex-col rounded-md border bg-surface shadow-sm ${selected ? "border-primary ring-2 ring-primary/40" : "border-border"}`}>
       <div
@@ -352,6 +367,45 @@ function KindSketch({ kind }: { kind: PanelKind }): JSX.Element {
       <svg {...common} fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round">
         <path d="M36 44 A24 24 0 0 1 84 44" opacity="0.4" />
         <path d="M36 44 A24 24 0 0 1 72 23" />
+      </svg>
+    );
+  }
+  if (kind === "bargauge") {
+    return (
+      <svg {...common} fill="currentColor">
+        {[8, 20, 32].map((y, i) => (
+          <g key={y}>
+            <rect x="4" y={y} width="112" height="7" rx="2" opacity="0.2" />
+            <rect x="4" y={y} width={[96, 64, 40][i]} height="7" rx="2" opacity="0.7" />
+          </g>
+        ))}
+      </svg>
+    );
+  }
+  if (kind === "piechart") {
+    return (
+      <svg {...common} fill="currentColor">
+        <circle cx="60" cy="24" r="20" opacity="0.3" />
+        <path d="M60 24 L60 4 A20 20 0 0 1 79 30 Z" opacity="0.8" />
+      </svg>
+    );
+  }
+  if (kind === "barchart") {
+    return (
+      <svg {...common} fill="currentColor">
+        {[30, 14, 22, 6, 18].map((y, i) => (
+          <rect key={i} x={14 + i * 20} y={y} width="12" height={44 - y} rx="2" opacity="0.6" />
+        ))}
+      </svg>
+    );
+  }
+  if (kind === "text") {
+    return (
+      <svg {...common} fill="currentColor">
+        <rect x="4" y="6" width="60" height="7" rx="2" opacity="0.7" />
+        {[20, 30, 40].map((y) => (
+          <rect key={y} x="4" y={y} width={y === 40 ? 70 : 112} height="4" rx="2" opacity="0.35" />
+        ))}
       </svg>
     );
   }
@@ -504,7 +558,7 @@ function FilterRow({ id, filter, attributes, variables, onChange, onRemove }: { 
 /** The filters of a panel: which of the type's entities it reads. */
 export function FiltersEditor({ project, panel, variables, onChange }: { project: string; panel: BoardPanel; variables: BoardVariable[]; onChange: (filters: Filter[]) => void }): JSX.Element {
   const { t } = useTranslation();
-  const choices = useChoices(project, panel.endpoint, panel.type);
+  const choices = useChoices(project, panel.endpoint ?? "", panel.type ?? "");
   const attributes = (choices.data?.attributes ?? []).filter((option) => isNumber(option) || isText(option));
   const filters = panel.filters ?? [];
   return (
@@ -579,6 +633,12 @@ export function DisplayEditor({ panel, start, onChange }: { panel: BoardPanel; s
           </Select>
         </BField>
       </div>
+      {SCALED.includes(panel.kind) ? (
+        <div className="grid gap-3 sm:grid-cols-2 [&>*]:min-w-0">
+          <OptionalNumber id={`${id}-min`} label={t("builder.field.min")} help={t("builder.hint.min")} value={panel.min} onChange={(min) => onChange({ ...panel, min })} />
+          <OptionalNumber id={`${id}-max`} label={t("builder.field.max")} help={t("builder.hint.max")} value={panel.max} onChange={(max) => onChange({ ...panel, max })} />
+        </div>
+      ) : null}
       <div className="flex flex-col gap-2">
         <Checkbox
           label={t("builder.useThresholds")}
@@ -621,6 +681,90 @@ export function DisplayEditor({ panel, start, onChange }: { panel: BoardPanel; s
       </div>
     </fieldset>
   );
+}
+
+/** A text panel's words: Markdown the dashboard shows as plain text in the Portal. */
+export function TextEditor({ panel, onChange }: { panel: BoardPanel; onChange: (panel: BoardPanel) => void }): JSX.Element {
+  const { t } = useTranslation();
+  const id = `builder-panel-${panel.id}-content`;
+  const content = panel.text?.content ?? "";
+  return (
+    <BField id={id} label={t("builder.field.content")} help={t("builder.hint.content", { max: MAX_CONTENT, left: MAX_CONTENT - content.length })} required>
+      <Textarea id={id} rows={6} value={content} maxLength={MAX_CONTENT} onChange={(event) => onChange({ ...panel, text: { content: event.target.value } })} />
+    </BField>
+  );
+}
+
+/** A number field that may be left empty: empty is no value. */
+function OptionalNumber({ id, label, help, value, onChange }: { id: string; label: string; help: string; value: number | null | undefined; onChange: (value: number | undefined) => void }): JSX.Element {
+  return (
+    <BField id={id} label={label} help={help}>
+      <Input id={id} type="number" inputMode="decimal" value={value === undefined || value === null ? "" : String(value)} onChange={(event) => onChange(event.target.value === "" ? undefined : Number(event.target.value))} />
+    </BField>
+  );
+}
+
+/** The kind's own choices: how a bar gauge fills, a pie chart's shape, what names a bar chart's bars. */
+export function KindOptions({ project, panel, onChange }: { project: string; panel: BoardPanel; onChange: (panel: BoardPanel) => void }): JSX.Element | null {
+  const { t } = useTranslation();
+  const id = `builder-panel-${panel.id}`;
+  const choices = useChoices(project, panel.endpoint ?? "", panel.type ?? "");
+  if (panel.kind === "bargauge") {
+    const own = panel.bargauge ?? { displayMode: "gradient", orientation: "auto" };
+    return (
+      <div className="grid gap-3 sm:grid-cols-2 [&>*]:min-w-0">
+        <BField id={`${id}-displayMode`} label={t("builder.field.displayMode")} help={t("builder.hint.displayMode")}>
+          <Select id={`${id}-displayMode`} value={own.displayMode ?? "gradient"} onChange={(event) => onChange({ ...panel, bargauge: { ...own, displayMode: event.target.value as typeof DISPLAY_MODES[number] } })}>
+            {DISPLAY_MODES.map((mode) => (
+              <option key={mode} value={mode}>
+                {t(`builder.displayMode.${mode}`)}
+              </option>
+            ))}
+          </Select>
+        </BField>
+        <BField id={`${id}-orientation`} label={t("builder.field.orientation")} help={t("builder.hint.orientation")}>
+          <Select id={`${id}-orientation`} value={own.orientation ?? "auto"} onChange={(event) => onChange({ ...panel, bargauge: { ...own, orientation: event.target.value as typeof ORIENTATIONS[number] } })}>
+            {ORIENTATIONS.map((orientation) => (
+              <option key={orientation} value={orientation}>
+                {t(`builder.orientation.${orientation}`)}
+              </option>
+            ))}
+          </Select>
+        </BField>
+      </div>
+    );
+  }
+  if (panel.kind === "piechart") {
+    return (
+      <BField id={`${id}-pieType`} label={t("builder.field.pieType")} help={t("builder.hint.pieType")}>
+        <Select id={`${id}-pieType`} value={panel.piechart?.pieType ?? "pie"} onChange={(event) => onChange({ ...panel, piechart: { pieType: event.target.value as typeof PIE_TYPES[number] } })}>
+          {PIE_TYPES.map((pie) => (
+            <option key={pie} value={pie}>
+              {t(`builder.pieType.${pie}`)}
+            </option>
+          ))}
+        </Select>
+      </BField>
+    );
+  }
+  if (panel.kind === "barchart") {
+    const names = (choices.data?.attributes ?? []).filter(isText);
+    const xField = panel.barchart?.xField ?? "";
+    return (
+      <BField id={`${id}-xField`} label={t("builder.field.xField")} help={t("builder.hint.xField")} required>
+        <Select id={`${id}-xField`} value={xField} disabled={!panel.type} title={panel.type ? undefined : t("builder.chooseTypeFirst")} onChange={(event) => onChange({ ...panel, barchart: { xField: event.target.value } })}>
+          <option value="">{t("builder.choose")}</option>
+          {names.map((option) => (
+            <option key={option.name} value={option.name}>
+              {option.name}
+            </option>
+          ))}
+          {xField && !names.some((option) => option.name === xField) ? <option value={xField}>{xField}</option> : null}
+        </Select>
+      </BField>
+    );
+  }
+  return null;
 }
 
 /** The panel's place in numbers, for a keyboard or a phone. */
@@ -675,7 +819,8 @@ export function PanelPreviewCard({ project, board, panel }: { project: string; b
           <Icon name="refresh" className="size-4" />
           {t("builder.preview")}
         </Button>
-        <span className="text-caption text-fg-muted">{t("builder.previewHelp")}</span>
+        {/* Until the panel is complete the line says what it still needs, not what Preview would do. */}
+        <span className="text-caption text-fg-muted">{need.length > 0 ? t(need[0]) : t(panel.kind === "text" ? "builder.previewHelpText" : "builder.previewHelp")}</span>
       </div>
       {run.isError ? (
         <Alert tone="danger" title={t("builder.previewFailedTitle")}>
@@ -703,31 +848,40 @@ export function PanelEditor({ project, board, panel, start, onChange, onPlace, o
   const [asking, setAsking] = useState(false);
   const id = `builder-panel-${panel.id}`;
   const aggregated = (panel.aggregation ?? "none") !== "none";
+  const kindRefused = useContext(Invalid)[`${id}-kind`];
   return (
     <Card as="section" aria-labelledby={`${id}-heading`} className="flex flex-col gap-4">
       <CardHeader as="h2" titleId={`${id}-heading`} title={t("builder.panelTitle", { title: panel.title.trim() || t("builder.untitledPanel") })} />
       <RadioGroup<PanelKind>
         name={`${id}-kind`}
+        id={`${id}-kind`}
+        errors={kindRefused ? [kindRefused] : undefined}
         legend={t("builder.field.kind")}
         layout="row"
         value={panel.kind}
         options={PANEL_KINDS.map((kind) => ({ value: kind, label: t(`builder.kind.${kind}`) }))}
         onChange={(kind) => onChange(withKind(panel, kind))}
       />
+      <p className="-mt-2 text-caption text-fg-muted">{t(`builder.kindHint.${panel.kind}`)}</p>
       <BField id={`${id}-title`} label={t("builder.field.panelTitle")} help={t("builder.hint.panelTitle")} required>
         <Input id={`${id}-title`} value={panel.title} maxLength={120} onChange={(event) => onChange({ ...panel, title: event.target.value })} />
       </BField>
       <BField id={`${id}-description`} label={t("builder.field.description")} help={t("builder.hint.panelDescription")}>
         <Textarea id={`${id}-description`} rows={2} value={panel.description ?? ""} maxLength={500} onChange={(event) => onChange({ ...panel, description: event.target.value })} />
       </BField>
+      {panel.kind === "text" ? (
+        <TextEditor panel={panel} onChange={onChange} />
+      ) : (
+      <>
       <SourcePicker
         project={project}
         id={id}
-        value={{ endpoint: panel.endpoint, type: panel.type, attribute: panel.attribute }}
-        onChange={(source) => onChange({ ...panel, ...source, filters: source.type === panel.type ? panel.filters : [] })}
+        value={{ endpoint: panel.endpoint ?? "", type: panel.type ?? "", attribute: panel.attribute ?? "" }}
+        onChange={(source) => onChange({ ...panel, ...source, filters: source.type === panel.type ? panel.filters : [], barchart: panel.barchart && source.type !== panel.type ? { xField: "" } : panel.barchart })}
         attributesOf={(options) => drawable(panel.kind, options.attributes)}
       />
-      {panel.kind === "table" ? null : (
+      <KindOptions project={project} panel={panel} onChange={onChange} />
+      {currentOnly(panel.kind) ? null : (
         <div className="grid gap-3 sm:grid-cols-2 [&>*]:min-w-0">
           <BField id={`${id}-aggregation`} label={t("builder.field.aggregation")} help={t(AGGREGATION_HINTS[panel.kind])}>
             <Select id={`${id}-aggregation`} value={panel.aggregation ?? "none"} onChange={(event) => onChange({ ...panel, aggregation: event.target.value as BoardPanel["aggregation"], interval: event.target.value === "none" ? "auto" : panel.interval })}>
@@ -751,6 +905,8 @@ export function PanelEditor({ project, board, panel, start, onChange, onPlace, o
       )}
       <FiltersEditor project={project} panel={panel} variables={board.variables ?? []} onChange={(filters) => onChange({ ...panel, filters })} />
       <DisplayEditor panel={panel} start={start} onChange={onChange} />
+      </>
+      )}
       <PositionEditor panel={panel} onPlace={onPlace} />
       <PanelPreviewCard project={project} board={board} panel={panel} />
       <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
