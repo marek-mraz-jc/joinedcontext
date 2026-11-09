@@ -150,8 +150,12 @@ def main(argv=None) -> int:
     s = Session(a.base_url, a.timeout)
 
     def secret(name):
-        f = state / name if state else None
-        return f.read_text().strip() if f and f.exists() else None
+        # jc's state dir, else the files up.sh gives jc for the tokens jc keeps in memory only
+        # (deploy/rehearsal/rehearsal.py read_secret)
+        for f in ((state / name, state.parent / "secrets" / name) if state else ()):
+            if f.exists():
+                return f.read_text().strip()
+        return None
 
     manifest = json.loads((export / "manifest.json").read_text())
     now = dt.datetime.now(dt.UTC)

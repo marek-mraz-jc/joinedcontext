@@ -1089,6 +1089,9 @@ pub async fn add_push_mirror(
     state
         .outbound_guard
         .validate_url(&req.remote_address, None)?;
+    if let Some(r) = &req.secret_ref {
+        shako_core::check_secret_ref("secretRef", r)?;
+    }
     let remote_name = format!(
         "mirror-{}",
         &uuid::Uuid::now_v7().simple().to_string()[24..]
@@ -1205,13 +1208,19 @@ pub async fn add_webhook(
             state.secret_store.put_secret(repo.org_id, &r, &secret);
             r
         }
-        HookSecret::Ref(r) if !r.trim().is_empty() => r,
+        HookSecret::Ref(r) if !r.trim().is_empty() => {
+            shako_core::check_secret_ref("secretRef", &r)?;
+            r
+        }
         HookSecret::Ref(_) => {
             return Err(ShakoError::Unprocessable(
                 "a hook needs a secret to sign its deliveries".into(),
             ));
         }
     };
+    if let Some(r) = &req.previous_secret_ref {
+        shako_core::check_secret_ref("previousSecretRef", r)?;
+    }
     state
         .store()
         .create_webhook(WebhookRecord {

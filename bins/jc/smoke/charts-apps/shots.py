@@ -48,11 +48,12 @@ class Browser:
         self._browser.close()
         self._pw.stop()
 
-    def _page(self, width: int, token: str | None = None):
-        headers = {"Authorization": f"Bearer {token}"} if token else None
-        ctx = self._browser.new_context(viewport={"width": width, "height": 900}, locale="en-GB",
-                                        extra_http_headers=headers)
-        ctx.add_cookies(self.cookies)
+    def _page(self, width: int, portal: bool = True):
+        """`portal`: with the suite's Portal session cookies. An App's page gets none: its host is
+        another origin, and route.fetch would send the Portal's CSRF cookie beside the App's."""
+        ctx = self._browser.new_context(viewport={"width": width, "height": 900}, locale="en-GB")
+        if portal:
+            ctx.add_cookies(self.cookies)
         page = ctx.new_page()
         page.set_default_timeout(self.timeout)
         return ctx, page
@@ -102,12 +103,20 @@ class Browser:
         client, sent as the edge sends it on prod."""
         rows, path = [], app_host(self.base, name) + "/"
         for width in WIDTHS:
-            ctx, page = self._page(width, token)
+            ctx, page = self._page(width, portal=False)
 
             def edge(route, request, base=self.base):
+                url = edge_rewrite(base, name, request.url)
+                # The edge's login hands the person's token on as the edge file says: the
+                # gateway's bearer on the endpoint route, X-Access-Token on the App's own.
+                headers = {k: v for k, v in request.headers.items() if k.lower() != "authorization"}
+                if token and "/api/endpoint/" in url:
+                    headers["authorization"] = f"Bearer {token}"
+                elif token:
+                    headers["x-access-token"] = token
                 # fetched and fulfilled under the App's URL: a continue_ to another URL would
                 # move the document off its origin, and its own CSP `'self'` refuse its assets
-                route.fulfill(response=route.fetch(url=edge_rewrite(base, name, request.url), max_redirects=0))
+                route.fulfill(response=route.fetch(url=url, headers=headers, max_redirects=0))
 
             ctx.route(lambda url, base=self.base: edge_rewrite(base, name, url) is not None, edge)
             data, bad, console = [], [], []
@@ -132,6 +141,8 @@ class Browser:
             except Exception as e:  # noqa: BLE001
                 row["error"] = str(e).splitlines()[0][:200]
             finally:
+                # a page still polling has routes in flight: they end quietly, not in the next shot
+                ctx.unroute_all(behavior="ignoreErrors")
                 ctx.close()
             rows.append(row)
         return rows
