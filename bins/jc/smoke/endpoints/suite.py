@@ -199,7 +199,7 @@ class Suite:
                          not missing and not extra,
                          "extra = a type no granting Policy names or the export holds no row of" if extra else "")
         self.ok_json(f"{who}.attributes", e.slug, f"{base}/ngsi-ld/v1/attributes", token)
-        temporal = any(g.temporal() for g in grants)
+        temporal = [g for g in grants if g.temporal()]
         for t, count in sorted(want.items()):
             self.one_type(e, token, who, t, count, narrowed, tenant[t], temporal)
         self.surfaces(e, token, who, want, narrowed)
@@ -257,32 +257,46 @@ class Suite:
     def selectors_for(self, e, t):
         return [s for g in e.grants for s in g.selectors if s.type in (t, "*")]
 
-    def temporal(self, e, token, who, t, granted: bool):
+    def temporal(self, e, token, who, t, grants: list):
         base = f"/api/endpoint/{e.slug}/ngsi-ld/v1/temporal/entities"
         target = f"{e.slug} {t}"
         series = (self.index["temporal"].get(e.tenant) or {}).get(t)
         if not series:
             return
-        if not granted:
-            self.r.skip(f"{who}.temporal", target, f"GET {base}/{{id}}", "history", "no bound Policy grants a temporal read")
+        # the grants of a temporal read that name this type, and the idPatterns they narrow it by
+        sels = [s for g in grants for s in (g.selectors or [ex.Selector("*", None)]) if s.type in (t, "*")]
+        if not sels:
+            self.r.skip(f"{who}.temporal", target, f"GET {base}/{{id}}", "history",
+                        "no bound Policy grants a temporal read of this type")
             return
+        if all(s.pattern for s in sels):
+            found = [(series.get("pseries") or {}).get(s.pattern) for s in sels]
+            found = [f for f in found if f]
+            if not found:
+                self.r.skip(f"{who}.temporal", target, f"GET {base}/{{id}}", "history",
+                            "no exported history of an id the grant's idPattern opens")
+                return
+            series = {**series, **max(found, key=lambda f: f["newest"])}
         eid = series["id"]
         recent = ex.parse_time(series["newest"]) >= self.window
         path = f"{base}/{q(eid)}?timerel=after&timeAt={iso(self.window)}"
+        # CIM 009 6.3.10: a temporal answer cut at the broker's instance limit is 206 Partial
+        # Content with Content-Range, the instances of its first part in the body.
+        whole = (200, 206)
         if recent:
             st, _, raw = self.get(path, token)
-            n = instances(as_json(raw)) if st == 200 else 0
+            n = instances(as_json(raw)) if st in whole else 0
             self.r.check(f"{who}.temporal.last-24h", target, f"GET {path}", ">= 1 instance",
-                         f"{st} {n} instances {short(raw, 80) if st != 200 else ''}", st == 200 and n >= 1)
+                         f"{st} {n} instances {short(raw, 80) if st not in whole else ''}", st in whole and n >= 1)
         else:
             self.r.skip(f"{who}.temporal.last-24h", target, f"GET {path}", ">= 1 instance",
                         f"the newest exported instance ({series['newest']}) is older than 24 h now")
         path = f"{base}/{q(eid)}?timerel=before&timeAt={iso(self.stale)}"
         st, _, raw = self.get(path, token)
-        n = instances(as_json(raw)) if st == 200 else 0
+        n = instances(as_json(raw)) if st in whole else 0
         self.r.check(f"{who}.temporal.none-older", target, f"GET {path}",
                      f"no instance before now - 24 h - {self.a.sweep_minutes} min (200 empty or 404)",
-                     f"{st} {n} instances", st == 404 or (st == 200 and n == 0))
+                     f"{st} {n} instances", st == 404 or (st in whole and n == 0))
 
     def surfaces(self, e, token, who, want: dict, narrowed: str):
         base = f"/api/endpoint/{e.slug}"
@@ -349,9 +363,11 @@ class Suite:
         """Writes the caller holds no grant for: a Create Entity of a type the Endpoint serves, and
         one of a type no Policy names. Both refused before anything is read or written."""
         path = f"/api/endpoint/{e.slug}/ngsi-ld/v1/entities"
-        # An Endpoint no bound Policy grants a write serves no write operation: its view answers
-        # 405 for every caller, which refuses as surely as 401/403.
-        if not any(g.writes() for g in e.grants):
+        # An Endpoint no bound Policy grants Create Entity (createEntity, or its group
+        # redirectionOps) serves no POST /entities: its view answers 405 for every caller, which
+        # refuses as surely as 401/403. A grant of batch writes alone (a pipeline's upsertBatch)
+        # serves only /entityOperations.
+        if not any(g.creates() for g in e.grants):
             expect = (*expect, 405)
         want = " or ".join(map(str, expect))
         for id, t in ((f"{who}.write-outside", types[0] if types else OUTSIDE),
@@ -392,9 +408,16 @@ class Suite:
     # ---------------------------------------------------------------- whole run
 
     def listing(self, eps):
-        path = "/api/endpoints"
-        st, _, raw = self.get(path, accept="application/json")
-        slugs = set(re.findall(r'"slug"\s*:\s*"([a-z2-7]+)"', raw.decode(errors="replace")))
+        # The list pages (at most 100 a page) and names the next page's cursor: read every page.
+        path, slugs, cursor, pages = "/api/endpoints", set(), None, 0
+        while True:
+            page = f"{path}?limit=100" + (f"&cursor={q(cursor)}" if cursor else "")
+            st, _, raw = self.get(page, accept="application/json")
+            slugs |= set(re.findall(r'"slug"\s*:\s*"([a-z2-7]+)"', raw.decode(errors="replace")))
+            body, pages = as_json(raw), pages + 1
+            cursor = body.get("nextCursor") if st == 200 and isinstance(body, dict) else None
+            if not cursor or pages >= 1000:
+                break
         want = {e.slug for e in eps if not e.closed and e.public_grants()}
         missing = sorted(want - slugs)
         self.r.check("listing", "gateway", f"GET {path}", f"{len(want)} public Endpoints listed",

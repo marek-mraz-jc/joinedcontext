@@ -106,14 +106,17 @@ def test_expected_counts_follow_the_policy_patterns(tmp_path):
 class Fake:
     """Answers as a healthy gateway does for the bundle; `broken` names one rule it breaks."""
 
-    def __init__(self, broken: str = ""):
+    def __init__(self, broken: str = "", temporal: bool = True):
         self.broken = broken
+        self.temporal = temporal  # whether the open Endpoint's view serves a temporal read
 
     def answer(self, method, path, headers):
         u = urllib.parse.urlparse(path)
         p, qs = u.path, urllib.parse.parse_qs(u.query)
         tok = headers.get("Authorization", "")
         if p == "/api/endpoints":
+            if self.broken == "paged-list" and not qs.get("cursor"):
+                return 200, {}, {"items": [{"slug": "c" * 32}], "nextCursor": "1"}
             return 200, {}, {"items": [{"slug": OPEN}]}
         if p.startswith("/opendata/api/3/action/package_show"):
             return 200, {}, {"success": True, "result": {"resources": [{"url": "x"}]}}
@@ -121,6 +124,8 @@ class Fake:
         rest = p.split("/", 4)[4] if p.count("/") >= 4 else ""
         if slug == CLOSED and not tok and self.broken != "closed-open":
             return 401, {}, {"title": "unauthorized"}
+        if method == "POST" and self.broken == "no-create":
+            return 405, {}, {"title": "OperationNotSupported"}
         if method == "POST":
             return (201, {}, {}) if self.broken == "write-open" else (401, {}, {"title": "no"})
         if rest == "ngsi-ld/v1/types":
@@ -128,9 +133,14 @@ class Fake:
             return 200, {}, {"typeList": types}
         if rest.startswith("ngsi-ld/v1/types/") or rest == "ngsi-ld/v1/attributes":
             return 200, {}, {"attributeNames": ["pm10"]}
+        if rest.startswith("ngsi-ld/v1/temporal/entities/") and self.broken == "view-404" and (
+                ":north-" not in urllib.parse.unquote(rest) or slug == OPEN and not self.temporal):
+            return 404, {}, {"title": "ResourceNotFound"}
         if rest.startswith("ngsi-ld/v1/temporal/entities/"):
             if qs.get("timerel") == ["after"]:
-                return 200, {}, {"id": "x", "pm10": [{"type": "Property", "value": 3}]}
+                # a temporal answer cut at the instance limit (CIM 009 6.3.10)
+                st = 206 if self.broken == "partial-history" else 200
+                return st, {}, {"id": "x", "pm10": [{"type": "Property", "value": 3}]}
             old = [{"type": "Property", "value": 1}] if self.broken == "old-history" else []
             return 200, {}, {"id": "x", "pm10": old}
         if rest == "ngsi-ld/v1/entities" and "count" in qs:
@@ -214,6 +224,60 @@ def test_each_broken_rule_turns_its_check_red(tmp_path, serve, broken, check):
     code, res = run(tmp_path, serve(Fake(broken)), now_iso())
     red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
     assert code == 1 and check in red, red
+
+
+def test_a_paged_listing_is_read_to_its_end(tmp_path, serve):
+    """/api/endpoints names at most 100 a page and the next page's cursor: an Endpoint on page 2
+    is listed."""
+    code, res = run(tmp_path, serve(Fake("paged-list")), now_iso())
+    listing = [r for r in res["checks"] if r["id"] == "listing"]
+    assert [r["result"] for r in listing] == ["pass"], listing
+
+
+@pytest.mark.parametrize("ops,result", [("upsertBatch, createBatch, queryBatch", "pass"),
+                                        ("createEntity", "fail"), ("redirectionOps", "fail")])
+def test_a_view_serving_no_create_refuses_with_405(tmp_path, serve, ops, result):
+    """A public grant of batch writes alone serves no POST /entities: the view's 405 refuses as
+    surely as 401. A grant of createEntity (or redirectionOps) does serve it: 405 is then wrong."""
+    b = bundle(tmp_path / "x", now_iso())
+    pol = b / "gitea" / "files" / "org" / "city" / "spaces" / "air" / "policies" / "public-read.yaml"
+    pol.write_text(pol.read_text().replace("retrieveTemporal]", f"retrieveTemporal, {ops}]"))
+    out = tmp_path / "out"
+    suite.main(["--base-url", serve(Fake("no-create")), "--export", str(b), "--out", str(out), "--workers", "1"])
+    res = json.loads((out / "results.json").read_text())
+    got = [r["result"] for r in res["checks"] if r["id"] == "anon.write-outside"]
+    assert got == [result], got
+
+
+@pytest.mark.parametrize("ops,temporal,result", [
+    ("retrieveOps, retrieveEntityTypes", False, "skip"),
+    ("retrieveOps, retrieveEntityTypes, queryTemporal, retrieveTemporal", True, "pass")])
+def test_a_temporal_read_is_checked_where_a_grant_opens_it(tmp_path, serve, ops, temporal, result):
+    """retrieveOps holds no temporal operation (CIM 009 Table 4.20-2), and the history checked is
+    of an id the grant's idPattern opens, not the type's newest series (here south-2, outside
+    ':north-'): a view answering 404 for both is right."""
+    import datetime as dt
+    earlier = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    b = bundle(tmp_path / "x", earlier)
+    pol = b / "gitea" / "files" / "org" / "city" / "spaces" / "air" / "policies" / "public-read.yaml"
+    pol.write_text(pol.read_text().replace("retrieveOps, retrieveEntityTypes, queryTemporal, retrieveTemporal", ops))
+    t = b / "antares" / "temporal.jsonl"
+    row = json.loads(t.read_text())
+    row["id"], row["instance"]["observedAt"] = "urn:ngsi-ld:AirQualityObserved:south-2", now_iso()
+    t.write_text(t.read_text() + json.dumps(row) + "\n")
+    out = tmp_path / "out"
+    suite.main(["--base-url", serve(Fake("view-404", temporal)), "--export", str(b), "--out", str(out), "--workers", "1",
+                "--cache", str(tmp_path / "cache")])
+    res = json.loads((out / "results.json").read_text())
+    got = {r["result"] for r in res["checks"] if r["id"].startswith("anon.temporal")}
+    assert got == {result}, [r for r in res["checks"] if r["id"].startswith("anon.temporal")]
+
+
+def test_a_partial_history_is_history(tmp_path, serve):
+    """206 Partial Content with instances is a temporal answer (CIM 009 6.3.10)."""
+    code, res = run(tmp_path, serve(Fake("partial-history")), now_iso())
+    got = [r["result"] for r in res["checks"] if r["id"] == "anon.temporal.last-24h"]
+    assert got == ["pass"], got
 
 
 def test_a_stopped_gateway_fails_and_never_passes(tmp_path):

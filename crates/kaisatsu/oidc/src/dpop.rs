@@ -362,6 +362,9 @@ mod tests {
         let header_d = URL_SAFE_NO_PAD
             .encode(json!({ "alg": "ES256", "typ": "dpop+jwt", "jwk": with_d }).to_string());
         let leaked = format!("{header_d}.{}", parts.next().unwrap());
+        // The two iat cases sit 10 s past the 300 s window: proofs are built before the loop
+        // verifies them, and on a loaded runner a second passes in between (now + 301 was then read
+        // 300 s ahead, inside the window, and passed).
         let cases = [
             proof_with(&h, "JWT", &h.jwk, &claims(json!({}))),
             leaked,
@@ -369,13 +372,13 @@ mod tests {
                 &h,
                 "dpop+jwt",
                 &h.jwk,
-                &claims(json!({ "iat": Utc::now().timestamp() - 301 })),
+                &claims(json!({ "iat": Utc::now().timestamp() - 310 })),
             ),
             proof_with(
                 &h,
                 "dpop+jwt",
                 &h.jwk,
-                &claims(json!({ "iat": Utc::now().timestamp() + 301 })),
+                &claims(json!({ "iat": Utc::now().timestamp() + 310 })),
             ),
             proof_with(&h, "dpop+jwt", &h.jwk, &claims(json!({ "htm": "GET" }))),
             proof_with(
