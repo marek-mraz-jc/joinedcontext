@@ -223,7 +223,7 @@ async fn serve_hop(
             move |req: Request, next: Next| hop_guard(Arc::clone(&guard_secret), req, next),
         ));
     // The gateway hands its request id on through the hop: the broker's lines carry it.
-    let router = crate::access::layer("antares", router);
+    let router = crate::access::hop_layer("antares", router);
     let token = shutdown.clone();
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, router)
