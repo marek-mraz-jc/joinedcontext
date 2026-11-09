@@ -7,7 +7,8 @@
 //! read the header, keep it for their own lines and the broker hop), runs the module inside a
 //! `request` span that names the module and the id (every line the module writes for the
 //! request carries both), answers with the id, and writes one `jc::access` line: method, path
-//! without the query, status and milliseconds; for a refusal or a failure also the reason.
+//! without the query, status and milliseconds; for a refusal or a failure also the reason. An
+//! answered call without a caller's id is written once a minute per method and path ([`Sampler`]).
 //!
 //! The same door counts the call into jc's one metrics recorder for the modules that record
 //! nothing of their own (shako, kaisatsu, daiya, dataroom, ekiben): `<module>_http_requests_total`
@@ -16,10 +17,13 @@
 
 use axum::Router;
 use axum::extract::Request;
+use axum::http::Method;
 use axum::http::{HeaderName, HeaderValue};
 use axum::middleware::Next;
 use axum::response::Response;
-use std::time::Instant;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 use tracing::Instrument;
 
 pub const HEADER: HeaderName = HeaderName::from_static("x-request-id");
@@ -37,19 +41,22 @@ fn fresh() -> String {
     hex::encode(bytes)
 }
 
-/// The id a request goes on with: the caller's when it is plain (the first one), else a new one.
-pub fn request_id(req: &Request) -> String {
+/// The caller's id when it is plain (the first one).
+fn callers_id(req: &Request) -> Option<String> {
     req.headers()
         .get(&HEADER)
         .and_then(|v| v.to_str().ok())
         .filter(|id| plain(id))
-        .map_or_else(fresh, str::to_owned)
+        .map(str::to_owned)
 }
 
 /// `router` behind the access layer of `module`.
 pub fn layer(module: &'static str, router: Router) -> Router {
+    let sampler = Arc::new(Sampler::default());
     router.layer(axum::middleware::from_fn(
-        move |req: Request, next: Next| access(module, Door::Outer, req, next),
+        move |req: Request, next: Next| {
+            access(module, Door::Outer(Arc::clone(&sampler)), req, next)
+        },
     ))
 }
 
@@ -64,14 +71,54 @@ pub fn hop_layer(module: &'static str, router: Router) -> Router {
     ))
 }
 
-#[derive(Clone, Copy, PartialEq)]
 enum Door {
-    Outer,
+    Outer(Arc<Sampler>),
     Hop,
 }
 
+/// How long an answered call is the only line of its kind (module door, method, path): a poll
+/// answered every few seconds writes one line a minute, the next one saying how many went
+/// unwritten (`unlogged`). A call whose caller sent its own `X-Request-Id` asked to be traced and
+/// is always written, and so is every refusal and failure. The request counters keep every call.
+/// The Portal's sync polls wrote 675 kaisatsu lines a minute on an idle prod rehearsal
+/// (2026-11-09), all `answered`.
+const QUIET_FOR: Duration = Duration::from_secs(60);
+/// Kinds remembered at most per door: past it every answer is written, so a walk over unique
+/// paths never grows the table without bound.
+const KINDS: usize = 4096;
+
+#[derive(Default)]
+struct Sampler(Mutex<HashMap<(Method, String), (Instant, u64)>>);
+
+impl Sampler {
+    /// `Some(unlogged)` when the answer is written (the first of its kind in [`QUIET_FOR`], with
+    /// how many of its kind went unwritten before it), `None` when it is only counted.
+    fn admit(&self, method: &Method, path: &str, now: Instant) -> Option<u64> {
+        let mut seen = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let key = (method.clone(), path.to_owned());
+        if let Some((at, unlogged)) = seen.get_mut(&key) {
+            if now.duration_since(*at) < QUIET_FOR {
+                *unlogged += 1;
+                return None;
+            }
+            let before = *unlogged;
+            *at = now;
+            *unlogged = 0;
+            return Some(before);
+        }
+        if seen.len() >= KINDS {
+            seen.retain(|_, (at, _)| now.duration_since(*at) < QUIET_FOR);
+        }
+        if seen.len() < KINDS {
+            seen.insert(key, (now, 0));
+        }
+        Some(0)
+    }
+}
+
 async fn access(module: &'static str, door: Door, mut req: Request, next: Next) -> Response {
-    let id = request_id(&req);
+    let traced = callers_id(&req);
+    let id = traced.clone().unwrap_or_else(fresh);
     // `plain` or hex: always a valid header value.
     let value = HeaderValue::from_str(&id).unwrap_or(HeaderValue::from_static("invalid"));
     req.headers_mut().insert(HEADER, value.clone());
@@ -88,8 +135,20 @@ async fn access(module: &'static str, door: Door, mut req: Request, next: Next) 
         if status.is_server_error() || status.is_client_error() {
             let reason = status.canonical_reason().unwrap_or("refused");
             tracing::info!(target: "jc::access", module, %method, path, status = code, ms, reason, "refused");
-        } else if door == Door::Outer {
-            tracing::info!(target: "jc::access", module, %method, path, status = code, ms, "answered");
+        } else if let Door::Outer(sampler) = &door {
+            let unlogged = match traced {
+                Some(_) => Some(0),
+                None => sampler.admit(&method, &path, started),
+            };
+            match unlogged {
+                Some(0) => {
+                    tracing::info!(target: "jc::access", module, %method, path, status = code, ms, "answered");
+                }
+                Some(unlogged) => {
+                    tracing::info!(target: "jc::access", module, %method, path, status = code, ms, unlogged, "answered");
+                }
+                None => {}
+            }
         }
     });
     response.headers_mut().insert(HEADER, value);
@@ -242,6 +301,47 @@ mod tests {
             lines[0].contains("request_id=smokelogs-hop-refused")
                 && lines[0].contains("status=401")
                 && lines[0].contains("reason=\"Unauthorized\""),
+            "{log}"
+        );
+    }
+
+    #[test]
+    fn an_answer_is_written_once_a_minute_per_kind_with_the_count_it_left_out() {
+        let sampler = Sampler::default();
+        let t0 = Instant::now();
+        let get = Method::GET;
+        assert_eq!(sampler.admit(&get, "/q/views/a", t0), Some(0));
+        assert_eq!(sampler.admit(&get, "/q/views/b", t0), Some(0));
+        let later = t0 + Duration::from_secs(10);
+        assert_eq!(sampler.admit(&get, "/q/views/a", later), None);
+        assert_eq!(sampler.admit(&Method::POST, "/q/views/a", later), Some(0));
+        assert_eq!(sampler.admit(&get, "/q/views/a", later), None);
+        assert_eq!(sampler.admit(&get, "/q/views/a", t0 + QUIET_FOR), Some(2));
+        assert_eq!(sampler.admit(&get, "/q/views/a", t0 + QUIET_FOR), None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_poll_writes_one_answered_line_and_every_refusal_and_traced_call_its_own() {
+        let app = layer("kaisatsu", module());
+        let mut log = String::new();
+        for (path, id) in [
+            ("/open", None),
+            ("/open", None),
+            ("/open", None),
+            ("/open", Some("smokelogs-traced-0001")),
+            ("/closed", None),
+            ("/closed", None),
+        ] {
+            log += &call_at(app.clone(), path, id).await.1;
+        }
+        let access: Vec<_> = log.lines().filter(|l| l.contains("jc::access")).collect();
+        let answered = access.iter().filter(|l| l.contains("answered")).count();
+        let refused = access.iter().filter(|l| l.contains("refused")).count();
+        assert_eq!((answered, refused), (2, 2), "{log}");
+        assert!(
+            access
+                .iter()
+                .any(|l| l.contains("answered") && l.contains("request_id=smokelogs-traced-0001")),
             "{log}"
         );
     }
