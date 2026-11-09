@@ -9,6 +9,10 @@ from pathlib import Path
 import yaml
 
 RESIDENT = {"mqtt", "nats", "websocket", "kafka", "amqp"}
+# Sources the Portal runs and deletes whatever their clock (run_queue.rs is_resident: a poll, a
+# feed and a read that ends): without a period or schedule such a pipeline runs once after apply
+# (Clock::Once) and its stream is in the runner only while that run lasts.
+RUN_AND_DELETE = {"http", "gtfs-rt"}
 
 
 # Each cron field's range, as prod's Portal reads it (joinedcontext-portal src/reconciler/run_queue.rs
@@ -42,6 +46,9 @@ class Pipeline:
     slug: str = ""               # the target Endpoint's slug
     out_type: str = ""
     secret_refs: list = field(default_factory=list)
+    # The runner variables its DataSource's credentials reach the runner as (the Portal's
+    # pipeline_references: an explicit envVar, else jc-core env_var_of DS_{SOURCE}_{KEY}).
+    source_vars: list = field(default_factory=list)
 
     @property
     def key(self) -> str:
@@ -55,6 +62,35 @@ class Pipeline:
     def scheduled(self) -> bool:
         s = self.spec
         return bool(s.get("schedule") or s.get("period")) or s.get("class") == "scheduled"
+
+    @property
+    def runs_once(self) -> bool:
+        """No clock and a source the Portal runs and deletes: one run after apply, no stream held."""
+        return not self.scheduled and self.source_type in RUN_AND_DELETE
+
+
+def _env_part(text: str) -> str:
+    return "".join(c.upper() if c.isascii() and c.isalnum() else "_" for c in str(text))
+
+
+def source_vars(name: str, spec: dict) -> list:
+    """The runner variables a DataSource's credentials reach the runner as, as the Portal names
+    them (jc-core DataSourceSpec::secret_refs and env_var_of): `spec.secrets`, an http source's
+    `authorization.headerRef`, an mqtt `passwordRef`, a TLS `caCertRef`; a typed source's
+    `spec.secrets` entry only under its own envVar."""
+    typed = spec.get("type") in ("http", "mqtt", "websocket", "gtfs-rt")
+    refs = [r for r in spec.get("secrets") or [] if not typed or (isinstance(r, dict) and r.get("envVar"))]
+    refs.append(((spec.get("http") or {}).get("authorization") or {}).get("headerRef"))
+    refs.append((spec.get("mqtt") or {}).get("passwordRef"))
+    refs.append((spec.get("tls") or {}).get("caCertRef"))
+    out = []
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        var = ref.get("envVar") or (f"DS_{_env_part(name)}_{_env_part(ref['key'])}" if ref.get("key")
+                                    else f"DS_{_env_part(name)}")
+        out.append(var)
+    return out
 
 
 def _docs(path: Path):
@@ -80,7 +116,7 @@ def load_pipelines(files: Path) -> list[Pipeline]:
         for d in _docs(f):
             if d.get("kind") == "DataSource":
                 sources[(d["metadata"].get("namespace") or f.parts[-3], d["metadata"]["name"])] = \
-                    (d.get("spec") or {}).get("type", "")
+                    d.get("spec") or {}
     out = []
     for f in sorted(files.glob("*/*/pipelines/**/*.yaml")):
         for d in _docs(f):
@@ -95,7 +131,9 @@ def load_pipelines(files: Path) -> list[Pipeline]:
             src = spec.get("source") or (spec.get("sources") or [{}])[0] or {}
             ref = src.get("dataSourceRef") or {}
             ref = ref.get("name") if isinstance(ref, dict) else ref
-            p.source_type = sources.get((project, ref), src.get("type", "")) or ""
+            source = sources.get((project, ref))
+            p.source_type = (source.get("type", "") if source is not None else src.get("type", "")) or ""
+            p.source_vars = source_vars(ref, source) if source is not None else []
             urn = str(spec.get("targetEndpoint") or first_out.get("targetEndpoint") or "")
             parts = urn.split(":")
             if len(parts) >= 4:

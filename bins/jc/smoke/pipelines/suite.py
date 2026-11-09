@@ -15,7 +15,7 @@ portal-reconciler client of --state, signed in by the browser flow, deleted at t
              a Pipeline naming secretRefs whose condition is about its secret is a skip naming it
   held       GET  /streams/streams/{p}.{n} (jc's ekiben, its admin token from --state ekiben-token)
              200 for a resident or always-running stream; a scheduled one is loaded only for its
-             runs (skip)
+             runs (skip), and so is a run-once one: no clock and an http or gtfs-rt source (skip)
   run        POST /api/v1/projects/{p}/pipelines/{n}/runs        202 (the first --runs runnable
              Pipelines; a resident source is a skip)
   history    GET  /api/v1/projects/{p}/pipelines/{n}/runs        the started run appears and ends
@@ -88,6 +88,10 @@ def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline) 
     if p.scheduled and not p.resident:
         r.skip("held", p.key, f"GET /streams/streams/{sid}", "200",
                "scheduled: the Portal loads the stream only for its runs (PL-78)")
+    elif p.runs_once:
+        r.skip("held", p.key, f"GET /streams/streams/{sid}", "200",
+               f"same on prod: no period or schedule and a {p.source_type} source, so the Portal runs it "
+               "once after apply and holds no stream (prod's run_queue.rs Clock::Once, streams.rs place)")
     elif not ekiben_tok:
         r.skip("held", p.key, f"GET /streams/streams/{sid}", "200", "no --state: no ekiben token")
     else:

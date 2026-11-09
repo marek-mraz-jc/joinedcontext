@@ -195,3 +195,41 @@ def test_a_schedule_prods_portal_refuses_too_is_a_named_same_on_prod_skip(monkey
     assert status["result"] == "skip" and status["reason"].startswith("same on prod: schedule minute out of range")
     # A refusal of a schedule prod would take stays a fail.
     assert rows("7 3 * * 3")["status"]["result"] == "fail"
+
+
+def test_a_run_once_http_pipeline_holds_no_stream_and_its_held_row_is_a_same_on_prod_skip(tmp_path):
+    """helsinki/vision-counts: no period, no schedule, an http source. Prod's Portal queues it as
+    Clock::Once and the runner holds its stream only while the one run lasts, so a 404 from the
+    runner is prod's behaviour; a resident source's 404 stays a fail."""
+    import suite
+    write(tmp_path, "o/helsinki/datasources/file.yaml", """
+        kind: DataSource
+        metadata: {name: file, namespace: helsinki}
+        spec: {type: http, http: {url: 'https://example.org/x.json'}}
+    """)
+    write(tmp_path, "o/helsinki/datasources/feed.yaml", """
+        kind: DataSource
+        metadata: {name: feed, namespace: helsinki}
+        spec: {type: mqtt}
+    """)
+    for name, ds in (("once", "file"), ("live", "feed")):
+        write(tmp_path, f"o/helsinki/pipelines/{name}/pipeline.yaml", f"""
+            kind: Pipeline
+            metadata: {{name: {name}, namespace: helsinki}}
+            spec: {{class: auto, source: {{dataSourceRef: {{kind: DataSource, name: {ds}}}}}}}
+        """)
+    live, once = manifests.load_pipelines(tmp_path)
+    assert once.runs_once and not live.runs_once
+
+    class H:
+        def call(self, method, path, *a, **k):
+            if path.startswith("/streams/"):
+                return 404, {}, b'{"error":"Stream not found"}'
+            return 200, {}, json.dumps({"metadata": {"name": path.rsplit("/", 1)[-1]}, "status": {}}).encode()
+
+    def held(p):
+        r = suite.Results("pipelines", "http://x")
+        suite.check_pipeline(r, H(), "tok", p)
+        return next(c for c in r.rows if c["id"] == "held")
+    assert held(once)["result"] == "skip" and held(once)["reason"].startswith("same on prod: no period")
+    assert held(live)["result"] == "fail"
