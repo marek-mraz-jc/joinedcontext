@@ -57,6 +57,10 @@ class Grant:
     def public(self) -> bool:
         return self.assignee.get("kind") == "role" and self.assignee.get("id") == "public"
 
+    def creates(self) -> bool:
+        """Grants Create Entity (POST /entities): CIM 009 Table 4.20-2 puts it in redirectionOps."""
+        return bool(self.operations & {"createEntity", "redirectionOps"})
+
     def writes(self) -> bool:
         return bool(self.operations - READ_OPS - TEMPORAL_OPS
                     - {o for o in self.operations if o.startswith("retrieve")}

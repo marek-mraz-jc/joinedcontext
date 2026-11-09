@@ -349,9 +349,11 @@ class Suite:
         """Writes the caller holds no grant for: a Create Entity of a type the Endpoint serves, and
         one of a type no Policy names. Both refused before anything is read or written."""
         path = f"/api/endpoint/{e.slug}/ngsi-ld/v1/entities"
-        # An Endpoint no bound Policy grants a write serves no write operation: its view answers
-        # 405 for every caller, which refuses as surely as 401/403.
-        if not any(g.writes() for g in e.grants):
+        # An Endpoint no bound Policy grants Create Entity (createEntity, or its group
+        # redirectionOps) serves no POST /entities: its view answers 405 for every caller, which
+        # refuses as surely as 401/403. A grant of batch writes alone (a pipeline's upsertBatch)
+        # serves only /entityOperations.
+        if not any(g.creates() for g in e.grants):
             expect = (*expect, 405)
         want = " or ".join(map(str, expect))
         for id, t in ((f"{who}.write-outside", types[0] if types else OUTSIDE),

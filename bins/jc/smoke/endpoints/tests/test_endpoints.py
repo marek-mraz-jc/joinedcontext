@@ -123,6 +123,8 @@ class Fake:
         rest = p.split("/", 4)[4] if p.count("/") >= 4 else ""
         if slug == CLOSED and not tok and self.broken != "closed-open":
             return 401, {}, {"title": "unauthorized"}
+        if method == "POST" and self.broken == "no-create":
+            return 405, {}, {"title": "OperationNotSupported"}
         if method == "POST":
             return (201, {}, {}) if self.broken == "write-open" else (401, {}, {"title": "no"})
         if rest == "ngsi-ld/v1/types":
@@ -224,6 +226,21 @@ def test_a_paged_listing_is_read_to_its_end(tmp_path, serve):
     code, res = run(tmp_path, serve(Fake("paged-list")), now_iso())
     listing = [r for r in res["checks"] if r["id"] == "listing"]
     assert [r["result"] for r in listing] == ["pass"], listing
+
+
+@pytest.mark.parametrize("ops,result", [("upsertBatch, createBatch, queryBatch", "pass"),
+                                        ("createEntity", "fail"), ("redirectionOps", "fail")])
+def test_a_view_serving_no_create_refuses_with_405(tmp_path, serve, ops, result):
+    """A public grant of batch writes alone serves no POST /entities: the view's 405 refuses as
+    surely as 401. A grant of createEntity (or redirectionOps) does serve it: 405 is then wrong."""
+    b = bundle(tmp_path / "x", now_iso())
+    pol = b / "gitea" / "files" / "org" / "city" / "spaces" / "air" / "policies" / "public-read.yaml"
+    pol.write_text(pol.read_text().replace("retrieveTemporal]", f"retrieveTemporal, {ops}]"))
+    out = tmp_path / "out"
+    suite.main(["--base-url", serve(Fake("no-create")), "--export", str(b), "--out", str(out), "--workers", "1"])
+    res = json.loads((out / "results.json").read_text())
+    got = [r["result"] for r in res["checks"] if r["id"] == "anon.write-outside"]
+    assert got == [result], got
 
 
 def test_a_stopped_gateway_fails_and_never_passes(tmp_path):
