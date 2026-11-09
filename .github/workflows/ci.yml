@@ -191,10 +191,11 @@ jobs:
   # The platform crates vendored under vendor/joinedcontext-platform (context-gateway, jc-core,
   # jcctl and the rest the Portal links): path dependencies of the root build, not members, so
   # root-test runs none of their tests. Their own workspace, whose Cargo.lock repeats the root
-  # lockfile's versions (lock-subset.py) and whose ngsild is jc's: what the platform's fast lane
-  # runs, every member's lib and bins, jc-core's and context-gateway's `it` binary, jcctl's Portal
-  # API drift test; `cargo test`, as there (in-process locks). Beside root-test, so the run does
-  # not get longer. The assistant is a root member (root-test).
+  # lockfile's versions (lock-subset.py) and whose ngsild is jc's: of the platform's fast lane,
+  # every member's lib and bins, context-gateway's `it` binary and jcctl's Portal API drift test;
+  # `cargo test`, as there (in-process locks). jc-core's `it` compares the platform repository's
+  # committed schemas and examples, which are not vendored. Beside root-test, so the run does not
+  # get longer. The assistant is a root member (root-test).
   platform-test:
     needs: changes
     if: needs.changes.outputs.platform == 'true'
@@ -207,8 +208,6 @@ jobs:
       - uses: ./.github/actions/rust
         with: { workspace: vendor/joinedcontext-platform, key: platform-test }
       - run: cargo test --workspace --locked --no-fail-fast --lib --bins
-      - run: cargo test --locked --no-fail-fast -p jc-core --test it
-        env: { ODRL_RECORDS_DIR: "${{ runner.temp }}/odrl-records" }
       - run: cargo test --locked --no-fail-fast -p context-gateway --test it
         env: { DCAT_RECORDS_DIR: "${{ runner.temp }}/dcat-records" }
       - run: "cargo test --locked --no-fail-fast -p jcctl --test it portal_api_drift_tests::"
