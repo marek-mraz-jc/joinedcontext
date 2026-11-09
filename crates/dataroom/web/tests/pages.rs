@@ -6,12 +6,14 @@ mod common;
 use common::*;
 use dataroom_core::{BrandingBlock, FormFieldLayout, ShaclValidationReport};
 use dataroom_search::{FacetCount, SearchFacets};
-use dataroom_web::i18n::jc_t;
+use dataroom_web::i18n::{jc_rows, jc_t};
 use dataroom_web::*;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 const XSS: &str = "Air '\"><img src=x onerror=alert(1)><script>alert(2)</script>";
+/// A theme without a `/`, so the whole text reaches the topic code and label (G3).
+const XSS_THEME: &str = "<img src=x onerror=alert(5)>";
 
 /// What every page must hold, whatever its data: the page's language, a nonce on every script
 /// and style element, no inline event handler and no `javascript:` link.
@@ -113,6 +115,7 @@ fn hostile_dataset() -> dataroom_core::Dataset {
                 "title": { "sk": XSS, "en": XSS },
                 "description": { "sk": XSS },
                 "tags": [XSS],
+                "themes": [XSS_THEME, "http://publications.europa.eu/resource/authority/data-theme/ENVI"],
                 "endpointUrl": ep(""),
                 "licenceUrl": "javascript:alert(3)",
                 "licenceId": "custom",
@@ -152,7 +155,16 @@ fn every_page_escapes_publisher_text_and_nonces_every_script() {
         keyword: vec![facet(XSS, 1)],
         ..SearchFacets::default()
     };
-    let none = BTreeMap::new();
+    let filters: BTreeMap<String, String> = [
+        ("organization", XSS),
+        ("res_format", XSS),
+        ("tags", XSS),
+        ("vocab_jc_topic", XSS_THEME),
+        ("q", XSS),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v.to_owned()))
+    .collect();
     let views = [view("c1", "jc_visualization", XSS)];
     let pages: Vec<(&str, String)> = vec![
         (
@@ -178,7 +190,7 @@ fn every_page_escapes_publisher_text_and_nonces_every_script() {
                 1,
                 XSS,
                 XSS,
-                &none,
+                &filters,
                 "sk",
                 true,
                 "",
@@ -266,8 +278,24 @@ fn every_page_escapes_publisher_text_and_nonces_every_script() {
                 &p,
                 std::slice::from_ref(&ds),
                 &facets,
-                1,
+                41,
+                2,
                 XSS,
+                XSS,
+                &filters,
+                "sk",
+                true,
+                "",
+                NONCE,
+            ),
+        ),
+        (
+            "groups",
+            groups::render_group_list_page(
+                &c,
+                None,
+                std::slice::from_ref(&ds),
+                "",
                 XSS,
                 "sk",
                 true,
@@ -297,6 +325,20 @@ fn every_page_escapes_publisher_text_and_nonces_every_script() {
         assert_safe_page(name, html, "sk");
     }
     let page = |n: &str| pages.iter().find(|(k, _)| *k == n).expect(n).1.clone();
+    // A theme, a filter value or a query reaches the topics page, the filter pills, the hidden
+    // fields and the pager only as text (G3-G5).
+    for name in ["groups", "list", "org"] {
+        let html = page(name);
+        assert!(!html.contains("<IMG"), "{name}: theme rendered as markup");
+        assert!(
+            !html.contains("onerror=alert(5)>"),
+            "{name}: theme unescaped"
+        );
+    }
+    assert!(page("groups").contains("&lt;IMG SRC=X ONERROR=ALERT(5)&gt;"));
+    assert!(page("list").contains("class=\"filtered pill\""));
+    assert!(page("org").contains("class=\"filtered pill\""));
+    assert!(page("org").contains("class=\"page-link\""));
     // The escaped title is still there, as text.
     assert!(page("dataset").contains("&lt;img src=x onerror=alert(1)&gt;"));
     // A `javascript:` licence or resource address is never a link.
@@ -519,15 +561,18 @@ fn d2_facets_hide_a_shared_topic_link_the_active_value_and_offer_more() {
         !html.contains("vocab_jc_topic=ENVI"),
         "a topic every result shares is hidden"
     );
-    assert!(html.contains("/data/dataset/?vocab_jc_topic=TRAN"));
+    // Facet links keep the active filters, as CKAN's do (G5).
     assert!(
-        html.contains("/data/dataset/?_organization_limit=0"),
+        html.contains("/data/dataset/?organization=p1&amp;spatial=SK032&amp;vocab_jc_topic=TRAN")
+    );
+    assert!(
+        html.contains("/data/dataset/?organization=p1&amp;spatial=SK032&amp;_organization_limit=0"),
         "more than 10 publishers"
     );
     assert!(!html.contains("organization=p11"), "only ten shown");
     assert!(html.contains("OGC API Features"), "format label");
     assert!(html.contains("(NUTS SK032)"), "NUTS label");
-    assert!(html.contains("/data/dataset/?spatial=urn%3Ax"));
+    assert!(html.contains("/data/dataset/?organization=p1&amp;spatial=urn%3Ax"));
     assert!(html.contains(&esc_t("datasets_found", "en").replace("{n}", "4")));
     // The active topic stays listed when the search filters by it.
     facets.theme = vec![facet("ENVI", 4)];
@@ -937,8 +982,10 @@ fn d5_publisher_page_lists_its_datasets_and_facets() {
         &[dataset("a", json!({ "publisherId": "pub-city" }))],
         &facets,
         1,
+        1,
         "",
         "",
+        &BTreeMap::new(),
         "sk",
         true,
         "",
@@ -960,8 +1007,10 @@ fn d5_publisher_page_lists_its_datasets_and_facets() {
         &[],
         &SearchFacets::default(),
         0,
+        1,
         "",
         "",
+        &BTreeMap::new(),
         "sk",
         false,
         "",
@@ -1119,7 +1168,22 @@ fn b4_noindex_reaches_every_page_but_the_framed_map() {
         ),
         (
             "org",
-            render_organization_read_page(&c, None, &p, &[], &f, 0, "", "", "sk", false, "", NONCE),
+            render_organization_read_page(
+                &c,
+                None,
+                &p,
+                &[],
+                &f,
+                0,
+                1,
+                "",
+                "",
+                &BTreeMap::new(),
+                "sk",
+                false,
+                "",
+                NONCE,
+            ),
         ),
         ("about", render_about_page(&c, None, "sk", false, "", NONCE)),
         (
@@ -1285,4 +1349,187 @@ fn d1_home_breaks_count_and_date_ties_by_label_name_and_title() {
     assert!(
         html.find("organization=a-pub").expect("a") < html.find("organization=b-pub").expect("b")
     );
+}
+
+#[test]
+fn the_topics_page_lists_every_eu_theme_with_its_dataset_count() {
+    // G3: CKAN's /group/ ("Témy"), built from the EU data themes; a theme the datasets name that
+    // is not one of them gets its own card, a hidden dataset counts for none.
+    let c = cat();
+    let eu =
+        |code: &str| format!("http://publications.europa.eu/resource/authority/data-theme/{code}");
+    let ds = [
+        dataset("a", json!({ "themes": [eu("TRAN"), eu("ENVI")] })),
+        dataset("b", json!({ "themes": [eu("TRAN"), "LOCAL"] })),
+        dataset(
+            "c",
+            json!({ "themes": [eu("TRAN")], "visibility": "internal" }),
+        ),
+    ];
+    let html = groups::render_group_list_page(&c, None, &ds, "", "", "sk", true, "", NONCE);
+    assert_safe_page("groups", &html, "sk");
+    assert_eq!(
+        html.matches("class=\"media-item\"").count(),
+        14,
+        "13 EU themes + LOCAL"
+    );
+    assert!(html.contains("14 tém nájdených"));
+    let card = |label: &str| {
+        let i = html
+            .find(&format!("<h2 class=\"media-heading\">{label}</h2>"))
+            .expect(label);
+        html[i..i + html[i..].find("</li>").expect("card end")].to_owned()
+    };
+    assert!(card("Doprava").contains(&jc_rows(2, "datasets_n", "sk")));
+    assert!(card("Doprava").contains("href=\"/sk/dataset/?vocab_jc_topic=TRAN\""));
+    assert!(card("Životné prostredie").contains(&jc_rows(1, "datasets_n", "sk")));
+    assert!(card("Energetika").contains(&jc_rows(0, "datasets_n", "sk")));
+    assert!(card("LOCAL").contains(&jc_rows(1, "datasets_n", "sk")));
+    // Sorted by name, reversed on request; the query narrows by name or code.
+    let pos = |h: &str, l: &str| h.find(&format!(">{l}</h2>")).expect(l);
+    assert!(pos(&html, "Doprava") < pos(&html, "Zdravie"));
+    let desc =
+        groups::render_group_list_page(&c, None, &ds, "", "title desc", "sk", true, "", NONCE);
+    assert!(pos(&desc, "Doprava") > pos(&desc, "Zdravie"));
+    let one = groups::render_group_list_page(&c, None, &ds, "envi", "", "sk", true, "", NONCE);
+    assert_eq!(one.matches("class=\"media-item\"").count(), 1);
+    let none = groups::render_group_list_page(&c, None, &ds, "zzz", "", "sk", true, "", NONCE);
+    assert!(none.contains(&esc_t("no_topics_found", "sk")));
+    assert!(none.contains(&esc_t("empty_topics", "sk")));
+}
+
+#[test]
+fn a_filtered_list_shows_its_filters_as_pills_and_keeps_them_in_every_link() {
+    // G5: the pills under the count, each removing only its own filter; facet and pager links
+    // keep the other filters; the publisher facet narrows to the chosen publisher.
+    let c = cat();
+    let p = publisher("city", json!({ "title": { "sk": "Mesto" } }));
+    let q = publisher("town", json!({ "title": { "sk": "Obec" } }));
+    let facets = SearchFacets {
+        publisher: vec![facet("city", 30), facet("town", 4)],
+        format: vec![facet("CSV", 30), facet("MCP", 30)],
+        ..SearchFacets::default()
+    };
+    let params: BTreeMap<String, String> = [
+        ("organization", "city"),
+        ("res_format", "CSV"),
+        ("q", "voda"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v.to_owned()))
+    .collect();
+    let html = render_dataset_list_page(
+        &c,
+        None,
+        &[],
+        &[p, q],
+        &facets,
+        30,
+        1,
+        "voda",
+        "",
+        &params,
+        "sk",
+        true,
+        "",
+        NONCE,
+    );
+    assert!(html.contains(&esc(&jc_t("datasets_found_query", "sk")
+        .replace("{n}", "30")
+        .replace("{q}", "voda"))));
+    let pills = &html[html.find("class=\"filter-list\"").expect("pills")..];
+    let pills = &pills[..pills.find("</p>").expect("end")];
+    assert!(pills.contains("Mesto"));
+    assert!(
+        pills.contains("href=\"/sk/dataset/?q=voda&amp;res_format=CSV\""),
+        "{pills}"
+    );
+    assert!(
+        pills.contains("href=\"/sk/dataset/?organization=city&amp;q=voda\""),
+        "{pills}"
+    );
+    // The publisher facet holds only the chosen publisher; a format link keeps the filters.
+    assert!(!html.contains(">L town<"));
+    assert!(html.contains("href=\"/sk/dataset/?organization=city&amp;q=voda&amp;res_format=CSV&amp;vocab_jc_format=MCP\""));
+    // The pager keeps them too, and the search form carries them as hidden fields.
+    assert!(html.contains(
+        "href=\"/sk/dataset/?organization=city&amp;q=voda&amp;res_format=CSV&amp;page=2\""
+    ));
+    assert!(html.contains("<input type=\"hidden\" name=\"res_format\" value=\"CSV\" />"));
+    // On a phone the facets open as CKAN's modal from two real buttons; the API footnote follows.
+    assert!(html.contains("<button type=\"button\" class=\"show-filters btn btn-default\">"));
+    assert!(html.contains("<button type=\"button\" class=\"hide-filters\" aria-label=\"Zavrieť\">"));
+    assert!(html.contains("<a href=\"/api/3/action/package_search\">API</a>"));
+}
+
+#[test]
+fn a_publisher_page_pages_its_datasets_and_lists_only_itself_as_publisher() {
+    // G4: twenty datasets a page with CKAN's pager, the publisher facet naming only this publisher.
+    let c = cat();
+    let p = publisher("city", json!({ "title": { "sk": "Mesto" } }));
+    let facets = SearchFacets {
+        publisher: vec![facet("city", 22), facet("town", 4)],
+        ..SearchFacets::default()
+    };
+    let none = BTreeMap::new();
+    let html = render_organization_read_page(
+        &c,
+        None,
+        &p,
+        &[],
+        &facets,
+        22,
+        1,
+        "",
+        "",
+        &none,
+        "sk",
+        true,
+        "",
+        NONCE,
+    );
+    assert!(html.contains("<div class=\"nums\">"));
+    assert!(html.contains(">L city<") && !html.contains(">L town<"));
+    let pager = &html[html.find("class=\"pagination").expect("pager")..];
+    let pager = &pager[..pager.find("</ul>").expect("end")];
+    assert_eq!(
+        pager.matches("class=\"page-link\"").count(),
+        3,
+        "1 2 »: {pager}"
+    );
+    assert!(pager.contains("href=\"/sk/organization/city?page=2\""));
+    let last = render_organization_read_page(
+        &c,
+        None,
+        &p,
+        &[],
+        &facets,
+        22,
+        2,
+        "",
+        "",
+        &none,
+        "sk",
+        true,
+        "",
+        NONCE,
+    );
+    assert!(last.contains("href=\"/sk/organization/city?page=1\""));
+    let one = render_organization_read_page(
+        &c,
+        None,
+        &p,
+        &[],
+        &facets,
+        20,
+        1,
+        "",
+        "",
+        &none,
+        "sk",
+        true,
+        "",
+        NONCE,
+    );
+    assert!(!one.contains("class=\"pagination"));
 }

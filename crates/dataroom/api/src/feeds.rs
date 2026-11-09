@@ -99,6 +99,37 @@ async fn public_feed_datasets(
     Ok((visible, pub_map))
 }
 
+/// Moves the Turtle block of the Hydra page `<page_uri>` right under the prefixes, where CKAN's
+/// DCAT feed puts it, so a reader or harvester sees the paging before the 100 datasets (G6).
+/// The serializer writes one subject per paragraph; a body without that paragraph is returned
+/// unchanged.
+fn paging_first(body: String, page_uri: &str) -> String {
+    let Some(start) = body.find(&format!("\n<{page_uri}> a ")).map(|i| i + 1) else {
+        return body;
+    };
+    let Some(len) = body[start..].find(" .\n").map(|i| i + " .\n".len()) else {
+        return body;
+    };
+    let Some(after_prefixes) = body.find("\n\n").map(|i| i + 2).filter(|&i| i <= start) else {
+        return body;
+    };
+    let block = &body[start..start + len];
+    let mut out = String::with_capacity(body.len() + 1);
+    out.push_str(&body[..after_prefixes]);
+    out.push_str(block);
+    out.push('\n');
+    out.push_str(&body[after_prefixes..start]);
+    let rest = &body[start + len..];
+    match rest.strip_prefix('\n') {
+        Some(rest) => out.push_str(rest),
+        None => {
+            out.pop();
+            out.push_str(rest);
+        }
+    }
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_dcat_catalog_response(
     cat: &Catalogue,
@@ -132,7 +163,10 @@ fn render_dcat_catalog_response(
         prev_page_uri: (page > 1).then(|| format!("{base}{feed_path}?page={}", page - 1)),
     });
 
-    let body = serialize_catalogue(cat, &slice, pub_map, format, profile_kind, hydra.as_ref());
+    let mut body = serialize_catalogue(cat, &slice, pub_map, format, profile_kind, hydra.as_ref());
+    if let (RdfFormat::Turtle, Some(h)) = (format, &hydra) {
+        body = paging_first(body, &h.current_page_uri);
+    }
 
     (
         StatusCode::OK,
@@ -524,4 +558,25 @@ fn escape_xml(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::paging_first;
+
+    #[test]
+    fn the_paging_block_moves_under_the_prefixes() {
+        let body = "@prefix a: <x#> .\n\n<s1> a:p <o> .\n\n<P?page=1> a a:Page ;\n  a:n 1 .\n\n<s2> a:p <o> .\n";
+        assert_eq!(
+            paging_first(body.into(), "P?page=1"),
+            "@prefix a: <x#> .\n\n<P?page=1> a a:Page ;\n  a:n 1 .\n\n<s1> a:p <o> .\n\n<s2> a:p <o> .\n"
+        );
+        // Last paragraph, and no paging block at all.
+        let last = "@prefix a: <x#> .\n\n<s1> a:p <o> .\n\n<P> a a:Page .\n";
+        assert_eq!(
+            paging_first(last.into(), "P"),
+            "@prefix a: <x#> .\n\n<P> a a:Page .\n\n<s1> a:p <o> .\n"
+        );
+        assert_eq!(paging_first(body.into(), "Q"), body);
+    }
 }
