@@ -820,11 +820,13 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
 
     // A write no Policy grants the caller is refused before the view, which would answer 405
-    // with the writes it serves somebody else: 401 without a token, 403 with one, and no
-    // `Allow` (prod's zilina-doprava and praha-mesto answered 405 to an anonymous create).
+    // with the writes it serves somebody else: 403 and no `Allow` (prod's zilina-doprava and
+    // praha-mesto answered 405 to an anonymous create). An anonymous caller of the public
+    // Endpoint is its `public` role, refused as the decision point refuses anyone (GW1) and as
+    // the gateway's `model_judged` and quality-rule refusals answer it: 403, not 401.
     // The writer's token names the closed Endpoint, where the writers' Policy applies.
     for (who, root, token, want) in [
-        ("anonymous", &public, None, StatusCode::UNAUTHORIZED),
+        ("anonymous", &public, None, StatusCode::FORBIDDEN),
         (
             "a writer",
             &closed,
