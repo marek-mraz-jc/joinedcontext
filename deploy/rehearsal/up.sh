@@ -111,10 +111,18 @@ people_args=()
 [ -f "$demo_users" ] && people_args+=(--demo-users "$demo_users")
 if [ -d "$export_dir/keycloak" ]; then
   python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/state/realms" \
-    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}"
-  # Each secret the realm config names gets a fresh value of the rehearsal (never the old one).
+    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}" --secrets-dir "$home/secrets/realm"
+  # Each secret the realm config names gets a fresh value of the rehearsal (never the old one), in
+  # a file of its own under secrets/realm: kaisatsu inside jc reads $(file:...) there and no
+  # environment. secrets/realm-NAME stays a link to it for the smoke and shots.
+  mkdir -p "$home/secrets/realm"; chmod 700 "$home/secrets/realm"
   while read -r name; do
-    [ -n "$name" ] && export "$name=$(cat "$(secret "realm-$name")")"
+    [ -n "$name" ] || continue
+    if [ -f "$home/secrets/realm-$name" ] && [ ! -L "$home/secrets/realm-$name" ]; then
+      mv "$home/secrets/realm-$name" "$home/secrets/realm/$name"
+    fi
+    secret "realm/$name" > /dev/null
+    ln -sfn "realm/$name" "$home/secrets/realm-$name"
   done < "$home/state/realm-vars.txt"
 fi
 
@@ -173,6 +181,7 @@ printf '[mounts.portal]\npath_prefix = ""\n%s\n' "$db_config" > "$home/jc.toml"
 nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" \
+  --kaisatsu-import-secrets-dir "$home/secrets/realm" \
   --kaisatsu-database-url-file "$home/secrets/kaisatsu-db-url" \
   --kaisatsu-db-password-file "$(secret kaisatsu-app-pw)" \
   --shako-repo-root "$home/repos" --ekiben-file-root "$home/files" \

@@ -768,3 +768,20 @@ def test_a_jc_that_ignores_sigterm_is_killed_before_the_next_starts():
     r = subprocess.run([str(HERE / "stop-jc.sh"), str(stuck.pid)], capture_output=True, text=True, timeout=60)
     stuck.wait(timeout=5)
     assert r.returncode == 0 and "SIGKILL" in r.stderr and stuck.returncode == -9
+
+
+def test_synth_puts_the_sample_apps_in_the_apps_organization():
+    job = ('            - name: ORG\n              value: "joinedcontext"\n'
+           '            - name: APPS_ORG\n              value: "joinedcontext-apps"\n')
+    assert rh.apps_owner_of(job, "joinedcontext") == "joinedcontext-apps"
+    assert rh.apps_owner_of('            - name: ORG\n              value: "x"\n', "x") == "x"
+
+
+def test_realm_secrets_become_file_references_under_the_secrets_dir(tmp_path):
+    realm = {"realm": "r", "clients": [{"clientId": "a", "secret": "$(env:A_SECRET)"},
+                                        {"clientId": "b", "secret": "$(B_SECRET)"}]}
+    out = rh.to_file_refs(realm, tmp_path)
+    assert [c["secret"] for c in out["clients"]] == [f"$(file:{tmp_path}/A_SECRET)", f"$(file:{tmp_path}/B_SECRET)"]
+    (tmp_path / "A_SECRET").write_text("s3\n")
+    assert rh.secret_file(out["clients"][0]["secret"], tmp_path / "x").read_text() == "s3\n"
+    assert rh.secret_file("$(env:A_SECRET)", tmp_path) == tmp_path / "realm-A_SECRET"

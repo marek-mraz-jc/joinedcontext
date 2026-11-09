@@ -221,6 +221,12 @@ def _env_value(job_text: str, name: str):
     return found[-1] if found else None
 
 
+def apps_owner_of(job_text: str, org: str) -> str:
+    """The organization holding the sample Apps, as the bootstrap Job sets it
+    (`APPS_OWNER=${APPS_ORG:-$ORG}`): joinedcontext-apps on dev, where shako looks them up."""
+    return _env_value(job_text, "APPS_ORG") or org
+
+
 def layout2(seed: dict[str, str], org: str, repo: str):
     """Splits seed files (`a__b__c` keys) into repositories the way the forge bootstrap's layout
     2 does (components/gitea/charts/bootstrap/templates/job.yaml step 5d)."""
@@ -291,7 +297,7 @@ def cmd_synth(a):
     # forge: the bootstrap's organization files and every project seed, cut as layout 2
     job = (render / "gitea-bootstrap.yaml").read_text()
     org, repo = _env_value(job, "ORG") or "joinedcontext", _env_value(job, "REPO") or "configuration"
-    apps_owner = _env_value(job, "APPS_OWNER") or org
+    apps_owner = apps_owner_of(job, org)
     apps_project = _env_value(job, "APPS_PROJECT") or "helsinki"
     seed: dict[str, str] = {}
     apps: dict[str, dict[str, str]] = {}
@@ -423,6 +429,24 @@ def add_tester(realm: dict) -> dict:
     return out
 
 
+SECRET_VAR = re.compile(r"\$\((?:env:)?([A-Z][A-Z0-9_]*)\)")
+
+
+def to_file_refs(realm: dict, secrets_dir: Path) -> dict:
+    """Every `$(env:NAME)` / `$(NAME)` secret as `$(file:<secrets_dir>/NAME)`: kaisatsu inside jc
+    reads no environment, only files under its import secrets dir."""
+    text = SECRET_VAR.sub(lambda m: "$(file:%s)" % (secrets_dir / m[1]), json.dumps(realm))
+    return json.loads(text)
+
+
+def secret_file(ref: str, secrets: Path) -> Path:
+    """The file a realm secret reference names: `$(file:path)`, or the rehearsal's realm-NAME."""
+    m = re.fullmatch(r"\$\(file:(.+)\)", ref.strip())
+    if m:
+        return Path(m[1])
+    return secrets / f"realm-{SECRET_VAR.search(ref)[1]}"
+
+
 UNKNOWN_MAPPER = re.compile(
     r"\$\.(clientScopes|clients)\[(\d+)\]\.protocolMappers\[(\d+)\]\.protocolMapper: unknown mapper kind '([^']+)'")
 
@@ -535,11 +559,13 @@ def cmd_realms(a):
             if dropped:
                 print(f"realm {name}: {len(dropped)} parts kaisatsu refuses left out "
                       f"(realm-{name}-left-out.json): {sorted({d['kind'] for d in dropped})}")
+        # The secret variables the realm names ($(env:NAME)): up.sh makes a value for each.
+        names = sorted(set(SECRET_VAR.findall(json.dumps(clean))))
+        (dst.parent / "realm-vars.txt").write_text("".join(n + "\n" for n in names))
+        if a.secrets_dir:
+            clean = to_file_refs(clean, Path(a.secrets_dir))
         write_private(dst / f"{name}.json", json.dumps(clean, indent=1))
         taken.append(name)
-        # The secret variables the realm names ($(env:NAME)): up.sh makes a value for each.
-        names = sorted(set(re.findall(r"\$\((?:env:)?([A-Z][A-Z0-9_]*)\)", json.dumps(clean))))
-        (dst.parent / "realm-vars.txt").write_text("".join(n + "\n" for n in names))
     if len(taken) > 1:
         # jc's kaisatsu import dir merges every file into one realm.
         raise SystemExit(f"more than one realm to import: {taken}")
@@ -1288,8 +1314,7 @@ def cmd_smoke(a):
         conf = next((c for c in realm.get("clients", []) if str(c.get("secret", "")).startswith("$(")
                      and c.get("serviceAccountsEnabled")), None)
         if conf:
-            var = re.search(r"\$\((?:env:)?([A-Z0-9_]+)\)", conf["secret"]).group(1)
-            secret = (state.parent / "secrets" / f"realm-{var}").read_text().strip()
+            secret = secret_file(conf["secret"], state.parent / "secrets").read_text().strip()
             st, tok = h.json("POST", f"/id/realms/{name}/protocol/openid-connect/token", form={
                 "grant_type": "client_credentials", "client_id": conf["clientId"], "client_secret": secret})
             check(f"realm {name}: client {conf['clientId']} gets a token", st == 200 and "access_token" in (tok or {}),
@@ -1639,6 +1664,7 @@ def main(argv=None):
     s.add_argument("--kaisatsu-bin", help="leave out the mappers this kaisatsu refuses (named in the report)")
     s.add_argument("--people", help="a 0700 dir holding users-<realm>.jsonl (dev only): people without credentials")
     s.add_argument("--demo-users", help="the deployment's demo-users.yaml: the personas that keep e-mail and names")
+    s.add_argument("--secrets-dir", help="write each secret as $(file:<dir>/NAME), the form kaisatsu in jc reads")
     s = sub.add_parser("import"); s.add_argument("--export", required=True); s.add_argument("--base", required=True)
     s.add_argument("--state", required=True); s.add_argument("--report", required=True)
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin")
