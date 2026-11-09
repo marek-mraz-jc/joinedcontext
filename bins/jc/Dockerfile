@@ -185,7 +185,7 @@ RUN for name in sharing-private sharing-project sharing-organization sharing-rol
 # The build stage's base: the Rust toolchain on the runtime's Debian (same glibc). make for
 # tikv-jemalloc-sys, cmake for aws-lc-sys' fallback build, g++ for the assistant's tokenizer
 # (esaxx, oniguruma), curl for the pinned downloads below.
-FROM rust:1.97-slim-trixie@sha256:8e8cf8f7fd54a2d23d5a743b3a03f56e26b6c774276c33fa0595111704ebb15c AS rust
+FROM rust:1.99.0-slim-trixie@sha256:2752b332db73fdbb7dc576f06c82ed1f312005784ef913d7e04a28f5f55dc581 AS rust
 RUN apt-get update && apt-get install -y --no-install-recommends make cmake jq g++ curl ca-certificates && rm -rf /var/lib/apt/lists/*
 # The assistant module (G7): the PDFium its crate links, the embedding model and ONNX Runtime,
 # each pinned by checksum in its script, as the platform image fetches them.
