@@ -62,6 +62,18 @@ METRIC_PREFIXES = {
 }
 MUTATING = re.compile(r"^(POST|PUT|PATCH|DELETE)\b|tools/call\s+\S*(propose|create|delete|revoke|update|apply)",
                       re.I)
+# Where a mutating call changes a project, so the activity feed shows it: the Portal API (not its
+# sign-in routes) and an Endpoint's data. A token exchange, an MCP initialize or an MQTT auth check
+# changes nothing there.
+PROJECT_WRITE = re.compile(r"^\S+\s+(/api/v1/(?!auth/)|/api/endpoint/)|tools/call", re.I)
+# A check that passes because the write was refused: its expected answer is a 4xx.
+REFUSAL = re.compile(r"^\s*4\d\d\b")
+
+
+def is_write(c: dict) -> bool:
+    call = str(c.get("call", ""))
+    return (c.get("result") == PASS and bool(MUTATING.search(call)) and bool(PROJECT_WRITE.search(call))
+            and not REFUSAL.match(str(c.get("expected", ""))))
 
 
 def new_id() -> str:
@@ -391,7 +403,7 @@ def suite_windows(dirs: list[Path]) -> list[dict]:
             continue
         end = f.stat().st_mtime
         start = end - float(doc.get("seconds") or 0)
-        writes = [c for c in doc.get("checks", []) if c.get("result") == PASS and MUTATING.search(str(c.get("call", "")))]
+        writes = [c for c in doc.get("checks", []) if is_write(c)]
         out.append({"suite": doc.get("suite", f.parent.name), "dir": str(f.parent), "start": start - 60, "end": end + 60,
                     "writes": len(writes), "example": writes[0]["call"][:120] if writes else ""})
     return out

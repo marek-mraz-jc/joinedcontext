@@ -190,6 +190,25 @@ def test_the_suite_windows_count_only_passed_writes(tmp_path):
     assert w["writes"] == 2 and w["start"] == 1_000_000 - 100 - 60 and w["end"] == 1_000_000 + 60
 
 
+def test_a_refused_write_or_a_sign_in_exchange_is_no_write(tmp_path):
+    # The 2026-11-09T155017Z gate counted refusal probes and token exchanges as writes and then
+    # missed their activity events (activity.endpoints, .kaisatsu, .subscriptions).
+    d = tmp_path / "endpoints"
+    d.mkdir()
+    (d / "results.json").write_text(json.dumps({"suite": "endpoints", "seconds": 10, "checks": [
+        {"call": "POST /api/endpoint/abc/ngsi-ld/v1/entities type SmokeOutsidePolicy",
+         "expected": "401 or 403 or 405", "result": "pass"},
+        {"call": "POST /c/abc without a token", "expected": "401 naming the metadata", "result": "pass"},
+        {"call": "POST /api/mcp initialize with that token", "expected": "200", "result": "pass"},
+        {"call": "POST /oauth/token (code + verifier)", "expected": "200, an access token", "result": "pass"},
+        {"call": "POST /api/v1/auth/logout", "expected": "200", "result": "pass"},
+        {"call": "POST /internal/mqtt/auth on the public base", "expected": "no CONNECT decision", "result": "pass"},
+        {"call": "POST /api/endpoint/abc/ngsi-ld/v1/entities", "expected": "201", "result": "pass"},
+        {"call": "PUT /api/v1/projects/city/endpoints/x", "expected": "200 or 201", "result": "pass"}]}))
+    (w,) = suite.suite_windows([d])
+    assert w["writes"] == 2 and w["example"] == "POST /api/endpoint/abc/ngsi-ld/v1/entities"
+
+
 def test_metric_names_drop_labels_and_comments():
     text = "# HELP x y\nantares_up 1\njc_portal_requests_total{route=\"/\"} 3\n"
     assert suite.metric_names(text) == {"antares_up", "jc_portal_requests_total"}
