@@ -16,6 +16,9 @@ allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# As in the root deny.toml: the vendored platform crates and the monorepo's shared crates depend on
+# each other by path without a version; cargo-deny allows that only for unpublished crates.
+allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
