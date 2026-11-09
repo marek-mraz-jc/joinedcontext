@@ -19,6 +19,7 @@ import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-r
 import { expect, vi } from "vitest";
 import i18n from "../src/i18n";
 import { App } from "../src/App";
+import { EXACT_PROJECTS } from "./exactProjects";
 
 export const VIEWER = {
   subject: "b7c1e0f4",
@@ -105,6 +106,11 @@ export interface Rendered extends RenderResult {
   client: QueryClient;
 }
 
+function exactList(response: Response): Response {
+  response.headers.set(EXACT_PROJECTS, "1");
+  return response;
+}
+
 export async function renderRoute(options: RouteOptions): Promise<Rendered> {
   await i18n.changeLanguage(options.locale ?? "en");
   window.history.pushState({}, "", options.path);
@@ -130,7 +136,9 @@ export async function renderRoute(options: RouteOptions): Promise<Rendered> {
       );
     }
     if (path === "/api/v1/projects") {
-      return Promise.resolve(options.projects?.() ?? jsonResponse(list([{ name: "helsinki" }])));
+      // A list the test gives is the person's whole list (an outsider reads none); the default one
+      // gains the project of the page under test in setup.ts.
+      return Promise.resolve(options.projects ? exactList(options.projects()) : jsonResponse(list([{ name: "helsinki" }])));
     }
     // `pending` holds the page's own data, never the shell's: an identity that never arrives
     // renders the login page instead of the page under test.
