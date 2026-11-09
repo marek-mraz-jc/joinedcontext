@@ -712,15 +712,23 @@ async fn the_gateway_reads_the_forge_with_no_program_on_the_path() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_anonymous_oauth_server_runs_on_a_key_jc_keeps() {
     let jc = start().await;
-    let (status, body) = call(
-        &jc,
-        reqwest::Method::GET,
-        "/.well-known/oauth-authorization-server",
-        None,
-        None,
-    )
+    // The gateway answers 503 until its first load; then the document, not a 404.
+    let body = eventually("the OAuth server's document", &jc, 60, || async {
+        let (status, body) = call(
+            &jc,
+            reqwest::Method::GET,
+            "/.well-known/oauth-authorization-server",
+            None,
+            None,
+        )
+        .await;
+        match status {
+            StatusCode::OK => Ok(body),
+            StatusCode::SERVICE_UNAVAILABLE => Err(body),
+            other => panic!("{other} {body}\n{}", jc.tail()),
+        }
+    })
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}\n{}", jc.tail());
     let document: Value = serde_json::from_str(&body).unwrap();
     assert!(
         document["registration_endpoint"]
