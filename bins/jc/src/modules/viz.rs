@@ -199,8 +199,11 @@ impl Site {
                 "default-src 'none'; script-src {own}; style-src {own}; img-src {own} data:; connect-src {}; frame-src {own}; {tail}; frame-ancestors *",
                 join(&[&api, &cat])
             ),
+            // The chart host frames the renderer. Sandboxed, the host is an opaque origin, which no
+            // `frame-ancestors` source matches (`*` included): the renderer then names none.
             render: format!(
-                "default-src 'none'; script-src {own}; style-src {own} 'unsafe-inline'; img-src {own} data:; connect-src 'none'; {tail}; frame-ancestors *"
+                "default-src 'none'; script-src {own}; style-src {own} 'unsafe-inline'; img-src {own} data:; connect-src 'none'; {tail}{}",
+                if shared { "" } else { "; frame-ancestors *" }
             ),
             map: page(&tiles_img, &join(&[&tiles]), "*"),
             explore: page(
@@ -535,6 +538,30 @@ mod tests {
             let csp = header(&res, "content-security-policy");
             assert!(!csp.contains("sandbox"), "{path}: {csp}");
         }
+    }
+
+    /// Sandboxed, the chart host `/` is an opaque origin and frames `/render.html`: a
+    /// `frame-ancestors` there, `*` included, matches no opaque ancestor and the browser blocks
+    /// every chart of a dataset page (rehearsal 2026-11-09, helsinki-weather). On an origin of its
+    /// own the renderer keeps `frame-ancestors *`.
+    #[test]
+    fn a_sandboxed_chart_host_may_frame_its_renderer() {
+        let shared = LiveAddresses {
+            catalogue: "http://localhost:42102/opendata".into(),
+            ..LiveAddresses::default()
+        };
+        let site = Site::new("http://localhost:42102", &shared);
+        let res = serve(&site, &Method::GET, "/render.html");
+        let csp = header(&res, "content-security-policy");
+        assert!(!csp.contains("frame-ancestors"), "{csp}");
+        assert!(
+            csp.contains("connect-src 'none'") && csp.contains("sandbox"),
+            "{csp}"
+        );
+        let own = Site::new("https://viz.city.test", &live());
+        let res = serve(&own, &Method::GET, "/render.html");
+        let csp = header(&res, "content-security-policy");
+        assert!(csp.ends_with("frame-ancestors *"), "{csp}");
     }
 
     /// A sandboxed page asks MapLibre's module and worker as `Origin: null`: the releases answer
