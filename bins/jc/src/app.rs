@@ -63,8 +63,15 @@ pub struct MountPlan {
     pub spec: MountSpec,
     pub mount: Mount,
     /// More router-table entries of the same router: the other root paths of a module that
-    /// answers at whole paths (`Module::root_paths`), whose router then sees the path unstripped.
+    /// answers at whole paths (`Module::root_paths`), or the later `[[mounts.<module>]]` entries.
+    /// The router hands each request the `Mount` of the entry it came in on (the request's own
+    /// host and that entry's prefix).
     pub also: Vec<MountSpec>,
+    /// Whether the module answers at whole paths (the gateway, the assistant): its router sees
+    /// each request's path unstripped on every entry. Every other module's router sees the path
+    /// with the entry's prefix stripped, on its later entries as on its first, because a module
+    /// router is written relative to its mount and the entry's `Mount` names that prefix.
+    pub at_root: bool,
 }
 
 impl MountPlan {
@@ -72,17 +79,70 @@ impl MountPlan {
     pub fn specs(&self) -> impl Iterator<Item = &MountSpec> {
         std::iter::once(&self.spec).chain(&self.also)
     }
-
-    /// Whether the module answers at whole root paths rather than under a prefix of its own.
-    #[must_use]
-    pub fn at_root(&self) -> bool {
-        !self.also.is_empty()
-    }
 }
 
-/// Places every configured module: an explicit `[mounts.<module>]` entry wins, otherwise the mode
-/// decides (slug: any host, path `/<slug>`; host: `<label>.<base_host>`, path `/`). Overlapping
-/// placements are refused here, before any module starts.
+/// One router-table entry of `module`, its host lowercased and its prefix normalized.
+fn entry_spec(
+    module: Module,
+    host: Option<String>,
+    prefix: &str,
+) -> Result<MountSpec, RouterError> {
+    let prefix = jc_router::normalize_prefix(prefix)?;
+    Ok(MountSpec {
+        module: module.name().to_owned(),
+        host: host.map(|h| h.trim().to_ascii_lowercase()),
+        path_prefix: (!prefix.is_empty()).then_some(prefix),
+    })
+}
+
+/// Refuses the `[mounts.<module>]` entries jc must not route: none at all, a wildcard or
+/// malformed host, a host-less entry in host mode (it would answer on every host), a prefix a
+/// whole-path module does not answer at, and two equal entries.
+fn check_entries(mode: MountMode, module: Module, specs: &[MountSpec]) -> Result<(), StartError> {
+    let refuse =
+        |message: String| StartError::Config(crate::config::ConfigError::Mount { module, message });
+    if specs.is_empty() {
+        return Err(refuse("no entry".into()));
+    }
+    let roots = module.root_paths();
+    for (i, spec) in specs.iter().enumerate() {
+        match spec.host.as_deref() {
+            Some(h) if h.contains('*') => {
+                return Err(refuse(format!("host '{h}': wildcard hosts are refused")));
+            }
+            Some(h) if !crate::config::valid_host(h) => {
+                return Err(refuse(format!("host '{h}' is not a plain host name")));
+            }
+            None if mode == MountMode::Host => {
+                return Err(refuse(
+                    "an entry without a host would answer on every host in host mode".into(),
+                ));
+            }
+            _ => {}
+        }
+        if let Some(prefix) = spec.path_prefix.as_deref()
+            && !roots.is_empty()
+            && !roots.contains(&prefix)
+        {
+            return Err(refuse(format!(
+                "prefix '{prefix}': {module} answers only at its own paths ({})",
+                roots.join(", ")
+            )));
+        }
+        if specs[..i].contains(spec) {
+            return Err(refuse(format!(
+                "two equal entries (host '{}', prefix '{}')",
+                spec.host.as_deref().unwrap_or("*"),
+                spec.path_prefix.as_deref().unwrap_or("/")
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Places every configured module: explicit `[mounts.<module>]` entries win, otherwise the mode
+/// decides (slug: any host, path `/<slug>`; host: `<label>.<base_host>`, path `/`). Bad entries
+/// and overlapping placements are refused here, before any module starts.
 pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
     let mut plans = Vec::with_capacity(cfg.roles.len());
     for &module in &cfg.roles {
@@ -91,53 +151,58 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
             continue;
         }
         let roots = module.root_paths();
-        if cfg.mode == MountMode::Slug && !roots.is_empty() && !cfg.mounts.contains_key(&module) {
-            let mount = Mount::new(module.name(), cfg.scheme.clone(), cfg.base_host.clone(), "")?;
-            let mut specs = roots.iter().map(|prefix| MountSpec {
-                module: module.name().to_owned(),
-                host: None,
-                path_prefix: Some((*prefix).to_owned()),
-            });
-            let spec = specs
-                .next()
-                .ok_or(RouterError::InvalidPrefix(String::new()))?;
-            plans.push(MountPlan {
-                module,
-                spec,
-                mount,
-                also: specs.collect(),
-            });
-            continue;
-        }
-        let (host, prefix) = match cfg.mounts.get(&module) {
-            Some(o) => (
-                o.host.clone().map(|h| h.trim().to_ascii_lowercase()),
-                o.path_prefix.clone().unwrap_or_default(),
-            ),
+        let at_root = !roots.is_empty();
+        let mut specs = match cfg.mounts.get(&module) {
+            Some(entries) => {
+                let specs = entries
+                    .iter()
+                    .map(|e| {
+                        entry_spec(
+                            module,
+                            e.host.clone(),
+                            e.path_prefix.as_deref().unwrap_or_default(),
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                check_entries(cfg.mode, module, &specs)?;
+                specs
+            }
             None => match cfg.mode {
-                MountMode::Slug => (None, format!("/{}", module.slug())),
-                MountMode::Host => (
+                // A whole-path module answers at its root paths on any host.
+                MountMode::Slug if at_root => roots
+                    .iter()
+                    .map(|prefix| entry_spec(module, None, prefix))
+                    .collect::<Result<Vec<_>, _>>()?,
+                MountMode::Slug => vec![entry_spec(module, None, &format!("/{}", module.slug()))?],
+                MountMode::Host => vec![entry_spec(
+                    module,
                     Some(format!("{}.{}", module.host_label(), cfg.base_host)),
-                    String::new(),
-                ),
+                    "",
+                )?],
             },
+        }
+        .into_iter();
+        let spec = specs
+            .next()
+            .ok_or(RouterError::InvalidPrefix(String::new()))?;
+        // Slug mode's default root paths are no address of their own: the module's base is
+        // the domain's root.
+        let prefix = match (cfg.mounts.contains_key(&module), cfg.mode, at_root) {
+            (false, MountMode::Slug, true) => "",
+            _ => spec.path_prefix.as_deref().unwrap_or_default(),
         };
         let mount = Mount::new(
             module.name(),
             cfg.scheme.clone(),
-            host.clone().unwrap_or_else(|| cfg.base_host.clone()),
-            prefix.clone(),
+            spec.host.clone().unwrap_or_else(|| cfg.base_host.clone()),
+            prefix,
         )?;
-        let spec = MountSpec {
-            module: module.name().to_owned(),
-            host,
-            path_prefix: (!mount.path_prefix.is_empty()).then(|| mount.path_prefix.clone()),
-        };
         plans.push(MountPlan {
             module,
             spec,
             mount,
-            also: Vec::new(),
+            also: specs.collect(),
+            at_root,
         });
     }
     // Dry run of the router table: overlap is refused before any module state exists.
@@ -147,6 +212,22 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
     }
     dry.build()?;
     Ok(plans)
+}
+
+/// Mounts `router` at every entry of `plan`, behind the whole-path rewrite for a module that
+/// answers at whole paths.
+fn mount_all(mut builder: JcRouterBuilder, plan: &MountPlan, router: &Router) -> JcRouterBuilder {
+    for spec in plan.specs() {
+        let router = router.clone();
+        #[cfg(feature = "gateway")]
+        let router = if plan.at_root {
+            modules::gateway::at_root(router)
+        } else {
+            router
+        };
+        builder = builder.mount(spec.clone(), router);
+    }
+    builder
 }
 
 /// The Portal's mount, answered with 503 until the Portal is built. The Portal discovers its
@@ -270,12 +351,14 @@ pub async fn build_router(
     let mut gateway = None;
     let mut hop = None;
     for plan in plans {
-        tracing::info!(
-            module = plan.module.name(),
-            host = plan.spec.host.as_deref().unwrap_or("*"),
-            prefix = plan.spec.path_prefix.as_deref().unwrap_or("/"),
-            "mounted"
-        );
+        for spec in plan.specs() {
+            tracing::info!(
+                module = plan.module.name(),
+                host = spec.host.as_deref().unwrap_or("*"),
+                prefix = spec.path_prefix.as_deref().unwrap_or("/"),
+                "mounted"
+            );
+        }
         #[cfg(feature = "shako")]
         if plan.module == Module::Shako {
             let state = modules::shako::build_state(&cfg.shako, ctx.setup, ctx.secrets).await?;
@@ -287,7 +370,7 @@ pub async fn build_router(
                 ),
                 None => (main_router, v2_router),
             };
-            builder = builder.mount(plan.spec.clone(), main_router);
+            builder = mount_all(builder, &plan, &main_router);
             // S1: mount `/v2/` at the host root in both one-domain and host modes
             let v2_spec = MountSpec {
                 module: "shako-registry".into(),
@@ -299,7 +382,7 @@ pub async fn build_router(
         }
         if plan.module == Module::Portal {
             let late = LateRouter::default();
-            builder = builder.mount(plan.spec, late.router());
+            builder = mount_all(builder, &plan, &late.router());
             portal = Some((late, plan.mount));
             continue;
         }
@@ -316,22 +399,13 @@ pub async fn build_router(
                 Some(door) => door.guard(Module::Antares, built.router, ctx.setup),
                 None => built.router,
             };
-            builder = builder.mount(plan.spec, router);
+            builder = mount_all(builder, &plan, &router);
             hop = built.hop;
             continue;
         }
         if plan.module == Module::Gateway {
             let late = LateRouter::default();
-            for spec in plan.specs() {
-                let router = late.router();
-                #[cfg(feature = "gateway")]
-                let router = if plan.at_root() {
-                    modules::gateway::at_root(router)
-                } else {
-                    router
-                };
-                builder = builder.mount(spec.clone(), router);
-            }
+            builder = mount_all(builder, &plan, &late.router());
             gateway = Some(LateGateway {
                 slot: late,
                 mount: plan.mount,
@@ -341,24 +415,15 @@ pub async fn build_router(
         }
         if plan.module == Module::Assistant {
             // Started already (`start`); off, the mount answers 404.
-            let router = assistant.clone().unwrap_or_default();
-            for spec in plan.specs() {
-                let router = router.clone();
-                #[cfg(feature = "gateway")]
-                let router = if plan.at_root() {
-                    modules::gateway::at_root(router)
-                } else {
-                    router
-                };
-                builder = builder.mount(spec.clone(), router);
-            }
+            builder = mount_all(builder, &plan, &assistant.clone().unwrap_or_default());
             continue;
         }
-        let mut router = modules::build(plan.module, cfg, ctx, plan.mount, shutdown, tasks).await?;
+        let mut router =
+            modules::build(plan.module, cfg, ctx, plan.mount.clone(), shutdown, tasks).await?;
         if let Some(door) = ctx.door {
             router = door.guard(plan.module, router, ctx.setup);
         }
-        builder = builder.mount(plan.spec, router);
+        builder = mount_all(builder, &plan, &router);
     }
     if let Some(late) = gateway.as_mut() {
         late.hop = hop;
@@ -878,6 +943,214 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
     use tower::ServiceExt;
+
+    /// dev's edge rows as jc mounts (the CUTOVER section 4 table).
+    const DEV_MOUNTS: &str = include_str!("../tests/fixtures/dev-mounts.toml");
+
+    fn dev_config(roles: &str, file: &str) -> Config {
+        let file = Config::parse_file(std::path::Path::new("jc.toml"), file).unwrap();
+        let cli = crate::config::Cli {
+            role: Some(roles.into()),
+            scheme: Some("https".into()),
+            ..crate::config::Cli::default()
+        };
+        Config::merge(cli, file).unwrap()
+    }
+
+    /// Which module the planned router table sends `host` `path` to, and the path it hands over.
+    async fn routed(plans: &[MountPlan], host: &str, path: &str) -> (StatusCode, String) {
+        let mut builder = JcRouterBuilder::new("https", "city.test");
+        for plan in plans {
+            let name = plan.module.name();
+            let router = Router::new().fallback(move |uri: axum::http::Uri| async move {
+                format!("{name} {}", uri.path())
+            });
+            builder = mount_all(builder, plan, &router);
+        }
+        let req = Request::builder()
+            .uri(path)
+            .header(header::HOST, host)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = builder.build().unwrap().dispatch(req, None).await;
+        let status = resp.status();
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 16)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    #[tokio::test]
+    async fn the_dev_table_plans_every_row_and_routes_each_to_its_module() {
+        let cfg = dev_config("kaisatsu,portal,dataroom,daiya,shako,gateway", DEV_MOUNTS);
+        let plans = plan_mounts(&cfg).unwrap();
+        let rows: Vec<(&str, &str, &str)> = plans
+            .iter()
+            .flat_map(|p| {
+                p.specs().map(|s| {
+                    (
+                        s.module.as_str(),
+                        s.host.as_deref().unwrap_or("*"),
+                        s.path_prefix.as_deref().unwrap_or("/"),
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("kaisatsu", "idm.city.test", "/"),
+                ("dataroom", "opendata.city.test", "/"),
+                ("daiya", "city.test", "/grafana"),
+                ("gateway", "api.city.test", "/"),
+                ("gateway", "city.test", "/cs"),
+                ("gateway", "city.test", "/api/endpoint"),
+                ("gateway", "city.test", "/api/mcp"),
+                ("gateway", "city.test", "/catalog"),
+                ("gateway", "city.test", "/catalog.jsonld"),
+                ("gateway", "city.test", "/catalog.ttl"),
+                ("gateway", "portal.city.test", "/cs"),
+                ("gateway", "portal.city.test", "/api/endpoint"),
+                ("gateway", "portal.city.test", "/api/mcp"),
+                ("portal", "portal.city.test", "/"),
+                ("shako", "city.test", "/git"),
+            ]
+        );
+        let gateway = plans.iter().find(|p| p.module == Module::Gateway).unwrap();
+        assert!(gateway.at_root);
+        // The first entry is the gateway's own address.
+        assert_eq!(gateway.mount.public_base(), "https://api.city.test");
+        let portal = plans.iter().find(|p| p.module == Module::Portal).unwrap();
+        assert!(!portal.at_root);
+        assert_eq!(portal.mount.public_base(), "https://portal.city.test");
+
+        for (host, path, want) in [
+            ("idm.city.test", "/realms/dev", "kaisatsu /realms/dev"),
+            ("portal.city.test", "/", "portal /"),
+            (
+                "portal.city.test",
+                "/api/v1/health",
+                "portal /api/v1/health",
+            ),
+            ("portal.city.test", "/catalogue", "portal /catalogue"),
+            // dev sends this one to the Portal too (portal-well-known).
+            (
+                "portal.city.test",
+                "/.well-known/oauth-protected-resource/c/1",
+                "portal /.well-known/oauth-protected-resource/c/1",
+            ),
+            (
+                "portal.city.test",
+                "/api/endpoint/x",
+                "gateway /api/endpoint/x",
+            ),
+            ("portal.city.test", "/api/mcp", "gateway /api/mcp"),
+            ("portal.city.test", "/api/mcp/hub", "gateway /api/mcp/hub"),
+            ("portal.city.test", "/cs/a/b", "gateway /cs/a/b"),
+            ("opendata.city.test", "/dataset/x", "dataroom /dataset/x"),
+            ("city.test", "/grafana/api/health", "daiya /api/health"),
+            ("city.test", "/git/org/repo", "shako /org/repo"),
+            ("city.test", "/cs/a", "gateway /cs/a"),
+            (
+                "city.test",
+                "/api/endpoint/x/ngsi-ld/v1/entities",
+                "gateway /api/endpoint/x/ngsi-ld/v1/entities",
+            ),
+            ("city.test", "/api/mcp", "gateway /api/mcp"),
+            ("city.test", "/catalog", "gateway /catalog"),
+            ("city.test", "/catalog.jsonld", "gateway /catalog.jsonld"),
+            ("city.test", "/catalog.ttl", "gateway /catalog.ttl"),
+            ("api.city.test", "/catalog.ttl", "gateway /catalog.ttl"),
+            (
+                "api.city.test",
+                "/oauth/register",
+                "gateway /oauth/register",
+            ),
+            (
+                "api.city.test",
+                "/.well-known/oauth-authorization-server",
+                "gateway /.well-known/oauth-authorization-server",
+            ),
+            (
+                "api.city.test",
+                "/.well-known/oauth-protected-resource/api/mcp",
+                "gateway /.well-known/oauth-protected-resource/api/mcp",
+            ),
+            (
+                "api.city.test",
+                "/.well-known/oauth-protected-resource/api/endpoint",
+                "gateway /.well-known/oauth-protected-resource/api/endpoint",
+            ),
+        ] {
+            let (status, body) = routed(&plans, host, path).await;
+            assert_eq!(
+                (status, body.as_str()),
+                (StatusCode::OK, want),
+                "{host}{path}"
+            );
+        }
+        // Paths dev does not route on a host reach nothing: `{d}/` and `{d}/ckan` are APISIX
+        // redirects, `{d}/catalogue` a glob spelling jc does not serve, the gateway's OAuth
+        // paths exist only on its own host.
+        for (host, path) in [
+            ("city.test", "/"),
+            ("city.test", "/ckan"),
+            ("city.test", "/catalogue"),
+            ("city.test", "/api/mcpx"),
+            ("city.test", "/oauth/register"),
+            ("city.test", "/.well-known/oauth-authorization-server"),
+            ("portal.city.test.evil", "/"),
+            ("data.city.test", "/"),
+            ("nope.city.test", "/api/endpoint/x"),
+        ] {
+            let (status, body) = routed(&plans, host, path).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{host}{path}: {body}");
+        }
+    }
+
+    fn refusal(file: &str) -> String {
+        let cfg = dev_config("gateway,portal", file);
+        plan_mounts(&cfg).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn bad_mount_entries_refuse_to_start() {
+        let host_mode = "mode = \"host\"\nbase_host = \"city.test\"\n";
+        let err = refusal(&format!(
+            "{host_mode}[[mounts.portal]]\nhost = \"portal.city.test\"\n[[mounts.portal]]\npath_prefix = \"/x\"\n"
+        ));
+        assert!(err.contains("without a host"), "{err}");
+        let err = refusal(&format!("{host_mode}[mounts.portal]\npath_prefix = \"\"\n"));
+        assert!(err.contains("without a host"), "{err}");
+        let err = refusal(&format!(
+            "{host_mode}[mounts.portal]\nhost = \"*.apps.city.test\"\n"
+        ));
+        assert!(err.contains("wildcard"), "{err}");
+        let err = refusal(&format!(
+            "{host_mode}[mounts.portal]\nhost = \"portal.*.test\"\n"
+        ));
+        assert!(err.contains("wildcard"), "{err}");
+        let err = refusal(&format!("{host_mode}[mounts.portal]\nhost = \"a b\"\n"));
+        assert!(err.contains("plain host name"), "{err}");
+        let err = refusal(&format!(
+            "{host_mode}[[mounts.gateway]]\nhost = \"API.city.test\"\n[[mounts.gateway]]\nhost = \"api.city.test\"\npath_prefix = \"/\"\n"
+        ));
+        assert!(err.contains("two equal entries"), "{err}");
+        let err = refusal(&format!(
+            "{host_mode}[[mounts.gateway]]\nhost = \"api.city.test\"\n[[mounts.gateway]]\nhost = \"portal.city.test\"\npath_prefix = \"/gw\"\n"
+        ));
+        assert!(err.contains("answers only at its own paths"), "{err}");
+        let err = refusal("mounts.portal = []\n");
+        assert!(err.contains("no entry"), "{err}");
+        // A later entry on another module's (host, prefix) is the router's overlap refusal.
+        let err = refusal(&format!(
+            "{host_mode}[mounts.portal]\nhost = \"portal.city.test\"\n[[mounts.gateway]]\nhost = \"api.city.test\"\n[[mounts.gateway]]\nhost = \"portal.city.test\"\n"
+        ));
+        assert!(err.contains("overlapping"), "{err}");
+        // Slug mode keeps host-less entries: they are its normal shape.
+        let cfg = dev_config("portal", "[mounts.portal]\npath_prefix = \"\"\n");
+        assert!(plan_mounts(&cfg).is_ok());
+    }
 
     async fn status(late: &LateRouter) -> StatusCode {
         let req = Request::builder()

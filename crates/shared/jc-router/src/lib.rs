@@ -311,6 +311,25 @@ impl JcRouter {
         (scheme, host)
     }
 
+    /// The entry a request on `host_with_port` (`host_only` without its port) for `path` goes to:
+    /// a linear scan, most specific host and longest prefix first.
+    fn find(&self, host_with_port: &str, host_only: &str, path: &str) -> Option<&MountedEntry> {
+        self.entries.iter().find(|entry| {
+            let host_ok = match &entry.host {
+                Some(h) => h == host_with_port || h == host_only,
+                None => true,
+            };
+            if !host_ok {
+                return false;
+            }
+            // `path` is the prefix or continues it with a whole segment (no allocation per entry).
+            entry.prefix.is_empty()
+                || path
+                    .strip_prefix(entry.prefix.as_str())
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })
+    }
+
     pub async fn dispatch(&self, mut req: Request<Body>, peer: Option<IpAddr>) -> Response<Body> {
         let peer = peer.or_else(|| {
             req.extensions()
@@ -324,22 +343,7 @@ impl JcRouter {
             .map_or(host_with_port.as_str(), |(h, _)| h);
         let path = req.uri().path().to_owned();
 
-        let matched = self.entries.iter().find(|entry| {
-            let host_ok = match &entry.host {
-                Some(h) => h == &host_with_port || h == host_only,
-                None => true,
-            };
-            if !host_ok {
-                return false;
-            }
-            if entry.prefix.is_empty() {
-                true
-            } else {
-                path == entry.prefix || path.starts_with(&format!("{}/", entry.prefix))
-            }
-        });
-
-        let Some(entry) = matched else {
+        let Some(entry) = self.find(&host_with_port, host_only, &path) else {
             return (StatusCode::NOT_FOUND, "unmounted path").into_response();
         };
 
@@ -668,5 +672,105 @@ mod tests {
             err.to_string(),
             "overlapping mounts between module 'a' and 'b' on host '*' prefix '/'"
         );
+    }
+
+    /// Router lookup over jc's whole host-mode table (dev's rows plus the default hosts, 30
+    /// entries) against today's one entry per module (11). Timing only:
+    /// `cargo test -p jc-router --release -- --ignored --nocapture lookup_time`.
+    #[test]
+    #[ignore = "timing, run by hand"]
+    fn lookup_time_over_the_full_table() {
+        fn table(specs: &[(&str, &str)]) -> JcRouter {
+            let mut b = JcRouterBuilder::new("https", "city.test");
+            for (i, (host, prefix)) in specs.iter().enumerate() {
+                b = b.mount(
+                    MountSpec {
+                        module: format!("m{i}"),
+                        host: Some((*host).into()),
+                        path_prefix: Some((*prefix).into()),
+                    },
+                    Router::new(),
+                );
+            }
+            b.build().unwrap()
+        }
+        let hosts: Vec<String> = [
+            "id",
+            "opendata",
+            "dashboards",
+            "streams",
+            "broker",
+            "api",
+            "portal",
+            "git",
+            "assistant",
+            "viz",
+            "tiles",
+        ]
+        .iter()
+        .map(|l| format!("{l}.city.test"))
+        .collect();
+        let one_each: Vec<(&str, &str)> = hosts.iter().map(|h| (h.as_str(), "")).collect();
+        let full: Vec<(&str, &str)> = vec![
+            ("idm.city.test", ""),
+            ("portal.city.test", ""),
+            ("opendata.city.test", ""),
+            ("city.test", "/grafana"),
+            ("city.test", "/git"),
+            ("api.city.test", ""),
+            ("city.test", "/cs"),
+            ("city.test", "/api/endpoint"),
+            ("city.test", "/api/mcp"),
+            ("city.test", "/catalog"),
+            ("city.test", "/catalog.jsonld"),
+            ("city.test", "/catalog.ttl"),
+            ("portal.city.test", "/cs"),
+            ("portal.city.test", "/api/endpoint"),
+            ("portal.city.test", "/api/mcp"),
+            ("streams.city.test", ""),
+            ("broker.city.test", ""),
+            ("assistant.city.test", ""),
+            ("viz.city.test", ""),
+            ("tiles.city.test", ""),
+            ("status.city.test", ""),
+            ("ai.city.test", ""),
+            ("a1.city.test", ""),
+            ("a2.city.test", ""),
+            ("a3.city.test", ""),
+            ("a4.city.test", ""),
+            ("a5.city.test", ""),
+            ("a6.city.test", ""),
+            ("a7.city.test", ""),
+            ("a8.city.test", ""),
+        ];
+        const N: u32 = 1_000_000;
+        for (name, router) in [("full", table(&full)), ("one per module", table(&one_each))] {
+            for (host, path) in [
+                ("portal.city.test", "/api/endpoint/x/ngsi-ld/v1/entities"),
+                ("nope.city.test", "/api/endpoint/x"),
+            ] {
+                // The fastest of five rounds: the host is shared, so slower rounds are noise.
+                let mut best = u128::MAX;
+                let mut hits = 0u32;
+                for _ in 0..5 {
+                    let start = std::time::Instant::now();
+                    hits = 0;
+                    for _ in 0..N {
+                        let found = std::hint::black_box(&router).find(
+                            std::hint::black_box(host),
+                            host,
+                            std::hint::black_box(path),
+                        );
+                        hits += u32::from(found.is_some());
+                    }
+                    best = best.min(start.elapsed().as_nanos() / u128::from(N));
+                }
+                let ns = best;
+                println!(
+                    "{name} ({} entries) {host}{path}: {ns} ns per lookup, {hits} hits",
+                    router.entries.len()
+                );
+            }
+        }
     }
 }
