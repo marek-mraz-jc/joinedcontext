@@ -630,7 +630,11 @@ async fn the_gateway_reads_the_forge_with_no_program_on_the_path() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(jc.log_has("gateway: the forge checkout read"), "{}", jc.tail());
+    assert!(
+        jc.log_has("gateway: the forge checkout read"),
+        "{}",
+        jc.tail()
+    );
     assert!(!jc.log_has("git does not run"), "{}", jc.tail());
 }
 

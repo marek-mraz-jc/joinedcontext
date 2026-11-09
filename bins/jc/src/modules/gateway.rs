@@ -282,7 +282,10 @@ impl ForgeArchives {
         let answer = self
             .http
             .get(format!("{}/api/v1/repos/{shown}", self.forge))
-            .header(axum::http::header::AUTHORIZATION, self.authorization.clone())
+            .header(
+                axum::http::header::AUTHORIZATION,
+                self.authorization.clone(),
+            )
             .send()
             .map_err(|e| format!("{shown}: the forge does not answer: {}", e.without_url()))?;
         let status = answer.status();
@@ -300,7 +303,9 @@ impl ForgeArchives {
             .read_to_end(&mut body)
             .map_err(|e| format!("{shown}: {}", e))?;
         if body.len() as u64 > ceiling {
-            return Err(format!("{shown} is larger than the {ceiling} bytes jc reads"));
+            return Err(format!(
+                "{shown} is larger than the {ceiling} bytes jc reads"
+            ));
         }
         Ok(body)
     }
@@ -333,7 +338,11 @@ impl ForgeArchives {
     /// Removes the trees of `slug` other than `keep`, once the link points at `keep`.
     pub fn prune(&self, slug: &str, keep: &Path) {
         let prefix = format!("{slug}.tree-");
-        for item in std::fs::read_dir(&self.cache).into_iter().flatten().flatten() {
+        for item in std::fs::read_dir(&self.cache)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
             if item.file_name().to_string_lossy().starts_with(&prefix) && item.path() != keep {
                 let _ = std::fs::remove_dir_all(item.path());
             }
@@ -413,15 +422,22 @@ fn unpack(archive: &[u8], into: &Path) -> Result<(), String> {
         let absolute = matches!(name.as_bytes().first(), Some(b'/' | b'\\'))
             || name.as_bytes().get(1) == Some(&b':');
         let Some(path) = entry.enclosed_name().filter(|_| !absolute) else {
-            return Err(format!("the archive carries `{name}`, outside the checkout"));
+            return Err(format!(
+                "the archive carries `{name}`, outside the checkout"
+            ));
         };
         // Drop the directory the forge wraps the tree in.
         let relative: PathBuf = path.components().skip(1).collect();
         if relative.as_os_str().is_empty() {
             continue;
         }
-        if !relative.components().all(|c| matches!(c, Component::Normal(_))) {
-            return Err(format!("the archive carries `{name}`, outside the checkout"));
+        if !relative
+            .components()
+            .all(|c| matches!(c, Component::Normal(_)))
+        {
+            return Err(format!(
+                "the archive carries `{name}`, outside the checkout"
+            ));
         }
         let ceiling = MAX_ENTRY.min(budget);
         if entry.size() > ceiling {
@@ -489,8 +505,7 @@ pub fn sync_forge(
             only: None,
         };
         let archives = ForgeArchives::new(forge, &repo.owner, token, projects.join(".cache"))?;
-        for linked in
-            jcctl::commands::checkouts::sync_with(&tree, &projects, &options, &archives)?
+        for linked in jcctl::commands::checkouts::sync_with(&tree, &projects, &options, &archives)?
         {
             if let Err(why) = linked.result {
                 tracing::warn!(project = %linked.slug, %why, "gateway: a project checkout failed");
