@@ -706,6 +706,52 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     let (status, body) = call(&jc, post.clone(), &writes, Some(&person), Some(&other)).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
 
+    // A write no Policy grants the caller is refused before the view, which would answer 405
+    // with the writes it serves somebody else: 401 without a token, 403 with one, and no
+    // `Allow` (prod's zilina-doprava and praha-mesto answered 405 to an anonymous create).
+    // The writer's token names the closed Endpoint, where the writers' Policy applies.
+    for (who, root, token, want) in [
+        ("anonymous", &public, None, StatusCode::UNAUTHORIZED),
+        (
+            "a writer",
+            &closed,
+            Some(person.as_str()),
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let one = format!("{root}/entities/urn:ngsi-ld:Thing:one");
+        for (method, path, body) in [
+            (post.clone(), format!("{root}/entities"), Some(&thing)),
+            (reqwest::Method::DELETE, one.clone(), None),
+            (reqwest::Method::PATCH, format!("{one}/attrs"), Some(&thing)),
+            (
+                post.clone(),
+                format!("{root}/entityOperations/delete"),
+                None,
+            ),
+        ] {
+            if token.is_some() && method == post && path.ends_with("/entities") {
+                continue; // the writers' Policy grants this create
+            }
+            let mut req = Client::new()
+                .request(method.clone(), jc.url(&path))
+                .header("jc-reason", "smoke");
+            if let Some(token) = token {
+                req = req.bearer_auth(token);
+            }
+            if let Some(body) = body {
+                req = req
+                    .header("content-type", "application/json")
+                    .body(body.to_string());
+            }
+            let resp = req.send().await.unwrap();
+            let (status, allow) = (resp.status(), resp.headers().get("allow").cloned());
+            let text = resp.text().await.unwrap_or_default();
+            assert_eq!(status, want, "{who} {method} {path}: {text}");
+            assert!(allow.is_none(), "{who} {method} {path}: Allow {allow:?}");
+        }
+    }
+
     // Anonymous: the public Endpoint answers types and an entity query, the closed one 401.
     let (status, body) = call(&jc, get.clone(), &format!("{public}/types"), None, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
