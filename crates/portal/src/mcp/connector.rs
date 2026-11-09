@@ -49,7 +49,7 @@ pub fn router() -> Router<AppState> {
 fn base(state: &AppState) -> String {
     state
         .config
-        .public_base_url
+        .public_base()
         .as_str()
         .trim_end_matches('/')
         .to_owned()
@@ -313,7 +313,7 @@ fn answered_here(
     message: &Value,
 ) -> Option<(Response, String)> {
     if method == "resources/read" && message["params"]["uri"] == super::app_view::URI {
-        let contents = super::app_view::contents(&state.config.public_base_url);
+        let contents = super::app_view::contents(&state.config.public_base());
         let answer = result(id.clone(), json!({ "contents": contents }));
         return Some((json_response(StatusCode::OK, &answer), "allowed".to_owned()));
     }
@@ -477,7 +477,7 @@ async fn judge(
                 with_projects_named(
                     response,
                     &connector.projects(),
-                    &state.config.public_base_url,
+                    &state.config.public_base(),
                     state.paired_tabs.is_paired(
                         &connector.id,
                         &connector.owner,
@@ -707,7 +707,7 @@ fn tab_action(
                     undelivered.reason(),
                     state
                         .config
-                        .public_base_url
+                        .public_base()
                         .join(route)
                         .map_or_else(|_| route.to_owned(), |address| address.to_string())
                 ),

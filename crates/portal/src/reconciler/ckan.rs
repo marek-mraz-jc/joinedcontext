@@ -135,6 +135,9 @@ pub struct CkanSync {
     /// The installation's own catalogue, where a public Endpoint of a project without a
     /// `CkanInstance` is published (EP-174). `None` publishes such an Endpoint nowhere.
     installation: Option<CkanInstanceSpec>,
+    /// Each Organization's own catalogue (`organization_host::OrganizationCatalogue`): an
+    /// Endpoint of a project it owns publishes there alone, under its name, with its token.
+    organizations: Vec<crate::organization_host::OrganizationCatalogue>,
 }
 
 impl CkanSync {
@@ -149,7 +152,82 @@ impl CkanSync {
             last_call: Arc::default(),
             api_route: None,
             installation: None,
+            organizations: Vec::new(),
         }
+    }
+
+    /// Publishes every Endpoint of an Organization's projects into that Organization's own
+    /// catalogue (jc `[[organizations]]`). The operator configures them, never a manifest.
+    pub fn for_organizations(
+        mut self,
+        catalogues: Vec<crate::organization_host::OrganizationCatalogue>,
+    ) -> Self {
+        self.organizations = catalogues;
+        self
+    }
+
+    /// `target` as its Organization's own catalogue takes it: that catalogue's URL, the CKAN
+    /// organisation of the Organization's name. A project of an Organization with no catalogue
+    /// of its own keeps what its `CkanInstance` says.
+    fn routed(&self, repo: &Repository, mut target: Target) -> Target {
+        let project = target.id.namespace.clone().unwrap_or_default();
+        let Some(catalogue) = organization_in(repo, &project)
+            .and_then(|org| self.organizations.iter().find(|c| c.organization == org))
+        else {
+            return target;
+        };
+        target.instance.url = catalogue.url.as_str().trim_end_matches('/').to_owned();
+        target.instance.organization_default = Some(catalogue.organization.clone());
+        target.publication.organization = Some(catalogue.organization.clone());
+        target
+    }
+
+    /// The Organization catalogue `instance` is, after [`CkanSync::routed`].
+    fn organization_catalogue(
+        &self,
+        instance: &CkanInstanceSpec,
+    ) -> Option<&crate::organization_host::OrganizationCatalogue> {
+        self.organizations
+            .iter()
+            .find(|c| c.url.as_str().trim_end_matches('/') == instance.base_url())
+    }
+
+    /// The client of `target`'s catalogue: its Organization's (that catalogue's API address,
+    /// reach and token file) or the instance's own (`apiTokenRef`), and the settings its
+    /// datasets link the Organization's data host with.
+    fn client(
+        &self,
+        target: &Target,
+        repository: &Path,
+        source: publisher::TokenSource<'_>,
+    ) -> Result<(HttpCkan, String, Settings), String> {
+        let mut settings = self.settings.clone();
+        let Some(catalogue) = self.organization_catalogue(&target.instance) else {
+            let api_url = self.api_url(&target.instance);
+            let token = project_token(target, repository, source)?;
+            let api = HttpCkan::new(&api_url, token).map_err(|err| err.to_string())?;
+            return Ok((api, api_url, settings));
+        };
+        let api_url = catalogue
+            .api
+            .as_ref()
+            .unwrap_or(&catalogue.url)
+            .as_str()
+            .trim_end_matches('/')
+            .to_owned();
+        let token =
+            jcctl::secrets::SecretValue::from_file(&catalogue.token_file).ok_or_else(|| {
+                format!(
+                    "the token file of {}'s catalogue is unreadable or empty",
+                    catalogue.organization
+                )
+            })?;
+        let api =
+            HttpCkan::reaching(&api_url, token, catalogue.reach).map_err(|err| err.to_string())?;
+        if let Some(host) = &catalogue.data_host {
+            settings.host = host.clone();
+        }
+        Ok((api, api_url, settings))
     }
 
     /// Publishes a public Endpoint of a project that declares no `CkanInstance` into the
@@ -255,7 +333,7 @@ impl CkanSync {
         for project in projects(repo) {
             match publisher::targets_with(repo, &project, self.installation.as_ref()) {
                 Ok((targets, unplanned)) => {
-                    wanted.extend(targets);
+                    wanted.extend(targets.into_iter().map(|t| self.routed(repo, t)));
                     for line in unplanned {
                         held.insert((line.project.clone(), line.endpoint.clone()));
                         if let Some(report) = self.unplanned(line) {
@@ -327,6 +405,7 @@ impl CkanSync {
         // that did not read or of an Endpoint held back this run.
         for target in withdrawn(previous, &claims, self.installation.as_ref())
             .into_iter()
+            .map(|target| self.routed(repo, target))
             .filter(|target| {
                 let project = target.id.namespace.clone().unwrap_or_default();
                 !unread.contains(&project) && !held.contains(&(project, target.id.name.clone()))
@@ -424,14 +503,13 @@ impl CkanSync {
         measured: Measurements,
         known: &Organizations,
     ) -> Report {
-        let settings = self.settings.clone();
         let line = |publication| Report::of(target, publication);
         let target = target.clone();
         let repository = repository.to_path_buf();
         let age_key_file = self.age_key_file.clone();
         let last_call = self.last_call.clone();
-        let api_url = self.api_url(&target.instance);
         let known = known.clone();
+        let this = self.clone();
         // Resolving the token, opening the socket and reading the gateway are all blocking, and
         // dropping a blocking client inside this runtime panics, so the whole publication of one
         // Endpoint happens on a blocking thread.
@@ -440,8 +518,7 @@ impl CkanSync {
                 env: None,
                 age_key_file: age_key_file.as_deref(),
             };
-            let token = project_token(&target, &repository, source)?;
-            let api = HttpCkan::new(&api_url, token).map_err(|err| err.to_string())?;
+            let (api, api_url, settings) = this.client(&target, &repository, source)?;
             let mut api = Paced::new(api, last_call, CALL_GAP).remembering(&api_url, known);
             if withdraw {
                 return withdraw_one(&mut api, &target);
@@ -476,15 +553,14 @@ impl CkanSync {
         let repository = repository.to_path_buf();
         let age_key_file = self.age_key_file.clone();
         let last_call = self.last_call.clone();
-        let api_url = self.api_url(&target.instance);
         let known = known.clone();
+        let this = self.clone();
         let work = tokio::task::spawn_blocking(move || {
             let source = publisher::TokenSource {
                 env: None,
                 age_key_file: age_key_file.as_deref(),
             };
-            let token = project_token(&target, &repository, source)?;
-            let api = HttpCkan::new(&api_url, token).map_err(|err| err.to_string())?;
+            let (api, api_url, _) = this.client(&target, &repository, source)?;
             let mut api = Paced::new(api, last_call, CALL_GAP).remembering(&api_url, known);
             sweep_with(&mut api, &organization, &kept)
         })
@@ -903,6 +979,52 @@ fn project_token(
     publisher::token(&target.instance, &folder, source).map_err(|err| err.to_string())
 }
 
+/// The Organization that owns `project` in `repo`, as `permissions::organization_of` reads it
+/// in the mirror: its Project's `spec.organizationRef`, else the installation's (the only
+/// Organization, or the only one that sets `spec.installation`).
+fn organization_in(repo: &Repository, project: &str) -> Option<String> {
+    let org_level = |id: &ResourceId| {
+        id.namespace
+            .as_deref()
+            .is_none_or(|n| n == crate::api::blueprints::ORG_NAMESPACE)
+    };
+    let owner = repo
+        .iter()
+        .find(|(id, _)| org_level(id) && id.kind == "Project" && id.name == project)
+        .and_then(|(_, r)| {
+            r.manifest
+                .spec
+                .get("organizationRef")
+                .and_then(crate::resource::reference_name)
+                .map(str::to_owned)
+        });
+    if owner.is_some() {
+        return owner;
+    }
+    let organizations: Vec<(&str, bool)> = repo
+        .iter()
+        .filter(|(id, _)| org_level(id) && id.kind == "Organization")
+        .map(|(id, r)| {
+            (
+                id.name.as_str(),
+                r.manifest.spec.get("installation") == Some(&serde_json::Value::Bool(true)),
+            )
+        })
+        .collect();
+    match organizations.as_slice() {
+        [(only, _)] => Some((*only).to_owned()),
+        _ => {
+            let mut claims = organizations
+                .iter()
+                .filter(|(_, installation)| *installation);
+            match (claims.next(), claims.next()) {
+                (Some((one, _)), None) => Some((*one).to_owned()),
+                _ => None,
+            }
+        }
+    }
+}
+
 /// The projects of a repository, as the loader files them.
 fn projects(repo: &Repository) -> BTreeSet<String> {
     repo.iter()
@@ -1169,5 +1291,94 @@ mod tests {
         assert!(!other.contains("helsinki-ckan-token"), "{other}");
         assert!(project_token(&target("../helsinki"), &tree, source).is_err());
         std::fs::remove_dir_all(&tree).ok();
+    }
+
+    fn manifest(kind: &str, name: &str, spec: serde_json::Value) -> RawManifest {
+        RawManifest {
+            api_version: "joinedcontext.com/v1alpha1".to_owned(),
+            kind: kind.to_owned(),
+            metadata: RawMetadata {
+                name: name.to_owned(),
+                namespace: None,
+                rest: serde_json::Map::new(),
+            },
+            spec,
+            status: None,
+        }
+    }
+
+    /// jc-multiorg-portal: an Endpoint of each Organization's project publishes into that
+    /// Organization's own catalogue, under its name, with its own token, whatever catalogue its
+    /// `CkanInstance` names; the other Organization's catalogue is never the target.
+    #[test]
+    fn each_organizations_endpoint_publishes_into_its_own_catalogue_alone() {
+        let repo = Repository::from_manifests(
+            vec![
+                manifest("Organization", "hel", json!({ "installation": true })),
+                manifest("Organization", "ba", json!({})),
+                manifest("Project", "helsinki", json!({ "organizationRef": "hel" })),
+                manifest(
+                    "Project",
+                    "bratislava",
+                    json!({ "organizationRef": { "kind": "Organization", "name": "ba" } }),
+                ),
+                manifest("Project", "unowned", json!({})),
+            ],
+            None,
+        )
+        .expect("a repository");
+        let dir = std::env::temp_dir().join(format!("jc-multiorg-ckan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let catalogue = |org: &str| {
+            let token_file = dir.join(format!("{org}.token"));
+            std::fs::write(&token_file, format!("{org}-token\n")).expect("token");
+            crate::organization_host::OrganizationCatalogue {
+                organization: org.to_owned(),
+                url: format!("http://opendata.{org}.localhost:42301")
+                    .parse()
+                    .unwrap(),
+                api: Some(format!("http://opendata.{org}.localhost").parse().unwrap()),
+                reach: Some("127.0.0.1:42301".parse().unwrap()),
+                data_host: Some(format!("http://api.{org}.localhost:42301")),
+                token_file,
+            }
+        };
+        let sync = CkanSync::new("portal.example")
+            .for_organizations(vec![catalogue("hel"), catalogue("ba")]);
+        let source = publisher::TokenSource {
+            env: None,
+            age_key_file: None,
+        };
+        for (project, org) in [
+            ("helsinki", "hel"),
+            ("bratislava", "ba"),
+            ("unowned", "hel"),
+        ] {
+            // The instance names hel-fi on data.example.fi: the Organization's catalogue wins.
+            let routed = sync.routed(&repo, target(project));
+            let own = format!("http://opendata.{org}.localhost:42301");
+            assert_eq!(routed.instance.url, own, "{project}");
+            assert_eq!(routed.instance.organization_default.as_deref(), Some(org));
+            assert_eq!(routed.publication.organization.as_deref(), Some(org));
+            let (_, api_url, settings) = sync
+                .client(&routed, &dir, source)
+                .unwrap_or_else(|e| panic!("{project}: {e}"));
+            assert_eq!(api_url, format!("http://opendata.{org}.localhost"));
+            assert_eq!(settings.host, format!("http://api.{org}.localhost:42301"));
+            let other = if org == "hel" { "ba" } else { "hel" };
+            assert!(!routed.instance.url.contains(other), "{project}");
+        }
+        // Without its token file the run says so, and never falls back to another's.
+        std::fs::remove_file(dir.join("ba.token")).expect("rm");
+        let routed = sync.routed(&repo, target("bratislava"));
+        let Err(err) = sync.client(&routed, &dir, source) else {
+            panic!("bratislava published without its token file");
+        };
+        assert!(err.contains("ba's catalogue"), "{err}");
+        assert!(!err.contains("hel-token"), "{err}");
+        // A Portal without Organization catalogues keeps the instance's.
+        let plain = CkanSync::new("portal.example").routed(&repo, target("bratislava"));
+        assert_eq!(plain.instance.url, "https://data.example.fi");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

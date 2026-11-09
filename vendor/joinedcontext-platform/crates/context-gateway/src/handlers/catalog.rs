@@ -60,6 +60,7 @@ pub(crate) async fn endpoint_record(
         .get(axum::http::header::ACCEPT)
         .and_then(|value| value.to_str().ok());
     let base = gateway.base_url();
+    let base: &str = &base;
     let format = space_surface::negotiate(accept);
     let body = match format {
         space_surface::Format::JsonLd => serde_json::to_string(&profile::render(
@@ -118,7 +119,7 @@ pub(crate) async fn dataset_record(
             space.as_deref(),
             &slice,
             &index,
-            gateway.base_url(),
+            &gateway.base_url(),
         ),
         profile,
         Some(&catalog),
@@ -187,7 +188,7 @@ async fn public_records(
         // An Endpoint listing its datasets is in the feed as those datasets (EP-176).
         if slices.is_empty() {
             records.push(profile::render(
-                endpoint_surface::dataset(&endpoint, space.as_deref(), &index, gateway.base_url()),
+                endpoint_surface::dataset(&endpoint, space.as_deref(), &index, &gateway.base_url()),
                 profile,
                 endpoint.catalog.as_deref(),
             ));
@@ -200,7 +201,7 @@ async fn public_records(
                     space.as_deref(),
                     slice,
                     &index,
-                    gateway.base_url(),
+                    &gateway.base_url(),
                 ),
                 profile,
                 Some(&catalog),
@@ -221,7 +222,7 @@ async fn catalog_feed(
 ) -> serde_json::Value {
     endpoint_surface::feed(
         public_records(gateway, profile, None, host).await,
-        gateway.base_url(),
+        &gateway.base_url(),
         &gateway.org_domain,
     )
 }
@@ -286,7 +287,7 @@ pub(crate) async fn publisher_catalog(
     let feed = profile::render_catalog(
         jc_dcat::publisher_feed(
             records,
-            gateway.base_url(),
+            &gateway.base_url(),
             &jc_dcat::CatalogueOwner {
                 project,
                 title: &owner.title,

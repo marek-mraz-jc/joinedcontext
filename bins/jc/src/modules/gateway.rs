@@ -79,6 +79,7 @@ pub fn work_dir(setup: &Setup) -> PathBuf {
 /// | `JC_GATEWAY_BROKER_URL` | Antares' hop |
 /// | `JC_GATEWAY_ORG_DOMAIN`, `JC_GATEWAY_PUBLIC_URL`, `JC_GATEWAY_PREVIEWS_DIR` | the mounts, the state dir |
 /// | `JC_GATEWAY_ASSISTANT_URL` | the assistant's internal listener |
+/// | `JC_GATEWAY_OAUTH_KEY` | the generated `gateway-oauth-key` |
 /// | `JC_OIDC_ISSUER`, `_JWKS_URL`, `_CLIENT_ID`, `_CLIENT_SECRET`, `JC_GATEWAY_REVOCATIONS_URL`, `_CONNECTORS_URL`, `_USAGE_URL` | kaisatsu and the Portal |
 /// | `JC_GATEWAY_REPO_DIR`, `_PROJECTS_DIR`, `_ASSEMBLY_DIR` | shako, checked out by [`follow_forge`] |
 #[must_use]
@@ -132,6 +133,11 @@ pub fn vars(
     if !wire {
         return out;
     }
+    // The anonymous OAuth server prod runs (ADR-N-052): its issuer is the public URL above.
+    group(vec![(
+        "JC_GATEWAY_OAUTH_KEY",
+        secret(Secret::GatewayOauthKey),
+    )]);
     if let (Some(id), Some(_), Some(internal)) = (
         siblings.get(Module::Kaisatsu),
         siblings.get(Module::Portal),
@@ -683,12 +689,25 @@ pub fn at_root(router: Router) -> Router {
 /// (`context_gateway::app::HostOrganization`), from the host `jc-router` resolved (its
 /// `Mount`), for the `[[organizations]]` API, MCP and Portal hosts: there the gateway lists that
 /// Organization's Endpoints alone.
-pub fn by_organization(router: Router, orgs: &[crate::config::OrganizationSection]) -> Router {
-    let hosts: std::sync::Arc<BTreeMap<String, String>> = std::sync::Arc::new(
+///
+/// Beside it goes the host's link base (`context_gateway::app::HostBase`): an API or MCP host
+/// links itself, the Portal host its Organization's API host, so an answer on one
+/// Organization's host links no address of another's or of the deployment's.
+pub fn by_organization(
+    router: Router,
+    orgs: &[crate::config::OrganizationSection],
+    scheme: &str,
+) -> Router {
+    let hosts: std::sync::Arc<BTreeMap<String, (String, String)>> = std::sync::Arc::new(
         orgs.iter()
             .flat_map(|org| {
-                [&org.hosts.api, &org.hosts.mcp, &org.hosts.portal]
-                    .map(|h| (bare(h).to_owned(), org.name.clone()))
+                let base = |h: &str| format!("{scheme}://{h}");
+                [
+                    (&org.hosts.api, base(&org.hosts.api)),
+                    (&org.hosts.mcp, base(&org.hosts.mcp)),
+                    (&org.hosts.portal, base(&org.hosts.api)),
+                ]
+                .map(|(h, link)| (bare(h).to_owned(), (org.name.clone(), link)))
             })
             .collect(),
     );
@@ -699,13 +718,17 @@ pub fn by_organization(router: Router, orgs: &[crate::config::OrganizationSectio
                 // Only jc places it: whatever a request carried is dropped first.
                 req.extensions_mut()
                     .remove::<context_gateway::app::HostOrganization>();
+                req.extensions_mut()
+                    .remove::<context_gateway::app::HostBase>();
                 let org = req
                     .extensions()
                     .get::<Mount>()
                     .and_then(|m| hosts.get(bare(&m.host)).cloned());
-                if let Some(org) = org {
+                if let Some((org, link)) = org {
                     req.extensions_mut()
                         .insert(context_gateway::app::HostOrganization(org));
+                    req.extensions_mut()
+                        .insert(context_gateway::app::HostBase(link));
                 }
                 next.run(req).await
             }
@@ -961,6 +984,10 @@ mod tests {
         let v = vars(&siblings, &setup, true, &mount, Some(&hop), None, bind);
         assert_eq!(v["JC_GATEWAY_BROKER_URL"], "http://127.0.0.1:4242");
         assert_eq!(v["JC_GATEWAY_PUBLIC_URL"], "https://city.example");
+        assert_eq!(
+            v["JC_GATEWAY_OAUTH_KEY"],
+            setup.value(Secret::GatewayOauthKey).unwrap()
+        );
         assert_eq!(v["JC_OIDC_ISSUER"], "https://city.example/id/realms/jc");
         assert_eq!(
             v["JC_OIDC_JWKS_URL"],
