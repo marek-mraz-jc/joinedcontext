@@ -8,15 +8,13 @@
 
 mod common;
 
-use common::{Body, Browser, free_port, lost_the_port, sign_in};
+use common::{Body, Browser, free_port, lost_the_port, sign_in, sign_in_at};
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
-
-const REALM: &str = "jc";
 
 /// Where jc places its modules: one host with a slug each, or a host per module (`--mode host`,
 /// the Portal on `portal.localhost`).
@@ -31,6 +29,8 @@ const SLUGS: [&str; 6] = ["id", "git", "streams", "opendata", "dashboards", "bro
 struct Jc {
     child: Child,
     placement: Placement,
+    /// The realm the Portal signs in through (`--identity-realm`).
+    realm: &'static str,
     port: u16,
     base: String,
     state: PathBuf,
@@ -161,12 +161,12 @@ async fn kaisatsu_pg(dir: &Path) -> Option<(PathBuf, PathBuf)> {
 }
 
 async fn start() -> Jc {
-    start_placed(Placement::Slug).await
+    start_placed(Placement::Slug, "jc").await
 }
 
-async fn start_placed(placement: Placement) -> Jc {
+async fn start_placed(placement: Placement, realm: &'static str) -> Jc {
     for _ in 0..5 {
-        if let Some(jc) = start_placed_once(placement).await {
+        if let Some(jc) = start_placed_once(placement, realm).await {
             return jc;
         }
     }
@@ -174,7 +174,7 @@ async fn start_placed(placement: Placement) -> Jc {
 }
 
 /// One jc; `None` when it stopped because another bind took its port first.
-async fn start_placed_once(placement: Placement) -> Option<Jc> {
+async fn start_placed_once(placement: Placement, realm: &'static str) -> Option<Jc> {
     assert!(
         Command::new("docker")
             .args(["run", "--rm", "alpine", "true"])
@@ -232,6 +232,7 @@ async fn start_placed_once(placement: Placement) -> Option<Jc> {
         .args(["--base-host", &base_host])
         .arg("--state-dir")
         .arg(&state)
+        .args(["--identity-realm", realm])
         // A password-only demo realm: decisions without a second factor (an explicit
         // installation setting of the Portal, T-6083), and a quick forge poll.
         .env("JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR", "false")
@@ -266,6 +267,7 @@ async fn start_placed_once(placement: Placement) -> Option<Jc> {
     let jc = Jc {
         child,
         placement,
+        realm,
         port,
         base,
         state,
@@ -293,7 +295,10 @@ async fn me(jc: &Jc, browser: &mut Browser) -> Value {
 async fn kaisatsu_admin_token(jc: &Jc) -> String {
     let client = Client::new();
     let resp = client
-        .post(jc.url(&format!("/id/realms/{REALM}/protocol/openid-connect/token")))
+        .post(jc.url(&format!(
+            "/id/realms/{}/protocol/openid-connect/token",
+            jc.realm
+        )))
         .form(&[
             ("grant_type", "client_credentials"),
             ("client_id", "portal-reconciler"),
@@ -313,7 +318,7 @@ async fn kaisatsu_admin_token(jc: &Jc) -> String {
 
 async fn kaisatsu_admin_write(jc: &Jc, token: &str, path: &str, body: &Value) -> StatusCode {
     Client::new()
-        .put(jc.url(&format!("/id/admin/realms/{REALM}{path}")))
+        .put(jc.url(&format!("/id/admin/realms/{}{path}", jc.realm)))
         .bearer_auth(token)
         .json(body)
         .send()
@@ -324,7 +329,7 @@ async fn kaisatsu_admin_write(jc: &Jc, token: &str, path: &str, body: &Value) ->
 
 async fn kaisatsu_admin(jc: &Jc, token: &str, path: &str) -> (StatusCode, Value) {
     let resp = Client::new()
-        .get(jc.url(&format!("/id/admin/realms/{REALM}{path}")))
+        .get(jc.url(&format!("/id/admin/realms/{}{path}", jc.realm)))
         .bearer_auth(token)
         .send()
         .await
@@ -1107,15 +1112,27 @@ async fn the_portal_runs_on_its_sibling_modules() {
 /// Host mode: every module on its own host name, the Portal on `portal.localhost`. The Portal
 /// signs a person in through kaisatsu on `id.localhost`, keeps its cookies on its own host, writes
 /// people to kaisatsu and proposals to shako, and a module's slug on the Portal's host reaches the
-/// Portal, not the module.
+/// Portal, not the module. The deployment names its realm `dev`: jc makes it on first start (its
+/// first-start files, the first admin), and no realm `jc`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_portal_runs_on_its_own_host_in_host_mode() {
-    let jc = start_placed(Placement::Host).await;
+    let jc = start_placed(Placement::Host, "dev").await;
     let mut browser = Browser::new();
+    assert_eq!(
+        std::fs::read_to_string(jc.state.join("realm-owner-dev")).unwrap(),
+        "jc\n"
+    );
+    let dormant = Client::new()
+        .get(jc.url("/id/realms/jc/.well-known/openid-configuration"))
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(dormant, StatusCode::NOT_FOUND, "a realm jc beside dev");
 
-    // a. Sign-in across hosts.
+    // a. Sign-in across hosts, at /realms/dev.
     let password = jc.secret("first-admin-password");
-    sign_in(&|p| jc.url(p), &mut browser, "admin", &password).await;
+    sign_in_at(&|p| jc.url(p), &mut browser, jc.realm, "admin", &password).await;
     let who = me(&jc, &mut browser).await;
     assert_eq!(who["username"], "admin", "{who}");
     let portal_cookies = browser.jar.names_for(&jc.url("/"));
@@ -1201,8 +1218,8 @@ async fn the_portal_runs_on_its_own_host_in_host_mode() {
     // A module's slug on the Portal's host is the Portal's path, not the module.
     let on_portal = client
         .get(format!(
-            "{}/id/realms/{REALM}/.well-known/openid-configuration",
-            jc.base
+            "{}/id/realms/{}/.well-known/openid-configuration",
+            jc.base, jc.realm
         ))
         .send()
         .await

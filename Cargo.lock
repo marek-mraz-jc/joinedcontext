@@ -6260,6 +6260,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
+ "sha2 0.10.9",
  "shako-core",
  "shako-server",
  "shako-store-memory",

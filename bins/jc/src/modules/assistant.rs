@@ -75,7 +75,7 @@ pub fn vars(
     // by the host a request reached it on, and the proxy introspects at the same address.
     put(
         "JC_ASSISTANT_TOKEN_URL",
-        public(Module::Kaisatsu).map(|id| token_url(&id)),
+        public(Module::Kaisatsu).map(|id| token_url(&id, &setup.realm)),
     );
     put(
         "JC_ASSISTANT_CLIENT_ID",
@@ -120,7 +120,7 @@ pub fn vars(
         put("JC_ASSISTANT_EMBEDDER_URL", Some(url.to_owned()));
         put(
             "JC_ASSISTANT_EMBEDDER_TOKEN_URL",
-            public(Module::Kaisatsu).map(|id| token_url(&id)),
+            public(Module::Kaisatsu).map(|id| token_url(&id, &setup.realm)),
         );
         put(
             "JC_ASSISTANT_EMBEDDER_CLIENT_ID",
@@ -137,11 +137,8 @@ pub fn vars(
 }
 
 /// The realm's token endpoint under kaisatsu's base `id`.
-fn token_url(id: &str) -> String {
-    format!(
-        "{id}/realms/{}/protocol/openid-connect/token",
-        setup::PORTAL_REALM
-    )
+fn token_url(id: &str, realm: &setup::Realm) -> String {
+    format!("{id}/realms/{realm}/protocol/openid-connect/token")
 }
 
 /// One assistant key: the environment's value (`env`) first, else the sibling's (`vars`).
@@ -161,15 +158,13 @@ fn lookup<'a>(
 /// are set on the config afterwards). The model's base and provider follow the environment.
 fn proxy_lookup(
     siblings: &Siblings,
+    realm: &setup::Realm,
     env: &impl Fn(&str) -> Option<String>,
 ) -> BTreeMap<&'static str, String> {
     let mut out = BTreeMap::new();
     out.insert("JC_PROXY_BIND", format!("{}:0", Ipv4Addr::LOCALHOST));
     if let Some(id) = siblings.get(Module::Kaisatsu) {
-        out.insert(
-            "JC_OIDC_ISSUER",
-            format!("{}/realms/{}", id.public, setup::PORTAL_REALM),
-        );
+        out.insert("JC_OIDC_ISSUER", format!("{}/realms/{realm}", id.public));
     }
     out.insert("JC_OIDC_CLIENT_ID", setup::PROXY_CLIENT.to_owned());
     out.insert("JC_ASSISTANT_CLIENT_ID", setup::ASSISTANT_CLIENT.to_owned());
@@ -284,7 +279,7 @@ async fn proxy(
     env: &impl Fn(&str) -> Option<String>,
     key: &jc_secret::Secret,
 ) -> Result<Proxy, String> {
-    let table = proxy_lookup(siblings, env);
+    let table = proxy_lookup(siblings, &setup.realm, env);
     let mut config = agent_proxy::config::Config::from_lookup(|k| table.get(k).cloned())
         .map_err(|e| format!("the model proxy is not configured: {e}"))?;
     config.oidc_client_secret = setup
@@ -592,7 +587,7 @@ mod tests {
             "JC_MODEL_KEY" => Some("sk-or-v1-from-env".to_owned()),
             _ => None,
         };
-        let table = proxy_lookup(&siblings, &env);
+        let table = proxy_lookup(&siblings, &setup::Realm::default(), &env);
         assert_eq!(table["JC_MODEL_BASE"], "https://models.example/v1");
         assert_eq!(table["JC_PROXY_BIND"], "127.0.0.1:0");
         for key in table.keys() {
@@ -626,7 +621,7 @@ mod tests {
         assert!(!portal.contains_key("JC_PORTAL_KNOWLEDGE_URL"));
         assert_eq!(
             crate::modules::dataroom::assistant_widget(&siblings, "data"),
-            ""
+            None
         );
         assert!(tasks.is_empty(), "nothing was spawned");
     }
@@ -840,8 +835,8 @@ mod tests {
         let portal = crate::siblings::portal_vars(&siblings, &setup, |_| None);
         assert_eq!(portal["JC_PORTAL_KNOWLEDGE_URL"], internal);
         assert_eq!(
-            crate::modules::dataroom::assistant_widget(&siblings, "data"),
-            "https://city.example/d/data/widget"
+            crate::modules::dataroom::assistant_widget(&siblings, "data").as_deref(),
+            Some("https://city.example/d/data/widget")
         );
 
         // Publicly only the widget's and the chat's paths.

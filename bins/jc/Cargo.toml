@@ -15,7 +15,7 @@ name = "jc"
 path = "src/main.rs"
 
 [features]
-default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "gateway", "portal", "shako", "model-tools", "assistant", "jemalloc"]
+default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "gateway", "portal", "shako", "model-tools", "assistant", "viz", "jemalloc"]
 shako = [
   "dep:shako-server",
   "dep:shako-core",
@@ -56,6 +56,8 @@ model-tools = ["dep:linkml-model", "dep:serde_norway"]
 # with its model proxy (agent-proxy) on loopback. ONNX Runtime is loaded from a file at start.
 assistant = ["dep:assistant", "dep:agent-proxy", "dep:jc-core", "dep:ort", "gateway"]
 jemalloc = ["dep:tikv-jemallocator"]
+# The chart renderer and live-data explorer (vendor/viz), static files only.
+viz = []
 
 [dependencies]
 jc-router = { path = "../../crates/shared/jc-router" }
@@ -131,6 +133,7 @@ shako-store-memory = { path = "../../crates/shako/store-memory", optional = true
 shako-store-pg = { path = "../../crates/shako/store-pg", optional = true }
 
 [dev-dependencies]
+sha2 = "0.10"
 jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core", features = ["outbound"] }
 http-body-util = "0.1"
 tempfile = "3"
