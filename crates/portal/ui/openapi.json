@@ -44873,6 +44873,32 @@
           }
         }
       },
+      "BarChartOptions": {
+        "type": "object",
+        "description": "A bar chart's own choices: the text attribute that names each bar, one bar per entity.",
+        "required": [
+          "xField"
+        ],
+        "properties": {
+          "xField": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BarGaugeOptions": {
+        "type": "object",
+        "description": "A bar gauge's own choices.",
+        "properties": {
+          "displayMode": {
+            "$ref": "#/components/schemas/DisplayMode"
+          },
+          "orientation": {
+            "$ref": "#/components/schemas/Orientation"
+          }
+        },
+        "additionalProperties": false
+      },
       "Binding": {
         "type": "object",
         "description": "One topic filter's way to an attribute; it ends at the first hop the caller may not read.",
@@ -44991,10 +45017,7 @@
           "id",
           "kind",
           "title",
-          "grid",
-          "endpoint",
-          "type",
-          "attribute"
+          "grid"
         ],
         "properties": {
           "aggregation": {
@@ -45002,6 +45025,27 @@
           },
           "attribute": {
             "type": "string"
+          },
+          "barchart": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BarChartOptions"
+              }
+            ]
+          },
+          "bargauge": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BarGaugeOptions",
+                "description": "Each kind's own choices, given for that kind only."
+              }
+            ]
           },
           "decimals": {
             "type": [
@@ -45016,7 +45060,7 @@
           },
           "endpoint": {
             "type": "string",
-            "description": "An Endpoint of the project, by name."
+            "description": "An Endpoint of the project, by name; a text panel names none."
           },
           "filters": {
             "type": "array",
@@ -45037,6 +45081,41 @@
           },
           "kind": {
             "$ref": "#/components/schemas/PanelKind"
+          },
+          "max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The scale of a gauge or bar gauge; Grafana scales to the data where none is given."
+          },
+          "piechart": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PieChartOptions"
+              }
+            ]
+          },
+          "text": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TextOptions"
+              }
+            ]
           },
           "thresholds": {
             "oneOf": [
@@ -48698,6 +48777,15 @@
           }
         },
         "additionalProperties": false
+      },
+      "DisplayMode": {
+        "type": "string",
+        "description": "How a bar gauge fills its bars, Grafana's `displayMode`.",
+        "enum": [
+          "gradient",
+          "lcd",
+          "basic"
+        ]
       },
       "DomainVerification": {
         "type": "object",
@@ -52759,6 +52847,15 @@
           }
         }
       },
+      "Orientation": {
+        "type": "string",
+        "description": "Which way bars run, Grafana's `orientation`; `auto` follows the panel's shape.",
+        "enum": [
+          "auto",
+          "horizontal",
+          "vertical"
+        ]
+      },
       "OutOfWindow": {
         "type": "object",
         "description": "One grant of this broker the account carries that is not in force now.",
@@ -52901,7 +52998,11 @@
           "timeseries",
           "stat",
           "table",
-          "gauge"
+          "gauge",
+          "bargauge",
+          "piechart",
+          "barchart",
+          "text"
         ]
       },
       "PanelPreview": {
@@ -53240,6 +53341,24 @@
         ],
         "title": "Phase",
         "description": "Lifecycle phase enumeration."
+      },
+      "PieChartOptions": {
+        "type": "object",
+        "description": "A pie chart's own choices.",
+        "properties": {
+          "pieType": {
+            "$ref": "#/components/schemas/PieType"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PieType": {
+        "type": "string",
+        "description": "A pie chart's shape, Grafana's `pieType`.",
+        "enum": [
+          "pie",
+          "donut"
+        ]
       },
       "PipelineErrorRatio": {
         "type": "object",
@@ -57832,6 +57951,19 @@
           }
         ],
         "description": "A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string."
+      },
+      "TextOptions": {
+        "type": "object",
+        "description": "A text panel's own choice: what it says, in Markdown. The Portal shows it as plain text.",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "ThresholdStep": {
         "type": "object",
