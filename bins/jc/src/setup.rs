@@ -121,7 +121,11 @@ impl Secret {
             Module::Antares => Some(Secret::AntaresAdminToken),
             Module::Daiya => Some(Secret::DashboardsPassword),
             Module::Dataroom => Some(Secret::CatalogueToken),
-            Module::Kaisatsu | Module::Portal | Module::Gateway | Module::ModelTools => None,
+            Module::Kaisatsu
+            | Module::Portal
+            | Module::Gateway
+            | Module::ModelTools
+            | Module::Viz => None,
         }
     }
 

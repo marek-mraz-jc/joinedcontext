@@ -106,6 +106,7 @@ fn probe(module: Module) -> (&'static str, &'static str) {
         Module::Gateway => ("/api/endpoints", "endpoints"),
         // Model Tools has no public mount; the loops below check it answers nothing there.
         Module::ModelTools => ("/healthz", "\"status\":\"ok\""),
+        Module::Viz => ("/healthz", "ok"),
     }
 }
 

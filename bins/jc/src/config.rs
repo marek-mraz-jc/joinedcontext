@@ -230,6 +230,40 @@ pub struct DataroomSection {
     #[serde(default)]
     pub portal_token_file: Option<PathBuf>,
     pub database: Option<DatabaseSection>,
+    /// `[dataroom.addresses]`: where the catalogue's live parts answer.
+    pub addresses: DataroomAddresses,
+}
+
+/// `[dataroom.addresses]`: the bases (`http(s)://host[:port][/path]`) the dataset pages frame,
+/// link and read, one by one (G1). One left out comes from the module `jc` mounts for it: `viz`
+/// from viz, `api` from the gateway's origin, `portal` from the Portal; `tiles` and `assistant`
+/// only from here, since `jc` serves neither, so a page never points at a part nobody serves. A
+/// catalogue's own branding (`addresses` in its branding JSON) wins over these, per catalogue.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DataroomAddresses {
+    pub viz: Option<String>,
+    pub api: Option<String>,
+    pub tiles: Option<String>,
+    pub assistant: Option<String>,
+    pub portal: Option<String>,
+}
+
+impl DataroomAddresses {
+    /// Each named address with its key, for the start-up check.
+    #[must_use]
+    pub fn named(&self) -> Vec<(&'static str, &str)> {
+        [
+            ("viz", &self.viz),
+            ("api", &self.api),
+            ("tiles", &self.tiles),
+            ("assistant", &self.assistant),
+            ("portal", &self.portal),
+        ]
+        .into_iter()
+        .filter_map(|(k, v)| v.as_deref().map(|v| (k, v)))
+        .collect()
+    }
 }
 
 impl Default for DataroomSection {
@@ -239,6 +273,7 @@ impl Default for DataroomSection {
             catalogue_id: "00000000-0000-7000-8000-000000000010".into(),
             portal_token_file: None,
             database: None,
+            addresses: DataroomAddresses::default(),
         }
     }
 }
@@ -359,6 +394,10 @@ pub enum ConfigError {
     Remote(String),
     #[error("[{module}.database]: {message}")]
     Database { module: Module, message: String },
+    #[error(
+        "[dataroom.addresses] {0}: '{1}' is not a base URL (http(s)://host[:port][/path], no trailing slash)"
+    )]
+    Address(&'static str, String),
 }
 
 /// The resolved configuration `jc` runs with.
@@ -508,6 +547,14 @@ impl Config {
         dataroom.portal_token_file = cli
             .dataroom_portal_token_file
             .or(dataroom.portal_token_file);
+        if let Some((key, bad)) = dataroom
+            .addresses
+            .named()
+            .into_iter()
+            .find(|(_, v)| !crate::siblings::is_base_url(v))
+        {
+            return Err(ConfigError::Address(key, bad.to_owned()));
+        }
         for (module, db) in [
             (Module::Kaisatsu, &kaisatsu.database),
             (Module::Ekiben, &ekiben.database),
@@ -1245,6 +1292,34 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
             secrets.remote_client_secret.unwrap().source,
             jc_secret::Source::Env
         );
+    }
+
+    #[test]
+    fn dataroom_addresses_are_read_one_by_one_and_a_bad_one_is_refused() {
+        let file = Config::parse_file(
+            Path::new("jc.toml"),
+            "[dataroom.addresses]\napi = \"https://api.dev.example\"\ntiles = \"https://tiles.dev.example\"\n",
+        )
+        .unwrap();
+        let cfg = Config::merge(cli(&["--role", "dataroom"]), file).unwrap();
+        assert_eq!(
+            cfg.dataroom.addresses.api.as_deref(),
+            Some("https://api.dev.example")
+        );
+        assert_eq!(cfg.dataroom.addresses.assistant, None);
+
+        let typo = Config::parse_file(
+            Path::new("jc.toml"),
+            "[dataroom.addresses]\napis = \"https://x.example\"\n",
+        );
+        assert!(typo.is_err(), "an unknown key is refused");
+        let bad = Config::parse_file(
+            Path::new("jc.toml"),
+            "[dataroom.addresses]\nviz = \"https://viz.example/?x=\\\"\"\n",
+        )
+        .unwrap();
+        let err = Config::merge(cli(&["--role", "dataroom"]), bad).unwrap_err();
+        assert!(matches!(err, ConfigError::Address("viz", _)), "{err}");
     }
 
     #[test]

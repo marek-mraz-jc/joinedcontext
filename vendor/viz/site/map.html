@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Map</title>
+<link rel="stylesheet" href="vendor/maplibre-gl-6.14.0.css">
+<link rel="stylesheet" href="map.css">
+<!-- T-4711: MapLibre and its worker load beside the page, not after map.js asks for them. -->
+<link rel="modulepreload" href="vendor/maplibre-gl-6.14.0.mjs">
+<link rel="modulepreload" href="vendor/maplibre-gl-worker-6.14.0.mjs">
+<script src="refuse.js" defer></script>
+<script src="vendor/pmtiles-4.5.0.js" defer></script>
+<script src="map.js" defer></script>
+</head>
+<body>
+<div id="map" role="region" aria-label="Map"></div>
+<p id="hint" class="hint"></p>
+</body>
+</html>

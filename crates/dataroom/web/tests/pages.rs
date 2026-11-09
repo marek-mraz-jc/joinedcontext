@@ -697,12 +697,13 @@ fn d3_dataset_page_shows_every_block_for_a_platform_dataset() {
         "jc-resources-title",
         "jc-subscribe-calendar",
         "jc-subscribe-news",
-        "jc-map-embed",
         "jc-more-title",
         "shacl-heading",
     ] {
         assert!(html.contains(&format!("id=\"{id}\"")), "{id}");
     }
+    // The explorer draws the map: no second map card asks the same reads (as on CKAN).
+    assert!(!html.contains("id=\"jc-map-embed\""));
     assert!(
         html.contains("<meta name=\"robots\" content=\"noindex, nofollow\">"),
         "B4 noindex"
@@ -772,6 +773,143 @@ fn d3_dataset_page_without_domain_or_resources_leaves_platform_blocks_out() {
         html.contains("id=\"shacl-heading\""),
         "editor panel without reports"
     );
+}
+
+/// G1: an installation without a domain (jc) names each live part on its own; the dataset page
+/// frames, links and reads exactly those, and leaves out what nobody serves.
+#[test]
+fn g1_dataset_page_follows_the_addresses_named_one_by_one() {
+    let api = "http://localhost:42241";
+    let ep_local = |path: &str| format!("{api}/api/endpoint/{SLUG}/{path}");
+    let mut c = cat();
+    c.branding = Some(json!({ "addresses": {
+        "viz": "http://localhost:42241/viz",
+        "api": api,
+        "tiles": "https://tiles.city.example",
+    }}));
+    let ds = with_dists(
+        dataset("air", json!({ "endpointUrl": ep_local("") })),
+        vec![
+            dist("csv", &ep_local("file.csv"), json!({})),
+            dist(
+                "ogc",
+                &ep_local("ogc/features/collections/AirQualityObserved"),
+                json!({}),
+            ),
+        ],
+    );
+    let html = render_dataset_page_full(
+        &c,
+        None,
+        &ds,
+        None,
+        &[],
+        &[],
+        false,
+        "sk",
+        false,
+        "/opendata",
+        NONCE,
+    );
+    assert_safe_page("dataset-g1", &html, "sk");
+    for id in ["jc-explorer-title", "jc-live-title", "jc-mcp-title"] {
+        assert!(html.contains(&format!("id=\"{id}\"")), "{id}");
+    }
+    assert!(html.contains(&format!(
+        "src=\"http://localhost:42241/viz/explore.html#{SLUG}&amp;inline&amp;lang=sk&amp;theme=light&amp;dataset=air\""
+    )));
+    assert!(
+        html.contains("data-jc-viz=\"http://localhost:42241\""),
+        "the height messages come from the viz origin"
+    );
+    assert!(html.contains("http://localhost:42241/api/mcp"));
+    // Snippets carry no credential.
+    for secret in ["token", "Bearer", "apikey", "Authorization"] {
+        let curl = html
+            .split("jc-live-title")
+            .nth(1)
+            .unwrap_or_default()
+            .split("jc-mcp-title")
+            .next()
+            .unwrap_or_default();
+        assert!(!curl.contains(secret), "{secret} in the live box");
+    }
+    // Nobody serves an assistant: no launcher points at nothing.
+    assert!(!html.contains("id=\"jc-assistant\"") && !html.contains("/d/data/widget"));
+
+    // A dataset on another gateway is not this platform's: no live parts.
+    let foreign = dataset(
+        "far",
+        json!({ "endpointUrl": format!("https://api.other.example/api/endpoint/{SLUG}/") }),
+    );
+    let html = render_dataset_page_full(
+        &c,
+        None,
+        &foreign,
+        None,
+        &[],
+        &[],
+        false,
+        "sk",
+        false,
+        "/opendata",
+        NONCE,
+    );
+    for id in ["jc-explorer-title", "jc-live-title"] {
+        assert!(
+            !html.contains(&format!("id=\"{id}\"")),
+            "{id} for a foreign gateway"
+        );
+    }
+
+    // An assistant named on its own gets its launcher.
+    c.branding = Some(json!({ "addresses": { "assistant": "https://assistant.city.example" } }));
+    let html = render_dataset_page_full(
+        &c,
+        None,
+        &ds,
+        None,
+        &[],
+        &[],
+        false,
+        "sk",
+        false,
+        "/opendata",
+        NONCE,
+    );
+    assert!(html.contains("src=\"https://assistant.city.example/d/data/widget?embed=1&amp;dock=1&amp;lang=sk&amp;scheme=light\""));
+}
+
+#[test]
+fn g1_csp_names_the_named_origins_and_is_unchanged_without_them() {
+    let none = BrandingBlock::default();
+    assert_eq!(
+        csp_header_for_branding("n", &none, false),
+        csp_header_for_domain("n", None, false)
+    );
+    let mut dom = BrandingBlock::default();
+    dom.apply_override_json(&json!({ "domain": DOMAIN }));
+    assert_eq!(
+        csp_header_for_branding("n", &dom, true),
+        csp_header_for_domain("n", Some(DOMAIN), true),
+        "a domain alone gives the old header byte for byte"
+    );
+    let mut jc = BrandingBlock::default();
+    jc.apply_override_json(&json!({ "addresses": {
+        "viz": "http://localhost:42241/viz",
+        "api": "https://api.dev.example",
+        "tiles": "https://tiles.dev.example:8443",
+    }}));
+    let h = csp_header_for_branding("n", &jc, false);
+    let own = " http://localhost:42241 https://api.dev.example https://tiles.dev.example:8443";
+    assert!(h.contains(&format!("connect-src 'self'{own};")), "{h}");
+    assert!(h.contains(&format!("frame-src 'self'{own};")), "{h}");
+    assert!(h.contains(&format!("img-src 'self' data:{own};")), "{h}");
+    assert!(
+        h.contains("script-src 'self' 'nonce-n';") && h.contains("frame-ancestors 'self';"),
+        "{h}"
+    );
+    assert!(!h.contains('*') && !h.contains("unsafe"), "{h}");
 }
 
 // ---- D4 resource page ----

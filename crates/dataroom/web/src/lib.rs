@@ -10,6 +10,7 @@ pub mod listing;
 
 use askama::Template;
 use chrono::Datelike;
+use dataroom_core::branding::Address;
 use dataroom_core::vocab::{find_licence, theme_code};
 use dataroom_core::{
     localized_text, text_in_lang, BrandingBlock, Catalogue, Dataset, Distribution, FormFieldLayout,
@@ -391,6 +392,49 @@ pub fn csp_header_for_domain(nonce: &str, domain: Option<&str>, framable_map: bo
     )
 }
 
+/// The page CSP of `branding`: the domain's hosts as [`csp_header_for_domain`] names them, plus
+/// the origin of each address named on its own (`addresses`), so an installation without a domain
+/// (jc) lets a page frame and read exactly the viz, gateway, tiles and assistant it names. With
+/// nothing named the header is [`csp_header_for_domain`]'s, byte for byte.
+pub fn csp_header_for_branding(
+    nonce: &str,
+    branding: &BrandingBlock,
+    framable_map: bool,
+) -> String {
+    let domain = (!branding.domain.is_empty()).then_some(branding.domain.as_str());
+    let mut csp = csp_header_for_domain(nonce, domain, framable_map);
+    let mut extra = String::new();
+    for which in dataroom_core::branding::Address::ALL {
+        let Some(base) = branding.address(which) else {
+            continue;
+        };
+        if !branding.domain.is_empty()
+            && base == format!("https://{}.{}", which.label(), branding.domain)
+        {
+            continue;
+        }
+        let origin = dataroom_core::branding::origin_of(&base);
+        if dataroom_core::branding::is_base_url(origin) && !extra.split(' ').any(|o| o == origin) {
+            extra.push(' ');
+            extra.push_str(origin);
+        }
+    }
+    if !extra.is_empty() {
+        for directive in [
+            "img-src 'self' data:",
+            "connect-src 'self'",
+            "frame-src 'self'",
+        ] {
+            let at = csp.find(directive).map(|i| i + directive.len());
+            if let Some(at) = at {
+                let end = at + csp[at..].find(';').unwrap_or(csp.len() - at);
+                csp.insert_str(end, &extra);
+            }
+        }
+    }
+    csp
+}
+
 pub fn csp_header(nonce: &str, framable_map: bool) -> String {
     csp_header_for_domain(nonce, None, framable_map)
 }
@@ -505,19 +549,14 @@ impl PageChrome {
         } else {
             String::new()
         };
-        let portal_url = if !branding.domain.is_empty() {
-            format!("https://portal.{}/", branding.domain)
-        } else {
-            String::new()
-        };
-        let assistant_widget_url = if !branding.domain.is_empty() {
-            format!(
-                "https://assistant.{}/d/data/widget?embed=1&dock=1&lang={norm_lang}&scheme=light",
-                branding.domain
-            )
-        } else {
-            String::new()
-        };
+        let portal_url = branding
+            .address(Address::Portal)
+            .map(|p| format!("{p}/"))
+            .unwrap_or_default();
+        let assistant_widget_url = branding
+            .address(Address::Assistant)
+            .map(|a| format!("{a}/d/data/widget?embed=1&dock=1&lang={norm_lang}&scheme=light"))
+            .unwrap_or_default();
         let has_mcp = jc_mcp_install(&branding).is_some();
 
         let footer_pages = STATIC_PAGE_NAMES
@@ -1430,7 +1469,12 @@ pub fn render_dataset_page_full(
         &chrome.lang,
         &chrome.lang_prefix,
     );
-    let map_cfg = jc_map_config(catalogue, dataset, None, &chrome.branding, &chrome.lang);
+    // The explorer draws its own map of the same Endpoint (as on CKAN, where the map card sits
+    // only beside the DataStore tables): a second map card would ask the same reads again.
+    let map_cfg = explorer
+        .is_none()
+        .then(|| jc_map_config(catalogue, dataset, None, &chrome.branding, &chrome.lang))
+        .flatten();
     let map_embed_url = map_cfg
         .as_ref()
         .and_then(|m| m.get("embed").and_then(Value::as_str))

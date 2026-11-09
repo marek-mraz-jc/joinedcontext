@@ -97,8 +97,77 @@ impl Siblings {
     }
 }
 
+/// The catalogue's live parts as `jc` places them ([`crate::config::DataroomAddresses`]): each a
+/// base without a trailing slash, or "" when nobody serves it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LiveAddresses {
+    pub viz: String,
+    pub api: String,
+    pub tiles: String,
+    pub assistant: String,
+    pub portal: String,
+    /// The default catalogue's public base (dataroom's mount).
+    pub catalogue: String,
+}
+
+/// The addresses `cfg` names, the others from the mounted modules: viz, the gateway's origin (it
+/// answers `/api/endpoint` and `/api/mcp` at the root of its host), the Portal and dataroom. No
+/// module serves tiles or the assistant, so those come from `cfg` alone.
+#[must_use]
+pub fn live_addresses(
+    cfg: &crate::config::DataroomAddresses,
+    siblings: &Siblings,
+) -> LiveAddresses {
+    let pick =
+        |named: &Option<String>, from: Option<String>| named.clone().or(from).unwrap_or_default();
+    let public = |m: Module| siblings.get(m).map(|s| s.public.clone());
+    LiveAddresses {
+        viz: pick(&cfg.viz, public(Module::Viz)),
+        api: pick(&cfg.api, public(Module::Gateway).map(|g| origin(&g))),
+        tiles: pick(&cfg.tiles, None),
+        assistant: pick(&cfg.assistant, None),
+        portal: pick(&cfg.portal, public(Module::Portal)),
+        catalogue: public(Module::Dataroom).unwrap_or_default(),
+    }
+}
+
+/// `http(s)://host[:port][/path]` with a lowercase host, no user, query, fragment or trailing
+/// slash: what a page may frame, link and name in its CSP (dataroom-core `is_base_url` holds the
+/// same rule for a catalogue's own branding).
+#[must_use]
+pub fn is_base_url(v: &str) -> bool {
+    let Some(rest) = v
+        .strip_prefix("https://")
+        .or_else(|| v.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    let (host, port) = match authority.split_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (authority, None),
+    };
+    let label_ok = |l: &str| {
+        !l.is_empty()
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+            && l.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    };
+    let host_ok = host.split('.').all(label_ok);
+    let port_ok =
+        port.is_none_or(|p| (1..=5).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit()));
+    let path_ok = !path.ends_with('/')
+        && !path.contains("//")
+        && !path.split('/').any(|s| s == "." || s == "..")
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"/-_.~".contains(&b));
+    host_ok && port_ok && path_ok
+}
+
 /// The origin (`scheme://host:port`) of a URL string without a path.
-fn origin(url: &str) -> String {
+pub(crate) fn origin(url: &str) -> String {
     match url.find("://") {
         Some(i) => {
             let rest = &url[i + 3..];
@@ -355,6 +424,54 @@ mod tests {
         assert_eq!(git.internal, git.public);
         assert_eq!(git.public, "https://git.city.example");
         assert_eq!(siblings.listener, "[::1]:1".parse().unwrap());
+    }
+
+    #[test]
+    fn live_addresses_come_from_the_mounts_unless_named_and_nobody_serves_tiles_or_assistant() {
+        let (siblings, _, _d) = fixture("https");
+        let live = live_addresses(&crate::config::DataroomAddresses::default(), &siblings);
+        assert_eq!(live.viz, "https://city.example/viz");
+        assert_eq!(
+            live.api, "https://city.example",
+            "the gateway answers at the host's root"
+        );
+        assert_eq!(live.portal, "https://city.example/portal");
+        assert_eq!(live.catalogue, "https://city.example/opendata");
+        assert_eq!((live.tiles.as_str(), live.assistant.as_str()), ("", ""));
+
+        let named = crate::config::DataroomAddresses {
+            api: Some("https://api.dev.example".into()),
+            tiles: Some("https://tiles.dev.example".into()),
+            ..Default::default()
+        };
+        let live = live_addresses(&named, &siblings);
+        assert_eq!(live.api, "https://api.dev.example");
+        assert_eq!(live.tiles, "https://tiles.dev.example");
+        assert_eq!(live.assistant, "");
+    }
+
+    #[test]
+    fn a_base_url_has_no_query_user_trailing_slash_or_odd_character() {
+        for ok in [
+            "http://localhost:42241/viz",
+            "https://api.city.example",
+            "http://dataroom:8080",
+        ] {
+            assert!(is_base_url(ok), "{ok}");
+        }
+        for bad in [
+            "https://api.example/",
+            "https://api.example/a?x",
+            "https://u@api.example",
+            "javascript:alert(1)",
+            "https://API.example",
+            "https://api.example/a/../b",
+            "https://api.example'; script-src *",
+            "https://api.example:123456",
+            "https://",
+        ] {
+            assert!(!is_base_url(bad), "{bad}");
+        }
     }
 
     /// Asserts the keys of one row come from the sibling and an explicit URL keeps the whole row

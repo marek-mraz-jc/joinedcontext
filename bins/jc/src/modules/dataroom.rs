@@ -12,8 +12,10 @@ use crate::app::StartError;
 use crate::config::DataroomSection;
 use crate::module::Module;
 use crate::setup::{Secret, Setup};
+use crate::siblings::Siblings;
 use axum::Router;
 use dataroom_api::DataroomState;
+use dataroom_core::branding::{BrandingAddresses, BrandingBlock};
 use dataroom_core::{CatalogueId, OrgId, PolicyAuthorizer, Store};
 use dataroom_store_memory::MemoryStore;
 use dataroom_store_pg::PgStore;
@@ -54,9 +56,26 @@ async fn open_store(cfg: &DataroomSection) -> Result<Arc<dyn Store>, StartError>
     ))
 }
 
+/// The installation branding `jc` hands dataroom: only the live parts' addresses (G1), named in
+/// `[dataroom.addresses]` or taken from the mounted modules. A catalogue's own branding still wins
+/// per catalogue; one that nobody serves stays empty, so no page points at it.
+fn installation_branding(live: &crate::siblings::LiveAddresses) -> BrandingBlock {
+    BrandingBlock {
+        addresses: BrandingAddresses {
+            viz: live.viz.clone(),
+            api: live.api.clone(),
+            tiles: live.tiles.clone(),
+            assistant: live.assistant.clone(),
+            portal: live.portal.clone(),
+        },
+        ..BrandingBlock::default()
+    }
+}
+
 pub async fn build(
     cfg: &DataroomSection,
     setup: &Setup,
+    siblings: &Siblings,
     mount: Mount,
 ) -> Result<Router, StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Dataroom, e);
@@ -76,6 +95,10 @@ pub async fn build(
     };
     let state = DataroomState::new(store, Arc::new(authorizer), org_id, catalogue_id)
         .with_tokens(tokens)
+        .with_installation_branding(installation_branding(&crate::siblings::live_addresses(
+            &cfg.addresses,
+            siblings,
+        )))
         .with_public_base(mount.public_base())
         .with_mount_prefix(mount.path_prefix);
     Ok(dataroom_api::router(state))

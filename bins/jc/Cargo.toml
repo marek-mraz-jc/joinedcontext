@@ -15,7 +15,7 @@ name = "jc"
 path = "src/main.rs"
 
 [features]
-default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "gateway", "portal", "shako", "model-tools", "jemalloc"]
+default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "gateway", "portal", "shako", "model-tools", "viz", "jemalloc"]
 shako = [
   "dep:shako-server",
   "dep:shako-core",
@@ -53,6 +53,8 @@ portal = ["dep:joinedcontext-portal"]
 # POST /generate for the reconciler: broker schema and @context of a LinkML model.
 model-tools = ["dep:linkml-model", "dep:serde_norway"]
 jemalloc = ["dep:tikv-jemallocator"]
+# The chart renderer and live-data explorer (vendor/viz), static files only.
+viz = []
 
 [dependencies]
 jc-router = { path = "../../crates/shared/jc-router" }
@@ -123,6 +125,7 @@ shako-store-memory = { path = "../../crates/shako/store-memory", optional = true
 shako-store-pg = { path = "../../crates/shako/store-pg", optional = true }
 
 [dev-dependencies]
+sha2 = "0.10"
 jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core", features = ["outbound"] }
 http-body-util = "0.1"
 tempfile = "3"
