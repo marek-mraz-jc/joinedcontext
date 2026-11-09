@@ -118,6 +118,11 @@ const TEST_SOURCE = {
   },
 };
 
+/** The form is held while the permissions are on their way (jc-portal-refusals): act once they answered. */
+async function permissionsKnown(): Promise<void> {
+  await waitFor(() => expect(screen.queryByText(en.permissions.checking)).toBeNull());
+}
+
 describe("ResourceFormDialog shared drafts and verdict gates (AG-61, AG-62, UI-47, UI-48)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
@@ -816,6 +821,7 @@ describe("ResourceFormDialog shared drafts and verdict gates (AG-61, AG-62, UI-4
       </QueryClientProvider>,
     );
 
+    await permissionsKnown();
     fireEvent.change(screen.getByLabelText(/Name/i), {
       target: { value: "aq-feed" },
     });
@@ -944,6 +950,7 @@ describe("ResourceFormDialog shared drafts and verdict gates (AG-61, AG-62, UI-4
       </QueryClientProvider>,
     );
 
+    await permissionsKnown();
     fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: "refused-feed" } });
     const check = screen.getByRole("button", { name: en.form.check });
     fireEvent.click(check);
@@ -1560,6 +1567,7 @@ describe("ResourceFormDialog shared drafts and verdict gates (AG-61, AG-62, UI-4
       </QueryClientProvider>,
     );
 
+    await permissionsKnown();
     fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: "rejected-feed" } });
     fireEvent.click(screen.getByRole("button", { name: en.form.check }));
 
