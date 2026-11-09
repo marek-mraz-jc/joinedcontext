@@ -1,12 +1,19 @@
 # cargo deny policy of the root workspace (everything bins/jc links). The nested workspaces
 # (crates/antares, crates/ekiben, crates/portal) keep their own deny.toml beside their lockfile.
-# No advisory is ignored here: a vulnerable or unmaintained crate turns the supply-chain job red
-# until it is upgraded or replaced (bins/jc/STATUS.md lists the open ones).
+# A vulnerable or unmaintained crate turns the supply-chain job red until it is upgraded or
+# replaced (bins/jc/STATUS.md lists the open ones). Two advisories are ignored, the same ids and
+# reasons crates/portal (and prod's joinedcontext-portal) carries, each with no fixed release and
+# no reachable danger: RUSTSEC-2023-0071 (rsa) and RUSTSEC-2026-0374 (basic-toml). cargo audit
+# does not read this file: .cargo/audit.toml repeats the rsa id (audit only warns on basic-toml).
 [graph]
 all-features = false
 
 [advisories]
 yanked = "deny"
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "rsa 0.9 (Marvin, private-key timing) via openidconnect 4 -> joinedcontext-portal; no fixed rsa release. Runtime use is openidconnect's RS256 verification with Keycloak's public keys, which Marvin does not reach; rsa private keys exist only in tests (portal dev-dependency: src/auth/bearer.rs #[cfg(test)] mod tests, tests/auth_tests.rs); kaisatsu signs with aws-lc-rs (crypto/src/keys.rs). Drop when rsa releases a constant-time fix or openidconnect drops rsa" },
+    { id = "RUSTSEC-2026-0374", reason = "basic-toml 0.1.10 unmaintained (no vulnerability): build-time read of i18n.toml inside proc-macros, age 0.12.1 -> i18n-embed-fl 0.10.1 / i18n-embed-impl -> i18n-config 0.4.8, the newest of each. Drop when i18n-config releases without basic-toml" },
+]
 
 [licenses]
 # The union of the nested workspaces' allow-lists; each entry carries its reason there
