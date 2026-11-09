@@ -50,21 +50,25 @@ if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.sho
 // and the stub's formData() threw (16 red import tests on ci, Node 22 duck-typed it). undici gets
 // Node's File while it builds a part (vitest hands it a Blob per jsdom file) or parses a body.
 if (typeof window !== "undefined") {
-  const withNodeFile = <T>(run: () => T): T => {
+  const nodeFile = NodeFile as unknown as typeof File;
+  const lendNodeFile = (): (() => void) => {
     const jsdomFile = globalThis.File;
-    globalThis.File = NodeFile as typeof File;
-    try {
-      return run();
-    } finally {
+    globalThis.File = nodeFile;
+    return () => {
       globalThis.File = jsdomFile;
-    }
+    };
   };
   const form = await new Response("", { headers: { "Content-Type": "application/x-www-form-urlencoded" } }).formData();
   const NodeFormData = form.constructor as typeof FormData;
   for (const name of ["append", "set"] as const) {
     const own = NodeFormData.prototype[name] as (...args: unknown[]) => void;
     NodeFormData.prototype[name] = function (this: FormData, ...args: unknown[]) {
-      withNodeFile(() => own.apply(this, args));
+      const giveBack = lendNodeFile();
+      try {
+        own.apply(this, args);
+      } finally {
+        giveBack();
+      }
     };
   }
   // vitest's Request extends Node's, which owns formData.
@@ -72,12 +76,11 @@ if (typeof window !== "undefined") {
   for (const body of [nodeRequest, Response.prototype] as Body[]) {
     const own = body.formData;
     body.formData = async function (this: Body) {
-      const jsdomFile = globalThis.File;
-      globalThis.File = NodeFile as typeof File;
+      const giveBack = lendNodeFile();
       try {
         return await own.call(this);
       } finally {
-        globalThis.File = jsdomFile;
+        giveBack();
       }
     };
   }
