@@ -945,6 +945,54 @@ mod tests {
         assert_eq!(data(&fast_queue).len(), 1);
     }
 
+    /// A bare `{id,type}` the broker created (its upstream asks `sysAttrs`, so the message says
+    /// createdAt equals modifiedAt) reaches a filter that watches nothing. A filter with
+    /// watchedAttributes, a filter on another type, a later write the hub sees nothing of, and a
+    /// first-seen entity that was not created (an evicted or emptied table) send nothing.
+    #[test]
+    fn a_bare_create_reaches_a_filter_that_watches_nothing() {
+        let now = chrono::Utc::now();
+        let t0 = "2026-11-09T12:00:00.000Z";
+        let bare = |id: &str, modified: &str| {
+            json!({"id": id, "type": "Vehicle", "createdAt": t0, "modifiedAt": modified})
+        };
+        let hub = Hub::new("s", 100);
+        let (all, all_queue) = open(&hub);
+        let (watching, watching_queue) = open(&hub);
+        let (other, other_queue) = open(&hub);
+        let (stamped, stamped_queue) = open(&hub);
+        subscribe(&hub, all, json!({}));
+        subscribe(&hub, watching, json!({"watchedAttributes": ["speed"]}));
+        subscribe(&hub, other, json!({"entities": [{"type": "Bus"}]}));
+        subscribe(&hub, stamped, json!({"notification": {"sysAttrs": true}}));
+        hub.apply(bare("urn:ngsi-ld:Vehicle:7", t0), now);
+        let sent = data(&all_queue);
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0]["id"], "urn:ngsi-ld:Vehicle:7");
+        assert!(
+            sent[0].get("createdAt").is_none() && sent[0].get("modifiedAt").is_none(),
+            "the upstream's sysAttrs stay upstream: {sent:?}"
+        );
+        assert_eq!(data(&stamped_queue)[0]["createdAt"], t0, "asked for");
+        assert!(data(&watching_queue).is_empty());
+        assert!(data(&other_queue).is_empty());
+
+        hub.apply(bare("urn:ngsi-ld:Vehicle:7", "2026-11-09T12:00:01.000Z"), now);
+        hub.apply(bare("urn:ngsi-ld:Vehicle:8", "2026-11-09T12:00:01.000Z"), now);
+        assert!(data(&all_queue).is_empty(), "no change the hub sees");
+
+        let mut full = bus("urn:ngsi-ld:Vehicle:9", 10.0, "x");
+        full["createdAt"] = json!(t0);
+        full["modifiedAt"] = json!(t0);
+        full["speed"]["createdAt"] = json!(t0);
+        full["speed"]["value"] = json!({"createdAt": "kept, a value"});
+        hub.apply(full, now);
+        let sent = data(&all_queue);
+        assert!(sent[0]["speed"].get("createdAt").is_none(), "{sent:?}");
+        assert_eq!(sent[0]["speed"]["value"]["createdAt"], "kept, a value");
+        assert_eq!(data(&watching_queue).len(), 1);
+    }
+
     #[test]
     fn notification_attributes_cut_the_entity_further() {
         let hub = Hub::new("s", 100);
