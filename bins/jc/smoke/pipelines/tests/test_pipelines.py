@@ -121,3 +121,38 @@ def test_the_runner_check_refuses_the_portal_page_answered_in_place_of_ekiben():
     assert suite.runner_list({"content-type": "text/html"}, b"<!doctype html>") is None
     assert suite.runner_list({"content-type": "application/json"}, b"not json") is None
     assert suite.runner_list({"content-type": "application/json"}, b'{"zilina.a": {}}') == {"zilina.a": {}}
+
+
+def test_the_runner_check_sends_the_ekiben_token_jc_was_given_as_a_file(tmp_path):
+    """jc removes <state>/ekiben-token when given --ekiben-token-file: the suite reads
+    <home>/secrets/ekiben-token instead, or ekiben answers its stream list 401."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    import suite
+    from common import Http
+
+    class Ekiben(BaseHTTPRequestHandler):
+        def do_GET(self):
+            ok = self.headers.get("Authorization") == "Bearer t0ken"
+            self.send_response(200 if ok else 401)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"{}" if ok else b'{"error":"unauthorized"}')
+
+        def log_message(self, *a):
+            pass
+
+    (tmp_path / "state").mkdir()
+    (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets" / "ekiben-token").write_text("t0ken\n")
+    srv = HTTPServer(("127.0.0.1", 0), Ekiben)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        http = Http(f"http://127.0.0.1:{srv.server_port}")
+        assert http.call("GET", "/streams/streams", None)[0] == 401
+        tok = suite.ekiben_token(tmp_path / "state")
+        assert http.call("GET", "/streams/streams", tok)[0] == 200
+    finally:
+        srv.shutdown()
+    assert suite.ekiben_token(tmp_path / "nothing" / "state") is None

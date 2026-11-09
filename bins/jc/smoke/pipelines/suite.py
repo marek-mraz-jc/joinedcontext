@@ -179,12 +179,21 @@ def _ts(text):
         return None
 
 
+def ekiben_token(state: Path) -> str | None:
+    """ekiben's token: <state>/ekiben-token, else the file jc was given (<home>/secrets/ekiben-token),
+    as rehearsal.py read_secret looks; jc removes the state copy at start when given a file."""
+    for p in (state / "ekiben-token", state.parent / "secrets" / "ekiben-token"):
+        if p.exists():
+            return p.read_text().strip()
+    return None
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="run pipelines")
     ap.add_argument("--base-url", required=True)
     ap.add_argument("--export", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--state", help="jc state dir: portal-admin-client-secret, ekiben-token")
+    ap.add_argument("--state", help="jc state dir: portal-admin-client-secret, ekiben-token (or ../secrets/ekiben-token)")
     ap.add_argument("--admin-token-file", help="unused: the suite signs in a test administrator")
     ap.add_argument("--person-token-file", help="unused by this suite")
     ap.add_argument("--runs", type=int, default=10, help="how many Pipelines to run once")
@@ -197,9 +206,7 @@ def main(argv):
     pipelines = load_pipelines(Path(a.export) / "gitea" / "files")
     if a.only:
         pipelines = [p for p in pipelines if p.key in set(a.only)]
-    ekiben_tok = None
-    if a.state and (Path(a.state) / "ekiben-token").exists():
-        ekiben_tok = (Path(a.state) / "ekiben-token").read_text().strip()
+    ekiben_tok = ekiben_token(Path(a.state)) if a.state else None
     st, h, raw = http.call("GET", "/streams/streams", ekiben_tok)
     listed = runner_list(h, raw)
     r.check("runner", "ekiben", "GET /streams/streams", "200 the runner's JSON stream list",

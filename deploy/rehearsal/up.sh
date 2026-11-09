@@ -195,9 +195,6 @@ nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.to
   > "$home/jc.log" 2>&1 &
 echo $! > "$home/jc.pid"
 "$here/wait-jc.sh" "$(cat "$home/jc.pid")" "$home/jc.log" || exit 1
-# The pipelines smoke reads ekiben's token from <state>/ekiben-token, which jc removes at start now
-# that it is given as a file: a link to the given file until the suite reads secrets/.
-ln -sfn ../secrets/ekiben-token "$home/state/ekiben-token"
 echo "$env_name: jc on http://localhost:$port (log $home/jc.log)"
 
 
