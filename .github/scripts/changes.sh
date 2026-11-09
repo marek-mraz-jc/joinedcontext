@@ -46,8 +46,10 @@ covered() {
   awk -v done="${TMPDIR:-/tmp}/ci-done.$$" '
     BEGIN {
       while ((getline l < done) > 0) ok[l] = 1
-      jobs["root"] = "root-clippy root-test"; jobs["antares"] = "antares-clippy antares-test"
-      jobs["ekiben"] = "ekiben"; jobs["portal"] = "portal-clippy portal-test"; jobs["ui"] = "ui"
+      # every job of a key, each test partition of ci.yml (matrix part) by its name
+      jobs["root"] = "root-clippy root-test-1 root-test-2 root-test-3"
+      jobs["antares"] = "antares-clippy antares-test-1 antares-test-2 antares-test-3"
+      jobs["ekiben"] = "ekiben"; jobs["portal"] = "portal-clippy portal-test-1 portal-test-2"; jobs["ui"] = "ui"
     }
     {
       split($0, kv, "=")
@@ -91,7 +93,7 @@ if [ "${1:-}" = --selftest ]; then
   check '.github/scripts/changes.sh' "$JOBS"
   [ "$(printf 'root=false\nui=true\nimage=false\n' | ship)" = ship=true ] || { echo "FAIL: ship ui"; exit 1; }
   [ "$(printf 'root=false\nui=false\nimage=false\n' | ship)" = ship=false ] || { echo "FAIL: ship docs"; exit 1; }
-  [ "$(printf 'root=true\nportal=true\nsupply=true\n' | covered 'root-clippy\nroot-test\nportal-clippy')" = "$(printf 'root=false\nportal=true\nsupply=true')" ] \
+  [ "$(printf 'root=true\nportal=true\nsupply=true\n' | covered 'root-clippy\nroot-test-1\nroot-test-2\nroot-test-3\nportal-clippy\nportal-test-1')" = "$(printf 'root=false\nportal=true\nsupply=true')" ] \
     || { echo "FAIL: covered"; exit 1; }
   echo "changes.sh selftest ok"
   exit 0
