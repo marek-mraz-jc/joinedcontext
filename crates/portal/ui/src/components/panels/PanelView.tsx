@@ -124,7 +124,7 @@ function TablesLink({ href }: { href: string }): JSX.Element | null {
   const safe = safeHref(href);
   if (!safe) return null;
   return (
-    <a className={clsx(buttonClass("secondary", "sm"), "touch-target")} href={safe} target="_blank" rel="noopener noreferrer">
+    <a className={clsx(buttonClass("secondary", "sm"), "touch-target")} data-tables-link href={safe} target="_blank" rel="noopener noreferrer">
       <Icon name="external" className="size-4" />
       {t("dashboardView.asTables")}
     </a>
@@ -207,7 +207,9 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
     // A map reads each entity's latest values: a longer range would bring nothing more.
     body = (
       <MapFrame height={height}>
-        <PanelState icon="globe" title={noValue ?? t("dashboardView.emptyTitle")} description={t("dashboardView.geomap.empty")} />
+        <PanelState icon="globe" title={noValue ?? t("dashboardView.emptyTitle")} description={t("dashboardView.geomap.empty")}>
+          {tablesHref ? <TablesLink href={tablesHref} /> : null}
+        </PanelState>
       </MapFrame>
     );
   } else if (!hasData(data.frames)) {

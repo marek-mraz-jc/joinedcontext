@@ -155,6 +155,26 @@ describe("the helsinki air quality geomap", () => {
     expect(calls.popups[0].firstElementChild!.textContent).toBe("7 at this spot, 5 listed");
   });
 
+  it("lists only the stacked readings that fit whole and counts the rest", () => {
+    // A 400 px map gives the list 168 px; each reading is 80 px tall, so two fit.
+    const height = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const index = this.tagName === "DIV" && this.parentElement?.className.includes("divide-y") ? [...this.parentElement.children].indexOf(this) : -1;
+      return { top: 0, bottom: (index + 1) * 80 } as DOMRect;
+    });
+    try {
+      draw(frames);
+      const under = calls.sources[0].source.data.features.slice(0, 7).map((feature) => ({ properties: feature.properties }));
+      calls.clicks.get("markers")!({ features: under, lngLat: [0, 0] });
+      expect(calls.popups[0].querySelectorAll("dl")).toHaveLength(2);
+      expect(calls.popups[0].firstElementChild!.textContent).toBe("7 at this spot, 2 listed");
+      expect(calls.popups[0].textContent).toContain("5 not listed: zoom in to tell them apart");
+    } finally {
+      height.mockRestore();
+      rect.mockRestore();
+    }
+  });
+
   it("opens no tooltip when the layer has it off", () => {
     const off = structuredClone(panel);
     (off.options!.layers as { tooltip: boolean }[])[0].tooltip = false;

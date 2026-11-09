@@ -411,8 +411,14 @@
   }
 }
 @media (max-width: 639px) {
+  /* A phone width: the finger's 44 px, drawn as a box so the target reads as one. */
   .maplibregl-popup-close-button {
     min-width: 44px;
+    min-height: 44px;
+    border-radius: 0.5rem;
+    background-color: var(--color-surface-muted);
+  }
+  [data-tables-link] {
     min-height: 44px;
   }
 }

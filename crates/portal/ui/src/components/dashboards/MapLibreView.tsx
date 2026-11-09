@@ -414,29 +414,36 @@ export function MapLibreView({
         const root = document.createElement("div");
         const count = document.createElement("p");
         count.className = "mb-1 pr-6 text-body font-semibold text-fg";
-        count.textContent = t("dashboards.stackedHere", { n: features.length, shown: Math.min(features.length, STACKED) });
-        // The listed readings scroll inside the popup; the header says how many are listed.
-        root.className = "flex flex-col gap-2 divide-y divide-border overflow-y-auto [&>*+*]:pt-2";
-        // A share of the map's own height, so the tapped spot and its neighbours stay in view.
-        const mapHeight = container.current?.clientHeight ?? 400;
-        root.style.maxHeight = `${Math.round(mapHeight * (mapHeight < 480 ? 0.42 : 0.45))}px`;
+        root.className = "flex flex-col gap-2 divide-y divide-border overflow-hidden [&>*+*]:pt-2";
         for (const feature of features.slice(0, STACKED)) {
           root.append(popupNode(feature, layer.popupProperties, layer.open, layer.titleProperty));
         }
         const more = document.createElement("p");
-        if (features.length > STACKED) {
-          more.className = "mt-2 border-t border-border pt-2 text-body text-fg-muted";
-          more.textContent = t("dashboards.moreHere", { n: features.length - STACKED });
-        }
-        // Above the map's own controls (the scale, the attribution), which MapLibre stacks over a popup.
+        more.className = "mt-2 border-t border-border pt-2 text-body text-fg-muted";
         const stacked = document.createElement("div");
-        stacked.append(count, root);
-        if (more.textContent) stacked.append(more);
+        stacked.append(count, root, more);
+        const counted = () => {
+          const shown = root.children.length;
+          count.textContent = t("dashboards.stackedHere", { n: features.length, shown });
+          more.textContent = features.length > shown ? t("dashboards.moreHere", { n: features.length - shown }) : "";
+          more.hidden = !more.textContent;
+        };
+        counted();
         // A phone map is narrow: the popup keeps to it, a wider map lets a heading and its time share a line.
+        // z-10 puts it above the map's own controls (the scale, the attribution).
         new Popup({ className: "z-10", maxWidth: (container.current?.clientWidth ?? 0) < 500 ? "18rem" : "20rem" })
           .setLngLat(event.lngLat)
           .setDOMContent(features.length === 1 ? popupNode(features[0], layer.popupProperties, layer.open, layer.titleProperty) : stacked)
           .addTo(instance);
+        // Only whole readings, within a share of the map's height so the tapped spot stays in view;
+        // the rest are counted, never cut in half.
+        const mapHeight = container.current?.clientHeight ?? 400;
+        const room = mapHeight * (mapHeight < 480 ? 0.42 : 0.45);
+        const top = root.getBoundingClientRect().top;
+        while (root.children.length > 1 && root.lastElementChild!.getBoundingClientRect().bottom - top > room) {
+          root.lastElementChild!.remove();
+        }
+        counted();
       });
       drawn.current.set(layer.name, layer);
     }
