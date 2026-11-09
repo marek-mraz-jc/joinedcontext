@@ -411,13 +411,16 @@
   }
 }
 @media (max-width: 639px) {
-  /* A phone width: the finger's 44 px, drawn as a box so the target reads as one. */
+  /* A phone width: the finger's 44 px for the popup's close and the map's zoom buttons. */
   .maplibregl-popup .maplibregl-popup-close-button {
     min-width: 44px;
     min-height: 44px;
-    border: 1px solid var(--color-border);
-    border-radius: 0.5rem;
-    background-color: var(--color-surface-muted);
+  }
+  .maplibregl-ctrl-group button.maplibregl-ctrl-zoom-in,
+  .maplibregl-ctrl-group button.maplibregl-ctrl-zoom-out,
+  .maplibregl-ctrl-group button.maplibregl-ctrl-compass {
+    width: 44px;
+    height: 44px;
   }
   [data-tables-link] {
     min-height: 44px;

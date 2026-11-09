@@ -332,7 +332,11 @@ async function stackedPopup(page: Page, map: Locator, width: number): Promise<vo
   expect(shown.y).toBeGreaterThanOrEqual(box.y);
   expect(shown.y + shown.height).toBeLessThanOrEqual(box.y + box.height);
   const close = (await popup.locator(".maplibregl-popup-close-button").boundingBox())!;
-  if (width < 640) expect(Math.min(close.width, close.height)).toBeGreaterThanOrEqual(44);
+  if (width < 640) {
+    expect(Math.min(close.width, close.height)).toBeGreaterThanOrEqual(44);
+    const zoom = (await map.locator(".maplibregl-ctrl-zoom-in").boundingBox())!;
+    expect(Math.min(zoom.width, zoom.height)).toBeGreaterThanOrEqual(44);
+  }
   await pageShot(page, "geomap-popup", width);
   // A tap on the bare map closes the tooltip.
   await page.mouse.click(box.x + 4, box.y + box.height - 4);
