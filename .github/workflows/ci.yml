@@ -133,6 +133,11 @@ jobs:
         with: { tool: cargo-nextest }
       - run: cargo nextest run --workspace --locked --profile ci --no-fail-fast
       - run: cargo test --workspace --locked --no-fail-fast --doc
+      - if: always()
+        run: du -sh target/debug/deps
+      - if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: junit-root, path: target/nextest/ci/junit.xml, if-no-files-found: ignore, retention-days: 7 }
   antares-clippy:
     needs: changes
     if: needs.changes.outputs.antares == 'true'
@@ -174,6 +179,9 @@ jobs:
         with: { tool: cargo-nextest }
       - run: cargo nextest run --workspace --locked --profile ci
       - run: cargo test --workspace --locked --no-fail-fast --doc
+      - if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: junit-antares, path: crates/antares/target/nextest/ci/junit.xml, if-no-files-found: ignore, retention-days: 7 }
   ekiben:
     needs: changes
     if: needs.changes.outputs.ekiben == 'true'
@@ -239,6 +247,8 @@ jobs:
       - run: |
           (while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/ {print "mem used " $3 "/" $2 " MB"}') $(df -h / | awk 'NR == 2 {print "disk free " $4}')"; done) &
           cargo test --workspace --locked --no-fail-fast
+      - if: always()
+        run: du -sh target/debug/deps
   # The bundles the jc image embeds: a UI that does not build ships the placeholder page.
   ui:
     needs: changes
