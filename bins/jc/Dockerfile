@@ -33,29 +33,29 @@ RUN printf '{"commit":"%s","openapi":"%s"}\n' "$JC_COMMIT" "$(sha256sum ui/opena
 FROM node:24-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS apps
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 WORKDIR /work
-COPY crates/portal/sdk/package.json sdk/pnpm-lock.yaml ./sdk/
-COPY crates/portal/apps/bbsk-ukazovatele/ui/package.json apps/bbsk-ukazovatele/ui/pnpm-lock.yaml ./apps/bbsk-ukazovatele/ui/
-COPY crates/portal/apps/banskabystrica-zaznamy/ui/package.json apps/banskabystrica-zaznamy/ui/pnpm-lock.yaml ./apps/banskabystrica-zaznamy/ui/
-COPY crates/portal/apps/bbsk-zaznamy/ui/package.json apps/bbsk-zaznamy/ui/pnpm-lock.yaml ./apps/bbsk-zaznamy/ui/
-COPY crates/portal/apps/banskabystrica-ovzdusie/ui/package.json apps/banskabystrica-ovzdusie/ui/pnpm-lock.yaml ./apps/banskabystrica-ovzdusie/ui/
-COPY crates/portal/apps/banskabystrica-mapa/ui/package.json apps/banskabystrica-mapa/ui/pnpm-lock.yaml ./apps/banskabystrica-mapa/ui/
-COPY crates/portal/apps/banskabystrica-data/ui/package.json apps/banskabystrica-data/ui/pnpm-lock.yaml ./apps/banskabystrica-data/ui/
-COPY crates/portal/apps/banskabystrica-skoly/ui/package.json apps/banskabystrica-skoly/ui/pnpm-lock.yaml ./apps/banskabystrica-skoly/ui/
-COPY crates/portal/apps/bbsk-mapa/ui/package.json apps/bbsk-mapa/ui/pnpm-lock.yaml ./apps/bbsk-mapa/ui/
-COPY crates/portal/apps/bbsk-podujatia/ui/package.json apps/bbsk-podujatia/ui/pnpm-lock.yaml ./apps/bbsk-podujatia/ui/
-COPY crates/portal/apps/bbsk-data/ui/package.json apps/bbsk-data/ui/pnpm-lock.yaml ./apps/bbsk-data/ui/
-COPY crates/portal/apps/bbsk-mosty/ui/package.json apps/bbsk-mosty/ui/pnpm-lock.yaml ./apps/bbsk-mosty/ui/
-COPY crates/portal/apps/praha-mapa/ui/package.json apps/praha-mapa/ui/pnpm-lock.yaml ./apps/praha-mapa/ui/
-COPY crates/portal/apps/praha-data/ui/package.json apps/praha-data/ui/pnpm-lock.yaml ./apps/praha-data/ui/
-COPY crates/portal/apps/praha-odpad/ui/package.json apps/praha-odpad/ui/pnpm-lock.yaml ./apps/praha-odpad/ui/
-COPY crates/portal/apps/helsinki-kartta/ui/package.json apps/helsinki-kartta/ui/pnpm-lock.yaml ./apps/helsinki-kartta/ui/
-COPY crates/portal/apps/helsinki-data/ui/package.json apps/helsinki-data/ui/pnpm-lock.yaml ./apps/helsinki-data/ui/
-COPY crates/portal/apps/bike-stations/ui/package.json apps/bike-stations/ui/pnpm-lock.yaml ./apps/bike-stations/ui/
-COPY crates/portal/apps/praha-mesto/ui/package.json apps/praha-mesto/ui/pnpm-lock.yaml ./apps/praha-mesto/ui/
-COPY crates/portal/apps/zilina-mapa/ui/package.json apps/zilina-mapa/ui/pnpm-lock.yaml ./apps/zilina-mapa/ui/
-COPY crates/portal/apps/zilina-ukazovatele/ui/package.json apps/zilina-ukazovatele/ui/pnpm-lock.yaml ./apps/zilina-ukazovatele/ui/
-COPY crates/portal/apps/zilina-zaznamy/ui/package.json apps/zilina-zaznamy/ui/pnpm-lock.yaml ./apps/zilina-zaznamy/ui/
-COPY crates/portal/apps/zilina-vyskum/ui/package.json apps/zilina-vyskum/ui/pnpm-lock.yaml ./apps/zilina-vyskum/ui/
+COPY crates/portal/sdk/package.json crates/portal/sdk/pnpm-lock.yaml ./sdk/
+COPY crates/portal/apps/bbsk-ukazovatele/ui/package.json crates/portal/apps/bbsk-ukazovatele/ui/pnpm-lock.yaml ./apps/bbsk-ukazovatele/ui/
+COPY crates/portal/apps/banskabystrica-zaznamy/ui/package.json crates/portal/apps/banskabystrica-zaznamy/ui/pnpm-lock.yaml ./apps/banskabystrica-zaznamy/ui/
+COPY crates/portal/apps/bbsk-zaznamy/ui/package.json crates/portal/apps/bbsk-zaznamy/ui/pnpm-lock.yaml ./apps/bbsk-zaznamy/ui/
+COPY crates/portal/apps/banskabystrica-ovzdusie/ui/package.json crates/portal/apps/banskabystrica-ovzdusie/ui/pnpm-lock.yaml ./apps/banskabystrica-ovzdusie/ui/
+COPY crates/portal/apps/banskabystrica-mapa/ui/package.json crates/portal/apps/banskabystrica-mapa/ui/pnpm-lock.yaml ./apps/banskabystrica-mapa/ui/
+COPY crates/portal/apps/banskabystrica-data/ui/package.json crates/portal/apps/banskabystrica-data/ui/pnpm-lock.yaml ./apps/banskabystrica-data/ui/
+COPY crates/portal/apps/banskabystrica-skoly/ui/package.json crates/portal/apps/banskabystrica-skoly/ui/pnpm-lock.yaml ./apps/banskabystrica-skoly/ui/
+COPY crates/portal/apps/bbsk-mapa/ui/package.json crates/portal/apps/bbsk-mapa/ui/pnpm-lock.yaml ./apps/bbsk-mapa/ui/
+COPY crates/portal/apps/bbsk-podujatia/ui/package.json crates/portal/apps/bbsk-podujatia/ui/pnpm-lock.yaml ./apps/bbsk-podujatia/ui/
+COPY crates/portal/apps/bbsk-data/ui/package.json crates/portal/apps/bbsk-data/ui/pnpm-lock.yaml ./apps/bbsk-data/ui/
+COPY crates/portal/apps/bbsk-mosty/ui/package.json crates/portal/apps/bbsk-mosty/ui/pnpm-lock.yaml ./apps/bbsk-mosty/ui/
+COPY crates/portal/apps/praha-mapa/ui/package.json crates/portal/apps/praha-mapa/ui/pnpm-lock.yaml ./apps/praha-mapa/ui/
+COPY crates/portal/apps/praha-data/ui/package.json crates/portal/apps/praha-data/ui/pnpm-lock.yaml ./apps/praha-data/ui/
+COPY crates/portal/apps/praha-odpad/ui/package.json crates/portal/apps/praha-odpad/ui/pnpm-lock.yaml ./apps/praha-odpad/ui/
+COPY crates/portal/apps/helsinki-kartta/ui/package.json crates/portal/apps/helsinki-kartta/ui/pnpm-lock.yaml ./apps/helsinki-kartta/ui/
+COPY crates/portal/apps/helsinki-data/ui/package.json crates/portal/apps/helsinki-data/ui/pnpm-lock.yaml ./apps/helsinki-data/ui/
+COPY crates/portal/apps/bike-stations/ui/package.json crates/portal/apps/bike-stations/ui/pnpm-lock.yaml ./apps/bike-stations/ui/
+COPY crates/portal/apps/praha-mesto/ui/package.json crates/portal/apps/praha-mesto/ui/pnpm-lock.yaml ./apps/praha-mesto/ui/
+COPY crates/portal/apps/zilina-mapa/ui/package.json crates/portal/apps/zilina-mapa/ui/pnpm-lock.yaml ./apps/zilina-mapa/ui/
+COPY crates/portal/apps/zilina-ukazovatele/ui/package.json crates/portal/apps/zilina-ukazovatele/ui/pnpm-lock.yaml ./apps/zilina-ukazovatele/ui/
+COPY crates/portal/apps/zilina-zaznamy/ui/package.json crates/portal/apps/zilina-zaznamy/ui/pnpm-lock.yaml ./apps/zilina-zaznamy/ui/
+COPY crates/portal/apps/zilina-vyskum/ui/package.json crates/portal/apps/zilina-vyskum/ui/pnpm-lock.yaml ./apps/zilina-vyskum/ui/
 RUN corepack enable && cd sdk && pnpm install --frozen-lockfile \
     && cd ../apps/bbsk-ukazovatele/ui && pnpm install --frozen-lockfile \
     && cd ../../banskabystrica-zaznamy/ui && pnpm install --frozen-lockfile \

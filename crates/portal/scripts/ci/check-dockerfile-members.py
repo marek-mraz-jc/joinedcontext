@@ -70,9 +70,11 @@ def shipped_apps(dockerfile: str, prefix: str) -> dict[str, list[str]]:
     names = set(re.findall(r"app-integrity\.mjs \"?/srv/apps/([A-Za-z0-9_-]+)", stage))
     for loop in re.findall(r"for name in ([^;]+); do\s*\\?\s*cp -r [^ ]+ \"/srv/apps/\$name\"", stage):
         names |= set(loop.split())
+    # Every source of a COPY into the build tree, the last word being its destination.
     sources = {
-        src.removeprefix(prefix)
-        for src in re.findall(r"^COPY (\S+) \./(?:apps|sdk|scripts)/", stage, re.MULTILINE)
+        src.removeprefix(prefix) if src.startswith(prefix) else f"(no {prefix}) {src}"
+        for line in re.findall(r"^COPY (.+ \./(?:apps|sdk|scripts)/\S*)$", stage, re.MULTILINE)
+        for src in line.split()[:-1]
     }
     runtime = [
         line
@@ -112,7 +114,7 @@ def apps_selftest() -> None:
         "ENV JC_PORTAL_APPS_DIR=/srv/apps\n"
     )
     assert shipped_apps(portal, "")["apps"] == ["a", "s-one", "s-two"]
-    jc = re.sub(r"^COPY (apps/|scripts/)", r"COPY crates/portal/\1", portal, flags=re.MULTILINE)
+    jc = re.sub(r"(?<=[ ])(apps/|scripts/)(?=\S* )", r"crates/portal/\1", portal)
     assert apps_differ(portal, jc) == [], apps_differ(portal, jc)
     assert apps_differ(portal, jc.replace("/srv/apps/a\n", "/srv/apps/b\n")) == [
         "bins/jc/Dockerfile lacks app `a` the Portal Dockerfile has",
@@ -124,6 +126,12 @@ def apps_selftest() -> None:
     assert apps_differ(portal, jc.replace("COPY crates/portal/apps/a/ui/ ./apps/a/ui/\n", "")) == [
         "bins/jc/Dockerfile lacks source `apps/a/ui/` the Portal Dockerfile has",
     ]
+    # A second source left without its crates/portal/ prefix (jc's context is the repository root).
+    unprefixed = jc.replace(" crates/portal/apps/a/ui/pnpm-lock.yaml", " apps/a/ui/pnpm-lock.yaml")
+    assert apps_differ(portal, unprefixed) == [
+        "bins/jc/Dockerfile lacks source `apps/a/ui/pnpm-lock.yaml` the Portal Dockerfile has",
+        "bins/jc/Dockerfile has source `(no crates/portal/) apps/a/ui/pnpm-lock.yaml` the Portal Dockerfile lacks",
+    ], apps_differ(portal, unprefixed)
     assert apps_differ(portal, jc.replace("ENV JC_PORTAL_APPS_DIR=/srv/apps\n", "")) == [
         "bins/jc/Dockerfile lacks runtime line `ENV JC_PORTAL_APPS_DIR=/srv/apps` the Portal Dockerfile has",
     ]
