@@ -248,6 +248,53 @@ fn other_view_types_are_never_touched_and_a_forged_or_duplicate_view_goes() {
     );
 }
 
+/// Counts the `resource_view_list` reads a run makes.
+struct Counted<'a>(&'a mut InMemoryCkan, std::cell::Cell<usize>);
+
+impl CkanApi for Counted<'_> {
+    fn show(
+        &self,
+        action: &str,
+        name: &str,
+    ) -> Result<Option<Value>, jcctl::publish::ckan::CkanError> {
+        if action == "resource_view_list" {
+            self.1.set(self.1.get() + 1);
+        }
+        self.0.show(action, name)
+    }
+    fn action(
+        &mut self,
+        action: &str,
+        payload: &Value,
+    ) -> Result<Value, jcctl::publish::ckan::CkanError> {
+        self.0.action(action, payload)
+    }
+}
+
+#[test]
+fn a_republish_reads_the_views_of_the_resources_that_hold_one_only() {
+    // C1: the hourly republish read the views of every resource, fifteen per dataset.
+    let endpoint = endpoint(&[chart("no2-now", "NO2 teraz")]);
+    let (mut ckan, first) = published(&endpoint);
+    let resources = ckan.package(DATASET).expect("dataset")["resources"]
+        .as_array()
+        .expect("resources")
+        .len();
+    assert!(resources > 1, "the dataset has {resources} resources");
+    let mut counted = Counted(&mut ckan, std::cell::Cell::new(0));
+    publish_views(&mut counted, &endpoint, &settings(), &[]).expect("first run");
+    assert_eq!(counted.1.get(), 0, "a dataset without views reads no list");
+    counted.1.set(0);
+    let again = publish_views(&mut counted, &endpoint, &settings(), &[]).expect("second run");
+    assert_eq!(again, Views::default());
+    assert_eq!(
+        counted.1.get(),
+        1,
+        "only the resource holding the view is read"
+    );
+    assert_eq!(ours(&ckan, &first).len(), 1);
+}
+
 #[test]
 fn no_dataset_or_no_publication_does_nothing() {
     let endpoint = endpoint(&[chart("no2-now", "NO2 teraz")]);
