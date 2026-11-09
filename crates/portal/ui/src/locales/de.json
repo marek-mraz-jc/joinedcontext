@@ -12295,6 +12295,7 @@
     },
     "conflictLead": "Jemand hat dieses Dashboard gespeichert, nachdem Sie es geöffnet haben. Die gespeicherte Version zu öffnen verwirft Ihre Änderungen.",
     "readOnlyHeading": "Dashboard-Baukasten",
-    "lockedConflict": "Gesperrt, bis Sie die gespeicherte Version öffnen."
+    "lockedConflict": "Gesperrt, bis Sie die gespeicherte Version öffnen.",
+    "readOnlyLead": "Hier gebaute Dashboards lesen die Daten des Projekts und öffnen sich neben seinen anderen Dashboards."
   }
 }

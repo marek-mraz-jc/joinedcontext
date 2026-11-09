@@ -12295,6 +12295,7 @@
     },
     "conflictLead": "Someone saved this dashboard after you opened it. Opening the saved version drops your changes.",
     "readOnlyHeading": "Dashboard builder",
-    "lockedConflict": "Locked until you open the saved version."
+    "lockedConflict": "Locked until you open the saved version.",
+    "readOnlyLead": "Dashboards built here read the project's data and open beside its other dashboards."
   }
 }

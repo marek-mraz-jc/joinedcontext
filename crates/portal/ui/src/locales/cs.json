@@ -12295,6 +12295,7 @@
     },
     "conflictLead": "Někdo tento dashboard uložil poté, co jste ho otevřeli. Otevření uložené verze zahodí vaše změny.",
     "readOnlyHeading": "Tvorba dashboardů",
-    "lockedConflict": "Uzamčeno, dokud neotevřete uloženou verzi."
+    "lockedConflict": "Uzamčeno, dokud neotevřete uloženou verzi.",
+    "readOnlyLead": "Dashboardy vytvořené zde čtou data projektu a otevírají se u jeho dalších dashboardů."
   }
 }

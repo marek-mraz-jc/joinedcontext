@@ -825,7 +825,7 @@ function NotAllowed({ project }: { project: string }): JSX.Element {
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-section">
-      <PageHeader title={t("builder.readOnlyHeading")} />
+      <PageHeader title={t("builder.readOnlyHeading")} description={t("builder.readOnlyLead")} />
       <EmptyState
         icon="lock"
         title={t("builder.readOnlyTitle")}
