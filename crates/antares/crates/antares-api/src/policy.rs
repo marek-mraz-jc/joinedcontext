@@ -1537,6 +1537,30 @@ pub fn drop_subject_unless_from(headers: &mut HeaderMap, names: &[String], from:
     }
 }
 
+/// [`drop_subject_unless_from`], except on a `/q` request carrying the admin bearer: the admin
+/// caller names whose reading a `/q` route runs under (`POST /q/views/{id}/preview`, T-3813), and
+/// a subject only narrows what the admin credential reads unnamed. Without it, a Portal that
+/// reaches the broker beside the gateway (jc) previews under nobody and meets `401`.
+pub fn drop_subject_unless_from_or_admin(
+    path: &str,
+    headers: &mut HeaderMap,
+    names: &[String],
+    from: &[String],
+    admin: Option<&crate::admin_auth::AdminAuth>,
+) {
+    let admin_call = (path == "/q" || path.starts_with("/q/"))
+        && admin.is_some_and(|auth| {
+            auth.admits(
+                headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .map(axum::http::HeaderValue::as_bytes),
+            )
+        });
+    if !admin_call {
+        drop_subject_unless_from(headers, names, from);
+    }
+}
+
 /// Who this request is from, as far as the seam is concerned: the tenant it
 /// addresses and the headers a deployment named. A header the request does
 /// not carry is simply absent — the seam invents nothing.
@@ -2210,6 +2234,34 @@ mod tests {
             assert!(h.get("x-jc-groups").is_none(), "{id:?}");
             assert_eq!(h.get("x-other").unwrap(), "kept");
         }
+    }
+
+    #[test]
+    fn an_admin_q_request_names_its_subject_and_nothing_else_does() {
+        let names = vec!["x-jc-subject".to_owned(), "x-jc-roles".to_owned()];
+        let from = vec!["context-gateway.jc".to_owned()];
+        let secret = "0123456789abcdef0123456789abcdef";
+        let admin = crate::admin_auth::AdminAuth::new(secret, false).unwrap();
+        let request = |bearer: Option<&str>| {
+            let mut h = HeaderMap::new();
+            h.insert("x-jc-roles", "public".parse().unwrap());
+            if let Some(b) = bearer {
+                h.insert("authorization", format!("Bearer {b}").parse().unwrap());
+            }
+            h
+        };
+        let kept = |path: &str, bearer: Option<&str>, admin: Option<&crate::admin_auth::AdminAuth>| {
+            let mut h = request(bearer);
+            drop_subject_unless_from_or_admin(path, &mut h, &names, &from, admin);
+            h.contains_key("x-jc-roles")
+        };
+        assert!(kept("/q/views/v/preview", Some(secret), Some(&admin)));
+        // the wrong bearer, no bearer, no admin credential configured, or outside /q: dropped
+        assert!(!kept("/q/views/v/preview", Some("not-the-secret-not-the-secret-xx"), Some(&admin)));
+        assert!(!kept("/q/views/v/preview", None, Some(&admin)));
+        assert!(!kept("/q/views/v/preview", Some(secret), None));
+        assert!(!kept("/ngsi-ld/v1/entities", Some(secret), Some(&admin)));
+        assert!(!kept("/qx/views", Some(secret), Some(&admin)));
     }
 
     /// `admits` is `shown(..).is_some()` without the set (T-3667).
