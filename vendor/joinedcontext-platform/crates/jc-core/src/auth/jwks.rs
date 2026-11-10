@@ -166,7 +166,10 @@ mod tests {
                 "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()
             );
-            socket.write_all(answer.as_bytes()).await.expect("an answer");
+            socket
+                .write_all(answer.as_bytes())
+                .await
+                .expect("an answer");
             String::from_utf8_lossy(&head[..n]).to_ascii_lowercase()
         });
         let verifier = Verifier::new("https://idm.city.invalid/realms/r");

@@ -1004,10 +1004,8 @@ mod tests {
             .unwrap();
         // jc's listener in host mode, with kaisatsu's keys on its own host only.
         let certs = "/realms/jc/protocol/openid-connect/certs";
-        let kaisatsu = Router::new().route(
-            certs,
-            axum::routing::get(|| async { r#"{"keys":[]}"# }),
-        );
+        let kaisatsu =
+            Router::new().route(certs, axum::routing::get(|| async { r#"{"keys":[]}"# }));
         let table = jc_router::JcRouterBuilder::new("https", "city.example")
             .mount(
                 jc_router::MountSpec {
