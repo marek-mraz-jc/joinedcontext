@@ -230,7 +230,9 @@ mod paging_store {
             if ids.is_empty() {
                 return;
             }
-            st.store.batch_delete(tenant, &ids).await.expect("clean");
+            let gone = st.store.batch_delete(tenant, &ids).await.expect("clean");
+            // a row whose document names another id never leaves: fail, not spin
+            assert!(gone.contains(&true), "clean made no progress: {ids:?}");
         }
     }
 
