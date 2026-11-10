@@ -17,7 +17,7 @@ export REHEARSAL_EXPORT=$export_dir
 REHEARSAL_IMPORT_POLICY=allow-all "$here/up.sh" "$env_name" "$port" "$pg_port"
 # rehearsal.py import fails on any refused broker call, an entity short of the export or a temporal
 # refusal other than the 24-hour cut-off; jc on allow-all never stays up after a failed import.
-if ! python3 -I "$here/rehearsal.py" import --export "$export_dir" --base "http://localhost:$port" \
+if ! python3 -I "$here/rehearsal.py" import --export "$export_dir" --base "http://127.0.0.1:$port" \
   --state "$home/state" --report "$home/import-report.json" --daiya-bin "$(dirname "$jc_bin")/daiya"; then
   kill "$(cat "$home/jc.pid")" 2>/dev/null || true
   echo "$env_name: import FAILED ($home/import-report.json); jc on allow-all stopped" >&2
@@ -33,9 +33,9 @@ fi
 "$here/up.sh" "$env_name" "$port" "$pg_port"
 # Wait until the broker answers at all (no credential needed for that).
 for _ in $(seq 60); do
-  [ "$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$port/broker/q/health")" != 000 ] && break; sleep 2
+  [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/broker/q/health")" != 000 ] && break; sleep 2
 done
-if ! python3 -I "$here/rehearsal.py" policy-check --base "http://localhost:$port" --state "$home/state"; then
+if ! python3 -I "$here/rehearsal.py" policy-check --base "http://127.0.0.1:$port" --state "$home/state"; then
   kill "$(cat "$home/jc.pid")" 2>/dev/null || true
   echo "$env_name: the broker does not refuse an anonymous write after the import; jc stopped" >&2
   exit 1

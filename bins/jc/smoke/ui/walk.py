@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 import urllib.parse
 
+from common import browser_get
+
 FORMS = ["spaces", "endpoints", "pipelines", "policies", "subscriptions", "csrs", "datasources", "syncsources"]
 SECTIONS = ["spaces", "endpoints", "subscriptions", "datasources", "pipelines", "dashboards", "apps", "syncsources",
             "policies", "csrs"]
@@ -39,7 +41,7 @@ def first_link(page, base: str, list_page: str, pattern: re.Pattern, main_only: 
 
 
 def first_name(page, base: str, project: str, section: str):
-    r = page.request.get(f"{base}/api/v1/projects/{project}/{section}")
+    r = browser_get(page, f"{base}/api/v1/projects/{project}/{section}")
     if not r.ok:
         return None
     try:

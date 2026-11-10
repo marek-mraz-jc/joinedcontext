@@ -6,7 +6,8 @@
 # prom-label-proxy pins every query to namespace="jc-prod"; daiya's datasource `prometheus`
 # (organization 1) points at the proxy, the one address `[daiya] prometheus_reach` opens.
 # REHEARSAL_PROMETHEUS=off leaves all of it out (the dashboards' Prometheus panels then skip).
-# Ports: Prometheus on <postgres port>+300, the proxy on +301, both on 127.0.0.1 only.
+# Ports: Prometheus on <postgres port>+300, the proxy on +301, both on 127.0.0.1 only. The TSDB keeps
+# 2 h (REHEARSAL_PROM_RETENTION; supervisor 2026-11-10) on a 512 MiB tmpfs, the container capped at 512 MiB.
 # Reads: env_name, home, pg_port, here, secret(); appends to daiya_lines.
 
 if [ "${REHEARSAL_PROMETHEUS:-on}" != off ]; then
@@ -28,7 +29,7 @@ if [ "${REHEARSAL_PROMETHEUS:-on}" != off ]; then
     -v "$home/prometheus/prometheus.yml":/etc/rh/prometheus.yml:ro \
     -v "$(secret metrics-token)":/etc/rh/token:ro \
     "$prom_image" --config.file=/etc/rh/prometheus.yml --storage.tsdb.path=/prometheus \
-    --storage.tsdb.retention.time=2d --web.listen-address="127.0.0.1:$prom_port" >/dev/null
+    --storage.tsdb.retention.time="${REHEARSAL_PROM_RETENTION:-2h}" --web.listen-address="127.0.0.1:$prom_port" >/dev/null
   docker run -d --name "rh-promproxy-$env_name" --network host --read-only --memory 64m \
     "$proxy_image" --insecure-listen-address="127.0.0.1:$proxy_port" \
     --upstream="http://127.0.0.1:$prom_port" --label=namespace --label-value=jc-prod \

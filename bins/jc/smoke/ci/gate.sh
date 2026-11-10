@@ -36,7 +36,7 @@ for _ in $(seq "${SMOKE_CONVERGE_SECS:-300}"); do
 done
 echo "gate: $(tail -n +"$((mark + 1))" "$home/jc.log" | grep -c 'sync run finished.*leader=true') reconciler passes since the import"
 
-# jc names itself localhost:<port> (up.sh --base-host): tokens carry that issuer.
+# jc names itself 127.0.0.1:<port> (up.sh --base-host): tokens carry that issuer.
 # The suites read their credentials from one state dir: jc's own, plus the service tokens
 # up.sh gave jc from the secrets dir (jc keeps no file of them). Links only, in a 0700 dir.
 view="$home/smoke-state"
@@ -44,7 +44,7 @@ rm -rf "$view" && mkdir -m 700 "$view"
 for f in "$home"/state/* "$home"/secrets/{shako-token,ekiben-token,dashboards-password}; do
   [ -f "$f" ] && ln -s "$f" "$view/"
 done
-args=(--base-url "http://localhost:$port" --out "$out" --export "$export_dir" --state "$view"
+args=(--base-url "http://127.0.0.1:$port" --out "$out" --export "$export_dir" --state "$view"
       --log-file "$home/jc.log" --admin-url "http://127.0.0.1:$((pg_port + 200))"
       --admin-token-file "$home/secrets/metrics-token")
 [ "${SMOKE_E2E:-0}" = 1 ] && args+=(--e2e)
