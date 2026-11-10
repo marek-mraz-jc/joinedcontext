@@ -5,22 +5,20 @@ name: ship-apps
 # ghcr.io/<owner>/jc-app-<app> by digest and signed with cosign, then its SBOM attested and the
 # trivy gate run (HIGH/CRITICAL with a fix), as image-embedder.yml does. Deployments pin the
 # digest (deployment components/jc/images.yaml), never a tag.
+#
+# ci.yml calls it on a push to main once `promote` signed the jc image (every gate and the scan
+# passed), as it calls image.yml: a called workflow signs under its own name on the caller's ref,
+# so the signature reads `.github/workflows/image-apps.yml@refs/heads/main` with the commit's sha.
+# (A `workflow_run` trigger ran on the default branch, jc-portal-1: it signed under that ref and
+# built only while jc-portal-1 equalled main.) A `v*` tag or a dispatch builds and signs at once.
 on:
-  workflow_run: { workflows: [ci], types: [completed], branches: [main] }
+  workflow_call:
   push:
     tags: ["v*"]
   workflow_dispatch:
 permissions: { contents: read }
-concurrency:
-  group: "image-apps-${{ github.sha }}"
-  cancel-in-progress: false
 jobs:
   build:
-    if: >-
-      github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_sha == github.sha &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write, id-token: write }
     timeout-minutes: 60

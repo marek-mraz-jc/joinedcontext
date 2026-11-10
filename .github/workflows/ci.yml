@@ -498,3 +498,13 @@ jobs:
     permissions: { contents: read, packages: write, id-token: write }
     uses: ./.github/workflows/image.yml
     with: { mode: sign, digest: "${{ needs.image.outputs.digest }}" }
+  # The ui-rust App images (image-apps.yml) of the commit whose jc image was just signed, when
+  # the push touches an App, the build stage or a workflow (changes.sh dockerfiles, workflows):
+  # other pushes do not wait for it before deploy-pin, and a dispatch or a `v*` tag rebuilds.
+  ship-apps:
+    needs: [changes, promote]
+    if: >-
+      always() && needs.promote.result == 'success' &&
+      (needs.changes.outputs.dockerfiles == 'true' || needs.changes.outputs.workflows == 'true')
+    permissions: { contents: read, packages: write, id-token: write }
+    uses: ./.github/workflows/image-apps.yml
