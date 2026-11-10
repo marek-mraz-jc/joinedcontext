@@ -9,8 +9,10 @@
  * 4. Hidden attributes are part of the one editor and are proposed on the endpoint itself.
  * 5. A person the space refuses sees what the endpoint serves today, and is told why.
  * 6. A draft the gateway refuses says why, beside the proof.
+ * 7. A person the Endpoint's own access document gives no query on the type is told so, and no
+ *    preview is asked: the broker would refuse it (gate 5 ui row, jc-ui-preview).
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
@@ -141,14 +143,19 @@ const UNPROJECTED = {
   spec: { ...ENDPOINT.spec, projectionRef: undefined, projection: undefined },
 };
 
+/** The Endpoint's `/access` document for a person its Policies let query events. */
+const QUERIES_EVENTS = { permissions: [{ resource: { type: "Event" }, actions: ["queryEntity", "retrieveEntity"], attributes: "*" }] };
+
 function renderPage({
   space = "readable",
   preview = "serves",
   endpoint = ENDPOINT,
+  access = "queries",
 }: {
   space?: "readable" | "refused";
   preview?: "serves" | "refuses" | "fails";
   endpoint?: unknown;
+  access?: "queries" | "other-type" | "refused";
 } = {}) {
   const sent: Sent[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -169,6 +176,12 @@ function renderPage({
       return space === "readable"
         ? json([concert, lecture], 200, { "NGSILD-Results-Count": "2" })
         : json({ title: "Not Found" }, 404);
+    }
+    if (path === `/api/endpoint/${SLUG}/access`) {
+      if (access === "refused") return json({ title: "Forbidden", status: 403 }, 403);
+      return access === "queries"
+        ? json(QUERIES_EVENTS)
+        : json({ permissions: [{ resource: { type: "WeatherObserved" }, actions: ["queryEntity"] }] });
     }
     if (path === PREVIEW) {
       if (preview === "refuses") {
@@ -354,6 +367,28 @@ describe("the endpoint's filter editor and its proof", () => {
     expect(screen.queryByRole("columnheader", { name: en.endpoints.proof.original })).not.toBeInTheDocument();
     // No draft travels for a person the preview would refuse anyway.
     expect(previews(sent)).toHaveLength(0);
+  });
+
+  it("asks no preview of a person the Endpoint's access gives no query on the type, and says why", async () => {
+    for (const access of ["other-type", "refused"] as const) {
+      const sent = renderPage({ access });
+
+      const proof = await screen.findByRole("region", { name: en.endpoints.proof.title });
+      expect(await within(proof).findByText(en.endpoints.proof.notGranted.replace("{type}", "Event"))).toBeInTheDocument();
+      expect(within(proof).queryByRole("table")).not.toBeInTheDocument();
+      expect(within(proof).queryByText(en.endpoints.proof.loading)).not.toBeInTheDocument();
+      expect(sent.some((call) => call.path === `/api/endpoint/${SLUG}/access`)).toBe(true);
+      expect(previews(sent)).toHaveLength(0);
+      cleanup();
+    }
+  });
+
+  it("still asks the preview of a person the Endpoint's access lets query the type", async () => {
+    const sent = renderPage();
+
+    expect(await screen.findByText("Serving 1 of 2 Event · hidden attributes: 1")).toBeInTheDocument();
+    expect(previews(sent).length).toBeGreaterThan(0);
+    expect(screen.queryByText(en.endpoints.proof.notGranted.replace("{type}", "Event"))).not.toBeInTheDocument();
   });
 
   it("says why the gateway refused the draft", async () => {

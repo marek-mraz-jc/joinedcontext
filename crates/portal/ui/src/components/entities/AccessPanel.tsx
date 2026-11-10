@@ -36,8 +36,23 @@ export function useAccess(slug: string | undefined) {
  * decides each delete; this only keeps a button from offering what will be refused.
  */
 export function mayDelete(doc: GrantDocument | undefined, type: string): boolean {
+  return holds(doc, type, ["deleteEntity"]);
+}
+
+/**
+ * Whether a grant lets its caller query entities of `type`: what the filter proof's preview runs
+ * through the same Policies (EP-85). The broker still decides each preview; this only keeps the
+ * page from asking for one it will refuse.
+ */
+export function mayQuery(doc: GrantDocument | undefined, type: string): boolean {
+  return holds(doc, type, ["queryEntity", "queryBatch"]);
+}
+
+/** A permission covering `type` names one of `actions`, and no prohibition covering it does. */
+function holds(doc: GrantDocument | undefined, type: string, actions: string[]): boolean {
   const names = (entry: GrantEntry) =>
-    (entry.resource?.type === undefined || covers(entry, type)) && (entry.actions ?? []).includes("deleteEntity");
+    (entry.resource?.type === undefined || covers(entry, type)) &&
+    (entry.actions ?? []).some((action) => actions.includes(action));
   return (doc?.permissions ?? []).some(names) && !(doc?.prohibitions ?? []).some(names);
 }
 

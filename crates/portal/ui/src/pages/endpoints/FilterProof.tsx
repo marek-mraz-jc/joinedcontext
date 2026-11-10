@@ -6,6 +6,7 @@ import { clsx } from "clsx";
 import { api, ApiError, unwrap } from "../../api/client";
 import type { Manifest } from "../../api/manifest";
 import { endpointUrl } from "../../components/endpoints/links";
+import { accessQuery, mayQuery } from "../../components/entities/AccessPanel";
 import {
   Alert,
   Button,
@@ -282,9 +283,16 @@ export function FilterProof({
   });
   // The person may not read the space: the proof is the served side alone.
   const readable = original.isSuccess;
+  // The preview reads through the Endpoint's own Policies, which its `/access` document states for
+  // this person: one they refuse is told so and no draft travels. The broker still decides each
+  // preview; this only spares a call it would refuse.
+  const access = useQuery({ ...accessQuery(slug), enabled: live && readable });
+  const accessRefused = access.error instanceof ApiError && (access.error.status === 401 || access.error.status === 403);
+  const notGranted = readable && (accessRefused || (access.isSuccess && !mayQuery(access.data, type)));
+  const accessFailed = readable && access.isError && !accessRefused;
   const served = useQuery({
     queryKey: ["filter-proof", "served", slug, type, offset, readable ? original.data.entities.map((e) => e.id) : null, readable ? settled : null],
-    enabled: live && type !== "" && !original.isPending,
+    enabled: live && type !== "" && !original.isPending && (!readable || (access.isSuccess && !notGranted)),
     retry: false,
     placeholderData: (previous) => previous,
     queryFn: async () => {
@@ -318,33 +326,59 @@ export function FilterProof({
       ? (served.error.problem?.detail ?? served.error.message)
       : null;
   const failed = served.isError && refused === null;
+  const header = (
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <h3 id="filter-proof-title" className="text-body font-semibold">
+        {t("endpoints.proof.title")}
+      </h3>
+      {types.length > 1 ? (
+        <Field id="filter-proof-type" label={t("endpoints.proof.type")} className="min-w-40">
+          <Select
+            id="filter-proof-type"
+            value={type}
+            onChange={(event) => {
+              setChosen(event.target.value);
+              setOffset(0);
+            }}
+          >
+            {types.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
+    </div>
+  );
+
+  if (notGranted || accessFailed) {
+    return (
+      <section className="space-y-3" aria-labelledby="filter-proof-title">
+        {header}
+        {notGranted ? (
+          <Alert tone="warning">{t("endpoints.proof.notGranted", { type })}</Alert>
+        ) : (
+          <Alert
+            tone="danger"
+            actions={
+              <Button size="sm" icon={<Icon name="refresh" className="size-4" />} onClick={() => void access.refetch()}>
+                {t("app.error.retry")}
+              </Button>
+            }
+          >
+            {t("endpoints.proof.failed", {
+              reason: access.error instanceof ApiError ? access.error.message : t("app.error.generic"),
+            })}
+          </Alert>
+        )}
+      </section>
+    );
+  }
 
   return (
     <section className="space-y-3" aria-labelledby="filter-proof-title">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <h3 id="filter-proof-title" className="text-body font-semibold">
-          {t("endpoints.proof.title")}
-        </h3>
-        {types.length > 1 ? (
-          <Field id="filter-proof-type" label={t("endpoints.proof.type")} className="min-w-40">
-            <Select
-              id="filter-proof-type"
-              value={type}
-              onChange={(event) => {
-                setChosen(event.target.value);
-                setOffset(0);
-              }}
-            >
-              {types.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        ) : null}
-      </div>
-
+      {header}
       {refused ? (
         <Alert tone="danger" role="alert">
           {t("endpoints.proof.refused", { reason: refused })}
