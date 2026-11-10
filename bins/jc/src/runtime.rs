@@ -35,18 +35,27 @@ fn filter(given: Option<tracing_subscriber::EnvFilter>) -> tracing_subscriber::E
 }
 
 /// Installs the one tracing subscriber (`RUST_LOG` filter, `info` by default, [`QUIET`] libraries
-/// at their level). Returns `false` when a subscriber was already installed (by an earlier call or
+/// at their level, a probe's lines thinned out: `access::quiet_probes`). Returns `false` when a subscriber was already installed (by an earlier call or
 /// by the embedding test harness).
 pub fn init_tracing(format: LogFormat) -> bool {
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
     let filter = filter(tracing_subscriber::EnvFilter::try_from_default_env().ok());
-    let builder = tracing_subscriber::fmt()
-        .with_env_filter(filter)
+    let fmt = tracing_subscriber::fmt::layer()
         .with_ansi(std::io::stderr().is_terminal())
         .with_writer(std::io::stderr);
-    match format {
-        LogFormat::Json => builder.json().try_init().is_ok(),
-        LogFormat::Text => builder.try_init().is_ok(),
-    }
+    let fmt = match format {
+        LogFormat::Json => fmt.json().boxed(),
+        LogFormat::Text => fmt.boxed(),
+    };
+    tracing_subscriber::registry()
+        .with(
+            fmt.with_filter(crate::access::quiet_probes())
+                .with_filter(filter),
+        )
+        .try_init()
+        .is_ok()
 }
 
 /// Installs the one Prometheus recorder for the `metrics` facade every module records into, and

@@ -405,25 +405,31 @@ fn upgrade(
         .max_frame_size(Some(envelope::MAX_FRAME_BYTES))
         .write_buffer_size(0)
         .max_write_buffer_size(MAX_NOTIFICATION_BYTES.saturating_mul(2));
-    tokio::spawn(async move {
-        match on_upgrade.await {
-            Ok(upgraded) => {
-                let socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
-                    hyper_util::rt::TokioIo::new(upgraded),
-                    Role::Server,
-                    Some(config),
-                )
-                .await;
-                match channel {
-                    Channel::Envelope => socket::serve(hub, conn, socket).await,
-                    Channel::StaMqtt => {
-                        sta_mqtt::serve(hub, conn, socket, mqtt_ops, view_id).await;
+    // The session runs in the upgrade request's span: its lines carry that request's id, and a
+    // host that keeps some requests quiet (jc's health-probe span) keeps their sessions quiet.
+    let span = tracing::Span::current();
+    tokio::spawn(tracing::Instrument::instrument(
+        async move {
+            match on_upgrade.await {
+                Ok(upgraded) => {
+                    let socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
+                        hyper_util::rt::TokioIo::new(upgraded),
+                        Role::Server,
+                        Some(config),
+                    )
+                    .await;
+                    match channel {
+                        Channel::Envelope => socket::serve(hub, conn, socket).await,
+                        Channel::StaMqtt => {
+                            sta_mqtt::serve(hub, conn, socket, mqtt_ops, view_id).await;
+                        }
                     }
                 }
+                Err(_) => hub.close(&conn.id),
             }
-            Err(_) => hub.close(&conn.id),
-        }
-    });
+        },
+        span,
+    ));
     let mut answer = (
         StatusCode::SWITCHING_PROTOCOLS,
         [

@@ -27,6 +27,13 @@ pub const SLOW_MS: u64 = 3_000;
 const TIMEOUT: StdDuration = StdDuration::from_secs(10);
 const AT_ONCE: usize = 8;
 
+/// The header a probe call (and every read of the views reconciler) carries [`MARK`] in, so the host's access layer can tell a background read
+/// from a visitor and write its answered calls as it writes a poll's (one line a minute).
+pub const MARK_HEADER: &str = "x-probe-mark";
+/// A secret of the process hosting the Portal beside its gateway (`jc` sets it at start, never
+/// logged); unset, a probe call carries no mark and is logged as any call.
+pub static MARK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 /// What one surface answered: its status, or why it did not answer, and how long it took.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Answer {
@@ -38,6 +45,18 @@ pub struct Answer {
 /// The request that asks surface `surface` of the Endpoint at `base` whether it is up; `None`
 /// for a surface the probes do not ask.
 fn request(client: &reqwest::Client, base: &str, surface: &str) -> Option<reqwest::RequestBuilder> {
+    Some(marked(asked(client, base, surface)?))
+}
+
+/// `ask` with [`MARK`] when the host set one: a background read the host writes as a poll's.
+pub fn marked(ask: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    match MARK.get() {
+        Some(mark) => ask.header(MARK_HEADER, mark),
+        None => ask,
+    }
+}
+
+fn asked(client: &reqwest::Client, base: &str, surface: &str) -> Option<reqwest::RequestBuilder> {
     let get = |path: &str| client.get(format!("{base}{path}"));
     let json = "application/json";
     Some(match surface {
@@ -192,6 +211,35 @@ pub fn judge_count(
     findings
 }
 
+/// One round's log: a line naming the counts and the slowest answer, and a line for each
+/// surface that failed (error); the calls themselves are the gateway's to log.
+fn report(judged: &[(Finding, u64)]) {
+    let count = |status| judged.iter().filter(|(f, _)| f.status == status).count();
+    let slowest = judged.iter().max_by_key(|(_, ms)| *ms);
+    tracing::info!(
+        surfaces = judged.len(),
+        ok = count(Status::Ok),
+        warn = count(Status::Warn),
+        error = count(Status::Error),
+        slowest_ms = slowest.map_or(0, |(_, ms)| *ms),
+        slowest = slowest.map_or_else(String::new, |(f, _)| format!(
+            "{}/{} {}",
+            f.project, f.name, f.check
+        )),
+        "health probe round"
+    );
+    for (f, ms) in judged.iter().filter(|(f, _)| f.status == Status::Error) {
+        tracing::warn!(
+            project = %f.project,
+            endpoint = %f.name,
+            surface = %f.check,
+            ms,
+            detail = %f.detail.text,
+            "health probe: a surface failed"
+        );
+    }
+}
+
 /// The probes and what they found last.
 pub struct Probes {
     gateway: Option<Url>,
@@ -273,8 +321,17 @@ impl Probes {
                 }
             }
         }
-        stream::iter(asks)
+        // The gateway builds two downloads at once (`MAX_DOWNLOADS`) and answers a third 503 at
+        // once: with 8 asks in flight a round refused ~480 of its own 540 `file.csv` asks on the
+        // prod rehearsal. One at a time leaves the other build slot to a visitor.
+        let files = tokio::sync::Semaphore::new(1);
+        let files = &files;
+        let judged = stream::iter(asks)
             .map(|(project, name, surface, public, ask)| async move {
+                let _file = match surface == "csv" {
+                    true => files.acquire().await.ok(),
+                    false => None,
+                };
                 let started = Instant::now();
                 let sent = ask.send().await;
                 let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -294,11 +351,16 @@ impl Probes {
                         }),
                     },
                 };
-                judge_surface(&project, &name, &surface, public, &answer)
+                (
+                    judge_surface(&project, &name, &surface, public, &answer),
+                    answer.ms,
+                )
             })
             .buffer_unordered(AT_ONCE)
-            .collect()
-            .await
+            .collect::<Vec<_>>()
+            .await;
+        report(&judged);
+        judged.into_iter().map(|(finding, _)| finding).collect()
     }
 
     async fn spaces(&self, mirror: &Mirror) -> Vec<Finding> {
@@ -509,7 +571,7 @@ mod tests {
         );
         let probes = Probes::new(Some(gateway), None);
         let t0 = Utc::now();
-        let red = probes.findings(&mirror, t0).await;
+        let (red, _) = logged(probes.findings(&mirror, t0)).await;
         let check = |findings: &[Finding], surface: &str| {
             findings
                 .iter()
@@ -520,13 +582,157 @@ mod tests {
         assert_eq!(check(&red, "odata"), Some(Status::Ok));
         assert_eq!(red.len(), 2, "mcp is off: {red:?}");
         ngsi.store(200, Ordering::SeqCst);
-        let kept = probes.findings(&mirror, t0 + Duration::minutes(1)).await;
+        let (kept, _) = logged(probes.findings(&mirror, t0 + Duration::minutes(1))).await;
         assert_eq!(
             check(&kept, "ngsi-ld"),
             Some(Status::Error),
             "kept until the next run"
         );
-        let green = probes.findings(&mirror, t0 + EVERY).await;
+        let (green, _) = logged(probes.findings(&mirror, t0 + EVERY)).await;
         assert_eq!(check(&green, "ngsi-ld"), Some(Status::Ok));
+    }
+
+    /// What `run` logs. Every test that runs a round captures: a round run with no subscriber
+    /// lets tracing-core take its one-dispatcher fast path and a capturing test misses lines.
+    async fn logged<F: std::future::Future>(run: F) -> (F::Output, String) {
+        #[derive(Clone, Default)]
+        struct Sink(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Sink {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let sink = Sink::default();
+        let writer = sink.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        let out = run.await;
+        drop(guard);
+        let text = String::from_utf8_lossy(&sink.0.lock().unwrap()).into_owned();
+        (out, text)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_round_writes_a_summary_line_and_a_line_per_failure() {
+        let mark = MARK.get_or_init(|| "a-test-mark".to_owned()).clone();
+        let marked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = Arc::clone(&marked);
+        // Every Endpoint but `ok-0` answers its NGSI-LD types with a 503.
+        let app = axum::Router::new().fallback(move |req: axum::extract::Request| {
+            let seen = Arc::clone(&seen);
+            let mark = mark.clone();
+            async move {
+                let sent = req.headers().get(MARK_HEADER).and_then(|v| v.to_str().ok());
+                if sent == Some(mark.as_str()) {
+                    seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                let path = req.uri().path();
+                if path.ends_with("/ngsi-ld/v1/types") && !path.contains("/ok-0/") {
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE
+                } else {
+                    axum::http::StatusCode::OK
+                }
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let gateway = Url::parse(&format!(
+            "http://{}/",
+            listener.local_addr().expect("an address")
+        ))
+        .expect("a url");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let mirror = Mirror::default();
+        for slug in ["ok-0", "bad-1", "bad-2"] {
+            mirror.upsert(
+                serde_json::from_value(serde_json::json!({
+                    "apiVersion": crate::resource::API_VERSION, "kind": "Endpoint",
+                    "metadata": {"name": slug, "namespace": "bbsk"},
+                    "spec": {"slug": slug, "audience": "public", "enabledRepresentations": ["odata"], "mcp": false},
+                    "status": {"phase": "Live"},
+                }))
+                .expect("an endpoint"),
+            );
+        }
+        let (found, log) =
+            logged(Probes::new(Some(gateway), None).findings(&mirror, Utc::now())).await;
+        let lines: Vec<_> = log.lines().filter(|l| l.contains("health_probe")).collect();
+        assert_eq!(found.len(), 6, "{found:?}");
+        assert_eq!(lines.len(), 3, "{log}");
+        assert!(
+            lines[0].contains("health probe round")
+                && lines[0].contains("surfaces=6")
+                && lines[0].contains("error=2"),
+            "{log}"
+        );
+        for (line, slug) in lines[1..].iter().zip(["bad-", "bad-"]) {
+            assert!(
+                line.contains("WARN") && line.contains(slug) && line.contains("ngsi-ld"),
+                "{log}"
+            );
+        }
+        assert_eq!(
+            marked.load(std::sync::atomic::Ordering::SeqCst),
+            6,
+            "every call carries the mark"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_round_builds_one_file_at_a_time() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let building = Arc::new(AtomicUsize::new(0));
+        let held = Arc::clone(&building);
+        // Like the gateway past its build slots: a second file asked while one builds is a 503.
+        let app = axum::Router::new().fallback(move |uri: axum::http::Uri| {
+            let held = Arc::clone(&held);
+            async move {
+                if !uri.path().ends_with("/file.csv") {
+                    return axum::http::StatusCode::OK;
+                }
+                if held.fetch_add(1, Ordering::SeqCst) > 0 {
+                    held.fetch_sub(1, Ordering::SeqCst);
+                    return axum::http::StatusCode::SERVICE_UNAVAILABLE;
+                }
+                tokio::time::sleep(StdDuration::from_millis(20)).await;
+                held.fetch_sub(1, Ordering::SeqCst);
+                axum::http::StatusCode::OK
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let gateway = Url::parse(&format!(
+            "http://{}/",
+            listener.local_addr().expect("an address")
+        ))
+        .expect("a url");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let mirror = Mirror::default();
+        for slug in ["f-0", "f-1", "f-2", "f-3"] {
+            mirror.upsert(
+                serde_json::from_value(serde_json::json!({
+                    "apiVersion": crate::resource::API_VERSION, "kind": "Endpoint",
+                    "metadata": {"name": slug, "namespace": "bbsk"},
+                    "spec": {"slug": slug, "audience": "public", "enabledRepresentations": ["csv"], "mcp": false},
+                    "status": {"phase": "Live"},
+                }))
+                .expect("an endpoint"),
+            );
+        }
+        let (found, _) =
+            logged(Probes::new(Some(gateway), None).findings(&mirror, Utc::now())).await;
+        let files: Vec<_> = found.iter().filter(|f| f.check == "csv").collect();
+        assert_eq!(files.len(), 4, "{found:?}");
+        assert!(files.iter().all(|f| f.status == Status::Ok), "{files:?}");
+        assert_eq!(building.load(Ordering::SeqCst), 0);
     }
 }
