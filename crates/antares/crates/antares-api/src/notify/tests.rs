@@ -698,7 +698,7 @@ mod change_pipeline {
     /// nothing else waits, and what a group held is given back when it goes.
     #[test]
     fn the_lanes_hold_at_most_their_byte_budget() {
-        let ledger: &'static Ledger = Box::leak(Box::new(Ledger(Default::default())));
+        let ledger: &'static Ledger = Box::leak(Box::new(Ledger(Default::default(), "test")));
         let first = ledger.take(600, 1000).expect("room");
         assert!(ledger.take(500, 1000).is_none(), "past the budget");
         let second = ledger.take(400, 1000).expect("exactly the budget");
@@ -728,6 +728,62 @@ mod change_pipeline {
             heap_estimate(&Value::Object(wide)) >= 3 * 640,
             "24 members need three nodes"
         );
+    }
+
+    /// jc-delete-mem: the matcher queue counted request batches only, so
+    /// behind a drain that does not keep up its 1,024 slots held 1,024 batch
+    /// deletes of 500 polygons each, every before-document whole. It now holds
+    /// at most its byte budget, drops and counts past it, and gives the bytes
+    /// back once a batch has been matched.
+    #[test]
+    fn the_matcher_queue_holds_at_most_its_byte_budget() {
+        let ledger: &'static Ledger = Box::leak(Box::new(Ledger(Default::default(), "test")));
+        // the receiver is never read here: a drain that does not keep up
+        let (tx, mut rx) = tokio::sync::mpsc::channel(CHANGE_QUEUE);
+        let pending = AtomicUsize::new(0);
+        let ring: Vec<Value> = (0..200)
+            .map(|k| json!([24.9 + f64::from(k) * 1e-4, 60.1]))
+            .collect();
+        let delete = |b: usize| -> Vec<Change> {
+            (0..500)
+                .map(|n| {
+                    let doc = json!({"id": format!("urn:ngsi-ld:NoiseZone:{b}-{n}"), "type": "NoiseZone",
+                        "location": {"type": "GeoProperty", "value": {"type": "Polygon", "coordinates": [ring.clone()]}}});
+                    ("helsinki".to_owned(), Some(doc), None)
+                })
+                .collect()
+        };
+        let one: usize = delete(0)
+            .iter()
+            .filter_map(|(_, before, _)| before.as_ref().map(heap_estimate))
+            .sum();
+        let budget = one.saturating_mul(8);
+        let dropped = AtomicUsize::new(0);
+        let count = || {
+            dropped.fetch_add(1, Ordering::SeqCst);
+        };
+        for b in 0..64 {
+            queue_within(&tx, &pending, delete(b), (ledger, budget), count);
+        }
+        let accepted = pending.load(Ordering::SeqCst);
+        assert!(
+            ledger.used() <= budget,
+            "the queue holds {} bytes against a budget of {budget} ({accepted} of 64 batches of {one} bytes)",
+            ledger.used()
+        );
+        assert!(
+            (1..64).contains(&accepted),
+            "{accepted} of 64 batches queued"
+        );
+        assert_eq!(
+            dropped.load(Ordering::SeqCst),
+            64 - accepted,
+            "every refused batch is counted"
+        );
+        while rx.try_recv().is_ok() {}
+        assert_eq!(ledger.used(), 0, "a matched batch gives its bytes back");
+        queue_within(&tx, &pending, delete(64), (ledger, budget), count);
+        assert_eq!(pending.load(Ordering::SeqCst), accepted + 1, "room again");
     }
 
     /// T-4086: behind a subscriber that never answers, a burst of a whole
