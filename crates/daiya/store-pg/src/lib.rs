@@ -113,9 +113,6 @@ impl PgPoolConfig {
             .password(self.password.as_str());
         PgPoolOptions::new()
             .max_connections(self.max_connections)
-            // An idle connection holds a ~19 MiB backend: close it after a minute, not sqlx's 10.
-            .min_connections(0)
-            .idle_timeout(std::time::Duration::from_secs(60))
             .connect_with(opts)
             .await
             .map_err(|e| CrError::Internal(format!("failed to connect to postgres: {e}")))

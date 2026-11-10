@@ -14,9 +14,6 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
-/// How long a module's idle connection stays open (see [`connect`]).
-pub const IDLE: Duration = Duration::from_secs(60);
-
 /// Connections a module's pool opens at most when `max_connections` is unset.
 pub const DEFAULT_MAX_CONNECTIONS: u32 = 5;
 
@@ -126,14 +123,10 @@ fn options(url: &str, password_file: &Path) -> Result<PgConnectOptions, String> 
 }
 
 /// A pool of at most `max` connections; a refused or unreachable server is an error (no retry
-/// beyond the acquire timeout, no fallback). An idle connection closes after [`IDLE`], as the
-/// Portal's and the assistant's pools do (T-6201): each open one holds a ~19 MiB backend, and
-/// sqlx's 10 min default kept every module's burst open long after it ended.
+/// beyond the acquire timeout, no fallback).
 pub async fn connect(opts: PgConnectOptions, max: u32) -> Result<PgPool, String> {
     PgPoolOptions::new()
         .max_connections(max.max(1))
-        .min_connections(0)
-        .idle_timeout(IDLE)
         .acquire_timeout(Duration::from_secs(10))
         .connect_with(opts)
         .await
