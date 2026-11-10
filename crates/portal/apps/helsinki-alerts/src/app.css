@@ -16,7 +16,7 @@
 
 /* The delete's confirm step: its own full-width row of the actions, the reason above its buttons. */
 .app-confirm {
-  flex-basis: 100%;
+  margin-block: var(--jc-space-2, 0.5rem);
   max-width: 40rem;
   display: flex;
   flex-wrap: wrap;
@@ -56,7 +56,7 @@
 }
 
 /* The delete itself: the one destructive button. */
-.app-confirm-danger {
+.app-confirm .app-confirm-danger {
   background: var(--jc-color-danger, #b91c1c);
   border-color: var(--jc-color-danger, #b91c1c);
   color: #fff;
