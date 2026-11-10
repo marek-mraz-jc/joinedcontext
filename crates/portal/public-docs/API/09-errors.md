@@ -48,9 +48,9 @@ What to do: Correct the attribute the detail names: a quality rule of the space 
 
 **Reason Required**, status 400.
 
-A delete through an Endpoint names no reason in `JC-Reason` (DM-113, ADR-N-054), so nothing was changed. The gateway asks it of every delete except the Portal UI's own, which follows once the UI sends a reason; DM-113 extends it to corrections and every UI write.
+A delete through an Endpoint, a correction or a write from the Portal UI names no reason in `JC-Reason` (DM-113, ADR-N-054), so nothing was changed. The gateway asks it of every delete, whoever sends it.
 
-What to do: Send the same request again with a `JC-Reason` header of 1 to 500 characters that says why.
+What to do: Send the same request again with a `JC-Reason` header of 1 to 500 characters that says why. A delete a person makes carries the reason that person gives: the Portal, the SDK's `entities.remove` and `jc_data_write` ask for it and refuse a missing or longer one before they send anything, and never fill one in.
 
 ### `unauthorized` {#unauthorized}
 
