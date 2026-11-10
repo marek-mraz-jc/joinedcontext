@@ -356,7 +356,7 @@ mod file {
                 );
                 // The body reads outside the in-process call that answered it (ADR-0025 rule
                 // 3): each page goes at the depth its handler ran at, never from zero.
-                let page = Box::pin(antares_ops::at_depth(self.depth, read)).await?;
+                let page = Box::pin(antares_ops::at_call_depth(self.depth, read)).await?;
                 // A token that does not move would read the same page again.
                 match page.next.filter(|next| self.p.next.as_ref() != Some(next)) {
                     Some(next) => self.p.next = Some(next),
@@ -588,7 +588,7 @@ mod file {
                 p,
                 digest: items::digest(self.id, &c.id, pairs),
                 base: self.base.to_owned(),
-                depth: antares_ops::in_process_depth(),
+                depth: antares_ops::call_depth(),
                 done: false,
             }
         }
@@ -1051,6 +1051,7 @@ mod tests {
         .await)
     }
 
+    #[cfg(any(feature = "parquet", feature = "tabular"))]
     const SECOND: std::time::Duration = std::time::Duration::from_secs(1);
 
     /// The CSV's first rows leave while its next page is still being read: a buffered file

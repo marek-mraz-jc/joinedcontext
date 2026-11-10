@@ -107,9 +107,18 @@ pub use antares_api::{
 /// request's `Host`), for a surface whose documents name its resources by
 /// absolute URL.
 pub use antares_api::public_base;
-/// The in-process call depth, and a future run at a depth taken earlier: a
-/// surface streaming a body reads each page at its handler's depth.
-pub use antares_api::state::{at_depth, in_process_depth};
+/// How many in-process calls the running task is inside: a surface that
+/// streams a body takes it in its handler, for [`at_call_depth`].
+#[must_use]
+pub fn call_depth() -> usize {
+    antares_api::state::in_process_depth()
+}
+
+/// `f` run `depth` in-process calls deep: a body polled after its handler
+/// returned reads each page at the depth the handler ran at.
+pub async fn at_call_depth<F: std::future::Future>(depth: usize, f: F) -> F::Output {
+    antares_api::state::at_depth(depth, f).await
+}
 
 /// The headers a surface may never set on an operation: the tenant, the
 /// snapshot and the policy subject come from the outer request alone (G2).

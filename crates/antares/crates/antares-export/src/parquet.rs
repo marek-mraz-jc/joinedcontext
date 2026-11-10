@@ -169,7 +169,7 @@ impl Sink for Writer {
     /// The row groups written since the last drain; the footer, which names every row group,
     /// comes with [`Sink::finish`].
     fn drain(&mut self) -> Result<Vec<u8>, Error> {
-        let flushed = self.file.flush().map_err(Error::from);
+        let flushed = self.file.flush().map_err(|e| Error::Write(e.to_string()));
         flushed.map_err(|e| refused(&self.over, e))?;
         Ok(std::mem::take(&mut self.file.inner_mut().bytes))
     }
