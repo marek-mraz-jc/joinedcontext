@@ -1757,10 +1757,9 @@ async fn second_admin(jc: &Jc, password: &str) -> String {
     username.to_owned()
 }
 
-/// Writes the project, waits until the closed Endpoint and the gateway admit its streams, has
-/// one administrator propose [`pipeline`] and a second approve it, and waits until its Thing
-/// landed through the closed Endpoint: answers the stream as the runner held it and the entity.
-async fn the_feed_lands(jc: &Jc) -> (Option<String>, String) {
+/// Writes the project and waits until the closed Endpoint answers and the gateway admits its
+/// `pipelines` account there.
+async fn the_feed_project(jc: &Jc) {
     eventually(
         "shako holds the organization repository",
         jc,
@@ -1826,6 +1825,15 @@ async fn the_feed_lands(jc: &Jc) -> (Option<String>, String) {
     )
     .await;
 
+}
+
+/// [`the_feed_project`], then one administrator proposes [`pipeline`] and a second approves it;
+/// waits until its Thing landed through the closed Endpoint: answers the stream as the runner held
+/// it and the entity.
+async fn the_feed_lands(jc: &Jc) -> (Option<String>, String) {
+    the_feed_project(jc).await;
+    let closed = format!("/api/endpoint/{CLOSED}/ngsi-ld/v1");
+    let reader = token(jc, "e2e-reader").await;
     // The administrator proposes the Pipeline, a second administrator approves it.
     let mut proposer = Browser::new();
     sign_in(
@@ -2051,8 +2059,92 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stream_signs_in_as_its_pipelines_own_client_bound_to_its_endpoint_alone() {
     let jc = start_with_env(true, &[("JC_PORTAL_PIPELINE_IDENTITY", "pipeline-secret")]).await;
-    let (rendered, entity) = the_feed_lands(&jc).await;
-    assert!(entity.contains("fed"), "{entity}");
+    the_feed_project(&jc).await;
+    // The Pipeline is in the repository already, as an imported one is: the gateway derives its
+    // account `pl-feed` and Policies from there (PL-19). A run before the gateway's table holds
+    // them is refused 403 and waits out its backoff, so the test runs it once the table admits
+    // the pipeline's own token.
+    put_file(
+        &jc,
+        &format!("projects/{PROJECT}/pipelines/feed/pipeline.yaml"),
+        &serde_json::to_string_pretty(&pipeline()).unwrap(),
+    )
+    .await;
+    let closed = format!("/api/endpoint/{CLOSED}/ngsi-ld/v1");
+    let own = client_token(&jc, FEED_CLIENT, FEED_SECRET).await;
+    eventually(
+        "the gateway's own table admits the pipeline's own account at the closed Endpoint",
+        &jc,
+        90,
+        || async {
+            let (status, body) = call(
+                &jc,
+                reqwest::Method::POST,
+                &format!("{closed}/entityOperations/query"),
+                Some(&own),
+                Some(&json!({ "type": "Query", "entities": [{ "type": "Thing" }] })),
+            )
+            .await;
+            (status == StatusCode::OK)
+                .then_some(())
+                .ok_or(format!("{status} {body}"))
+        },
+    )
+    .await;
+    let mut admin = Browser::new();
+    sign_in(
+        &|p| jc.url(p),
+        &mut admin,
+        "admin",
+        &jc.secret("first-admin-password"),
+    )
+    .await;
+    let reader = token(&jc, "e2e-reader").await;
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let (mut rendered, mut landed) = (None, false);
+    let mut asked = Instant::now() - Duration::from_secs(60);
+    while rendered.is_none() || !landed {
+        assert!(
+            Instant::now() < deadline,
+            "the stream ran as its own client: {}, its Thing landed: {landed}\n{}",
+            rendered.is_some(),
+            jc.tail()
+        );
+        // Run now, again while nothing landed (409 while a run is in the runner).
+        if !landed && asked.elapsed() > Duration::from_secs(20) {
+            let run = admin
+                .send(
+                    reqwest::Method::POST,
+                    &jc.url(&format!("/api/v1/projects/{PROJECT}/pipelines/feed/runs")),
+                    None,
+                    true,
+                )
+                .await;
+            println!("run now: {} {}", run.status, run.text);
+            asked = Instant::now();
+        }
+        if rendered.is_none() {
+            let held = Client::new()
+                .get(jc.url(&format!("/streams/streams/{PROJECT}.feed")))
+                .bearer_auth(jc.secret("ekiben-token"))
+                .send()
+                .await
+                .unwrap();
+            if held.status().is_success() {
+                rendered = Some(held.text().await.unwrap_or_default());
+            }
+        }
+        let (status, body) = call(
+            &jc,
+            reqwest::Method::GET,
+            &format!("{closed}/entities?type=Thing&limit=5"),
+            Some(&reader),
+            None,
+        )
+        .await;
+        landed |= status == StatusCode::OK && body.contains("Thing:fed");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 
     // The runner held the stream as the pipeline's own client, its secret only as a variable.
     let stream = rendered.expect("the runner held the stream while it ran");
@@ -2075,7 +2167,6 @@ async fn a_stream_signs_in_as_its_pipelines_own_client_bound_to_its_endpoint_alo
     );
 
     // The token the stream gets: bound to A and the internal listener, nothing else, and small.
-    let own = client_token(&jc, FEED_CLIENT, FEED_SECRET).await;
     let mut aud: Vec<String> = match &claims_of(&own)["aud"] {
         Value::String(one) => vec![one.clone()],
         Value::Array(many) => many
