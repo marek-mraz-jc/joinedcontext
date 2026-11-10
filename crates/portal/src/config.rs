@@ -263,6 +263,11 @@ pub struct Config {
     /// `name` alone ([`crate::apps::app_host`]), as the edge file has APISIX do where an edge
     /// composes the App routes. Off by default: there the edge does it.
     pub serve_app_hosts: bool,
+    /// The `ui-rust` Apps whose pod this installation runs, App name to its Service's origin
+    /// (`JC_PORTAL_APP_PODS=hsl-transport=http://jc-app-hsl-transport.jc-prod.svc.cluster.local:8080`,
+    /// comma-separated): on its App host such an App is proxied there, as the edge file routes
+    /// Service `app-{name}`; any other `ui-rust` App answers the 503 of a half not run here.
+    pub app_pods: std::collections::BTreeMap<String, String>,
     /// The file the deployment renders `global.branding` into (`JC_BRANDING_FILE`; UI-30,
     /// OPS-46). `None` serves
     /// neutral joinedcontext defaults, which is what an installation without branding looks
@@ -463,6 +468,7 @@ impl std::fmt::Debug for Config {
             .field("apps_cache_dir", &self.apps_cache_dir)
             .field("apps_url", &self.apps_url.as_ref().map(Url::as_str))
             .field("serve_app_hosts", &self.serve_app_hosts)
+            .field("app_pods", &self.app_pods)
             .field("artifact_store", &self.artifact_store)
             .field("apps_db", &self.apps_db)
             .field("pipeline_secrets", &self.pipeline_secrets)
@@ -511,6 +517,10 @@ pub struct AppsDbSettings {
     /// reconciler writes each shard's placement and store key (AP-157, AP-158). Without it the
     /// reconciler writes neither and says so.
     pub host_namespace: Option<String>,
+    /// A test's stub shard on loopback, which every shard request goes to as to an HTTP proxy,
+    /// the shard's URL whole; the environment never sets it, so a deployment reaches the shard.
+    #[doc(hidden)]
+    pub shards_through: Option<std::net::SocketAddr>,
 }
 
 impl std::fmt::Debug for AppsDbSettings {
@@ -549,6 +559,7 @@ fn apps_db_settings(
         shards,
         bucket: present("JC_PORTAL_APPS_BUCKET").unwrap_or_else(|| "apps".to_owned()),
         host_namespace: present("JC_PORTAL_WASM_HOST_NAMESPACE").map(|v| v.trim().to_owned()),
+        shards_through: None,
     }))
 }
 
@@ -1537,6 +1548,51 @@ fn apps_store_origin(
     Ok(Some(url.origin().ascii_serialization()))
 }
 
+/// `JC_PORTAL_APP_PODS`: `{name}={origin}` pairs, comma-separated, or unset. A name is one DNS
+/// label (an App's), an origin is `http(s)://host[:port]` alone: the request path is the App's.
+fn app_pods(
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<std::collections::BTreeMap<String, String>, ConfigError> {
+    let invalid = |reason: String| ConfigError::Invalid {
+        var: "JC_PORTAL_APP_PODS",
+        reason,
+    };
+    let mut pods = std::collections::BTreeMap::new();
+    let raw = lookup("JC_PORTAL_APP_PODS").unwrap_or_default();
+    for pair in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|pair| !pair.is_empty())
+    {
+        let Some((name, origin)) = pair.split_once('=') else {
+            return Err(invalid(format!("'{pair}' is no name=origin pair")));
+        };
+        let name = name.trim();
+        if !crate::resource::is_dns1123(name) {
+            return Err(invalid(format!("'{name}' is no App name")));
+        }
+        let url = http_scheme("JC_PORTAL_APP_PODS", origin.trim())?;
+        if url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.path() != "/"
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(invalid(format!(
+                "App '{name}': an origin alone, `http://host:port`"
+            )));
+        }
+        if pods
+            .insert(name.to_owned(), url.origin().ascii_serialization())
+            .is_some()
+        {
+            return Err(invalid(format!("App '{name}' is named twice")));
+        }
+    }
+    Ok(pods)
+}
+
 /// The basemap configuration block, or `None` when this Portal proxies no basemap (AP-67).
 /// The operator's bounds file (PF-97). Absent, every entry keeps its built-in bound. A file that
 /// cannot be read, is no map of catalog paths, holds a range upside down or loosens a security
@@ -1996,6 +2052,7 @@ impl Config {
         let apps_url = apps_url(&lookup)?;
         let serve_app_hosts = apps_url.is_some()
             && lookup("JC_PORTAL_SERVE_APP_HOSTS").is_some_and(|v| v.trim() == "true");
+        let app_pods = app_pods(&lookup)?;
         let basemap = basemap_config(&lookup)?;
         let apps_store_origin = apps_store_origin(&lookup)?;
         let app_settings = app_settings(&lookup, &public_base_url, basemap.is_some())?;
@@ -2085,6 +2142,7 @@ impl Config {
             apps_cache_dir,
             apps_url,
             serve_app_hosts,
+            app_pods,
             branding_file,
             ckan_api_route,
             ckan_api_reach,
@@ -2172,6 +2230,7 @@ impl Config {
             apps_cache_dir: None,
             apps_url: None,
             serve_app_hosts: false,
+            app_pods: std::collections::BTreeMap::new(),
             branding_file: None,
             ckan_api_route: None,
             ckan_api_reach: None,
@@ -3630,6 +3689,41 @@ mod tests {
 
     /// T-3359: the store's public origin is one https origin, normalized, or the Portal refuses
     /// to start saying what to write.
+    #[test]
+    fn app_pods_are_app_names_with_an_origin_alone() {
+        let read = |value: &str| {
+            let value = value.to_owned();
+            Config::from_vars(move |k| (k == "JC_PORTAL_APP_PODS").then(|| value.clone()))
+        };
+        let pods =
+            read(" hsl-transport=http://app-hsl-transport.ns.svc:8080/ , b=https://b.example ")
+                .expect("valid")
+                .app_pods;
+        assert_eq!(
+            pods.into_iter().collect::<Vec<_>>(),
+            [
+                ("b".to_owned(), "https://b.example".to_owned()),
+                (
+                    "hsl-transport".to_owned(),
+                    "http://app-hsl-transport.ns.svc:8080".to_owned()
+                ),
+            ]
+        );
+        assert!(read("").expect("unset").app_pods.is_empty());
+        for bad in [
+            "hsl-transport",
+            "a.b=http://x:8080",
+            "Big=http://x:8080",
+            "a=ftp://x",
+            "a=http://x:8080/apps",
+            "a=http://x:8080?q",
+            "a=http://u:p@x:8080",
+            "a=http://x,a=http://y",
+        ] {
+            assert!(read(bad).is_err(), "{bad}");
+        }
+    }
+
     #[test]
     fn the_apps_store_origin_is_one_https_origin() {
         let read = |value: &str| {

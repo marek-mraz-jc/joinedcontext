@@ -102,6 +102,7 @@ impl Surface for Probe {
                                 next,
                                 count,
                                 truncated,
+                                ..
                             },
                             read,
                         )) => Json(json!({

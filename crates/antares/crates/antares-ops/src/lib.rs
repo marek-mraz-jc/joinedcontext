@@ -57,7 +57,7 @@ pub use antares_ql::PRIMER;
 pub use antares_residual as residual;
 pub use error::{ngsi_problem, Problem, Refusal, CONTEXT_DETAIL, INNER_DETAIL, TIMEOUT_DETAIL};
 pub use operation::OperationId;
-pub use scan::{pickable, Page, Pushdown, Scanned, RESIDUAL_SCAN, TOO_COMPLEX};
+pub use scan::{is_cursor, pickable, Page, Pushdown, Scanned, RESIDUAL_SCAN, TOO_COMPLEX};
 
 use antares_api::AppState;
 use axum::body::Body;
