@@ -403,15 +403,29 @@ impl HarvestEngine {
         let Some((public, internal)) = &self.own_gateway else {
             return Ok(None);
         };
+        // Only an Endpoint read: the loopback listener serves every module, and a URL here can
+        // come from a remote page (a Hub's `next` link) or a source an editor wrote. Anything
+        // else under the origin, or a path the listener could decode into another mount, goes
+        // through the guard, which refuses loopback.
         let Some(rest) = url
             .strip_prefix(public.as_str())
-            .filter(|r| r.starts_with('/'))
+            .filter(|r| r.starts_with("/api/endpoint/"))
+            .filter(|r| {
+                let lower = r.to_ascii_lowercase();
+                !["%2e", "%2f", "%5c", "\\"]
+                    .iter()
+                    .any(|bad| lower.contains(bad))
+            })
         else {
             return Ok(None);
         };
         let url = url::Url::parse(&format!("http://{internal}{rest}")).map_err(|e| {
             DataroomError::OutboundRefused(format!("own gateway address of {url}: {e}"))
         })?;
+        // The parser drops dot segments: what it kept must still be an Endpoint read.
+        if !url.path().starts_with("/api/endpoint/") {
+            return Ok(None);
+        }
         Ok(Some(ValidatedTarget {
             url,
             host: internal.ip().to_string(),
@@ -1458,6 +1472,38 @@ mod tests {
             .collect();
         assert_eq!(active.len(), 1);
         assert_eq!(withdrawn.len(), 1);
+    }
+
+    /// The own gateway shortcut reaches the loopback listener for an Endpoint read alone: any
+    /// other path under the origin (another module of the listener, an address a remote page or
+    /// an editor wrote) stays with the guard, which refuses loopback.
+    #[test]
+    fn the_own_gateway_reaches_only_endpoint_reads_on_the_loopback_listener() {
+        let internal: SocketAddr = "127.0.0.1:42102".parse().unwrap();
+        let engine = HarvestEngine::new(Arc::new(MapFetcher::new()))
+            .with_own_gateway("http://localhost:42102/", internal);
+        let own = |u: &str| engine.own_target(u).expect("no parse error");
+        let read = own("http://localhost:42102/api/endpoint/abc/ngsi-ld/v1/entities?type=T")
+            .expect("shortcut");
+        assert_eq!(
+            read.url.as_str(),
+            "http://127.0.0.1:42102/api/endpoint/abc/ngsi-ld/v1/entities?type=T"
+        );
+        assert_eq!(read.pinned_addrs, vec![internal]);
+        for other in [
+            "http://localhost:42102/portal/api/v1/projects",
+            "http://localhost:42102/streams/streams",
+            "http://localhost:42102/",
+            "http://localhost:42102/api/endpoint/../portal/api",
+            "http://localhost:42102/api/endpoint/a/../../portal",
+            "http://localhost:42102/api/endpoint/%2e%2e/portal",
+            "http://localhost:42102/api/endpoint/a%2F..%2F..%2Fportal",
+            "http://localhost:42102/api/endpoint\\..\\portal",
+            "http://localhost:421020/api/endpoint/a",
+            "http://localhost:42102.evil.example/api/endpoint/a",
+        ] {
+            assert!(own(other).is_none(), "{other}");
+        }
     }
 
     /// prod's `_od_transient`: a 429, a 5xx and a broken connection are read again; a 4xx, a
