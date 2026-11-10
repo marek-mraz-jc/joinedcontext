@@ -504,7 +504,9 @@ mod paging_store {
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
         assert!(
-            body["type"].as_str().is_some_and(|t| t.ends_with("TooManyResults")),
+            body["type"]
+                .as_str()
+                .is_some_and(|t| t.ends_with("TooManyResults")),
             "{body}"
         );
         clear(&st, &tenant).await;
@@ -565,18 +567,13 @@ mod paging_store {
         let hidden: Vec<(String, Value)> = (1..=5)
             .map(|i| poi(&format!("urn:ngsi-ld:Secret:s{i}"), "Secret", 0.2))
             .collect();
-        st.store
-            .batch_create(&tenant, hidden)
-            .await
-            .expect("seed");
+        st.store.batch_create(&tenant, hidden).await.expect("seed");
         let st = st.with_policy(Arc::new(OnlyPoi));
         let (status, headers, body) = send_t(
             &st,
             &tenant,
             "GET",
-            &format!(
-                "/ngsi-ld/v1/entities?type=PointOfInterest,Secret&count=true&limit=200&{BOX}"
-            ),
+            &format!("/ngsi-ld/v1/entities?type=PointOfInterest,Secret&count=true&limit=200&{BOX}"),
             None,
         )
         .await;
