@@ -302,8 +302,10 @@ fn own_gateway(
         .strip_prefix("http://")
         .and_then(|a| a.parse::<std::net::SocketAddr>().ok())
         .filter(|a| a.ip().is_loopback());
-    // A named api address that is not the gateway's mount is another host: no shortcut.
-    let reach = loopback.filter(|_| live.api == public && internal != public);
+    // A named api address that is not the gateway's mount is another host: no shortcut. A
+    // public origin that is the loopback listener itself (a kit on http://127.0.0.1:<port>) is
+    // still jc serving it there.
+    let reach = loopback.filter(|_| live.api == public);
     Some((live.api.clone(), reach))
 }
 
@@ -608,6 +610,14 @@ mod tests {
         assert_eq!(
             own_gateway(&live("http://localhost:42102"), &slug),
             Some(("http://localhost:42102".into(), Some(listener)))
+        );
+        let literal = with(
+            "http://127.0.0.1:42102/gateway",
+            "http://127.0.0.1:42102/gateway",
+        );
+        assert_eq!(
+            own_gateway(&live("http://127.0.0.1:42102"), &literal),
+            Some(("http://127.0.0.1:42102".into(), Some(listener)))
         );
         let host = with("https://api.city.example", "https://api.city.example");
         assert_eq!(
