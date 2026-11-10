@@ -408,6 +408,9 @@ pub struct Built {
     /// The in-pod listener's router: every host-mounted module of
     /// [`crate::siblings::IN_POD`] at `/{slug}`, `None` when none is (T-6705).
     pub in_pod: Option<Router>,
+    /// The App pods' listener's router (`apps_listen`): the gateway's Endpoint reads alone,
+    /// `None` without that listener or without the gateway.
+    pub apps: Option<Router>,
     portal: Option<(LateRouter, Mount)>,
     gateway: Option<LateGateway>,
 }
@@ -440,6 +443,8 @@ pub async fn build_router(
     }
     let mut portal = None;
     let mut gateway = None;
+    #[cfg_attr(not(feature = "gateway"), allow(unused_mut))]
+    let mut apps = None;
     let mut hop = None;
     let hosted = crate::siblings::hosted_in_pod(&plans);
     let mut in_pod = (!hosted.is_empty())
@@ -529,6 +534,16 @@ pub async fn build_router(
             #[cfg(not(feature = "gateway"))]
             let router = late.router();
             builder = mount_all(builder, &plan, &router);
+            // The App pods' listener: the same gateway at `/api/endpoint` alone, reads alone. No
+            // proxy is trusted there, so a pod's forwarding headers reach nothing.
+            #[cfg(feature = "gateway")]
+            if cfg.apps_listen.is_some() {
+                apps = Some(modules::gateway::apps_router(
+                    &cfg.scheme,
+                    &cfg.base_host,
+                    router.clone(),
+                )?);
+            }
             gateway = Some(LateGateway {
                 slot: late,
                 mount: plan.mount,
@@ -559,6 +574,7 @@ pub async fn build_router(
     Ok(Built {
         router: builder.build()?.into_axum_router(),
         in_pod,
+        apps,
         portal,
         gateway,
     })
@@ -752,6 +768,8 @@ pub struct Running {
     /// The in-pod loopback listener's address, when a module of [`crate::siblings::IN_POD`] is
     /// mounted on a host (T-6705).
     pub in_pod_addr: Option<SocketAddr>,
+    /// The App pods' listener's address, when `apps_listen` is set.
+    pub apps_addr: Option<SocketAddr>,
     shutdown: CancellationToken,
     tasks: TaskTracker,
     servers: Vec<JoinHandle<std::io::Result<()>>>,
@@ -918,6 +936,13 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     for (listener, router) in forwarders {
         servers.push(serve(listener, router, shutdown.clone()));
     }
+    let mut apps_addr = None;
+    if let (Some(at), Some(router)) = (cfg.apps_listen, built.apps.clone()) {
+        let listener = bind(at).await?;
+        apps_addr = Some(listener.local_addr().map_err(StartError::Serve)?);
+        tracing::info!(addr = ?apps_addr, "gateway: the App pods' listener (Endpoint reads)");
+        servers.push(serve(listener, router, shutdown.clone()));
+    }
     let mut admin_addr = None;
     if let (Some(admin), Some(token)) = (cfg.admin_listen, admin_token) {
         let admin_router = admin_router(token)?;
@@ -930,6 +955,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         addr,
         admin_addr,
         in_pod_addr,
+        apps_addr,
         shutdown,
         tasks,
         servers,
