@@ -286,6 +286,9 @@ async fn build_postgres(
     }
     let pool = PgPoolOptions::new()
         .max_connections(4)
+        // An idle connection holds a backend of the datasource's server: close it after a
+        // minute, not sqlx's 10.
+        .idle_timeout(Duration::from_secs(60))
         .acquire_timeout(deps.policy.timeout)
         .connect_lazy_with(opts);
     Ok(Arc::new(PostgresDatasource::new(

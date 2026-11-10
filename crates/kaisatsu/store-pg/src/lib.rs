@@ -240,6 +240,9 @@ impl PgStore {
     ) -> Result<Self> {
         let pool = PgPoolOptions::new()
             .max_connections(max_connections.clamp(1, 50))
+            // An idle connection holds a ~19 MiB backend: close it after a minute, not sqlx's 10.
+            .min_connections(0)
+            .idle_timeout(Duration::from_secs(60))
             .acquire_timeout(Duration::from_secs(5))
             .connect_with(opts)
             .await
