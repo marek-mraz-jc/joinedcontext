@@ -48,7 +48,7 @@ describe("the bulk delete", () => {
     await userEvent.click(screen.getByRole("button", { name: "Delete selected" }));
     const dialog = await screen.findByRole("alertdialog");
     const reason = within(dialog).getByLabelText(/Reason/);
-    expect(reason).toHaveAccessibleDescription(/for example: Duplicates left by the old feed/);
+    expect(reason).toHaveAccessibleDescription(/recorded with each deletion/);
     await userEvent.click(within(dialog).getByTestId("confirm-accept"));
     expect(within(dialog).getByText("Enter why you delete them.")).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();

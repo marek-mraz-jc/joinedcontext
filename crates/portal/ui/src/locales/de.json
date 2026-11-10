@@ -1321,7 +1321,7 @@
       "keyRemoveOf": "{field} entfernen",
       "keyNoField": "Jedes Feld dieses Typs ist schon in der Liste.",
       "groupCount": "{count, plural, one {# Zeile} other {# Zeilen}}",
-      "deleteReasonHint": "Warum Sie sie löschen, wird mit jeder Löschung festgehalten, zum Beispiel: Duplikate aus dem alten Feed.",
+      "deleteReasonHint": "Warum Sie sie löschen. Das wird mit jeder Löschung festgehalten.",
       "deleteReasonRequired": "Geben Sie an, warum Sie sie löschen."
     },
     "temporal": {

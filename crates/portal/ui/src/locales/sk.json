@@ -1321,7 +1321,7 @@
       "keyRemoveOf": "Odstrániť {field}",
       "keyNoField": "Každé pole tohto typu už je v zozname.",
       "groupCount": "{count, plural, one {# riadok} few {# riadky} other {# riadkov}}",
-      "deleteReasonHint": "Prečo ich mažete, zaznamená sa s každým zmazaním, napríklad: Duplikáty po starom zdroji.",
+      "deleteReasonHint": "Prečo ich mažete. Zaznamená sa s každým zmazaním.",
       "deleteReasonRequired": "Napíšte, prečo ich mažete."
     },
     "temporal": {

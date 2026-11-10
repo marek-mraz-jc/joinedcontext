@@ -770,8 +770,6 @@ async fn answer_call(
             decided_in_portal(&state.config.public_base(), op, project, &input, refused)
         })
         .and_then(|()| crate::ops::may_try(op, &caller.identity, state, project, Some(&input)))
-        // An input the operation refuses is refused before the person is asked to confirm it.
-        .and_then(|()| (op.validate)(&input))
     {
         return result(id, problem_result(refused));
     }
@@ -785,6 +783,10 @@ async fn answer_call(
         let digest = elicitation::digest_of(&input);
         match params.get("elicitation").or(answered_in_arguments.as_ref()) {
             None => {
+                // An input the operation refuses is refused before the person is asked to confirm it.
+                if let Err(refused) = (op.validate)(&input) {
+                    return result(id, problem_result(refused));
+                }
                 // PF-57: a proposal whose check has not run is refused on every door
                 // with the same three fields, so a client that reads
                 // `verdict_required` on the REST route reads it here too. The
