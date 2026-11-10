@@ -519,6 +519,7 @@ impl StreamDeployer {
         self.validated(stream, project, pipeline, spaces);
         self.logged(stream, project, pipeline);
         own_credential(stream, project);
+        reasoned_deletes(stream, project, pipeline);
     }
 
     /// Puts the validation stage into one rendered stream when every output writes into the
@@ -2913,6 +2914,78 @@ output:
         own_credential(&mut other, "bbsk");
         assert_eq!(other["x"], "${JC_CLIENT_SECRET_HELSINKI}");
         assert_eq!(rendered["output"], before_output);
+    }
+
+    /// DM-113: a delete an author's step sends to the instance's gateway names its pipeline and
+    /// stream in `JC-Reason` at any depth (HSL's sits in try > switch, OSM's in branch > switch),
+    /// or the gateway answers `400 reason-required` and nothing is deleted. A look-alike host, an
+    /// outside URL, a read, an interpolated operation and a step's own reason get nothing added.
+    #[test]
+    fn an_authors_delete_toward_the_gateway_names_its_pipeline() {
+        let mut spec = helsinki_pipeline_spec();
+        spec.compute = None;
+        let ds = helsinki_datasource_spec();
+        let call = |case: &str, verb: &str, url: &str, extra: &str| {
+            format!("{{ http: {{ url: '{url}', {verb} headers: {{ X-Case: '{case}'{extra} }} }} }}")
+        };
+        let ep = "${JC_GATEWAY_URL}/api/endpoint/si6e/ngsi-ld/v1";
+        let bento = format!(
+            "pipeline:\n  processors:\n\
+             \x20   - try:\n\
+             \x20       - switch:\n\
+             \x20           - check: this.length() > 0\n\
+             \x20             processors: [ {switch} ]\n\
+             \x20       - {try_} \n\
+             \x20   - catch: [ {catch} ]\n\
+             \x20   - branch: {{ processors: [ {host}, {evil}, {outside}, {query}, {get} ] }}\n\
+             \x20   - while: {{ check: 'false', processors: [ {entity}, {own}, {interpolated} ] }}\n\
+             \x20   - workflow: {{ branches: {{ a: {{ processors: [ {port} ] }} }} }}\n",
+            switch = call("switch", "verb: POST,", &format!("{ep}/entityOperations/delete"), ""),
+            try_ = call("try", "", &format!("{ep}/entityOperations/delete?x=1"), ""),
+            catch = call("temporal", "verb: delete,", &format!("{ep}/temporal/entities/urn:a/attrs/b"), ""),
+            host = call("host", "verb: POST,", "http://${JC_GATEWAY_HOST}/api/endpoint/si6e/ngsi-ld/v1/entityOperations/delete", ""),
+            evil = call("evil", "verb: POST,", "${JC_GATEWAY_URL}@evil.com/ngsi-ld/v1/entityOperations/delete", ""),
+            outside = call("outside", "verb: POST,", "https://example.org/ngsi-ld/v1/entityOperations/delete", ""),
+            query = call("query", "verb: POST,", &format!("{ep}/entityOperations/query"), ""),
+            get = call("get", "verb: GET,", &format!("{ep}/entities/urn:a"), ""),
+            entity = call("entity", "verb: DELETE,", &format!("{ep}/entities/${{! this.id }}"), ""),
+            own = call("own", "verb: DELETE,", &format!("{ep}/entities/urn:a"), ", jc-reason: 'mine'"),
+            interpolated = call("interpolated", "verb: POST,", &format!("{ep}/${{! @op }}"), ""),
+            port = call("port", "verb: POST,", "http://${JC_GATEWAY_HOST}:9/ngsi-ld/v1/entityOperations/delete", ""),
+        );
+        let mut rendered = render_stream(&spec, "p", "bbsk", &ds, "src", "abc123", Some(&bento))
+            .expect("renders");
+        StreamDeployer::new("http://runner").reporting(&mut rendered, "bbsk", "p", &[]);
+
+        fn calls(value: &Value, out: &mut std::collections::BTreeMap<String, Value>) {
+            match value {
+                Value::Object(map) => {
+                    if let Some(case) = map.pointer("/http/headers/X-Case").and_then(Value::as_str) {
+                        out.insert(case.to_owned(), map["http"]["headers"].clone());
+                    }
+                    map.values().for_each(|v| calls(v, out));
+                }
+                Value::Array(items) => items.iter().for_each(|v| calls(v, out)),
+                _ => {}
+            }
+        }
+        let mut found = std::collections::BTreeMap::new();
+        calls(&rendered, &mut found);
+        assert_eq!(found.len(), 12, "{rendered}");
+        let reason = crate::pipeline_source_deletes::reason_header(
+            "pipeline step: a delete in the pipeline's own steps, pipeline p stream bbsk.p",
+        );
+        for case in ["switch", "try", "temporal", "host", "entity"] {
+            assert_eq!(found[case]["JC-Reason"], reason.as_str(), "{case}: {rendered}");
+        }
+        for case in ["evil", "outside", "query", "get", "interpolated", "port"] {
+            assert_eq!(found[case].as_object().map(|h| h.len()), Some(1), "{case}: {rendered}");
+        }
+        let own = found["own"].as_object().expect("headers");
+        assert_eq!(own.len(), 2, "{rendered}");
+        assert_eq!(own["jc-reason"], "mine");
+        // The encoded reason holds nothing Bento would interpolate.
+        assert!(!reason.contains(['$', '{', ' ']), "{reason}");
     }
 
     /// T-5337: every cache a stream names, an author's nested ones and the platform's own change
