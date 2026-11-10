@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -157,6 +158,12 @@ pub struct HttpClient {
     basic_auth: Option<BasicAuthConfig>,
     max_response_bytes: usize,
     cached_token: AsyncMutex<Option<CachedOAuthToken>>,
+    /// This client's id: a call to the host's own listener is `X-Request-Id: {run}-<n>`, so the
+    /// gateway's and the broker's lines for a stream's write carry the stream's reference.
+    run: String,
+    calls: AtomicU64,
+    /// Whether the line naming `run` was written (once, at the first answered call).
+    named: AtomicBool,
 }
 
 impl HttpClient {
@@ -381,6 +388,9 @@ impl HttpClient {
             basic_auth,
             max_response_bytes,
             cached_token: AsyncMutex::new(None),
+            run: uuid::Uuid::now_v7().simple().to_string(),
+            calls: AtomicU64::new(0),
+            named: AtomicBool::new(false),
         }))
     }
 
@@ -495,7 +505,7 @@ impl HttpClient {
         ref_batch: &[Part],
         batch_as_multipart: bool,
         org: &OrgContext,
-    ) -> Result<(reqwest::RequestBuilder, String), CoreError> {
+    ) -> Result<(reqwest::RequestBuilder, String, Option<String>), CoreError> {
         let view = PartsView(ref_batch);
         let resolved_url_str = self
             .url
@@ -505,10 +515,23 @@ impl HttpClient {
         let parsed_url = validate_resolved_url(&resolved_url_str, org)?;
         org.admit_http_request().await;
         let redacted_url = redact_url_str(parsed_url.as_str());
+        let own = org.host_target().is_some_and(|t| t.admits(&parsed_url))
+            && !self
+                .headers
+                .keys()
+                .any(|k| k.eq_ignore_ascii_case("x-request-id"));
 
         let mut req = self
             .client_for(org, &parsed_url)
             .request(self.verb.clone(), parsed_url);
+        // 32 hex digits, a dash, digits: a plain token jc's door keeps as the caller's id.
+        let request_id = own.then(|| {
+            let n = self.calls.fetch_add(1, Ordering::Relaxed) + 1;
+            format!("{}-{n}", self.run)
+        });
+        if let Some(id) = &request_id {
+            req = req.header("X-Request-Id", id);
+        }
 
         let mut has_content_type = false;
         for (k, expr) in &self.headers {
@@ -609,7 +632,7 @@ impl HttpClient {
                 .body(body_buf);
         }
 
-        Ok((req, redacted_url))
+        Ok((req, redacted_url, request_id))
     }
 
     /// Executes an HTTP request with retries, rate limiting, and response size cap.
@@ -629,7 +652,7 @@ impl HttpClient {
 
         loop {
             self.wait_rate_limit(org, resources, &send_batch).await?;
-            let (req_builder, redacted_url) = self
+            let (req_builder, redacted_url, request_id) = self
                 .build_request(&send_batch, batch_as_multipart, org)
                 .await?;
 
@@ -644,6 +667,9 @@ impl HttpClient {
                     let body_bytes = read_capped_body(resp, self.max_response_bytes).await?;
 
                     if succeeded {
+                        if let Some(id) = request_id.filter(|_| !self.named.swap(true, Ordering::Relaxed)) {
+                            tracing::info!(request_id = %id, url = %redacted_url, status = code, "http_client: jc's listener answered; each call of this stream is X-Request-Id {}-<n>", self.run);
+                        }
                         return Ok(self.response_to_batch(code, &headers, body_bytes));
                     }
 
