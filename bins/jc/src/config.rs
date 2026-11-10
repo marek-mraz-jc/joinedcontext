@@ -1054,6 +1054,16 @@ pub fn antares_env(key: &str) -> Option<String> {
     std::env::var(key).ok()
 }
 
+/// `JC_EKIBEN_PRIVATE_HOSTS`: the in-cluster names ekiben's streams may reach although they
+/// resolve to private addresses (ekiben's `private_hosts`; `name:port` opens one port), comma
+/// separated: the MQTT brokers' internal listeners a DataSource reads. A variable rather than a
+/// `jc.toml` key, so a deployment can name it before the image reads it.
+#[must_use]
+#[allow(clippy::disallowed_methods)] // The one reader, for ekiben's private hosts.
+pub fn ekiben_private_hosts() -> String {
+    std::env::var("JC_EKIBEN_PRIVATE_HOSTS").unwrap_or_default()
+}
+
 /// The prefix of the variables `jc` hands ekiben's streams as `${NAME}` (ekiben's own
 /// convention for a shared process, `EnvAccess::AllowListed`).
 pub const EKIBEN_VAR_PREFIX: &str = "EKIBEN_VAR_";
