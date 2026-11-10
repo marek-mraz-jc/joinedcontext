@@ -113,6 +113,11 @@ fn mirror() -> Arc<Mirror> {
         });
         mirror.upsert(app);
     }
+    // A published wasm App whose manifest this Portal refuses (a field AppSpec does not know).
+    let mut broken = app("wasm");
+    broken["visibility"] = "roles".into();
+    broken["replicas"] = 2.into();
+    mirror.upsert(envelope("App", "ovzdusie", "air-broken", broken));
     mirror.upsert(envelope(
         "Endpoint",
         "ovzdusie",
@@ -547,6 +552,27 @@ async fn a_wasm_app_without_a_shard_it_may_use_keeps_the_designed_503() {
             text.contains(&format!("the server of App '{host}'")),
             "{text}"
         );
+    }
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_app_whose_manifest_is_refused_answers_its_host_with_the_404_never_a_page() {
+    let bundles = Bundles::new("wasm-refused", &["air-broken"]);
+    let (through, seen) = shard().await;
+    let portal = wasm_portal(&bundles, Some((2, Some("wasm-host"))), through);
+    for (uri, accept) in [
+        ("/api/me", "application/json"),
+        ("/api/me", "text/html"),
+        ("/", "text/html"),
+    ] {
+        let req = Request::builder()
+            .uri(uri)
+            .header(header::HOST, "air-broken.apps.example.org")
+            .header("accept", accept);
+        let (status, _, body) = send_with(&portal, req, "").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri} {accept}");
+        assert!(!served(&body, INDEX), "{uri} {accept}: the App's page");
     }
     assert!(seen.lock().unwrap().is_empty());
 }

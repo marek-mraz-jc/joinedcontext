@@ -265,10 +265,13 @@ elif [ -z "${JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:-}" ]; then
 fi
 # The datasets this kit renames answer their old names too (RENAMES.md, rehearsal.py CKAN_NAMES).
 alias_config=$(python3 -I "$here/rehearsal.py" aliases)
-# REHEARSAL_APP_HOSTS=on: the Portal also on every App host {name}.apps.localhost:<port>, as jc-prod's
-# *.apps.{domain} entry (edge-session-design S4a); jc sets JC_PORTAL_APPS_URL from it.
+# The Portal also on every App host {name}.apps.localhost:<port>, as jc-prod's *.apps.{domain} entry
+# (edge-session-design S4a; deployment components/jc/values/server/base-values.yaml.gotmpl); jc
+# sets JC_PORTAL_APPS_URL and JC_PORTAL_SERVE_APP_HOSTS from it. Without it every App host gets the
+# Portal's own page (gate 5 rerun, 2026-11-10: charts-apps app.server 200 text/html).
+# REHEARSAL_APP_HOSTS=off leaves it out.
 portal_mounts='[mounts.portal]\npath_prefix = ""\n'
-if [ "${REHEARSAL_APP_HOSTS:-off}" = on ]; then
+if [ "${REHEARSAL_APP_HOSTS:-on}" = on ]; then
   portal_mounts="[[mounts.portal]]\npath_prefix = \"\"\n\n[[mounts.portal]]\nhost = \"*.apps.localhost:$port\"\n"
 fi
 printf "$portal_mounts"'%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_config" > "$home/jc.toml"
