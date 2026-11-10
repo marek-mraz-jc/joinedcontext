@@ -331,6 +331,7 @@ pub struct HarvestEngine {
     max_bytes: usize,
     timeout: Duration,
     deadline: Duration,
+    own_gateway: Option<(String, SocketAddr)>,
 }
 
 /// How long one run may take before it is stopped and recorded failed (prod's CronJob
@@ -346,7 +347,38 @@ impl HarvestEngine {
             max_bytes: MAX_HARVEST_BYTES,
             timeout: Duration::from_secs(60),
             deadline: HARVEST_DEADLINE,
+            own_gateway: None,
         }
+    }
+
+    /// The instance's own gateway: a URL under `public` (an origin, no trailing slash) is read
+    /// from `internal`, the loopback listener that serves it, as prod's harvest read the
+    /// Endpoints in-cluster. Only that one origin goes there, with no redirect followed off it;
+    /// every other URL passes the guard as before.
+    pub fn with_own_gateway(mut self, public: &str, internal: SocketAddr) -> Self {
+        self.own_gateway = Some((public.trim_end_matches('/').to_owned(), internal));
+        self
+    }
+
+    /// The pinned target of `url` when it lies under the own gateway's origin.
+    fn own_target(&self, url: &str) -> Result<Option<ValidatedTarget>> {
+        let Some((public, internal)) = &self.own_gateway else {
+            return Ok(None);
+        };
+        let Some(rest) = url
+            .strip_prefix(public.as_str())
+            .filter(|r| r.starts_with('/'))
+        else {
+            return Ok(None);
+        };
+        let url = url::Url::parse(&format!("http://{internal}{rest}")).map_err(|e| {
+            DataroomError::OutboundRefused(format!("own gateway address of {url}: {e}"))
+        })?;
+        Ok(Some(ValidatedTarget {
+            url,
+            host: internal.ip().to_string(),
+            pinned_addrs: vec![*internal],
+        }))
     }
 
     pub fn with_deadline(mut self, deadline: Duration) -> Self {
@@ -393,13 +425,21 @@ impl HarvestEngine {
                 .custom_dns
                 .as_ref()
                 .map(|r| r.as_ref() as &crate::guard::DnsResolver);
-            let target = validate_and_pin_url(
-                &current_url,
-                &source.allowed_hosts,
-                cat_allowed_hosts,
-                self.resolve_dns,
-                resolver_ref,
-            )?;
+            let own = if hops == 0 {
+                self.own_target(&current_url)?
+            } else {
+                None
+            };
+            let target = match own {
+                Some(t) => t,
+                None => validate_and_pin_url(
+                    &current_url,
+                    &source.allowed_hosts,
+                    cat_allowed_hosts,
+                    self.resolve_dns,
+                    resolver_ref,
+                )?,
+            };
 
             match self
                 .fetcher

@@ -171,6 +171,7 @@ pub async fn build(
     for &(o, c) in &catalogues {
         grants.push(dataroom_harvest::harvest_principal(o, c).1);
     }
+    let own_gateway = own_gateway(&live, siblings);
     for seed in &cfg.harvest {
         let (cat, site) = match &seed.organization {
             None => (catalogue_id, mount.public_base()),
@@ -190,13 +191,24 @@ pub async fn build(
                 )
             }
         };
-        seed_harvest(store.as_ref(), org_id, cat, seed, &site)
-            .await
-            .map_err(|e| err(&format!("[[dataroom.harvest]] {}: {e}", seed.name)))?;
+        seed_harvest(
+            store.as_ref(),
+            org_id,
+            cat,
+            seed,
+            &site,
+            own_gateway.as_ref().map(|(public, _)| public.as_str()),
+        )
+        .await
+        .map_err(|e| err(&format!("[[dataroom.harvest]] {}: {e}", seed.name)))?;
     }
     let authorizer = Arc::new(PolicyAuthorizer::new(grants));
+    let mut engine = HarvestEngine::new(Arc::new(HttpFetcher::new()));
+    if let Some((public, Some(internal))) = &own_gateway {
+        engine = engine.with_own_gateway(public, *internal);
+    }
     HarvestScheduler::new(
-        Arc::new(HarvestEngine::new(Arc::new(HttpFetcher::new()))),
+        Arc::new(engine),
         store.clone(),
         authorizer.clone(),
         catalogues,
@@ -214,6 +226,29 @@ pub async fn build(
         dataroom_api::router(state),
         cfg.aliases.clone(),
     ))
+}
+
+/// The origin of this instance's gateway as the catalogue names it (`[dataroom.addresses]
+/// api` or the gateway's mount), and the loopback listener that serves it when jc mounts the
+/// gateway on its own listener (no host of its own): a harvest reads the Endpoints there, as
+/// prod's harvest read them in-cluster. `None` without a gateway.
+fn own_gateway(
+    live: &crate::siblings::LiveAddresses,
+    siblings: &Siblings,
+) -> Option<(String, Option<std::net::SocketAddr>)> {
+    let gateway = siblings.get(Module::Gateway)?;
+    let public = crate::siblings::origin(&gateway.public);
+    if live.api.is_empty() {
+        return None;
+    }
+    let internal = crate::siblings::origin(&gateway.internal);
+    let loopback = internal
+        .strip_prefix("http://")
+        .and_then(|a| a.parse::<std::net::SocketAddr>().ok())
+        .filter(|a| a.ip().is_loopback());
+    // A named api address that is not the gateway's mount is another host: no shortcut.
+    let reach = loopback.filter(|_| live.api == public && internal != public);
+    Some((live.api.clone(), reach))
 }
 
 fn bare_host(host: &str) -> &str {
@@ -279,11 +314,6 @@ async fn ensure_publisher(
     Ok(())
 }
 
-/// Holds one `[[dataroom.harvest]]` source in catalogue `catalogue_id`, whose public base is
-/// `site`: its publisher created when missing, the source written over the stored one. A
-/// source naming a scheme other than https, a URL or gateway host outside its own
-/// `allowed_hosts`, a schedule that is not cron or a converted file that does not read is
-/// refused.
 /// Writes `hidden` over the publish gate's list of catalogue `catalogue_id` (prod's `hidden`
 /// chart value, `jc_hide`): each named dataset answers its editors only, as on prod.
 pub async fn seed_hidden(
@@ -303,12 +333,19 @@ pub async fn seed_hidden(
     Ok(())
 }
 
+/// Holds one `[[dataroom.harvest]]` source in catalogue `catalogue_id`, whose public base is
+/// `site`: its publisher created when missing, the source written over the stored one. A
+/// source naming a scheme other than https, a URL or gateway host outside its own
+/// `allowed_hosts`, a schedule that is not cron or a converted file that does not read is
+/// refused. A source with converted datasets and no gateway reads `own_gateway`, the origin of
+/// this instance's gateway.
 pub async fn seed_harvest(
     store: &dyn Store,
     org_id: OrgId,
     catalogue_id: CatalogueId,
     seed: &HarvestSeed,
     site: &str,
+    own_gateway: Option<&str>,
 ) -> dataroom_core::Result<HarvestSource> {
     let kind: HarvestSourceKind =
         serde_json::from_value(serde_json::Value::from(seed.kind.as_str())).map_err(|_| {
@@ -316,9 +353,15 @@ pub async fn seed_harvest(
         })?;
     dataroom_harvest::validate_outbound_url(&seed.url, &seed.allowed_hosts, &[], false)?;
     dataroom_harvest::cron_matches(&seed.schedule, chrono::Utc::now())?;
-    if let Some(gateway) = &seed.gateway {
-        dataroom_harvest::validate_outbound_url(gateway, &seed.allowed_hosts, &[], false)?;
-    }
+    // A source that names no gateway reads its converted datasets from this instance's own.
+    let gateway = match (&seed.gateway, own_gateway) {
+        (Some(gateway), _) => {
+            dataroom_harvest::validate_outbound_url(gateway, &seed.allowed_hosts, &[], false)?;
+            Some(gateway.clone())
+        }
+        (None, Some(own)) if seed.converted_file.is_some() => Some(own.to_owned()),
+        (None, _) => None,
+    };
     let converted = match &seed.converted_file {
         None => BTreeMap::new(),
         Some(path) => converted_datasets(path, seed.datasets_base.as_deref(), site)?,
@@ -382,7 +425,7 @@ pub async fn seed_harvest(
                 schedule: seed.schedule.clone(),
                 enabled: seed.enabled,
                 converted,
-                gateway: seed.gateway.clone(),
+                gateway,
                 modified: now,
             },
         )
@@ -427,17 +470,98 @@ mod tests {
     const SITE: &str = "https://opendata.smartcity.joinedcontext.com";
     const GATEWAY: &str = "https://api.smartcity.joinedcontext.com";
 
-    /// The `[[dataroom.harvest]]` block of prod's two sources, as jc.toml carries it.
+    /// The `[[dataroom.harvest]]` block of prod's two sources, read as jc reads jc.toml (its
+    /// `od-datasets.json` beside it).
     fn prod_seeds() -> Vec<HarvestSeed> {
-        #[derive(serde::Deserialize)]
-        struct File {
-            dataroom: DataroomSection,
-        }
-        let raw = include_str!("../../docs/harvest-sources.toml");
-        toml::from_str::<File>(raw)
+        let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
+        crate::config::Config::read_file(&docs.join("harvest-sources.toml"))
             .expect("the block parses")
             .dataroom
+            .expect("[dataroom]")
             .harvest
+    }
+
+    /// The gateway on jc's own listener (slug mode, the rehearsal) is read there; one on a host
+    /// of its own, or an api address naming another host, is read through the guard.
+    #[test]
+    fn the_own_gateway_is_reached_on_loopback_only_when_jc_serves_it_there() {
+        use crate::siblings::{LiveAddresses, Sibling};
+        let listener: std::net::SocketAddr = "127.0.0.1:42102".parse().unwrap();
+        let with = |public: &str, internal: &str| {
+            let mut s = Siblings::new(&[], listener);
+            s.insert_remote(
+                Module::Gateway,
+                Sibling {
+                    public: public.into(),
+                    internal: internal.into(),
+                },
+            );
+            s
+        };
+        let live = |api: &str| LiveAddresses {
+            api: api.into(),
+            ..LiveAddresses::default()
+        };
+        let slug = with(
+            "http://localhost:42102/gateway",
+            "http://127.0.0.1:42102/gateway",
+        );
+        assert_eq!(
+            own_gateway(&live("http://localhost:42102"), &slug),
+            Some(("http://localhost:42102".into(), Some(listener)))
+        );
+        let host = with("https://api.city.example", "https://api.city.example");
+        assert_eq!(
+            own_gateway(&live("https://api.city.example"), &host),
+            Some(("https://api.city.example".into(), None))
+        );
+        assert_eq!(
+            own_gateway(&live("https://api.other.example"), &slug),
+            Some(("https://api.other.example".into(), None))
+        );
+        let elsewhere = with("http://localhost:42102", "http://10.0.0.5:8080");
+        assert_eq!(
+            own_gateway(&live("http://localhost:42102"), &elsewhere),
+            Some(("http://localhost:42102".into(), None))
+        );
+        assert_eq!(own_gateway(&live(""), &slug), None);
+        assert_eq!(own_gateway(&live("x"), &Siblings::new(&[], listener)), None);
+    }
+
+    /// Without a gateway of their own, prod's sources keep prod's converted datasets and read
+    /// their Endpoints on this instance's gateway, which no outbound check refuses for being
+    /// jc's own loopback listener (gate 4: no converted filter on the rehearsal).
+    #[tokio::test]
+    async fn prods_sources_read_their_converted_datasets_on_the_own_gateway() {
+        let own = "http://localhost:42102";
+        let (store, ctx) = catalogue().await;
+        for seed in prod_seeds() {
+            assert_eq!(seed.gateway, None, "{}", seed.name);
+            let src = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &seed, SITE, Some(own))
+                .await
+                .expect("seeded");
+            assert_eq!(src.gateway.as_deref(), Some(own), "{}", seed.name);
+            assert_eq!(src.converted.len(), 139, "{}", seed.name);
+            let entry = &src.converted["bbsk-kontaktne-miesta-2128a0"];
+            assert_eq!(
+                entry.dataset,
+                format!("{SITE}/dataset/bbsk-kontaktne-miesta-2128a0")
+            );
+            // Without converted datasets the own gateway is not taken.
+            let mut plain = seed.clone();
+            plain.converted_file = None;
+            let src = seed_harvest(
+                &store,
+                ctx.org_id,
+                ctx.catalogue_id,
+                &plain,
+                SITE,
+                Some(own),
+            )
+            .await
+            .expect("seeded");
+            assert_eq!(src.gateway, None);
+        }
     }
 
     async fn catalogue() -> (MemoryStore, RequestCtx) {
@@ -467,7 +591,7 @@ mod tests {
         );
         let (store, ctx) = catalogue().await;
         for seed in &seeds {
-            let src = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, seed, SITE)
+            let src = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, seed, SITE, None)
                 .await
                 .expect("seeded");
             assert!(src.enabled);
@@ -495,7 +619,7 @@ mod tests {
         }
         assert_eq!(store.list_harvest_sources(&ctx).await.unwrap().len(), 2);
         // Seeding again on the next start writes over the stored source, nothing doubles.
-        seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &seeds[0], SITE)
+        seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &seeds[0], SITE, None)
             .await
             .unwrap();
         assert_eq!(store.list_harvest_sources(&ctx).await.unwrap().len(), 2);
@@ -507,21 +631,21 @@ mod tests {
         let mut off_list = prod_seeds()[0].clone();
         off_list.allowed_hosts.retain(|h| h != "data.slovensko.sk");
         assert!(
-            seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &off_list, SITE)
+            seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &off_list, SITE, None)
                 .await
                 .is_err()
         );
         let mut bad_cron = prod_seeds()[1].clone();
         bad_cron.schedule = "nightly".into();
         assert!(
-            seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &bad_cron, SITE)
+            seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &bad_cron, SITE, None)
                 .await
                 .is_err()
         );
         let mut bad_kind = prod_seeds()[1].clone();
         bad_kind.kind = "ftp".into();
         assert!(
-            seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &bad_kind, SITE)
+            seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &bad_kind, SITE, None)
                 .await
                 .is_err()
         );
@@ -547,10 +671,10 @@ mod tests {
             seed.allowed_hosts
                 .push("api.smartcity.joinedcontext.com".into());
         }
-        let nkod = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &seeds[0], SITE)
+        let nkod = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &seeds[0], SITE, None)
             .await
             .unwrap();
-        let hub = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &seeds[1], SITE)
+        let hub = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &seeds[1], SITE, None)
             .await
             .unwrap();
         fetcher.insert(

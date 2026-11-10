@@ -230,6 +230,35 @@ async fn the_scheduler_runs_an_enabled_source_only_in_its_minute() {
     assert!(s.run_due(at(3, 23)).await.is_empty());
 }
 
+/// A new instance lists its sources' datasets without waiting for 03:23 (gate 4: the 17
+/// harvested datasets were missing because no run had happened); a failed first run is tried
+/// again, a completed one is not.
+#[tokio::test]
+async fn a_source_no_run_completed_runs_off_schedule_until_one_does() {
+    let (w, store, f) = scheduled_world(usize::MAX).await;
+    let s = scheduler(&w, store.clone(), f.clone(), true);
+    let out = s.run_unharvested().await;
+    assert!(out[0].1.is_err());
+    assert_eq!(f.calls.load(Ordering::SeqCst), 4);
+    assert!(active_names(&w).await.is_empty());
+
+    let (w, store, f) = scheduled_world(0).await;
+    let s = scheduler(&w, store.clone(), f.clone(), true);
+    let out = s.run_unharvested().await;
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].1.as_ref().unwrap().state, HarvestRunState::Succeeded);
+    assert_eq!(active_names(&w).await, vec!["city-cesty-aaa111".to_owned()]);
+    assert!(s.run_unharvested().await.is_empty(), "one run completed");
+    assert_eq!(f.calls.load(Ordering::SeqCst), 1);
+    // The catalogue's harvest principal still has to hold the grant.
+    let (w, store, f) = scheduled_world(0).await;
+    let out = scheduler(&w, store, f.clone(), false)
+        .run_unharvested()
+        .await;
+    assert!(matches!(out[0].1, Err(DataroomError::Forbidden(_))));
+    assert_eq!(f.calls.load(Ordering::SeqCst), 0);
+}
+
 #[tokio::test]
 async fn a_failed_run_is_retried_three_times_then_logged_and_the_next_cycle_runs() {
     // Fails three times, the fourth attempt (third retry) succeeds.

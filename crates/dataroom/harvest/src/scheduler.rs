@@ -10,8 +10,8 @@ use crate::runner::HarvestEngine;
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use dataroom_core::ops::HarvestRunner;
 use dataroom_core::{
-    Action, Authorizer, CatalogueId, DataroomError, GrantRule, HarvestRun, ObjectTarget, OrgId,
-    RequestCtx, Result, Store, Subject,
+    Action, Authorizer, CatalogueId, DataroomError, GrantRule, HarvestRun, HarvestRunState,
+    ObjectTarget, OrgId, RequestCtx, Result, Store, Subject,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -121,6 +121,17 @@ impl HarvestScheduler {
     /// Runs every enabled source of every catalogue whose schedule fires in the minute of `now`,
     /// sources side by side, and returns each source's last outcome.
     pub async fn run_due(&self, now: DateTime<Utc>) -> Vec<(String, Result<HarvestRun>)> {
+        self.run_sources(Due::At(now)).await
+    }
+
+    /// Runs every enabled source that no run has completed yet, whatever its schedule: prod's
+    /// first run after an install (`kubectl create job --from=cronjob/...`), so a new instance
+    /// does not wait for the night to list what its sources hold.
+    pub async fn run_unharvested(&self) -> Vec<(String, Result<HarvestRun>)> {
+        self.run_sources(Due::Unharvested).await
+    }
+
+    async fn run_sources(&self, due: Due) -> Vec<(String, Result<HarvestRun>)> {
         let mut runs = tokio::task::JoinSet::new();
         for &(org_id, catalogue_id) in &self.catalogues {
             let (subject, _) = harvest_principal(org_id, catalogue_id);
@@ -133,7 +144,15 @@ impl HarvestScheduler {
                 }
             };
             for source in sources.into_iter().filter(|s| s.enabled) {
-                match cron_matches(&source.schedule, now) {
+                let fires = match due {
+                    Due::At(now) => cron_matches(&source.schedule, now),
+                    Due::Unharvested => self
+                        .store
+                        .list_harvest_runs(&ctx, Some(&source.id))
+                        .await
+                        .map(|r| !r.iter().any(|r| r.state == HarvestRunState::Succeeded)),
+                };
+                match fires {
                     Ok(true) => {}
                     Ok(false) => continue,
                     Err(e) => {
@@ -177,20 +196,37 @@ impl HarvestScheduler {
     }
 
     /// Checks the schedules once a minute, for the life of the process; a run takes minutes,
-    /// so each minute's runs go on beside the next check.
+    /// so each minute's runs go on beside the next check. A source no run has completed runs at
+    /// the first minute and again each hour until one does: the Endpoints its converted
+    /// datasets read may not answer yet on a new instance.
+    /// ponytail: hourly catch-up (four attempts an hour for a source that never answers).
     pub fn spawn(self) -> tokio::task::JoinHandle<()> {
         let me = Arc::new(self);
         tokio::spawn(async move {
+            let mut first = true;
             loop {
                 let into_minute = u64::from(Utc::now().second());
                 tokio::time::sleep(Duration::from_secs(60 - into_minute)).await;
                 let (me, minute) = (me.clone(), Utc::now());
+                let catch_up = std::mem::take(&mut first) || minute.minute() == 0;
                 tokio::spawn(async move {
+                    if catch_up {
+                        me.run_unharvested().await;
+                    }
                     me.run_due(minute).await;
                 });
             }
         })
     }
+}
+
+/// Which sources a pass runs.
+#[derive(Clone, Copy)]
+enum Due {
+    /// Those whose schedule fires in this minute.
+    At(DateTime<Utc>),
+    /// Those no run has completed.
+    Unharvested,
 }
 
 /// One run of `source` and up to [`RETRIES`] more after a failure; a run refused because
