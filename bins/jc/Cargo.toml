@@ -46,7 +46,7 @@ daiya = [
   "dep:daiya-store-memory",
   "dep:daiya-store-pg",
 ]
-ekiben = ["dep:ekiben-server", "dep:ekiben-core", "dep:futures"]
+ekiben = ["dep:ekiben-server", "dep:ekiben-core", "dep:futures", "dep:jc-core"]
 # The platform's broker build (Antares image-jc FEATURES without parquet and tabular): Endpoint
 # views, the joinedcontext engine and every surface dev's broker serves.
 antares = ["dep:antares-broker"]

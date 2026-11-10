@@ -1061,7 +1061,8 @@ pub fn antares_env(key: &str) -> Option<String> {
 
 /// `JC_EKIBEN_PRIVATE_HOSTS`: the in-cluster names ekiben's streams may reach although they
 /// resolve to private addresses (ekiben's `private_hosts`; `name:port` opens one port), comma
-/// separated: the MQTT brokers' internal listeners a DataSource reads. A variable rather than a
+/// separated `project=name:port`: the MQTT brokers' internal listeners a DataSource reads, each
+/// open only to its project's streams (`modules::ekiben::admit`). A variable rather than a
 /// `jc.toml` key, so a deployment can name it before the image reads it.
 #[must_use]
 #[allow(clippy::disallowed_methods)] // The one reader, for ekiben's private hosts.

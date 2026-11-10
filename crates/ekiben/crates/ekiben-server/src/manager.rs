@@ -44,6 +44,13 @@ pub trait StreamPersistence: Send + Sync {
     }
 }
 
+/// The hosting process's own rule on what may run, asked before a stream or a resource posted
+/// through the API is built (`jc` binds the private hosts and broker usernames a stream names to
+/// the stream's project). `stream` is the stream's id, `None` for a resource, which every stream
+/// of its organization may name; `filled` is the config after `${VAR}` interpolation. The `Err`
+/// is the reason, answered as a config error (400).
+pub type Admission = Arc<dyn Fn(Option<&str>, &JsonValue) -> Result<(), String> + Send + Sync>;
+
 /// Why a posted resource was not taken; the API answers each with a 400.
 #[derive(Debug)]
 pub enum ResourceError {
@@ -155,6 +162,8 @@ pub struct StreamManager {
     pub env_access: EnvAccess,
     /// Keeps definitions across restarts when set ([`Self::with_persistence`]).
     persistence: Option<Arc<dyn StreamPersistence>>,
+    /// Asked before every stream and API resource is built ([`Self::with_admission`]).
+    admission: Option<Admission>,
 }
 
 impl StreamManager {
@@ -172,6 +181,21 @@ impl StreamManager {
             file_root,
             env_access: env_access.into(),
             persistence: None,
+            admission: None,
+        }
+    }
+
+    /// Asks `admission` before every stream (posted, put, patched or restored) and every resource
+    /// posted through the API or restored is built.
+    pub fn with_admission(mut self, admission: Admission) -> Self {
+        self.admission = Some(admission);
+        self
+    }
+
+    fn admit(&self, stream: Option<&str>, filled: &JsonValue) -> Result<(), CoreError> {
+        match &self.admission {
+            Some(admit) => admit(stream, filled).map_err(CoreError::config),
+            None => Ok(()),
         }
     }
 
@@ -280,6 +304,9 @@ impl StreamManager {
             .map_err(|e| ResourceError::Parse(format!("Error: {e}")))?;
         let mut conf = ekiben_core::ComponentConfig::from_json_value(&raw, "noop", None)
             .map_err(|e| ResourceError::Parse(e.to_string()))?;
+        if let Some(admit) = &self.admission {
+            admit(None, &raw).map_err(ResourceError::Parse)?;
+        }
         conf.label = id.to_string();
         let (_tx, rx) = tokio::sync::watch::channel(false);
         let org_ctx = self.resources.get_or_create_org(org);
@@ -387,6 +414,7 @@ impl StreamManager {
         posted: Option<JsonValue>,
         persist: bool,
     ) -> Result<Option<RunSummary>, CoreError> {
+        self.admit(Some(&id), &conf.raw_source)?;
         let key: StreamKey = (conf.org.clone(), id.clone());
         if self.streams.read().await.contains_key(&key) {
             return Err(CoreError::KeyAlreadyExists(format!(
@@ -552,6 +580,8 @@ impl StreamManager {
         caller_org: Option<&OrgId>,
         posted: Option<JsonValue>,
     ) -> Result<Option<RunSummary>, CoreError> {
+        // Refused before the running one stops, so a refused PUT leaves it as it was.
+        self.admit(Some(id), &conf.raw_source)?;
         self.delete(id, caller_org).await?;
         conf.org = caller_org.cloned().unwrap_or_default();
         self.create_posted(id.to_string(), conf, posted).await
