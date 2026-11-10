@@ -23,7 +23,7 @@ use std::time::Duration;
 
 const HUB: &str = "https://hub.city.example";
 const HUB_PAGE1: &str =
-    "https://hub.city.example/api/search/v1/collections/dataset/items?limit=100";
+    "https://hub.city.example/api/search/v1/collections/dataset/items?limit=100&sortBy=properties.created";
 
 fn hub_answer() -> String {
     json!({"numberMatched": 1, "features": [hub_item("aaa111", "Cesty", 1)]}).to_string()
@@ -228,6 +228,42 @@ async fn the_scheduler_runs_an_enabled_source_only_in_its_minute() {
     src.enabled = false;
     store.upsert_harvest_source(&w.ctx, src).await.unwrap();
     assert!(s.run_due(at(3, 23)).await.is_empty());
+}
+
+/// A start runs every enabled source whatever its schedule (gate 4: the 17 harvested datasets
+/// were missing because no run had happened before 03:23; a restart after the import lists the
+/// sheets the imported rows give), each tried again after a failure, a disabled one never.
+#[tokio::test]
+async fn a_start_runs_every_enabled_source_off_schedule() {
+    let (w, store, f) = scheduled_world(usize::MAX).await;
+    let s = scheduler(&w, store.clone(), f.clone(), true);
+    let out = s.run_all().await;
+    assert!(out[0].1.is_err());
+    assert_eq!(f.calls.load(Ordering::SeqCst), 4);
+    assert!(active_names(&w).await.is_empty());
+
+    let (w, store, f) = scheduled_world(0).await;
+    let s = scheduler(&w, store.clone(), f.clone(), true);
+    let out = s.run_all().await;
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].1.as_ref().unwrap().state, HarvestRunState::Succeeded);
+    assert_eq!(active_names(&w).await, vec!["city-cesty-aaa111".to_owned()]);
+    // The next start runs it again, and the run finds it unchanged.
+    let out = s.run_all().await;
+    assert_eq!(out[0].1.as_ref().unwrap().unchanged_count, 1);
+    let mut src = store
+        .get_harvest_source(&w.ctx, "hub")
+        .await
+        .unwrap()
+        .unwrap();
+    src.enabled = false;
+    store.upsert_harvest_source(&w.ctx, src).await.unwrap();
+    assert!(s.run_all().await.is_empty());
+    // The catalogue's harvest principal still has to hold the grant.
+    let (w, store, f) = scheduled_world(0).await;
+    let out = scheduler(&w, store, f.clone(), false).run_all().await;
+    assert!(matches!(out[0].1, Err(DataroomError::Forbidden(_))));
+    assert_eq!(f.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

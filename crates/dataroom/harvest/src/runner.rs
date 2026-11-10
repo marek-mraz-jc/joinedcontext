@@ -164,6 +164,7 @@ type PinnedSeen = Arc<std::sync::RwLock<Vec<(String, Vec<SocketAddr>)>>>;
 #[derive(Clone, Default)]
 pub struct MapFetcher {
     responses: Arc<std::sync::RwLock<BTreeMap<String, FetchResponse>>>,
+    statuses: Arc<std::sync::RwLock<BTreeMap<String, Vec<u16>>>>,
     pinned_seen: PinnedSeen,
 }
 
@@ -208,6 +209,17 @@ impl MapFetcher {
             );
     }
 
+    /// `url` answers HTTP `status` once, before its other answers, as [`HttpFetcher`] reports
+    /// a status it does not follow.
+    pub fn insert_status(&self, url: impl Into<String>, status: u16) {
+        self.statuses
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(url.into())
+            .or_default()
+            .push(status);
+    }
+
     pub fn pinned_seen(&self) -> Vec<(String, Vec<SocketAddr>)> {
         self.pinned_seen
             .read()
@@ -230,6 +242,14 @@ impl OutboundFetcher for MapFetcher {
             .push((target.host.clone(), target.pinned_addrs.clone()));
 
         let url = target.url.as_str();
+        let mut statuses = self.statuses.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(status) = statuses.get_mut(url).filter(|q| !q.is_empty()) {
+            let status = status.remove(0);
+            return Box::pin(std::future::ready(Err(DataroomError::OutboundRefused(
+                format!("{url} answered HTTP {status}"),
+            ))));
+        }
+        drop(statuses);
         let found = self
             .responses
             .read()
@@ -331,11 +351,29 @@ pub struct HarvestEngine {
     max_bytes: usize,
     timeout: Duration,
     deadline: Duration,
+    own_gateway: Option<(String, SocketAddr)>,
+    retry_waits: Vec<Duration>,
 }
 
 /// How long one run may take before it is stopped and recorded failed (prod's CronJob
 /// `activeDeadlineSeconds`).
 pub const HARVEST_DEADLINE: Duration = Duration::from_secs(3600);
+
+/// The waits, in seconds, before each new read of a sheet whose read failed by itself (prod's
+/// `OD_RETRY_WAITS`, T-4385).
+const SHEET_RETRY_WAITS: [u64; 3] = [5, 30, 120];
+
+/// Whether a failed read passes by itself (prod's `_od_transient`): a 429, a 5xx or a broken
+/// connection. Any other answer (a 4xx, a body over the cap, a refused address) is the answer.
+pub fn transient(e: &DataroomError) -> bool {
+    let DataroomError::OutboundRefused(m) = e else {
+        return false;
+    };
+    match m.rsplit_once(" answered HTTP ") {
+        Some((_, code)) => code.parse::<u16>().is_ok_and(|c| c == 429 || c >= 500),
+        None => m.starts_with("fetch ") || m.starts_with("read "),
+    }
+}
 
 impl HarvestEngine {
     pub fn new(fetcher: Arc<dyn OutboundFetcher>) -> Self {
@@ -346,6 +384,61 @@ impl HarvestEngine {
             max_bytes: MAX_HARVEST_BYTES,
             timeout: Duration::from_secs(60),
             deadline: HARVEST_DEADLINE,
+            own_gateway: None,
+            retry_waits: SHEET_RETRY_WAITS.map(Duration::from_secs).to_vec(),
+        }
+    }
+
+    /// The instance's own gateway: a URL under `public` (an origin, no trailing slash) is read
+    /// from `internal`, the loopback listener that serves it, as prod's harvest read the
+    /// Endpoints in-cluster. Only that one origin goes there, with no redirect followed off it;
+    /// every other URL passes the guard as before.
+    pub fn with_own_gateway(mut self, public: &str, internal: SocketAddr) -> Self {
+        self.own_gateway = Some((public.trim_end_matches('/').to_owned(), internal));
+        self
+    }
+
+    /// The pinned target of `url` when it lies under the own gateway's origin.
+    fn own_target(&self, url: &str) -> Result<Option<ValidatedTarget>> {
+        let Some((public, internal)) = &self.own_gateway else {
+            return Ok(None);
+        };
+        let Some(rest) = url
+            .strip_prefix(public.as_str())
+            .filter(|r| r.starts_with('/'))
+        else {
+            return Ok(None);
+        };
+        let url = url::Url::parse(&format!("http://{internal}{rest}")).map_err(|e| {
+            DataroomError::OutboundRefused(format!("own gateway address of {url}: {e}"))
+        })?;
+        Ok(Some(ValidatedTarget {
+            url,
+            host: internal.ip().to_string(),
+            pinned_addrs: vec![*internal],
+        }))
+    }
+
+    /// The waits before each new read of a sheet that failed by itself ([`transient`]).
+    pub fn with_retry_waits(mut self, waits: Vec<Duration>) -> Self {
+        self.retry_waits = waits;
+        self
+    }
+
+    /// Whether the sheet at `url` answers, read as prod's `od_read` reads it: a read that failed
+    /// by itself is asked again after each of the retry waits (the gateway answers 503 while
+    /// its download slots are full, as when jc starts and the Portal probes every Endpoint).
+    async fn sheet_answers(&self, url: &str, source: &HarvestSource, hosts: &[String]) -> bool {
+        let mut waits = self.retry_waits.iter();
+        loop {
+            match self.checked_fetch(url, source, hosts, "text/csv").await {
+                Ok(_) => return true,
+                Err(e) if transient(&e) => match waits.next() {
+                    Some(wait) => tokio::time::sleep(*wait).await,
+                    None => return false,
+                },
+                Err(_) => return false,
+            }
         }
     }
 
@@ -393,13 +486,21 @@ impl HarvestEngine {
                 .custom_dns
                 .as_ref()
                 .map(|r| r.as_ref() as &crate::guard::DnsResolver);
-            let target = validate_and_pin_url(
-                &current_url,
-                &source.allowed_hosts,
-                cat_allowed_hosts,
-                self.resolve_dns,
-                resolver_ref,
-            )?;
+            let own = if hops == 0 {
+                self.own_target(&current_url)?
+            } else {
+                None
+            };
+            let target = match own {
+                Some(t) => t,
+                None => validate_and_pin_url(
+                    &current_url,
+                    &source.allowed_hosts,
+                    cat_allowed_hosts,
+                    self.resolve_dns,
+                    resolver_ref,
+                )?,
+            };
 
             match self
                 .fetcher
@@ -465,8 +566,11 @@ impl HarvestEngine {
             HarvestSourceKind::ArcGisHub => {
                 let mut features = Vec::new();
                 let hub = source.url.trim_end_matches('/');
+                // Sorted: unsorted, the Hub's pages overlap at random (opendata.bbsk.sk
+                // 2026-11-10: 3 of 4 reads held 115 items, 100 of them distinct), and the
+                // items a repeat stands in for go missing from the read.
                 let mut next_url = Some(format!(
-                    "{hub}/api/search/v1/collections/dataset/items?limit=100"
+                    "{hub}/api/search/v1/collections/dataset/items?limit=100&sortBy=properties.created"
                 ));
                 let mut expected_total = None;
 
@@ -505,6 +609,18 @@ impl HarvestEngine {
                 if next_url.is_some() {
                     return Err(incomplete(format!(
                         "the Hub still pages after {MAX_PAGES} pages"
+                    )));
+                }
+                // An item read twice hides one never read: the read is not complete.
+                let distinct = features
+                    .iter()
+                    .filter_map(|f| f.pointer("/properties/id").and_then(Value::as_str))
+                    .collect::<BTreeSet<_>>()
+                    .len();
+                if distinct != features.len() {
+                    return Err(incomplete(format!(
+                        "the Hub listed {} items, {distinct} of them distinct",
+                        features.len()
                     )));
                 }
                 match expected_total {
@@ -716,16 +832,13 @@ impl HarvestEngine {
             ds.distributions = dists;
             // prod's sheet (`od_sheet`): for a dataset the publish gate leaves visible whose
             // Endpoint answers the file. A refusal (a 4xx, a body over the cap) means none, as on
-            // prod; a 429, 5xx or broken read, where prod retries and then fails the whole run,
-            // means none this run and is asked again on the next (C9: the other datasets go on).
+            // prod; a 429, 5xx or broken read is read again as prod reads it, and where prod then
+            // fails the whole run, means none this run and is asked again on the next (C9: the
+            // other datasets go on).
             // ponytail: the probe reads the whole file under MAX_HARVEST_BYTES; prod's cap is 50 MB.
             if !hidden.contains_key(&ds.name) {
                 let url = crate::converted::sheet_address(&root, entry);
-                if self
-                    .checked_fetch(&url, source, cat_allowed_hosts, "text/csv")
-                    .await
-                    .is_ok()
-                {
+                if self.sheet_answers(&url, source, cat_allowed_hosts).await {
                     let n = ds.distributions.len();
                     ds.distributions
                         .push(crate::converted::sheet(&root, entry, &ds.id, lang, n));
@@ -1239,7 +1352,7 @@ mod tests {
             .unwrap();
 
         let fetcher = MapFetcher::new();
-        let hub_url = "https://hub.bbsk.sk/api/search/v1/collections/dataset/items?limit=100";
+        let hub_url = "https://hub.bbsk.sk/api/search/v1/collections/dataset/items?limit=100&sortBy=properties.created";
 
         // Run 1: 2 valid open datasets + 1 closed-licence item (skipped)
         fetcher.insert(
@@ -1345,6 +1458,32 @@ mod tests {
             .collect();
         assert_eq!(active.len(), 1);
         assert_eq!(withdrawn.len(), 1);
+    }
+
+    /// prod's `_od_transient`: a 429, a 5xx and a broken connection are read again; a 4xx, a
+    /// body over the cap and a refused or unscripted address are the answer.
+    #[test]
+    fn a_read_is_asked_again_only_when_it_failed_by_itself() {
+        let refused = |m: &str| DataroomError::OutboundRefused(m.to_owned());
+        for m in [
+            "http://127.0.0.1:1/api/endpoint/a/file.csv answered HTTP 503",
+            "https://x.example/f answered HTTP 429",
+            "https://x.example/f answered HTTP 500",
+            "fetch https://x.example/f: connection reset",
+            "read https://x.example/f: unexpected EOF",
+        ] {
+            assert!(transient(&refused(m)), "{m}");
+        }
+        for m in [
+            "https://x.example/f answered HTTP 413",
+            "https://x.example/f answered HTTP 404",
+            "https://x.example/f body exceeded cap of 10 bytes",
+            "no response for https://x.example/f",
+            "scheme 'http' is refused",
+        ] {
+            assert!(!transient(&refused(m)), "{m}");
+        }
+        assert!(!transient(&DataroomError::Forbidden("read x".into())));
     }
 
     #[tokio::test]

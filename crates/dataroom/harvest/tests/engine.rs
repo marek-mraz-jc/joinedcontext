@@ -7,7 +7,7 @@ mod common;
 use common::*;
 use dataroom_core::ops::HarvestRunner;
 use dataroom_core::store::BoxFuture;
-use dataroom_core::{Result, Store};
+use dataroom_core::{HarvestSource, Result, Store};
 use dataroom_harvest::{
     FetchResponse, HarvestEngine, MapFetcher, OutboundFetcher, ValidatedTarget,
 };
@@ -71,6 +71,68 @@ async fn the_engine_holds_its_byte_cap_even_when_a_fetcher_does_not() {
             Duration::from_millis(1500),
             "https://feeds.example.org/c.ttl".to_string()
         )]
+    );
+}
+
+async fn read(e: &HarvestEngine, src: &HarvestSource, url: &str) -> Result<String> {
+    e.checked_fetch(url, src, &[], "application/json")
+        .await
+        .map(|(_, body)| body)
+}
+
+/// The instance's own gateway (jc's loopback listener, gate 4's rehearsal): a URL under its
+/// public origin is read from the listener; any other loopback or http URL, a look-alike
+/// origin, and a redirect off the listener still meet the guard.
+#[tokio::test]
+async fn the_own_gateway_is_read_on_its_listener_and_nothing_else_skips_the_guard() {
+    let src = source(
+        "arc-gis-hub",
+        "hub",
+        "https://hub.city.example",
+        &["hub.city.example"],
+    );
+    let listener = SocketAddr::from(([127, 0, 0, 1], 42102));
+    let f = MapFetcher::new();
+    let index = "http://127.0.0.1:42102/api/endpoint/ep/schema/index.json";
+    f.insert(index, Some("application/json"), "{}");
+    f.insert_redirect(
+        "http://127.0.0.1:42102/api/endpoint/moved/",
+        302,
+        "/api/endpoint/ep/schema/index.json",
+    );
+    let own = engine(&f).with_own_gateway("http://localhost:42102/", listener);
+    let body = read(
+        &own,
+        &src,
+        "http://localhost:42102/api/endpoint/ep/schema/index.json",
+    )
+    .await
+    .expect("the own gateway answers");
+    assert_eq!(body, "{}");
+    assert_eq!(
+        f.pinned_seen(),
+        vec![("127.0.0.1".to_owned(), vec![listener])]
+    );
+    for url in [
+        "http://localhost:42103/api/endpoint/ep/schema/index.json",
+        "http://localhost:42102.evil.example/api/endpoint/ep/schema/index.json",
+        "http://127.0.0.1:42102/api/endpoint/ep/schema/index.json",
+        "http://localhost:42102/api/endpoint/moved/",
+    ] {
+        let err = read(&own, &src, url).await.unwrap_err();
+        assert!(err.to_string().contains("refused"), "{url}: {err}");
+    }
+    // Without the own gateway, its address is a loopback http URL like any other.
+    let err = read(
+        &engine(&f),
+        &src,
+        "http://localhost:42102/api/endpoint/ep/schema/index.json",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("scheme 'http' is refused"),
+        "{err}"
     );
 }
 

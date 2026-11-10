@@ -13,7 +13,7 @@ use serde_json::json;
 
 const HUB: &str = "https://hub.city.example";
 const HUB_PAGE1: &str =
-    "https://hub.city.example/api/search/v1/collections/dataset/items?limit=100";
+    "https://hub.city.example/api/search/v1/collections/dataset/items?limit=100&sortBy=properties.created";
 
 #[tokio::test]
 async fn arcgis_hub_reads_every_page_and_keeps_unchanged_items() {
@@ -95,6 +95,54 @@ async fn arcgis_hub_without_a_match_count_is_an_incomplete_read() {
     let err = e.run_source(&w.ctx, &w.store, &src).await.unwrap_err();
     assert!(err.to_string().contains("1 of 5"), "{err}");
     assert_eq!(active_names(&w).await.len(), 2);
+}
+
+/// The Hub's unsorted pages overlap at random: two pages holding `numberMatched` items with one
+/// of them twice leave another unread, so the read is incomplete and withdraws nothing
+/// (opendata.bbsk.sk 2026-11-10; gate 4 missed podjazdy, priepusty, zakladne-skoly, clenovia).
+#[tokio::test]
+async fn a_hub_read_that_lists_an_item_twice_is_incomplete_and_withdraws_nothing() {
+    let w = world(&[]).await;
+    let src = source("arc-gis-hub", "hub", HUB, &["hub.city.example"]);
+    let f = MapFetcher::new();
+    let page = |items: serde_json::Value, next: Option<String>| {
+        json!({"numberMatched": 3, "features": items,
+               "links": next.map(|n| vec![json!({"rel": "next", "href": n})]).unwrap_or_default()})
+        .to_string()
+    };
+    f.insert(
+        HUB_PAGE1,
+        Some("application/json"),
+        page(
+            json!([
+                hub_item("aaa111", "Cesty", 1),
+                hub_item("bbb222", "Školy", 1)
+            ]),
+            Some(format!("{HUB}/page2")),
+        ),
+    );
+    f.insert(
+        format!("{HUB}/page2"),
+        Some("application/json"),
+        page(json!([hub_item("ccc333", "Parky", 1)]), None),
+    );
+    let e = engine(&f);
+    e.run_source(&w.ctx, &w.store, &src)
+        .await
+        .expect("first run");
+    assert_eq!(active_names(&w).await.len(), 3);
+
+    f.insert(
+        format!("{HUB}/page2"),
+        Some("application/json"),
+        page(json!([hub_item("bbb222", "Školy", 1)]), None),
+    );
+    let err = e.run_source(&w.ctx, &w.store, &src).await.unwrap_err();
+    assert!(
+        err.to_string().contains("3 items, 2 of them distinct"),
+        "{err}"
+    );
+    assert_eq!(active_names(&w).await.len(), 3, "nothing withdrawn");
 }
 
 #[tokio::test]

@@ -351,8 +351,9 @@ pub struct HarvestSeed {
     pub schedule: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// prod's `od-datasets.json` (deployment `charts/ckan/files/`): the converted datasets by
-    /// name. Set: only those are listed, with their Endpoint's distributions on `gateway`.
+    /// prod's `od-datasets.json` (deployment `charts/ckan/files/`, bins/jc/docs/od-datasets.json):
+    /// the converted datasets by name, a relative path read beside jc.toml. Set: only those are
+    /// listed, with their Endpoint's distributions on `gateway`.
     #[serde(default)]
     pub converted_file: Option<PathBuf>,
     /// The catalogue base the file's `dataset` URLs name, replaced by this catalogue's own
@@ -360,7 +361,7 @@ pub struct HarvestSeed {
     #[serde(default)]
     pub datasets_base: Option<String>,
     /// The public base the Endpoints answer under (prod's `harvest.gateway`); its host must be
-    /// in `allowed_hosts`.
+    /// in `allowed_hosts`. Unset: this instance's own gateway.
     #[serde(default)]
     pub gateway: Option<String>,
 }
@@ -733,13 +734,20 @@ impl Config {
     /// Default directory of the generated secrets.
     pub const DEFAULT_STATE_DIR: &'static str = "jc-state";
 
-    /// Reads and parses a TOML config file.
+    /// Reads and parses a TOML config file. A relative `converted_file` is read beside it.
     pub fn read_file(path: &Path) -> Result<FileConfig, ConfigError> {
         let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::parse_file(path, &text)
+        let mut file = Self::parse_file(path, &text)?;
+        let dir = path.parent().unwrap_or(Path::new(""));
+        for seed in file.dataroom.iter_mut().flat_map(|d| d.harvest.iter_mut()) {
+            if let Some(f) = seed.converted_file.as_mut().filter(|f| f.is_relative()) {
+                *f = dir.join(&*f);
+            }
+        }
+        Ok(file)
     }
 
     /// Parses TOML text as a config file (`path` only names it in errors).
