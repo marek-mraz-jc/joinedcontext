@@ -511,6 +511,10 @@ pub struct AppsDbSettings {
     /// reconciler writes each shard's placement and store key (AP-157, AP-158). Without it the
     /// reconciler writes neither and says so.
     pub host_namespace: Option<String>,
+    /// A test's stub shard on loopback, which every shard request goes to as to an HTTP proxy,
+    /// the shard's URL whole; the environment never sets it, so a deployment reaches the shard.
+    #[doc(hidden)]
+    pub shards_through: Option<std::net::SocketAddr>,
 }
 
 impl std::fmt::Debug for AppsDbSettings {
@@ -549,6 +553,7 @@ fn apps_db_settings(
         shards,
         bucket: present("JC_PORTAL_APPS_BUCKET").unwrap_or_else(|| "apps".to_owned()),
         host_namespace: present("JC_PORTAL_WASM_HOST_NAMESPACE").map(|v| v.trim().to_owned()),
+        shards_through: None,
     }))
 }
 

@@ -1526,6 +1526,7 @@ mod tests {
             shards: 2,
             bucket: "apps".into(),
             host_namespace: None,
+            shards_through: None,
         });
         config.artifact_store = None;
         let mut state = AppState::new(config, None);

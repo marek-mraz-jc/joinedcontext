@@ -1,22 +1,23 @@
 //! The App hosts the Portal answers itself where no edge routes them (jc, AP-133,
 //! edge-session-design S4a): `{name}.apps.{domain}` reaches App `name` alone, its own endpoints
-//! through the gateway without the browser's cookies, and no Portal route at all.
+//! through the gateway without the browser's cookies, a wasm App's own server through its shard
+//! (AP-143), and no Portal route at all.
 
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::http::{header, HeaderMap, Request, StatusCode};
 use http_body_util::BodyExt;
 use joinedcontext_portal::apps::static_host::sri_sha384;
-use joinedcontext_portal::config::Config;
+use joinedcontext_portal::config::{AppsDbSettings, Config};
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use tower::ServiceExt;
 
-#[path = "common/unique.rs"]
-mod unique;
+mod common;
 
 const INDEX: &[u8] = b"<!doctype html><title>air quality</title>";
 const BUNDLE_JS: &[u8] = b"console.log('air quality');";
@@ -29,7 +30,7 @@ impl Bundles {
         let root = std::env::temp_dir().join(format!(
             "jc-app-host-{case}-{}-{}",
             std::process::id(),
-            crate::unique::unique()
+            common::unique::unique()
         ));
         for app in apps {
             let dir = root.join(app);
@@ -94,6 +95,23 @@ fn mirror() -> Arc<Mirror> {
         ("air-pod", "ui-rust"),
     ] {
         mirror.upsert(envelope("App", "ovzdusie", name, app(kind)));
+    }
+    // wasm Apps with the shard the publish recorded: on shard 1, on none, on one the host does not
+    // run (2 of 2), and a `roles` App on shard 0.
+    for (name, visibility, shard) in [
+        ("air-shard", "public", Some(1)),
+        ("air-noshard", "public", None),
+        ("air-far", "public", Some(2)),
+        ("air-roles", "roles", Some(0)),
+    ] {
+        let mut spec = app("wasm");
+        spec["visibility"] = visibility.into();
+        spec["roles"] = serde_json::json!([{ "name": "viewer" }]);
+        let mut app = envelope("App", "ovzdusie", name, spec);
+        app.status = shard.map(|shard| {
+            serde_json::from_value(serde_json::json!({ "shard": shard })).expect("status")
+        });
+        mirror.upsert(app);
     }
     mirror.upsert(envelope(
         "Endpoint",
@@ -349,6 +367,276 @@ async fn a_half_this_portal_does_not_run_answers_a_503_naming_the_app() {
         assert_eq!(status, StatusCode::OK, "{host}");
     }
     assert_eq!(seen.lock().unwrap().len(), 2);
+}
+
+/// A WASM shard on loopback, reached as the HTTP proxy of every shard URL, so it sees the URL the
+/// Portal built whole; it records each request and answers 200 with a cookie and a header of its
+/// own.
+async fn shard() -> (SocketAddr, Seen) {
+    let seen: Seen = Arc::default();
+    let record = seen.clone();
+    let router = axum::Router::new().fallback(move |req: Request<Body>| {
+        let record = record.clone();
+        async move {
+            record.lock().unwrap().push((
+                req.method().to_string(),
+                req.uri().to_string(),
+                req.headers().clone(),
+            ));
+            (
+                [
+                    (header::SET_COOKIE, "shard=1; Path=/"),
+                    (header::CONTENT_TYPE, "application/json"),
+                    (header::HeaderName::from_static("x-shard"), "own"),
+                ],
+                r#"{"forecast":[]}"#,
+            )
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await });
+    (addr, seen)
+}
+
+/// A Portal serving the App hosts that trusts the process's realm, with the WASM host `host`
+/// (shards, namespace) reached through stub `through`.
+fn wasm_portal(
+    bundles: &Bundles,
+    host: Option<(u32, Option<&str>)>,
+    through: SocketAddr,
+) -> axum::Router {
+    let mut config = Config::from_vars(|key| {
+        match key {
+            "JC_OIDC_ISSUER" => Some(common::REALM.issuer.as_str()),
+            "JC_PORTAL_COOKIE_KEY" => {
+                Some("cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001")
+            }
+            "JC_OIDC_CLIENT_ID" => Some("portal-api"),
+            "JC_OIDC_CLIENT_SECRET" => Some("secret"),
+            _ => None,
+        }
+        .map(str::to_owned)
+    })
+    .expect("config");
+    config.apps_dir = Some(bundles.0.to_string_lossy().into_owned());
+    config.public_base_url = "https://portal.example.org".parse().unwrap();
+    config.apps_url = Some("https://example.org".parse().unwrap());
+    config.serve_app_hosts = true;
+    config.apps_db = host.map(|(shards, namespace)| AppsDbSettings {
+        url: "postgres://apps@db/apps".into(),
+        shards,
+        bucket: "apps".into(),
+        host_namespace: namespace.map(str::to_owned),
+        shards_through: Some(through),
+    });
+    server::app(AppState::new(config, None).with_mirror(mirror()))
+}
+
+async fn send_with(
+    portal: &axum::Router,
+    req: axum::http::request::Builder,
+    body: &'static str,
+) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let response = portal
+        .clone()
+        .oneshot(req.body(Body::from(body)).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, body.to_vec())
+}
+
+#[tokio::test]
+async fn a_wasm_apps_api_reaches_its_shard_under_its_own_prefix_without_cookies() {
+    let bundles = Bundles::new("wasm-proxy", &["air-shard"]);
+    let (through, seen) = shard().await;
+    let portal = wasm_portal(&bundles, Some((2, Some("wasm-host"))), through);
+    for (method, uri) in [
+        ("GET", "/api/forecast?days=3"),
+        ("POST", "/apps/air-shard/api/forecast?days=3"),
+    ] {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::HOST, "air-shard.apps.example.org")
+            .header(
+                "cookie",
+                "__Host-jc_app_air_shard=sid; __Host-portal=session",
+            )
+            .header("authorization", "Bearer app-token")
+            .header("x-access-token", "edge-token")
+            .header("connection", "keep-alive")
+            .header("accept", "application/json");
+        let (status, headers, body) = send_with(&portal, req, "{\"x\":1}").await;
+        assert_eq!(status, StatusCode::OK, "{method} {uri}");
+        assert_eq!(body, br#"{"forecast":[]}"#, "the shard's own answer");
+        assert_eq!(headers["x-shard"], "own");
+        assert!(
+            headers.get(header::SET_COOKIE).is_none(),
+            "the shard sets no cookie on an App host"
+        );
+    }
+    let held = seen.lock().unwrap().clone();
+    assert_eq!(held.len(), 2);
+    for ((method, uri, headers), want) in held.iter().zip(["GET", "POST"]) {
+        assert_eq!(method, want);
+        // The shard of status.shard in the configured namespace, on the shard's apps port, under
+        // the App's prefix, with the query.
+        assert_eq!(
+            uri,
+            "http://jc-wasm-host-1.wasm-host.svc.cluster.local:8080/apps/air-shard/api/forecast?days=3"
+        );
+        assert_eq!(
+            headers[header::HOST],
+            "jc-wasm-host-1.wasm-host.svc.cluster.local:8080"
+        );
+        assert!(headers.get(header::COOKIE).is_none(), "{headers:?}");
+        assert!(headers.get("x-access-token").is_none(), "{headers:?}");
+        assert_eq!(headers[header::AUTHORIZATION], "Bearer app-token");
+        assert_eq!(headers[header::ACCEPT], "application/json");
+    }
+    // The request names no part of the host: a dot segment that would leave the App's prefix
+    // (another App on the shard, the host's own paths) is refused before anything is sent, and a
+    // Host under another apex is no App host at all.
+    for uri in [
+        "/api/../../air-roles/api/x",
+        "/api/%2e%2e/%2E%2E/healthz",
+        "/api/.%2e/x",
+    ] {
+        let req = Request::builder()
+            .uri(uri)
+            .header(header::HOST, "air-shard.apps.example.org");
+        let (status, _, _) = send_with(&portal, req, "").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+    }
+    let req = Request::builder()
+        .uri("/api/forecast")
+        .header(header::HOST, "air-shard.apps.evil.example");
+    send_with(&portal, req, "").await;
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        2,
+        "nothing more reached the shard"
+    );
+}
+#[tokio::test]
+async fn a_wasm_app_without_a_shard_it_may_use_keeps_the_designed_503() {
+    let bundles = Bundles::new("wasm-503", &["air-shard", "air-noshard", "air-far"]);
+    let (through, seen) = shard().await;
+    // No shard recorded, a shard the host does not run, no WASM host configured, and a host
+    // without its namespace: the 503 naming the App, and the shard never asked.
+    for (host, config) in [
+        ("air-noshard", Some((2, Some("wasm-host")))),
+        ("air-far", Some((2, Some("wasm-host")))),
+        ("air-shard", None),
+        ("air-shard", Some((2, None))),
+        ("air-shard", Some((1, Some("wasm-host")))),
+    ] {
+        let portal = wasm_portal(&bundles, config, through);
+        let req = Request::builder()
+            .uri("/api/forecast")
+            .header(header::HOST, format!("{host}.apps.example.org"));
+        let (status, headers, body) = send_with(&portal, req, "").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{host} {config:?}");
+        assert_eq!(headers[header::CONTENT_TYPE], "application/problem+json");
+        let text = String::from_utf8(body).unwrap();
+        assert!(
+            text.contains(&format!("the server of App '{host}'")),
+            "{text}"
+        );
+    }
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_signed_out_call_of_a_non_public_app_answers_401_before_anything_is_handed_on() {
+    let bundles = Bundles::new("wasm-401", &["air-roles"]);
+    let (through, seen) = shard().await;
+    let portal = wasm_portal(&bundles, Some((2, Some("wasm-host"))), through);
+    for (method, uri, accept) in [
+        ("GET", "/api/forecast", "application/json"),
+        ("GET", "/api/forecast", "text/html"),
+        ("POST", "/apps/air-roles/api/forecast", "application/json"),
+        (
+            "GET",
+            "/api/endpoint/airslug/ngsi-ld/v1/entities",
+            "application/ld+json",
+        ),
+        ("GET", "/api/services/jobs", "application/json"),
+    ] {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::HOST, "air-roles.apps.example.org")
+            .header("accept", accept)
+            // Another App's session and the Portal's are no session of this App.
+            .header(
+                "cookie",
+                "__Host-jc_app_air_shard=sid; __Host-portal=session",
+            );
+        let (status, headers, _) = send_with(&portal, req, "").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri} {accept}");
+        assert_eq!(headers[header::CONTENT_TYPE], "application/problem+json");
+    }
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_non_public_wasm_apps_shard_serves_only_whom_the_app_admits() {
+    let bundles = Bundles::new("wasm-roles", &["air-roles"]);
+    let (through, seen) = shard().await;
+    let portal = wasm_portal(&bundles, Some((2, Some("wasm-host"))), through);
+    let call = |token: String| {
+        Request::builder()
+            .uri("/api/forecast")
+            .header(header::HOST, "air-roles.apps.example.org")
+            .header("accept", "application/json")
+            .header("authorization", format!("Bearer {token}"))
+    };
+    // Without the App's role, and on a token of another App's client: refused here.
+    for token in [
+        common::REALM.person_token("air-roles", "jana", &[]),
+        common::REALM.person_token("air-shard", "jana", &["viewer"]),
+        "not-a-token".to_owned(),
+    ] {
+        let (status, _, _) = send_with(&portal, call(token), "").await;
+        assert!(
+            status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND,
+            "{status}"
+        );
+    }
+    assert!(seen.lock().unwrap().is_empty(), "the shard never asked");
+    // A viewer reaches shard 0 with their token.
+    let token = common::REALM.person_token("air-roles", "jana", &["viewer"]);
+    let (status, _, body) = send_with(&portal, call(token.clone()), "").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, br#"{"forecast":[]}"#);
+    let held = seen.lock().unwrap().clone();
+    assert_eq!(held.len(), 1);
+    assert_eq!(
+        held[0].1,
+        "http://jc-wasm-host-0.wasm-host.svc.cluster.local:8080/apps/air-roles/api/forecast"
+    );
+    assert_eq!(held[0].2[header::AUTHORIZATION], format!("Bearer {token}"));
+}
+
+#[tokio::test]
+async fn a_dot_segment_never_carries_an_endpoint_call_past_the_slug_check() {
+    let bundles = Bundles::new("dots", &["air-quality"]);
+    let (gateway, seen) = gateway().await;
+    let portal = portal(&bundles, Some(gateway), true);
+    for uri in [
+        "/api/endpoint/airslug/../foreignslug/ngsi-ld/v1/entities",
+        "/api/endpoint/airslug/%2e%2e/foreignslug/ngsi-ld/v1/entities",
+        "/api/endpoint/airslug/ngsi-ld/../../../v1/projects",
+    ] {
+        let (status, _, _) = send(&portal, "air-quality.apps.example.org", uri, &[]).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+    }
+    assert!(seen.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
