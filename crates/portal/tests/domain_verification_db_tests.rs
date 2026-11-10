@@ -12,6 +12,9 @@ use joinedcontext_portal::domain_verification::{
 };
 use serde_json::Value;
 
+#[path = "common/unique.rs"]
+mod unique;
+
 fn database_url() -> Option<String> {
     std::env::var("JC_PORTAL_TEST_DATABASE_URL")
         .ok()
@@ -20,11 +23,8 @@ fn database_url() -> Option<String> {
 
 /// An Organization nobody else's run writes to, so tests share one database without a fixture.
 fn fresh_organization() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    format!("org-{nanos}")
+    let id = crate::unique::unique();
+    format!("org-{id}")
 }
 
 /// A resolver that publishes whatever TXT strings the case gives it, and counts the looks.

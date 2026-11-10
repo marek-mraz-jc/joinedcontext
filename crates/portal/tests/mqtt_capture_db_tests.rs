@@ -10,6 +10,9 @@ use std::collections::BTreeSet;
 use chrono::{DateTime, Duration, Utc};
 use joinedcontext_portal::mqtt_capture::{CaptureStore, Message, BROKER_MESSAGES};
 
+#[path = "common/unique.rs"]
+mod unique;
+
 fn database_url() -> Option<String> {
     std::env::var("JC_PORTAL_TEST_DATABASE_URL")
         .ok()
@@ -18,11 +21,8 @@ fn database_url() -> Option<String> {
 
 /// A project nobody else's run writes to.
 fn fresh_project() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    format!("capture-{nanos}")
+    let id = crate::unique::unique();
+    format!("capture-{id}")
 }
 
 fn message(topic: &str, received_at: DateTime<Utc>, bytes: usize) -> Message {

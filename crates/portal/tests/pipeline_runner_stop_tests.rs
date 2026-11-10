@@ -16,6 +16,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+#[path = "common/unique.rs"]
+mod unique;
+
 /// The Portal's own wait for the runner (`RUNNER_TIMEOUT` in src/reconciler/streams.rs).
 const RUNNER_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -67,10 +70,7 @@ async fn a_stream_whose_write_fails_is_replaced_within_the_runner_timeout() {
         .timeout(RUNNER_TIMEOUT)
         .build()
         .expect("a client");
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("after 1970")
-        .as_nanos();
+    let unique = crate::unique::unique();
     let (name, receiver) = (format!("t2983-{unique}"), format!("t2983rx-{unique}"));
     // Addresses as the runner dials them: nothing listens on its port 9, so every write there
     // is refused, and its own server on 4195 carries the receiving stream.
@@ -147,13 +147,7 @@ async fn a_stream_whose_write_fails_is_deleted_within_the_runner_timeout() {
         .timeout(RUNNER_TIMEOUT)
         .build()
         .expect("a client");
-    let name = format!(
-        "t2983del-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("after 1970")
-            .as_nanos()
-    );
+    let name = format!("t2983del-{}", crate::unique::unique());
     let refused = "http://127.0.0.1:9";
     let created = client
         .post(format!("{runner}/streams/{name}"))

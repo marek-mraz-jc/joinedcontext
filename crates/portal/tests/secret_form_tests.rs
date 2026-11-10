@@ -24,6 +24,9 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request as Seen, ResponseTemplate};
 
+#[path = "common/unique.rs"]
+mod unique;
+
 const CSRF: &str = "secret-form-csrf";
 const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
 const TYPED: &str = "typed-in-the-form-0123456789";
@@ -174,7 +177,7 @@ async fn world() -> World {
     let dir = std::env::temp_dir().join(format!(
         "secret-form-{}-{}",
         std::process::id(),
-        rand_suffix()
+        crate::unique::unique()
     ));
     std::fs::create_dir_all(&dir).expect("dir");
     let key_file = dir.join("keys.txt");
@@ -228,13 +231,6 @@ async fn world() -> World {
         _forge: forge,
         _dir: dir,
     }
-}
-
-fn rand_suffix() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default()
 }
 
 impl World {

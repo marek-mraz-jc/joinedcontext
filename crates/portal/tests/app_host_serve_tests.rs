@@ -15,6 +15,9 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use tower::ServiceExt;
 
+#[path = "common/unique.rs"]
+mod unique;
+
 const INDEX: &[u8] = b"<!doctype html><title>air quality</title>";
 const BUNDLE_JS: &[u8] = b"console.log('air quality');";
 
@@ -26,10 +29,7 @@ impl Bundles {
         let root = std::env::temp_dir().join(format!(
             "jc-app-host-{case}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default()
+            crate::unique::unique()
         ));
         for app in apps {
             let dir = root.join(app);

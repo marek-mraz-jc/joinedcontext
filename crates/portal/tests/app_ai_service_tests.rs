@@ -38,11 +38,8 @@ async fn database() -> Option<sqlx::PgPool> {
 
 /// A project of its own per test, so the day's counters never meet in the shared database.
 fn project(test: &str) -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or_default();
-    format!("{test}-{nanos}")
+    let id = crate::common::unique::unique();
+    format!("{test}-{id}")
 }
 
 /// A stub proxy answering a completion with `content` and 70 + 30 tokens, or with `status`.

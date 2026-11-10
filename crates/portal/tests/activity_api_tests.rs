@@ -21,6 +21,9 @@ use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 
+#[path = "common/unique.rs"]
+mod unique;
+
 const PROJECT: &str = "helsinki";
 const CSRF: &str = "test-csrf-activity";
 
@@ -294,11 +297,8 @@ async fn activity_db() -> Option<(sqlx::PgPool, String)> {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    Some((pool, format!("trim-{nanos}")))
+    let id = crate::unique::unique();
+    Some((pool, format!("trim-{id}")))
 }
 
 async fn rows_of(pool: &sqlx::PgPool, project: &str) -> i64 {

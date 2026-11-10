@@ -11,6 +11,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+#[path = "common/unique.rs"]
+mod unique;
+
 fn runner_url() -> Option<String> {
     std::env::var("JC_PORTAL_TEST_BENTO_URL")
         .ok()
@@ -50,10 +53,7 @@ async fn a_pass_whose_report_fails_still_reads_and_writes_every_tick() {
         .timeout(Duration::from_secs(30))
         .build()
         .expect("a client");
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("after 1970")
-        .as_nanos();
+    let unique = crate::unique::unique();
     let (name, receiver) = (format!("t3001-{unique}"), format!("t3001rx-{unique}"));
 
     let catcher =

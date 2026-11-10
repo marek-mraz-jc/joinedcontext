@@ -8,6 +8,9 @@ use joinedcontext_portal::erasure::{self, Group, Store, StoreState};
 use joinedcontext_portal::state::AppState;
 use serde_json::json;
 
+#[path = "common/unique.rs"]
+mod unique;
+
 #[tokio::test]
 async fn a_store_that_does_not_answer_keeps_the_erasure_open_until_it_does() {
     let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
@@ -20,13 +23,7 @@ async fn a_store_that_does_not_answer_keeps_the_erasure_open_until_it_does() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let project = format!(
-        "erase-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    );
+    let project = format!("erase-{}", crate::unique::unique());
     // No broker and no assistant: the broker fails, the conversations have nothing to hold.
     let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
     let trip = "urn:ngsi-ld:BikeTrip:hel.fi:t-42";
@@ -187,13 +184,7 @@ async fn a_proposal_is_approved_once_by_a_second_person_before_it_expires() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let project = format!(
-        "four-eyes-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    );
+    let project = format!("four-eyes-{}", crate::unique::unique());
     let groups = vec![Group {
         class: "BikeTrip".into(),
         entities: vec!["urn:ngsi-ld:BikeTrip:t-1".into()],
