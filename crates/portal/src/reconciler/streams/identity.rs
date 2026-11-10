@@ -139,7 +139,7 @@ pub fn as_pipeline(
 /// client's would open every Endpoint the `pipelines` account's roles reach. Any other text that
 /// names the project's secret variable gets the pipeline's, so no stream holds a project-wide
 /// credential. A pipeline whose client has no secret in the runner is refused by the runner
-/// (`missing variables`), never sent as the project.
+/// (400, `environment variable ... was not defined`), never sent as the project.
 pub fn with_pipeline_secret(stream: &mut Value, project: &str, pipeline: &str) {
     let account = jc_core::kinds::service_account::keycloak_client_id(project, PIPELINE_ACCOUNT);
     let own = jc_core::kinds::service_account::keycloak_client_id(

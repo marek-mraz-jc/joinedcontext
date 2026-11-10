@@ -33,10 +33,10 @@ python3 -I rehearsal.py realms --export <export> --out <work>/state/realms \
 - Outputs, beside `--out` (in `<work>/state`):
   - `realm-vars.txt`: every secret name the realm needs;
   - `realm-state-secrets.txt`: the clients jc signs in as (portal-api, portal-reconciler, context-gateway, jc-assistant, agent-proxy), with the state file each one's secret goes to;
-  - `realm-pipeline-clients.txt`: each `<project>-pipelines` client and its secret name;
+  - `realm-pipeline-clients.txt`: each `<project>-pipelines` client and each Pipeline's own client `<project>-pl-<pipeline>`, with its secret name;
   - `realm-<name>-lines.json`: main's lines put in;
   - `realm-<name>-left-out.json`: what kaisatsu refuses.
-- Only jc's own clients switch from federated-jwt to their secret, because jc signs in as them from one process. Every workload client keeps federated-jwt; jc-kaisatsu-audience (5f8adf60) checks it against the cluster's JWKS.
+- jc's own clients and each Pipeline's own client `<project>-pl-<pipeline>` (account attribute `<project>/pl-<pipeline>`) switch from federated-jwt to their secret, because jc signs in as them from one process: ekiben runs every stream in jc, so no stream has a Kubernetes ServiceAccount token. Name and audience mappers stay as prod had them (jc-pipeline-audience: for all 824 prod pipelines the mappers equal the Endpoints the pipeline names). Every other workload client keeps federated-jwt; jc-kaisatsu-audience (5f8adf60) checks it against the cluster's JWKS.
 - The realm file can hold people (jc-dev): keep it in a 0600 Secret, never in a ConfigMap.
 
 ## 4. Secrets (one Kubernetes Secret per kind, generated, never copied)
@@ -44,12 +44,13 @@ python3 -I rehearsal.py realms --export <export> --out <work>/state/realms \
 1. Realm secrets: one key per line of `realm-vars.txt`, each `openssl rand -hex 32`, mounted at `--secrets-dir`, mode 0400.
 2. jc's state client secrets: for each line `<state file> <NAME>` of `realm-state-secrets.txt`, the state file holds the same value as realm secret `<NAME>`. That is the one source for those clients (F5). Copy it on every start, before jc reads its state.
    - kaisatsu re-applies a realm whose secret files changed behind an unchanged document (kaisatsu import, 2026-11-09), so a rotated value reaches the stored client at the next start.
-3. Pipeline clients: `--ekiben-client-secrets-dir` holds one file per `<project>-pipelines` (a copy, not a link) with that client's realm secret.
+3. Pipeline clients: `--ekiben-client-secrets-dir` holds one file per line of `realm-pipeline-clients.txt`, `<project>-pipelines` and `<project>-pl-<pipeline>` alike, named by the client (a copy, not a link), with that client's realm secret. jc hands a `-pl-` file to ekiben as `JC_PIPELINE_SECRET_<CLIENT>` (capitals, `-` as `_`).
 4. Store credentials: one Postgres role per module (kaisatsu, Portal, Antares, shako, daiya, dataroom, ekiben), each password in its own file (`[<m>.database] password_file`). jc refuses a password in a URL.
 
 ## 5. jc's configuration (as up.sh writes jc.toml)
 
 - `[identity] realm`: `dev` or `smartcity` (from `realm-name.txt`).
+- `JC_PORTAL_PIPELINE_IDENTITY=pipeline-secret` when `realm-pipeline-clients.txt` names a `-pl-` client (up.sh sets it): every stream signs in as its Pipeline's own client, whose token names only the Endpoints that pipeline writes. Without it every stream signs in as `<project>-pipelines`, and the gateway refuses each write to an Endpoint outside that client's audience with 401 `token is not bound to this resource`. A Pipeline created after the import has no own client: ekiben refuses its stream (400, `environment variable 'JC_PIPELINE_SECRET_...' was not defined`) and the Pipeline shows the refusal; it never falls back to the project's client.
 - `trusted_proxies` and `trusted_proxy_identities` (cluster only; the rehearsal has no edge and sets neither):
   - `trusted_proxies`: the pod network APISIX runs in (`["10.42.0.0/16"]` on k3s; the chart's `jc.server.trustedProxies`, `JCBIN_TRUSTED_PROXIES`).
   - `trusted_proxy_identities`: APISIX's Linkerd identity, e.g. `apisix.<namespace>.serviceaccount.identity.linkerd.cluster.local` (`JCBIN_TRUSTED_PROXY_IDENTITIES`, jc a964cea1 and later). Without it any pod that reaches jc can set `X-Forwarded-*` (jc-wasm-deploy, test_jc_component).
