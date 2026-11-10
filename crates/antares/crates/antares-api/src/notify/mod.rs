@@ -81,18 +81,19 @@ fn queue_for_matching(
         tx,
         pending,
         changes,
-        &QUEUE_LEDGER,
-        *crate::bounds::DELIVERY_LANE_BYTES,
+        (&QUEUE_LEDGER, *crate::bounds::DELIVERY_LANE_BYTES),
+        note_drop,
     );
 }
 
-/// [`queue_for_matching`] against `ledger` and its `budget`.
+/// [`queue_for_matching`] against `ledger` and its budget, telling `dropped`
+/// of each batch refused.
 fn queue_within(
     tx: &tokio::sync::mpsc::Sender<Queued>,
     pending: &std::sync::atomic::AtomicUsize,
     changes: Vec<Change>,
-    ledger: &'static Ledger,
-    budget: usize,
+    (ledger, budget): (&'static Ledger, usize),
+    dropped: impl Fn(),
 ) {
     let bytes = changes.iter().fold(0usize, |n, (tenant, before, after)| {
         [before, after]
@@ -103,14 +104,14 @@ fn queue_within(
             })
     });
     let Some(held) = ledger.take(bytes, budget) else {
-        note_drop();
+        dropped();
         return;
     };
     // stamped now, after the write: a subscription made later never matches it
     if tx.try_send((crate::mirror::tick(), changes, held)).is_ok() {
         pending.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     } else {
-        note_drop();
+        dropped();
     }
 }
 

@@ -758,9 +758,12 @@ mod change_pipeline {
             .filter_map(|(_, before, _)| before.as_ref().map(heap_estimate))
             .sum();
         let budget = one.saturating_mul(8);
-        let dropped = changes_dropped();
+        let dropped = AtomicUsize::new(0);
+        let count = || {
+            dropped.fetch_add(1, Ordering::SeqCst);
+        };
         for b in 0..64 {
-            queue_within(&tx, &pending, delete(b), ledger, budget);
+            queue_within(&tx, &pending, delete(b), (ledger, budget), count);
         }
         let accepted = pending.load(Ordering::SeqCst);
         assert!(
@@ -772,13 +775,14 @@ mod change_pipeline {
             (1..64).contains(&accepted),
             "{accepted} of 64 batches queued"
         );
-        assert!(
-            changes_dropped().saturating_sub(dropped) >= (64 - accepted) as u64,
+        assert_eq!(
+            dropped.load(Ordering::SeqCst),
+            64 - accepted,
             "every refused batch is counted"
         );
         while rx.try_recv().is_ok() {}
         assert_eq!(ledger.used(), 0, "a matched batch gives its bytes back");
-        queue_within(&tx, &pending, delete(64), ledger, budget);
+        queue_within(&tx, &pending, delete(64), (ledger, budget), count);
         assert_eq!(pending.load(Ordering::SeqCst), accepted + 1, "room again");
     }
 
