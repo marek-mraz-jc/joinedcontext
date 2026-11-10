@@ -22,7 +22,6 @@ pub fn install(hosts: &[(String, SocketAddr)]) {
 }
 
 /// A client builder that dials each reached host at its address.
-#[must_use]
 pub fn builder() -> reqwest::ClientBuilder {
     let mut builder = reqwest::Client::builder();
     if let Ok(held) = REACH.read() {
