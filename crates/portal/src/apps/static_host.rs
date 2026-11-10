@@ -393,8 +393,28 @@ pub(super) fn published_app(
         .find(|env| env.kind == "App" && env.metadata.name == name)?;
     let build = envelope.status.as_ref().and_then(|s| s.build.clone());
     let project = envelope.metadata.namespace.clone()?;
-    let spec: AppSpec = serde_json::from_value(envelope.spec).ok()?;
+    let spec: AppSpec = match serde_json::from_value(envelope.spec) {
+        Ok(spec) => spec,
+        Err(error) => {
+            // Served as no App (the host's 404), so the operator needs the line that says why;
+            // once per App and refusal, as every request of the host asks again.
+            if first_refusal(&format!("{project}/{name}: {error}")) {
+                tracing::warn!(app = %name, project = %project, %error, "App manifest refused: the App is not served");
+            }
+            return None;
+        }
+    };
     (spec.lifecycle == AppLifecycle::Published).then_some((project, spec, build))
+}
+
+/// Whether `refusal` is new to this process.
+fn first_refusal(refusal: &str) -> bool {
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    SEEN.get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(refusal.to_owned())
 }
 
 /// The configuration a static app starts from (SDK-02), `None` when it reads no endpoint.
@@ -901,6 +921,14 @@ pub fn router() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_refused_manifest_is_logged_once_and_again_when_the_refusal_changes() {
+        let first = "p/a: unknown field `replicas`";
+        assert!(super::first_refusal(first));
+        assert!(!super::first_refusal(first));
+        assert!(super::first_refusal("p/a: unknown field `scale`"));
+    }
 
     #[test]
     fn the_entity_panel_links_to_the_project_in_the_portal_over_https_only() {
