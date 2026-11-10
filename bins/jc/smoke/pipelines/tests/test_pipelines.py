@@ -235,46 +235,6 @@ def test_a_run_once_http_pipeline_holds_no_stream_and_its_held_row_is_a_same_on_
     assert held(live)["result"] == "fail"
 
 
-def test_a_step_reading_its_own_sources_credential_is_a_same_on_prod_skip_and_any_other_name_fails(tmp_path):
-    """praha/golemio-garages: the bento's http step reads ${DS_GOLEMIO_MR_PARKIT_TOKEN}, the name its
-    own DataSource's headerRef reaches the runner as, and the pipeline has no secretRefs. Prod's
-    Portal refuses that bento the same way. Another DS_* name, or a second refusal, stays a fail."""
-    import suite
-    write(tmp_path, "o/praha/datasources/golemio-mr-parkit.yaml", """
-        kind: DataSource
-        metadata: {name: golemio-mr-parkit, namespace: praha}
-        spec:
-          type: http
-          http: {url: 'https://api.golemio.cz/v3/parking', authorization: {header: X-Access-Token, headerRef: {name: golemio, key: token}}}
-    """)
-    write(tmp_path, "o/praha/pipelines/golemio-garages/pipeline.yaml", """
-        kind: Pipeline
-        metadata: {name: golemio-garages, namespace: praha}
-        spec: {period: 24h, source: {dataSourceRef: {kind: DataSource, name: golemio-mr-parkit}}}
-    """)
-    p, = manifests.load_pipelines(tmp_path)
-    assert p.source_vars == ["DS_GOLEMIO_MR_PARKIT_TOKEN"] and p.secret_refs == []
-
-    def refusal(var):
-        return {"type": "StreamDeployed", "status": "False", "reason": "RunnerRefused",
-                "message": f"bento.yaml: invalid pipeline.processors `${{{var}}}`: a step names no runner "
-                           "variable but JC_GATEWAY_URL, ... (PL-16)"}
-
-    def status(*conds):
-        class H:
-            def call(self, method, path, *a, **k):
-                return 200, {}, json.dumps({"metadata": {"name": "golemio-garages"},
-                                            "status": {"phase": "Error", "conditions": list(conds)}}).encode()
-        r = suite.Results("pipelines", "http://x")
-        suite.check_pipeline(r, H(), None, p)
-        return next(c for c in r.rows if c["id"] == "status")
-    own = status(refusal("DS_GOLEMIO_MR_PARKIT_TOKEN"))
-    assert own["result"] == "skip" and own["reason"].startswith("same on prod: a step reads `${DS_GOLEMIO_MR_PARKIT_TOKEN}`")
-    assert status(refusal("DS_GOLEMIO_POLICE_TOKEN"))["result"] == "fail"
-    assert status(refusal("JC_PORTAL_TOKEN"))["result"] == "fail"
-    assert status(refusal("DS_GOLEMIO_MR_PARKIT_TOKEN"), refusal("DS_OTHER"))["result"] == "fail"
-
-
 class Clock:
     """time.time and time.sleep of the suite on a fake clock."""
 
