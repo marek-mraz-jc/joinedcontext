@@ -110,6 +110,39 @@ fn an_array_of_arrays_is_one_json_cell() {
     );
 }
 
+/// jc-memory-cut2: the table holds a nested cell as the JSON text the CSV writes for it, not as
+/// a parsed tree (~5 times the text for a polygon's rings), and the CSV is the same bytes.
+#[test]
+fn a_nested_cell_is_held_as_its_json_text() {
+    let ring = json!([[24.9, 60.1], [24.91, 60.1], [24.9, 60.11], [24.9, 60.1]]);
+    let area = json!({
+        "id": "urn:a", "type": "Announcement",
+        "location": { "type": "GeoProperty",
+                      "value": { "type": "Polygon", "coordinates": [ring] } },
+        "tags": { "type": "Property", "value": [{ "k": "road" }] },
+        "kinds": { "type": "Property", "value": ["x", "y"] },
+        "nothing": { "type": "Property", "value": {} }
+    });
+    let table = table(&json!([area]), &Limits::default()).expect("within the limits");
+    let at = |name: &str| {
+        let index = table.columns.iter().position(|c| c == name).expect(name);
+        table.rows[0][index].clone()
+    };
+    assert_eq!(
+        at("location.value.coordinates"),
+        json!("[[[24.9,60.1],[24.91,60.1],[24.9,60.11],[24.9,60.1]]]")
+    );
+    assert_eq!(at("tags.value"), json!("[{\"k\":\"road\"}]"));
+    assert_eq!(at("kinds.value[1]"), json!("y"), "a list of scalars still spreads");
+    assert_eq!(at("nothing.value"), json!({}), "an empty object is no text");
+    let text = csv(&table, &Limits::default(), Dialect::default()).expect("within the limits");
+    assert!(
+        text.contains("\"[[[24.9,60.1],[24.91,60.1],[24.9,60.11],[24.9,60.1]]]\""),
+        "{text}"
+    );
+    assert!(text.contains("\"[{\"\"k\"\":\"\"road\"\"}]\""), "{text}");
+}
+
 /// EP-08: a relationship is its target URN, as a string a spreadsheet can read.
 #[test]
 fn a_relationship_is_the_target_urn() {
