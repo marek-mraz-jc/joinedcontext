@@ -104,9 +104,10 @@ jobs:
   # apps tests create their own roles). nextest runs the binaries side by side; the tests sharing
   # one module's database stay one at a time (.config/nextest.toml). The tests are split in
   # three jobs (two took 333 s of tests each, run 42616261654), each with its own Postgres: every job compiles the same warm build (no archive to
-  # upload and download) and runs its `--partition slice:k/N` (round robin over all tests; count:
-  # deals each binary's first test to job 1); the first also runs the doc tests. The partition job
-  # names are listed in changes.sh (covered).
+  # upload and download) and runs its partition of the tests, balanced by the times
+  # .github/ci-durations.json records (test-part.py --nextest; a test with no recorded time still
+  # lands in exactly one); the first also runs the doc tests, which the split counts. The
+  # partition job names are listed in changes.sh (covered).
   root-test:
     name: root-test-${{ matrix.part }}
     needs: changes
@@ -173,9 +174,13 @@ jobs:
           if [ "${{ matrix.part }}" = 1 ]; then
             cargo test --workspace --locked --no-fail-fast --doc > "$RUNNER_TEMP/doc.log" 2>&1 & doc=$!
           fi
+          # the doc build beside the first job's tests slowed them by up to 1.7x (run 42756711313)
+          python3 .github/scripts/test-part.py --nextest root ${{ matrix.part }} ${{ strategy.job-total }} --extra 1=45 \
+            --reuse "$RUNNER_TEMP/binaries.json" "$RUNNER_TEMP/cargo-metadata.json" > "$RUNNER_TEMP/part.txt"
+          set --; while IFS= read -r term; do set -- "$@" -E "$term"; done < "$RUNNER_TEMP/part.txt"
           tests=0
-          cargo nextest run --profile ci --no-fail-fast --partition "slice:${{ matrix.part }}/${{ strategy.job-total }}" \
-            --binaries-metadata "$RUNNER_TEMP/binaries.json" --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" || tests=$?
+          cargo nextest run --profile ci --no-fail-fast \
+            --binaries-metadata "$RUNNER_TEMP/binaries.json" --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" "$@" || tests=$?
           docs=0
           if [ -n "$doc" ]; then
             wait "$doc" || docs=$?
@@ -227,10 +232,12 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
   # nextest with Antares' own groups (crates/antares/.config/nextest.toml), in three jobs, each
-  # with its own PostGIS: the first runs pg_explain and the doc tests, the other two a slice each
-  # of every other test. pg_explain seeds 200 000 Entities and ANALYZEs them in one transaction
-  # held for about a minute, once per database: beside every slice it deadlocked a concurrent
-  # index build and timed out a week partition's DDL in two of three jobs (run 42610186767).
+  # with its own PostGIS: the first builds and runs only pg_explain, then the view matrix; the
+  # other two run every other test, split by the times .github/ci-durations.json records
+  # (test-part.py --nextest), and the third the doc tests after them. pg_explain seeds 200 000
+  # Entities and ANALYZEs them in one transaction held for about a minute, once per database:
+  # beside every slice it deadlocked a concurrent index build and timed out a week partition's DDL
+  # in two of three jobs (run 42610186767).
   antares-test:
     name: antares-test-${{ matrix.part }}
     needs: changes
@@ -239,11 +246,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { part: 1, tests: "-E 'binary(pg_explain)'" }
-          - { part: 2, tests: "-E 'not binary(pg_explain)' --partition slice:1/2" }
-          - { part: 3, tests: "-E 'not binary(pg_explain)' --partition slice:2/2" }
+      matrix: { part: [1, 2, 3] }
     defaults: { run: { working-directory: crates/antares } }
     services:
       postgis:
@@ -265,13 +268,25 @@ jobs:
         with: { workspace: crates/antares, key: antares-test }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: cargo-nextest }
-      - run: cargo nextest run --workspace --locked --profile ci --timings ${{ matrix.tests }}
+      # --test: only pg_explain's binary is built (--workspace keeps the workspace's features)
+      - if: matrix.part == 1
+        run: cargo nextest run --workspace --locked --profile ci --timings --no-fail-fast --test pg_explain -E 'binary(pg_explain)'
+      - if: matrix.part != 1
+        run: |
+          cargo nextest list --workspace --locked --profile ci --timings --list-type binaries-only --message-format json > "$RUNNER_TEMP/binaries.json"
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
+          # the doc tests run after the third part's tests (about 60 s)
+          python3 ../../.github/scripts/test-part.py --nextest antares $(( ${{ matrix.part }} - 1 )) 2 --extra 2=60 \
+            --filter 'not binary(pg_explain)' --reuse "$RUNNER_TEMP/binaries.json" "$RUNNER_TEMP/cargo-metadata.json" > "$RUNNER_TEMP/part.txt"
+          set --; while IFS= read -r term; do set -- "$@" -E "$term"; done < "$RUNNER_TEMP/part.txt"
+          cargo nextest run --profile ci --no-fail-fast \
+            --binaries-metadata "$RUNNER_TEMP/binaries.json" --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" "$@"
       # The view and policy matrix compiles only with `full,jc-policy` (no member turns them on):
       # jc's own feature set (bins/jc/Cargo.toml antares-broker), so each view sees only its own
       # data through the shared Router and an unvouched subject is refused (T-6677, F-01).
       - if: matrix.part == 1
         run: cargo nextest run --locked --profile ci -p antares-broker --features full,jc-policy,linkml,ical,feed,parquet,tabular --test views_matrix
-      - if: matrix.part == 1
+      - if: matrix.part == 3
         run: cargo test --workspace --locked --no-fail-fast --doc
       - if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -308,9 +323,10 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
   # cargo test, not nextest: the Portal's database tests serialize on in-process locks
   # (KNOWLEDGE: the DATABASE mutex), which separate processes would not hold. The test binaries
-  # are split in two jobs, each with its own Postgres (.github/scripts/test-part.py: round robin
-  # over every tests/*.rs, the libs and bins in the first, the doc tests in the second); binaries
-  # of one job still run one after another, as before.
+  # are split in four jobs, each with its own Postgres (.github/scripts/test-part.py: every
+  # tests/*.rs by its recorded build and run time in .github/ci-durations.json, the libs and bins
+  # in the first, the doc tests in the second); binaries of one job still run one after another,
+  # as before. The partition job names are listed in changes.sh (covered).
   portal-test:
     name: portal-test-${{ matrix.part }}
     needs: changes
@@ -319,7 +335,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix: { part: [1, 2] }
+      matrix: { part: [1, 2, 3, 4] }
     defaults: { run: { working-directory: crates/portal } }
     services:
       postgres:
@@ -352,7 +368,7 @@ jobs:
           (while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/ {print "mem used " $3 "/" $2 " MB"}') $(df -h / | awk 'NR == 2 {print "disk free " $4}')"; done) &
           # -j 4: the runner's four cores for the link phase (~160 test binaries); a flag, not
           # CARGO_BUILD_JOBS, which is part of the rust-cache key
-          targets=$(python3 ../../.github/scripts/test-part.py ${{ matrix.part }} ${{ strategy.job-total }})
+          targets=$(python3 ../../.github/scripts/test-part.py ${{ matrix.part }} ${{ strategy.job-total }} --doc 2)
           # shellcheck disable=SC2086
           cargo test --workspace --locked --no-fail-fast -j 4 --timings $targets
       # in the second job: the first runs the lib tests and compiles the lib's test build
