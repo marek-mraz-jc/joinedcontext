@@ -5,7 +5,7 @@
 //! - Brute-force protector matching RI (10 failures in 12 h, 60 s step to 15 min, quick login
 //!   1000 ms -> 60 s wait, never permanent, counted per person and per source IP, same answer
 //!   and timing for wrong password and unknown person).
-//! - Server-rendered Askama pages (`templates/login_page.html`) with per-response CSP nonce,
+//! - Server-rendered pages (`kaisatsu_core::page`, keycloak.v2's layout) with per-response CSP nonce,
 //!   `frame-ancestors 'none'`, CSRF token bound to `auth_session`, WCAG AA contrast, and
 //!   i18n bundles for `en`, `sk`, `cs`, `de`, and `hu` (no literal user-facing strings in templates).
 //! - Outbound e-mail sender via `lettre` over TLS with signed single-use 15-min action links.
@@ -13,7 +13,8 @@
 pub mod account;
 pub mod email;
 pub mod handlers;
-pub mod i18n;
+/// The bundles moved to `kaisatsu-core` so the OIDC pages (sign out) speak the same words.
+pub use kaisatsu_core::i18n;
 pub mod machine;
 pub mod outbox;
 pub mod passkey;

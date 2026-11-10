@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 //! Internationalization bundles for `en`, `sk`, `cs`, `de`, and `hu` (W7).
-//! Message keys and texts come directly from `charts/theme/files/login__messages__messages_{en,sk,cs,de}.properties`,
-//! plus Hungarian (`hu`) and field labels/hints so no Askama template holds a literal user-facing string.
+//! Message keys and texts come directly from `charts/theme/files/login__messages__messages_{en,sk,cs,de}.properties`
+//! (the joinedcontext theme), the keycloak.v2/base keys its pages showed (Keycloak 26.8.1, same
+//! wording per language), plus Hungarian (`hu`), so no template holds a literal user-facing
+//! string. A key missing in a language falls back to English, as Keycloak's bundles do.
 
 use std::collections::BTreeMap;
 
@@ -79,7 +81,7 @@ doCancel=Cancel
 passwordNewLabel=New password
 passwordConfirmLabel=Confirm password
 passwordConfirmHint=Type the new password once more
-notMatchPasswordMessage=The two passwords do not match. Type the same password in both fields.
+notMatchPasswordMessage=Passwords don't match.
 logoutOtherSessions=Sign out from other devices
 logoutOtherSessionsHint=Every other browser and app signed in to your account has to sign in again.
 reauthenticate=Sign in again to continue. This keeps your account safe before a security change.
@@ -144,7 +146,7 @@ accountEmailInvalid=Enter a valid e-mail address, for example name@organization.
 accountEmailInUse=Another account already uses this e-mail address.
 accountAttributeReadOnly=This attribute is managed by your administrator and cannot be changed here.
 otpScanHint=Scan this code with your authenticator app, or type the key below.
-invalidTotpMessage=Invalid authenticator code. Type the code your app shows now.
+invalidTotpMessage=Invalid authenticator code.
 otpAppsHint=Install an authenticator app on your phone, for example FreeOTP, Aegis or 2FAS.
 accountProfileSaved=Your personal info is saved.
 accountPasswordUpdated=Your password is updated.
@@ -163,6 +165,65 @@ copiedMessage=Copied
 doShowPassword=Show password
 doShow=Show
 doHide=Hide
+email=Email
+password=Password
+showPassword=Show password
+hidePassword=Hide password
+loginOtpOneTime=One-time code
+restartLoginTooltip=Restart login
+loginTotpTitle=Mobile Authenticator Setup
+configureTotpMessage=You need to set up Mobile Authenticator to activate your account.
+loginTotpStep1=Install one of the following applications on your mobile:
+loginTotpStep2=Open the application and scan the barcode:
+loginTotpStep3=Enter the one-time code provided by the application and click Submit to finish the setup.
+loginTotpStep3DeviceName=Provide a Device Name to help you manage your OTP devices.
+loginTotpManualStep2=Open the application and enter the key:
+loginTotpManualStep3=Use the following configuration values if the application allows setting them:
+loginTotpUnableToScan=Unable to scan?
+loginTotpType=Type
+loginTotpAlgorithm=Algorithm
+loginTotpDigits=Digits
+loginTotpInterval=Interval
+loginTotpDeviceName=Device Name
+loginTotp.totp=Time-based
+totpAppFreeOTPName=FreeOTP
+totpAppGoogleName=Google Authenticator
+passwordNew=New Password
+passwordConfirm=Confirm password
+updatePasswordMessage=You need to change your password to activate your account.
+verifyEmailMessage=You need to verify your email address to activate your account.
+emailVerifyInstruction1=An email with instructions to verify your email address has been sent to your address {0}.
+successLogout=You are logged out
+invalidPasswordMessage=Invalid password.
+invalidPasswordMinLengthMessage=Invalid password: minimum length {0}.
+invalidPasswordMinDigitsMessage=Invalid password: must contain at least {0} numerical digits.
+invalidPasswordMinLowerCaseCharsMessage=Invalid password: must contain at least {0} lower case characters.
+invalidPasswordMinUpperCaseCharsMessage=Invalid password: must contain at least {0} upper case characters.
+invalidPasswordNotUsernameMessage=Invalid password: must not be equal to the username.
+invalidPasswordNotEmailMessage=Invalid password: must not be equal to the email.
+invalidPasswordHistoryMessage=Invalid password: must not be equal to any of last {0} passwords.
+locale_cs=Czech (Čeština)
+locale_en=English
+locale_de=German (Deutsch)
+locale_sk=Slovak (Slovenčina)
+locale_hu=Hungarian (Magyar)
+invalidPasswordMinSpecialCharsMessage=Invalid password: must contain at least {0} special characters.
+oauth2DeviceVerificationTitle=Device Login
+verifyOAuth2DeviceUserCode=Enter the code provided by your device and click Submit
+oauth2DeviceInvalidUserCodeMessage=Invalid code, please try again.
+oauth2DeviceVerificationCompleteHeader=Device Login Successful
+oauth2DeviceVerificationCompleteMessage=You may close this browser window and go back to your device.
+oauth2DeviceConsentDeniedMessage=Consent denied for connecting the device.
+oauth2DeviceVerificationFailedHeader=Device Login Failed
+oauth2DeviceExpiredUserCodeMessage=The code has expired. Please go back to your device and try connecting again.
+oauthGrantRequest=Do you grant these access privileges?
+doYes=Yes
+doNo=No
+confirmLinkIdpTitle=Account already exists
+federatedIdentityConfirmLinkMessage=User with {0} {1} already exists. How do you want to continue?
+confirmLinkIdpContinue=Add to existing account
+jcDeviceTooManyCodes=Too many wrong codes. Wait a few minutes, then try again.
+oauthGrantTitle=Grant Access to {0}
 "#;
 
 const SK_PROPERTIES: &str = r#"
@@ -232,8 +293,8 @@ doCancel=Zrušiť
 passwordNewLabel=Nové heslo
 passwordConfirmLabel=Potvrdenie hesla
 passwordConfirmHint=Zadajte nové heslo ešte raz
-notMatchPasswordMessage=Heslá sa nezhodujú. Do oboch polí zadajte rovnaké heslo.
-logoutOtherSessions=Odhlásiť z ostatných zariadení
+notMatchPasswordMessage=Heslá sa nezhodujú.
+logoutOtherSessions=Odhlásenie z iných zariadení
 logoutOtherSessionsHint=Každý iný prehliadač a aplikácia prihlásená k vášmu účtu sa bude musieť prihlásiť znova.
 reauthenticate=Na pokračovanie sa prihláste znova. Pred zmenou zabezpečenia tak chránime váš účet.
 accountTitle=Účet
@@ -297,7 +358,7 @@ accountEmailInvalid=Zadajte platnú e-mailovú adresu, napríklad meno@organizac
 accountEmailInUse=Túto e-mailovú adresu už používa iný účet.
 accountAttributeReadOnly=Tento atribút spravuje váš správca a tu ho nemožno zmeniť.
 otpScanHint=Naskenujte tento kód overovacou aplikáciou alebo zadajte kľúč uvedený nižšie.
-invalidTotpMessage=Neplatný kód overovacej aplikácie. Zadajte kód, ktorý aplikácia zobrazuje teraz.
+invalidTotpMessage=Neplatný kód autentifikátora.
 otpAppsHint=Nainštalujte si do telefónu overovaciu aplikáciu, napríklad FreeOTP, Aegis alebo 2FAS.
 accountProfileSaved=Osobné údaje sú uložené.
 accountPasswordUpdated=Heslo je zmenené.
@@ -316,6 +377,65 @@ copiedMessage=Skopírované
 doShowPassword=Zobraziť heslo
 doShow=Zobraziť
 doHide=Skryť
+email=E-mail
+password=Heslo
+showPassword=Zobraziť heslo
+hidePassword=Skryť heslo
+loginOtpOneTime=Jednorazový kód
+restartLoginTooltip=Znovu spustiť prihlásenie
+loginTotpTitle=Nastavenie mobilného autentifikátora
+configureTotpMessage=Na aktiváciu Vášho účtu musíte nastaviť aplikáciu Mobile Authenticator.
+loginTotpStep1=Nainštalujte si do mobilu jednu z nasledujúcich aplikácií:
+loginTotpStep2=Otvorte aplikáciu a skenujte čiarový kód alebo zadajte kľúč
+loginTotpStep3=Zadajte jednorazový kód poskytnutý aplikáciou a kliknutím na tlačidlo Odoslať dokončite nastavenie
+loginTotpStep3DeviceName=Uveďte názov zariadenia, ktorý Vám pomôže spravovať zariadenia OTP.
+loginTotpManualStep2=Otvorte aplikáciu a zadajte kľúč
+loginTotpManualStep3=Používajte nasledujúce hodnoty konfigurácie, ak aplikácia umožňuje ich nastavenie
+loginTotpUnableToScan=Nemožno skenovať?
+loginTotpType=Typ
+loginTotpAlgorithm=Algoritmus
+loginTotpDigits=Číslica
+loginTotpInterval=Interval
+loginTotpDeviceName=Názov zariadenia
+loginTotp.totp=Založené na čase
+totpAppFreeOTPName=FreeOTP
+totpAppGoogleName=Google Authenticator
+passwordNew=Nové heslo
+passwordConfirm=Potvrdenie hesla
+updatePasswordMessage=Ak chcete aktivovať svoj účet, musíte zmeniť heslo.
+verifyEmailMessage=Ak chcete aktivovať svoj účet, musíte overiť svoju e-mailovú adresu.
+emailVerifyInstruction1=Bol Vám odoslaný e-mail s pokynmi na overenie Vašej e-mailovej adresy.
+successLogout=Odhlásili ste sa
+invalidPasswordMessage=Neplatné heslo.
+invalidPasswordMinLengthMessage=Neplatné heslo: minimálna dĺžka {0}.
+invalidPasswordMinDigitsMessage=Neplatné heslo: musí obsahovať aspoň {0} číslic.
+invalidPasswordMinLowerCaseCharsMessage=Neplatné heslo: musí obsahovať minimálne {0} malé písmená.
+invalidPasswordMinUpperCaseCharsMessage=Neplatné heslo: musí obsahovať aspoň {0} veľké písmená.
+invalidPasswordNotUsernameMessage=Neplatné heslo: nesmie byť rovnaké ako používateľské meno.
+invalidPasswordNotEmailMessage=Neplatné heslo: nesmie sa rovnať e-mailu.
+invalidPasswordHistoryMessage=Neplatné heslo: nesmie sa rovnať žiadnemu z posledných {0} hesiel.
+locale_en=Angličtina (English)
+locale_cs=Čeština (Čeština)
+locale_de=Nemčina (Deutsch)
+locale_sk=Slovenčina
+locale_hu=Maďarčina (Magyar)
+invalidPasswordMinSpecialCharsMessage=Neplatné heslo: musí obsahovať aspoň {0} špeciálne znaky.
+oauth2DeviceVerificationTitle=Prihlásenie zariadenia
+verifyOAuth2DeviceUserCode=Zadajte kód poskytnutý Vaším zariadením a kliknite na tlačidlo Odoslať
+oauth2DeviceInvalidUserCodeMessage=Neplatný kód, skúste to prosím znova.
+oauth2DeviceVerificationCompleteHeader=Úspešné prihlásenie zariadenia
+oauth2DeviceVerificationCompleteMessage=Môžete zavrieť toto okno prehliadača a vrátiť sa k svojmu zariadeniu.
+oauth2DeviceConsentDeniedMessage=Súhlas s pripojením zariadenia zamietnutý.
+oauth2DeviceVerificationFailedHeader=Prihlásenie zariadenia zlyhalo
+oauth2DeviceExpiredUserCodeMessage=Kód stratil platnosť. Vráťte sa prosím k svojmu zariadeniu a skúste sa pripojiť znova.
+oauthGrantRequest=Udeľujete tieto prístupové oprávnenia?
+doYes=Áno
+doNo=Nie
+confirmLinkIdpTitle=Účet už existuje
+federatedIdentityConfirmLinkMessage=Používateľ s {0} {1} už existuje. Ako chcete pokračovať?
+confirmLinkIdpContinue=Pridať do existujúceho účtu
+jcDeviceTooManyCodes=Príliš veľa nesprávnych kódov. Počkajte niekoľko minút a skúste to znova.
+oauthGrantTitle=Poskytnúť prístup {0}
 "#;
 
 const CS_PROPERTIES: &str = r#"
@@ -385,8 +505,8 @@ doCancel=Zrušit
 passwordNewLabel=Nové heslo
 passwordConfirmLabel=Potvrzení hesla
 passwordConfirmHint=Zadejte nové heslo ještě jednou
-notMatchPasswordMessage=Hesla se neshodují. Do obou polí zadejte stejné heslo.
-logoutOtherSessions=Odhlásit z ostatních zařízení
+notMatchPasswordMessage=Hesla se neshodují.
+logoutOtherSessions=Odhlásit se z ostatních zařízení
 logoutOtherSessionsHint=Každý jiný prohlížeč a aplikace přihlášená k vašemu účtu se bude muset přihlásit znovu.
 reauthenticate=Pro pokračování se přihlaste znovu. Před změnou zabezpečení tak chráníme váš účet.
 accountTitle=Účet
@@ -450,7 +570,7 @@ accountEmailInvalid=Zadejte platnou e-mailovou adresu, například jmeno@organiz
 accountEmailInUse=Tuto e-mailovou adresu už používá jiný účet.
 accountAttributeReadOnly=Tento atribut spravuje váš správce a zde jej nelze změnit.
 otpScanHint=Naskenujte tento kód ověřovací aplikací nebo zadejte klíč uvedený níže.
-invalidTotpMessage=Neplatný kód z ověřovací aplikace. Zadejte kód, který aplikace zobrazuje teď.
+invalidTotpMessage=Neplatný kód ověřování.
 otpAppsHint=Nainstalujte si do telefonu ověřovací aplikaci, například FreeOTP, Aegis nebo 2FAS.
 accountProfileSaved=Osobní údaje jsou uloženy.
 accountPasswordUpdated=Heslo je změněno.
@@ -469,6 +589,65 @@ copiedMessage=Zkopírováno
 doShowPassword=Zobrazit heslo
 doShow=Zobrazit
 doHide=Skrýt
+email=E-mail
+password=Heslo
+showPassword=Zobrazit heslo
+hidePassword=Skrýt heslo
+loginOtpOneTime=Jednorázový kód
+restartLoginTooltip=Začít s přihlašováním od začátku
+loginTotpTitle=Nastavení Mobilního Autentikátoru
+configureTotpMessage=Chcete-li aktivovat účet, musíte nastavit službu Mobile Authenticator.
+loginTotpStep1=Nainstalujte si do mobilu jednu z následujících aplikací:
+loginTotpStep2=Otevřete aplikaci a naskenujte čárový kód:
+loginTotpStep3=Zadejte jednorázový kód poskytnutý aplikací a klepnutím na tlačítko Odeslat dokončete nastavení.
+loginTotpStep3DeviceName=Zadejte název zařízení pro jednodušší správu jednorázových kódů (OTP) zařízení.
+loginTotpManualStep2=Otevřete aplikaci a zadejte klíč:
+loginTotpManualStep3=Použijte následující hodnoty konfigurace, pokud aplikace umožňuje jejich nastavení:
+loginTotpUnableToScan=Nelze skenovat?
+loginTotpType=Typ
+loginTotpAlgorithm=Algoritmus
+loginTotpDigits=Číslice
+loginTotpInterval=Interval
+loginTotpDeviceName=Název zařízení
+loginTotp.totp=Založeno na čase
+totpAppFreeOTPName=FreeOTP
+totpAppGoogleName=Google Authenticator
+passwordNew=Nové heslo
+passwordConfirm=Potvrdit heslo
+updatePasswordMessage=Pro aktivaci účtu musíte provést aktualizaci hesla.
+verifyEmailMessage=Pro aktivaci účtu musíte ověřit vaši e-mailovou adresu.
+emailVerifyInstruction1=Byl Vám zaslán e-mail s pokyny k ověření vaší e-mailové adresy na {0}.
+successLogout=Odhlášení bylo úspěšné
+invalidPasswordMessage=Neplatné heslo.
+invalidPasswordMinLengthMessage=Neplatné heslo: minimální délka {0}.
+invalidPasswordMinDigitsMessage=Neplatné heslo: musí obsahovat nejméně {0} číslic.
+invalidPasswordMinLowerCaseCharsMessage=Neplatné heslo: musí obsahovat minimálně {0} malé znaky.
+invalidPasswordMinUpperCaseCharsMessage=Neplatné heslo: musí obsahovat nejméně {0} velká písmena.
+invalidPasswordNotUsernameMessage=Neplatné heslo: nesmí být totožné s uživatelským jménem.
+invalidPasswordNotEmailMessage=Neplatné heslo: nesmí být totožné s e-mailovou adresou.
+invalidPasswordHistoryMessage=Neplatné heslo: Nesmí se rovnat žádnému z posledních {0} hesel.
+locale_en=Angličtina (English)
+locale_cs=Čeština
+locale_de=Němčina (Deutsch)
+locale_sk=Slovenština (Slovenčina)
+locale_hu=Maďarština (Magyar)
+invalidPasswordMinSpecialCharsMessage=Neplatné heslo: musí obsahovat nejméně {0} speciální znaky.
+oauth2DeviceVerificationTitle=Přihlášení na zařízení
+verifyOAuth2DeviceUserCode=Zadejte kód z vašeho zařízení a klikněte na Odeslat
+oauth2DeviceInvalidUserCodeMessage=Nesprávný kód, zkuste to prosím znovu.
+oauth2DeviceVerificationCompleteHeader=Úspěšné přihlášení v zařízení
+oauth2DeviceVerificationCompleteMessage=Můžete zavřít toto okno prohlížeče a vrátit se do vašeho zařízení.
+oauth2DeviceConsentDeniedMessage=Připojení zařízení odmítnuto.
+oauth2DeviceVerificationFailedHeader=Selhalo přihlášení v zařízení
+oauth2DeviceExpiredUserCodeMessage=Platnost kódu vypršela. Vraťte se prosím do vašeho zařízení a zkuste se připojit znovu.
+oauthGrantRequest=Poskytujete tyto přístupová oprávnění?
+doYes=Ano
+doNo=Ne
+confirmLinkIdpTitle=Účet již existuje
+federatedIdentityConfirmLinkMessage=Uživatel s {0} {1} již existuje. Jak chcete pokračovat?
+confirmLinkIdpContinue=Přidat do existujícího účtu
+jcDeviceTooManyCodes=Příliš mnoho chybných kódů. Počkejte několik minut a zkuste to znovu.
+oauthGrantTitle=Udělit přístup {0}
 "#;
 
 const DE_PROPERTIES: &str = r#"
@@ -538,7 +717,7 @@ doCancel=Abbrechen
 passwordNewLabel=Neues Passwort
 passwordConfirmLabel=Passwort bestätigen
 passwordConfirmHint=Geben Sie das neue Passwort noch einmal ein
-notMatchPasswordMessage=Die Passwörter stimmen nicht überein. Geben Sie in beide Felder dasselbe Passwort ein.
+notMatchPasswordMessage=Die Passwörter sind nicht identisch.
 logoutOtherSessions=Von anderen Geräten abmelden
 logoutOtherSessionsHint=Jeder andere Browser und jede App, die mit Ihrem Konto angemeldet ist, muss sich neu anmelden.
 reauthenticate=Melden Sie sich erneut an, um fortzufahren. So schützen wir Ihr Konto vor einer Sicherheitsänderung.
@@ -603,7 +782,7 @@ accountEmailInvalid=Geben Sie eine gültige E-Mail-Adresse ein, zum Beispiel nam
 accountEmailInUse=Ein anderes Konto verwendet diese E-Mail-Adresse bereits.
 accountAttributeReadOnly=Dieses Attribut verwaltet Ihr Administrator; es kann hier nicht geändert werden.
 otpScanHint=Scannen Sie diesen Code mit Ihrer Authenticator-App oder geben Sie den Schlüssel unten ein.
-invalidTotpMessage=Ungültiger Authenticator-Code. Geben Sie den Code ein, den Ihre App jetzt anzeigt.
+invalidTotpMessage=Ungültiger One-time Code.
 otpAppsHint=Installieren Sie eine Authenticator-App auf Ihrem Telefon, zum Beispiel FreeOTP, Aegis oder 2FAS.
 accountProfileSaved=Ihre persönlichen Daten sind gespeichert.
 accountPasswordUpdated=Ihr Passwort ist geändert.
@@ -622,6 +801,65 @@ copiedMessage=Kopiert
 doShowPassword=Passwort anzeigen
 doShow=Anzeigen
 doHide=Verbergen
+email=E-Mail
+password=Passwort
+showPassword=Passwort einblenden
+hidePassword=Passwort ausblenden
+loginOtpOneTime=One-time code
+restartLoginTooltip=Login neu starten
+loginTotpTitle=Mehrfachauthentifizierung konfigurieren
+configureTotpMessage=Sie müssen eine Mehrfachauthentifizierung einrichten, um das Benutzerkonto zu aktivieren.
+loginTotpStep1=Installieren Sie eine der folgenden Applikationen auf Ihrem Smartphone:
+loginTotpStep2=Öffnen Sie die Applikation und scannen Sie den QR-Code:
+loginTotpStep3=Geben Sie den von der Applikation generierten One-time Code ein und klicken Sie auf Absenden.
+loginTotpStep3DeviceName=Geben Sie einen Gerätenamen an, um die Verwaltung Ihrer OTP-Geräte zu erleichtern.
+loginTotpManualStep2=Öffnen Sie die Applikation und geben Sie den folgenden Schlüssel ein:
+loginTotpManualStep3=Verwenden Sie die folgenden Konfigurationswerte, falls Sie diese für die Applikation anpassen können:
+loginTotpUnableToScan=Sie können den QR-Code nicht scannen?
+loginTotpType=Typ
+loginTotpAlgorithm=Algorithmus
+loginTotpDigits=Ziffern
+loginTotpInterval=Intervall
+loginTotpDeviceName=Gerätename
+loginTotp.totp=zeitbasiert (time-based)
+totpAppFreeOTPName=FreeOTP
+totpAppGoogleName=Google Authenticator
+passwordNew=Neues Passwort
+passwordConfirm=Passwort bestätigen
+updatePasswordMessage=Sie müssen Ihr Passwort ändern, um das Benutzerkonto zu aktivieren.
+verifyEmailMessage=Sie müssen Ihre E-Mail-Adresse verifizieren, um das Benutzerkonto zu aktivieren.
+emailVerifyInstruction1=Eine E-Mail mit Anweisungen, um Ihre E-Mail-Adresse zu überprüfen, wurde an Ihre Adresse geschickt {0}.
+successLogout=Sie sind abgemeldet.
+invalidPasswordMessage=Ungültiges Passwort.
+invalidPasswordMinLengthMessage=Ungültiges Passwort: Es muss mindestens {0} Zeichen lang sein.
+invalidPasswordMinDigitsMessage=Ungültiges Passwort: Es muss mindestens {0} Zahl(en) beinhalten.
+invalidPasswordMinLowerCaseCharsMessage=Ungültiges Passwort: Es muss mindestens {0} Kleinbuchstaben beinhalten.
+invalidPasswordMinUpperCaseCharsMessage=Ungültiges Passwort: Es muss mindestens {0} Großbuchstaben beinhalten.
+invalidPasswordNotUsernameMessage=Ungültiges Passwort: Es darf nicht gleich sein wie der Benutzername.
+invalidPasswordNotEmailMessage=Ungültiges Passwort: darf nicht identisch mit der E-Mail-Adresse sein.
+invalidPasswordHistoryMessage=Ungültiges Passwort: Es darf nicht einem der letzten {0} Passwörter entsprechen.
+locale_de=Deutsch
+locale_en=Englisch (English)
+locale_sk=Slowakisch (Slovenčina)
+locale_cs=Tschechisch (Čeština)
+locale_hu=Ungarisch (Magyar)
+invalidPasswordMinSpecialCharsMessage=Ungültiges Passwort: Es muss mindestens {0} Sonderzeichen beinhalten.
+oauth2DeviceVerificationTitle=Geräte-Login
+verifyOAuth2DeviceUserCode=Geben Sie den Code von Ihrem Gerät ein und klicken Sie auf Senden
+oauth2DeviceInvalidUserCodeMessage=Ungültiger Code, bitte probieren Sie es erneut.
+oauth2DeviceVerificationCompleteHeader=Geräte-Login erfolgreich
+oauth2DeviceVerificationCompleteMessage=Sie können dieses Browser-Fenster schließen und auf Ihrem Gerät weiterarbeiten.
+oauth2DeviceConsentDeniedMessage=Zustimmung für Verbindung mit dem Gerät verweigert.
+oauth2DeviceVerificationFailedHeader=Geräte-Login fehlgeschlagen
+oauth2DeviceExpiredUserCodeMessage=Der Code ist abgelaufen. Bitte versuchen Sie, Ihr Gerät erneut zu verbinden.
+oauthGrantRequest=Wollen Sie diese Zugriffsrechte gewähren?
+doYes=Ja
+doNo=Nein
+confirmLinkIdpTitle=Das Benutzerkonto existiert bereits.
+federatedIdentityConfirmLinkMessage=Ein Benutzer mit {0} {1} existiert bereits. Wie möchten Sie fortfahren?
+confirmLinkIdpContinue=Zu einem bestehenden Benutzerkonto hinzufügen
+jcDeviceTooManyCodes=Zu viele falsche Codes. Warten Sie einige Minuten und versuchen Sie es dann erneut.
+oauthGrantTitle=Zugang zu {0} gewähren
 "#;
 
 const HU_PROPERTIES: &str = r#"
@@ -647,7 +885,7 @@ missingUsernameMessage=Adja meg az e-mail-címét vagy felhasználónevét.
 missingPasswordMessage=Adja meg a jelszavát.
 loginTimeout=A bejelentkezés túl sokáig tartott, ezért elölről indul. Adja meg újra az adatait.
 expiredCodeMessage=A bejelentkezés túl sokáig tartott. Jelentkezzen be újra.
-expiredActionMessage=Ezt a hivatkozást már felhasználták, vagy lejárt. Jelentkezzen be a folytatáshoz.
+expiredActionMessage=A művelet érvényességi ideje lejárt. Kérem, lépjen be újra.
 expiredActionTokenNoSessionMessage=Ez a hivatkozás lejárt. Kérjen újat.
 expiredActionTokenSessionExistsMessage=Ez a hivatkozás lejárt. Kérjen újat.
 invalidCodeMessage=A bejelentkezést nem sikerült befejezni. Nyissa meg újra az alkalmazást, és jelentkezzen be onnan.
@@ -686,13 +924,13 @@ termsTitle=Felhasználási feltételek
 termsInstruction=A folytatáshoz fogadja el a felhasználási feltételeket.
 otpDeviceLabel=Eszköz neve
 otpDeviceHint=Nem kötelező, például Munkahelyi telefon. Ezen a néven jelenik meg a hitelesítő a fiókoldalán.
-doSubmit=Küldés
+doSubmit=Elküld
 doCancel=Mégse
 passwordNewLabel=Új jelszó
 passwordConfirmLabel=Jelszó megerősítése
 passwordConfirmHint=Írja be még egyszer az új jelszót
-notMatchPasswordMessage=A két jelszó nem egyezik. Mindkét mezőbe ugyanazt a jelszót írja.
-logoutOtherSessions=Kijelentkezés a többi eszközről
+notMatchPasswordMessage=A jelszavak nem egyeznek meg.
+logoutOtherSessions=Kijelentkezés más eszközökről
 logoutOtherSessionsHint=Minden más böngészőnek és alkalmazásnak, amely be van jelentkezve a fiókjába, újra be kell jelentkeznie.
 reauthenticate=A folytatáshoz jelentkezzen be újra. Így védjük a fiókját egy biztonsági módosítás előtt.
 accountTitle=Fiók
@@ -756,7 +994,7 @@ accountEmailInvalid=Adjon meg érvényes e-mail-címet, például nev@szervezet.
 accountEmailInUse=Ezt az e-mail-címet már egy másik fiók használja.
 accountAttributeReadOnly=Ezt az attribútumot a rendszergazda kezeli, itt nem módosítható.
 otpScanHint=Olvassa be ezt a kódot a hitelesítő alkalmazással, vagy írja be az alábbi kulcsot.
-invalidTotpMessage=Érvénytelen hitelesítő kód. Írja be a kódot, amelyet az alkalmazás most mutat.
+invalidTotpMessage=Érvénytelen hitelesítő kód.
 otpAppsHint=Telepítsen hitelesítő alkalmazást a telefonjára, például FreeOTP, Aegis vagy 2FAS.
 accountProfileSaved=A személyes adatai mentve.
 accountPasswordUpdated=A jelszava megváltozott.
@@ -775,6 +1013,65 @@ copiedMessage=Másolva
 doShowPassword=Jelszó megjelenítése
 doShow=Mutat
 doHide=Elrejt
+locale_hu=Magyar
+locale_en=Angol (English)
+locale_sk=Szlovák (Slovenčina)
+locale_cs=Cseh (Čeština)
+locale_de=Német (Deutsch)
+email=E-mail cím
+password=Jelszó
+showPassword=Jelszó megjelenítése
+hidePassword=Jelszó elrejtése
+loginOtpOneTime=Egyszer használatos kód
+restartLoginTooltip=Belépés újrakezdése
+loginTotpTitle=Mobil hitelesítő eszköz beállítása
+configureTotpMessage=Fiókja aktiválásához előbb be kell állítania egy mobil hitelesítő eszközt.
+loginTotpStep1=Kérem, telepítse az itt felsorolt alkalmazások egyikét a mobil eszközére:
+loginTotpStep2=Indítsa el az alkalmazást a mobil eszközén és olvassa be ezt a QR-kódot:
+loginTotpStep3=Adja meg az alkalmazás által generált egyszer használatos kódot majd kattintson az Elküld gombra a beállítás befejezéséhez.
+loginTotpStep3DeviceName=Adja meg a mobil eszköz nevét. Ez a későbbiekben segíthet az eszköz azonosításában.
+loginTotpManualStep2=Indítsa el az alkalmazást és adja meg a következő kulcsot:
+loginTotpManualStep3=Használja a következő beállításokat, ha az alkalmazása támogatja ezeket:
+loginTotpUnableToScan=Nem tud QR-kódot beolvasni?
+loginTotpType=Típus
+loginTotpAlgorithm=Algoritmus
+loginTotpDigits=Számjegyek
+loginTotpInterval=Intervallum
+loginTotpDeviceName=Eszköz neve
+loginTotp.totp=Idő alapú
+totpAppFreeOTPName=FreeOTP
+totpAppGoogleName=Google Authenticator
+passwordNew=Új jelszó
+passwordConfirm=Jelszó megerősítése
+updatePasswordMessage=Fiókja aktiválásához előbb le kell cserélnie a jelszavát.
+verifyEmailMessage=Fiókja aktiválásához előbb erősítse meg e-mail címét.
+emailVerifyInstruction1=Útmutatót küldtünk a(z) {0} e-mail-címre arról, hogyan erősítheti meg azt.
+successLogout=Sikeres kijelentkezés
+invalidPasswordMessage=Érvénytelen jelszó.
+invalidPasswordMinLengthMessage=Érvénytelen jelszó: minimum hossz: {0}.
+invalidPasswordMinDigitsMessage=Érvénytelen jelszó: legalább {0} darab számjegyet kell tartalmaznia.
+invalidPasswordMinLowerCaseCharsMessage=Érvénytelen jelszó: legalább {0} darab kisbetűt kell tartalmaznia.
+invalidPasswordMinUpperCaseCharsMessage=Érvénytelen jelszó: legalább {0} darab nagybetűt kell tartalmaznia.
+invalidPasswordNotUsernameMessage=Érvénytelen jelszó: nem lehet azonos a felhasználónévvel.
+invalidPasswordNotEmailMessage=Érvénytelen jelszó: nem lehet azonos az e-mail címmel.
+invalidPasswordHistoryMessage=Érvénytelen jelszó: nem lehet azonos az utolsó {0} darab, korábban alkalmazott jelszóval.
+invalidPasswordMinSpecialCharsMessage=Érvénytelen jelszó: legalább {0} darab speciális karaktert (pl. #!$@ stb.) kell tartalmaznia.
+oauth2DeviceVerificationTitle=Eszköz hitelesítése
+verifyOAuth2DeviceUserCode=Írja be az eszköz által generált kódot, majd kattintson az Elküld gombra
+oauth2DeviceInvalidUserCodeMessage=Érvénytelen kód, kérem, próbálja újra.
+oauth2DeviceVerificationCompleteHeader=Eszköz hitelesítése sikeres
+oauth2DeviceVerificationCompleteMessage=Bezárhatja ezt az oldalt és visszatérhet az eszközhöz.
+oauth2DeviceConsentDeniedMessage=Jóváhagyó nyilatkozat elutasítva az eszköz számára.
+oauth2DeviceVerificationFailedHeader=Eszköz hitelesítése sikertelen
+oauth2DeviceExpiredUserCodeMessage=A kód érvényessége lejárt. Kérem, térjen vissza az eszközhöz és próbálja újra.
+oauthGrantRequest=Engedélyezi ezeket a jogosultságokat?
+doYes=Igen
+doNo=Nem
+confirmLinkIdpTitle=A felhasználói fiók már létezik
+federatedIdentityConfirmLinkMessage=A megadott {0} {1} felhasználó már létezik. Hogyan tovább?
+confirmLinkIdpContinue=Hozzáadás meglévő fiókhoz
+jcDeviceTooManyCodes=Túl sok hibás kód. Várjon néhány percet, majd próbálja újra.
+oauthGrantTitle=Hozzáférés engedélyezése a következő számára: {0}
 "#;
 
 fn parse_properties(raw: &'static str) -> BTreeMap<&'static str, &'static str> {
@@ -820,7 +1117,13 @@ impl Bundle {
 
     #[must_use]
     pub fn get<'a>(&'a self, key: &'a str) -> &'a str {
-        self.messages.get(key).copied().unwrap_or(key)
+        static EN: std::sync::LazyLock<BTreeMap<&'static str, &'static str>> =
+            std::sync::LazyLock::new(|| parse_properties(EN_PROPERTIES));
+        self.messages
+            .get(key)
+            .or_else(|| EN.get(key))
+            .copied()
+            .unwrap_or(key)
     }
 
     #[must_use]
@@ -848,6 +1151,49 @@ impl Bundle {
     pub fn keys(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.messages.keys().copied()
     }
+}
+
+/// The languages a realm offers that have a bundle, in the realm's order; the realm's default
+/// (or English) alone when it offers none.
+#[must_use]
+pub fn realm_locales(realm: &crate::model::RealmConfig) -> Vec<&'static str> {
+    let offered: Vec<&'static str> = if realm.internationalization_enabled {
+        realm
+            .supported_locales
+            .iter()
+            .filter_map(|l| SUPPORTED_LOCALES.iter().copied().find(|s| s == l))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if offered.is_empty() {
+        let default = SUPPORTED_LOCALES
+            .iter()
+            .copied()
+            .find(|s| *s == realm.default_locale)
+            .unwrap_or("en");
+        return vec![default];
+    }
+    offered
+}
+
+/// [`negotiate_locale`] with the realm's default language (its first offered one when the
+/// default is not shipped); any shipped language the app or the browser asks for is kept, as
+/// the login pages always did.
+#[must_use]
+pub fn negotiate_for_realm(
+    realm: &crate::model::RealmConfig,
+    ui_locales: Option<&str>,
+    cookie_locale: Option<&str>,
+    accept_language: Option<&str>,
+) -> &'static str {
+    let offered = realm_locales(realm);
+    let default = if offered.contains(&realm.default_locale.as_str()) {
+        realm.default_locale.as_str()
+    } else {
+        offered[0]
+    };
+    negotiate_locale(ui_locales, cookie_locale, accept_language, default)
 }
 
 /// Locale negotiation order required by W7: `ui_locales` -> cookie -> `Accept-Language` -> realm default.
@@ -906,12 +1252,14 @@ mod tests {
 
         for lang in SUPPORTED_LOCALES {
             let bundle = Bundle::for_locale(lang);
+            let own: Vec<&str> = bundle.keys().collect();
             for &key in &en_keys {
-                let val = bundle.get(key);
-                assert_ne!(
-                    val, key,
+                // `get` falls back to English; the bundle itself must hold every key.
+                assert!(
+                    own.contains(&key),
                     "missing translation for key '{key}' in locale '{lang}'"
                 );
+                let val = bundle.get(key);
                 assert!(!val.is_empty());
             }
         }

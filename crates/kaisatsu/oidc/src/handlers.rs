@@ -18,6 +18,8 @@ use base64::engine::{Engine, general_purpose::STANDARD as B64_STD};
 use chrono::{Duration, Utc};
 use jc_router::Mount;
 use kaisatsu_core::claims::ActClaim;
+use kaisatsu_core::i18n::{Bundle, negotiate_for_realm};
+use kaisatsu_core::page;
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use regex::Regex;
@@ -65,7 +67,7 @@ pub fn oidc_router(state: OidcState) -> Router {
         )
         .route(
             "/realms/{realm}/protocol/openid-connect/auth",
-            get(authorize_get),
+            get(authorize_page),
         )
         .route(
             "/realms/{realm}/protocol/openid-connect/auth/device",
@@ -612,6 +614,123 @@ pub(crate) fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<Stri
 const KC_ACTION_MAX_AUTH_AGE: i64 = 300;
 
 /// `GET /realms/{realm}/protocol/openid-connect/auth` (W1, W7).
+/// `GET .../auth` from a browser (its `Accept` names `text/html`): an error met before the
+/// flow can go back to the app is keycloak.v2's error page in the realm's words and language,
+/// with the way back to the app; other callers keep the OAuth JSON body.
+async fn authorize_page(
+    State(state): State<OidcState>,
+    Path(realm_name): Path<String>,
+    Query(params): Query<BTreeMap<String, String>>,
+    headers: HeaderMap,
+    mount_ext: Option<Extension<Mount>>,
+) -> Result<Response> {
+    let wants_html = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("text/html"));
+    let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
+    let client_id = params.get("client_id").cloned();
+    let ui_locales = params.get("ui_locales").cloned();
+    let outcome = authorize_get(
+        State(state.clone()),
+        Path(realm_name.clone()),
+        Query(params),
+        headers.clone(),
+        mount_ext,
+    )
+    .await;
+    let err = match outcome {
+        Err(err) if wants_html => err,
+        other => return other,
+    };
+    let Some(realm) = state.store.get_realm(&realm_name).await? else {
+        return Err(err);
+    };
+    let accept = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok());
+    let bundle = Bundle::for_locale(negotiate_for_realm(
+        &realm,
+        ui_locales.as_deref(),
+        None,
+        accept,
+    ));
+    let client = match &client_id {
+        Some(id) => state.store.get_client_by_client_id(&realm.id, id).await?,
+        None => None,
+    };
+    let app = logout_app_name(
+        &state,
+        &realm,
+        client.as_ref().map(|c| c.client_id.as_str()),
+        &bundle,
+    )
+    .await?;
+    let branding = state
+        .store
+        .get_branding(&realm.id, None)
+        .await?
+        .unwrap_or_default()
+        .sanitised();
+    let shell = page::Shell {
+        bundle: &bundle,
+        realm: &realm,
+        branding: &branding,
+        path_prefix: &mount.path_prefix,
+        app: &app,
+        locale_base_url: "",
+    };
+    let nonce = random_handle_256()[..16].to_owned();
+    let mut tpl = shell.page("error", bundle.get("errorTitle"), &nonce);
+    tpl.alert = Some(page::Alert::danger(
+        &bundle.format("invalidParameterMessage", &[error_parameter(&err)]),
+    ));
+    match client
+        .and_then(|c| c.base_url)
+        .filter(|u| u.starts_with("https://") || u.starts_with("http://"))
+    {
+        Some(base) => tpl.links.push(page::Link {
+            id: "backToApplication".into(),
+            class: "pf-m-link",
+            url: base,
+            label: if app.is_empty() {
+                bundle.get("backToApplication").to_owned()
+            } else {
+                bundle.format("jcBackTo", &[app.as_str()])
+            },
+        }),
+        None => tpl
+            .instructions
+            .push(bundle.get("jcErrorNextStep").to_owned()),
+    }
+    let status = StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::BAD_REQUEST);
+    let mut resp = page_response(&tpl);
+    *resp.status_mut() = status;
+    Ok(resp)
+}
+
+/// The request parameter an authorization error is about, as keycloak.v2's "Invalid parameter:
+/// {0}" names it; "request" when the error names none.
+fn error_parameter(err: &KaisatsuError) -> &'static str {
+    const PARAMS: [&str; 10] = [
+        "redirect_uri",
+        "client_id",
+        "response_type",
+        "code_challenge",
+        "request_uri",
+        "kc_action",
+        "prompt",
+        "scope",
+        "acr_values",
+        "max_age",
+    ];
+    let text = err.to_string();
+    PARAMS
+        .into_iter()
+        .find(|p| text.contains(p))
+        .unwrap_or("request")
+}
+
 async fn authorize_get(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
@@ -3330,70 +3449,43 @@ pub async fn dispatch_backchannel_logout(
     Ok(())
 }
 
-fn logout_confirm_labels(locale: &str) -> (&'static str, &'static str, &'static str) {
-    match locale {
-        "sk" => (
-            "Odhlásiť sa",
-            "Chcete sa odhlásiť? Odhlásite sa zo všetkých aplikácií tejto organizácie.",
-            "Odhlásiť sa",
-        ),
-        "cs" => (
-            "Odhlásit se",
-            "Chcete se odhlásit? Odhlásíte se ze všech aplikací této organizace.",
-            "Odhlásit se",
-        ),
-        "de" => (
-            "Abmelden",
-            "Möchten Sie sich abmelden? Sie werden von allen Anwendungen dieser Organisation abgemeldet.",
-            "Abmelden",
-        ),
-        "hu" => (
-            "Kijelentkezés",
-            "Szeretne kijelentkezni? A szervezet minden alkalmazásából kijelentkezik.",
-            "Kijelentkezés",
-        ),
-        _ => (
-            "Sign out",
-            "Do you want to sign out? You are signed out of every app of this organization.",
-            "Sign out",
-        ),
-    }
+/// The language of the sign-out pages: the picker's (`kc_locale`), the app's `ui_locales`, the
+/// browser's, the realm's default; only languages the realm offers.
+fn logout_bundle(
+    params: &BTreeMap<String, String>,
+    headers: &HeaderMap,
+    realm: &RealmConfig,
+) -> Bundle {
+    let accept = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok());
+    let picked = params
+        .get("kc_locale")
+        .filter(|l| kaisatsu_core::i18n::realm_locales(realm).contains(&l.as_str()));
+    let ui = picked
+        .or_else(|| params.get("ui_locales"))
+        .map(String::as_str);
+    Bundle::for_locale(negotiate_for_realm(realm, ui, None, accept))
 }
 
-fn negotiate_logout_locale(
-    ui_locales: Option<&str>,
-    headers: &HeaderMap,
-    realm_default: &str,
-) -> &'static str {
-    let pick = |cand: &str| -> Option<&'static str> {
-        let primary = cand
-            .split(['-', '_', ';', ','])
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase();
-        ["en", "sk", "cs", "de", "hu"]
-            .into_iter()
-            .find(|&l| l == primary)
+/// The name of the app a sign-out page speaks for (the client's name translated), else empty.
+async fn logout_app_name(
+    state: &OidcState,
+    realm: &RealmConfig,
+    client_id: Option<&str>,
+    bundle: &Bundle,
+) -> Result<String> {
+    let Some(id) = client_id else {
+        return Ok(String::new());
     };
-    if let Some(ui) = ui_locales {
-        for part in ui.split_whitespace() {
-            if let Some(found) = pick(part) {
-                return found;
-            }
-        }
-    }
-    if let Some(al) = headers
-        .get(header::ACCEPT_LANGUAGE)
-        .and_then(|v| v.to_str().ok())
-    {
-        for part in al.split(',') {
-            if let Some(found) = pick(part) {
-                return found;
-            }
-        }
-    }
-    pick(realm_default).unwrap_or("en")
+    Ok(state
+        .store
+        .get_client_by_client_id(&realm.id, id)
+        .await?
+        .and_then(|c| c.name)
+        .filter(|n| !n.trim().is_empty())
+        .map(|n| bundle.translate_client_name(&n))
+        .unwrap_or_default())
 }
 
 /// Mints a single-use, session-bound CSRF token for the logout confirmation form (OIDC
@@ -3452,97 +3544,99 @@ async fn verify_and_consume_logout_csrf_token(
         .map_err(|_| KaisatsuError::Forbidden("logout confirmation token already used".into()))
 }
 
+/// keycloak.v2's logout-confirm page in the theme's words: "Do you want to sign out?" and one
+/// button, with the single-use confirmation token (K5).
 #[allow(clippy::too_many_arguments)]
 fn render_logout_confirm_page(
     mount: &Mount,
     realm: &RealmConfig,
     branding: &BrandingBlock,
-    locale: &str,
+    bundle: &Bundle,
+    app: &str,
     csrf_token: &str,
     client_id: Option<&str>,
     post_logout_redirect_uri: Option<&str>,
     state_param: Option<&str>,
 ) -> Response {
-    let (title, header_text, button_label) = logout_confirm_labels(locale);
     let nonce = random_handle_256()[..16].to_owned();
     let action = format!(
         "{}/realms/{}/protocol/openid-connect/logout",
         mount.path_prefix, realm.realm
     );
-    let css = branding.css_variables();
-    let org_display = if realm.display_name.is_empty() {
-        realm.realm.as_str()
-    } else {
-        realm.display_name.as_str()
+    let mut again = url::form_urlencoded::Serializer::new(String::new());
+    for (name, value) in [
+        ("client_id", client_id),
+        ("post_logout_redirect_uri", post_logout_redirect_uri),
+        ("state", state_param),
+    ] {
+        if let Some(v) = value {
+            again.append_pair(name, v);
+        }
+    }
+    let locale_base_url = format!("{action}?{}", again.finish());
+    let shell = page::Shell {
+        bundle,
+        realm,
+        branding,
+        path_prefix: &mount.path_prefix,
+        app,
+        locale_base_url: &locale_base_url,
     };
-    let mut hidden = format!(
-        r#"<input type="hidden" name="logout_csrf_token" value="{}"/>"#,
-        html_escape(csrf_token)
-    );
-    if let Some(cid) = client_id {
-        hidden.push_str(&format!(
-            r#"<input type="hidden" name="client_id" value="{}"/>"#,
-            html_escape(cid)
-        ));
+    let mut tpl = shell.page("logout-confirm", bundle.get("logoutConfirmTitle"), &nonce);
+    tpl.instructions
+        .push(bundle.get("logoutConfirmHeader").to_owned());
+    let mut hidden = vec![
+        ("logout_csrf_token".to_owned(), csrf_token.to_owned()),
+        ("ui_locales".to_owned(), bundle.locale.to_owned()),
+    ];
+    for (name, value) in [
+        ("client_id", client_id),
+        ("post_logout_redirect_uri", post_logout_redirect_uri),
+        ("state", state_param),
+    ] {
+        if let Some(v) = value {
+            hidden.push((name.to_owned(), v.to_owned()));
+        }
     }
-    if let Some(uri) = post_logout_redirect_uri {
-        hidden.push_str(&format!(
-            r#"<input type="hidden" name="post_logout_redirect_uri" value="{}"/>"#,
-            html_escape(uri)
-        ));
-    }
-    if let Some(st) = state_param {
-        hidden.push_str(&format!(
-            r#"<input type="hidden" name="state" value="{}"/>"#,
-            html_escape(st)
-        ));
-    }
-    let html = format!(
-        "<!DOCTYPE html><html lang=\"{lang}\" dir=\"ltr\"><head><meta charset=\"utf-8\">\
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>{title} · {org}</title>\
-         <style nonce=\"{nonce}\">{css}\
-         body {{ margin:0; background:var(--jc-background); color:var(--jc-text); font-family:var(--jc-font-body); }}\
-         .pf-v5-c-login {{ min-height:100vh; display:flex; align-items:center; justify-content:center; padding:1rem; }}\
-         .pf-v5-c-login__container {{ width:100%; max-width:25rem; }}\
-         .pf-v5-c-login__main {{ background:var(--jc-background); border:1px solid #cbd5e1; border-top:4px solid var(--jc-primary); border-radius:0.375rem; padding:1.5rem; }}\
-         .pf-v5-c-button {{ display:inline-block; width:100%; padding:0.625rem 1rem; font-size:1rem; font-weight:600; border:none; border-radius:0.25rem; background:var(--jc-primary); color:var(--jc-primary-fg); cursor:pointer; }}\
-         </style></head>\
-         <body id=\"keycloak-bg\" data-page-id=\"login-logout-confirm\">\
-         <div class=\"pf-v5-c-login\"><div class=\"pf-v5-c-login__container\">\
-         <main class=\"pf-v5-c-login__main\">\
-         <h1 id=\"kc-page-title\">{title}</h1>\
-         <p id=\"instruction1\">{header}</p>\
-         <form id=\"kc-logout-confirm-form\" action=\"{action}\" method=\"post\">\
-         {hidden}\
-         <button class=\"pf-v5-c-button\" id=\"kc-logout\" name=\"confirmLogout\" type=\"submit\">{btn}</button>\
-         </form></main></div></div></body></html>",
-        lang = html_escape(locale),
-        title = html_escape(title),
-        org = html_escape(org_display),
-        nonce = nonce,
-        css = css,
-        header = html_escape(header_text),
-        action = html_escape(&action),
-        hidden = hidden,
-        btn = html_escape(button_label),
-    );
-    let csp = format!(
-        "default-src 'self'; script-src 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
-    );
+    tpl.form = Some(page::Form {
+        id: "kc-logout-confirm-form".into(),
+        action,
+        hidden,
+        submit_name: "confirmLogout".into(),
+        submit_id: "kc-logout".into(),
+        submit_label: bundle.get("doLogout").to_owned(),
+        ..page::Form::default()
+    });
+    page_response(&tpl)
+}
+
+/// keycloak.v2's info page after a sign-out without a way back: "You are logged out".
+fn render_signed_out_page(
+    mount: &Mount,
+    realm: &RealmConfig,
+    branding: &BrandingBlock,
+    bundle: &Bundle,
+) -> Response {
+    let shell = page::Shell {
+        bundle,
+        realm,
+        branding,
+        path_prefix: &mount.path_prefix,
+        app: "",
+        locale_base_url: "",
+    };
+    let nonce = random_handle_256()[..16].to_owned();
+    let mut tpl = shell.page("info", bundle.get("successLogout"), &nonce);
+    tpl.instructions
+        .push(bundle.get("successLogout").to_owned());
+    page_response(&tpl)
+}
+
+fn page_response(tpl: &page::Page) -> Response {
     (
         StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8".to_owned()),
-            (header::CONTENT_SECURITY_POLICY, csp),
-            (header::X_FRAME_OPTIONS, "DENY".to_owned()),
-            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
-            (
-                header::CACHE_CONTROL,
-                "no-store, no-cache, must-revalidate".to_owned(),
-            ),
-        ],
-        html,
+        page::security_headers(&tpl.nonce, "'self'"),
+        tpl.html(),
     )
         .into_response()
 }
@@ -3692,11 +3786,9 @@ async fn handle_logout_request(
                 post_logout.map(String::as_str),
                 state_param.map(String::as_str),
             )?;
-            let locale = negotiate_logout_locale(
-                params.get("ui_locales").map(String::as_str),
-                &headers,
-                &realm.default_locale,
-            );
+            let bundle = logout_bundle(&params, &headers, &realm);
+            let app = logout_app_name(&state, &realm, client_id_param.map(String::as_str), &bundle)
+                .await?;
             let branding = state
                 .store
                 .get_branding(
@@ -3710,7 +3802,8 @@ async fn handle_logout_request(
                 &mount,
                 &realm,
                 &branding,
-                locale,
+                &bundle,
+                &app,
                 &csrf,
                 client_id_param.map(String::as_str),
                 post_logout.map(String::as_str),
@@ -3750,13 +3843,16 @@ async fn handle_logout_request(
             .into_response());
     }
 
-    Ok((
-        StatusCode::OK,
-        [
-            (header::SET_COOKIE, clear_cookie),
-            (header::CONTENT_TYPE, "text/html; charset=utf-8".to_owned()),
-        ],
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Signed out</title></head><body><h1>Signed out</h1></body></html>",
-    )
-        .into_response())
+    let bundle = logout_bundle(&params, &headers, &realm);
+    let branding = state
+        .store
+        .get_branding(&realm.id, None)
+        .await?
+        .unwrap_or_default()
+        .sanitised();
+    let mut resp = render_signed_out_page(&mount, &realm, &branding, &bundle);
+    if let Ok(v) = header::HeaderValue::from_str(&clear_cookie) {
+        resp.headers_mut().append(header::SET_COOKIE, v);
+    }
+    Ok(resp)
 }
