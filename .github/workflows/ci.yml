@@ -4,8 +4,10 @@ name: ci
 # Four Cargo workspaces live here: the root (bins/jc and the modules it links) and the nested
 # crates/antares, crates/ekiben and crates/portal, each with its own lockfile; each is its own job.
 # Jobs are gated by the paths changed since the base (`changes`): a docs-only change runs only
-# `changes` (gitleaks runs in it). A dispatch runs every job (the repository is private and its
-# minutes are metered, so there is no schedule; to put one back: `schedule: [{ cron: "7 2 * * *" }]`).
+# `changes` (gitleaks runs in it). A dispatch runs every job. There is no schedule (to put one
+# back: `schedule: [{ cron: "7 2 * * *" }]`). The repository is public: its standard runners have
+# 4 cores (root-test prints nproc) and cost no minutes, but the account runs at most 20 jobs at
+# once across its repositories, so each job here takes a slot from the others.
 #
 # A push to main ships (ship-proof/** behaves like main, for measuring the pipeline without
 # touching main): `image` (image.yml, mode build) compiles the release binary and pushes the image
@@ -104,12 +106,16 @@ jobs:
   # apps tests create their own roles). nextest runs the binaries side by side; the tests sharing
   # one module's database stay one at a time (.config/nextest.toml). The tests are split in
   # four jobs (two of three took 333 s of tests each, run 42616261654; with three, one runner's
-  # 1.4x slower tests still set the run, 42766258305), each with its own Postgres: every job
-  # compiles the same warm build (no archive to
-  # upload and download) and runs its partition of the tests, balanced by the times
-  # .github/ci-durations.json records (test-part.py --nextest; a test with no recorded time still
-  # lands in exactly one); the first also runs the doc tests, which the split counts. The
-  # partition job names are listed in changes.sh (covered).
+  # 1.4x slower tests still set the run, 42766258305), each with its own Postgres, by test
+  # binary: each job builds and runs only its share of the targets (test-part.py --binaries:
+  # `--test x` per integration test name, the lib, bin and example tests as one block, the names
+  # of one serial group together, balanced by the build and test times .github/ci-durations.json
+  # and cargo --timings record; a target with no recorded time still lands in exactly one).
+  # Building every test binary in every job took 2-4 min of the 5-8 (215 uncacheable rustc
+  # calls, run 42812938101); the same targets with --workspace compile the same units with the
+  # same features (cargo --unit-graph). assistant::chat_tests (600-800 s of tests) is built in
+  # two jobs and its tests split by name (test-part.py --pieces). The first job also runs the
+  # doc tests, which the split counts. The partition job names are listed in changes.sh (covered).
   root-test:
     name: root-test-${{ matrix.part }}
     needs: changes
@@ -167,19 +173,26 @@ jobs:
         with: { key: root-test }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: cargo-nextest }
-      # Build once, then run this job's partition from the built binaries (no cargo call, so no build lock):
-      # job 1 compiles and runs the doc tests beside it instead of after it (1-2 min when a crate
-      # every lib links changed, run 42617984832).
+      # Build this job's targets once, then run its tests from the built binaries (no cargo call, so
+      # no build lock): job 1 compiles and runs the doc tests beside it instead of after it (1-2 min
+      # when a crate every lib links changed, run 42617984832).
       - run: |
-          cargo nextest list --workspace --locked --profile ci --list-type binaries-only --message-format json > "$RUNNER_TEMP/binaries.json"
+          echo "nproc: $(nproc)"
+          # the doc build beside the first job's tests slowed them by up to 1.7x (run 42756711313)
+          plan="root ${{ matrix.part }} ${{ strategy.job-total }} --extra 1=45"
+          # shellcheck disable=SC2086
+          python3 .github/scripts/test-part.py --binaries $plan > "$RUNNER_TEMP/targets.txt"
+          set --; while IFS= read -r arg; do set -- "$@" "$arg"; done < "$RUNNER_TEMP/targets.txt"
+          echo "targets: $*"
+          cargo nextest list --workspace --locked --profile ci --list-type binaries-only --message-format json "$@" > "$RUNNER_TEMP/binaries.json"
           cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
           doc=
           if [ "${{ matrix.part }}" = 1 ]; then
             cargo test --workspace --locked --no-fail-fast --doc > "$RUNNER_TEMP/doc.log" 2>&1 & doc=$!
           fi
           for _ in $(seq 1 60); do docker exec assistant-pg /usr/lib/postgresql/16/bin/pg_isready -h 127.0.0.1 -U postgres && break; sleep 1; done
-          # the doc build beside the first job's tests slowed them by up to 1.7x (run 42756711313)
-          python3 .github/scripts/test-part.py --nextest root ${{ matrix.part }} ${{ strategy.job-total }} --extra 1=45 \
+          # shellcheck disable=SC2086
+          python3 .github/scripts/test-part.py --pieces $plan \
             --reuse "$RUNNER_TEMP/binaries.json" "$RUNNER_TEMP/cargo-metadata.json" > "$RUNNER_TEMP/part.txt"
           set --; while IFS= read -r term; do set -- "$@" -E "$term"; done < "$RUNNER_TEMP/part.txt"
           tests=0
