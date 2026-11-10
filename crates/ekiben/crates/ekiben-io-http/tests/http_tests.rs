@@ -309,6 +309,99 @@ async fn a_stream_reaches_the_hosts_broker_mount_and_no_other_loopback_target() 
     assert_eq!(*seen.lock().unwrap(), vec!["/broker/hop"]);
 }
 
+/// A listener recording the `X-Request-Id` of every call (empty when none came).
+async fn id_listener() -> (std::net::SocketAddr, Arc<std::sync::Mutex<Vec<String>>>) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let app = Router::new().fallback(move |headers: HeaderMap| {
+        let log = log.clone();
+        async move {
+            let id = headers
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default();
+            log.lock().unwrap().push(id.to_string());
+            (StatusCode::OK, [("content-type", "application/json")], "{}")
+        }
+    });
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (addr, seen)
+}
+
+async fn get_n(reg: &Registry, pctx: &ProcContext, conf: serde_json::Value, n: usize) {
+    let conf = ComponentConfig::from_json_value(&conf, "noop", None).unwrap();
+    let proc = reg.build_processor(&conf, pctx, "0").unwrap();
+    for _ in 0..n {
+        let out = proc
+            .process_batch(pctx, vec![Part::from_str("{}")])
+            .await
+            .unwrap();
+        assert!(out[0][0].error_get().is_none());
+    }
+}
+
+/// A stream's calls to the host's own listener name the stream to it, numbered, so the gateway's
+/// and the broker's lines for a write carry the stream's reference; a configured id is kept, and
+/// a call to anywhere else gets no header of ours.
+#[tokio::test]
+async fn a_stream_names_its_calls_to_the_hosts_listener_and_no_other() {
+    let (addr, seen) = id_listener().await;
+    let target = ekiben_core::HostTarget {
+        addr,
+        path_prefixes: vec!["/broker".into()],
+        late: None,
+    };
+    let (reg, pctx) = host_target_contexts(Some(target));
+    let url = format!("http://{addr}/broker/ngsi-ld/v1/entityOperations/upsert");
+    get_n(
+        &reg,
+        &pctx,
+        serde_json::json!({"http": {"url": url, "verb": "GET"}}),
+        2,
+    )
+    .await;
+    let ids = seen.lock().unwrap().clone();
+    assert_eq!(ids.len(), 2, "{ids:?}");
+    let run = ids[0]
+        .strip_suffix("-1")
+        .expect("the first call is <run>-1");
+    assert!(
+        run.len() == 32 && run.bytes().all(|b| b.is_ascii_hexdigit()),
+        "{ids:?}"
+    );
+    assert_eq!(ids[1], format!("{run}-2"));
+
+    seen.lock().unwrap().clear();
+    let headers = serde_json::json!({"X-Request-Id": "set-by-the-pipeline"});
+    get_n(
+        &reg,
+        &pctx,
+        serde_json::json!({"http": {"url": url, "verb": "GET", "headers": headers}}),
+        1,
+    )
+    .await;
+    assert_eq!(*seen.lock().unwrap(), vec!["set-by-the-pipeline"]);
+
+    seen.lock().unwrap().clear();
+    let (reg, pctx, _) = setup_contexts(true);
+    get_n(
+        &reg,
+        &pctx,
+        serde_json::json!({"http": {"url": url, "verb": "GET"}}),
+        1,
+    )
+    .await;
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![""],
+        "no id to a listener that is not the host's"
+    );
+}
+
 /// jc's Portal binds its internal listener after ekiben is built: a stream's report sinks reach
 /// it under its pipeline routes once the address is set, and nothing on it before or elsewhere.
 #[tokio::test]

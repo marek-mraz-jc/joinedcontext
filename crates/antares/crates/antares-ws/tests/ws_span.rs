@@ -5,7 +5,7 @@
 
 use antares_ops::test_kit::TestBroker;
 use antares_ws::{Hub, Limits, Sink, Ws};
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -38,7 +38,8 @@ impl std::io::Write for Lines {
 }
 
 /// The close line, written by the session task after the upgrade answered,
-/// names the span the upgrade request ran in.
+/// names the span the upgrade request ran in, and so does the delete of the
+/// socket's Subscriptions once its resume grace ran out.
 #[tokio::test]
 async fn the_session_logs_in_the_span_of_its_upgrade_request() -> Result<(), String> {
     let lines = Lines::default();
@@ -48,7 +49,10 @@ async fn the_session_logs_in_the_span_of_its_upgrade_request() -> Result<(), Str
         .with_ansi(false)
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
-    let hub = Hub::new(Limits::default());
+    let hub = Hub::new(Limits {
+        resume_grace: Duration::from_millis(50),
+        ..Limits::default()
+    });
     let broker = TestBroker::with_sinks(vec![Box::new(Sink::new(hub.clone()))], None).await?;
     let app = broker
         .serve_mounted(vec![antares_ops::mount(Ws::new(hub.clone()))])?
@@ -74,18 +78,24 @@ async fn the_session_logs_in_the_span_of_its_upgrade_request() -> Result<(), Str
         .await
         .map_err(|e| e.to_string())?;
     let _welcome = ws.next().await;
+    let subscribe = r#"{"metadata": {"x-op": "x-subscribe", "x-id": "1"},
+        "body": {"type": "Subscription", "entities": [{"type": "Car"}]}}"#;
+    ws.send(subscribe.into()).await.map_err(|e| e.to_string())?;
+    let _made = ws.next().await;
     ws.close(None).await.map_err(|e| e.to_string())?;
     for _ in 0..500 {
-        if lines.text().contains("websocket closed") {
+        if lines.text().contains("delete_subscription") {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     let text = lines.text();
-    let closed = text
-        .lines()
-        .find(|l| l.contains("websocket closed"))
-        .ok_or(format!("no close line in {text}"))?;
-    assert!(closed.contains("upgrade{rid=\"ws-span-0001\"}"), "{closed}");
+    for what in ["websocket closed", "delete_subscription"] {
+        let line = text
+            .lines()
+            .find(|l| l.contains(what))
+            .ok_or(format!("no {what} line in {text}"))?;
+        assert!(line.contains("upgrade{rid=\"ws-span-0001\"}"), "{line}");
+    }
     Ok(())
 }
