@@ -10,8 +10,9 @@ use chrono::{DateTime, Datelike, Duration, Utc};
 use dataroom_core::branding::{origin_of, Address};
 use dataroom_core::vocab::find_licence;
 use dataroom_core::{
-    localized_text, publisher_badge_svg_data_uri, resolve_publisher_branding, BrandingBlock, Catalogue, Dataset, Distribution,
-    Publisher, PublisherBranding, RecordState, ResourceView, Visibility,
+    localized_text, publisher_badge_svg_data_uri, resolve_publisher_branding, BrandingBlock,
+    Catalogue, Dataset, Distribution, Publisher, PublisherBranding, RecordState, ResourceView,
+    Visibility,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -2526,9 +2527,8 @@ pub fn publisher_card_info(
     let title = localized_text(&p.title, lang, default_lang)
         .unwrap_or(&p.name)
         .to_owned();
-    let configured_badge = configured.and_then(|c| {
-        publisher_badge_svg_data_uri(c.initials.as_deref()?, c.colour.as_deref()?)
-    });
+    let configured_badge = configured
+        .and_then(|c| publisher_badge_svg_data_uri(c.initials.as_deref()?, c.colour.as_deref()?));
     let fb = PublisherBranding {
         initials: p.badge_initials.clone().or_else(|| {
             let init: String = p

@@ -1045,13 +1045,12 @@ pub fn render_home_page_mounted(
                 .iter()
                 .filter(|d| d.publisher_id == p.name || d.publisher_id == p.id)
                 .count();
-            let (title, image, desc) =
-                publisher_card_info(
-                    p,
-                    chrome.branding.publishers.get(&p.name),
-                    &chrome.lang,
-                    &catalogue.default_language,
-                );
+            let (title, image, desc) = publisher_card_info(
+                p,
+                chrome.branding.publishers.get(&p.name),
+                &chrome.lang,
+                &catalogue.default_language,
+            );
             let d_str = desc.unwrap_or_default();
             let d_short = if d_str.chars().count() > 80 {
                 format!(
@@ -1462,11 +1461,11 @@ pub fn render_dataset_page_full(
         .unwrap_or_else(|| dataset.publisher_id.clone());
     let (publisher_title, publisher_image, pub_desc_opt) = match publisher {
         Some(p) => publisher_card_info(
-                    p,
-                    chrome.branding.publishers.get(&p.name),
-                    &chrome.lang,
-                    &catalogue.default_language,
-                ),
+            p,
+            chrome.branding.publishers.get(&p.name),
+            &chrome.lang,
+            &catalogue.default_language,
+        ),
         None => (
             publisher_slug.clone(),
             "/base/images/placeholder-organization.png".into(),
@@ -1851,13 +1850,12 @@ pub fn render_organization_list_page(
         .iter()
         .filter(|p| p.state == RecordState::Active)
         .filter_map(|p| {
-            let (title, image, desc) =
-                publisher_card_info(
-                    p,
-                    chrome.branding.publishers.get(&p.name),
-                    &chrome.lang,
-                    &catalogue.default_language,
-                );
+            let (title, image, desc) = publisher_card_info(
+                p,
+                chrome.branding.publishers.get(&p.name),
+                &chrome.lang,
+                &catalogue.default_language,
+            );
             if !q_lower.is_empty()
                 && !title.to_lowercase().contains(&q_lower)
                 && !p.name.to_lowercase().contains(&q_lower)
@@ -1948,13 +1946,12 @@ pub fn render_organization_read_page(
         csp_nonce,
     );
     let labels = UiLabels::for_lang(&chrome.lang);
-    let (title, image, desc) =
-        publisher_card_info(
-                    publisher,
-                    chrome.branding.publishers.get(&publisher.name),
-                    &chrome.lang,
-                    &catalogue.default_language,
-                );
+    let (title, image, desc) = publisher_card_info(
+        publisher,
+        chrome.branding.publishers.get(&publisher.name),
+        &chrome.lang,
+        &catalogue.default_language,
+    );
     let d_str = desc.unwrap_or_default();
     let pub_view = PublisherRowView {
         name: publisher.name.clone(),

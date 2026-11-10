@@ -2582,10 +2582,24 @@ async fn pages_draw_the_brand_marks_the_footer_logo_and_each_configured_badge() 
     let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect width="48" height="48" fill="#0000bf"/></svg>"##;
     let w = world_with(|s| router(s.with_installation_branding(host_branding(svg)))).await;
     let a = get(&w.app, "/logo.svg", None).await;
-    assert_eq!((a.status, a.body.as_str()), (StatusCode::OK, svg), "the configured logo");
+    assert_eq!(
+        (a.status, a.body.as_str()),
+        (StatusCode::OK, svg),
+        "the configured logo"
+    );
     let lockup = get(&w.app, "/jc-logo.svg", None).await;
-    assert!(lockup.body.contains("viewBox=\"0 0 266 56\""), "old prod's lockup in the header");
-    for uri in ["/", "/organization/", "/organization/city", "/dataset/open", "/assistants", "/about"] {
+    assert!(
+        lockup.body.contains("viewBox=\"0 0 266 56\""),
+        "old prod's lockup in the header"
+    );
+    for uri in [
+        "/",
+        "/organization/",
+        "/organization/city",
+        "/dataset/open",
+        "/assistants",
+        "/about",
+    ] {
         let a = get(&w.app, uri, None).await;
         assert_eq!(a.status, StatusCode::OK, "{uri}");
         // Each of the three chips holds its brand mark inline: no request to another origin.
@@ -2594,17 +2608,33 @@ async fn pages_draw_the_brand_marks_the_footer_logo_and_each_configured_badge() 
             assert!(a.body.contains(&seg), "{uri}: {mark}");
         }
         assert!(
-            a.body.contains("<div class=\"jc-footer-brand\">\n          <img src=\"/logo.svg\" alt=\"\" />"),
+            a.body.contains(
+                "<div class=\"jc-footer-brand\">\n          <img src=\"/logo.svg\" alt=\"\" />"
+            ),
             "{uri}: the footer mark"
         );
     }
     let a = get(&w.app, "/en/organization/", None).await;
     let drawn = dataroom_core::publisher_badge_svg_data_uri("CTY", "#b4232a").unwrap();
-    assert!(a.body.contains(&drawn), "the configured badge on the publishers page");
-    assert!(a.body.contains("The city's own words") || a.body.contains("The city&#x27;s own words"));
+    assert!(
+        a.body.contains(&drawn),
+        "the configured badge on the publishers page"
+    );
+    assert!(
+        a.body.contains("The city's own words") || a.body.contains("The city&#x27;s own words")
+    );
     let a = get(&w.app, "/assistants", None).await;
-    assert!(a.body.contains("<svg class=\"jc-note-icon\""), "the connector note's mark");
-    assert_eq!(a.body.matches("<svg class=\"jc-ai-logo\" width=\"32\"").count(), 3, "a mark per card");
+    assert!(
+        a.body.contains("<svg class=\"jc-note-icon\""),
+        "the connector note's mark"
+    );
+    assert_eq!(
+        a.body
+            .matches("<svg class=\"jc-ai-logo\" width=\"32\"")
+            .count(),
+        3,
+        "a mark per card"
+    );
 
     // A logo SVG the logo upload would refuse is never served on the catalogue's origin.
     let bad = r#"<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>"#;

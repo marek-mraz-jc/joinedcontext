@@ -114,5 +114,8 @@ fn the_default_logo_draws_its_words_as_paths_so_nothing_is_cut() {
     // (public__jc-logo.svg, 266x56) draws its words as paths, so no font can widen them.
     let svg = dataroom_web::JC_LOGO_SVG;
     assert!(svg.contains("viewBox=\"0 0 266 56\""), "the 266x56 lockup");
-    assert!(svg.contains("<path") && !svg.contains("<text"), "words as paths");
+    assert!(
+        svg.contains("<path") && !svg.contains("<text"),
+        "words as paths"
+    );
 }

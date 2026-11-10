@@ -1206,7 +1206,10 @@ async fn handle_sitemap_xml(State(state): State<DataroomState>, headers: HeaderM
 /// logo upload accepts is served on this origin; otherwise, or for no catalogue, the lockup.
 async fn handle_logo_svg(State(state): State<DataroomState>, headers: HeaderMap) -> Response {
     let own = match state.resolve_context(&headers).await {
-        Ok((_ctx, cat)) => cat.effective_branding(Some(state.branding_of(&cat))).logo_svg,
+        Ok((_ctx, cat)) => {
+            cat.effective_branding(Some(state.branding_of(&cat)))
+                .logo_svg
+        }
         Err(_) => None,
     };
     let body = own

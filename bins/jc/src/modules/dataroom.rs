@@ -140,7 +140,7 @@ fn configured_branding(cfg: &DataroomSection) -> Result<BrandingBlock, String> {
             Some(other) => {
                 return Err(format!(
                     "[dataroom.branding] {key} = {other:?}: \"logo.svg\" (with logo_svg) or \"jc-logo.svg\""
-                ))
+                ));
             }
         }
     }
@@ -968,7 +968,10 @@ mod tests {
             .count();
         assert_eq!(worded, 6);
         let live = crate::siblings::LiveAddresses::default();
-        assert_eq!(installation_branding(&own, &live, None).publishers, own.publishers);
+        assert_eq!(
+            installation_branding(&own, &live, None).publishers,
+            own.publishers
+        );
     }
 
     #[test]
@@ -986,7 +989,12 @@ mod tests {
             configured_branding(&cfg)
         };
         assert!(seed("PHA", "#b4232a").is_ok());
-        for (initials, colour) in [("", "#b4232a"), ("PRAHA", "#b4232a"), ("PHA", "red"), ("PHA", "#b4232a\"/>")] {
+        for (initials, colour) in [
+            ("", "#b4232a"),
+            ("PRAHA", "#b4232a"),
+            ("PHA", "red"),
+            ("PHA", "#b4232a\"/>"),
+        ] {
             let e = seed(initials, colour).expect_err(initials);
             assert!(e.starts_with("[dataroom.publishers.praha]"), "{e}");
         }
@@ -999,11 +1007,20 @@ mod tests {
         };
         let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0 0h1v1z"/></svg>"#;
         let ok = logo(Some("logo.svg"), Some(svg)).expect("logo.svg with its SVG");
-        assert_eq!((ok.logo.as_str(), ok.favicon.as_str()), ("logo.svg", "logo.svg"));
+        assert_eq!(
+            (ok.logo.as_str(), ok.favicon.as_str()),
+            ("logo.svg", "logo.svg")
+        );
         assert_eq!(ok.logo_svg.as_deref(), Some(svg));
         assert!(logo(Some("jc-logo.svg"), None).is_ok());
-        assert!(logo(Some("logo.svg"), None).is_err(), "no file serves logo.svg");
-        assert!(logo(Some("other.png"), Some(svg)).is_err(), "no route serves other.png");
+        assert!(
+            logo(Some("logo.svg"), None).is_err(),
+            "no file serves logo.svg"
+        );
+        assert!(
+            logo(Some("other.png"), Some(svg)).is_err(),
+            "no route serves other.png"
+        );
         let e = logo(None, Some(r#"<svg onload="alert(1)"></svg>"#)).unwrap_err();
         assert!(e.contains("logo_svg"), "{e}");
     }

@@ -1469,7 +1469,10 @@ fn publisher_card_info_falls_back_to_name_badge_and_placeholder() {
         publisher_card_info(&logo, None, "sk", "sk").1,
         "https://x.example/logo.png"
     );
-    assert_eq!(publisher_card_info(&logo, None, "sk", "sk").0, "Vydavateľ x");
+    assert_eq!(
+        publisher_card_info(&logo, None, "sk", "sk").0,
+        "Vydavateľ x"
+    );
 }
 
 fn badge_text(image: &str) -> String {
@@ -1505,7 +1508,10 @@ fn publisher_card_info_draws_each_publishers_configured_badge_and_words() {
     let words = configured("PHA", "#b4232a", &[("en", "Prague"), ("sk", "Praha")]);
     let (_, image, desc) = publisher_card_info(&praha, Some(&words), "sk", "sk");
     let svg = badge_text(&image);
-    assert!(svg.contains("fill=\"#b4232a\"") && svg.contains(">PHA</text>"), "{svg}");
+    assert!(
+        svg.contains("fill=\"#b4232a\"") && svg.contains(">PHA</text>"),
+        "{svg}"
+    );
     assert_eq!(desc.as_deref(), Some("Praha"));
     // A language with no words of its own reads English, not the catalogue default (jc_org).
     let (_, _, desc) = publisher_card_info(&praha, Some(&words), "cs", "sk");
@@ -1536,14 +1542,13 @@ fn publisher_card_info_keeps_ckans_own_picture_and_words_over_the_configured_one
 #[test]
 fn publisher_card_info_escapes_configured_initials_and_refuses_a_bad_colour() {
     let p = publisher("x", json!({}));
-    let (_, image, _) = publisher_card_info(
-        &p,
-        Some(&configured("<b>", "#0000bf", &[])),
-        "sk",
-        "sk",
-    );
+    let (_, image, _) =
+        publisher_card_info(&p, Some(&configured("<b>", "#0000bf", &[])), "sk", "sk");
     let svg = badge_text(&image);
-    assert!(svg.contains(">&lt;b&gt;</text>") && !svg.contains("<b>"), "{svg}");
+    assert!(
+        svg.contains(">&lt;b&gt;</text>") && !svg.contains("<b>"),
+        "{svg}"
+    );
     // A colour that is no hex value draws no configured badge: the stored or name badge stands.
     let (_, image, _) = publisher_card_info(
         &p,
@@ -1552,7 +1557,10 @@ fn publisher_card_info_escapes_configured_initials_and_refuses_a_bad_colour() {
         "sk",
     );
     let svg = badge_text(&image);
-    assert!(svg.contains(">X</text>") && !svg.contains("script"), "{svg}");
+    assert!(
+        svg.contains(">X</text>") && !svg.contains("script"),
+        "{svg}"
+    );
 }
 
 // ---- small text helpers ----
