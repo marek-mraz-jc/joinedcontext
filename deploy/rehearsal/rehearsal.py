@@ -541,10 +541,11 @@ def realm_of(state: Path) -> str:
 SECRET_VAR = re.compile(r"\$\((?:env:)?([A-Z][A-Z0-9_]*)\)")
 
 
-def to_file_refs(realm: dict, secrets_dir: Path) -> dict:
-    """Every `$(env:NAME)` / `$(NAME)` secret as `$(file:<secrets_dir>/NAME)`: kaisatsu inside jc
-    reads no environment, only files under its import secrets dir."""
-    text = SECRET_VAR.sub(lambda m: "$(file:%s)" % (secrets_dir / m[1]), json.dumps(realm))
+def to_file_refs(realm: dict) -> dict:
+    """Every `$(env:NAME)` / `$(NAME)` secret as `$(file:NAME)`: kaisatsu inside jc reads no
+    environment, only files under its import secrets dir, and reads a relative name there
+    (crates/kaisatsu/import resolve_secret_value), so a restored home at another path applies."""
+    text = SECRET_VAR.sub(lambda m: "$(file:%s)" % m[1], json.dumps(realm))
     return json.loads(text)
 
 
@@ -561,10 +562,11 @@ def pipeline_clients(realm: dict) -> list[tuple[str, str]]:
 
 
 def secret_file(ref: str, secrets: Path) -> Path:
-    """The file a realm secret reference names: `$(file:path)`, or the rehearsal's realm-NAME."""
+    """The file a realm secret reference names: `$(file:path)` (a relative name under
+    <secrets>/realm, kaisatsu's import secrets dir), or the rehearsal's realm-NAME."""
     m = re.fullmatch(r"\$\(file:(.+)\)", ref.strip())
     if m:
-        return Path(m[1])
+        return secrets / "realm" / m[1]
     return secrets / f"realm-{SECRET_VAR.search(ref)[1]}"
 
 
@@ -766,7 +768,7 @@ def cmd_realms(a):
         (dst.parent / "realm-pipeline-clients.txt").write_text(
             "".join(f"{cid} {var}\n" for cid, var in pipeline_clients(clean)))
         if a.secrets_dir:
-            clean = to_file_refs(clean, Path(a.secrets_dir))
+            clean = to_file_refs(clean)
         write_private(dst / f"{name}.json", json.dumps(clean, indent=1))
         taken.append(name)
     if len(taken) > 1:
@@ -2226,7 +2228,7 @@ def main(argv=None):
     s.add_argument("--public-base", help="the rehearsal's own address: a twin of each client URL on the source host")
     s.add_argument("--people", help="a 0700 dir holding users-<realm>.jsonl (dev only): people without credentials")
     s.add_argument("--demo-users", help="the deployment's demo-users.yaml: the personas that keep e-mail and names")
-    s.add_argument("--secrets-dir", help="write each secret as $(file:<dir>/NAME), the form kaisatsu in jc reads")
+    s.add_argument("--secrets-dir", help="kaisatsu's import secrets dir: write each secret as $(file:NAME), read under it")
     s.add_argument("--lines-from", help="the release's rendered keycloak-config values (rehearsal.py render)")
     s.add_argument("--lines-to", help="main's rendered keycloak-config values: its realm lines go over the export")
     s = sub.add_parser("import"); s.add_argument("--export", required=True); s.add_argument("--base", required=True)
