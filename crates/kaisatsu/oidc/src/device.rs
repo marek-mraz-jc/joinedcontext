@@ -199,6 +199,7 @@ fn page_path(mount: &Mount, realm: &RealmConfig) -> String {
 
 /// A device page (keycloak.v2's login-oauth2-device-verify-user-code, login-oauth-grant and
 /// info) in the realm's language and branding; `fill` adds the page's content.
+#[allow(clippy::too_many_arguments)]
 async fn render(
     state: &OidcState,
     mount: &Mount,

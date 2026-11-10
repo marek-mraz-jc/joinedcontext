@@ -693,9 +693,8 @@ async fn authorize_page(
     };
     let nonce = random_handle_256()[..16].to_owned();
     let mut tpl = shell.page("error", bundle.get("errorTitle"), &nonce);
-    tpl.alert = Some(page::Alert::danger(
-        &bundle.format("invalidParameterMessage", &[error_parameter(&err)]),
-    ));
+    tpl.instructions
+        .push(bundle.format("invalidParameterMessage", &[error_parameter(&err)]));
     match client
         .and_then(|c| c.base_url)
         .filter(|u| u.starts_with("https://") || u.starts_with("http://"))
