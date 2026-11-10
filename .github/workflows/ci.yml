@@ -75,6 +75,8 @@ jobs:
           BEFORE: ${{ github.event.before }}
           BRANCH: ${{ github.ref_name }}
         run: sh .github/scripts/gitleaks.sh
+      # The T-6676 R cleanup tool's selftests against a stub gateway (stdlib, seconds).
+      - run: python3 -m unittest discover -s bins/jc/deploy/minted-cleanup
       - if: steps.paths.outputs.workflows == 'true'
         run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
       - if: steps.paths.outputs.workflows == 'true'
