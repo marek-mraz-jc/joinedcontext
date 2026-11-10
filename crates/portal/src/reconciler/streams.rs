@@ -2953,14 +2953,15 @@ output:
             interpolated = call("interpolated", "verb: POST,", &format!("{ep}/${{! @op }}"), ""),
             port = call("port", "verb: POST,", "http://${JC_GATEWAY_HOST}:9/ngsi-ld/v1/entityOperations/delete", ""),
         );
-        let mut rendered = render_stream(&spec, "p", "bbsk", &ds, "src", "abc123", Some(&bento))
-            .expect("renders");
+        let mut rendered =
+            render_stream(&spec, "p", "bbsk", &ds, "src", "abc123", Some(&bento)).expect("renders");
         StreamDeployer::new("http://runner").reporting(&mut rendered, "bbsk", "p", &[]);
 
         fn calls(value: &Value, out: &mut std::collections::BTreeMap<String, Value>) {
             match value {
                 Value::Object(map) => {
-                    if let Some(case) = map.pointer("/http/headers/X-Case").and_then(Value::as_str) {
+                    if let Some(case) = map.pointer("/http/headers/X-Case").and_then(Value::as_str)
+                    {
                         out.insert(case.to_owned(), map["http"]["headers"].clone());
                     }
                     map.values().for_each(|v| calls(v, out));
@@ -2976,10 +2977,18 @@ output:
             "pipeline step: a delete in the pipeline's own steps, pipeline p stream bbsk.p",
         );
         for case in ["switch", "try", "temporal", "host", "entity"] {
-            assert_eq!(found[case]["JC-Reason"], reason.as_str(), "{case}: {rendered}");
+            assert_eq!(
+                found[case]["JC-Reason"],
+                reason.as_str(),
+                "{case}: {rendered}"
+            );
         }
         for case in ["evil", "outside", "query", "get", "interpolated", "port"] {
-            assert_eq!(found[case].as_object().map(|h| h.len()), Some(1), "{case}: {rendered}");
+            assert_eq!(
+                found[case].as_object().map(|h| h.len()),
+                Some(1),
+                "{case}: {rendered}"
+            );
         }
         let own = found["own"].as_object().expect("headers");
         assert_eq!(own.len(), 2, "{rendered}");
