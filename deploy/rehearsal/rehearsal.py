@@ -61,6 +61,9 @@ STATE_CLIENT_SECRETS = {"portal-api": "portal-client-secret", PORTAL_ADMIN_CLIEN
 # join it; an imported realm without it gets it, as it gets rehearsal-tester.
 ADMIN_GROUP = "platform-admins"
 IMPORT_WORKERS = 4  # parallel batch writes into the local broker
+# One batch write may wait this long: on a host at load 50+ a 500-entity upsert took over the
+# client's 60 s (gate 2026-11-10T170300Z-gc, call 600 of 3,757), and one timeout ends the import.
+IMPORT_TIMEOUT = 300
 MAX_REPORTED = 200  # refused calls kept in the report; the rest are only counted
 
 
@@ -151,8 +154,8 @@ class Http:
                 self._store(e.headers)
             return e.code, dict(e.headers or {}), e.read() or b""
 
-    def json(self, method, path, body=None, headers=None, form=None):
-        status, hdrs, raw = self.call(method, path, body, headers, form)
+    def json(self, method, path, body=None, headers=None, form=None, timeout=60):
+        status, hdrs, raw = self.call(method, path, body, headers, form, timeout)
         try:
             value = json.loads(raw) if raw else None
         except ValueError:
@@ -1285,7 +1288,7 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, adm
     def upsert(job):
         tenant, batch = job
         st, body = h.json("POST", f"{base}/entityOperations/upsert?options=update", body=batch,
-                          headers={"NGSILD-Tenant": tenant, **auth})
+                          headers={"NGSILD-Tenant": tenant, **auth}, timeout=IMPORT_TIMEOUT)
         ok = len(batch) if st in (200, 201, 204) else \
             len(body.get("success", [])) if st == 207 and isinstance(body, dict) else 0
         with lock:
@@ -1299,7 +1302,8 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, adm
 
     def temporal(job):
         (tenant, eid), ent = job
-        st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant, **auth})
+        st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant, **auth},
+                          timeout=IMPORT_TIMEOUT)
         if st in (200, 201, 204):
             with lock:
                 out["temporal"] += sum(len(v) for k, v in ent.items() if k not in ("id", "type"))
