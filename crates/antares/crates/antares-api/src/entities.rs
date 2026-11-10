@@ -1810,16 +1810,16 @@ async fn filter_rows(
     // refused a dataset's count once its type held MAX_UNDECIDED_ROWS.
     // ponytail: still reads every Entity the policy admits; compile the
     // rules' OR and the shown-set predicates to SQL if that shows up
-    let counting = client_page.filter(|_| {
-        rules.is_some()
-            && judged.is_none()
-            && params.get("count").map(String::as_str) == Some("true")
-    });
     // So too a geoquery or a scopeQ the store narrows but cannot decide: it
     // pages the candidates (`query_candidates`) and the loop below decides
     // them, where one flat read took up to MAX_UNDECIDED_ROWS for a page of
-    // 20 (T-5088: ~1 000 rows, 0.6-1.1 s a statement).
+    // 20 (T-5088: ~1 000 rows, 0.6-1.1 s a statement), and refused a counted
+    // map viewport once its box held that many (jc praha-mapa at 1440 px).
     let undecidable = !geos.is_empty() || scope_q.is_some();
+    let counting = client_page.filter(|_| {
+        ((rules.is_some() && judged.is_none()) || undecidable)
+            && params.get("count").map(String::as_str) == Some("true")
+    });
     let enough = match client_page {
         Some((offset, limit))
             if ((rules.is_some() && judged.is_none()) || undecidable)

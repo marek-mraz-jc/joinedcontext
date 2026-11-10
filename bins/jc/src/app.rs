@@ -445,6 +445,7 @@ pub async fn build_router(
     let mut gateway = None;
     #[cfg_attr(not(feature = "gateway"), allow(unused_mut))]
     let mut apps = None;
+    #[cfg_attr(not(feature = "antares"), allow(unused_mut))]
     let mut hop = None;
     let hosted = crate::siblings::hosted_in_pod(&plans);
     let mut in_pod = (!hosted.is_empty())
