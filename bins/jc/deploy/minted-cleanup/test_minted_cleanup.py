@@ -562,6 +562,13 @@ class Verify(Case):
         self.assertEqual((self.state / "history-for-sweep.tsv").read_text(), f"helsinki\t{urn('Vehicle', 1)}\n")
         self.assertEqual((self.state / "history-left-after-delete.tsv").read_text(), "")
 
+    def test_rows_left_only_in_attr_versions_or_attr_rows_fail_the_check(self):
+        for left in ("0\t0\t3\t0", "0\t0\t0\t2"):
+            code, out = self.verify("", f"helsinki\t{urn('KeyPerformanceIndicator', 4)}\t{left}\n")
+            self.assertEqual(code, 1, out)
+            self.assertEqual((self.state / "history-left-after-delete.tsv").read_text(),
+                             f"helsinki\t{urn('KeyPerformanceIndicator', 4)}\t{left}\n")
+
     def test_history_of_a_deleted_id_and_live_copies_fail(self):
         code, out = self.verify(f"helsinki\t{urn('Tree', 2)}\t\n", f"helsinki\t{urn('Tree', 3)}\t1\t4\n")
         self.assertEqual(code, 1, out)

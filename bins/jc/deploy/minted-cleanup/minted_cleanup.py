@@ -8,7 +8,7 @@
   minted_cleanup.py policies --list L.tsv --endpoints E.tsv --state DIR --until ISO [--owner USER-ID]
   minted_cleanup.py verify --recount R.tsv --history H.tsv --state DIR
 
-L.tsv (README.md's read-only SELECT): tenant, id, types (space-separated), expires_at (ISO or
+L.tsv (sql/list.sql, read-only): tenant, id, types (space-separated), expires_at (ISO or
 empty), refs (the minted ids the entity's document names, space-separated). E.tsv: tenant, the
 Endpoint's slug, the space that Endpoint names (spec.contextSpaceRef, read from the Portal), the
 project. `policies` writes per space the temporary Policy (README.md) for the types listed and,
@@ -30,8 +30,8 @@ from --token-file per batch, or, with --client-secret-file, fetched by client cr
 expires_in has passed (the secret read from its 0600 file per fetch); neither comes from argv or
 the environment, and neither is logged or kept in DIR.
 
-`verify` reads the recount (tenant, id, expires_at) and the history count (tenant, id, temporal
-rows, attr rows) under the prefix: non-expired copies left fail it; when history remains, it
+`verify` reads the recount (tenant, id, expires_at) and the history count (tenant, id, then the
+rows of temporal_entities, attr_instances, attr_versions and attr_rows) under the prefix: non-expired copies left fail it; when history remains, it
 lists expired copies for the broker's expiry sweep and deleted ids whose history stayed.
 """
 
@@ -412,15 +412,15 @@ def verify(a) -> int:
             live[t] += 1
     expired = len(left) - sum(live.values())
     log(state, f"recount: {sum(live.values())} non-expired left {dict(live)}, {expired} expired left")
-    history = tsv(a.history, 4)
+    history = tsv(a.history, 6)
     if not history:
         log(state, "history: none under the prefix; history step skipped")
         return 1 if live else 0
     sweep, stayed = [], []
-    for t, i, temporal, attrs in history:
+    for t, i, *counts in history:
         e = left.get((t, i), "deleted")
         if e == "deleted":
-            stayed.append(f"{t}\t{i}\t{temporal}\t{attrs}")
+            stayed.append("\t".join([t, i, *counts]))
         elif e is not None and e <= now:
             sweep.append(f"{t}\t{i}")
     (state / "history-for-sweep.tsv").write_text("".join(s + "\n" for s in sweep), encoding="utf-8")
