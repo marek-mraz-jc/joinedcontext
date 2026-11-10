@@ -116,6 +116,12 @@ people_args=()
 if [ -n "${REHEARSAL_REALM_LINES_FROM:-}" ] && [ -n "${REHEARSAL_REALM_LINES_TO:-}" ]; then
   people_args+=(--lines-from "$REHEARSAL_REALM_LINES_FROM" --lines-to "$REHEARSAL_REALM_LINES_TO")
 fi
+# Realm lines without an export to render them over would leave the last rendered realm in place
+# while the start looks as if it took them (jc-catalogue-17): refuse that.
+if [ ! -d "$export_dir/keycloak" ] && [ -n "${REHEARSAL_REALM_LINES_FROM:-}${REHEARSAL_REALM_LINES_TO:-}" ]; then
+  echo "up.sh: REHEARSAL_REALM_LINES_* given but $export_dir holds no keycloak/: set REHEARSAL_EXPORT to the bundle, or the last rendered realm stays" >&2
+  exit 1
+fi
 if [ -d "$export_dir/keycloak" ]; then
   python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/state/realms" \
     --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}" --secrets-dir "$home/secrets/realm" \
@@ -262,6 +268,11 @@ printf "$portal_mounts"'%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_con
 # prod's publish-gate hidden list ([dataroom.hidden]): dataroom leaves those datasets out of search
 # and DCAT as prod's catalogue does (jc-catalogue-parity).
 cat "$here/../../bins/jc/docs/catalogue-hidden.toml" >> "$home/jc.toml"
+# prod's two catalogue harvests ([[dataroom.harvest]], jc-catalogue-17): hub-bbsk and
+# nkod-banskabystrica run once at start, then on their schedules; each keeps the datasets prod
+# converted, from od-datasets.json, which the toml names relative to jc.toml.
+cat "$here/../../bins/jc/docs/harvest-sources.toml" >> "$home/jc.toml"
+install -m 644 "$here/../../bins/jc/docs/od-datasets.json" "$home/od-datasets.json"
 # REHEARSAL_JC_TOML_EXTRA: a file appended to jc.toml as is, e.g. the [[organizations]] of a
 # host-mode multiorg run (each Organization on its own *.localhost hosts).
 if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then

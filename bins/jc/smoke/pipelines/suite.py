@@ -24,7 +24,8 @@ portal-reconciler client of --state, signed in by the browser flow, deleted at t
              Pipelines; a resident source is a skip)
   history    GET  /api/v1/projects/{p}/pipelines/{n}/runs        the started run appears and ends;
              one still Queued after --wait is waited for as long as the runs the statuses report
-             queued ahead of it take, at most 15 min (prod's RUN_TIMEOUT)
+             queued ahead of it take (at most 15 min, prod's RUN_TIMEOUT, a round), again while
+             fewer runs are ahead than at the last look; a look with no progress ends the wait
   log        GET  .../runs/{run}/log                             one line per record
   landed     GET  /api/endpoint/{slug}/ngsi-ld/v1/entities/{id}  a record the run sent, modifiedAt
              not before the run started; entities?type=T&count=true at least the run's sent
@@ -178,7 +179,7 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
             r.skip(x, p.key, "", "", f"the run did not start ({st})")
         return
     started = (as_json(raw) or {}).get("run")
-    run, deadline, extended = None, time.time() + wait, None
+    run, deadline, extended, rounds = None, time.time() + wait, None, 0
     while True:
         while time.time() < deadline:
             time.sleep(5)
@@ -192,19 +193,26 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
                 last = _ts(run.get("lastAt"))
                 if last and time.time() - last > 20:
                     break
-        if run or extended is not None:
+        if run:
             break
-        # Still queued: wait as long as the queue says the runs ahead take, once.
+        # Still queued. Prod's Portal has no spacing to wait out: a run-now keeps its place in
+        # due order (dd7d5ce5 src/reconciler/run_queue.rs:767-776, run_now returns
+        # `entry.queued.get_or_insert(now)`) and starts when its lane has room (settle, 700-746).
+        # So wait as long as the queue reports for the runs ahead, again while fewer are ahead
+        # than at the last look (the queue moves), and stop once a round sees no progress.
+        ahead = extended[1] if extended else None
         extended = queue_wait(http, projects, base, wait)
-        if not extended:
+        if not extended or (ahead is not None and extended[1] >= ahead):
             break
-        deadline = time.time() + extended[0] - wait
+        rounds += 1
+        # The first estimate counts from the start, the --wait already spent included.
+        deadline = time.time() + extended[0] - (wait if rounds == 1 else 0)
     why = ""
     if not run:
         st, _, raw = http.call("GET", base)
         said = [f"{c.get('reason')}: {c.get('message')}" for c in conditions(as_json(raw) or {})]
-        waited = (f"{extended[0]:.0f} s ({extended[1]} queued ahead, the queue's runs {extended[2]:.0f} s each)"
-                  if extended else f"{wait:.0f} s")
+        waited = (f"{time.time() - t0:.0f} s ({extended[1]} still queued ahead after {rounds} round(s) of "
+                  f"the queue's estimate, its runs {extended[2]:.0f} s each)" if extended else f"{wait:.0f} s")
         why = f"none within {waited}; status {'; '.join(said)[:200]}"
     r.check("history", p.key, f"GET {base}/runs", "the started run listed with its counts",
             json.dumps(run)[:240] if run else why, run is not None)
