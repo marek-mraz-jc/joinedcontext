@@ -55,10 +55,10 @@ covered() {
     BEGIN {
       while ((getline l < done) > 0) ok[l] = 1
       # every job of a key, each test partition of ci.yml (matrix part) by its name
-      jobs["root"] = "root-clippy root-test-1 root-test-2 root-test-3"
-      jobs["antares"] = "antares-clippy antares-test-1 antares-test-2 antares-test-3"
+      jobs["root"] = "root-clippy root-test-1 root-test-2 root-test-3 root-test-4"
+      jobs["antares"] = "antares-clippy antares-test-1 antares-test-2 antares-test-3 antares-test-4"
       jobs["platform"] = "platform-test"
-      jobs["ekiben"] = "ekiben"; jobs["portal"] = "portal-clippy portal-test-1 portal-test-2"; jobs["ui"] = "ui ui-test-1 ui-test-2 ui-test-3 ui-test-4"
+      jobs["ekiben"] = "ekiben"; jobs["portal"] = "portal-clippy portal-test-1 portal-test-2 portal-test-3 portal-test-4"; jobs["ui"] = "ui ui-test-1 ui-test-2 ui-test-3 ui-test-4"
     }
     {
       split($0, kv, "=")
@@ -106,8 +106,11 @@ if [ "${1:-}" = --selftest ]; then
   for r in refs/heads/jc-ui-node24 refs/pull/1/merge; do ! trunk "$r" || { echo "FAIL: branch $r"; exit 1; }; done
   [ "$(printf 'root=false\nui=true\nimage=false\n' | ship)" = ship=true ] || { echo "FAIL: ship ui"; exit 1; }
   [ "$(printf 'root=false\nui=false\nimage=false\n' | ship)" = ship=false ] || { echo "FAIL: ship docs"; exit 1; }
-  [ "$(printf 'root=true\nportal=true\nsupply=true\n' | covered 'root-clippy\nroot-test-1\nroot-test-2\nroot-test-3\nportal-clippy\nportal-test-1')" = "$(printf 'root=false\nportal=true\nsupply=true')" ] \
+  [ "$(printf 'root=true\nportal=true\nsupply=true\n' | covered 'root-clippy\nroot-test-1\nroot-test-2\nroot-test-3\nroot-test-4\nportal-clippy\nportal-test-1')" = "$(printf 'root=false\nportal=true\nsupply=true')" ] \
     || { echo "FAIL: covered"; exit 1; }
+  [ "$(printf 'portal=true\n' | covered 'portal-clippy\nportal-test-1\nportal-test-2\nportal-test-3')" = portal=true ] \
+    && [ "$(printf 'portal=true\n' | covered 'portal-clippy\nportal-test-1\nportal-test-2\nportal-test-3\nportal-test-4')" = portal=false ] \
+    || { echo "FAIL: covered portal parts"; exit 1; }
   echo "changes.sh selftest ok"
   exit 0
 fi
