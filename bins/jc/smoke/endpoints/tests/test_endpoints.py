@@ -169,7 +169,10 @@ class Fake:
             if self.broken == "no-files":
                 return 400, {}, {"title": "unknown parameter f"}
             rows = 3 if self.broken == "csv-rows" else 2
-            body = "id,geometry\n" + "".join(f'urn:x:{i},"{{""type"":""Point""}}"\n' for i in range(rows))
+            # A polygon of a few thousand points is one cell past csv's default 128 KiB field.
+            shape = "[0,0]," * 30_000 if self.broken == "wide-cell" else ""
+            body = "id,geometry\n" + "".join(f'urn:x:{i},"{{""type"":""Point"",""c"":[{shape}0]}}"\n'
+                                             for i in range(rows))
             return 200, {"Content-Type": "text/csv; charset=utf-8; header=present"}, body.encode()
         if rest.endswith("/items") and qs.get("f") == ["parquet"]:
             if self.broken in ("busy", "busy-once") and not self.busy_seen:
@@ -256,6 +259,13 @@ def test_each_broken_rule_turns_its_check_red(tmp_path, serve, broken, check):
     code, res = run(tmp_path, serve(Fake(broken)), now_iso())
     red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
     assert code == 1 and check in red, red
+
+
+def test_a_csv_cell_past_the_default_field_limit_is_read(tmp_path, serve):
+    """A NoiseZone polygon is one CSV cell of a few hundred KiB: the reader takes it, the row counts."""
+    code, res = run(tmp_path, serve(Fake("wide-cell")), now_iso())
+    got = [(r["result"], r["actual"]) for r in res["checks"] if r["id"] in ("anon.ogc.csv", "crash")]
+    assert got and all(g[0] == "pass" for g in got), got
 
 
 def test_a_paged_listing_is_read_to_its_end(tmp_path, serve):

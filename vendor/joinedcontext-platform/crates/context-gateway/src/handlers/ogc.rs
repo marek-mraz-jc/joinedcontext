@@ -31,7 +31,7 @@ use crate::resolver::Endpoint;
 use crate::{proxy, query};
 use axum::body::Body;
 use axum::extract::{Path, Request, State};
-use axum::http::header::{ACCEPT, ALLOW, CONTENT_LENGTH, CONTENT_TYPE};
+use axum::http::header::{ACCEPT, ALLOW, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderValue, Method, Response, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::any;
@@ -378,6 +378,20 @@ async fn answered(
     );
     let view_to = format!("{}{}/", gateway.base_url(), endpoint.base_path);
     let (mut parts, body) = answer.into_parts();
+    caller_links(&mut parts.headers, &from, &to);
+    caller_links(&mut parts.headers, &view_from, &view_to);
+    if let Some(restricted) = parts.headers.remove(ANTARES_RESTRICTED) {
+        parts.headers.insert(RESULTS_RESTRICTED, restricted);
+    }
+    // A file the broker wrote (`f=csv|parquet|zip`, up to its answer ceiling) holds no link to
+    // move: it streams through instead of being held, so a file past `MAX_BODY` is still served.
+    let attachment = parts
+        .headers
+        .get(CONTENT_DISPOSITION)
+        .is_some_and(|v| v.as_bytes().starts_with(b"attachment"));
+    if attachment {
+        return Response::from_parts(parts, body);
+    }
     // ponytail: the page is held whole to move its links, so one past MAX_BODY (8 MiB) is a
     // broker failure; `halved` asks an OGC page again smaller first (T-5891). Stream the rewrite
     // if one feature of a collection ever passes 8 MiB.
@@ -385,11 +399,6 @@ async fn answered(
         tracing::error!(slug = %endpoint.slug, surface = surface.name, "the broker's answer is larger than the gateway holds");
         return broker_failure(StatusCode::BAD_GATEWAY, None, Body::empty()).await;
     };
-    caller_links(&mut parts.headers, &from, &to);
-    caller_links(&mut parts.headers, &view_from, &view_to);
-    if let Some(restricted) = parts.headers.remove(ANTARES_RESTRICTED) {
-        parts.headers.insert(RESULTS_RESTRICTED, restricted);
-    }
     // A vector tile (T-5121) or another binary body holds no link: its bytes go as sent.
     let tile = parts.headers.get(CONTENT_TYPE).is_some_and(|v| {
         v.as_bytes()
