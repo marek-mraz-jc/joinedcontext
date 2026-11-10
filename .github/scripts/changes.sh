@@ -22,8 +22,9 @@ map() {
     /^\.github\/workflows\/ci\.yml$/ || /^\.github\/scripts\// { for (k in on) on[k] = "true"; next }
     /^\.github\// { next }
     /^bins\/jc\/Dockerfile$/ || /^\.dockerignore$/ { on["image"] = "true" }
-    # the App bundles both images ship in /srv/apps: their lists must stay equal
-    /^bins\/jc\/Dockerfile$/ || /^crates\/portal\/Dockerfile$/ || /^crates\/portal\/apps\// || /^crates\/portal\/scripts\/(app-integrity\.mjs|ci\/check-dockerfile-members\.py)$/ { on["dockerfiles"] = "true" }
+    # the App bundles both images ship in /srv/apps: their lists must stay equal; the App images
+    # (ci.yml ship-apps) build from crates/portal/builder
+    /^bins\/jc\/Dockerfile$/ || /^crates\/portal\/Dockerfile$/ || /^crates\/portal\/apps\// || /^crates\/portal\/builder\// || /^crates\/portal\/scripts\/(app-integrity\.mjs|ci\/check-dockerfile-members\.py)$/ { on["dockerfiles"] = "true" }
     /(^|\/)Cargo\.lock$/ || /(^|\/)deny\.toml$/ || /(^|\/)\.cargo\/audit\.toml$/ { on["supply"] = "true" }
     # the vendored platform crates (platform-test), the assistant aside (a root member), and the
     # root lockfile and manifest its lockfile repeats
@@ -95,6 +96,7 @@ if [ "${1:-}" = --selftest ]; then
   check 'crates/portal/sdk/src/sdk/index.ts' 'root portal ui'
   check 'crates/portal/apps/bbsk-mapa/ui/src/App.tsx' 'root portal dockerfiles'
   check 'crates/portal/Dockerfile' 'root portal dockerfiles'
+  check 'crates/portal/builder/Dockerfile' 'root portal dockerfiles'
   check 'vendor/ngsild/x.rs' 'root portal'
   check 'vendor/joinedcontext-platform/crates/context-gateway/src/lib.rs' 'root portal platform'
   check 'vendor/joinedcontext-platform/crates/assistant/src/lib.rs' 'root portal'
