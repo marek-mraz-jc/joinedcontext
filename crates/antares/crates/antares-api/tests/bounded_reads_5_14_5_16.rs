@@ -409,8 +409,8 @@ mod paging_store {
         (
             id.to_owned(),
             json!({"id": id, "type": [format!("https://uri.etsi.org/ngsi-ld/default-context/{t}")],
-                   "https://uri.etsi.org/ngsi-ld/location": {"type": "GeoProperty",
-                       "value": {"type": "Point", "coordinates": [x, 0.5]}}}),
+                   "https://uri.etsi.org/ngsi-ld/location": [{"type": "GeoProperty",
+                       "value": {"type": "Point", "coordinates": [x, 0.5]}}]}),
         )
     }
 
@@ -510,7 +510,8 @@ mod paging_store {
         clear(&st, &tenant).await;
     }
 
-    /// Serves PointOfInterest only, whatever the request selects.
+    /// A view: PointOfInterest only, with its location, whatever the request
+    /// selects.
     struct OnlyPoi;
 
     impl antares_api::policy::PolicyEngine for OnlyPoi {
@@ -530,6 +531,8 @@ mod paging_store {
                         types: vec![
                             "https://uri.etsi.org/ngsi-ld/default-context/PointOfInterest".into(),
                         ],
+                        // as a view lists them: the geoquery reads a shown member
+                        attributes: vec!["https://uri.etsi.org/ngsi-ld/location".into()],
                         ..Rule::default()
                     }],
                     ..Filter::default()
@@ -538,6 +541,15 @@ mod paging_store {
                 Decision::Allow
             };
             Box::pin(std::future::ready(answer))
+        }
+
+        fn pre_notify(
+            &self,
+            _s: &antares_api::policy::Subject,
+            _sub: &Value,
+            _n: &mut Value,
+        ) -> antares_api::policy::NotifyDecision {
+            antares_api::policy::NotifyDecision::Deliver
         }
     }
 
