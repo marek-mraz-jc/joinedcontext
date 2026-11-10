@@ -85,6 +85,101 @@ pub fn with_pipeline_identity(stream: &mut Value, project: &str, pipeline: &str)
     }
 }
 
+/// How a stream under per-pipeline identity (PL-19) proves its pipeline's client: through the
+/// runner's Kubernetes token sidecar ([`with_pipeline_identity`]), or, where the runner shares
+/// one process with the realm and holds no Kubernetes identity (`jc`), by that client's own
+/// secret ([`with_pipeline_secret`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PipelineCredential {
+    /// `JC_PORTAL_PIPELINE_IDENTITY=pipeline`: the sidecar presents the pod's projected token.
+    #[default]
+    Sidecar,
+    /// `JC_PORTAL_PIPELINE_IDENTITY=pipeline-secret`: the client's secret, from a runner variable.
+    Secret,
+}
+
+/// The runner variable that holds the secret of the client `{project}-pl-{pipeline}`:
+/// `JC_PIPELINE_SECRET_` and the client id in capitals, every `-` a `_`
+/// (`banskabystrica-pl-kataster` is `JC_PIPELINE_SECRET_BANSKABYSTRICA_PL_KATASTER`). jc's
+/// `[ekiben] client_secrets_dir` loader names it the same. An author cannot name it: jc-core lets
+/// a step read only `STEP_VARIABLES` and a `secretRef` no `JC_` variable.
+pub fn pipeline_secret_var(project: &str, pipeline: &str) -> String {
+    let client = jc_core::kinds::service_account::keycloak_client_id(
+        project,
+        &jc_core::kinds::pipeline_identity::account_name(pipeline),
+    );
+    let mut name = String::from("JC_PIPELINE_SECRET_");
+    name.extend(client.chars().map(|ch| {
+        if ch.is_ascii_alphanumeric() {
+            ch.to_ascii_uppercase()
+        } else {
+            '_'
+        }
+    }));
+    name
+}
+
+/// [`with_pipeline_identity`] or [`with_pipeline_secret`], as `credential` says.
+pub fn as_pipeline(
+    stream: &mut Value,
+    project: &str,
+    pipeline: &str,
+    credential: PipelineCredential,
+) {
+    match credential {
+        PipelineCredential::Sidecar => with_pipeline_identity(stream, project, pipeline),
+        PipelineCredential::Secret => with_pipeline_secret(stream, project, pipeline),
+    }
+}
+
+/// Turns every credential of `project`'s `pipelines` account in a rendered stream into its own
+/// pipeline's client `{project}-pl-{pipeline}` with that client's secret variable
+/// ([`pipeline_secret_var`]) at the realm's `${JC_TOKEN_URL}` (PL-19, jc). That client's audience
+/// mappers name only the Endpoints the pipeline writes, so its token opens no other; the project
+/// client's would open every Endpoint the `pipelines` account's roles reach. Any other text that
+/// names the project's secret variable gets the pipeline's, so no stream holds a project-wide
+/// credential. A pipeline whose client has no secret in the runner is refused by the runner
+/// (400, `environment variable ... was not defined`), never sent as the project.
+pub fn with_pipeline_secret(stream: &mut Value, project: &str, pipeline: &str) {
+    let account = jc_core::kinds::service_account::keycloak_client_id(project, PIPELINE_ACCOUNT);
+    let own = jc_core::kinds::service_account::keycloak_client_id(
+        project,
+        &jc_core::kinds::pipeline_identity::account_name(pipeline),
+    );
+    let project_secret = format!("${{{}}}", client_secret_var(project));
+    let secret = format!("${{{}}}", pipeline_secret_var(project, pipeline));
+    rewrite_secret(stream, &account, &own, &project_secret, &secret);
+}
+
+fn rewrite_secret(value: &mut Value, account: &str, own: &str, project_secret: &str, secret: &str) {
+    match value {
+        Value::Object(map) => {
+            if let Some(oauth2) = map.get_mut("oauth2") {
+                if oauth2.get("client_key").and_then(Value::as_str) == Some(account) {
+                    *oauth2 = serde_json::json!({
+                        "enabled": true,
+                        "client_key": own,
+                        "client_secret": secret,
+                        "token_url": "${JC_TOKEN_URL}"
+                    });
+                }
+            }
+            for item in map.values_mut() {
+                rewrite_secret(item, account, own, project_secret, secret);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                rewrite_secret(item, account, own, project_secret, secret);
+            }
+        }
+        Value::String(text) if text.contains(project_secret) => {
+            *text = text.replace(project_secret, secret);
+        }
+        _ => {}
+    }
+}
+
 /// Makes a rendered stream its project's own before the runner gets it: the credential
 /// ([`own_client`]) and every cache it names ([`own_caches`]).
 pub(crate) fn own_credential(value: &mut Value, project: &str) {

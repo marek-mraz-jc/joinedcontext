@@ -532,7 +532,10 @@ pub(crate) async fn run_stream_within(
     // 1.22.0), so a fresh name per test grew the dev runner past 2 GiB in three days. The slot
     // above keeps this Portal to one test per project; another replica's test answers 409.
     let stream = format!("{runner}/streams/{STREAM_PREFIX}{project}");
-    let identity = state.config.pipeline_identity;
+    let identity = state
+        .config
+        .pipeline_identity
+        .then_some(state.config.pipeline_credential);
     let outcome = create_and_trace(
         http,
         project,
@@ -582,7 +585,7 @@ async fn create_and_trace(
     project: &str,
     stream: &str,
     config: &Value,
-    identity: bool,
+    identity: Option<crate::reconciler::streams::PipelineCredential>,
     window: Window,
     receiver: &mut mpsc::UnboundedReceiver<Captured>,
 ) -> Result<(TestTrace, bool), ApiError> {
@@ -675,14 +678,19 @@ async fn left_over_removed(http: &reqwest::Client, stream: &str) -> bool {
 /// The harness as the runner gets it: the project's `pipelines` client, or with the pipelines'
 /// own identities on, the project's harness principal through the token service, which names no
 /// client secret for the runner's streams API to serve back (PL-43, T-4050).
-fn credentialed(config: &Value, project: &str, identity: bool) -> Value {
+fn credentialed(
+    config: &Value,
+    project: &str,
+    identity: Option<crate::reconciler::streams::PipelineCredential>,
+) -> Value {
     let mut config = config.clone();
     crate::reconciler::streams::own_credential(&mut config, project);
-    if identity {
-        crate::reconciler::streams::with_pipeline_identity(
+    if let Some(credential) = identity {
+        crate::reconciler::streams::as_pipeline(
             &mut config,
             project,
             jc_core::kinds::pipeline_identity::HARNESS,
+            credential,
         );
     }
     config

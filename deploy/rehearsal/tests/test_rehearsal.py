@@ -1279,6 +1279,37 @@ def test_only_the_clients_jc_signs_in_as_trade_federated_jwt_for_their_secret():
     assert realm["clients"][0]["clientAuthenticatorType"] == "federated-jwt"
 
 
+def test_each_pipelines_own_client_trades_federated_jwt_for_its_secret_and_keeps_its_audience():
+    k8s = {"jwt.credential.sub": "system:serviceaccount:smartcity-pipeline-identities:pl-bb-park",
+           "jwt.credential.issuer": "kubernetes"}
+    aud = [{"protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "slugA"}}]
+    realm = {"clients": [
+        {"clientId": "bb-pl-park", "clientAuthenticatorType": "federated-jwt", "secret": "$(env:KC_BB_PL_PARK_SECRET)",
+         "attributes": {**k8s, "joinedcontext.serviceaccount": "bb/pl-park"}, "protocolMappers": aud},
+        {"clientId": "bb-pl-nosecret", "clientAuthenticatorType": "federated-jwt",
+         "attributes": {**k8s, "joinedcontext.serviceaccount": "bb/pl-nosecret"}},
+        # A workload client that is no Pipeline's keeps the cluster's token.
+        {"clientId": "bb-cams", "clientAuthenticatorType": "federated-jwt",
+         "attributes": {**k8s, "joinedcontext.serviceaccount": "bb/cams"}},
+        # An account attribute naming another client is not this client's pipeline.
+        {"clientId": "bb-pl-other", "clientAuthenticatorType": "federated-jwt",
+         "attributes": {**k8s, "joinedcontext.serviceaccount": "bb/pl-park"}},
+        {"clientId": "bb-pipelines", "clientAuthenticatorType": "client-secret", "secret": "$(env:KC_BB_PIPELINES_SECRET)"},
+    ]}
+    out, changed = rh.jc_clients_by_secret(realm)
+    by = {c["clientId"]: c for c in out["clients"]}
+    assert changed == ["bb-pl-nosecret", "bb-pl-park"]
+    park = by["bb-pl-park"]
+    assert park["clientAuthenticatorType"] == "client-secret"
+    assert park["attributes"] == {"joinedcontext.serviceaccount": "bb/pl-park"}
+    assert park["protocolMappers"] == aud and park["secret"] == "$(env:KC_BB_PL_PARK_SECRET)"
+    assert by["bb-pl-nosecret"]["secret"] == "$(env:KC_BB_PL_NOSECRET_SECRET)"
+    assert by["bb-cams"] == realm["clients"][2] and by["bb-pl-other"] == realm["clients"][3]
+    assert rh.pipeline_clients(out) == [("bb-pipelines", "KC_BB_PIPELINES_SECRET"),
+                                        ("bb-pl-nosecret", "KC_BB_PL_NOSECRET_SECRET"),
+                                        ("bb-pl-park", "KC_BB_PL_PARK_SECRET")]
+
+
 def test_an_export_without_service_accounts_gets_the_portals_from_jcs_shipped_realm():
     shipped = json.loads(rh.SHIPPED_REALM.read_text())
     realm = {"clients": [{"clientId": "portal-api"}, {"clientId": "portal-reconciler"}],

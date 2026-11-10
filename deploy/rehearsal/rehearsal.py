@@ -457,17 +457,31 @@ def state_client_secrets(realm: dict) -> list[tuple[str, str]]:
     return sorted(out)
 
 
+def pipeline_own_client(c: dict) -> bool:
+    """Whether `c` is a Pipeline's own client `<project>-pl-<pipeline>` as the Portal made it on
+    the cluster (PL-19, T-1508): its account attribute `<project>/pl-<pipeline>` names it."""
+    project, _, name = str((c.get("attributes") or {}).get("joinedcontext.serviceaccount", "")).partition("/")
+    return name.startswith("pl-") and c.get("clientId") == f"{project}-{name}"
+
+
 def jc_clients_by_secret(realm: dict) -> tuple[dict, list[str]]:
-    """The realm with each client of STATE_CLIENT_SECRETS signing in by its secret: prod and dev
-    give them `federated-jwt` (Keycloak trusts the Kubernetes service account token of the pod),
-    and jc, one process with no Kubernetes issuer, signs in as them with the secret of its state
-    file. Every other client keeps its authenticator. Answers the realm and the clients changed."""
+    """The realm with each client of STATE_CLIENT_SECRETS, and each Pipeline's own client
+    (`pipeline_own_client`), signing in by its secret: prod and dev give them `federated-jwt`
+    (Keycloak trusts the Kubernetes service account token of the pod), and jc, one process with
+    no Kubernetes issuer, signs in as them with the secret of its state file or, for a pipeline,
+    of its file in ekiben's client secrets dir (`pipeline_clients`). Name and audience mappers
+    stay: a stream's token opens the Endpoints its pipeline wrote on prod and no other. A
+    pipeline's client without a secret variable gets `$(env:KC_<CLIENT>_SECRET)`. Every other
+    client keeps its authenticator. Answers the realm and the clients changed."""
     out, changed = dict(realm), []
     clients = []
     for c in realm.get("clients", []):
-        if c.get("clientId") in STATE_CLIENT_SECRETS and c.get("clientAuthenticatorType") == "federated-jwt":
+        own = pipeline_own_client(c)
+        if (c.get("clientId") in STATE_CLIENT_SECRETS or own) and c.get("clientAuthenticatorType") == "federated-jwt":
             attrs = {k: v for k, v in (c.get("attributes") or {}).items() if not k.startswith("jwt.credential.")}
             c = {**c, "clientAuthenticatorType": "client-secret", "attributes": attrs}
+            if own and not SECRET_VAR.fullmatch(str(c.get("secret", "")).strip()):
+                c["secret"] = f"$(env:KC_{re.sub(r'[^A-Z0-9]', '_', c['clientId'].upper())}_SECRET)"
             changed.append(c["clientId"])
         clients.append(c)
     if "clients" in realm:
@@ -571,13 +585,16 @@ def to_file_refs(realm: dict) -> dict:
 
 
 def pipeline_clients(realm: dict) -> list[tuple[str, str]]:
-    """(clientId, NAME) of each `<project>-pipelines` client whose secret is `$(env:NAME)`: jc's
+    """(clientId, NAME) of each `<project>-pipelines` client, and each Pipeline's own client
+    `<project>-pl-<pipeline>` (`pipeline_own_client`), whose secret is `$(env:NAME)`: jc's
     `[ekiben] client_secrets_dir` reads `<project>-pipelines` files for the runner's
-    `JC_CLIENT_SECRET_<PROJECT>`, as dev's runner Deployment takes them from the realm's Secret."""
+    `JC_CLIENT_SECRET_<PROJECT>`, as dev's runner Deployment takes them from the realm's Secret,
+    and `<project>-pl-<pipeline>` files for `JC_PIPELINE_SECRET_<CLIENT>`, the secret a stream
+    rendered with `JC_PORTAL_PIPELINE_IDENTITY=pipeline-secret` signs in with."""
     out = []
     for c in realm.get("clients", []):
         cid, m = c.get("clientId", ""), SECRET_VAR.fullmatch(str(c.get("secret", "")).strip())
-        if cid.endswith("-pipelines") and m:
+        if (cid.endswith("-pipelines") or pipeline_own_client(c)) and m:
             out.append((cid, m[1]))
     return sorted(out)
 
