@@ -99,6 +99,25 @@ def test_the_session_helpers_call_the_realm_they_are_given(monkeypatch):
     assert seen == ["/id/realms/smartcity/protocol/openid-connect/token", "/id/admin/realms/smartcity/users"]
 
 
+def test_the_realm_reads_relative_secret_names_under_the_kits_secrets_dir(tmp_path, monkeypatch):
+    # The kit writes $(file:NAME) relative to <home>/secrets/realm (81650d62): read from any cwd.
+    import session
+    (tmp_path / "state" / "realms").mkdir(parents=True)
+    (tmp_path / "secrets" / "realm").mkdir(parents=True)
+    (tmp_path / "secrets" / "realm" / "app-a").write_text("s3\n")
+    (tmp_path / "secrets" / "realm" / "tester").write_text("pw\n")
+    (tmp_path / "state" / "realms" / "smartcity.json").write_text(json.dumps({
+        "realm": "smartcity",
+        "clients": [{"clientId": "app-a", "secret": "$(file:app-a)", "redirectUris": ["https://a/*"]}],
+        "users": [{"username": "rehearsal-tester",
+                   "credentials": [{"type": "password", "value": "$(file:tester)"}]}]}))
+    monkeypatch.chdir(tmp_path / "state")
+    realm = session.Realm(tmp_path / "state")
+    assert realm.client("app-a") == ("s3", "https://a/callback")
+    assert realm.password("rehearsal-tester") == "pw"
+    assert realm.client("app-b") == (None, None)
+
+
 def test_the_app_host_is_rewritten_as_the_portals_edge_file_does():
     import shots
 
