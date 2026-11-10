@@ -48,3 +48,20 @@
   color: var(--jc-color-danger, #b91c1c);
   font-size: 0.875rem;
 }
+
+/* The field must be filled: said beside its label, as the Portal's forms mark it. */
+.app-confirm > label::after {
+  content: " *";
+  color: var(--jc-color-danger, #b91c1c);
+}
+
+/* The delete itself: the one destructive button. */
+.app-confirm-danger {
+  background: var(--jc-color-danger, #b91c1c);
+  border-color: var(--jc-color-danger, #b91c1c);
+  color: #fff;
+}
+
+.app-confirm > input[aria-invalid="true"] {
+  border-color: var(--jc-color-danger, #b91c1c);
+}

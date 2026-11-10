@@ -50,7 +50,7 @@ describe("the bulk delete", () => {
     const reason = within(dialog).getByLabelText(/Reason/);
     expect(reason).toHaveAccessibleDescription(/for example: Duplicates left by the old feed/);
     await userEvent.click(within(dialog).getByTestId("confirm-accept"));
-    expect(within(dialog).getByText("Enter why you delete them, for example: Duplicate entries.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Enter why you delete them.")).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(remove).not.toHaveBeenCalled();
 

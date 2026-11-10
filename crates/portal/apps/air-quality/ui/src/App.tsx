@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 import { AppShell, Card, Grid, Page, Split, useEntitySelection } from "@joinedcontext/sdk";
 import type { ShellPage } from "@joinedcontext/sdk";
@@ -235,6 +235,11 @@ function RemoveButton({
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reason = useId();
+  // The step, its error and a refusal stay in sight: they open below the card's other content.
+  const box = useRef<HTMLElement>(null);
+  useEffect(() => {
+    box.current?.scrollIntoView?.({ block: "nearest" });
+  }, [asked, tried, error]);
   if (!station.own) {
     return (
       <>
@@ -263,9 +268,12 @@ function RemoveButton({
     );
   }
   const length = [...why.trim()].length;
-  const whyError = !tried ? null : length === 0 ? "Enter why you remove it, for example: Duplicate of the Kallio station." : length > MAX_REASON ? `Use at most ${MAX_REASON} characters.` : null;
+  const whyError = !tried ? null : length === 0 ? "Enter why you remove it." : length > MAX_REASON ? `Use at most ${MAX_REASON} characters.` : null;
   return (
-    <section className="note" aria-label={`Remove ${title}`}>
+    <section className="note confirm" aria-label={`Remove ${title}`} ref={box}>
+      <p>
+        <strong>Remove {title}?</strong> It cannot be undone.
+      </p>
       <label htmlFor={`${reason}-why`}>Reason</label>
       <input
         id={`${reason}-why`}
@@ -288,6 +296,7 @@ function RemoveButton({
       <div className="note-actions">
         <button
           type="button"
+          className="danger"
           disabled={removing}
           onClick={() => {
             setTried(true);

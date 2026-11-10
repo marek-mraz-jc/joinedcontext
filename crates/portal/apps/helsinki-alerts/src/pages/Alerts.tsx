@@ -139,6 +139,7 @@ export function Alerts() {
               )}
               <button
                 type="button"
+                className="app-confirm-danger"
                 disabled={save.saving}
                 onClick={() => {
                   setTried(true);

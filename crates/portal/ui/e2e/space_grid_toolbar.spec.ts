@@ -232,7 +232,7 @@ for (const [label, width, height] of [["desktop-1440", 1440, 900], ["phone-400",
     const confirm = page.getByRole("alertdialog");
     await shot(page, `grid-delete-reason-empty-${label}`);
     await confirm.getByRole("button", { name: "Delete selected" }).click();
-    await expect(confirm.getByText("Enter why you delete them, for example: Duplicate entries.")).toBeVisible();
+    await expect(confirm.getByText("Enter why you delete them.")).toBeVisible();
     expect(deleted).toEqual([]);
     await shot(page, `grid-delete-reason-required-${label}`);
     await confirm.getByLabel(/Reason/).fill("Duplicates left by the old feed");

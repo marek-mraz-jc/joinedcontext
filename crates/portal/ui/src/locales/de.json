@@ -1322,7 +1322,7 @@
       "keyNoField": "Jedes Feld dieses Typs ist schon in der Liste.",
       "groupCount": "{count, plural, one {# Zeile} other {# Zeilen}}",
       "deleteReasonHint": "Warum Sie sie löschen, wird mit jeder Löschung festgehalten, zum Beispiel: Duplikate aus dem alten Feed.",
-      "deleteReasonRequired": "Geben Sie an, warum Sie sie löschen, zum Beispiel: Doppelte Einträge."
+      "deleteReasonRequired": "Geben Sie an, warum Sie sie löschen."
     },
     "temporal": {
       "title": "Wie Verlaufszeilen entstehen",
