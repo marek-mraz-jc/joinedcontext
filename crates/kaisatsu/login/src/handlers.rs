@@ -1346,6 +1346,12 @@ async fn authenticate_page_post(
             .await;
         }
 
+        // A refusal keeps what was typed in the username field, as keycloak.v2 does; the same
+        // for a wrong password and an unknown user.
+        let refused = AuthSession {
+            login_hint: Some(username.to_owned()),
+            ..auth_session.clone()
+        };
         // Timing-equal lookup: if user does not exist, run dummy Argon2id hash and return the
         // exact same invalidUserMessage page (W3, W7, W12).
         let Some(user) = state
@@ -1360,7 +1366,7 @@ async fn authenticate_page_post(
                 &state,
                 &mount,
                 &realm,
-                &auth_session,
+                &refused,
                 &current_state,
                 &headers,
                 bundle.get("invalidUserMessage"),
@@ -1377,7 +1383,7 @@ async fn authenticate_page_post(
                 &state,
                 &mount,
                 &realm,
-                &auth_session,
+                &refused,
                 &current_state,
                 &headers,
                 bundle.get("invalidUserMessage"),
@@ -1395,7 +1401,7 @@ async fn authenticate_page_post(
                 &state,
                 &mount,
                 &realm,
-                &auth_session,
+                &refused,
                 &current_state,
                 &headers,
                 bundle.get("invalidUserMessage"),
@@ -1412,7 +1418,7 @@ async fn authenticate_page_post(
                 &state,
                 &mount,
                 &realm,
-                &auth_session,
+                &refused,
                 &current_state,
                 &headers,
                 bundle.get("invalidUserMessage"),

@@ -630,7 +630,23 @@ async fn authorize_page(
         .is_some_and(|v| v.contains("text/html"));
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let client_id = params.get("client_id").cloned();
-    let ui_locales = params.get("ui_locales").cloned();
+    let picked = params
+        .get("kc_locale")
+        .or_else(|| params.get("ui_locales"))
+        .cloned();
+    // A block, so the serializer (not `Send`) is gone before the first await.
+    let locale_base_url = {
+        let mut again = url::form_urlencoded::Serializer::new(String::new());
+        for (k, v) in params.iter().filter(|(k, _)| k.as_str() != "kc_locale") {
+            again.append_pair(k, v);
+        }
+        format!(
+            "{}/realms/{realm_name}/protocol/openid-connect/auth?{}",
+            mount.path_prefix,
+            again.finish()
+        )
+    };
+
     let outcome = authorize_get(
         State(state.clone()),
         Path(realm_name.clone()),
@@ -649,12 +665,7 @@ async fn authorize_page(
     let accept = headers
         .get(header::ACCEPT_LANGUAGE)
         .and_then(|v| v.to_str().ok());
-    let bundle = Bundle::for_locale(negotiate_for_realm(
-        &realm,
-        ui_locales.as_deref(),
-        None,
-        accept,
-    ));
+    let bundle = Bundle::for_locale(negotiate_for_realm(&realm, picked.as_deref(), None, accept));
     let client = match &client_id {
         Some(id) => state.store.get_client_by_client_id(&realm.id, id).await?,
         None => None,
@@ -678,7 +689,7 @@ async fn authorize_page(
         branding: &branding,
         path_prefix: &mount.path_prefix,
         app: &app,
-        locale_base_url: "",
+        locale_base_url: &locale_base_url,
     };
     let nonce = random_handle_256()[..16].to_owned();
     let mut tpl = shell.page("error", bundle.get("errorTitle"), &nonce);
@@ -691,7 +702,7 @@ async fn authorize_page(
     {
         Some(base) => tpl.links.push(page::Link {
             id: "backToApplication".into(),
-            class: "pf-m-link",
+            class: "pf-m-primary",
             url: base,
             label: if app.is_empty() {
                 bundle.get("backToApplication").to_owned()
