@@ -151,8 +151,7 @@ fn a_batch_holds_no_copy_it_does_not_need() {
         drop(batch);
 
         // A mapping over N parts frees each input once its output exists: the peak stays near
-        // the input batch, never input plus output (each output is as large as its input and
-        // shares nothing with it).
+        // the input batch, never input plus output (the outputs share nothing with the inputs).
         let mapping = procs(
             json!({ "mapping": "root.w = this.v.map_each(x -> x + 1)" }),
             &reg,
@@ -164,10 +163,12 @@ fn a_batch_holds_no_copy_it_does_not_need() {
         reset_peak();
         let out = execute_all(&ctx, &mapping, vec![batch]).await.unwrap();
         let peak = PEAK.load(Ordering::Relaxed) - base;
+        let output = now() - base;
         assert_eq!(out[0].len(), 64);
         assert!(
-            peak < input * 3 / 2,
-            "mapping peaked at {peak} bytes over an input of {input}"
+            peak - input < output / 2,
+            "mapping peaked {} bytes over its {input}-byte input, its output holds {output}",
+            peak - input
         );
         drop(out);
 
