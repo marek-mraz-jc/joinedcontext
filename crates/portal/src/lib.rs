@@ -160,3 +160,5 @@ mod tests {
         );
     }
 }
+
+// ci probe: forces a rebuild of this crate (reverted)
