@@ -123,6 +123,12 @@ pub fn checked(input: &DataWriteInput) -> Result<(), OpError> {
                 ),
             ));
         }
+        if delete_reason(input).is_some_and(crate::secret_scan::quoted_secret) {
+            return Err(invalid(
+                "/reason",
+                "the reason reads like a credential: it would be kept with the delete, so leave the credential out",
+            ));
+        }
         return Ok(());
     }
     if input.entities.is_empty() || !input.ids.is_empty() {
@@ -422,6 +428,12 @@ mod tests {
             "/reason"
         );
         assert!(validate_write(&delete(json!(format!("  {}\n", "ž".repeat(MAX_REASON))))).is_ok());
+        // A credential quoted in the reason would be kept with the delete.
+        let token = format!("ghp_{}", "0123456789abcdef".repeat(3));
+        assert_eq!(
+            refused_at(delete(json!(format!("rotated {token}")))),
+            "/reason"
+        );
         // Other actions ignore it.
         let station = json!({ "id": "urn:ngsi-ld:T:1", "type": "T" });
         assert!(validate_write(

@@ -65,17 +65,26 @@ pub fn secret_text(text: &str) -> bool {
     let public_pem = text.contains("-----BEGIN CERTIFICATE")
         || text.contains("-----BEGIN PUBLIC KEY")
         || text.contains("-----BEGIN X509 CRL");
-    // A credential quoted in a sentence (a delete's reason naming the token it rotates) is one
-    // too: each word is judged alone, its quotes and trailing punctuation aside.
-    let quoted = text
-        .split_whitespace()
-        .map(|word| {
-            word.trim_matches([
-                '"', '\'', '`', '(', ')', '[', ']', '<', '>', ',', ';', '.', ':',
-            ])
-        })
-        .any(|word| credential_shaped(word) || secret_in_query(word));
-    ((credential_shaped(text) || quoted) && !public_pem) || secret_in_query(text)
+    (credential_shaped(text) && !public_pem) || secret_in_query(text)
+}
+
+/// Whether a sentence quotes a credential (a delete's reason naming the token it rotates): each
+/// word is judged alone, its quotes and trailing punctuation aside. Only free-text fields use it,
+/// so a manifest's own check still names the key a secret was typed under.
+pub fn quoted_secret(text: &str) -> bool {
+    let public_pem = text.contains("-----BEGIN CERTIFICATE")
+        || text.contains("-----BEGIN PUBLIC KEY")
+        || text.contains("-----BEGIN X509 CRL");
+    secret_text(text)
+        || (!public_pem
+            && text
+                .split_whitespace()
+                .map(|word| {
+                    word.trim_matches([
+                        '"', '\'', '`', '(', ')', '[', ']', '<', '>', ',', ';', '.', ':',
+                    ])
+                })
+                .any(|word| credential_shaped(word) || secret_in_query(word)))
 }
 
 /// Whether a query parameter is named like a credential (`apiKey`, `sig`, `client_secret`, …):
@@ -218,14 +227,14 @@ mod tests {
             ),
             "pushed with https://bot:hunter2@git.example.org/repo".to_owned(),
         ] {
-            assert!(secret_text(&text), "{text}");
+            assert!(quoted_secret(&text), "{text}");
         }
         for text in [
             "duplicate of urn:ngsi-ld:BikeCounter:2 after the feed renamed it",
             "Sensor moved to the Kallio station (see https://example.org/stations?id=42).",
             "certificate: -----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
         ] {
-            assert!(!secret_text(text), "{text}");
+            assert!(!quoted_secret(text), "{text}");
         }
     }
 
