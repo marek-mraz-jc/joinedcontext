@@ -773,8 +773,8 @@ async fn a_projects_derived_groups_follow_its_bindings_and_never_take_a_manifest
 /// only the first-start files, and the run deleted every imported `managed-by: joinedcontext` group
 /// with its members. A load declaring no group (and no project) removes nothing; the run that
 /// loads the manifest converges the group the realm already holds, members kept.
-#[tokio::test]
-async fn a_load_that_declares_no_group_keeps_every_managed_group_and_its_members() {
+/// Mounts a realm holding managed group `skoly-viewer` (g9) with member READER.
+async fn realm_holding_skoly_viewer() -> MockServer {
     let keycloak = realm().await;
     Mock::given(method("GET"))
         .and(path(format!("{REALM}/groups")))
@@ -802,16 +802,26 @@ async fn a_load_that_declares_no_group_keeps_every_managed_group_and_its_members
         .respond_with(ResponseTemplate::new(204))
         .mount(&keycloak)
         .await;
+    keycloak
+}
+
+#[tokio::test]
+async fn before_the_source_loaded_once_every_managed_group_and_its_members_stay() {
+    let keycloak = realm_holding_skoly_viewer().await;
     let sync = sync(&keycloak);
 
-    // The repository still empty: no group, no project.
-    let outcomes = sync.converge_with(&mirror_with(vec![]), &[]).await;
+    // The repository not loaded yet (jc's first-start seed only): the daemon holds removals.
+    let seed = mirror_with(vec![]);
+    seed.hold_removals(true);
+    let outcomes = sync.converge_with(&seed, &[]).await;
     assert!(outcomes.iter().all(|o| o.error.is_none()), "{outcomes:?}");
     let written = wrote(&keycloak).await;
     assert!(
         !written.iter().any(|w| w.starts_with("DELETE")),
-        "an empty load removed {written:?}"
+        "a load before the source loaded removed {written:?}"
     );
+    // What was kept is said: the daemon logs it at warn and puts it in the status.
+    assert_eq!(seed.held_back(), vec!["Group skoly-viewer".to_owned()]);
 
     // The manifest arrives: the group the realm holds converges, its member stays.
     let outcomes = sync
@@ -825,4 +835,25 @@ async fn a_load_that_declares_no_group_keeps_every_managed_group_and_its_members
             .any(|w| w.starts_with("DELETE") || w.starts_with("POST /admin")),
         "the held group was rewritten: {written:?}"
     );
+}
+
+/// The opposite: once the source has loaded, a manifest that drops its last group revokes it,
+/// and the group's members with it.
+#[tokio::test]
+async fn a_loaded_source_that_drops_its_last_group_removes_it_and_its_members() {
+    let keycloak = realm_holding_skoly_viewer().await;
+    let outcomes = sync(&keycloak)
+        .converge_with(&mirror_with(vec![]), &[])
+        .await;
+    assert!(outcomes.iter().all(|o| o.error.is_none()), "{outcomes:?}");
+    let written = wrote(&keycloak).await;
+    let removed: Vec<&String> = written.iter().filter(|w| w.starts_with("DELETE")).collect();
+    assert_eq!(
+        removed,
+        vec![&format!("DELETE {REALM}/groups/g9")],
+        "{written:?}"
+    );
+    assert!(outcomes
+        .iter()
+        .any(|o| o.name == "skoly-viewer" && o.drift.iter().any(|d| d.contains("removed"))));
 }

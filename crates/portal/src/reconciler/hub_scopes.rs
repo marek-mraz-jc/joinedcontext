@@ -228,8 +228,8 @@ impl HubScopeSync {
             let Some(name) = scope["name"].as_str() else {
                 continue;
             };
-            // No serving Endpoint loaded yet removes nothing: see groups.rs.
-            if !ours(scope) || names.is_empty() || names.contains_key(name) {
+            // Nothing goes before the source has loaded once (Mirror::hold_removal).
+            if !ours(scope) || names.contains_key(name) || mirror.hold_removal("hub scope", name) {
                 continue;
             }
             let Some(id) = scope["id"].as_str() else {

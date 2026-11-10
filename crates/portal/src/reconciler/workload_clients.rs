@@ -796,12 +796,15 @@ impl WorkloadClientSync {
             else {
                 continue;
             };
-            // An empty `wanted` (no account loaded yet) removes nothing: see groups.rs.
-            if !managed(client) || wanted.is_empty() || wanted.contains(account) {
+            if !managed(client) || wanted.contains(account) {
                 continue;
             }
             if !self.derives(account) {
                 kept.push(account);
+                continue;
+            }
+            // Nothing goes before the source has loaded once (Mirror::hold_removal).
+            if mirror.hold_removal("workload client", account) {
                 continue;
             }
             let mut outcome = ClientOutcome::of(account);

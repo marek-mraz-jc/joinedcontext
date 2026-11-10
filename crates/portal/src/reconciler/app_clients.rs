@@ -1093,11 +1093,11 @@ impl AppClientSync {
                     let Some(id) = client.get("clientId").and_then(Value::as_str) else {
                         continue;
                     };
-                    // An empty `wanted` (no App loaded yet) removes nothing: see groups.rs.
+                    // Nothing goes before the source has loaded once (Mirror::hold_removal).
                     if !id.starts_with("app-")
                         || !managed(client)
-                        || wanted.is_empty()
                         || wanted.contains(id)
+                        || mirror.hold_removal("App client", id)
                     {
                         continue;
                     }

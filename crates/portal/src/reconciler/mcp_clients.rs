@@ -153,8 +153,11 @@ impl McpClientSync {
             else {
                 continue;
             };
-            // An empty `wanted` (no server loaded yet) removes nothing: see groups.rs.
-            if !managed(client) || wanted.is_empty() || wanted.contains(server) {
+            // Nothing goes before the source has loaded once (Mirror::hold_removal).
+            if !managed(client)
+                || wanted.contains(server)
+                || mirror.hold_removal("MCP client", server)
+            {
                 continue;
             }
             let mut outcome = ClientOutcome::of(server);

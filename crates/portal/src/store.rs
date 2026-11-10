@@ -36,6 +36,12 @@ pub struct Mirror {
     /// The organization's `.jc/layout` (CC-85): 2 when every project lives in a repository of
     /// its own; 0 until the first sync says, which reads as 1.
     layout: std::sync::atomic::AtomicU32,
+    /// True while the source has not loaded once: the realm syncs then remove nothing they
+    /// manage (groups, App, workload and MCP clients, hub scopes), as on a fresh installation
+    /// whose repository holds only jc's first-start seed while its import runs.
+    removals_held: std::sync::atomic::AtomicBool,
+    /// What the syncs would have removed this run while removals were held, as `Kind name`.
+    held_back: std::sync::Mutex<Vec<String>>,
 }
 
 impl Mirror {
@@ -61,6 +67,40 @@ impl Mirror {
     pub fn set_layout(&self, layout: u32) {
         self.layout
             .store(layout, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether the realm syncs hold back removals this run ([`Mirror::hold_removals`]).
+    pub fn removals_held(&self) -> bool {
+        self.removals_held
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// A sync about to remove the managed object `kind` `name`: true, and the object recorded
+    /// in [`Mirror::held_back`], when removals are held, so the run says what it kept.
+    pub fn hold_removal(&self, kind: &str, name: &str) -> bool {
+        let held = self.removals_held();
+        if held {
+            self.held_back
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(format!("{kind} {name}"));
+        }
+        held
+    }
+
+    /// Every removal [`Mirror::hold_removal`] held back on this mirror, in order.
+    pub fn held_back(&self) -> Vec<String> {
+        self.held_back
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// Records whether this run's source has loaded once; false (the default) removes as
+    /// declared.
+    pub fn hold_removals(&self, held: bool) {
+        self.removals_held
+            .store(held, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Every registered project's own repository, by slug.
@@ -163,6 +203,7 @@ impl Mirror {
             .clone();
         self.set_repositories(repositories);
         self.set_layout(other.layout());
+        self.hold_removals(other.removals_held());
     }
 
     /// Every resource matching a predicate, in no particular order.
