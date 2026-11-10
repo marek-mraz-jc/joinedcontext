@@ -145,4 +145,21 @@ def test_a_wasm_server_passes_only_on_its_own_json_answer():
     assert not suite.server_judge(200, {"content-type": "text/html"}, b"<html>", False)[1]
     assert not suite.server_judge(200, j, b'{"id": "s1"}', False)[1], "anonymous yet a caller"
     assert not suite.server_judge(200, j, b"null", True)[1], "signed in yet nobody"
+    # The Portal's own page on an App host: jc mounts no App host, and the row says so.
+    actual, ok = suite.server_judge(200, {"content-type": "text/html; charset=utf-8"}, b"<!doctype html>", False)
+    assert not ok and "REHEARSAL_APP_HOSTS=on" in actual
+
+
+def test_without_a_wasm_host_only_the_portals_designed_503_naming_the_app_passes():
+    p = {"content-type": "application/problem+json"}
+    body = b'{"status":503,"detail":"the server of App \'kpi-forecast\' does not run on this installation yet"}'
+    assert suite.no_shard_judge(503, p, body, "kpi-forecast")[1]
+    assert not suite.no_shard_judge(503, p, body, "news-topics")[1], "another App's 503"
+    # The SPA (gate 5 rerun, no App host mount), the App's own 200, a 401 and a 503 naming the shard.
+    actual, ok = suite.no_shard_judge(200, {"content-type": "text/html; charset=utf-8"}, b"<!doctype html>", "kpi-forecast")
+    assert not ok and "REHEARSAL_APP_HOSTS=on" in actual
+    assert not suite.no_shard_judge(200, {"content-type": "application/json"}, b"null", "kpi-forecast")[1]
+    assert not suite.no_shard_judge(401, p, b'{"status":401}', "kpi-forecast")[1]
+    leak = body[:-2] + b' (jc-wasm-host-0.wasm-host.svc.cluster.local)"}'
+    assert not suite.no_shard_judge(503, p, leak, "kpi-forecast")[1]
     assert not suite.server_judge(0, {}, b"connection refused", False)[1]
