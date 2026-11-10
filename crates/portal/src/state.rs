@@ -329,6 +329,9 @@ impl AppState {
     pub async fn from_config(
         config: Config,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        // Before any sibling client is built, the realm's token client included: host mode
+        // dials them on jc's listener.
+        crate::reach::install(&config.reach);
         let oidc = match config.oidc.as_ref() {
             Some(oidc_config) => {
                 Some(OidcClient::discover(oidc_config, &config.redirect_uri()).await?)
@@ -337,8 +340,6 @@ impl AppState {
         };
         // A half-configured forge is a configuration error, not a reason to run without one:
         // `from_env` answers `Ok(None)` only when all four variables are absent.
-        // Before any sibling client is built: host mode dials them on jc's listener.
-        crate::reach::install(&config.reach);
         let shako = ShakoClient::from_env(|key| config.forge_var(key))?;
         // The same rule for the GitHub copy of application repositories (AP-79): off when both
         // of its variables are absent, a startup error when only one is.

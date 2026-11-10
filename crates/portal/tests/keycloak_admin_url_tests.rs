@@ -163,3 +163,60 @@ fn only_an_http_origin_is_taken_and_the_backchannel_keeps_the_realm_path() {
         "https://idm.dev.example/realms/hel"
     );
 }
+
+/// The Portal's own token requests (the login's code exchange, refresh, the client-credentials
+/// token, the endpoint exchange) share one `token_request`; on jc-prod it posted to the public
+/// token endpoint discovery named, through public DNS and the edge, and about 4 of 10 first
+/// sign-ins ended in "the authorization code could not be exchanged". In host mode the back
+/// channel is an `http://{kaisatsu host}` URL dialed at jc's listener (`JC_PORTAL_REACH`): the
+/// host name here resolves nowhere, so only the reach override gets the request to the realm.
+#[tokio::test]
+async fn the_portal_clients_own_token_requests_go_to_the_back_channel_through_reach() {
+    let public = realm().await;
+    let service = realm().await;
+    let issuer = format!("{}{REALM}", public.uri());
+    let port = service.address().port();
+    let reached = "kaisatsu.reach.invalid";
+    let admin = format!("http://{reached}:{port}");
+    let addr = format!("127.0.0.1:{port}");
+    let config = Config::from_vars(|k| match k {
+        "JC_OIDC_ISSUER" => Some(issuer.clone()),
+        "JC_OIDC_CLIENT_ID" => Some("joinedcontext-portal".to_owned()),
+        "JC_OIDC_CLIENT_SECRET" => Some("test-secret".to_owned()),
+        "JC_PORTAL_COOKIE_KEY" => Some("k".repeat(64)),
+        "JC_KEYCLOAK_ADMIN_URL" => Some(admin.clone()),
+        "JC_PORTAL_REACH" => Some(addr.clone()),
+        "JC_PORTAL_REACH_HOSTS" => Some(reached.to_owned()),
+        _ => None,
+    })
+    .expect("config");
+    // The Portal's OAuth parser wants a token type, which `realm()`'s answer leaves out.
+    Mock::given(method("POST"))
+        .and(path(format!("{REALM}/protocol/openid-connect/token")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "t", "token_type": "Bearer", "expires_in": 300
+        })))
+        .with_priority(1)
+        .mount(&service)
+        .await;
+    let state = AppState::from_config(config).await.expect("discovery");
+    let token = state.oidc.as_ref().expect("oidc").service_token().await;
+
+    let public = asked(&public).await;
+    assert!(
+        public.iter().all(|r| r.starts_with("GET ")),
+        "only discovery at the public issuer: {public:?}"
+    );
+    let service = service.received_requests().await.unwrap_or_default();
+    assert_eq!(service.len(), 1, "one token request at the back channel");
+    assert_eq!(
+        service[0].url.path(),
+        "/realms/hel/protocol/openid-connect/token"
+    );
+    assert_eq!(
+        service[0].headers.get("host").and_then(|h| h.to_str().ok()),
+        Some(format!("{reached}:{port}").as_str()),
+        "the request names kaisatsu's host, as jc's router dispatches on it"
+    );
+    assert_eq!(token.expect("a token"), "t");
+}
