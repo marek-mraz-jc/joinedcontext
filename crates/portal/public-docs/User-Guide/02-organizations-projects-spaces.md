@@ -98,7 +98,7 @@ The live journey `assistant-creates.spec.ts` replays these steps.
 3. You are taken to `/projects/helsinki/spaces/helsinki`.
 4. Under **Entity types**, you should see the defined types (`BikeHireDockingStation`, `Vehicle`, `Event`), the live entity count, and sample records.
 5. Under **Data**, select an entity type from **Entity type** to browse records in the data grid.
-   To delete rows, select them and choose **Delete**. The confirmation asks **Why are you deleting these?**: write the reason (1 to 500 characters, for example `duplicate of station 042 after the feed renamed it`). The reason goes with the delete into the record's history, and **Delete** stays off until you write one. **Explore**'s row delete asks the same way.
+   To delete rows, select them and choose **Delete**. The confirmation has a **Reason** field: write why you delete them (1 to 500 characters, for example `duplicate of station 042 after the feed renamed it`). The reason goes with each delete. Without one, **Delete** sends nothing and the field says **Enter why you delete them.** **Explore**'s row delete asks the same way.
 6. Under **Endpoints** and **Policies**, review the public and organizational views configured over this space.
 
 #### By asking the assistant
