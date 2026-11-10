@@ -356,7 +356,7 @@ fn interpolated(rendered: &str, held: &str) -> bool {
 impl StreamDeployer {
     /// Creates a new deployer targeting the specified runner URL template (may contain `{project}`).
     pub fn new(runner_url: impl Into<String>) -> Self {
-        let http = runner_client(reqwest::Client::builder().timeout(RUNNER_TIMEOUT), None);
+        let http = runner_client(crate::reach::builder().timeout(RUNNER_TIMEOUT), None);
         Self {
             runner_url: runner_url.into(),
             http,
@@ -377,7 +377,7 @@ impl StreamDeployer {
     /// Sends the runner's bearer `token` on every call ([`runner_client`]).
     pub fn with_runner_token(mut self, token: Option<String>) -> Self {
         self.http = runner_client(
-            reqwest::Client::builder().timeout(RUNNER_TIMEOUT),
+            crate::reach::builder().timeout(RUNNER_TIMEOUT),
             token.as_deref(),
         );
         self.runner_token = token;
@@ -1692,7 +1692,7 @@ mod tests {
         /// The same deployer with other timeouts, so a test need not wait out the real ones.
         fn with_timeouts(mut self, request: Duration, replace: Duration) -> Self {
             self.http = runner_client(
-                reqwest::Client::builder().timeout(request),
+                crate::reach::builder().timeout(request),
                 self.runner_token.as_deref(),
             );
             self.replace_timeout = replace;

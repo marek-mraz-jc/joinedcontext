@@ -614,10 +614,7 @@ async fn remote_forwarders(
         tracing::info!(module = module.name(), remote = %base, forwarder = %at, "remote module");
         siblings.insert_remote(
             *module,
-            crate::siblings::Sibling {
-                public: base.clone(),
-                internal: format!("http://{at}"),
-            },
+            crate::siblings::Sibling::direct(base.clone(), format!("http://{at}")),
         );
         out.push((listener, router));
     }
@@ -1157,6 +1154,32 @@ mod tests {
             .await
             .unwrap();
         (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// T-6705: host mode routes by name, so the kubelet's probe names a host jc serves:
+    /// ekiben's open `/ping` answers on its host, and a probe naming the pod's address reaches
+    /// nothing (jc's admin listener `/healthz` answers any Host).
+    #[tokio::test]
+    async fn host_mode_answers_the_liveness_probe_on_ekibens_host_only() {
+        let plans = crate::siblings::tests::host_mode_plans();
+        let (status, body) = routed(&plans, "streams.smartcity.test", "/ping").await;
+        assert_eq!((status, body.as_str()), (StatusCode::OK, "ekiben /ping"));
+        for host in ["10.42.0.17:8080", "localhost:8080", "smartcity.test"] {
+            let (status, body) = routed(&plans, host, "/streams/ping").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{host}: {body}");
+        }
+        // The forge stays on the apex host's path, where only jc's own listener reaches it.
+        let (status, body) = routed(&plans, "smartcity.test", "/git/api/v1/version").await;
+        assert_eq!((status, body.as_str()), (StatusCode::OK, "shako /api/v1/version"));
+        for (host, path) in [
+            ("localhost:8080", "/git/api/v1/version"),
+            ("smartcity.test", "/%67it/api/v1/version"),
+            ("smartcity.test", "//git/api/v1/version"),
+            ("smartcity.test", "/./git/api/v1/version"),
+        ] {
+            let (_, body) = routed(&plans, host, path).await;
+            assert!(!body.starts_with("shako"), "{host}{path}: {body}");
+        }
     }
 
     #[tokio::test]
