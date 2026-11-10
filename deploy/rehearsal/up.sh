@@ -182,6 +182,14 @@ export ANTARES_HISTORY_BACKFILL=on
 # jc is one process: the local notification bus cannot double-fire.
 export ANTARES_ALLOW_SHARED_LOCAL=1
 export JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false JC_PORTAL_SYNC_INTERVAL=10
+# An imported realm with each Pipeline's own client <project>-pl-<pipeline> (prod's, PL-19): every
+# stream signs in as its pipeline's client by that client's secret, whose audience is the Endpoints
+# that pipeline writes, never as the project's <project>-pipelines (jc-pipeline-audience).
+if grep -q -- '-pl-' "$home/state/realm-pipeline-clients.txt" 2>/dev/null; then
+  export JC_PORTAL_PIPELINE_IDENTITY=pipeline-secret
+else
+  unset JC_PORTAL_PIPELINE_IDENTITY
+fi
 # The catalogue over plain http, for this one-machine rehearsal only (jc and the Portal warn).
 export JC_PORTAL_CKAN_ALLOW_HTTP=true
 # Every imported CkanInstance names this catalogue (rehearsal.py fence_writes); the Portal calls it

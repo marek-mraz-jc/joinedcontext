@@ -1282,6 +1282,25 @@ pub fn client_secret_var(project: &str) -> String {
     name
 }
 
+/// The variable a stream rendered with its pipeline's own secret names for the client
+/// `{project}-pl-{pipeline}`, as the Portal writes it (`pipeline_secret_var`):
+/// `banskabystrica-pl-kataster` becomes `JC_PIPELINE_SECRET_BANSKABYSTRICA_PL_KATASTER`.
+#[must_use]
+pub fn pipeline_secret_var(client: &str) -> String {
+    let mut name = String::from("JC_PIPELINE_SECRET_");
+    for ch in client.chars() {
+        name.push(if ch.is_ascii_alphanumeric() {
+            ch.to_ascii_uppercase()
+        } else {
+            '_'
+        });
+    }
+    name
+}
+
+/// The infix of a Pipeline's own client, `{project}-pl-{pipeline}` (jc-core `pipeline_identity`).
+const PIPELINE_OWN_CLIENT_INFIX: &str = "-pl-";
+
 /// Whether `name` is a DNS-1123 label, as every project name is.
 fn dns_label(name: &str) -> bool {
     (1..=63).contains(&name.len())
@@ -1292,9 +1311,11 @@ fn dns_label(name: &str) -> bool {
         && !name.ends_with('-')
 }
 
-/// Reads every `<project>-pipelines` file of the client secrets directory (other files are left
-/// alone: the directory is kaisatsu's import secrets too) and the harness client's. A symbolic
-/// link is refused, as kaisatsu's loader refuses one. Errors name files, never a value.
+/// Reads every `<project>-pipelines` file of the client secrets directory, and every
+/// `<project>-pl-<pipeline>` file, a pipeline's own client that a stream rendered with
+/// `JC_PORTAL_PIPELINE_IDENTITY=pipeline-secret` signs in as (other files are left alone: the
+/// directory is kaisatsu's import secrets too), and the harness client's. A symbolic link is
+/// refused, as kaisatsu's loader refuses one. Errors name files, never a value.
 fn pipeline_client_secrets(
     cfg: &EkibenSection,
 ) -> Result<BTreeMap<String, jc_secret::Secret>, ConfigError> {
@@ -1316,12 +1337,13 @@ fn pipeline_client_secrets(
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
-        let Some(project) = name.strip_suffix(PIPELINE_CLIENT_SUFFIX) else {
-            continue;
+        let var = match name.strip_suffix(PIPELINE_CLIENT_SUFFIX) {
+            Some(project) if dns_label(project) => client_secret_var(project),
+            None if dns_label(&name) && name.contains(PIPELINE_OWN_CLIENT_INFIX) => {
+                pipeline_secret_var(&name)
+            }
+            _ => continue,
         };
-        if !dns_label(project) {
-            continue;
-        }
         let path = entry.path();
         if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
             return Err(ConfigError::ClientSecrets(format!(
@@ -1330,7 +1352,7 @@ fn pipeline_client_secrets(
             )));
         }
         let secret = jc_secret::read_file(&name, &path)?;
-        out.insert(client_secret_var(project), secret.clone());
+        out.insert(var, secret.clone());
         clients.insert(name, secret);
     }
     if let Some(client) = &cfg.harness_client {
@@ -1949,6 +1971,50 @@ path_prefix = "/api/endpoint"
             assert!(link.contains("symbolic link"), "{link}");
         }
         assert!(load(&["--ekiben-client-secrets-dir", "/nonexistent/jc"]).is_err());
+    }
+
+    /// jc-pipeline-audience: a Pipeline's own client `{project}-pl-{pipeline}` (an imported
+    /// realm's, switched to its secret) reaches the runner as `JC_PIPELINE_SECRET_<CLIENT>`, the
+    /// variable the Portal renders with `pipeline-secret`; kaisatsu's `KC_..._SECRET` files
+    /// beside it are not clients.
+    #[test]
+    fn a_pipelines_own_client_secret_comes_from_the_directory_by_client_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str, value: &str| std::fs::write(dir.path().join(name), value).unwrap();
+        at("banskabystrica-pipelines", "s-project");
+        at("banskabystrica-pl-od-dtm-bb-register-statickej-dopravy", "s-own\n");
+        at("KC_BANSKABYSTRICA_PL_KATASTER_SECRET", "x");
+        at("-pl-x", "x");
+        let secrets = Secrets::load_from(
+            &Config::merge(
+                cli(&[
+                    "--role",
+                    "ekiben",
+                    "--ekiben-client-secrets-dir",
+                    dir.path().to_str().unwrap(),
+                ]),
+                FileConfig::default(),
+            )
+            .unwrap(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let names: Vec<&str> = secrets
+            .pipeline_client_secrets
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "JC_CLIENT_SECRET_BANSKABYSTRICA",
+                "JC_PIPELINE_SECRET_BANSKABYSTRICA_PL_OD_DTM_BB_REGISTER_STATICKEJ_DOPRAVY"
+            ]
+        );
+        assert_eq!(
+            secrets.pipeline_client_secrets[names[1]].expose(),
+            "s-own"
+        );
     }
 
     #[test]

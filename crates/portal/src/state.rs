@@ -854,6 +854,7 @@ impl AppState {
             let deployer = StreamDeployer::new(url)
                 .with_runner_token(self.config.pipeline_runner_token.clone())
                 .with_pipeline_identity(self.config.pipeline_identity)
+                .with_pipeline_credential(self.config.pipeline_credential)
                 .with_concurrency(batch, short)
                 .with_run_ends(ends);
             // A refused record reaches the Portal on the listener the test harness reaches
