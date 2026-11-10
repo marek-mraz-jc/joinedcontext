@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The model every odata-json test reads: `City` (alias `c`) with Building, Tower (from
 //! Building), Person and the complex Address; one property per primitive type the reader
 //! checks; Core and Capabilities restrictions on the Buildings set.

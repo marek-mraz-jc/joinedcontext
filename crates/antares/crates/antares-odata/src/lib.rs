@@ -151,15 +151,104 @@ async fn respond(ops: &Ops, req: Request) -> Response {
             .path()
             .strip_prefix(&format!("/{id}/odata/v4"))
             .is_some_and(|rest| matches!(rest, "" | "/" | "/$metadata"));
-    let visible = if names_the_model {
-        Some(model_visible(&view, &caller).await)
+    // Absolute: a path-only context URL is read as a file path by
+    // Microsoft.OData.Core on Linux (T-3688).
+    let service_root = format!(
+        "{}{PREFIX}/{id}/odata/v4/",
+        antares_ops::public_base(req.headers())
+    );
+    let served = if names_the_model {
+        let visible = model_visible(&view, &caller).await;
+        assembled(&id, view, Some(&visible), version, service_root).map(Arc::new)
     } else {
-        None
+        kept(&id, view, version, service_root)
     };
-    let visible = visible.as_ref();
-    let Some((edm, csdl, metadata_etag)) = model(&id, &view, visible, version) else {
+    let Some(served) = served else {
         return not_found();
     };
+    let Served { state, routed, .. } = &*served;
+    // The inner router matches its own path; the outer match goes.
+    req.extensions_mut().remove::<MatchedPath>();
+    let req = match query_in_body(req, state.url_limits.max_query_len).await {
+        Ok(req) => req,
+        Err(refused) => return refused.into_response(),
+    };
+    let inner_root = format!("/{id}/odata/v4/");
+    if req.method() == Method::POST && req.uri().path() == format!("{inner_root}$batch") {
+        let path_root = format!("{PREFIX}{inner_root}");
+        let roots = (path_root.as_str(), inner_root.as_str());
+        return batch::serve(routed, ops, roots, req, state.url_limits.max_query_len).await;
+    }
+    let Ok(resp) = routed.clone().oneshot(req).await;
+    resp
+}
+
+/// What the inner router of a view's `AppState` weighs (T-5896: ~246 KiB per view).
+const INNER_ROUTER_BYTES: u32 = 256 << 10;
+
+/// The state and the router one request of a view is served by (T-6619 R3-005).
+struct Served {
+    /// The view compilation, the schema revision and the service root it was built for.
+    view: std::sync::Weak<dyn std::any::Any + Send + Sync>,
+    revision: u64,
+    service_root: String,
+    state: Arc<ODataState>,
+    routed: Router,
+    /// The weight of its model ([`model`]).
+    weight: u32,
+}
+
+/// [`assembled`] for a request that reads no model document, kept per view and version on
+/// this pod: such a request's model is the same for every caller (the engine narrows only the
+/// documents that name the model), so it is built again only when the view compilation, the
+/// schema revision or the service root moves (T-6619 R3-005: the model key, the state and the
+/// router were built per request). Weighed as [`model`] weighs, under the same bound, plus
+/// the inner router the view's `AppState` builds on its first call (~246 KiB, T-5896), which
+/// a kept entry now builds once instead of per request.
+/// ponytail: the two caches may hold different models, so up to twice the model bound.
+fn kept(
+    id: &str,
+    view: ViewOps,
+    version: CsdlVersion,
+    service_root: String,
+) -> Option<Arc<Served>> {
+    static KEPT: LazyLock<moka::sync::Cache<(String, bool), Arc<Served>>> = LazyLock::new(|| {
+        moka::sync::Cache::builder()
+            .max_capacity(MODEL_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed))
+            .weigher(|_key: &(String, bool), value: &Arc<Served>| {
+                value.weight.saturating_add(INNER_ROUTER_BYTES)
+            })
+            .build()
+    });
+    let key = (id.to_owned(), version == CsdlVersion::V4_01);
+    let generation = view.generation();
+    let (revision, _) = view.schema()?;
+    if let Some(hit) = KEPT.get(&key) {
+        if std::sync::Weak::ptr_eq(&hit.view, &generation)
+            && hit.revision == revision
+            && hit.service_root == service_root
+        {
+            return Some(hit);
+        }
+    }
+    let served = Arc::new(assembled(id, view, None, version, service_root)?);
+    KEPT.insert(key, served.clone());
+    Some(served)
+}
+
+/// The model of `view` as `visible` narrows it, its state and the router over it.
+fn assembled(
+    id: &str,
+    view: ViewOps,
+    visible: Option<&antares_ops::Visible>,
+    version: CsdlVersion,
+    service_root: String,
+) -> Option<Served> {
+    #[cfg(test)]
+    tests::ASSEMBLED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let generation = view.generation();
+    let ((edm, csdl, metadata_etag, metadata), revision, weight) =
+        model(id, &view, visible, version)?;
     // A 4.0 document serves an Untyped member as a dynamic property of an open type (CSDL XML
     // 3.4); its URLs resolve against the 4.01 model, which names each, so a name no model holds
     // stays unknown (T-5206).
@@ -169,33 +258,23 @@ async fn respond(ops: &Ops, req: Request) -> Response {
         .flat_map(|s| &s.entity_types)
         .any(|t| t.open);
     let url_model = (version == CsdlVersion::V4_0 && open)
-        .then(|| model(&id, &view, visible, CsdlVersion::V4_01))
+        .then(|| model(id, &view, visible, CsdlVersion::V4_01))
         .flatten()
-        .map(|(_, csdl, _)| csdl);
+        .map(|((_, csdl, ..), ..)| csdl);
     let state = Arc::new(ODataState {
         model: csdl,
         url_model,
-        // Absolute: a path-only context URL is read as a file path by
-        // Microsoft.OData.Core on Linux (T-3688).
-        service_root: format!(
-            "{}{PREFIX}/{id}/odata/v4/",
-            antares_ops::public_base(req.headers())
-        ),
+        service_root: service_root.clone(),
         url_limits: odata_url::Limits::strict(),
         csdl_limits: odata_csdl::Limits::strict(),
         max_header_len: MAX_HEADER_LEN,
         metadata_etag,
+        metadata,
         custom_options: read::NGSILD_OPTIONS
             .iter()
             .map(|name| (*name).to_owned())
             .collect(),
     });
-    // The inner router matches its own path; the outer match goes.
-    req.extensions_mut().remove::<MatchedPath>();
-    let req = match query_in_body(req, state.url_limits.max_query_len).await {
-        Ok(req) => req,
-        Err(refused) => return refused.into_response(),
-    };
     let reads = Arc::new(read::Reads {
         view,
         edm,
@@ -214,15 +293,15 @@ async fn respond(ops: &Ops, req: Request) -> Response {
             )
             .with_state(state.clone()),
     );
-    let inner_root = format!("/{id}/odata/v4/");
     let routed = Router::new().nest_service(&format!("/{id}/odata/v4"), api);
-    if req.method() == Method::POST && req.uri().path() == format!("{inner_root}$batch") {
-        let path_root = format!("{PREFIX}{inner_root}");
-        let roots = (path_root.as_str(), inner_root.as_str());
-        return batch::serve(&routed, ops, roots, req, state.url_limits.max_query_len).await;
-    }
-    let Ok(resp) = routed.oneshot(req).await;
-    resp
+    Some(Served {
+        view: generation,
+        revision,
+        service_root,
+        state,
+        routed,
+        weight,
+    })
 }
 
 /// `POST {resource}/$query` (Protocol 11.2.5.2, T-3441 Q22): the options
@@ -305,8 +384,14 @@ async fn query_in_body(req: Request, max: usize) -> Result<Request, ODataErrorRe
 /// `representations.odata` as written, and whether it offers the Temporal Query (T-5908).
 type ModelKey = (String, edm::Shown, edm::Writable, u64, bool, String, bool);
 
-/// A built model, its CSDL document and that document's `ETag`.
-type Built = (Arc<edm::Edm>, Arc<odata_csdl::Model>, Option<String>);
+/// A built model, its CSDL document, that document's `ETag` and its metadata documents as
+/// written (T-6619 R3-014: written once per built key, not per request).
+type Built = (
+    Arc<edm::Edm>,
+    Arc<odata_csdl::Model>,
+    Option<String>,
+    Arc<odata_axum::MetadataDocuments>,
+);
 
 /// What the caller may read through `view`: asked as the type details the
 /// LinkML surface asks for its schema documents, else as the reads the model
@@ -352,7 +437,7 @@ fn model(
     view: &ViewOps,
     visible: Option<&antares_ops::Visible>,
     version: CsdlVersion,
-) -> Option<Built> {
+) -> Option<(Built, u64, u32)> {
     static CACHE: LazyLock<moka::sync::Cache<ModelKey, (Built, u32)>> = LazyLock::new(|| {
         moka::sync::Cache::builder()
             .max_capacity(MODEL_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed))
@@ -387,8 +472,8 @@ fn model(
             .unwrap_or_default(),
         view.allows(OperationId::TemporalQuery),
     );
-    if let Some((hit, _)) = CACHE.get(&key) {
-        return Some(hit);
+    if let Some((hit, weight)) = CACHE.get(&key) {
+        return Some((hit, revision, weight));
     }
     // A view's names are the Entities' IRIs; the schema's may be another vocabulary's.
     let viewed;
@@ -410,15 +495,18 @@ fn model(
         schema_revision = revision,
         "the view's OData model was built"
     );
-    let etag = odata_axum::metadata_etag(&edm.csdl, &odata_csdl::Limits::strict());
-    let mut xml = Vec::new();
-    // ponytail: the document is written a second time for its weight, once per built key.
-    let weight = odata_csdl::write_xml(&edm.csdl, &odata_csdl::Limits::strict(), &mut xml)
-        .map_or(u32::MAX, |()| u32::try_from(xml.len()).unwrap_or(u32::MAX))
+    let documents = Arc::new(odata_axum::MetadataDocuments::default());
+    // The XML document `$metadata` serves, written here once: its tag and its weight.
+    let xml = documents.xml(&edm.csdl, &odata_csdl::Limits::strict());
+    let etag = xml.map(|w| w.etag.clone());
+    let weight = xml
+        .map_or(u32::MAX, |w| {
+            u32::try_from(w.body.len()).unwrap_or(u32::MAX)
+        })
         .max(4096);
-    let built = (Arc::new(edm.clone()), Arc::new(edm.csdl), etag);
+    let built = (Arc::new(edm.clone()), Arc::new(edm.csdl), etag, documents);
     CACHE.insert(key, (built.clone(), weight));
-    Some(built)
+    Some((built, revision, weight))
 }
 
 /// The schema of `bytes`, parsed once per revision on this pod and shared
@@ -466,6 +554,98 @@ fn not_found() -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`assembled`] calls in this test binary (T-6619 R3-005).
+    pub(super) static ASSEMBLED: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    async fn send(app: &Router, method: &str, uri: &str, body: &str) -> (StatusCode, String) {
+        let mut req = Request::builder().method(method).uri(uri);
+        if !body.is_empty() {
+            req = req
+                .header(CONTENT_TYPE, "application/json")
+                .header(CONTENT_LENGTH, body.len());
+        }
+        let req = req
+            .header("NGSILD-Tenant", "t6619")
+            .body(axum::body::Body::from(body.to_owned()))
+            .unwrap_or_default();
+        let Ok(resp) = app.clone().oneshot(req).await;
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap_or_default();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    fn view(attributes: &str) -> String {
+        format!(
+            r#"{{"id": "t6619-cars", "tenant": "t6619", "@context": {{"city": "https://example.org/city/"}},
+            "selector": ["city:Car"],
+            "rules": [{{"types": ["city:Car"], "attributes": [{attributes}]}}],
+            "operations": ["query_entities", "retrieve_entity"]}}"#
+        )
+    }
+
+    const SCHEMA: &str = r#"{
+      "id": "https://example.org/city", "name": "city",
+      "prefixes": {"city": {"prefix_prefix": "city", "prefix_reference": "https://example.org/city/"}},
+      "default_prefix": "city",
+      "classes": {"Car": {"slots": ["speed", "colour"]}},
+      "slots": {"speed": {"range": "float"}, "colour": {"range": "string"}}
+    }"#;
+
+    fn assembled_so_far() -> usize {
+        ASSEMBLED.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// T-6619 R3-005: a read that names no model document is served by the state and router
+    /// built for its view compilation and schema revision; a rule or schema change builds anew.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_router_is_built_once_per_compilation_and_revision() -> Result<(), String> {
+        std::env::set_var(antares_ops::views::SCHEMA_MAX_ENV, "65536");
+        let broker = antares_ops::test_kit::TestBroker::new().await?;
+        let app = broker.serve(OData)?;
+        let (s, b) = send(&app, "PUT", "/q/views/t6619-cars", &view(r#""city:speed""#)).await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+        let (s, b) = send(&app, "PUT", "/q/schemas/t6619", SCHEMA).await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+        let car = r#"{"id": "urn:ngsi-ld:Car:1", "type": "https://example.org/city/Car",
+            "https://example.org/city/speed": {"type": "Property", "value": 1},
+            "https://example.org/city/colour": {"type": "Property", "value": "red"}}"#;
+        let (s, b) = send(&app, "POST", "/ngsi-ld/v1/entities", car).await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+        let cars = "/x/views/t6619-cars/odata/v4/Car";
+        let before = assembled_so_far();
+        for _ in 0..3 {
+            let (s, b) = send(&app, "GET", cars, "").await;
+            assert_eq!(s, StatusCode::OK, "{b}");
+            assert!(!b.contains("colour"), "{b}");
+        }
+        assert_eq!(assembled_so_far() - before, 1, "one build for three reads");
+        let rule = view(r#""city:speed", "city:colour""#);
+        let (s, b) = send(&app, "PUT", "/q/views/t6619-cars", &rule).await;
+        assert!(s.is_success(), "{s} {b}");
+        let (s, b) = send(&app, "GET", cars, "").await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        assert!(b.contains("colour"), "the new rule reaches the read: {b}");
+        assert_eq!(
+            assembled_so_far() - before,
+            2,
+            "a new compilation builds anew"
+        );
+        let schema = SCHEMA.replace(r#""string""#, r#""integer""#);
+        let (s, b) = send(&app, "PUT", "/q/schemas/t6619", &schema).await;
+        assert!(s.is_success(), "{s} {b}");
+        let (s, b) = send(&app, "GET", cars, "").await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        assert_eq!(
+            assembled_so_far() - before,
+            3,
+            "a new schema revision builds anew"
+        );
+        Ok(())
+    }
 
     /// T-5895: the shares the broker sets are what the model caches take.
     #[test]

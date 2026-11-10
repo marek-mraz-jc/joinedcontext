@@ -144,7 +144,12 @@ fn writes(id: &str) -> Vec<(&'static str, &'static str, String, Option<Value>)> 
             "5.6.18",
             "PUT",
             e.clone(),
-            Some(json!({"id": id, "type": "Vehicle", "speed": {"type": "Property", "value": 9}})),
+            // a replace keeps the member the condition reads: one that drops it would move the
+            // Entity out of the condition, which the post-image check refuses (F-08)
+            Some(
+                json!({"id": id, "type": "Vehicle", "zone": {"type": "Property", "value": "A"},
+                        "speed": {"type": "Property", "value": 9}}),
+            ),
         ),
         (
             "5.6.19",

@@ -246,7 +246,13 @@ elif [ -z "${JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:-}" ]; then
 fi
 # The datasets this kit renames answer their old names too (RENAMES.md, rehearsal.py CKAN_NAMES).
 alias_config=$(python3 -I "$here/rehearsal.py" aliases)
-printf '[mounts.portal]\npath_prefix = ""\n%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_config" > "$home/jc.toml"
+# REHEARSAL_APP_HOSTS=on: the Portal also on every App host {name}.apps.localhost:<port>, as jc-prod's
+# *.apps.{domain} entry (edge-session-design S4a); jc sets JC_PORTAL_APPS_URL from it.
+portal_mounts='[mounts.portal]\npath_prefix = ""\n'
+if [ "${REHEARSAL_APP_HOSTS:-off}" = on ]; then
+  portal_mounts="[[mounts.portal]]\npath_prefix = \"\"\n\n[[mounts.portal]]\nhost = \"*.apps.localhost:$port\"\n"
+fi
+printf "$portal_mounts"'%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_config" > "$home/jc.toml"
 # REHEARSAL_JC_TOML_EXTRA: a file appended to jc.toml as is, e.g. the [[organizations]] of a
 # host-mode multiorg run (each Organization on its own *.localhost hosts).
 if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then

@@ -394,6 +394,32 @@ the script's own receiver. The run fails on:
 it runs by itself when the soak changes. `python3 dev/soak.py --selftest`
 plants a failure in each judge.
 
+## Ten organizations at once (`dev/load-10-orgs.sh`)
+
+`dev/load-10-orgs.sh` (T-6628) runs the joinedcontext broker image
+(`IMAGE`, by default the dev pin) on a local PostGIS of dev's major, with
+dev's runtime keys: the `joinedcontext` policy engine,
+`ANTARES_REQUIRE_RLS=1` over a login that is no superuser and does not
+bypass RLS, `ANTARES_PG_POOL` 13 and `ANTARES_MAX_CONNECTIONS` 512. Each of
+`TENANTS` Tenants is one organization: its own caller (`x-jc-client
+load-tN`), its own rule document granting that caller clauses 5.6.8, 5.7.1,
+5.7.2 and 5.7.3 on three types, and a retention rule giving `Sensor`
+history. k6 (`dev/load-10-orgs.js`) seeds 10 000 Entities per Tenant, then
+offers `RATE` requests a second split evenly over the Tenants for `WARMUP`
+plus `DURATION`: 70 % query by type and `q`, 15 % Entity by id, 10 %
+temporal `lastN`, 5 % Batch Upsert. Every hundredth query reads another
+Tenant with the own caller instead.
+
+Every id an answer carries must have the reading Tenant's prefix, and a
+cross-Tenant read must answer 403 or 404. Both are k6 thresholds
+(`leaks`, `xtenant_unexpected`, count 0), so a leak exits 99.
+`dev/load-10-orgs-report.py` writes `report.md` from the k6 summary, the
+broker's `/q/metrics` before and after, `docker stats`, the broker's
+PostgreSQL connections and `pg_stat_statements`. Broker, PostGIS and k6 run
+on their own CPU sets (`BROKER_CPUS`, `PG_CPUS`, `K6_CPUS`, four cores
+each by default); a cpuset does not keep other processes off those cores,
+so latency tails follow the host's load.
+
 ## How each measurement works
 
 No rig script is a unit test. Every one starts a real broker, drives it

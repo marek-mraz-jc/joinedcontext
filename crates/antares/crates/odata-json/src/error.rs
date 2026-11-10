@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The OData error body (JSON Format 4.01 section 21.1) and the errors of the body reader.
 //!
 //! Neither carries a value from the request (threat model O20): a message is fixed text per

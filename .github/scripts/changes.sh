@@ -7,7 +7,7 @@
 # name already concluded success in another ci run of this same commit (a fast-forward merge of a
 # branch head ci passed) is not run again: the same commit is the same input, workflow file
 # included. supply-chain, gitleaks and the image always run.
-#   EVENT=push BEFORE=<sha> sh changes.sh      # in ci.yml
+#   EVENT=push BEFORE=<sha> sh changes.sh      # in ci.yml (reads GITHUB_REF)
 #   sh changes.sh --selftest
 set -eu
 JOBS="root antares ekiben portal ui supply workflows image dockerfiles platform"
@@ -40,6 +40,10 @@ map() {
 }
 
 all() { for j in $JOBS; do echo "$j=true"; done; }
+
+# trunk <ref>: the refs that keep their own base (`before`): each merged head is checked against
+# the head before it
+trunk() { case "$1" in refs/heads/main | refs/heads/jc-portal-1 | refs/heads/ship-proof/*) return 0 ;; esac; return 1; }
 
 # ship: the image holds the Rust build (root reaches every crate) and the embedded UI
 ship() { awk -F= '($1 == "root" || $1 == "ui" || $1 == "image") && $2 == "true" { s = 1 } END { print "ship=" (s ? "true" : "false") }'; }
@@ -98,6 +102,8 @@ if [ "${1:-}" = --selftest ]; then
   check 'Cargo.lock' 'root supply platform'
   check '.github/workflows/image.yml' 'workflows'
   check '.github/scripts/changes.sh' "$JOBS"
+  for r in refs/heads/jc-portal-1 refs/heads/main refs/heads/ship-proof/x; do trunk "$r" || { echo "FAIL: trunk $r"; exit 1; }; done
+  for r in refs/heads/jc-ui-node24 refs/pull/1/merge; do ! trunk "$r" || { echo "FAIL: branch $r"; exit 1; }; done
   [ "$(printf 'root=false\nui=true\nimage=false\n' | ship)" = ship=true ] || { echo "FAIL: ship ui"; exit 1; }
   [ "$(printf 'root=false\nui=false\nimage=false\n' | ship)" = ship=false ] || { echo "FAIL: ship docs"; exit 1; }
   [ "$(printf 'root=true\nportal=true\nsupply=true\n' | covered 'root-clippy\nroot-test-1\nroot-test-2\nroot-test-3\nportal-clippy\nportal-test-1')" = "$(printf 'root=false\nportal=true\nsupply=true')" ] \
@@ -113,6 +119,12 @@ case "${EVENT:-}" in
   push) base=${BEFORE:-} ;;
   *) base= ;;
 esac
+# A branch push checks what the branch brings to jc-portal-1: its diff from the merge base. A new
+# branch has no `before`, and a push that merged jc-portal-1 would otherwise count trunk's changes
+# as its own (one ci.yml change on trunk ran all 21 jobs of a 6-file branch).
+if [ "${EVENT:-}" = push ] && [ -n "${GITHUB_REF:-}" ] && ! trunk "$GITHUB_REF"; then
+  base=$(git merge-base origin/jc-portal-1 HEAD 2>/dev/null) || base=
+fi
 if [ -z "$base" ] || [ "$base" = "$zero" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
   echo "no base: every job runs"
   lines=$(all)

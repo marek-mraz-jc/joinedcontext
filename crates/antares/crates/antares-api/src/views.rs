@@ -120,6 +120,22 @@ impl CompiledView {
         }
     }
 
+    /// The view that shows nothing: one rule naming no type, which holds
+    /// for no Entity. What a state that lost its request's view reads as.
+    #[must_use]
+    pub fn nothing() -> Arc<Self> {
+        static NOTHING: std::sync::LazyLock<Arc<CompiledView>> = std::sync::LazyLock::new(|| {
+            Arc::new(CompiledView {
+                narrowing: Arc::new(Filter {
+                    rules: vec![crate::policy::Rule::default()],
+                    ..Filter::default()
+                }),
+                id: String::new(),
+            })
+        });
+        NOTHING.clone()
+    }
+
     /// Whether the view shows every name ([`Self::every`]): [`Self::new`]
     /// never compiles a view without rules.
     #[must_use]
@@ -200,11 +216,11 @@ pub fn with_view(
         // Rule 7: the handler checks the view on the stored Entity before
         // and after the write (`WriteGuard`); the engine's own answer
         // still refuses a narrowed write, as it does without a view.
-        return match resolve(clause, Decision::Filter(Arc::unwrap_or_clone(engine?))) {
+        return match resolve(clause, Decision::Filter(engine?)) {
             Decision::Deny(why) => Err(Denied(why)),
             // 5.8.4 lists the view's own and keeps the engine's selection
             // among them (T-3673)
-            Decision::Filter(f) if crate::policy::RECORD_LISTS.contains(&clause) => Ok(Arc::new(f)),
+            Decision::Filter(f) if crate::policy::RECORD_LISTS.contains(&clause) => Ok(f),
             _ => Ok(crate::policy::unnarrowed()),
         };
     }
@@ -236,37 +252,50 @@ pub fn with_view(
 /// `views`, T-3778): the last answer is kept per thread and handed out again
 /// while the same view, clause and engine narrowing come back. It is keyed
 /// by the whole input (the view's `Arc` itself, held so its address cannot
-/// be reused; the clause; the engine's `Filter` by value), so it never
-/// answers for another (O16). A filter unequal to itself (a NaN) misses.
+/// be reused; the clause; the engine's `Filter`, the same `Arc` or an equal
+/// value), so it never answers for another (O16). An engine that hands out
+/// the same `Arc` again (T-6618) is found by pointer, without comparing the
+/// rules. A filter unequal to itself (a NaN) misses.
 /// The answer is the same `Arc` on a hit, so `repr::narrow_repr` finds its
 /// reach by pointer as well.
 fn paired(view: &CompiledView, clause: &str, engine: Arc<Filter>) -> Result<Arc<Filter>, Denied> {
-    type Last = (Arc<Filter>, String, Filter, Result<Arc<Filter>, Denied>);
+    type Last = (
+        Arc<Filter>,
+        String,
+        Arc<Filter>,
+        Result<Arc<Filter>, Denied>,
+    );
     thread_local! {
         static LAST: std::cell::RefCell<Option<Last>> = const { std::cell::RefCell::new(None) };
     }
     let hit = LAST.with_borrow(|last| {
         last.as_ref()
-            .filter(|l| Arc::ptr_eq(&l.0, &view.narrowing) && l.1 == clause && l.2 == *engine)
+            .filter(|l| {
+                Arc::ptr_eq(&l.0, &view.narrowing)
+                    && l.1 == clause
+                    && (Arc::ptr_eq(&l.2, &engine) || *l.2 == *engine)
+            })
             .map(|l| l.3.clone())
     });
     if let Some(hit) = hit {
         return hit;
     }
-    let key = Filter::clone(&engine);
+    let key = engine.clone();
     let composed = if *engine == Filter::default() {
         Ok(Filter::clone(view.narrowing()))
     } else {
         compose(view.narrowing(), Arc::unwrap_or_clone(engine))
     };
-    let answer = composed.and_then(
-        |composed| match resolve(clause, Decision::Filter(composed)) {
-            Decision::Allow => Ok(crate::policy::unnarrowed()),
-            // `resolve` makes no condition of a filter
-            Decision::Filter(f) | Decision::AllowIf(f) => Ok(Arc::new(f)),
-            Decision::Deny(why) => Err(Denied(why)),
-        },
-    );
+    let answer =
+        composed.and_then(
+            |composed| match resolve(clause, Decision::Filter(Arc::new(composed))) {
+                Decision::Allow => Ok(crate::policy::unnarrowed()),
+                // `resolve` makes no condition of a filter
+                Decision::Filter(f) => Ok(f),
+                Decision::AllowIf(f) => Ok(Arc::new(f)),
+                Decision::Deny(why) => Err(Denied(why)),
+            },
+        );
     LAST.set(Some((
         view.narrowing.clone(),
         clause.to_owned(),
@@ -869,7 +898,8 @@ impl WriteGuard {
         st: &crate::state::AppState,
         written: impl IntoIterator<Item = &'a str>,
     ) -> Option<Self> {
-        let narrowing = st.view.as_deref()?.narrowing();
+        let view = st.view()?;
+        let narrowing = view.narrowing();
         Some(Self {
             sel: crate::policy::Condition::new(narrowing),
             written: written.into_iter().map(str::to_owned).collect(),
@@ -912,7 +942,7 @@ impl WriteGuard {
                 && shown.as_ref().is_some_and(|s| s.allows(k));
             if frame || attribute {
                 k.hash(&mut hasher);
-                v.to_string().hash(&mut hasher);
+                hash_json(v, &mut hasher);
             }
         }
         format!("\"{:016x}\"", hasher.finish())
@@ -1231,6 +1261,24 @@ pub(crate) async fn schema_admits(
     schema_admits_typed(st, tenant, &typed, false)
 }
 
+/// `v.to_string().hash(h)` without the String: the text streams into the
+/// hasher, then the `0xff` that `str`'s Hash writes after it, so every
+/// entity tag keeps its value (R1-016).
+fn hash_json(v: &serde_json::Value, h: &mut impl std::hash::Hasher) {
+    struct Into<'a, H>(&'a mut H);
+    impl<H: std::hash::Hasher> std::io::Write for Into<'_, H> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.write(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    // writing a Value into a sink that never fails cannot fail
+    let _ = serde_json::to_writer(Into(&mut *h), v);
+    h.write_u8(0xff);
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1245,6 +1293,24 @@ mod tests {
     use std::sync::Arc;
     use tower::ServiceExt;
 
+    /// R1-016: the streamed hash is the one the String gave, so a tag a
+    /// client holds from before still matches.
+    #[test]
+    fn the_streamed_hash_is_the_one_the_text_gave() {
+        use std::hash::{Hash, Hasher};
+        for v in [
+            serde_json::json!({"type": "Property", "value": [1, "a\"b", {"x": null}]}),
+            serde_json::json!("ü"),
+            serde_json::json!(1.5),
+        ] {
+            let mut old = std::hash::DefaultHasher::new();
+            v.to_string().hash(&mut old);
+            let mut new = std::hash::DefaultHasher::new();
+            hash_json(&v, &mut new);
+            assert_eq!(old.finish(), new.finish(), "{v}");
+        }
+    }
+
     struct Narrowing(Filter);
 
     impl PolicyEngine for Narrowing {
@@ -1253,7 +1319,7 @@ mod tests {
         }
         fn decide<'a>(&'a self, _s: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
             let answer = if FILTERABLE.contains(&op.clause) {
-                Decision::Filter(self.0.clone())
+                Decision::Filter(std::sync::Arc::new(self.0.clone()))
             } else {
                 Decision::Allow
             };

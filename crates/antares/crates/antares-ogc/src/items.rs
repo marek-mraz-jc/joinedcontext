@@ -43,7 +43,8 @@ pub(crate) struct Params {
     /// The NGSI-LD `lang` a `LanguageProperty` is read in: the caller's `Accept-Language`.
     pub lang: Option<String>,
     /// Read the page without the store's whole count (T-6508), which walks every matching
-    /// row: the [`Page`] states neither `matched` nor a `next` from it.
+    /// row: the [`Page`] states no `matched`, and its `next` comes from one Entity read past
+    /// the page. A page read from a `next` token is read so too (R3-001).
     pub uncounted: bool,
 }
 
@@ -667,8 +668,10 @@ pub(crate) struct Cursor {
     start: (usize, usize),
     limit: usize,
     digest: u64,
-    /// [`Params::uncounted`].
-    uncounted: bool,
+    /// Whether the page states `numberMatched`: the request's first page, unless
+    /// [`Params::uncounted`]. A page read from a `next` token asks the store for no count
+    /// (R3-001): its `next` comes from one Entity read past the page.
+    counted: bool,
     /// The part being read and where its read stands, `None` before its first read.
     part: usize,
     reading: Option<Reading>,
@@ -722,11 +725,11 @@ impl Cursor {
             start,
             limit: usize::try_from(p.limit).unwrap_or(usize::MAX),
             digest,
-            uncounted: p.uncounted,
+            counted: !p.uncounted && p.next.is_none(),
             part: 0,
             reading: None,
             served: 0,
-            matched: Some(0),
+            matched: (!p.uncounted && p.next.is_none()).then_some(0),
             next: None,
         })
     }
@@ -748,24 +751,20 @@ impl Cursor {
         let Some(part) = self.parts.get(i) else {
             return Ok(None);
         };
-        let mut r = match self.reading.take() {
-            Some(r) => r,
-            None => self.enter(part)?,
-        };
         let room = if i < self.start.0 {
             0
         } else {
             self.limit.saturating_sub(self.served)
         };
-        let size = room.min(view.page_size());
-        let page = self.store_page(&r, size);
-        let (docs, next, count) = match &r.residual {
-            None => scanned(view.scan(caller, &r.pushdown, None, page).await)?,
-            Some(program) => scanned(
-                view.scan_within(caller, &r.pushdown, program, page, &mut r.budget)
-                    .await,
-            )?,
+        if room == 0 && !self.counted && self.reading.is_none() {
+            return self.pass(view, caller, i).await.map(Some);
+        }
+        let mut r = match self.reading.take() {
+            Some(r) => r,
+            None => self.enter(part)?,
         };
+        let size = room.min(view.page_size());
+        let (docs, next, count) = self.read_part(view, caller, &mut r, size, room).await?;
         let got = docs.len();
         self.served = self.served.saturating_add(got);
         r.first = false;
@@ -790,7 +789,7 @@ impl Cursor {
             return Ok(Some(features));
         }
         let count = match &r.residual {
-            _ if self.uncounted => None,
+            _ if !self.counted => None,
             None => r.count,
             // ponytail: the count reads the residual's answer again, within the budget; a
             // count kept beside the cursor when one request reads both.
@@ -816,8 +815,8 @@ impl Cursor {
         }
         // Without a residual the whole count says whether more remains past this page.
         let next = match r.residual {
-            Some(_) => next,
-            None => count.filter(|n| r.pos < *n).map(|_| r.pos),
+            None if self.counted => count.filter(|n| r.pos < *n).map(|_| r.pos),
+            _ => next,
         };
         // A part after the one that filled the page answers its whole count and, holding
         // anything, starts the next page at its offset 0.
@@ -825,13 +824,66 @@ impl Cursor {
         Ok(Some(features))
     }
 
-    /// The next store read: a part's first read also counts it, unless the page is uncounted.
+    /// The next store read: a part's first read on a counted page also counts it.
     fn store_page(&self, r: &Reading, size: usize) -> antares_ops::Page {
         antares_ops::Page {
             start: r.pos,
             size,
-            whole: !self.uncounted && r.residual.is_none() && r.first,
+            whole: self.counted && r.residual.is_none() && r.first,
         }
+    }
+
+    /// One store read of the part `r` reads, at most `size` Entities of the page's `room`;
+    /// an uncounted read that ends the page asks one more, whose presence is its `next`.
+    async fn read_part(
+        &self,
+        view: &ViewOps,
+        caller: &Caller,
+        r: &mut Reading,
+        size: usize,
+        room: usize,
+    ) -> Result<Read, Problem> {
+        let ahead = !self.counted && r.residual.is_none() && size == room;
+        let page = self.store_page(r, size.saturating_add(usize::from(ahead)));
+        let (mut docs, mut next, count) = match &r.residual {
+            None => scanned(view.scan(caller, &r.pushdown, None, page).await)?,
+            Some(program) => scanned(
+                view.scan_within(caller, &r.pushdown, program, page, &mut r.budget)
+                    .await,
+            )?,
+        };
+        if ahead {
+            let more = docs.len() > size;
+            docs.truncate(size);
+            next = more.then(|| r.pos.saturating_add(size));
+        }
+        Ok((docs, next, count))
+    }
+
+    /// Part `i` on an uncounted page with no room left: nothing read before the token's
+    /// part, and past a full page one Entity of the part, whose presence starts the `next`
+    /// page there (R3-001: a count of every part was the old answer).
+    async fn pass(
+        &mut self,
+        view: &ViewOps,
+        caller: &Caller,
+        i: usize,
+    ) -> Result<Vec<Value>, Problem> {
+        if i < self.start.0 {
+            self.part = i.saturating_add(1);
+            return Ok(Vec::new());
+        }
+        if let (None, Some(part)) = (&self.next, self.parts.get(i)) {
+            let mut r = self.enter(part)?;
+            let (docs, _, _) = self.read_part(view, caller, &mut r, 1, usize::MAX).await?;
+            self.next = (!docs.is_empty()).then(|| token(i, r.pos, self.digest));
+        }
+        self.part = if self.next.is_some() {
+            self.parts.len()
+        } else {
+            i.saturating_add(1)
+        };
+        Ok(Vec::new())
     }
 
     /// The first read of `part`: its residual compiled and its pushdown.
@@ -1155,6 +1207,12 @@ mod tests {
             ..params(&c, &[]).map_err(|e| e.1.to_owned())?
         };
         assert!(!whole(uncounted)?);
+        // R3-001: a page read from a `next` token counts nothing either.
+        let further = Params {
+            next: Some(token(0, 10, 0)),
+            ..params(&c, &[]).map_err(|e| e.1.to_owned())?
+        };
+        assert!(!whole(further)?);
         Ok(())
     }
 
@@ -1349,7 +1407,7 @@ mod tests {
     fn kept(datetime: &str, events: &[(&str, Option<&str>)]) -> (Option<String>, Vec<usize>) {
         let terms = Terms {
             context: Map::new(),
-            by_iri: vec![("s".into(), "s".into()), ("e".into(), "e".into())],
+            by_iri: [("s".into(), "s".into()), ("e".into(), "e".into())].into(),
         };
         let range = super::datetime(datetime).unwrap_or_default();
         let time = Time::Interval(Some("s".into()), Some("e".into()));
@@ -1414,7 +1472,7 @@ mod tests {
     fn the_time_query_keeps_features_without_time() {
         let terms = Terms {
             context: Map::new(),
-            by_iri: vec![("s".into(), "s".into()), ("e".into(), "e".into())],
+            by_iri: [("s".into(), "s".into()), ("e".into(), "e".into())].into(),
         };
         let at = "2026-01-02T00:00:00Z".to_owned();
         let range = (Some(at.clone()), Some(at));

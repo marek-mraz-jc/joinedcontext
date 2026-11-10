@@ -1,6 +1,6 @@
 diff -ru a/site/embed.js site/embed.js
---- a/site/embed.js	2026-11-09 06:37:01.194717034 +0000
-+++ site/embed.js	2026-11-09 07:07:06.111406083 +0000
+--- a/site/embed.js
++++ site/embed.js
 @@ -13,6 +13,11 @@
    var VIEWS = ["both", "table"];
    var HEIGHT = { min: 240, max: 2000, fallback: 640 };
@@ -60,8 +60,8 @@ diff -ru a/site/embed.js site/embed.js
    }
  })(typeof self !== "undefined" ? self : globalThis);
 diff -ru a/site/explore.js site/explore.js
---- a/site/explore.js	2026-11-09 06:37:01.194901061 +0000
-+++ site/explore.js	2026-11-09 07:07:06.112214714 +0000
+--- a/site/explore.js
++++ site/explore.js
 @@ -7,8 +7,35 @@
  (function (root) {
    "use strict";
@@ -222,8 +222,8 @@ diff -ru a/site/explore.js site/explore.js
    else if (typeof document !== "undefined") main();
  })(typeof self !== "undefined" ? self : this);
 diff -ru a/site/map.html site/map.html
---- a/site/map.html	2026-11-09 06:37:01.195175502 +0000
-+++ site/map.html	2026-11-09 07:07:06.111840393 +0000
+--- a/site/map.html
++++ site/map.html
 @@ -8,8 +8,8 @@
  <link rel="stylesheet" href="vendor/maplibre-gl-6.14.0.css">
  <link rel="stylesheet" href="map.css">
@@ -235,3 +235,16 @@ diff -ru a/site/map.html site/map.html
  <script src="refuse.js" defer></script>
  <script src="vendor/pmtiles-4.5.0.js" defer></script>
  <script src="map.js" defer></script>
+diff -ru a/site/host.js site/host.js
+--- a/site/host.js
++++ site/host.js
+@@ -40,7 +40,8 @@
+   // `&lang=sk` (the page's language) in any order.
+   function parseHash(hash) {
+     var parts = String(hash || "").replace(/^#/, "").split("&");
+-    if (!/^[0-9a-f-]{36}$/.test(parts[0])) return null;
++    // jc's catalogue mints `view-<uuid>` where CKAN minted the bare UUID: both name a view.
++    if (!/^(?:view-)?[0-9a-f-]{36}$/.test(parts[0])) return null;
+     var lang = parts.map(function (p) { return /^lang=([a-z]{2})$/.exec(p); }).filter(Boolean)[0];
+     return { id: parts[0], inline: parts.indexOf("inline") > 0, lang: lang ? lang[1] : null };
+   }

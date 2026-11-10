@@ -93,7 +93,11 @@ async fn preview(
         .header("Accept", "application/json")
         .body(Body::empty())
         .map_err(|e| e.to_string())?;
-    let answer = r.state.with_view(loaded.view).call(&caller, req).await;
+    // The view's own policyRefs apply as on the real path (F-04): the engine
+    // learns the view from the in-process scope, never from a header.
+    let answer =
+        antares_api::policy::through_view(&id, r.state.with_view(loaded.view).call(&caller, req))
+            .await;
     // The admin caller reads a refusal as the broker gave it.
     if !answer.status().is_success() {
         return Ok(answer);

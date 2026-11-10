@@ -196,7 +196,12 @@ async fn stored_sub(st: &AppState) -> Value {
         .unwrap_or(Value::Null)
 }
 
-const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// How long a test waits for a notification that must come: 10 s,
+/// stretched under a sanitizer like `listen()` (strict TSan held two
+/// allowed deliveries past a flat 10 s, run 42490158793, T-6681).
+fn wait() -> std::time::Duration {
+    std::time::Duration::from_secs(10 * antares_api::state::slow_factor())
+}
 
 /// How long a test listens for a notification that may or must not come:
 /// 1.5 s, stretched under a sanitizer, whose slowdown once held an allowed
@@ -246,7 +251,7 @@ async fn a_delivered_notification_still_counts() {
     subscribe(&st, &uri, Some("alice")).await;
     fire(&st, "urn:ngsi-ld:Vehicle:sent").await;
 
-    let body = tokio::time::timeout(WAIT, rx.recv())
+    let body = tokio::time::timeout(wait(), rx.recv())
         .await
         .expect("a notification arrived")
         .expect("body");
@@ -269,7 +274,7 @@ async fn a_filtered_notification_loses_only_what_the_engine_named() {
     subscribe(&st, &uri, Some("alice")).await;
     fire(&st, "urn:ngsi-ld:Vehicle:filtered").await;
 
-    let body = tokio::time::timeout(WAIT, rx.recv())
+    let body = tokio::time::timeout(wait(), rx.recv())
         .await
         .expect("a notification arrived")
         .expect("body");
@@ -294,7 +299,7 @@ async fn a_projection_named_as_an_iri_removes_the_member_it_names() {
     subscribe(&st, &uri, Some("alice")).await;
     fire(&st, "urn:ngsi-ld:Vehicle:iri").await;
 
-    let body = tokio::time::timeout(WAIT, rx.recv())
+    let body = tokio::time::timeout(wait(), rx.recv())
         .await
         .expect("a notification arrived")
         .expect("body");
@@ -319,7 +324,7 @@ async fn a_pick_leaves_the_entity_frame_and_nothing_it_did_not_name() {
     subscribe(&st, &uri, Some("alice")).await;
     fire(&st, "urn:ngsi-ld:Vehicle:picked").await;
 
-    let body = tokio::time::timeout(WAIT, rx.recv())
+    let body = tokio::time::timeout(wait(), rx.recv())
         .await
         .expect("a notification arrived")
         .expect("body");
@@ -367,7 +372,7 @@ async fn the_notification_subject_is_the_subscribers() {
     subscribe(&st, &uri, Some("alice")).await;
     // the write is nobody's in particular; the notification is still alice's
     fire(&st, "urn:ngsi-ld:Vehicle:subject").await;
-    tokio::time::timeout(WAIT, rx.recv())
+    tokio::time::timeout(wait(), rx.recv())
         .await
         .expect("a notification arrived");
 
@@ -437,7 +442,7 @@ async fn the_stored_subject_is_in_no_representation_and_no_client_can_set_it() {
 
     // and the one the engine is asked about is still the creator's
     fire(&st, "urn:ngsi-ld:Vehicle:proof").await;
-    tokio::time::timeout(WAIT, rx.recv())
+    tokio::time::timeout(wait(), rx.recv())
         .await
         .expect("a notification arrived");
     assert_eq!(
@@ -625,7 +630,7 @@ async fn a_notification_projection_reaches_the_inline_joined_entity() {
         )
         .await;
         assert_eq!(code, StatusCode::CREATED, "{body}");
-        let n = tokio::time::timeout(WAIT, rx.recv())
+        let n = tokio::time::timeout(wait(), rx.recv())
             .await
             .ok()
             .flatten()

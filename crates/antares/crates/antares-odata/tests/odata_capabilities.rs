@@ -146,17 +146,10 @@ async fn the_restrictions_name_what_filter_and_orderby_refuse() {
     assert_eq!(status, StatusCode::OK, "{xml}");
     let unfilterable = paths(&xml, "FilterRestrictions", "NonFilterableProperties");
     let unsortable = paths(&xml, "SortRestrictions", "NonSortableProperties");
-    // the surface sorts on the system members (T-3758) and filters on none
+    // the surface sorts on the system members (T-3758) and filters on them (T-6631)
     let system = |p: &String| p == "createdAt" || p == "modifiedAt";
-    assert_eq!(
-        unfilterable
-            .iter()
-            .filter(|p| !system(p))
-            .collect::<Vec<_>>(),
-        unsortable.iter().collect::<Vec<_>>(),
-        "{xml}"
-    );
-    assert!(unfilterable.iter().any(system), "{xml}");
+    assert_eq!(unfilterable, unsortable, "{xml}");
+    assert!(!unfilterable.iter().any(system), "{xml}");
     for name in ["tags", "_types", "scope"] {
         assert!(unfilterable.iter().any(|p| p == name), "{name}: {xml}");
     }
@@ -165,6 +158,8 @@ async fn the_restrictions_name_what_filter_and_orderby_refuse() {
         ("$orderby", "createdAt"),
         ("$orderby", "modifiedAt%20desc"),
         ("$filter", "brand%20eq%20'x'"),
+        ("$filter", "createdAt%20gt%202000-01-01T00:00:00Z"),
+        ("$filter", "modifiedAt%20eq%20null"),
     ] {
         let (status, body) = send(
             &app,
@@ -375,6 +370,10 @@ async fn filter_functions_are_the_served_operators_and_functions() {
             "geo.intersects",
             "geo.intersects(location,geography'SRID=4326;Polygon((0 0,1 0,1 1,0 1,0 0))')",
         ),
+        (
+            "geo.distance",
+            "geo.distance(location,geography'SRID=4326;Point(0 0)') lt 1000",
+        ),
         ("concat", "concat(brand,'x') eq 'ax'"),
         ("indexof", "indexof(brand,'a') eq 0"),
         ("length", "length(brand) eq 1"),
@@ -414,7 +413,7 @@ async fn filter_functions_are_the_served_operators_and_functions() {
         assert_eq!(status, StatusCode::OK, "{function}: {uri}: {body}");
     }
     // a function the list leaves out is refused, named
-    let uri = format!("{ROOT}/Car?$filter=geo.distance(location,location)%20lt%201");
+    let uri = format!("{ROOT}/Car?$filter=geo.length(location)%20lt%201");
     let (status, body) = send(&app, Method::GET, &uri, None).await;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
     assert!(

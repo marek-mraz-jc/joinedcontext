@@ -58,6 +58,7 @@ jobs:
           tags: antares-local:latest
           build-args: |
             FEATURES=${{ env.FEATURES }}
+            SECURITY_EPOCH=${{ github.run_id }}
             VERSION=dev
             REVISION=${{ github.sha }}
           cache-from: type=gha,scope=antares-jc

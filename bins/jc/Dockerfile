@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.27@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # The jc image: one binary hosting every module (bins/jc), default features, the Portal UI
 # embedded. Build from the repository root: `docker build -f bins/jc/Dockerfile .`
 # .github/workflows/image.yml builds, smoke-tests, pushes by digest and signs it. It compiles jc
@@ -192,6 +192,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends make cmake jq g
 COPY vendor/joinedcontext-platform/scripts/ci/pdfium.sh vendor/joinedcontext-platform/scripts/ci/e5-small.sh vendor/joinedcontext-platform/scripts/ci/onnxruntime.sh /tmp/
 RUN sh /tmp/pdfium.sh /opt/pdfium && sh /tmp/e5-small.sh /opt/e5-small && sh /tmp/onnxruntime.sh /opt/onnxruntime
 ENV KREUZBERG_PDFIUM_PREBUILT=/opt/pdfium
+# sccache, pinned by checksum, for the two cargo builds below: with the GitHub Actions cache handed
+# in as build secrets (ci.yml `dockerfile`, dockerfile-cache.yml) every crate whose inputs did not
+# change comes from the cache instead of compiling. Without those secrets (a plain `docker build`)
+# cargo runs without it. The binary stays in this stage; the image never holds it.
+RUN set -eu; case "$(uname -m)" in \
+      x86_64) arch=x86_64; sha=45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89 ;; \
+      aarch64) arch=aarch64; sha=2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a ;; \
+      *) echo "no pinned sccache for $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 3 -o /tmp/sccache.tgz \
+      "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-$arch-unknown-linux-musl.tar.gz"; \
+    echo "$sha  /tmp/sccache.tgz" | sha256sum -c - >/dev/null; \
+    tar xzf /tmp/sccache.tgz -C /usr/local/bin --strip-components=1 "sccache-v0.18.0-$arch-unknown-linux-musl/sccache"; \
+    rm /tmp/sccache.tgz; sccache --version
+# Sourced by each cargo RUN that mounts the secrets: sccache on when the Actions cache token came in
+# (read-only unless SCCACHE_GHA_RW_MODE says otherwise, as .github/actions/rust sets it).
+RUN printf '%s\n' \
+      'if [ -n "${ACTIONS_RUNTIME_TOKEN:-}" ] && [ -n "${ACTIONS_RESULTS_URL:-}" ]; then' \
+      '  export RUSTC_WRAPPER=sccache SCCACHE_GHA_ENABLED=true ACTIONS_CACHE_SERVICE_V2=on SCCACHE_IDLE_TIMEOUT=0' \
+      '  export SCCACHE_GHA_RW_MODE="${SCCACHE_GHA_RW_MODE:-READ_ONLY}"' \
+      'fi' > /usr/local/bin/sccache-env
 # `default` = one job per core (cargo refuses an empty value); a shared build host passes a number.
 ARG CARGO_BUILD_JOBS=default
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
@@ -223,16 +244,26 @@ FROM rust AS build
 WORKDIR /src
 COPY --from=plan /stub ./
 # Every registry and git dependency of jc (and of the kaisatsu CLI below), compiled once over the
-# stub sources.
-RUN cargo build --release --locked -p jc -p kaisatsu-server
+# stub sources. The secrets (ids below) never enter a layer or its cache key.
+RUN --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
+    --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=SCCACHE_GHA_RW_MODE,env=SCCACHE_GHA_RW_MODE \
+    . /usr/local/bin/sccache-env \
+ && cargo build --release --locked -p jc -p kaisatsu-server \
+ && if [ -n "${RUSTC_WRAPPER:-}" ]; then sccache --stop-server; fi
 COPY . .
 COPY --from=ui /work/ui/dist ./crates/portal/ui/dist
 COPY --from=ui /work/sdk/dist ./crates/portal/sdk/dist
 # COPY keeps the context's mtimes, which can be older than the stub build: touch every Rust source
 # so cargo rebuilds the path packages over the real code. The target dir goes in the same step, so
 # the layer holds only the binary.
-RUN find bins crates vendor -name '*.rs' -not -path '*/node_modules/*' -exec touch {} + \
+RUN --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
+    --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=SCCACHE_GHA_RW_MODE,env=SCCACHE_GHA_RW_MODE \
+    . /usr/local/bin/sccache-env \
+ && find bins crates vendor -name '*.rs' -not -path '*/node_modules/*' -exec touch {} + \
  && cargo build --release --locked -p jc -p kaisatsu-server \
+ && if [ -n "${RUSTC_WRAPPER:-}" ]; then sccache --stop-server; fi \
  && strip -o /jc target/release/jc \
  && strip -o /kaisatsu target/release/kaisatsu \
  && rm -rf target \

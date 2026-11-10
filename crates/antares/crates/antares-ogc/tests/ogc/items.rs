@@ -434,12 +434,13 @@ async fn the_features_without_geometry_page_to_their_end() -> Result<(), String>
     assert_eq!(a.status, StatusCode::CREATED, "{}", a.body);
     let mut uri = format!("{CARS}?bbox=0,0,1,1&limit=1");
     let mut seen = Vec::new();
-    for _ in 0..5 {
+    for n in 0..5 {
         let page = get(&f.app, &uri).await;
         assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+        // R3-001: the first page counts, a page read from its `next` token does not
         assert_eq!(
             page.body.get("numberMatched"),
-            Some(&json!(2)),
+            (n == 0).then_some(&json!(2)),
             "{}",
             page.body
         );
@@ -746,5 +747,53 @@ async fn an_id_filter_reads_by_id_past_the_scan_budget() -> Result<(), String> {
             "{filter}"
         );
     }
+    Ok(())
+}
+
+/// R3-001: a page read from a `next` token asks the store for no whole count, so it states no
+/// `numberMatched`; its `next` comes from one Entity read past the page, and the page that ends
+/// the collection exactly has none.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_further_page_states_no_count_and_ends_exactly() -> Result<(), String> {
+    let f = fixture().await?;
+    let first = get(&f.app, &format!("{CARS}?limit=1")).await;
+    assert_eq!(first.body.get("numberMatched"), Some(&json!(4)));
+    let mut seen = ids(&first.body);
+    let mut next = href(&first.body, "next");
+    while let Some(link) = next {
+        let at = local(&link).replace("limit=1", "limit=3");
+        let page = get(&f.app, &at).await;
+        assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+        assert_eq!(page.body.get("numberMatched"), None, "{}", page.body);
+        seen.extend(ids(&page.body));
+        next = href(&page.body, "next");
+        assert!(seen.len() <= 4, "{seen:?}");
+    }
+    seen.sort();
+    assert_eq!(
+        seen,
+        [
+            "urn:ngsi-ld:Car:1",
+            "urn:ngsi-ld:Car:2",
+            "urn:ngsi-ld:Car:3",
+            "urn:ngsi-ld:Car:4"
+        ]
+    );
+    // Across the bbox part and the part without geometry: page 2 holds one Feature of each.
+    let first = get(&f.app, &format!("{CARS}?bbox=170,-1,-170,1&limit=1")).await;
+    let link = href(&first.body, "next").ok_or("no next link")?;
+    let rest = get(&f.app, &local(&link).replace("limit=1", "limit=2")).await;
+    assert_eq!(
+        ids(&rest.body),
+        ["urn:ngsi-ld:Car:4", "urn:ngsi-ld:Car:3"],
+        "{}",
+        rest.body
+    );
+    assert_eq!(rest.body.get("numberMatched"), None);
+    assert_eq!(
+        href(&rest.body, "next"),
+        None,
+        "the collection ended exactly"
+    );
     Ok(())
 }

@@ -48,11 +48,11 @@ impl PolicyEngine for Hiding {
     }
     fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
         let decision = if self.0 && op.clause.starts_with("5.7.") {
-            Decision::Filter(Filter {
+            Decision::Filter(std::sync::Arc::new(Filter {
                 omit: vec![format!("{CITY}owner")],
                 scope_q: Some("/open".into()),
                 ..Filter::default()
-            })
+            }))
         } else {
             Decision::Allow
         };

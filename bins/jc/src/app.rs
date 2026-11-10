@@ -96,6 +96,12 @@ fn entry_spec(
     })
 }
 
+/// The domain of the App hosts' wildcard `*.apps.{domain}`, `None` for any other host.
+pub(crate) fn apps_wildcard(host: &str) -> Option<&str> {
+    host.strip_prefix("*.apps.")
+        .filter(|domain| crate::config::valid_host(domain))
+}
+
 /// Refuses the `[mounts.<module>]` entries jc must not route: none at all, a wildcard or
 /// malformed host, a host-less entry in host mode (it would answer on every host), a prefix a
 /// whole-path module does not answer at, and two equal entries.
@@ -108,8 +114,19 @@ fn check_entries(mode: MountMode, module: Module, specs: &[MountSpec]) -> Result
     let roots = module.root_paths();
     for (i, spec) in specs.iter().enumerate() {
         match spec.host.as_deref() {
+            // The App hosts (edge-session-design S4a): the Portal's static host on every
+            // `{name}.apps.{domain}`, never its own address and never under a path.
+            Some(h) if apps_wildcard(h).is_some() => {
+                if module != Module::Portal || i == 0 || spec.path_prefix.is_some() {
+                    return Err(refuse(format!(
+                        "host '{h}': a wildcard host is only a later Portal entry at the host root"
+                    )));
+                }
+            }
             Some(h) if h.contains('*') => {
-                return Err(refuse(format!("host '{h}': wildcard hosts are refused")));
+                return Err(refuse(format!(
+                    "host '{h}': wildcard hosts are refused, but for the Portal's '*.apps.{{domain}}'"
+                )));
             }
             Some(h) if !crate::config::valid_host(h) => {
                 return Err(refuse(format!("host '{h}' is not a plain host name")));
@@ -430,7 +447,11 @@ pub async fn build_router(
         #[cfg(feature = "shako")]
         if plan.module == Module::Shako {
             let state = modules::shako::build_state(&cfg.shako, ctx.setup, ctx.secrets).await?;
-            let (main_router, v2_router) = modules::shako::build(state, plan.mount.clone());
+            let (main_router, v2_router) = modules::shako::build(
+                state,
+                plan.mount.clone(),
+                &ctx.siblings.portal_base().unwrap_or_default(),
+            );
             let (main_router, v2_router) = match ctx.door {
                 Some(door) => (
                     door.guard(Module::Shako, main_router, ctx.setup),
@@ -836,6 +857,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
             std::collections::BTreeMap::new()
         };
         vars.extend(modules::portal::organization_vars(cfg, siblings.listener));
+        vars.extend(modules::portal::apps_vars(cfg));
         modules::portal::config(mount, env, vars)?;
     }
     let mut servers = vec![serve(listener, built.router, shutdown.clone())];
@@ -973,7 +995,10 @@ async fn portal_attempt(
             Box::pin(modules::portal::build(
                 ctx,
                 cfg.portal_siblings,
-                modules::portal::organization_vars(&cfg, shared.siblings.listener),
+                modules::portal::organization_vars(&cfg, shared.siblings.listener)
+                    .into_iter()
+                    .chain(modules::portal::apps_vars(&cfg))
+                    .collect(),
                 mount,
                 &shutdown,
             ));
@@ -1309,6 +1334,33 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "portal")]
+    #[test]
+    fn the_app_hosts_wildcard_is_a_portal_entry_and_names_the_apps_apex() {
+        let cfg = dev_config(
+            "gateway,portal",
+            "mode = \"host\"\nbase_host = \"city.test\"\n[[mounts.portal]]\nhost = \"portal.city.test\"\n[[mounts.portal]]\nhost = \"*.Apps.City.test\"\n",
+        );
+        let plans = plan_mounts(&cfg).expect("the wildcard is a later Portal entry");
+        let portal = plans.iter().find(|p| p.module == Module::Portal).unwrap();
+        assert_eq!(portal.mount.host, "portal.city.test");
+        assert_eq!(portal.also[0].host.as_deref(), Some("*.apps.city.test"));
+        let vars = modules::portal::apps_vars(&cfg);
+        assert_eq!(
+            vars.get("JC_PORTAL_APPS_URL").map(String::as_str),
+            Some("https://city.test")
+        );
+        assert_eq!(
+            vars.get("JC_PORTAL_SERVE_APP_HOSTS").map(String::as_str),
+            Some("true")
+        );
+        let none = dev_config(
+            "gateway,portal",
+            "mode = \"host\"\nbase_host = \"city.test\"\n",
+        );
+        assert!(modules::portal::apps_vars(&none).is_empty());
+    }
+
     #[test]
     fn bad_mount_entries_refuse_to_start() {
         let host_mode = "mode = \"host\"\nbase_host = \"city.test\"\n";
@@ -1322,6 +1374,37 @@ mod tests {
             "{host_mode}[mounts.portal]\nhost = \"*.apps.city.test\"\n"
         ));
         assert!(err.contains("wildcard"), "{err}");
+        // The App hosts' wildcard: a later Portal entry at the root, nothing else.
+        let portal = "[[mounts.portal]]\nhost = \"portal.city.test\"\n";
+        for (extra, says) in [
+            (
+                "[[mounts.portal]]\nhost = \"*.apps.city.test\"\npath_prefix = \"/x\"\n",
+                "only a later Portal entry",
+            ),
+            (
+                "[[mounts.gateway]]\nhost = \"api.city.test\"\n[[mounts.gateway]]\nhost = \"*.apps.city.test\"\npath_prefix = \"/api/endpoint\"\n",
+                "only a later Portal entry",
+            ),
+            (
+                "[[mounts.gateway]]\nhost = \"api.city.test\"\n[[mounts.gateway]]\nhost = \"*.apps.city.test\"\n",
+                "only a later Portal entry",
+            ),
+            (
+                "[[mounts.portal]]\nhost = \"*.city.test\"\n",
+                "wildcard hosts are refused",
+            ),
+            (
+                "[[mounts.portal]]\nhost = \"*.apps.*.test\"\n",
+                "wildcard hosts are refused",
+            ),
+            (
+                "[[mounts.portal]]\nhost = \"x.*.apps.city.test\"\n",
+                "wildcard hosts are refused",
+            ),
+        ] {
+            let err = refusal(&format!("{host_mode}{portal}{extra}"));
+            assert!(err.contains(says), "{extra}: {err}");
+        }
         let err = refusal(&format!(
             "{host_mode}[mounts.portal]\nhost = \"portal.*.test\"\n"
         ));

@@ -25,6 +25,7 @@ use shako_core::{
 use shako_git::{compact_repository, fsck_repository, init_bare_repo};
 use shako_mcp::{call_mcp_tool, list_mcp_tools};
 use shako_registry::{oci_v2_routes, stripped_v2_registry_routes};
+pub use shako_web::PortalBase;
 use shako_web::web_router;
 
 #[derive(Clone)]

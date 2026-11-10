@@ -33,10 +33,12 @@ impl PolicyEngine for Ruled {
     }
 
     fn decide<'a>(&'a self, _s: &'a Subject, _op: &'a Operation<'a>) -> DecisionFuture<'a> {
-        Box::pin(std::future::ready(Decision::Filter(Filter {
-            rules: self.0.clone(),
-            ..Filter::default()
-        })))
+        Box::pin(std::future::ready(Decision::Filter(std::sync::Arc::new(
+            Filter {
+                rules: self.0.clone(),
+                ..Filter::default()
+            },
+        ))))
     }
 
     fn pre_notify(&self, _s: &Subject, _sub: &Value, _n: &mut Value) -> NotifyDecision {

@@ -11,6 +11,7 @@ use crate::subject::{Caller, Platform};
 use antares_api::policy::{Rule, FILTERABLE};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The policies of one caller in force now, split by effect.
 pub struct Grants<'t> {
@@ -18,6 +19,10 @@ pub struct Grants<'t> {
     pub permissions: Vec<&'t Policy>,
     /// The prohibitions, in document order.
     pub prohibitions: Vec<&'t Policy>,
+    /// What the view shows: each Entity type (an IRI) with the Attributes
+    /// (IRIs) it shows of it; `None` when it shows every name. A grant
+    /// reaches no further than the view (F-13).
+    pub shown: Option<BTreeMap<String, BTreeSet<String>>>,
 }
 
 impl<'t> Grants<'t> {
@@ -32,7 +37,86 @@ impl<'t> Grants<'t> {
         Self {
             permissions,
             prohibitions,
+            shown: None,
         }
+    }
+
+    /// The same grants read through a view that shows `shown` (`None`: every name).
+    #[must_use]
+    pub fn through(mut self, shown: Option<BTreeMap<String, BTreeSet<String>>>) -> Self {
+        self.shown = shown;
+        self
+    }
+
+    /// Whether the view shows one of `types` (every type when empty), and
+    /// `attribute` of it when one is named.
+    fn shows(&self, types: &[String], attribute: Option<&str>) -> bool {
+        let Some(shown) = &self.shown else {
+            return true;
+        };
+        let has = |attrs: &BTreeSet<String>| attribute.is_none_or(|a| attrs.contains(a));
+        if types.is_empty() {
+            return shown.values().any(has);
+        }
+        types.iter().any(|t| shown.get(t).is_some_and(has))
+    }
+
+    /// The selectors of `p` as far as the view shows them: a type it does
+    /// not show is gone, `*` stands for each type it shows, and the
+    /// Attributes are the ones both name; a permission left with no Attribute
+    /// is gone, a prohibition of the whole Entity stays whole.
+    #[must_use]
+    pub fn selectors(&self, p: &Policy) -> Vec<Selector> {
+        let Some(shown) = &self.shown else {
+            return selectors(p);
+        };
+        let ctx = context();
+        let mut out = Vec::new();
+        for s in selectors(p) {
+            let types: Vec<&String> = if s.entity_type == "*" {
+                shown.keys().collect()
+            } else {
+                let iri = ctx.expand_key(&s.entity_type);
+                shown
+                    .get_key_value(&iri)
+                    .map(|(k, _)| k)
+                    .into_iter()
+                    .collect()
+            };
+            for t in types {
+                let Some(visible) = shown.get(t) else {
+                    continue;
+                };
+                let mut attributes: Vec<String> = visible
+                    .iter()
+                    .filter(|a| {
+                        s.attributes.is_empty()
+                            || s.attributes.iter().any(|n| ctx.expand_key(n) == **a)
+                    })
+                    .map(|a| ctx.compact_iri(a))
+                    .collect();
+                attributes.sort();
+                // a prohibition of the whole Entity stays whole: it names no Attribute
+                let whole_prohibition = p.prohibit && s.attributes.is_empty();
+                if attributes.is_empty() && !whole_prohibition {
+                    continue;
+                }
+                out.push(Selector {
+                    entity_type: if s.entity_type == "*" {
+                        ctx.compact_iri(t)
+                    } else {
+                        s.entity_type.clone()
+                    },
+                    attributes: if whole_prohibition {
+                        Vec::new()
+                    } else {
+                        attributes
+                    },
+                    ..s.clone()
+                });
+            }
+        }
+        out
     }
 }
 
@@ -101,21 +185,21 @@ pub fn authzen(
     json!({
         "subject": subject(caller),
         "resource": {"type": "view", "id": view},
-        "permissions": entries(&grants.permissions, served),
-        "prohibitions": entries(&grants.prohibitions, served),
+        "permissions": entries(grants, &grants.permissions, served),
+        "prohibitions": entries(grants, &grants.prohibitions, served),
     })
 }
 
 /// One entry per selector of each policy that leaves an action through the
 /// view.
-fn entries(policies: &[&Policy], served: &dyn Fn(&str) -> bool) -> Vec<Value> {
+fn entries(grants: &Grants<'_>, policies: &[&Policy], served: &dyn Fn(&str) -> bool) -> Vec<Value> {
     let mut out = Vec::new();
     for p in policies {
         let actions = actions(p, served);
         if actions.is_empty() {
             continue;
         }
-        for s in selectors(p) {
+        for s in grants.selectors(p) {
             let mut resource = Map::new();
             resource.insert("type".into(), json!(s.entity_type));
             if let Some(pattern) = &s.id_pattern {
@@ -196,6 +280,14 @@ pub fn verdict<'t>(
     let ctx = context();
     let types: Vec<String> = entity_type.map(|t| ctx.expand_key(t)).into_iter().collect();
     let attribute = attribute.map(|a| ctx.expand_key(a));
+    // the view's narrowing bounds every grant (F-13): a type it does not
+    // show is no grant, an Attribute it hides is read without
+    if !grants.shows(&types, None) {
+        return Verdict::NoGrant;
+    }
+    if !grants.shows(&types, attribute.as_deref()) {
+        return Verdict::NotInGrant;
+    }
     let write = clause.starts_with("5.6.");
     let lists = |p: &&&Policy| p.clauses.contains(clause);
     if let Some(p) = grants.prohibitions.iter().filter(lists).find(|p| {
@@ -845,6 +937,7 @@ mod tests {
         let without = Grants {
             permissions: grants.permissions.clone(),
             prohibitions: Vec::new(),
+            shown: None,
         };
         let table = attributes_of(&without, "Car", &["speed", "colour", "plate"], &every);
         let reasons: Vec<Value> = ["speed", "colour", "plate"]

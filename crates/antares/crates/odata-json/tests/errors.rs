@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The error body (JSON Format 4.01 section 21.1) and the reader's errors as the surface renders
 //! them: fixed text, a declared target at most, and never a value from the request (threat
 //! model O20, property over random inputs).

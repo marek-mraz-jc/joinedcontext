@@ -4,7 +4,7 @@ description = "OData 4.01 over axum: the service document and $metadata router, 
 version.workspace = true
 edition.workspace = true
 publish = false
-license.workspace = true
+license = "MIT"
 rust-version.workspace = true
 
 # ADR-0024 decision 1 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
@@ -16,11 +16,16 @@ role = "protocol"
 axum = { version = "0.8", default-features = false }
 odata-csdl = { path = "../odata-csdl" }
 odata-json = { path = "../odata-json" }
+odata-table = { path = "../odata-table" }
 odata-url = { path = "../odata-url", features = ["edm"] }
 
 [dev-dependencies]
+# examples/tables.rs: a listener for the conformance suites, and a GitTable to serve.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+odata-table = { path = "../odata-table", features = ["git"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
 http-body-util = { version = "0.1", default-features = false }
-tokio = { version = "1", default-features = false, features = ["macros", "rt"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "net"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 
 # surfaces-threat-model 10.1: the full table, not the workspace's.

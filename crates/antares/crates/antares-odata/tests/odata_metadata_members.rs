@@ -36,7 +36,7 @@ impl PolicyEngine for UnitOnly {
     }
     fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
         let answer = if ["5.7.1", "5.7.2"].contains(&op.clause) {
-            Decision::Filter(Filter {
+            Decision::Filter(std::sync::Arc::new(Filter {
                 metadata: Some(Box::new(Metadata {
                     named: BTreeMap::from([(
                         format!("{CITY}speed"),
@@ -45,7 +45,7 @@ impl PolicyEngine for UnitOnly {
                     rest: BTreeSet::new(),
                 })),
                 ..Filter::default()
-            })
+            }))
         } else {
             Decision::Allow
         };

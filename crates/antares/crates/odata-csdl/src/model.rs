@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The EDM model: the subset of CSDL 4.01 this crate writes (ADR-0024 decision 5).
 //!
 //! Everything is plain data with public fields; [`validate`](fn@crate::validate) decides whether a value is a
@@ -147,6 +147,22 @@ impl Model {
         schema.complex_types.iter().find(|t| t.name == name)
     }
 
+    /// The action or function a qualified name (namespace or alias) names.
+    ///
+    /// ```
+    /// # use odata_csdl::{CsdlVersion, Model, Operation, OperationKind, Schema};
+    /// # let mut city = Schema::new("City");
+    /// # city.operations.push(Operation::new("Check", OperationKind::Action));
+    /// # let model = Model { version: CsdlVersion::V4_01, references: vec![], schemas: vec![city] };
+    /// assert_eq!(model.operation("City.Check").map(|o| o.kind), Some(OperationKind::Action));
+    /// assert!(model.operation("City.Simulate").is_none());
+    /// ```
+    #[must_use]
+    pub fn operation(&self, qualified: &str) -> Option<&Operation> {
+        let (schema, name) = self.declared(qualified)?;
+        schema.operations.iter().find(|o| o.name == name)
+    }
+
     /// The entity set `name` of the model's entity container.
     ///
     /// ```
@@ -257,6 +273,8 @@ pub struct Schema {
     pub complex_types: Vec<ComplexType>,
     /// Term definitions, in order.
     pub terms: Vec<Term>,
+    /// Unbound actions and functions, in order (one overload per name).
+    pub operations: Vec<Operation>,
     /// The entity container; at most one schema of a model has one.
     pub entity_container: Option<EntityContainer>,
     /// Annotations on the schema itself (for example `Core.SchemaVersion`).
@@ -613,6 +631,8 @@ pub struct EntityContainer {
     pub name: String,
     /// Entity sets, in order.
     pub entity_sets: Vec<EntitySet>,
+    /// Action and function imports, in order: the operations the service root answers.
+    pub imports: Vec<OperationImport>,
     /// Annotations on the container.
     pub annotations: Vec<Annotation>,
 }
@@ -754,4 +774,149 @@ pub enum Expr {
     Collection(Vec<Expr>),
     /// `Record`, its property values in order; the record type is the term's.
     Record(Vec<(String, Expr)>),
+}
+
+/// Whether an [`Operation`] is an action (POST, may change state) or a function (GET, no side
+/// effects, always returns something).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperationKind {
+    /// `Action` (CSDL XML 12.1).
+    Action,
+    /// `Function` (CSDL XML 12.2).
+    Function,
+}
+
+impl OperationKind {
+    /// The CSDL element name.
+    ///
+    /// ```
+    /// assert_eq!(odata_csdl::OperationKind::Function.as_str(), "Function");
+    /// ```
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Action => "Action",
+            Self::Function => "Function",
+        }
+    }
+}
+
+/// An unbound action or function (CSDL XML 12). The subset: no binding parameter, not
+/// composable, no entity set path, one overload per name.
+///
+/// ```
+/// use odata_csdl::{Operation, OperationKind, Parameter, TypeRef};
+/// let mut f = Operation::new("Attributes", OperationKind::Function);
+/// f.parameters.push(Parameter::new("type", TypeRef::single("Edm.String")));
+/// f.return_type = Some(TypeRef::single("ns.Table"));
+/// assert_eq!(f.parameters[0].name, "type");
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct Operation {
+    /// A simple identifier, unique in its schema.
+    pub name: String,
+    /// Action or function.
+    pub kind: OperationKind,
+    /// Parameters, in order.
+    pub parameters: Vec<Parameter>,
+    /// What it returns; a function must return something, an action may not.
+    pub return_type: Option<TypeRef>,
+    /// Whether the returned value may be null.
+    pub return_nullable: bool,
+    /// Annotations on the operation.
+    pub annotations: Vec<Annotation>,
+}
+
+impl Operation {
+    /// An operation without parameters, return type or annotations.
+    ///
+    /// ```
+    /// let a = odata_csdl::Operation::new("Check", odata_csdl::OperationKind::Action);
+    /// assert!(a.return_type.is_none());
+    /// ```
+    #[must_use]
+    pub fn new(name: impl Into<String>, kind: OperationKind) -> Self {
+        Self {
+            name: name.into(),
+            kind,
+            parameters: Vec::new(),
+            return_type: None,
+            return_nullable: false,
+            annotations: Vec::new(),
+        }
+    }
+}
+
+/// A parameter of an [`Operation`] (CSDL XML 12.9).
+///
+/// ```
+/// let p = odata_csdl::Parameter::new("subject", odata_csdl::TypeRef::single("Edm.Untyped"));
+/// assert!(p.nullable);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parameter {
+    /// A simple identifier, unique among the operation's parameters.
+    pub name: String,
+    /// Its type: a primitive, a complex or an entity type, or a collection of one.
+    pub ty: TypeRef,
+    /// Whether null (or, for an action, an absent member) is accepted.
+    pub nullable: bool,
+}
+
+impl Parameter {
+    /// A nullable parameter.
+    ///
+    /// ```
+    /// let p = odata_csdl::Parameter::new("p", odata_csdl::TypeRef::single("Edm.String")).required();
+    /// assert!(!p.nullable);
+    /// ```
+    #[must_use]
+    pub fn new(name: impl Into<String>, ty: TypeRef) -> Self {
+        Self {
+            name: name.into(),
+            ty,
+            nullable: true,
+        }
+    }
+
+    /// The same parameter, not nullable.
+    #[must_use]
+    pub fn required(mut self) -> Self {
+        self.nullable = false;
+        self
+    }
+}
+
+/// An action or function import of the container (CSDL XML 13.5, 13.6): the name the service
+/// root answers the operation under.
+///
+/// ```
+/// let i = odata_csdl::OperationImport::new("Access", "ns.Access");
+/// assert!(i.in_service_document);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct OperationImport {
+    /// A simple identifier, unique in the container beside its entity sets.
+    pub name: String,
+    /// The qualified name of the imported operation; its kind decides `ActionImport` or
+    /// `FunctionImport`.
+    pub operation: String,
+    /// A function import listed in the service document (`IncludeInServiceDocument`); an action
+    /// import is never listed.
+    pub in_service_document: bool,
+    /// Annotations on the import.
+    pub annotations: Vec<Annotation>,
+}
+
+impl OperationImport {
+    /// An import of `operation` under `name`, listed in the service document when a function.
+    #[must_use]
+    pub fn new(name: impl Into<String>, operation: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            operation: operation.into(),
+            in_service_document: true,
+            annotations: Vec::new(),
+        }
+    }
 }

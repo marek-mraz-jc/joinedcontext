@@ -578,7 +578,7 @@ pub(crate) fn answer(shape: &Shape, k: u64, mut parts: Vec<TypePart>, types_cut:
             let Some(e) = part.entities.get(round) else {
                 continue;
             };
-            let size = e.to_string().len();
+            let size = antares_ops::json_len(e);
             if used.saturating_add(size) > ANSWER_BYTES {
                 truncated = true;
                 break 'rounds;

@@ -866,3 +866,27 @@ fn durations_bytes_and_times_stored_as_text_compare_as_values() {
         assert_eq!(Duration::parse(bad), None, "{bad}");
     }
 }
+
+#[test]
+fn scope_is_a_list_a_lone_string_one_item_of_it() {
+    let scope = || Expr::Path(Path::Scope);
+    let is = |v: &str| eq(var(0, &[]), s(v));
+    let lone = json!({"id": "urn:a", "type": "T", "scope": "/SK/BB"});
+    let many = json!({"id": "urn:a", "type": "T", "scope": ["/SK/BB", "/SK/BA"]});
+    let none = json!({"id": "urn:a", "type": "T"});
+    for (entity, rows) in [
+        (&lone, [T, T, F, T]),
+        (&many, [T, F, F, T]),
+        (&none, [U, U, U, U]),
+    ] {
+        let exprs = [
+            any(scope(), Some(is("/SK/BB"))),
+            all(scope(), is("/SK/BB")),
+            any(scope(), Some(is("/CZ"))),
+            any(scope(), None),
+        ];
+        for (expr, want) in exprs.iter().zip(rows) {
+            assert_eq!(on(expr, entity), want, "{expr:?} on {entity}");
+        }
+    }
+}

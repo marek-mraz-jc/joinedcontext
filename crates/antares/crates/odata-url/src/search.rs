@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! `$search` (URL Conventions 4.01 5.1.7, ABNF `search`): words, phrases, `NOT`, `AND` (also
 //! written as whitespace) and `OR`, with parentheses. The ABNF reads the operators right to
 //! left; 5.1.7 gives them precedence ("NOT ... has the highest precedence, followed by AND and

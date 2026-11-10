@@ -7,7 +7,7 @@
 //! `temporalQ` are written decomposed, as the geometry and the interval a
 //! plain ODRL reader can act on.
 
-use crate::access::{actions, selectors, Grants};
+use crate::access::{actions, Grants};
 use crate::document::Policy;
 use crate::subject::{Caller, Platform};
 use serde_json::{json, Map, Value};
@@ -37,8 +37,8 @@ pub fn policy(
     served: &dyn Fn(&str) -> bool,
     access_url: &str,
 ) -> Value {
-    let permission = rules(&grants.permissions, served);
-    let prohibition = rules(&grants.prohibitions, served);
+    let permission = rules(grants, &grants.permissions, served);
+    let prohibition = rules(grants, &grants.prohibitions, served);
     let digest = Sha256::digest(json!([&permission, &prohibition]).to_string().as_bytes());
     let hex = digest.iter().fold(String::new(), |mut s, b| {
         let _ = write!(s, "{b:02x}");
@@ -89,7 +89,7 @@ fn assignee(caller: &Caller) -> &str {
 }
 
 /// One rule per selector: ODRL targets one thing, a policy may name several.
-fn rules(policies: &[&Policy], served: &dyn Fn(&str) -> bool) -> Vec<Value> {
+fn rules(grants: &Grants<'_>, policies: &[&Policy], served: &dyn Fn(&str) -> bool) -> Vec<Value> {
     let mut out = Vec::new();
     for p in policies {
         let names = actions(p, served);
@@ -97,7 +97,7 @@ fn rules(policies: &[&Policy], served: &dyn Fn(&str) -> bool) -> Vec<Value> {
             continue;
         }
         let action: Vec<String> = names.iter().map(|n| format!("ngsi-ld:{n}")).collect();
-        for s in selectors(p) {
+        for s in grants.selectors(p) {
             let mut refinement = Vec::new();
             if !s.attributes.is_empty() {
                 refinement.push(constraint("ngsi-ld:attrs", "isAnyOf", json!(s.attributes)));

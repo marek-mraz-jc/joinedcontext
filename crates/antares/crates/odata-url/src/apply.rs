@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! `$apply` (OData Data Aggregation 4.0 section 3): `identity`, `filter`, `search`, `orderby`,
 //! `top`, `skip`, `compute`, `aggregate`, `groupby` (T-3937), the six of `topcount` to
 //! `bottompercent` and `concat` (T-3985). The hierarchy and join transformations, `expand`,

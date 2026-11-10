@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: EUPL-1.2
+// SPDX-License-Identifier: MIT
 //! The response writers (JSON Format 4.01 sections 5, 11, 12, 14): straight to a
 //! `std::io::Write`, members in the order the format asks for, control information by the
 //! negotiated level and version.

@@ -599,15 +599,16 @@ pub(crate) struct Built {
 /// `s` as one URI component: unreserved characters and `:` stay, the rest
 /// is percent-encoded.
 pub(crate) fn encode(s: &str) -> String {
-    s.bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || b"-._~:".contains(&b) {
-                char::from(b).to_string()
-            } else {
-                format!("%{b:02X}")
-            }
-        })
-        .collect()
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~:".contains(&b) {
+            out.push(char::from(b));
+        } else {
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+    out
 }
 
 pub(crate) fn text(c: &Checked) -> String {
@@ -859,6 +860,16 @@ fn build_write(tool: &ToolDef, args: &Args) -> Option<Built> {
 
 #[cfg(test)]
 mod tests {
+
+    /// T-6612, R3-026: one String per call, the same text as before.
+    #[test]
+    fn a_component_is_encoded_with_colons_kept() {
+        assert_eq!(
+            super::encode("urn:ngsi-ld:Car:a b/ä%"),
+            "urn:ngsi-ld:Car:a%20b%2F%C3%A4%25"
+        );
+        assert_eq!(super::encode(""), "");
+    }
     use super::*;
 
     fn args(pairs: &[(&'static str, Checked)]) -> Args {

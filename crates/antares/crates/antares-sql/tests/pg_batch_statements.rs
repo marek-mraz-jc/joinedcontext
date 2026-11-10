@@ -194,3 +194,115 @@ async fn a_batch_of_1000_runs_the_statements_a_batch_of_10_does() {
         .expect("present");
     assert_eq!(stored["speed"][0]["value"], 2, "the async batch is stored");
 }
+
+/// T-6606 (R2-034): a failed delivery is booked by one UPDATE, so the row
+/// lock lasts that statement alone, where `mutate` held it from its
+/// `SELECT … FOR UPDATE` across the round trip back. The document and the
+/// bookkeeping columns come out as the rule (`record_failure_via_mutate`)
+/// writes them, with and without a success to roll back to.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_delivery_is_booked_in_one_statement_as_the_rule_books_it() {
+    use antares_store::{CurrentStateDriver, Kind};
+    let url = require_db!();
+    let log = Statements::default();
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::registry().with(
+            log.clone().with_filter(
+                tracing_subscriber::filter::Targets::new()
+                    .with_target("sqlx::query", tracing::Level::TRACE),
+            ),
+        ),
+    );
+    let pool = pg::connect(&url, 2).await.expect("pool");
+    let t = TenantId::new("pgfailbook").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
+    let (rule, one) = (
+        "urn:ngsi-ld:Subscription:fail-rule",
+        "urn:ngsi-ld:Subscription:fail-one",
+    );
+    let t0 = "2026-01-01T00:00:00.000Z";
+    for id in [rule, one] {
+        let _ = store.delete(&t, Kind::Subscription, id).await;
+        store
+            .create(
+                &t,
+                Kind::Subscription,
+                id,
+                json!({"id": id, "type": "Subscription", "status": "active",
+                    "notification": {"endpoint": {"uri": "http://127.0.0.1:9/n"},
+                        "timesSent": 2, "lastSuccess": "2026-01-01T00:00:01.000Z"}}),
+            )
+            .await
+            .expect("seed");
+    }
+    let columns = |id: &'static str| {
+        let pool = pool.clone();
+        let t = t.clone();
+        async move {
+            let mut tx = pool.begin().await.expect("begin");
+            pg::set_tenant(&mut tx, &t).await.expect("scope");
+            sqlx::query_as::<_, (Option<String>, Option<String>)>(
+                "SELECT last_success::text, last_failure::text FROM subscriptions \
+                 WHERE tenant_id = $1 AND id = $2",
+            )
+            .bind(t.as_str())
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("columns")
+        }
+    };
+    for (prev, now) in [
+        (Some(json!(t0)), "2026-01-01T00:00:02.000Z"),
+        (None, "2026-01-01T00:00:03.000Z"),
+    ] {
+        let by_rule = antares_store::record_failure_via_mutate(
+            &store,
+            &t,
+            Kind::Subscription,
+            rule,
+            prev.clone(),
+            now,
+        )
+        .await
+        .expect("rule")
+        .expect("booked");
+        log.take();
+        let booked = store
+            .record_failure(&t, Kind::Subscription, one, prev, now)
+            .await
+            .expect("one statement")
+            .expect("booked");
+        let statements: Vec<String> = log
+            .take()
+            .into_iter()
+            .filter(|q| !matches!(q.as_str(), "BEGIN" | "COMMIT") && !q.contains("set_config"))
+            .collect();
+        assert_eq!(statements.len(), 1, "{statements:#?}");
+        assert!(
+            statements[0].starts_with("UPDATE subscriptions"),
+            "{statements:#?}"
+        );
+        let mut rewritten = by_rule.clone();
+        rewritten["id"] = json!(one);
+        assert_eq!(booked, rewritten, "the statement and the rule disagree");
+        assert_eq!(columns(one).await, columns(rule).await);
+    }
+    assert!(
+        store
+            .record_failure(
+                &t,
+                Kind::Subscription,
+                "urn:ngsi-ld:Subscription:gone",
+                None,
+                t0
+            )
+            .await
+            .expect("gone")
+            .is_none(),
+        "a gone subscription books nothing"
+    );
+}
