@@ -232,9 +232,9 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
   # nextest with Antares' own groups (crates/antares/.config/nextest.toml), in three jobs, each
-  # with its own PostGIS: the first builds and runs only pg_explain, then the view matrix; the
-  # other two run every other test, split by the times .github/ci-durations.json records
-  # (test-part.py --nextest), and the third the doc tests after them. pg_explain seeds 200 000
+  # with its own PostGIS: the first builds and runs only pg_explain, then the view matrix and the
+  # doc tests; the other two run every other test, split by the times .github/ci-durations.json
+  # records (test-part.py --nextest). pg_explain seeds 200 000
   # Entities and ANALYZEs them in one transaction held for about a minute, once per database:
   # beside every slice it deadlocked a concurrent index build and timed out a week partition's DDL
   # in two of three jobs (run 42610186767).
@@ -275,8 +275,7 @@ jobs:
         run: |
           cargo nextest list --workspace --locked --profile ci --timings --list-type binaries-only --message-format json > "$RUNNER_TEMP/binaries.json"
           cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
-          # the doc tests run after the third part's tests (about 60 s)
-          python3 ../../.github/scripts/test-part.py --nextest antares $(( ${{ matrix.part }} - 1 )) 2 --extra 2=60 \
+          python3 ../../.github/scripts/test-part.py --nextest antares $(( ${{ matrix.part }} - 1 )) 2 \
             --filter 'not binary(pg_explain)' --reuse "$RUNNER_TEMP/binaries.json" "$RUNNER_TEMP/cargo-metadata.json" > "$RUNNER_TEMP/part.txt"
           set --; while IFS= read -r term; do set -- "$@" -E "$term"; done < "$RUNNER_TEMP/part.txt"
           cargo nextest run --profile ci --no-fail-fast \
@@ -286,7 +285,7 @@ jobs:
       # data through the shared Router and an unvouched subject is refused (T-6677, F-01).
       - if: matrix.part == 1
         run: cargo nextest run --locked --profile ci -p antares-broker --features full,jc-policy,linkml,ical,feed,parquet,tabular --test views_matrix
-      - if: matrix.part == 3
+      - if: matrix.part == 1
         run: cargo test --workspace --locked --no-fail-fast --doc
       - if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
