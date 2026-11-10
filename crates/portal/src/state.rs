@@ -1283,6 +1283,17 @@ impl AppState {
             .map(|claims| claims.groups.clone())
     }
 
+    /// The ID token [`Self::keep_session_claims`] kept for this session, left in place; `None`
+    /// when this process holds none (a restart, another replica).
+    pub fn session_id_token(&self, session: &Session) -> Option<String> {
+        self.session_claims
+            .read()
+            .ok()?
+            .get(&(session.identity.subject.clone(), session.issued_at))
+            .map(|claims| claims.id_token.clone())
+            .filter(|token| !token.is_empty())
+    }
+
     /// The ID token kept for this session, removed with its groups: a logout ends the session.
     pub fn take_id_token(&self, session: &Session) -> Option<String> {
         self.session_claims

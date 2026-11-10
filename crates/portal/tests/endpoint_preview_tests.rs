@@ -177,14 +177,12 @@ fn draft() -> Value {
 #[tokio::test]
 async fn a_member_previews_the_draft_as_themselves() {
     let r = rig(true).await;
-    let answer = send(
-        &r.state,
-        person("jana"),
-        "POST",
-        &route("air-staff"),
-        Some(draft()),
-    )
-    .await;
+    // A member of the project's group, whom the gateway's door admits (EP-14).
+    let jana = joinedcontext_portal::auth::session::Identity {
+        groups: vec!["city".into()],
+        ..person("jana")
+    };
+    let answer = send(&r.state, jana, "POST", &route("air-staff"), Some(draft())).await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
     let body: Value = serde_json::from_str(&answer.text).expect("JSON");
     assert_eq!(
@@ -197,7 +195,7 @@ async fn a_member_previews_the_draft_as_themselves() {
     assert_eq!(
         headers,
         &vec![
-            ("x-jc-subject".to_owned(), "jana".to_owned()),
+            ("x-jc-subject".to_owned(), "sub-jana".to_owned()),
             ("x-jc-roles".to_owned(), String::new()),
         ]
     );

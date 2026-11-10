@@ -941,6 +941,19 @@ def test_datasources_are_provisioned_on_the_exact_own_address_in_org_1(tmp_path)
         rh.provisioning_files(src, 42101, out)
 
 
+def test_prometheus_files_label_jc_and_point_daiya_at_the_proxy(tmp_path):
+    # prometheus.sh: jc's admin listener as a jc-prod target (its token by file, never inline),
+    # Prometheus itself as another namespace, daiya's org-1 datasource `prometheus` on the proxy.
+    rh.prometheus_files("127.0.0.1:55642", "127.0.0.1:55742", "127.0.0.1:55743",
+                        tmp_path / "prometheus.yml", tmp_path / "ds.yaml")
+    jobs = {j["job_name"]: j for j in json.loads((tmp_path / "prometheus.yml").read_text())["scrape_configs"]}
+    assert jobs["jc"]["static_configs"] == [{"targets": ["127.0.0.1:55642"], "labels": {"namespace": "jc-prod"}}]
+    assert jobs["jc"]["authorization"] == {"credentials_file": "/etc/rh/token"}
+    assert jobs["prometheus"]["static_configs"][0]["labels"] == {"namespace": "monitoring"}
+    (ds,) = json.loads((tmp_path / "ds.yaml").read_text())["datasources"]
+    assert (ds["uid"], ds["type"], ds["orgId"], ds["url"]) == ("prometheus", "prometheus", 1, "http://127.0.0.1:55743")
+
+
 def test_org_1_panels_count_data_and_red_apart(tmp_path):
     class Daiya(http.server.BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802

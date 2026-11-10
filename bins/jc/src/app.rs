@@ -405,6 +405,9 @@ where
 /// slot when the Portal is in the role set.
 pub struct Built {
     pub router: Router,
+    /// The in-pod listener's router: every host-mounted module of
+    /// [`crate::siblings::IN_POD`] at `/{slug}`, `None` when none is (T-6705).
+    pub in_pod: Option<Router>,
     portal: Option<(LateRouter, Mount)>,
     gateway: Option<LateGateway>,
 }
@@ -432,9 +435,29 @@ pub async fn build_router(
     for net in &cfg.trusted_proxies {
         builder = builder.trust_proxy(*net);
     }
+    for identity in &cfg.trusted_proxy_identities {
+        builder = builder.trust_identity(identity.clone());
+    }
     let mut portal = None;
     let mut gateway = None;
     let mut hop = None;
+    let hosted = crate::siblings::hosted_in_pod(&plans);
+    let mut in_pod = (!hosted.is_empty())
+        .then(|| JcRouterBuilder::new(cfg.scheme.clone(), cfg.base_host.clone()));
+    // The same router again on the in-pod listener, host-less at its slug (the slug mode shape).
+    let mut also_in_pod = |plan: &MountPlan, router: &Router| {
+        if !hosted.contains(&plan.module) {
+            return;
+        }
+        if let Some(inner) = in_pod.take() {
+            let spec = MountSpec {
+                module: plan.module.name().to_owned(),
+                host: None,
+                path_prefix: Some(format!("/{}", plan.module.slug())),
+            };
+            in_pod = Some(inner.mount(spec, access::layer(plan.module.name(), router.clone())));
+        }
+    };
     for plan in plans {
         for spec in plan.specs() {
             tracing::info!(
@@ -460,6 +483,7 @@ pub async fn build_router(
                 None => (main_router, v2_router),
             };
             builder = mount_all(builder, &plan, &main_router);
+            also_in_pod(&plan, &main_router);
             // S1: mount `/v2/` at the host root in both one-domain and host modes
             let v2_spec = MountSpec {
                 module: "shako-registry".into(),
@@ -493,6 +517,7 @@ pub async fn build_router(
                 None => built.router,
             };
             builder = mount_all(builder, &plan, &router);
+            also_in_pod(&plan, &router);
             hop = built.hop;
             continue;
         }
@@ -522,12 +547,18 @@ pub async fn build_router(
             router = door.guard(plan.module, router, ctx.setup);
         }
         builder = mount_all(builder, &plan, &router);
+        also_in_pod(&plan, &router);
     }
     if let Some(late) = gateway.as_mut() {
         late.hop = hop;
     }
+    let in_pod = match in_pod {
+        Some(inner) => Some(inner.build()?.into_axum_router()),
+        None => None,
+    };
     Ok(Built {
         router: builder.build()?.into_axum_router(),
+        in_pod,
         portal,
         gateway,
     })
@@ -718,6 +749,9 @@ fn serve(
 pub struct Running {
     pub addr: SocketAddr,
     pub admin_addr: Option<SocketAddr>,
+    /// The in-pod loopback listener's address, when a module of [`crate::siblings::IN_POD`] is
+    /// mounted on a host (T-6705).
+    pub in_pod_addr: Option<SocketAddr>,
     shutdown: CancellationToken,
     tasks: TaskTracker,
     servers: Vec<JoinHandle<std::io::Result<()>>>,
@@ -797,6 +831,23 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     let listener = bind(cfg.listen).await?;
     let addr = listener.local_addr().map_err(StartError::Serve)?;
     let mut siblings = Siblings::new(&plans, addr);
+    // The in-pod listener: loopback only, so the modules the edge never routes to are reached
+    // by their siblings without the edge and by nobody outside the pod (T-6705).
+    let hosted = crate::siblings::hosted_in_pod(&plans);
+    let in_pod_listener = match hosted.is_empty() {
+        true => None,
+        false => Some(bind(SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0))).await?),
+    };
+    let in_pod_addr = match &in_pod_listener {
+        Some(listener) => Some(listener.local_addr().map_err(StartError::Serve)?),
+        None => None,
+    };
+    if let Some(at) = in_pod_addr {
+        for &module in &hosted {
+            siblings.set_in_pod(module, at);
+        }
+        tracing::info!(%at, modules = ?hosted, "in-pod listener on loopback");
+    }
     if cfg.roles.contains(&Module::Portal) {
         siblings.organization_portals = cfg
             .organizations
@@ -861,6 +912,9 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         modules::portal::config(mount, env, vars)?;
     }
     let mut servers = vec![serve(listener, built.router, shutdown.clone())];
+    if let (Some(listener), Some(router)) = (in_pod_listener, built.in_pod.clone()) {
+        servers.push(serve(listener, router, shutdown.clone()));
+    }
     for (listener, router) in forwarders {
         servers.push(serve(listener, router, shutdown.clone()));
     }
@@ -875,6 +929,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     let running = Running {
         addr,
         admin_addr,
+        in_pod_addr,
         shutdown,
         tasks,
         servers,

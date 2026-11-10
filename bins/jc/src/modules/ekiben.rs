@@ -16,7 +16,12 @@
 //! - private and loopback HTTP targets stay refused (ekiben's default quotas), so a stream cannot
 //!   call the other modules' listeners from inside the process; the one exception is `jc`'s own
 //!   listener under the gateway's `/api/endpoint` and kaisatsu's token endpoint
-//!   ([`HostTarget`]), the two doors a stream reaches on dev.
+//!   ([`HostTarget`]), the two doors a stream reaches on dev;
+//! - the platform's MQTT brokers are private hosts each of one project (`JC_EKIBEN_PRIVATE_HOSTS`,
+//!   [`admit`]): every stream, posted, put or restored, and every resource posted through the API
+//!   is refused when it names another project's broker, a runner username other than its own
+//!   project's or the Portal's capture username. The gateway admits a tokenless CONNECT by that
+//!   username from the jc pod, where every project's stream runs, so the check binds it here.
 //!
 //! With `[ekiben.database]` every continuous stream posted through the API is kept in Postgres
 //! (`ekiben_pg`) and started again at the next start; without it streams live in memory.
@@ -28,8 +33,10 @@ use crate::siblings::Siblings;
 use axum::Router;
 use ekiben_core::{EnvAccess, HostTarget, OrgContext, OrgId, ResourceManager};
 use ekiben_server::{
-    ServerAuthConfig, ServerState, StreamManager, build_full_registry, build_router,
+    Admission, ServerAuthConfig, ServerState, StreamManager, build_full_registry, build_router,
 };
+use jc_core::kinds::mqtt_broker::{RUNNER_USERNAME, runner_username};
+use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -65,6 +72,19 @@ pub async fn build(
     siblings: &Siblings,
     portal_beside: bool,
 ) -> Result<Router, StartError> {
+    let hosts = private_hosts(&crate::config::ekiben_private_hosts());
+    build_with(cfg, setup, secrets, siblings, portal_beside, hosts).await
+}
+
+/// [`build`] with the private hosts given rather than read from `JC_EKIBEN_PRIVATE_HOSTS`.
+async fn build_with(
+    cfg: &EkibenSection,
+    setup: &crate::setup::Setup,
+    secrets: &crate::config::Secrets,
+    siblings: &Siblings,
+    portal_beside: bool,
+    hosts: Vec<PrivateHost>,
+) -> Result<Router, StartError> {
     let token = setup
         .value(crate::setup::Secret::EkibenToken)
         .ok_or_else(|| err("no API token"))?
@@ -83,6 +103,7 @@ pub async fn build(
         tracing::info!(addr = %target.addr, prefixes = ?target.path_prefixes, portal_internal = target.late.is_some(), "ekiben streams reach jc's gateway and token endpoint");
         resources = resources.with_host_target(target);
     }
+    open_private_hosts(&resources, &hosts);
     let names: Vec<&String> = defaults
         .keys()
         .chain(secrets.pipeline_client_secrets.keys())
@@ -105,7 +126,8 @@ pub async fn build(
         resources,
         Some(root),
         EnvAccess::None,
-    );
+    )
+    .with_admission(admission(hosts));
     // The deployment's shared resources first (Bento's `streams -r`): a restored or posted
     // stream may name any of them (`helsinki__gtfs`, `events_tail`).
     if let Some(path) = &cfg.resources_file {
@@ -144,6 +166,140 @@ pub async fn build(
         },
     );
     Ok(build_router(state))
+}
+
+/// One entry of `JC_EKIBEN_PRIVATE_HOSTS`: a broker's name (and port) and the one project
+/// whose streams may name it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PrivateHost {
+    project: String,
+    /// `name` or `name:port`, as ekiben's `private_hosts` reads it.
+    entry: String,
+    /// The name alone, lowercase.
+    name: String,
+}
+
+/// Reads `JC_EKIBEN_PRIVATE_HOSTS`: comma separated `project=name` entries, `name:port` for one
+/// port. An entry naming no project opens nothing and is logged.
+fn private_hosts(list: &str) -> Vec<PrivateHost> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+        .filter_map(|item| {
+            let owned = item
+                .split_once('=')
+                .map(|(p, e)| (p.trim(), e.trim()))
+                .filter(|(p, e)| !p.is_empty() && !e.is_empty());
+            let Some((project, entry)) = owned else {
+                tracing::warn!(entry = item, "JC_EKIBEN_PRIVATE_HOSTS: an entry names no project (`project=name:port`); it is not opened");
+                return None;
+            };
+            let name = entry.rsplit_once(':').map_or(entry, |(n, _)| n);
+            Some(PrivateHost {
+                project: project.to_owned(),
+                entry: entry.to_owned(),
+                name: name.trim_end_matches('.').to_ascii_lowercase(),
+            })
+        })
+        .collect()
+}
+
+/// Opens `hosts` to the default organization's streams although they resolve to private
+/// addresses: the platform's MQTT brokers, which a DataSource reads at
+/// `tcp://<release>.<namespace>.svc.cluster.local:1883`. Which project's stream may name each
+/// is [`admit`]'s. ekiben still refuses loopback, link-local and metadata addresses behind any
+/// listed name.
+fn open_private_hosts(resources: &ResourceManager, hosts: &[PrivateHost]) {
+    if hosts.is_empty() {
+        return;
+    }
+    let entries: Vec<String> = hosts.iter().map(|h| h.entry.clone()).collect();
+    tracing::info!(hosts = ?entries, "ekiben streams may reach these private hosts, each from its project's streams");
+    let org = resources.get_or_create_org(&OrgId::default());
+    org.set_quotas(ekiben_core::OrgQuotas {
+        private_hosts: entries,
+        ..org.get_quotas()
+    });
+}
+
+/// The username the Portal's capture subscriber CONNECTs with (context-gateway
+/// `mqtt::CAPTURE_USERNAME`): the gateway admits it from the jc pod, so no stream may name it.
+const CAPTURE_USERNAME: &str = "jc-portal-capture";
+
+/// Whether a stream (`stream` its id, `{project}.{pipeline}`) or a resource posted through the
+/// API (`None`; every stream of the organization may name it, so it belongs to no project) may
+/// run `filled`, its config after `${VAR}` interpolation. Every text of the config counts, so a
+/// URL list, a Bloblang literal and a socket address are read alike: it may name no private host
+/// of another project, no runner username but its own project's and not the capture username.
+/// The reason names only what the config itself names.
+fn admit(hosts: &[PrivateHost], stream: Option<&str>, filled: &Value) -> Result<(), String> {
+    let project = stream.and_then(|id| id.split_once('.')).map(|(p, _)| p);
+    let own_runner = project.map(runner_username);
+    let mut texts = Vec::new();
+    strings(filled, &mut texts);
+    for text in texts {
+        let lower = text.to_ascii_lowercase();
+        if let Some(host) = hosts
+            .iter()
+            .find(|h| Some(h.project.as_str()) != project && names_host(&lower, &h.name))
+        {
+            return Err(format!(
+                "names the private host {}, which belongs to another project",
+                host.name
+            ));
+        }
+        if lower.contains(CAPTURE_USERNAME) {
+            return Err(format!(
+                "names the Portal's capture username {CAPTURE_USERNAME}, which no stream may use"
+            ));
+        }
+        if lower.contains(RUNNER_USERNAME) && own_runner.as_deref() != Some(text) {
+            return Err(match &own_runner {
+                Some(own) => {
+                    format!("names a runner username other than its own project's ({own})")
+                }
+                None => "names a runner username, which only a project's stream may use".to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Whether `text` names the host `name`: it occurs where no other DNS label character precedes
+/// it, so `mqtt-a-b.ns` does not count inside `mqtt-x-mqtt-a-b.ns`.
+fn names_host(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(at, _)| {
+        !text[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '-')
+    })
+}
+
+/// Every string of `value`, keys included.
+fn strings<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
+    match value {
+        Value::String(s) => out.push(s),
+        Value::Array(items) => items.iter().for_each(|v| strings(v, out)),
+        Value::Object(map) => map.iter().for_each(|(k, v)| {
+            out.push(k);
+            strings(v, out);
+        }),
+        _ => {}
+    }
+}
+
+/// [`admit`] as ekiben asks it, logging each refusal with its reason.
+fn admission(hosts: Vec<PrivateHost>) -> Admission {
+    Arc::new(move |stream, filled| {
+        admit(&hosts, stream, filled).inspect_err(|reason| {
+            tracing::warn!(
+                stream = stream.unwrap_or("(an API resource)"),
+                %reason,
+                "ekiben refused a stream"
+            );
+        })
+    })
 }
 
 /// The default organization's variable map, as the Portal's reconciler sees the runner: what
@@ -294,6 +450,323 @@ fn host_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_listed_private_hosts_open_to_the_default_organization_on_their_port() {
+        let resources = ResourceManager::new();
+        let broker = "mqtt-helsinki-sensors.jc-prod-mqtt.svc.cluster.local";
+        let org = resources.get_or_create_org(&OrgId::default());
+        assert!(!org.is_private_host_port_allowed(broker, 1883));
+        open_private_hosts(&resources, &private_hosts(""));
+        assert!(org.get_quotas().private_hosts.is_empty());
+        open_private_hosts(
+            &resources,
+            &private_hosts(&format!(
+                " helsinki={broker}:1883 , ,zilina = other.svc:1883"
+            )),
+        );
+        assert!(org.is_private_host_port_allowed(broker, 1883));
+        assert!(!org.is_private_host_port_allowed(broker, 6060));
+        assert!(org.is_private_host_port_allowed("other.svc", 1883));
+        // The rest of the quotas stay as they were.
+        assert_eq!(
+            org.get_quotas().max_concurrent_streams,
+            ekiben_core::OrgQuotas::default().max_concurrent_streams
+        );
+    }
+
+    const SENSORS: &str = "mqtt-helsinki-sensors.jc-prod-mqtt.svc.cluster.local";
+    const OVZDUSIE: &str = "mqtt-banskabystrica-ovzdusie.jc-prod-mqtt.svc.cluster.local";
+
+    /// prod's brokers as the deployment lists them, each with its project.
+    fn prod_hosts() -> Vec<PrivateHost> {
+        private_hosts(&format!(
+            "helsinki={SENSORS}:1883,banskabystrica={OVZDUSIE}:1883"
+        ))
+    }
+
+    /// A stream reading a platform broker as the Portal renders it (jc-manifest `bento.rs`).
+    fn mqtt_stream(host: &str, user: &str) -> serde_json::Value {
+        serde_json::json!({
+            "input": {"mqtt": {
+                "urls": [format!("tcp://{host}:1883")],
+                "client_id": "jc-helsinki-p-jc-prod-mqtt",
+                "user": user,
+                "topics": ["sensors/#"]
+            }},
+            "output": {"drop": {}}
+        })
+    }
+
+    /// jc's ekiben on a loopback port with prod's broker list; answers its URL and token.
+    async fn serve_ekiben(dir: &Path) -> (String, String) {
+        use crate::setup::{Secret, Setup};
+        let setup = Setup::prepare(dir, &[Module::Ekiben], &Default::default()).unwrap();
+        let cfg = EkibenSection {
+            file_root: Some(dir.join("files")),
+            ..Default::default()
+        };
+        let siblings = Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        let app = build_with(
+            &cfg,
+            &setup,
+            &Default::default(),
+            &siblings,
+            false,
+            prod_hosts(),
+        )
+        .await
+        .unwrap();
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let runner = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await });
+        (runner, setup.value(Secret::EkibenToken).unwrap().to_owned())
+    }
+
+    /// The run-time gap of jc-prod-mqtt's report (section 3): the gateway admits the runner of
+    /// the broker's project from the jc pod, so a stream of project helsinki that names
+    /// banskabystrica's broker and runner username read banskabystrica's topics. ekiben's API
+    /// took it; now it refuses it, and helsinki's own stream on its own broker is still taken.
+    #[tokio::test]
+    async fn a_posted_stream_naming_another_projects_broker_and_runner_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (runner, token) = serve_ekiben(dir.path()).await;
+        let client = reqwest::Client::new();
+        let post = |id: &str, body: serde_json::Value| {
+            client
+                .post(format!("{runner}/streams/{id}"))
+                .bearer_auth(&token)
+                .json(&body)
+                .send()
+        };
+        let r = post(
+            "helsinki.steal",
+            mqtt_stream(OVZDUSIE, "pipeline-runner-banskabystrica"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+        let why = r.text().await.unwrap();
+        assert!(why.contains("belongs to another project"), "{why}");
+        let r = post(
+            "helsinki.own",
+            mqtt_stream(SENSORS, "pipeline-runner-helsinki"),
+        )
+        .await
+        .unwrap();
+        assert!(r.status().is_success(), "{}", r.status());
+        // The refused stream is not there.
+        let r = client
+            .get(format!("{runner}/streams/helsinki.steal"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), reqwest::StatusCode::NOT_FOUND);
+    }
+
+    /// A PUT is asked before the running stream stops: a refused one leaves it running; a
+    /// resource posted through the API belongs to no project, so it names no broker.
+    #[tokio::test]
+    async fn a_put_or_a_resource_naming_a_broker_is_refused_and_the_running_stream_stays() {
+        let dir = tempfile::tempdir().unwrap();
+        let (runner, token) = serve_ekiben(dir.path()).await;
+        let client = reqwest::Client::new();
+        let url = format!("{runner}/streams/helsinki.own");
+        let own = mqtt_stream(SENSORS, "pipeline-runner-helsinki");
+        let r = client
+            .post(&url)
+            .bearer_auth(&token)
+            .json(&own)
+            .send()
+            .await
+            .unwrap();
+        assert!(r.status().is_success(), "{}", r.status());
+        let forged = mqtt_stream(SENSORS, "pipeline-runner-banskabystrica");
+        let r = client
+            .put(&url)
+            .bearer_auth(&token)
+            .json(&forged)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+        let r = client.get(&url).bearer_auth(&token).send().await.unwrap();
+        assert!(
+            r.status().is_success(),
+            "the running stream stays: {}",
+            r.status()
+        );
+        let r = client
+            .post(format!("{runner}/resources/input/sensors"))
+            .bearer_auth(&token)
+            .json(&mqtt_stream(SENSORS, "pipeline-runner-helsinki")["input"])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+        assert!(r.text().await.unwrap().contains("another project"));
+    }
+
+    #[test]
+    fn another_projects_broker_host_is_refused() {
+        let hosts = prod_hosts();
+        let own_user = "pipeline-runner-helsinki";
+        assert_eq!(
+            admit(&hosts, Some("helsinki.p"), &mqtt_stream(OVZDUSIE, own_user)),
+            Err(format!(
+                "names the private host {OVZDUSIE}, which belongs to another project"
+            ))
+        );
+        // Any spelling the network check would still open, and any component naming it.
+        for text in [
+            OVZDUSIE.to_uppercase(),
+            format!("{OVZDUSIE}.:1883"),
+            format!("ws://{OVZDUSIE}:1883/mqtt"),
+            format!("root = \"tcp://{OVZDUSIE}:1883\""),
+        ] {
+            let config = serde_json::json!({"output": {"socket": {"address": text}}});
+            assert!(
+                admit(&hosts, Some("helsinki.p"), &config).is_err(),
+                "{text}"
+            );
+        }
+        // Its own project's stream reads it.
+        let theirs = mqtt_stream(OVZDUSIE, "pipeline-runner-banskabystrica");
+        assert_eq!(admit(&hosts, Some("banskabystrica.p"), &theirs), Ok(()));
+        // A name merely ending in the listed one is another host.
+        let longer = format!("mqtt-x-{OVZDUSIE}");
+        assert_eq!(
+            admit(&hosts, Some("helsinki.p"), &mqtt_stream(&longer, own_user)),
+            Ok(())
+        );
+        // A stream with no project in its id names no private host.
+        assert!(admit(&hosts, Some("orphan"), &mqtt_stream(SENSORS, "u")).is_err());
+    }
+
+    #[test]
+    fn a_forged_runner_username_is_refused() {
+        let hosts = prod_hosts();
+        for forged in [
+            "pipeline-runner-banskabystrica",
+            "pipeline-runner",
+            "Pipeline-Runner-helsinki",
+            "pipeline-runner-helsinki-x",
+        ] {
+            assert_eq!(
+                admit(&hosts, Some("helsinki.p"), &mqtt_stream(SENSORS, forged)),
+                Err("names a runner username other than its own project's (pipeline-runner-helsinki)".to_owned()),
+                "{forged}"
+            );
+        }
+        assert_eq!(
+            admit(
+                &hosts,
+                None,
+                &mqtt_stream("mqtt.hsl.fi", "pipeline-runner-helsinki")
+            ),
+            Err("names a runner username, which only a project's stream may use".to_owned())
+        );
+        let capture = mqtt_stream(SENSORS, "jc-portal-capture");
+        assert!(
+            admit(&hosts, Some("helsinki.p"), &capture)
+                .unwrap_err()
+                .contains("capture username")
+        );
+        // An outside broker with its own account is no business of this check.
+        assert_eq!(
+            admit(&hosts, Some("helsinki.p"), &mqtt_stream("mqtt.hsl.fi", "")),
+            Ok(())
+        );
+    }
+
+    #[cfg(feature = "gateway")]
+    #[test]
+    fn the_capture_username_is_the_gateways() {
+        assert_eq!(CAPTURE_USERNAME, context_gateway::mqtt::CAPTURE_USERNAME);
+    }
+
+    /// A stream saved before these checks is started at the next start through
+    /// `StreamManager::restore` (ekiben_pg logs the reason and starts the rest): refused.
+    #[tokio::test]
+    async fn a_restored_saved_stream_naming_another_projects_broker_is_not_started() {
+        let manager = StreamManager::new(
+            build_full_registry(),
+            ResourceManager::new(),
+            None,
+            EnvAccess::None,
+        )
+        .with_admission(admission(prod_hosts()));
+        let saved = mqtt_stream(OVZDUSIE, "pipeline-runner-banskabystrica");
+        let e = manager
+            .restore(OrgId::default(), "helsinki.saved".into(), saved)
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("belongs to another project"), "{e}");
+        assert!(manager.list(None).await.is_empty());
+        let own = mqtt_stream(SENSORS, "pipeline-runner-helsinki");
+        manager
+            .restore(OrgId::default(), "helsinki.own".into(), own)
+            .await
+            .unwrap();
+        assert_eq!(manager.list(None).await.len(), 1);
+        manager.stop_all(std::time::Duration::from_secs(1)).await;
+    }
+
+    #[test]
+    fn a_private_host_entry_admits_only_its_projects_streams() {
+        let hosts = private_hosts(&format!(
+            "banskabystrica={OVZDUSIE}:1883, {SENSORS}:1883, ={SENSORS}"
+        ));
+        // The entries naming no project open nothing.
+        assert_eq!(
+            hosts,
+            [PrivateHost {
+                project: "banskabystrica".into(),
+                entry: format!("{OVZDUSIE}:1883"),
+                name: OVZDUSIE.into(),
+            }]
+        );
+        let stream = mqtt_stream(OVZDUSIE, "pipeline-runner-helsinki");
+        assert!(admit(&hosts, Some("helsinki.p"), &stream).is_err());
+        let stream = mqtt_stream(OVZDUSIE, "pipeline-runner-banskabystrica");
+        assert_eq!(admit(&hosts, Some("banskabystrica.p"), &stream), Ok(()));
+    }
+
+    /// A refusal is logged with the stream and its reason, and with no variable's value.
+    #[test]
+    fn a_refusal_is_logged_with_its_reason() {
+        #[derive(Clone, Default)]
+        struct Buf(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Buf {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let buf = Buf::default();
+        let writer = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let mut stream = mqtt_stream(OVZDUSIE, "pipeline-runner-banskabystrica");
+        stream["input"]["mqtt"]["password"] = "filled-in-secret".into();
+        let refused = tracing::subscriber::with_default(subscriber, || {
+            admission(prod_hosts())(Some("helsinki.steal"), &stream)
+        });
+        assert!(refused.is_err());
+        let log = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        assert!(log.contains("ekiben refused a stream"), "{log}");
+        assert!(
+            log.contains("helsinki.steal") && log.contains("belongs to another project"),
+            "{log}"
+        );
+        assert!(!log.contains("filled-in-secret"), "{log}");
+    }
 
     #[test]
     fn a_given_variable_wins_over_a_pipeline_credential_of_the_same_name() {

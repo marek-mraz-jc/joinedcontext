@@ -15,7 +15,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
-use crate::auth::{CurrentUser, Identity};
+use axum::http::HeaderMap;
+use context_gateway::auth::subject::{admission, anonymous_with, person, with_endpoint_roles};
+use context_gateway::auth::token::{Claims, RealmAccess};
+use jc_core::kinds::Audience;
+
+use crate::auth::{CurrentUser, Session};
 use crate::error::ApiError;
 use crate::reconciler::views::Draft;
 use crate::resource::is_dns1123;
@@ -152,9 +157,9 @@ pub async fn preview_endpoint(
                 "the Endpoint's view is not compiled yet; try again shortly".into(),
             )
         })?;
-    let public = endpoint.spec["audience"].as_str() == Some("public");
+    let headers = subject(&state, views, &user.0, &project, &name)?;
     let (status, answer) = views
-        .preview(&id, &view, &query, &subject(identity, public))
+        .preview(&id, &view, &query, &headers)
         .await
         .map_err(|reason| {
             tracing::warn!(%reason, "the broker did not preview a draft");
@@ -211,31 +216,98 @@ fn query_of(request: &PreviewRequest) -> Result<String, String> {
     Ok(query.finish())
 }
 
-/// Whose reading the page is, as the gateway names a caller on every hop to the broker
-/// (Antares `addons/joinedcontext-policy/README.md` section 1): the anonymous caller on a public
-/// Endpoint (EP-16), the person on the others (EP-14).
-pub(crate) fn subject(identity: &Identity, public: bool) -> Vec<(&'static str, String)> {
-    if public {
-        return vec![("x-jc-roles", "public".to_owned())];
+/// Whose reading the page is: the `x-jc-*` headers the gateway's hop to the broker carries for
+/// the same caller on the same Endpoint, built by the gateway's own rules (context-gateway
+/// `auth::subject`, `tenancy::caller_headers`), never from the request's headers. On a public
+/// Endpoint the anonymous caller with the roles the Endpoint hands everyone (EP-16); on the
+/// others the person by Keycloak id, with their standing in the project's Organization and the
+/// Endpoint roles they hold (EP-14, ADR-N-067 2.3, AP-97).
+pub(crate) fn subject(
+    state: &AppState,
+    views: &crate::reconciler::views::ViewSync,
+    session: &Session,
+    project: &str,
+    name: &str,
+) -> Result<HeaderMap, ApiError> {
+    let (roles, audience, allowed_projects) =
+        views.caller_roles(project, name).ok_or_else(|| {
+            ApiError::Unavailable(
+                "the Endpoint's view is not compiled yet; try again shortly".into(),
+            )
+        })?;
+    if audience == Audience::Public {
+        return Ok(context_gateway::middleware::tenancy::caller_headers(
+            &anonymous_with(&roles),
+        ));
     }
-    let list = |members: &[String]| {
-        members
-            .iter()
-            .map(|member| member.trim_start_matches('/'))
-            .filter(|member| !member.is_empty())
-            .map(encode)
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-    let mut headers = vec![
-        ("x-jc-subject", encode(&identity.username)),
-        ("x-jc-roles", list(&identity.roles)),
-    ];
-    let groups = list(&identity.groups);
-    if !groups.is_empty() {
-        headers.push(("x-jc-groups", groups));
-    }
-    headers
+    let claims = claims_of(state, session);
+    let organization = organization_of(state, project);
+    let mut caller = person(&claims, audience, organization.as_deref()).ok_or_else(|| {
+        ApiError::Denied("the gateway names nobody by this session's username".into())
+    })?;
+    // The gateway reads for nobody its door refuses (EP-14, EP-15), and neither does the preview.
+    admission(
+        project,
+        audience,
+        &allowed_projects,
+        &caller.groups,
+        caller.member_of_organization,
+        |project| organization_of(state, project),
+    )
+    .map_err(|_| {
+        ApiError::Denied(
+            "the Endpoint's audience does not admit you; ask a steward for its project's group"
+                .into(),
+        )
+    })?;
+    with_endpoint_roles(&mut caller, &roles, Some(&claims));
+    Ok(context_gateway::middleware::tenancy::caller_headers(
+        &caller,
+    ))
+}
+
+/// The claims of the session's verified ID token, which the realm gives `jc_org` and `jc_groups`
+/// on `portal-ui` as on the access token the gateway reads. Without it (a restart, another
+/// replica) the session's own identity with no Organization standing and no grant groups: fewer
+/// facts than the gateway hears, never more.
+fn claims_of(state: &AppState, session: &Session) -> Claims {
+    let identity = &session.identity;
+    state
+        .session_id_token(session)
+        .and_then(|token| crate::auth::oidc::jwt_payload::<Claims>(&token))
+        .filter(|claims| claims.sub == identity.subject)
+        .unwrap_or_else(|| Claims {
+            sub: identity.subject.clone(),
+            iss: String::new(),
+            azp: None,
+            preferred_username: Some(identity.username.clone()),
+            realm_access: Some(RealmAccess {
+                roles: identity.roles.clone(),
+            }),
+            groups: identity.groups.clone(),
+            jc_org: Vec::new(),
+            jc_groups: Some(Vec::new()),
+            resource_access: Default::default(),
+            exp: 0,
+            iat: None,
+            agreement_id: None,
+            participant: None,
+            aud: Vec::new(),
+            scope: None,
+        })
+}
+
+/// The Organization the gateway gives `project`: its Project manifest's `organizationRef` when
+/// the spec parses, else none (context-gateway `store::provenance_of`). Unlike
+/// [`crate::permissions::organization_of`], no installation fallback: that would make a member of
+/// someone the gateway does not.
+fn organization_of(state: &AppState, project: &str) -> Option<String> {
+    let envelope = state
+        .mirror
+        .get(crate::permissions::ORG_NAMESPACE, "Project", project)?;
+    serde_json::from_value::<jc_core::kinds::ProjectSpec>(envelope.spec)
+        .ok()
+        .map(|spec| spec.organization_ref.name().to_owned())
 }
 
 /// Percent-encoded UTF-8 with the RFC 3986 unreserved characters kept, so a diacritic travels
@@ -263,6 +335,7 @@ pub fn router() -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::Identity;
 
     fn request(id: Vec<&str>, limit: Option<u32>) -> PreviewRequest {
         PreviewRequest {
@@ -291,29 +364,35 @@ mod tests {
         assert!(query_of(&bad).is_err());
     }
 
+    /// A session whose ID token this process does not keep is named by its Keycloak id with no
+    /// Organization standing and no grant groups, and a project without a parsing Project
+    /// manifest has no Organization, installation or not (the gateway's rule).
     #[test]
-    fn a_person_is_named_and_the_public_is_anonymous() {
-        let identity = Identity {
-            client: None,
-            subject: "id".into(),
-            username: "jana@hel.fi".into(),
-            email: None,
-            name: None,
-            roles: vec!["viewer".into()],
-            groups: vec!["/helsinki".into(), "ilmanlaatu, ä".into()],
-            second_factor: false,
+    fn without_a_kept_id_token_a_person_is_named_narrower() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let session = Session {
+            identity: Identity {
+                client: None,
+                subject: "id".into(),
+                username: "jana@hel.fi".into(),
+                email: None,
+                name: None,
+                roles: vec!["viewer".into()],
+                groups: vec!["helsinki".into()],
+                second_factor: false,
+            },
+            expires_at: i64::MAX,
+            issued_at: 1,
+            signed_in_at: None,
+            id_token: String::new(),
+            access_expires_at: i64::MAX,
+            refresh_token: None,
         };
-        assert_eq!(
-            subject(&identity, false),
-            vec![
-                ("x-jc-subject", "jana%40hel.fi".to_owned()),
-                ("x-jc-roles", "viewer".to_owned()),
-                ("x-jc-groups", "helsinki,ilmanlaatu%2C%20%C3%A4".to_owned()),
-            ]
-        );
-        assert_eq!(
-            subject(&identity, true),
-            vec![("x-jc-roles", "public".to_owned())]
-        );
+        let claims = claims_of(&state, &session);
+        let caller = person(&claims, Audience::Organization, Some("helsinki")).expect("a person");
+        assert_eq!(caller.user_principal(), Some("id"));
+        assert!(!caller.member_of_organization);
+        assert!(caller.grant_groups().is_empty());
+        assert_eq!(organization_of(&state, "city"), None);
     }
 }

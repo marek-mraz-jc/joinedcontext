@@ -246,10 +246,17 @@ done
 # default $home/dashboards: a rehearsal.py dashboards dir); daiya lets only file-provisioned
 # datasources reach it.
 REHEARSAL_DASHBOARDS=${REHEARSAL_DASHBOARDS:-$home/dashboards}
+daiya_lines=
+rm -f "$home/daiya-provisioning/datasources/prometheus.yaml"
 if compgen -G "$REHEARSAL_DASHBOARDS/*.datasource.*.json" >/dev/null; then
   python3 -I "$here/rehearsal.py" provisioning --dashboards "$REHEARSAL_DASHBOARDS" --port "$port" \
     --out "$home/daiya-provisioning"
-  db_config+=$(printf '\n[daiya]\nprovisioning_dir = "%s"\n' "$home/daiya-provisioning")
+  daiya_lines+="provisioning_dir = \"$home/daiya-provisioning\""$'\n'
+fi
+# shellcheck source=deploy/rehearsal/prometheus.sh
+. "$here/prometheus.sh"  # the Prometheus the dashboards read, through its label proxy (jc-prod-metrics)
+if [ -n "$daiya_lines" ]; then
+  db_config+=$(printf '\n[daiya]\n%s' "$daiya_lines")
 fi
 # The hub's search_documents searches the sources the deployment names (base-values of the
 # context-gateway; REHEARSAL_DEPLOYMENT is a deployment clone); jc fills the assistant's address.
@@ -264,10 +271,13 @@ elif [ -z "${JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:-}" ]; then
 fi
 # The datasets this kit renames answer their old names too (RENAMES.md, rehearsal.py CKAN_NAMES).
 alias_config=$(python3 -I "$here/rehearsal.py" aliases)
-# REHEARSAL_APP_HOSTS=on: the Portal also on every App host {name}.apps.localhost:<port>, as jc-prod's
-# *.apps.{domain} entry (edge-session-design S4a); jc sets JC_PORTAL_APPS_URL from it.
+# The Portal also on every App host {name}.apps.localhost:<port>, as jc-prod's *.apps.{domain} entry
+# (edge-session-design S4a; deployment components/jc/values/server/base-values.yaml.gotmpl); jc
+# sets JC_PORTAL_APPS_URL and JC_PORTAL_SERVE_APP_HOSTS from it. Without it every App host gets the
+# Portal's own page (gate 5 rerun, 2026-11-10: charts-apps app.server 200 text/html).
+# REHEARSAL_APP_HOSTS=off leaves it out.
 portal_mounts='[mounts.portal]\npath_prefix = ""\n'
-if [ "${REHEARSAL_APP_HOSTS:-off}" = on ]; then
+if [ "${REHEARSAL_APP_HOSTS:-on}" = on ]; then
   portal_mounts="[[mounts.portal]]\npath_prefix = \"\"\n\n[[mounts.portal]]\nhost = \"*.apps.localhost:$port\"\n"
 fi
 printf "$portal_mounts"'%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_config" > "$home/jc.toml"

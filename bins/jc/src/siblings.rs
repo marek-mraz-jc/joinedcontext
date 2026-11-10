@@ -5,7 +5,10 @@
 //! - `public`: its mount's public base, the address a browser and a token issuer use;
 //! - `internal`: the address the Portal calls it at. In slug mode (no host of its own) that is
 //!   `jc`'s own listener on loopback plus the slug, so a sibling call never leaves the host; a
-//!   module mounted on a host of its own is called at its public base (the host routes by name).
+//!   module mounted on a host of its own is called at its public base (the host routes by name),
+//!   but for the modules of [`IN_POD`], which `jc` also serves on a loopback listener of its own
+//!   ([`hosted_in_pod`]): the edge in front of a host mode installation never routes their public
+//!   base to them (shako's `/git` is blocked there, the broker and ekiben have no route; T-6705).
 //!
 //! A setting comes from a sibling only when the sibling is in the role set and the environment
 //! does not set it; an explicit value always wins. A sibling's credential is filled only together
@@ -45,6 +48,21 @@ pub fn reach(addr: SocketAddr) -> SocketAddr {
         ip => ip,
     };
     SocketAddr::new(ip, addr.port())
+}
+
+/// The modules the Portal and the gateway call that the edge of a host mode installation never
+/// routes to: called on `jc`'s in-pod listener when they are mounted on a host (T-6705).
+pub const IN_POD: [Module; 3] = [Module::Shako, Module::Ekiben, Module::Antares];
+
+/// The modules of [`IN_POD`] `plans` mount on a host: `jc` serves each of them on its in-pod
+/// loopback listener too, at `/{slug}`, and its siblings call it there ([`Siblings::set_in_pod`]).
+#[must_use]
+pub fn hosted_in_pod(plans: &[MountPlan]) -> Vec<Module> {
+    plans
+        .iter()
+        .filter(|plan| plan.spec.host.is_some() && IN_POD.contains(&plan.module))
+        .map(|plan| plan.module)
+        .collect()
 }
 
 impl Siblings {
@@ -94,6 +112,14 @@ impl Siblings {
     pub fn set_internal(&mut self, module: Module, addr: SocketAddr) {
         if let Some(sibling) = self.modules.get_mut(&module) {
             sibling.internal = format!("http://{}", reach(addr));
+        }
+    }
+
+    /// Points a host-mounted module's internal address at `jc`'s in-pod loopback listener `addr`,
+    /// where it answers at `/{slug}` ([`hosted_in_pod`]); its public mount stays.
+    pub fn set_in_pod(&mut self, module: Module, addr: SocketAddr) {
+        if let Some(sibling) = self.modules.get_mut(&module) {
+            sibling.internal = format!("http://{}/{}", reach(addr), module.slug());
         }
     }
 
@@ -462,6 +488,59 @@ mod tests {
         assert_eq!(git.internal, git.public);
         assert_eq!(git.public, "https://git.city.example");
         assert_eq!(siblings.listener, "[::1]:1".parse().unwrap());
+    }
+
+    /// T-6705: in host mode the Portal and the gateway call shako, ekiben and the broker on the
+    /// in-pod listener at their slug, never at the public base the edge does not route; the
+    /// other host-mounted siblings keep their host, and slug mode has nothing in pod.
+    #[test]
+    fn host_mode_calls_the_in_pod_modules_on_the_in_pod_listener() {
+        let mut cfg = Config::merge(
+            Cli {
+                role: Some("all".into()),
+                base_host: Some("city.example".into()),
+                scheme: Some("https".into()),
+                ..Cli::default()
+            },
+            FileConfig::default(),
+        )
+        .unwrap();
+        cfg.mode = crate::config::MountMode::Host;
+        let plans = crate::app::plan_mounts(&cfg).unwrap();
+        let hosted = hosted_in_pod(&plans);
+        let mut sorted = hosted.clone();
+        sorted.sort();
+        let mut want = IN_POD.to_vec();
+        want.sort();
+        assert_eq!(sorted, want);
+        assert_eq!(hosted.len(), 3, "{hosted:?}");
+        let mut siblings = Siblings::new(&plans, LISTEN.parse().unwrap());
+        for &module in &hosted {
+            siblings.set_in_pod(module, "0.0.0.0:40125".parse().unwrap());
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
+        let vars = portal_vars(&siblings, &setup, none);
+        for (key, want) in [
+            ("JC_SHAKO_URL", "http://127.0.0.1:40125/git"),
+            (
+                "JC_PORTAL_PIPELINE_RUNNER_URL",
+                "http://127.0.0.1:40125/streams",
+            ),
+            ("JC_PORTAL_BROKER_URL", "http://127.0.0.1:40125/broker"),
+        ] {
+            assert_eq!(vars.get(key).map(String::as_str), Some(want), "{key}");
+        }
+        // Their public bases stay what a browser and a token use.
+        assert_eq!(vars["JC_SHAKO_PUBLIC_URL"], "https://git.city.example");
+        // Every other host-mounted sibling keeps its host.
+        let dash = siblings.get(Module::Daiya).unwrap();
+        assert_eq!(dash.internal, dash.public);
+        assert_eq!(hosted_in_pod(&plans_slug()), Vec::<Module>::new());
+    }
+
+    fn plans_slug() -> Vec<MountPlan> {
+        plans(BTreeMap::new(), "https")
     }
 
     /// daiya reaches the gateway's Endpoints on the own listener at the address the Portal names

@@ -812,7 +812,33 @@ pub async fn build(
     let built = context_gateway::serve::build(&config, broker)
         .await
         .map_err(err)?;
+    if let (Some(bind), Some(internal)) = (config.internal_bind, built.internal) {
+        serve_internal(bind, internal).await?;
+    }
     Ok(built.app.layer(axum::middleware::from_fn(opaque_reads)))
+}
+
+/// The MQTT brokers' CONNECT and publish checks (`/internal/mqtt/auth`, `/internal/mqtt/acl`) on
+/// a listener of their own, `JC_GATEWAY_INTERNAL_BIND`, as the standalone gateway serves them
+/// (context-gateway `main.rs`, ADR-N-048): no jc mount and no edge route reaches it, and the
+/// deployment opens it to the broker pods alone.
+async fn serve_internal(
+    bind: std::net::SocketAddr,
+    router: Router,
+) -> Result<std::net::SocketAddr, StartError> {
+    let listener = tokio::net::TcpListener::bind(bind).await.map_err(|why| {
+        err(format!(
+            "the MQTT brokers' internal listener on {bind}: {why}"
+        ))
+    })?;
+    let addr = listener.local_addr().map_err(err)?;
+    tracing::info!(%addr, "gateway: internal listener for the MQTT brokers");
+    tokio::spawn(async move {
+        if let Err(error) = axum::serve(listener, router).await {
+            tracing::error!(%error, "gateway: the MQTT brokers' internal listener stopped");
+        }
+    });
+    Ok(addr)
 }
 
 #[cfg(test)]

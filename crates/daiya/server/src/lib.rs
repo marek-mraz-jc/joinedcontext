@@ -16,7 +16,7 @@ pub use daiya_api::DaiyaState;
 use daiya_api::{api_router, resolve_request_ctx};
 use daiya_mcp::{call_mcp_tool, list_mcp_tools};
 use daiya_model::{CrError, CrResult, InputLimits, OrgQuotas, RequestCtx};
-pub use daiya_query::OwnReach;
+pub use daiya_query::{OperatorReach, OwnReach};
 use jc_router::Mount;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
