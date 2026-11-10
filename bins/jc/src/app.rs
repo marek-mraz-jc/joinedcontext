@@ -432,6 +432,9 @@ pub async fn build_router(
     for net in &cfg.trusted_proxies {
         builder = builder.trust_proxy(*net);
     }
+    for identity in &cfg.trusted_proxy_identities {
+        builder = builder.trust_identity(identity.clone());
+    }
     let mut portal = None;
     let mut gateway = None;
     let mut hop = None;
