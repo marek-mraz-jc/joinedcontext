@@ -388,6 +388,35 @@ async fn a_managed_client_whose_app_is_gone_is_deleted_and_a_draft_gets_none() {
     assert!(!foreign.has_client("app-old") && !foreign.has_client("edge"));
 }
 
+/// The last App dropped from a loaded source: its client goes (a revocation), while before the
+/// source has loaded once (Mirror::hold_removals) it stays and is reported.
+#[tokio::test]
+async fn a_loaded_source_that_drops_its_last_app_deletes_its_client_and_none_before() {
+    for held_back in [true, false] {
+        let keycloak = realm().await;
+        app_client_list(
+            &keycloak,
+            json!([managed_client("uuid-old", "helsinki", "old")]),
+        )
+        .await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("{REALM}/clients/uuid-old")))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&keycloak)
+            .await;
+        let mirror = mirror_with(vec![]);
+        mirror.hold_removals(held_back);
+        sync(&keycloak).converge(&mirror).await;
+        let (deleted, said) = if held_back {
+            (vec![], vec!["App client app-old".to_owned()])
+        } else {
+            (vec![format!("DELETE {REALM}/clients/uuid-old")], vec![])
+        };
+        assert_eq!(wrote(&keycloak).await, deleted, "held back: {held_back}");
+        assert_eq!(mirror.held_back(), said);
+    }
+}
+
 #[tokio::test]
 async fn a_realm_that_refuses_the_token_is_one_failure_and_writes_nothing() {
     let keycloak = MockServer::start().await;

@@ -295,6 +295,29 @@ async fn the_hub_holds_our_scopes_only_and_none_as_a_default() {
     );
 }
 
+/// The last serving Endpoint dropped from a loaded source: its scope goes (a revocation), while
+/// before the source has loaded once (Mirror::hold_removals) it stays and is reported.
+#[tokio::test]
+async fn a_loaded_source_that_drops_its_last_endpoint_deletes_its_scope_and_none_before() {
+    for held_back in [true, false] {
+        let keycloak = realm(Some(json!({ "id": "hub-1", "clientId": "mcp-hub" }))).await;
+        let ours = held("s-1", desired(&air()));
+        scopes(&keycloak, json!([ours.clone()]), json!([ours.clone()])).await;
+        links(&keycloak, "default-client-scopes", json!([])).await;
+        links(&keycloak, "optional-client-scopes", json!([ours])).await;
+        let empty = Mirror::new();
+        empty.hold_removals(held_back);
+        sync(&keycloak).converge(&empty).await;
+        let (deleted, said) = if held_back {
+            (vec![], vec![format!("hub scope endpoint:{AIR}")])
+        } else {
+            (vec![format!("DELETE {REALM}/client-scopes/s-1")], vec![])
+        };
+        assert_eq!(writes(&keycloak).await, deleted, "held back: {held_back}");
+        assert_eq!(empty.held_back(), said);
+    }
+}
+
 /// A scope changed in the console is written back.
 #[tokio::test]
 async fn a_scope_changed_in_the_realm_is_written_back() {
