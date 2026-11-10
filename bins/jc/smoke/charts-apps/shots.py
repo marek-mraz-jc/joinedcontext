@@ -5,6 +5,7 @@ to the page's scrollHeight, so a sticky sidebar is not cut)."""
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import re
 import urllib.parse
 from pathlib import Path
@@ -13,9 +14,18 @@ WIDTHS = (1440, 400)
 
 
 def app_host(base: str, name: str) -> str:
-    """The App's own origin, `{name}.apps.{host}` (AP-133); Chromium resolves `*.localhost` to loopback."""
+    """The App's own origin, `{name}.apps.{host}` (AP-133); Chromium resolves `*.localhost` to loopback.
+    An IP literal has no subdomains: a base on 127.0.0.1 has its App hosts under localhost, as the
+    rehearsal kit mounts them (`*.apps.localhost:<port>`, deploy/rehearsal/up.sh)."""
     u = urllib.parse.urlparse(base)
-    return f"{u.scheme}://{name}.apps.{u.netloc}"
+    host = u.hostname or ""
+    try:
+        ipaddress.ip_address(host)
+        host = "localhost"
+    except ValueError:
+        pass
+    port = f":{u.port}" if u.port else ""
+    return f"{u.scheme}://{name}.apps.{host}{port}"
 
 
 def edge_rewrite(base: str, name: str, url: str) -> str | None:
