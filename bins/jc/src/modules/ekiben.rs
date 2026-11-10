@@ -83,6 +83,7 @@ pub async fn build(
         tracing::info!(addr = %target.addr, prefixes = ?target.path_prefixes, portal_internal = target.late.is_some(), "ekiben streams reach jc's gateway and token endpoint");
         resources = resources.with_host_target(target);
     }
+    open_private_hosts(&resources, &crate::config::ekiben_private_hosts());
     let names: Vec<&String> = defaults
         .keys()
         .chain(secrets.pipeline_client_secrets.keys())
@@ -144,6 +145,28 @@ pub async fn build(
         },
     );
     Ok(build_router(state))
+}
+
+/// Opens the names in `list` (comma separated, `name:port` for one port) to the default
+/// organization's streams although they resolve to private addresses: the platform's MQTT
+/// brokers, which a DataSource reads at `tcp://<release>.<namespace>.svc.cluster.local:1883`.
+/// ekiben still refuses loopback, link-local and metadata addresses behind any listed name.
+fn open_private_hosts(resources: &ResourceManager, list: &str) {
+    let hosts: Vec<String> = list
+        .split(',')
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if hosts.is_empty() {
+        return;
+    }
+    tracing::info!(?hosts, "ekiben streams may reach these private hosts");
+    let org = resources.get_or_create_org(&OrgId::default());
+    org.set_quotas(ekiben_core::OrgQuotas {
+        private_hosts: hosts,
+        ..org.get_quotas()
+    });
 }
 
 /// The default organization's variable map, as the Portal's reconciler sees the runner: what
@@ -294,6 +317,25 @@ fn host_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_listed_private_hosts_open_to_the_default_organization_on_their_port() {
+        let resources = ResourceManager::new();
+        let broker = "mqtt-helsinki-sensors.jc-prod-mqtt.svc.cluster.local";
+        let org = resources.get_or_create_org(&OrgId::default());
+        assert!(!org.is_private_host_port_allowed(broker, 1883));
+        open_private_hosts(&resources, "");
+        assert!(org.get_quotas().private_hosts.is_empty());
+        open_private_hosts(&resources, &format!(" {broker}:1883 , ,other.svc:1883"));
+        assert!(org.is_private_host_port_allowed(broker, 1883));
+        assert!(!org.is_private_host_port_allowed(broker, 6060));
+        assert!(org.is_private_host_port_allowed("other.svc", 1883));
+        // The rest of the quotas stay as they were.
+        assert_eq!(
+            org.get_quotas().max_concurrent_streams,
+            ekiben_core::OrgQuotas::default().max_concurrent_streams
+        );
+    }
 
     #[test]
     fn a_given_variable_wins_over_a_pipeline_credential_of_the_same_name() {

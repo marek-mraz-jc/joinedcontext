@@ -33,6 +33,11 @@ const READER_SECRET: &str = "e2e-reader-client-secret-not-secret";
 /// The project's pipeline client secret (`{PROJECT}-pipelines`), and another project's.
 const PIPELINES_SECRET: &str = "e2e-pipelines-client-secret-not-secret";
 const OTHER_PIPELINES_SECRET: &str = "other-pipelines-client-secret-not-secret";
+/// A device of the project's MQTT broker: ServiceAccount `cam`, Keycloak client `e2e-cam`, its
+/// tokens bound to the broker's release `mqtt-e2e-cams` (ADR-N-048).
+const CAMERA: &str = "e2e-cam";
+const CAMERA_SECRET: &str = "e2e-camera-client-secret-not-secret";
+const CAMERAS: &str = "mqtt-e2e-cams";
 /// The organization repository, not jc's default `jc/config`: the gateway must check out the
 /// repository the Portal is told to use (`JC_SHAKO_OWNER`, `JC_SHAKO_REPO`).
 const FORGE_OWNER: &str = "e2e-city";
@@ -140,6 +145,9 @@ fn realm_file(dir: &Path, secrets: &Path, realm: &str, file: &str) {
     std::fs::write(&pipelines_secret, PIPELINES_SECRET).unwrap();
     std::fs::write(secrets.join("other-pipelines"), OTHER_PIPELINES_SECRET).unwrap();
     let pipelines_secret = format!("$(file:{})", pipelines_secret.display());
+    let camera_secret = secrets.join(CAMERA);
+    std::fs::write(&camera_secret, CAMERA_SECRET).unwrap();
+    let camera_secret = format!("$(file:{})", camera_secret.display());
     let audience = |name: &str, slug: &str| {
         json!({
             "name": name,
@@ -208,6 +216,22 @@ fn realm_file(dir: &Path, secrets: &Path, realm: &str, file: &str) {
                 "webOrigins": [],
                 "defaultClientScopes": ["basic"],
                 "protocolMappers": [audience("endpoint", CLOSED)]
+            },
+            {
+                "clientId": CAMERA,
+                "enabled": true,
+                "protocol": "openid-connect",
+                "publicClient": false,
+                "clientAuthenticatorType": "client-secret",
+                "secret": camera_secret,
+                "standardFlowEnabled": false,
+                "directAccessGrantsEnabled": false,
+                "serviceAccountsEnabled": true,
+                "fullScopeAllowed": false,
+                "redirectUris": [],
+                "webOrigins": [],
+                "defaultClientScopes": ["basic"],
+                "protocolMappers": [audience("broker", CAMERAS)]
             },
             client("e2e-reader", CLOSED),
             client("e2e-elsewhere", ELSEWHERE),
@@ -737,6 +761,153 @@ async fn the_gateway_reads_the_forge_with_no_program_on_the_path() {
         jc.tail()
     );
     assert!(!jc.log_has("git does not run"), "{}", jc.tail());
+}
+
+/// The MQTT brokers' CONNECT check (ADR-N-048) inside jc: `JC_GATEWAY_INTERNAL_BIND` opens the
+/// gateway's internal listener, which admits a device whose kaisatsu token names its broker,
+/// refuses a wrong password, a token under another client id and a caller with no broker's mesh
+/// identity, and the public listener never answers the check. Before, jc dropped the gateway's
+/// internal router and nothing listened on that address.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_mqtt_connect_check_answers_on_the_internal_listener_alone() {
+    let mut started = None;
+    for _ in 0..5 {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        realm_file(
+            &root.join("realms"),
+            &root.join("realm-secrets"),
+            "jc",
+            "00-e2e.json",
+        );
+        let internal = format!("127.0.0.1:{}", free_port());
+        let envs = [("JC_GATEWAY_INTERNAL_BIND", internal.as_str())];
+        if let Some(jc) = start_at(root, free_port(), &[], &envs).await {
+            started = Some((dir, jc, internal));
+            break;
+        }
+    }
+    let (_dir, jc, internal) = started.expect("jc lost its listen port to another bind 5 times");
+    open_project(&jc).await;
+    put_file(
+        &jc,
+        &format!("projects/{PROJECT}/access/serviceaccounts/cam.yaml"),
+        &format!(
+            "{HEADER}\nkind: ServiceAccount\nmetadata:\n  name: cam\n  namespace: {PROJECT}\n\
+             spec:\n  owner:\n    user: {PERSON}\n  purpose: \"a camera\"\n  roles:\n    \
+             - role: space-writer\n      scope:\n        project: {PROJECT}\n  credentials:\n    \
+             - kind: oauth-client\n      name: default\n"
+        ),
+    )
+    .await;
+    put_file(
+        &jc,
+        &format!("projects/{PROJECT}/mqttbrokers/cams.yaml"),
+        &format!(
+            "{HEADER}\nkind: MqttBroker\nmetadata:\n  name: cams\n  namespace: {PROJECT}\n\
+             spec:\n  roles:\n    - name: camera\n      serviceAccounts: [cam]\n      \
+             publish: [\"cams/${{clientid}}/frame\"]\n"
+        ),
+    )
+    .await;
+
+    // What RMQTT's auth-http posts, with the mesh identity Linkerd stamps on the broker's call.
+    let identity = format!("{CAMERAS}.jc-mqtt.serviceaccount.identity.linkerd.cluster.local");
+    let ask = |base: String, identity: Option<String>, username: &str, password: String| {
+        let body = json!({
+            "clientid": username, "username": username, "password": password,
+            "ipaddr": "203.0.113.7",
+        });
+        async move {
+            let mut req = Client::new()
+                .post(format!("{base}/internal/mqtt/auth"))
+                .json(&body);
+            if let Some(identity) = identity {
+                req = req.header("l5d-client-id", identity);
+            }
+            let resp = req.send().await.map_err(|e| e.to_string())?;
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Ok::<_, String>((status, text))
+        }
+    };
+    let token = client_token(&jc, CAMERA, CAMERA_SECRET).await;
+    let on_internal = format!("http://{internal}");
+    let allowed = eventually(
+        "the internal listener admits the camera once the gateway holds its broker",
+        &jc,
+        90,
+        || {
+            let asked = ask(
+                on_internal.clone(),
+                Some(identity.clone()),
+                CAMERA,
+                token.clone(),
+            );
+            async move {
+                let (status, body) = asked.await?;
+                let answer: Value =
+                    serde_json::from_str(&body).map_err(|e| format!("{e}: {body}"))?;
+                (status == StatusCode::OK && answer["result"] == "allow")
+                    .then_some(answer)
+                    .ok_or(format!("{status} {body}"))
+            }
+        },
+    )
+    .await;
+    assert_eq!(allowed["superuser"], false, "{allowed}");
+    assert!(allowed["expire_at"].as_i64().is_some(), "{allowed}");
+
+    let refused = |(status, body): (StatusCode, String)| {
+        let answer: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+        status == StatusCode::OK && answer["result"] == "deny"
+    };
+    let wrong = ask(
+        on_internal.clone(),
+        Some(identity.clone()),
+        CAMERA,
+        "not-a-token".into(),
+    )
+    .await
+    .unwrap();
+    assert!(refused(wrong.clone()), "a wrong password: {wrong:?}");
+    let empty = ask(
+        on_internal.clone(),
+        Some(identity.clone()),
+        CAMERA,
+        String::new(),
+    )
+    .await
+    .unwrap();
+    assert!(refused(empty.clone()), "no password: {empty:?}");
+    let other = ask(
+        on_internal.clone(),
+        Some(identity.clone()),
+        "e2e-other",
+        token.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(refused(other.clone()), "another client id: {other:?}");
+    let unmeshed = ask(on_internal.clone(), None, CAMERA, token.clone())
+        .await
+        .unwrap();
+    assert!(refused(unmeshed.clone()), "no mesh identity: {unmeshed:?}");
+
+    // The public listener: no mount answers the check, with the broker's identity and a good token.
+    let (status, body) = ask(
+        jc.base.clone(),
+        Some(identity.clone()),
+        CAMERA,
+        token.clone(),
+    )
+    .await
+    .unwrap();
+    let answer: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+    assert!(
+        answer.get("result").is_none(),
+        "the public listener answered the check: {status} {body}"
+    );
 }
 
 /// ADR-N-052: the gateway's anonymous OAuth server, as prod runs it, signs with a key jc

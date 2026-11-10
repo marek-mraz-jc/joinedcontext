@@ -332,6 +332,27 @@ impl OrgContext {
             .any(|h| !h.is_empty() && h.eq_ignore_ascii_case(clean))
     }
 
+    /// Whether `host` on `port` is one of the organization's `private_hosts`: an entry `name`
+    /// admits every port of that name, an entry `name:port` that one port alone (jc names the
+    /// MQTT brokers' 1883 so, and not their HTTP API).
+    pub fn is_private_host_port_allowed(&self, host: &str, port: u16) -> bool {
+        if self.is_private_host_allowed(host) {
+            return true;
+        }
+        let clean = host
+            .trim_matches(|c| c == '[' || c == ']')
+            .trim_end_matches('.');
+        let quotas = self
+            .quotas
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        quotas.private_hosts.iter().any(|entry| {
+            entry.rsplit_once(':').is_some_and(|(name, p)| {
+                !name.is_empty() && name.eq_ignore_ascii_case(clean) && p.parse() == Ok(port)
+            })
+        })
+    }
+
     /// Attempts to acquire a concurrent stream slot for this organization.
     pub fn acquire_stream_slot(self: &Arc<Self>) -> Result<OrgStreamGuard, CoreError> {
         let max_streams = self.quotas.read().unwrap().max_concurrent_streams;

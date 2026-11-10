@@ -292,6 +292,10 @@ pub struct DaiyaSection {
     /// "bbsk" }`), so the provisioning files can name each by `orgId`.
     #[serde(default)]
     pub organizations: Vec<daiya_server::config::NumberedOrganization>,
+    /// The one address organization 1's Prometheus datasources may reach over http on a
+    /// non-public network (`http://<host>:<port>`, the instance's label-enforcing proxy on a
+    /// shared cluster); every other datasource keeps the default outbound policy.
+    pub prometheus_reach: Option<String>,
 }
 
 /// `[dataroom]` section (a key left out keeps its default).
@@ -867,6 +871,7 @@ impl Config {
             database: file.daiya.database,
             provisioning_dir: file.daiya.provisioning_dir,
             organizations: file.daiya.organizations,
+            prometheus_reach: file.daiya.prometheus_reach,
         };
         let mut assistant = file.assistant;
         assistant.model_key_file = cli.model_key_file.or(assistant.model_key_file);
@@ -1052,6 +1057,16 @@ pub fn portal_env(key: &str) -> Option<String> {
 pub fn antares_env(key: &str) -> Option<String> {
     debug_assert!(key.starts_with("ANTARES_"));
     std::env::var(key).ok()
+}
+
+/// `JC_EKIBEN_PRIVATE_HOSTS`: the in-cluster names ekiben's streams may reach although they
+/// resolve to private addresses (ekiben's `private_hosts`; `name:port` opens one port), comma
+/// separated: the MQTT brokers' internal listeners a DataSource reads. A variable rather than a
+/// `jc.toml` key, so a deployment can name it before the image reads it.
+#[must_use]
+#[allow(clippy::disallowed_methods)] // The one reader, for ekiben's private hosts.
+pub fn ekiben_private_hosts() -> String {
+    std::env::var("JC_EKIBEN_PRIVATE_HOSTS").unwrap_or_default()
 }
 
 /// The prefix of the variables `jc` hands ekiben's streams as `${NAME}` (ekiben's own
