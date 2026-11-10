@@ -21,6 +21,12 @@ jc_bin=${JC_BIN:-${CARGO_TARGET_DIR:-$here/../../target}/debug/jc}
 "$here/ui-fresh.sh" "$here/../.." "$jc_bin" || exit 1
 export_dir=${REHEARSAL_EXPORT:-$home/export}
 bind=${REHEARSAL_BIND:-127.0.0.1}
+# The rehearsal's one origin. kaisatsu names its issuer by the host a request reached it on, and
+# ekiben's guard lets the Portal's sweeps reach only the literal http://127.0.0.1:<port> (jc
+# ekiben.rs host_target): a token URL on `localhost` is refused as SSRF and every *.expiry sweep
+# and pipeline_oauth2 stream stops (supervisor 2026-11-10). So realm, jc, Apps and import all say
+# 127.0.0.1; the guard stays as it is.
+origin="http://127.0.0.1:$port"
 
 mkdir -p "$home"/secrets "$home"/state/realms "$home"/import "$home"/repos "$home"/files
 chmod 700 "$home/state" "$home/state/realms"
@@ -125,7 +131,7 @@ fi
 if [ -d "$export_dir/keycloak" ]; then
   python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/state/realms" \
     --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}" --secrets-dir "$home/secrets/realm" \
-    --public-base "http://localhost:$port"
+    --public-base "$origin"
   # Each secret the realm config names gets a fresh value of the rehearsal (never the old one), in
   # a file of its own under secrets/realm: kaisatsu inside jc reads $(file:...) there and no
   # environment. secrets/realm-NAME stays a link to it for the smoke and shots.
@@ -291,7 +297,7 @@ fi
 # shellcheck source=deploy/rehearsal/apps.sh
 . "$here/apps.sh"  # the Apps: image bundles, apps cache, prod builds, roles person (jc-apps-export)
 nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \
-  --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
+  --listen "$bind:$port" --base-host "${origin#http://}" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" \
   --kaisatsu-import-secrets-dir "$home/secrets/realm" \
   --ekiben-client-secrets-dir "$home/secrets/realm" \
@@ -302,7 +308,7 @@ nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text 
   > "$home/jc.log" 2>&1 &
 echo $! > "$home/jc.pid"
 "$here/wait-jc.sh" "$(cat "$home/jc.pid")" "$home/jc.log" || exit 1
-echo "$env_name: jc on http://localhost:$port (log $home/jc.log)"
+echo "$env_name: jc on $origin (log $home/jc.log)"
 
 
 # The 24 h rule, now and hourly, beside jc (rehearsal database only).
