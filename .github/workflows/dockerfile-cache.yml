@@ -1,7 +1,8 @@
 name: dockerfile-cache
-# The writer of the caches ci.yml's `dockerfile` job reads: on every jc-portal-1 push (the default
-# branch, whose caches every branch reads) the full `docker build` of bins/jc/Dockerfile exports
-# the layer cache (scope jc, mode=max) and writes sccache from the Dockerfile's two cargo builds.
+# The writer of the caches ci.yml's `dockerfile` job reads: on each jc-portal-1 push that changes a
+# layer input (paths below; the default branch, whose caches every branch reads) the full
+# `docker build` of bins/jc/Dockerfile exports the layer cache (scope jc, mode=max) and writes
+# sccache from the Dockerfile's two cargo builds.
 # Without it the scope went stale between Dockerfile changes: a dependency change on jc-portal-1
 # (c79331ab, kaisatsu-server dev-dependencies) missed the dependency layer of every branch after it
 # (13 min, run 42655700338). It is its own workflow so it never gates or delays a merge: no ci
@@ -9,9 +10,35 @@ name: dockerfile-cache
 # Then it drops the target caches .github/actions/rust saved under a superseded key (one per
 # lockfile hash): they hold the 10 GB Actions cache over its cap, and the eviction that follows takes
 # the oldest entries, the layer cache included. The layer cache and sccache entries are not touched.
+# Only a push that changes a cached layer's input runs it: the Dockerfile and its ignore file, the
+# manifests, lockfiles and toolchain files the dependency layer (`plan` stub) is built from, the
+# patched crates' sources it copies whole, the scripts the `rust` stage runs, the pnpm install
+# layers' package files, and this file. A source-only change misses only the last cargo build and
+# the UI and App builds, which every source change rebuilds anyway (sccache keeps what it has).
 on:
   push:
     branches: [jc-portal-1]
+    paths:
+      - bins/jc/Dockerfile
+      - .dockerignore
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "**/rust-toolchain.toml"
+      - "**/.cargo/config.toml"
+      - vendor/oxrdfxml/**
+      - vendor/tikv-jemalloc-ctl/**
+      - vendor/paste/**
+      - vendor/joinedcontext-platform/vendor/kreuzberg/**
+      - crates/antares/vendor/rumqttc/**
+      - vendor/joinedcontext-platform/scripts/ci/pdfium.sh
+      - vendor/joinedcontext-platform/scripts/ci/e5-small.sh
+      - vendor/joinedcontext-platform/scripts/ci/onnxruntime.sh
+      - "crates/portal/**/package.json"
+      - "crates/portal/**/pnpm-lock.yaml"
+      - .github/workflows/dockerfile-cache.yml
+      - .github/scripts/free-disk.sh
+      - .github/scripts/cache-prune.sh
+      - .github/scripts/check-build-context.sh
   workflow_dispatch:
 permissions: { contents: read }
 # One export per ref at a time; a push while one runs waits, and a newer push replaces it in the
@@ -26,6 +53,8 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # ci.yml's `dockerfile` job does not run on jc-portal-1: this build is that check there.
+      - run: sh .github/scripts/check-build-context.sh
       - run: sh .github/scripts/free-disk.sh --wait
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       # Exports ACTIONS_RESULTS_URL and ACTIONS_RUNTIME_TOKEN to the build's secrets.
