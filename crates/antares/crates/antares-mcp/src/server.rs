@@ -653,14 +653,16 @@ impl Server {
         let mut answer = self
             .run(tool.op, tools::build(tool, &args, limit, offset))
             .await;
-        // averages only for a history the broker cut: a raw answer that fits
-        // is what the NGSI-LD door serves for the same call (T-5028); only a
-        // 206 carries Content-Range, so a refusal is never retried. The averages
+        // averages only for a history the broker cut or that is over this
+        // server's budget: a raw answer that fits is what the NGSI-LD door
+        // serves for the same call (T-5028); a refusal is neither (only a 206
+        // carries Content-Range), so it is never retried. The averages
         // are this server's choice: avg takes numbers only (4.5.19.1, else 400
         // InvalidRequest, 5.7.4.4), so a call naming no attrs averages the
         // numeric Attributes of the raw page and names the others; refused
-        // anyway, the cut raw page and its `more` stay the answer.
-        let second = if aggregated.is_some() && answer.range.is_some() {
+        // anyway, the raw page and its `more` stay the answer.
+        let cut = answer.range.is_some() || antares_ops::json_len(&answer.body) > budget();
+        let second = if aggregated.is_some() && cut {
             let left = numeric_attrs(&mut averaged, &answer.body);
             if let (Some(note), false) = (aggregated.as_mut(), left.is_empty()) {
                 *note = format!(

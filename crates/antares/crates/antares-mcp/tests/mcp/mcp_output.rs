@@ -529,6 +529,63 @@ async fn averages_take_the_numbers_and_name_the_text() -> Result<(), String> {
     Ok(())
 }
 
+/// A history the broker serves whole (under its 100 instances per Attribute)
+/// can still be past this server's budget: averaged as a cut one is, not
+/// refused as too large (gate 4 `hub.temporal.24h`, Helsinki's road weather
+/// once the rehearsal's 24 h retention left it uncut).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_whole_history_past_the_budget_is_averaged() -> Result<(), String> {
+    let f = fixture().await?;
+    let now = chrono::Utc::now();
+    let ago = |minutes: i64| {
+        (now - chrono::Duration::minutes(minutes))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string()
+    };
+    let id = "urn:ngsi-ld:Car:long";
+    let at = |i: i64| {
+        let mut a = serde_json::Map::new();
+        a.insert(
+            "speed".into(),
+            json!({"type": "Property", "value": i % 80, "observedAt": ago(i)}),
+        );
+        a.insert("colour".into(), json!({"type": "Property", "value": format!("{i}{}", "c".repeat(800)), "observedAt": ago(i)}));
+        a
+    };
+    let mut first = at(90);
+    first.insert("id".into(), json!(id));
+    first.insert("type".into(), json!("Car"));
+    create(&f.app, "city", &Value::Object(first)).await?;
+    for i in (0..90).rev() {
+        let uri = format!("/ngsi-ld/v1/entities/{id}/attrs");
+        let s = send(
+            &f.app,
+            axum::http::Method::PATCH,
+            &uri,
+            "city",
+            &Value::Object(at(i)),
+        )
+        .await;
+        assert!(s.is_success(), "update {i}: {s}");
+    }
+    let a = call(
+        &f.app,
+        "cars",
+        "query_temporal",
+        json!({"type": ["Car"], "id": [id], "timerel": "between", "timeAt": ago(25 * 60), "endTimeAt": ago(-5)}),
+    )
+    .await;
+    assert!(!a.is_error(), "{}", a.text);
+    let s = a.structured();
+    let note = s
+        .get("aggregation")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(note.contains("colour"), "{}", a.text);
+    assert!(s.pointer("/entities/0/speed/avg").is_some(), "{}", a.text);
+    Ok(())
+}
+
 /// T-5028: a history older than a day that fits one answer stays raw, the
 /// instances the NGSI-LD door serves for the same call, with no aggregation.
 #[tokio::test(flavor = "multi_thread")]
