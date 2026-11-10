@@ -1107,10 +1107,12 @@ def test_synth_puts_the_sample_apps_in_the_apps_organization():
 def test_realm_secrets_become_file_references_under_the_secrets_dir(tmp_path):
     realm = {"realm": "r", "clients": [{"clientId": "a", "secret": "$(env:A_SECRET)"},
                                         {"clientId": "b", "secret": "$(B_SECRET)"}]}
-    out = rh.to_file_refs(realm, tmp_path)
-    assert [c["secret"] for c in out["clients"]] == [f"$(file:{tmp_path}/A_SECRET)", f"$(file:{tmp_path}/B_SECRET)"]
-    (tmp_path / "A_SECRET").write_text("s3\n")
-    assert rh.secret_file(out["clients"][0]["secret"], tmp_path / "x").read_text() == "s3\n"
+    out = rh.to_file_refs(realm)
+    # Relative names, read under kaisatsu's import secrets dir: no path of this home in the file.
+    assert [c["secret"] for c in out["clients"]] == ["$(file:A_SECRET)", "$(file:B_SECRET)"]
+    (tmp_path / "realm").mkdir()
+    (tmp_path / "realm" / "A_SECRET").write_text("s3\n")
+    assert rh.secret_file(out["clients"][0]["secret"], tmp_path).read_text() == "s3\n"
     assert rh.secret_file("$(env:A_SECRET)", tmp_path) == tmp_path / "realm-A_SECRET"
 
 
@@ -1384,3 +1386,40 @@ def test_up_sh_gives_dataroom_prods_publish_gate_hidden_list():
     doc = tomllib.loads(aliases + "\n" + hidden)
     rows = sum(1 for line in hidden.splitlines() if line.startswith('"'))
     assert rows > 50 and len(doc["dataroom"]["hidden"]) == rows and doc["dataroom"]["aliases"]
+
+
+def test_up_sh_gives_dataroom_prods_harvests_and_the_converted_list_beside_jc_toml():
+    """jc-catalogue-17: jc.toml carries prod's [[dataroom.harvest]] entries, they parse with the
+    aliases and the hidden list as one file, and each `converted_file` they name is copied beside
+    jc.toml."""
+    import tomllib
+    text = (HERE / "up.sh").read_text()
+    m = re.search(r'^cat "\$here/(\S+harvest-sources\.toml)" >> "\$home/jc\.toml"$', text, re.M)
+    assert m, "up.sh appends no [[dataroom.harvest]] to jc.toml"
+    copied = re.findall(r'^install -m 644 "\$here/(\S+)" "\$home/(\S+)"$', text, re.M)
+    aliases = subprocess.run([sys.executable, "-I", str(HERE / "rehearsal.py"), "aliases"],
+                             capture_output=True, text=True, check=True).stdout
+    hidden = (HERE / "../../bins/jc/docs/catalogue-hidden.toml").read_text()
+    doc = tomllib.loads(aliases + "\n" + hidden + "\n" + (HERE / m.group(1)).read_text())
+    harvests = doc["dataroom"]["harvest"]
+    assert {h["name"] for h in harvests} >= {"hub-bbsk", "nkod-banskabystrica"}
+    for h in harvests:
+        if "converted_file" in h:
+            src = [s for s, dst in copied if dst == h["converted_file"]]
+            assert src and (HERE / src[0]).is_file(), f"{h['name']}: {h['converted_file']} not copied beside jc.toml"
+            json.loads((HERE / src[0]).read_text())
+
+
+def test_up_sh_refuses_realm_lines_without_an_export_to_render(tmp_path):
+    """jc-catalogue-17: REHEARSAL_REALM_LINES_* with no keycloak/ in the export kept the last
+    rendered realm silently; up.sh now stops before jc starts."""
+    text = (HERE / "up.sh").read_text()
+    block = text[text.index("if [ ! -d \"$export_dir/keycloak\" ]"):]
+    block = block[:block.index("\nfi\n") + 4]
+    run = lambda env: subprocess.run(["bash", "-c", f"export_dir={tmp_path}\n{block}\necho started"],
+                                     capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", **env})
+    refused = run({"REHEARSAL_REALM_LINES_FROM": "a", "REHEARSAL_REALM_LINES_TO": "b"})
+    assert refused.returncode == 1 and "set REHEARSAL_EXPORT" in refused.stderr and "started" not in refused.stdout
+    assert run({}).stdout.strip() == "started"
+    (tmp_path / "keycloak").mkdir()
+    assert run({"REHEARSAL_REALM_LINES_FROM": "a", "REHEARSAL_REALM_LINES_TO": "b"}).stdout.strip() == "started"

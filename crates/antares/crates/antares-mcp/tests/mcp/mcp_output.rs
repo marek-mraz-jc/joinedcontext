@@ -449,6 +449,143 @@ async fn a_long_cut_history_window_answers_hourly_averages() -> Result<(), Strin
     Ok(())
 }
 
+/// The averages are asked for the caller, not by it, and avg takes numbers
+/// only (a text Attribute gets 400 `InvalidRequest`, 5.7.4.4; gate 4
+/// `hub.temporal.24h`, `WeatherObserved`'s `dateObserved`): the numeric
+/// Attributes are averaged and the others named; with none to average the
+/// refusal leaves the cut raw page and its `more`.
+#[tokio::test(flavor = "multi_thread")]
+async fn averages_take_the_numbers_and_name_the_text() -> Result<(), String> {
+    let f = fixture().await?;
+    let now = chrono::Utc::now();
+    let ago = move |minutes: i64| {
+        (now - chrono::Duration::minutes(minutes))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string()
+    };
+    let history = |id: &'static str, numbers: bool| {
+        let f = &f;
+        async move {
+            let prop = |value: Value, minutes: i64| json!({"type": "Property", "value": value, "observedAt": ago(minutes)});
+            let at = |i: i64| {
+                let mut a = serde_json::Map::new();
+                a.insert("colour".into(), prop(json!(format!("c{i}")), i));
+                if numbers {
+                    a.insert("speed".into(), prop(json!(i % 80), i));
+                }
+                a
+            };
+            let mut first = at(300);
+            // `cars` shows Cars below 80 only: an all-text history keeps one speed from before the window
+            first.insert("speed".into(), prop(json!(1), 3000));
+            first.insert("id".into(), json!(id));
+            first.insert("type".into(), json!("Car"));
+            let first = Value::Object(first);
+            create(&f.app, "city", &first).await?;
+            for i in (0..300).rev() {
+                let uri = format!("/ngsi-ld/v1/entities/{id}/attrs");
+                let s = send(
+                    &f.app,
+                    axum::http::Method::PATCH,
+                    &uri,
+                    "city",
+                    &Value::Object(at(i)),
+                )
+                .await;
+                assert!(s.is_success(), "update {i}: {s}");
+            }
+            let a = call(
+                &f.app,
+                "cars",
+                "retrieve_temporal",
+                json!({"id": id, "timerel": "between", "timeAt": ago(25 * 60), "endTimeAt": ago(-5)}),
+            )
+            .await;
+            assert!(!a.is_error(), "{}", a.text);
+            Ok::<_, String>(a)
+        }
+    };
+    // speed is averaged per hour; colour, which avg refuses, is left out and named
+    let a = history("urn:ngsi-ld:Car:mixed", true).await?;
+    let s = a.structured();
+    let note = s
+        .get("aggregation")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        note.contains("not averaged") && note.contains("colour"),
+        "{}",
+        a.text
+    );
+    assert!(s.pointer("/entity/speed/avg").is_some(), "{}", a.text);
+    assert!(s.pointer("/entity/colour").is_none(), "{}", a.text);
+    // nothing to average: the broker's refusal leaves the cut raw page and its `more`
+    let a = history("urn:ngsi-ld:Car:words", false).await?;
+    let s = a.structured();
+    assert!(s.get("aggregation").is_none(), "{}", a.text);
+    assert!(s.pointer("/more/next").is_some(), "{}", a.text);
+    let colour = s.pointer("/entity/colour").and_then(Value::as_array);
+    assert!(colour.is_some_and(|v| !v.is_empty()), "{}", a.text);
+    Ok(())
+}
+
+/// A history the broker serves whole (under its 100 instances per Attribute)
+/// can still be past this server's budget: averaged as a cut one is, not
+/// refused as too large (gate 4 `hub.temporal.24h`, Helsinki's road weather
+/// once the rehearsal's 24 h retention left it uncut).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_whole_history_past_the_budget_is_averaged() -> Result<(), String> {
+    let f = fixture().await?;
+    let now = chrono::Utc::now();
+    let ago = |minutes: i64| {
+        (now - chrono::Duration::minutes(minutes))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string()
+    };
+    let id = "urn:ngsi-ld:Car:long";
+    let at = |i: i64| {
+        let mut a = serde_json::Map::new();
+        a.insert(
+            "speed".into(),
+            json!({"type": "Property", "value": i % 80, "observedAt": ago(i)}),
+        );
+        a.insert("colour".into(), json!({"type": "Property", "value": format!("{i}{}", "c".repeat(800)), "observedAt": ago(i)}));
+        a
+    };
+    let mut first = at(90);
+    first.insert("id".into(), json!(id));
+    first.insert("type".into(), json!("Car"));
+    create(&f.app, "city", &Value::Object(first)).await?;
+    for i in (0..90).rev() {
+        let uri = format!("/ngsi-ld/v1/entities/{id}/attrs");
+        let s = send(
+            &f.app,
+            axum::http::Method::PATCH,
+            &uri,
+            "city",
+            &Value::Object(at(i)),
+        )
+        .await;
+        assert!(s.is_success(), "update {i}: {s}");
+    }
+    let a = call(
+        &f.app,
+        "cars",
+        "query_temporal",
+        json!({"type": ["Car"], "id": [id], "timerel": "between", "timeAt": ago(25 * 60), "endTimeAt": ago(-5)}),
+    )
+    .await;
+    assert!(!a.is_error(), "{}", a.text);
+    let s = a.structured();
+    let note = s
+        .get("aggregation")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(note.contains("colour"), "{}", a.text);
+    assert!(s.pointer("/entities/0/speed/avg").is_some(), "{}", a.text);
+    Ok(())
+}
+
 /// T-5028: a history older than a day that fits one answer stays raw, the
 /// instances the NGSI-LD door serves for the same call, with no aggregation.
 #[tokio::test(flavor = "multi_thread")]

@@ -68,7 +68,7 @@ def test_the_holder_gets_the_published_roles_apps_groups_and_no_credential_value
     holders = [u for u in out["users"] if u["username"] == apps.PERSON]
     assert len(holders) == 1, "made again, never twice"
     assert holders[0]["groups"] == ["/alerts-viewer", "/city/alerts-steward"]
-    assert holders[0]["credentials"][0]["value"] == "$(file:/s/pw)"
+    assert holders[0]["credentials"][0]["value"] == "$(file:pw)"
     assert missing == ["gone"]
     assert {u["username"] for u in out["users"]} == {"rehearsal-tester", apps.PERSON}
     assert "id" not in holders[0], "no id of its own unless one is named"
@@ -80,7 +80,7 @@ def test_the_holder_takes_the_id_a_prod_read_policy_names_and_nothing_else_of_th
     out, _ = apps.with_person(realm, [], Path("/s/pw"), pid)
     holder = out["users"][0]
     assert holder["id"] == pid and holder["username"] == apps.PERSON
-    assert holder["email"].endswith("@rehearsal.invalid") and holder["credentials"][0]["value"] == "$(file:/s/pw)"
+    assert holder["email"].endswith("@rehearsal.invalid") and holder["credentials"][0]["value"] == "$(file:pw)"
     with pytest.raises(SystemExit):
         apps.with_person(realm, [], Path("/s/pw"), "demo.steward")
     # apps.sh hands the id on only on a loopback rehearsal.

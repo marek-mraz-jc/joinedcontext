@@ -115,7 +115,7 @@ def with_person(realm: dict, groups: list[str], password_file: Path,
     person = {"username": PERSON, "enabled": True, "email": f"{PERSON}@rehearsal.invalid", "emailVerified": True,
               "firstName": "Rehearsal", "lastName": "App roles",
               "groups": sorted(paths[g] for g in groups if g in paths),
-              "credentials": [{"type": "password", "value": f"$(file:{password_file})", "temporary": False}]}
+              "credentials": [{"type": "password", "value": f"$(file:{password_file.name})", "temporary": False}]}
     if person_id:
         person["id"] = person_id
     out = dict(realm)
@@ -276,11 +276,12 @@ def call(base: str, method: str, path: str, headers: dict, body=None, form=None,
         return 0, None
 
 
-def person_id(base: str, realm: dict) -> str | None:
-    """The `sub` of PERSON's token from the realm's admin-cli (a direct grant, no client secret)."""
+def person_id(base: str, realm: dict, secrets_dir: Path) -> str | None:
+    """The `sub` of PERSON's token from the realm's admin-cli (a direct grant, no client secret);
+    the password file is named relative to kaisatsu's import secrets dir `secrets_dir`."""
     user = next((u for u in realm.get("users") or [] if u.get("username") == PERSON), {})
     ref = next((c.get("value", "") for c in user.get("credentials") or [] if c.get("type") == "password"), "")
-    pw_file = Path(ref[len("$(file:"):-1]) if ref.startswith("$(file:") else None
+    pw_file = secrets_dir / ref[len("$(file:"):-1] if ref.startswith("$(file:") else None
     if not pw_file or not pw_file.is_file():
         return None
     st, body = call(base, "POST", f"/id/realms/{realm.get('realm')}/protocol/openid-connect/token", {}, form={
@@ -299,7 +300,7 @@ def cmd_grant(a) -> int:
         print(f"apps.py: {a.base} did not answer within {a.wait} s", file=sys.stderr)
         return 1
     realm = json.loads(Path(a.realm_file).read_text())
-    user = person_id(a.base, realm)
+    user = person_id(a.base, realm, Path(a.secrets_dir))
     if not user:
         print(f"apps.py: no token for {PERSON} in realm {realm.get('realm')}: nothing granted", file=sys.stderr)
         return 1
@@ -346,6 +347,7 @@ def main(argv=None) -> int:
     s.add_argument("--export", required=True)
     s.add_argument("--token-file", required=True)
     s.add_argument("--realm-file", required=True)
+    s.add_argument("--secrets-dir", required=True, help="kaisatsu's import secrets dir (the password file's)")
     s.add_argument("--wait", type=float, default=600)
     a = p.parse_args(argv)
     return {"person": cmd_person, "publish": cmd_publish, "grant": cmd_grant}[a.cmd](a)

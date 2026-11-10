@@ -4,6 +4,11 @@
 # catalogue's harvest principal; a run fetches only from `allowed_hosts`. prod's lists leave out
 # the source's own host (its scripts fetched it unchecked): data.slovensko.sk and
 # opendata.bbsk.sk are listed here so the guard admits them.
+# Each source keeps only the datasets prod converted (`od-datasets.json` beside jc.toml: a copy of
+# bins/jc/docs/od-datasets.json, which is release 23a43801 charts/ckan/files/od-datasets.json
+# byte for byte), with its Endpoint's doors and model files as distributions. No `gateway`: the
+# Endpoints are read on this instance's own gateway, as prod's CronJobs read prod's. A source
+# runs once when jc starts, then on its schedule.
 
 # The city's datasets in the national catalogue (NKOD SPARQL), T-4151.
 [[dataroom.harvest]]
@@ -18,6 +23,8 @@ name_prefix = "bb-"
 allowed_hosts = ["data.slovensko.sk", "egov.banskabystrica.sk", "dtm-banskabystrica.tmapserver.sk", "www.banskabystrica.sk"]
 rewrite_hosts = { "banskabystrica.sk" = "www.banskabystrica.sk" }
 schedule = "23 3 * * *"
+converted_file = "od-datasets.json"
+datasets_base = "https://opendata.dev.joinedcontext.com/"
 
 [dataroom.harvest.skip]
 "Ulice" = "not ingested, link points to Počet občanov podľa dňa narodenia (732 rows of Deň, Pohlavie, Počet)"
@@ -43,6 +50,8 @@ publisher_description = "Otvorené údaje Banskobystrického samosprávneho kraj
 spatial_uri = "http://data.europa.eu/nuts/code/SK032"
 allowed_hosts = ["opendata.bbsk.sk", "services-eu1.arcgis.com", "www.arcgis.com"]
 schedule = "23 3 * * *"
+converted_file = "od-datasets.json"
+datasets_base = "https://opendata.dev.joinedcontext.com/"
 
 [dataroom.harvest.skip]
 "b5486911cb0342e48d475130d1d5e960" = "personal data (section 8), a count per okres at most"
