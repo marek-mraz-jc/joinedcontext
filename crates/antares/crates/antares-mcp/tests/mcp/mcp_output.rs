@@ -451,8 +451,8 @@ async fn a_long_cut_history_window_answers_hourly_averages() -> Result<(), Strin
 
 /// The averages are asked for the caller, not by it: when the broker refuses
 /// them (a text Attribute is not eligible for avg, 5.7.4.4: 400
-/// InvalidRequest), the cut raw page and its `more` stay the answer
-/// (gate 4 `hub.temporal.24h`, WeatherObserved's `dateObserved`).
+/// `InvalidRequest`), the cut raw page and its `more` stay the answer
+/// (gate 4 `hub.temporal.24h`, `WeatherObserved`'s `dateObserved`).
 #[tokio::test(flavor = "multi_thread")]
 async fn refused_averages_leave_the_cut_raw_history() -> Result<(), String> {
     let f = fixture().await?;

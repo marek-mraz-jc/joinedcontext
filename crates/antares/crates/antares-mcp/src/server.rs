@@ -657,7 +657,7 @@ impl Server {
         // 206 carries Content-Range, so a refusal is never retried. The averages
         // are this server's choice: refused (an Attribute not eligible for avg,
         // 5.7.4.4), the cut raw page and its `more` stay the answer.
-        let averages = if aggregated.is_some() && answer.range.is_some() {
+        let second = if aggregated.is_some() && answer.range.is_some() {
             Some(
                 self.run(tool.op, tools::build(tool, &averaged, limit, offset))
                     .await,
@@ -665,9 +665,9 @@ impl Server {
         } else {
             None
         };
-        if let Some(averages) = averages.filter(|a| a.status.is_success()) {
+        if let Some(second) = second.filter(|a| a.status.is_success()) {
             args = averaged;
-            answer = averages;
+            answer = second;
         } else {
             aggregated = None;
         }
