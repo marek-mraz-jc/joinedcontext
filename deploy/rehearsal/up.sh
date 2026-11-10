@@ -182,6 +182,11 @@ export ANTARES_HISTORY_BACKFILL=on
 # jc is one process: the local notification bus cannot double-fire.
 export ANTARES_ALLOW_SHARED_LOCAL=1
 export JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false JC_PORTAL_SYNC_INTERVAL=10
+# The old deployment's global.orgDomain (smartcity: hel.fi). Pipelines mint
+# urn:ngsi-ld:{Type}:{orgDomain}:{space}:{id}; without it jc falls back to jc.invalid on a loopback
+# host and every pipeline run writes a second copy of each imported entity under other ids.
+org_domain=${REHEARSAL_ORG_DOMAIN:-hel.fi}
+export JC_PORTAL_ORG_DOMAIN="$org_domain" JC_GATEWAY_ORG_DOMAIN="$org_domain" JC_ASSISTANT_ORG_DOMAIN="$org_domain"
 # The catalogue over plain http, for this one-machine rehearsal only (jc and the Portal warn).
 export JC_PORTAL_CKAN_ALLOW_HTTP=true
 # Every imported CkanInstance names this catalogue (rehearsal.py fence_writes); the Portal calls it

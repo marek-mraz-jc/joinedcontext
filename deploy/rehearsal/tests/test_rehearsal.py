@@ -1451,3 +1451,14 @@ def test_the_kit_names_its_own_origin_by_the_literal_loopback_address():
         code = [line for line in (HERE / name).read_text().splitlines() if not line.lstrip().startswith("#")]
         own = [line for line in code if re.search(r"http://localhost[:/]|\"localhost:\$port\"", line)]
         assert not own, f"{name} names the rehearsal's origin as localhost: {own}"
+
+
+def test_the_kit_runs_under_the_old_deployments_org_domain():
+    """Pipelines mint urn:ngsi-ld:{Type}:{orgDomain}:{space}:{id}. Without JC_PORTAL_ORG_DOMAIN jc
+    takes jc.invalid on a loopback host (provision.rs domain), so the rehearsal's pipeline runs
+    wrote 5218 praha-mesto PointOfInterest beside the 19547 imported under hel.fi and an App's map
+    read passed Antares' 10000-row ceiling. Portal, gateway and assistant read one domain."""
+    up = (HERE / "up.sh").read_text()
+    assert re.search(r'^org_domain=\$\{REHEARSAL_ORG_DOMAIN:-hel\.fi\}$', up, re.M), "up.sh sets no org domain"
+    for key in ("JC_PORTAL_ORG_DOMAIN", "JC_GATEWAY_ORG_DOMAIN", "JC_ASSISTANT_ORG_DOMAIN"):
+        assert f'{key}="$org_domain"' in up, f"up.sh exports no {key}"
