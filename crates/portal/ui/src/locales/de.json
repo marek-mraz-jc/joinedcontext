@@ -1917,7 +1917,7 @@
       "hiddenMark": "nicht geliefert",
       "empty": "Keine Entitäten auf dieser Seite.",
       "refused": "Der Filterentwurf wurde abgelehnt: {reason}",
-      "notGranted": "Ihr Zugriff auf diesen Endpunkt umfasst das Lesen von {type} nicht, daher kann der Vergleich nicht zeigen, was Ihr Entwurf liefern würde. Wer ihn liest, legen die Richtlinien des Endpunkts fest.",
+      "notGranted": "Ihr Zugriff auf diesen Endpunkt umfasst das Lesen von {type} nicht, daher kann der Vergleich nicht zeigen, was Ihr Entwurf liefern würde. Beantragen Sie Lesezugriff unter „Zugriff anfragen“ auf der Seite des Endpunkts; darüber entscheiden die Richtlinien des Endpunkts.",
       "failed": "Was der Filter liefert, konnte nicht gelesen werden: {reason}. Ändern Sie den Filter oder versuchen Sie es erneut.",
       "notLive": "Der Vergleich liest über den Endpunkt und erscheint, sobald der Endpunkt aktiv ist.",
       "noType": "Der Vergleich braucht mindestens einen Typ, den der Endpunkt bedient.",

@@ -327,7 +327,7 @@ export function FilterProof({
       : null;
   const failed = served.isError && refused === null;
   const header = (
-    <div className="flex flex-wrap items-end justify-between gap-3">
+    <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
       <h3 id="filter-proof-title" className="text-body font-semibold">
         {t("endpoints.proof.title")}
       </h3>
