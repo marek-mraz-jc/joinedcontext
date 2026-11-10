@@ -56,13 +56,16 @@ PORTAL_BUILD = 2.0
 PORTAL_LIB = 125.0
 PORTAL_DOC = 135.0
 # root by binary, from cargo --timings of root-test (runs 42764897027, 42769151385: 474 CPU
-# seconds of build on 4 cores took 121 s, so wall time follows CPU time): the libs every
-# partition builds (most from sccache) take about 140 CPU seconds, one integration test target
-# compiles and links in about 2, the lib, bin and example test block in about 140 (46 lib and 7
-# bin test units, the bins). The runner has 4 cores (`nproc`, ci.yml prints it).
-ROOT_LIBS = 140.0
+# seconds of build on 4 cores took 121 s, so wall time follows CPU time) and the build times of
+# run 42823061257: the libs every partition builds (most from sccache) take about 100 CPU
+# seconds, one integration test target compiles and links in about 2, the lib, bin and example
+# test block in about 160 (46 lib and 7 bin test units, the bins); a partition holding a test of
+# jc also builds jc's lib and bin, which link every module (about 120). The runner has 4 cores
+# (`nproc`, ci.yml prints it).
+ROOT_LIBS = 100.0
 ROOT_TARGET = 2.0
-ROOT_BLOCK = 140.0
+ROOT_BLOCK = 160.0
+ROOT_PACKAGE = {"jc": 120.0}
 CORES = 4
 THREADS = 4
 # a target whose tests take more than this share of a partition's test time is split by test
@@ -307,8 +310,9 @@ def root_plan(meta, rec, n, filters, extra):
             root[find(x)] = find(first.setdefault(g, x))
     items = {}
     for pkg, x in tests:
-        it = items.setdefault(find(x), {"names": set(), "bids": [], "groups": {}})
+        it = items.setdefault(find(x), {"names": set(), "bids": [], "groups": {}, "pkgs": set()})
         it["names"].add(x)
+        it["pkgs"].add(pkg)
         it["bids"].append(f"{pkg}::{x}")
         g = group(pkg, x)
         if g is not None:
@@ -316,7 +320,8 @@ def root_plan(meta, rec, n, filters, extra):
     items = list(items.values())
     for it in items:
         it["build"] = ROOT_TARGET * len(it["bids"])
-    lib = {"names": {"block"}, "bids": block, "build": ROOT_BLOCK, "groups": {}}
+    # the block builds every member's lib and bins
+    lib = {"names": {"block"}, "bids": block, "build": ROOT_BLOCK, "groups": {}, "pkgs": set(ROOT_PACKAGE)}
     for bid in block:
         pkg = bid.split("::")[0]
         name = bid.split("/")[-1] if "/" in bid else pkg.replace("-", "_")
@@ -335,8 +340,8 @@ def root_plan(meta, rec, n, filters, extra):
             m = min(n, max(1, math.ceil(it["run"] / THREADS / (SPLIT * share))))
         for i in range(m):
             pieces.append(dict(it, run=it["run"] / m, piece=i, of=m))
-    state = [{"build": 0.0, "run": 0.0, "groups": {}, "longest": 0.0, "extra": extra.get(k + 1, 0.0)}
-             for k in range(n)]
+    state = [{"build": 0.0, "run": 0.0, "groups": {}, "longest": 0.0, "pkgs": set(),
+              "extra": extra.get(k + 1, 0.0)} for k in range(n)]
 
     def time(s):
         tests_ = max([s["run"] / THREADS, s["longest"]] + list(s["groups"].values()))
@@ -346,8 +351,9 @@ def root_plan(meta, rec, n, filters, extra):
         groups = dict(s["groups"])
         for g, v in it["groups"].items():
             groups[g] = groups.get(g, 0.0) + v
-        return {"build": s["build"] + it["build"], "run": s["run"] + it["run"], "groups": groups,
-                "longest": max(s["longest"], it["longest"]), "extra": s["extra"]}
+        pkg_build = sum(ROOT_PACKAGE.get(p, 0.0) for p in it["pkgs"] - s["pkgs"])
+        return {"build": s["build"] + it["build"] + pkg_build, "run": s["run"] + it["run"], "groups": groups,
+                "longest": max(s["longest"], it["longest"]), "pkgs": s["pkgs"] | it["pkgs"], "extra": s["extra"]}
 
     parts = [[] for _ in range(n)]
     key = lambda it: (-(it["build"] / CORES + it["run"] / THREADS), sorted(it["names"]), it["piece"])

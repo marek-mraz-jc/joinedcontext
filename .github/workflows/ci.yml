@@ -178,8 +178,10 @@ jobs:
       # when a crate every lib links changed, run 42617984832).
       - run: |
           echo "nproc: $(nproc)"
-          # the doc build beside the first job's tests slowed them by up to 1.7x (run 42756711313)
-          plan="root ${{ matrix.part }} ${{ strategy.job-total }} --extra 1=45"
+          # the doc build beside the first job's build and tests slowed them by up to 1.7x (runs
+          # 42756711313, 42823061257: about 80 s), so the split loads that job with fewer tests
+          # and the lib block lands elsewhere
+          plan="root ${{ matrix.part }} ${{ strategy.job-total }} --extra 1=80"
           # shellcheck disable=SC2086
           python3 .github/scripts/test-part.py --binaries $plan > "$RUNNER_TEMP/targets.txt"
           set --; while IFS= read -r arg; do set -- "$@" "$arg"; done < "$RUNNER_TEMP/targets.txt"
