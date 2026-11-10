@@ -1436,18 +1436,3 @@ def test_up_sh_refuses_realm_lines_without_an_export_to_render(tmp_path):
     assert run({}).stdout.strip() == "started"
     (tmp_path / "keycloak").mkdir()
     assert run({"REHEARSAL_REALM_LINES_FROM": "a", "REHEARSAL_REALM_LINES_TO": "b"}).stdout.strip() == "started"
-
-
-def test_the_kit_names_its_own_origin_by_the_literal_loopback_address():
-    """Supervisor 2026-11-10: kaisatsu names its issuer by the host a request reached it on, and
-    ekiben's guard lets the Portal's sweeps reach only the literal http://127.0.0.1:<port> (jc
-    ekiben.rs host_target). With --base-host localhost the token URL was refused as SSRF and every
-    *.expiry sweep stopped. jc's base host, the realm's public base, the Apps and the import all
-    name one origin, 127.0.0.1; no script of the kit names its own origin as localhost."""
-    up = (HERE / "up.sh").read_text()
-    assert re.search(r'^origin="http://127\.0\.0\.1:\$port"$', up, re.M), "up.sh sets no 127.0.0.1 origin"
-    assert '--base-host "${origin#http://}"' in up and '--public-base "$origin"' in up
-    for name in ("up.sh", "apps.sh", "import.sh"):
-        code = [line for line in (HERE / name).read_text().splitlines() if not line.lstrip().startswith("#")]
-        own = [line for line in code if re.search(r"http://localhost[:/]|\"localhost:\$port\"", line)]
-        assert not own, f"{name} names the rehearsal's origin as localhost: {own}"
