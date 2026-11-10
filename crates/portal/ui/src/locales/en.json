@@ -1917,6 +1917,7 @@
       "hiddenMark": "not served",
       "empty": "No entities on this page.",
       "refused": "The draft filter is refused: {reason}",
+      "notGranted": "Your access to this endpoint does not include reading {type}, so the proof cannot show what your draft would serve. Ask for a read under Request access on the endpoint's page; the endpoint's policies decide it.",
       "failed": "What the filter serves could not be read: {reason}. Change the filter or try again.",
       "notLive": "The proof reads through the endpoint, so it appears once the endpoint is Live.",
       "noType": "The proof needs at least one type the endpoint serves.",
