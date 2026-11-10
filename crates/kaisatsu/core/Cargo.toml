@@ -6,6 +6,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
+# Without `config`: askama.toml support pulls basic-toml (RUSTSEC-2026-0374, unmaintained).
+askama = { version = "0.12.1", default-features = false, features = ["humansize", "num-traits", "urlencode"] }
 axum = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 futures-core = "0.3"

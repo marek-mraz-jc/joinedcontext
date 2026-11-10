@@ -1279,6 +1279,55 @@ def test_only_the_clients_jc_signs_in_as_trade_federated_jwt_for_their_secret():
     assert realm["clients"][0]["clientAuthenticatorType"] == "federated-jwt"
 
 
+def test_the_assistants_client_may_ask_the_shared_embedders_scope_and_nothing_else_moves():
+    realm = {"clients": [{"clientId": "jc-assistant", "secret": "$(file:x)", "optionalClientScopes": ["address"]},
+                         {"clientId": "portal-api", "optionalClientScopes": []}],
+             "clientScopes": [{"name": "address"}]}
+    out, changed = rh.add_embedder_scope(realm)
+    assert changed
+    by_id = {c["clientId"]: c for c in out["clients"]}
+    assert by_id["jc-assistant"] == {"clientId": "jc-assistant", "secret": "$(file:x)",
+                                     "optionalClientScopes": ["address", "embedder"]}
+    assert by_id["portal-api"]["optionalClientScopes"] == []
+    (scope,) = [s for s in out["clientScopes"] if s["name"] == "embedder"]
+    assert scope["protocolMappers"][0]["config"]["included.custom.audience"] == "embedder"
+    assert realm["clients"][0]["optionalClientScopes"] == ["address"], "the input is not changed"
+    # A second pass, and a realm without the assistant, change nothing.
+    assert rh.add_embedder_scope(out) == (out, False)
+    assert rh.add_embedder_scope({"clients": [{"clientId": "portal-api"}]})[1] is False
+
+
+def test_each_pipelines_own_client_trades_federated_jwt_for_its_secret_and_keeps_its_audience():
+    k8s = {"jwt.credential.sub": "system:serviceaccount:smartcity-pipeline-identities:pl-bb-park",
+           "jwt.credential.issuer": "kubernetes"}
+    aud = [{"protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "slugA"}}]
+    realm = {"clients": [
+        {"clientId": "bb-pl-park", "clientAuthenticatorType": "federated-jwt", "secret": "$(env:KC_BB_PL_PARK_SECRET)",
+         "attributes": {**k8s, "joinedcontext.serviceaccount": "bb/pl-park"}, "protocolMappers": aud},
+        {"clientId": "bb-pl-nosecret", "clientAuthenticatorType": "federated-jwt",
+         "attributes": {**k8s, "joinedcontext.serviceaccount": "bb/pl-nosecret"}},
+        # A workload client that is no Pipeline's keeps the cluster's token.
+        {"clientId": "bb-cams", "clientAuthenticatorType": "federated-jwt",
+         "attributes": {**k8s, "joinedcontext.serviceaccount": "bb/cams"}},
+        # An account attribute naming another client is not this client's pipeline.
+        {"clientId": "bb-pl-other", "clientAuthenticatorType": "federated-jwt",
+         "attributes": {**k8s, "joinedcontext.serviceaccount": "bb/pl-park"}},
+        {"clientId": "bb-pipelines", "clientAuthenticatorType": "client-secret", "secret": "$(env:KC_BB_PIPELINES_SECRET)"},
+    ]}
+    out, changed = rh.jc_clients_by_secret(realm)
+    by = {c["clientId"]: c for c in out["clients"]}
+    assert changed == ["bb-pl-nosecret", "bb-pl-park"]
+    park = by["bb-pl-park"]
+    assert park["clientAuthenticatorType"] == "client-secret"
+    assert park["attributes"] == {"joinedcontext.serviceaccount": "bb/pl-park"}
+    assert park["protocolMappers"] == aud and park["secret"] == "$(env:KC_BB_PL_PARK_SECRET)"
+    assert by["bb-pl-nosecret"]["secret"] == "$(env:KC_BB_PL_NOSECRET_SECRET)"
+    assert by["bb-cams"] == realm["clients"][2] and by["bb-pl-other"] == realm["clients"][3]
+    assert rh.pipeline_clients(out) == [("bb-pipelines", "KC_BB_PIPELINES_SECRET"),
+                                        ("bb-pl-nosecret", "KC_BB_PL_NOSECRET_SECRET"),
+                                        ("bb-pl-park", "KC_BB_PL_PARK_SECRET")]
+
+
 def test_an_export_without_service_accounts_gets_the_portals_from_jcs_shipped_realm():
     shipped = json.loads(rh.SHIPPED_REALM.read_text())
     realm = {"clients": [{"clientId": "portal-api"}, {"clientId": "portal-reconciler"}],
@@ -1493,3 +1542,14 @@ def test_the_kit_names_its_own_origin_by_the_literal_loopback_address():
         code = [line for line in (HERE / name).read_text().splitlines() if not line.lstrip().startswith("#")]
         own = [line for line in code if re.search(r"http://localhost[:/]|\"localhost:\$port\"", line)]
         assert not own, f"{name} names the rehearsal's origin as localhost: {own}"
+
+
+def test_the_kit_runs_under_the_old_deployments_org_domain():
+    """Pipelines mint urn:ngsi-ld:{Type}:{orgDomain}:{space}:{id}. Without JC_PORTAL_ORG_DOMAIN jc
+    takes jc.invalid on a loopback host (provision.rs domain), so the rehearsal's pipeline runs
+    wrote 5218 praha-mesto PointOfInterest beside the 19547 imported under hel.fi and an App's map
+    read passed Antares' 10000-row ceiling. Portal, gateway and assistant read one domain."""
+    up = (HERE / "up.sh").read_text()
+    assert re.search(r'^org_domain=\$\{REHEARSAL_ORG_DOMAIN:-hel\.fi\}$', up, re.M), "up.sh sets no org domain"
+    for key in ("JC_PORTAL_ORG_DOMAIN", "JC_GATEWAY_ORG_DOMAIN", "JC_ASSISTANT_ORG_DOMAIN"):
+        assert f'{key}="$org_domain"' in up, f"up.sh exports no {key}"

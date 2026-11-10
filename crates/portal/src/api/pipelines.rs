@@ -1182,7 +1182,12 @@ pub async fn retry_rejected(
     // pipeline identity the pipeline's own, which the replay then presents everywhere (T-4044).
     crate::reconciler::streams::own_credential(&mut config, &project);
     if state.config.pipeline_identity {
-        crate::reconciler::streams::with_pipeline_identity(&mut config, &project, &name);
+        crate::reconciler::streams::as_pipeline(
+            &mut config,
+            &project,
+            &name,
+            state.config.pipeline_credential,
+        );
     }
     jcctl::bento::inject_space(
         &mut config,

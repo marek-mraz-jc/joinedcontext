@@ -459,7 +459,9 @@ async fn totp_wrong_replayed_and_combined() {
         let (st, _, html) = c.post(&app, &[("otp", wrong)]).await;
         assert_eq!(st, StatusCode::OK);
         assert!(
-            html.contains("name=\"otp\"") && html.contains("role=\"alert\""),
+            html.contains("name=\"otp\"")
+                && html.contains("id=\"input-error-otp\"")
+                && html.contains("Invalid authenticator code"),
             "{wrong}"
         );
     }

@@ -1253,7 +1253,12 @@ pub async fn launch(
         &report,
     );
     if state.config.pipeline_identity {
-        crate::reconciler::streams::with_pipeline_identity(&mut config, project, pipeline);
+        crate::reconciler::streams::as_pipeline(
+            &mut config,
+            project,
+            pipeline,
+            state.config.pipeline_credential,
+        );
     }
     let stream = delete_stream(&runner, project, pipeline);
     let http = crate::api::pipelines::runner_http(&state.config);

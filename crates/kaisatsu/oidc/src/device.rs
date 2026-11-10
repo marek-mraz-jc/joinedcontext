@@ -23,6 +23,8 @@ use axum::{Extension, Form};
 use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
 use jc_router::Mount;
+use kaisatsu_core::i18n::{Bundle, negotiate_for_realm};
+use kaisatsu_core::page;
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use serde_json::json;
@@ -195,48 +197,75 @@ fn page_path(mount: &Mount, realm: &RealmConfig) -> String {
     format!("{}/realms/{}/device", mount.path_prefix, realm.realm)
 }
 
-fn escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
-fn page(status: StatusCode, title: &str, body: &str) -> Response {
-    let html = format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>{t}</title></head><body><main id=\"kc-device\"><h1>{t}</h1>{body}</main></body></html>",
-        t = escape(title)
-    );
-    (
+/// A device page (keycloak.v2's login-oauth2-device-verify-user-code, login-oauth-grant and
+/// info) in the realm's language and branding; `fill` adds the page's content.
+#[allow(clippy::too_many_arguments)]
+async fn render(
+    state: &OidcState,
+    mount: &Mount,
+    realm: &RealmConfig,
+    headers: &HeaderMap,
+    status: StatusCode,
+    page_id: &str,
+    heading_key: &str,
+    fill: impl FnOnce(&Bundle, &mut page::Page),
+) -> Result<Response> {
+    let accept = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok());
+    let bundle = Bundle::for_locale(negotiate_for_realm(realm, None, None, accept));
+    let branding = state
+        .store
+        .get_branding(&realm.id, None)
+        .await?
+        .unwrap_or_default()
+        .sanitised();
+    let shell = page::Shell {
+        bundle: &bundle,
+        realm,
+        branding: &branding,
+        path_prefix: &mount.path_prefix,
+        app: "",
+        locale_base_url: "",
+    };
+    let nonce = random_handle_256()[..16].to_owned();
+    let mut tpl = shell.page(page_id, bundle.get(heading_key), &nonce);
+    fill(&bundle, &mut tpl);
+    Ok((
         status,
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (
-                header::CONTENT_SECURITY_POLICY,
-                "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-            ),
-            (header::X_FRAME_OPTIONS, "DENY"),
-            (header::CACHE_CONTROL, "no-store"),
-            (header::REFERRER_POLICY, "no-referrer"),
-        ],
-        html,
+        page::security_headers(&tpl.nonce, "'self'"),
+        tpl.html(),
     )
-        .into_response()
+        .into_response())
 }
 
-fn code_form(action: &str, csrf: &str, user_code: &str, note: &str) -> String {
-    format!(
-        "{note}<form method=\"post\" action=\"{a}\"><input type=\"hidden\" name=\"csrf\" value=\"{c}\">\
-         <label for=\"user_code\">Enter the code your device shows</label> \
-         <input id=\"user_code\" name=\"user_code\" value=\"{u}\" autocomplete=\"off\" autofocus> \
-         <button type=\"submit\">Continue</button></form>",
-        a = escape(action),
-        c = escape(csrf),
-        u = escape(user_code),
-    )
+/// The "enter the code your device shows" form; `error` lands on the field.
+fn code_form(
+    bundle: &Bundle,
+    action: &str,
+    csrf: &str,
+    user_code: &str,
+    error: &str,
+) -> page::Form {
+    page::Form {
+        id: "kc-user-verify-device-user-code-form".into(),
+        action: action.to_owned(),
+        hidden: vec![("csrf".into(), csrf.to_owned())],
+        fields: vec![page::Field {
+            name: "user_code".into(),
+            label: bundle.get("verifyOAuth2DeviceUserCode").to_owned(),
+            input_type: "text".into(),
+            value: user_code.to_owned(),
+            autocomplete: "off".into(),
+            error: error.to_owned(),
+            required: true,
+            autofocus: true,
+            ..page::Field::default()
+        }],
+        submit_id: "kc-login".into(),
+        submit_label: bundle.get("doSubmit").to_owned(),
+        ..page::Form::default()
+    }
 }
 
 /// Starts the realm's login for the verification page; it comes back to `return_to`.
@@ -341,16 +370,21 @@ pub async fn device_page(
         }
         return start_login(&state, &realm, &mount, back).await;
     };
-    Ok(page(
+    let action = page_path(&mount, &realm);
+    let csrf = csrf_of(&state, &sso);
+    render(
+        &state,
+        &mount,
+        &realm,
+        &headers,
         StatusCode::OK,
-        "Sign in a device",
-        &code_form(
-            &page_path(&mount, &realm),
-            &csrf_of(&state, &sso),
-            &user_code,
-            "",
-        ),
-    ))
+        "login-oauth2-device-verify-user-code",
+        "oauth2DeviceVerificationTitle",
+        |b, p| {
+            p.form = Some(code_form(b, &action, &csrf, &user_code, ""));
+        },
+    )
+    .await
 }
 
 /// Whether the person's wrong codes reached the cap in the current window.
@@ -424,18 +458,42 @@ pub async fn device_submit(
     let csrf = csrf_of(&state, &sso);
     let presented = form.get("csrf").map(String::as_str).unwrap_or_default();
     if !constant_time_str_eq(presented, &csrf) {
-        return Ok(page(
+        let again = action.clone();
+        return render(
+            &state,
+            &mount,
+            &realm,
+            &headers,
             StatusCode::FORBIDDEN,
-            "Sign in a device",
-            "<p>This form expired. Open the device page again.</p>",
-        ));
+            "login-page-expired",
+            "pageExpiredTitle",
+            |b, p| {
+                p.instructions
+                    .push(b.get("jcPageExpiredExplained").to_owned());
+                p.links.push(page::Link {
+                    id: "loginRestartLink".into(),
+                    class: "pf-m-primary",
+                    url: again,
+                    label: b.get("oauth2DeviceVerificationTitle").to_owned(),
+                });
+            },
+        )
+        .await;
     }
     if capped(&state, &realm, &sso.user_id).await? {
-        return Ok(page(
+        return render(
+            &state,
+            &mount,
+            &realm,
+            &headers,
             StatusCode::TOO_MANY_REQUESTS,
-            "Sign in a device",
-            "<p>Too many wrong codes. Wait a few minutes, then try again.</p>",
-        ));
+            "info",
+            "oauth2DeviceVerificationTitle",
+            |b, p| {
+                p.alert = Some(page::Alert::danger(b.get("jcDeviceTooManyCodes")));
+            },
+        )
+        .await;
     }
     let entered = form
         .get("user_code")
@@ -462,16 +520,25 @@ pub async fn device_submit(
     };
     let (Some(mut rec), Some(client)) = (found, client) else {
         count_wrong_code(&state, &realm, &sso.user_id, &client_ip.for_audit()).await?;
-        return Ok(page(
+        return render(
+            &state,
+            &mount,
+            &realm,
+            &headers,
             StatusCode::BAD_REQUEST,
-            "Sign in a device",
-            &code_form(
-                &action,
-                &csrf,
-                "",
-                "<p role=\"alert\">That code is not valid, or it expired. Check the code on the device.</p>",
-            ),
-        ));
+            "login-oauth2-device-verify-user-code",
+            "oauth2DeviceVerificationTitle",
+            |b, p| {
+                p.form = Some(code_form(
+                    b,
+                    &action,
+                    &csrf,
+                    "",
+                    b.get("oauth2DeviceInvalidUserCodeMessage"),
+                ));
+            },
+        )
+        .await;
     };
     state
         .store
@@ -483,22 +550,42 @@ pub async fn device_submit(
         .clone()
         .unwrap_or_else(|| client.client_id.clone());
     match form.get("decision").map(String::as_str) {
-        None => Ok(page(
-            StatusCode::OK,
-            "Sign in a device",
-            &format!(
-                "<p>{app} asks to sign in as you (code {code}). Scopes: {scope}.</p>\
-                 <form method=\"post\" action=\"{a}\"><input type=\"hidden\" name=\"csrf\" value=\"{c}\">\
-                 <input type=\"hidden\" name=\"user_code\" value=\"{code}\">\
-                 <button type=\"submit\" name=\"decision\" value=\"allow\">Allow</button> \
-                 <button type=\"submit\" name=\"decision\" value=\"deny\">Deny</button></form>",
-                app = escape(&app),
-                code = escape(&shown),
-                scope = escape(&rec.scope),
-                a = escape(&action),
-                c = escape(&csrf),
-            ),
-        )),
+        None => {
+            render(
+                &state,
+                &mount,
+                &realm,
+                &headers,
+                StatusCode::OK,
+                "login-oauth-grant",
+                "oauth2DeviceVerificationTitle",
+                |b, p| {
+                    let app = b.translate_client_name(&app);
+                    p.set_heading(b.format("oauthGrantTitle", &[app.as_str()]));
+                    p.instructions.push(b.get("oauthGrantRequest").to_owned());
+                    p.instructions
+                        .extend(rec.scope.split_whitespace().map(str::to_owned));
+                    p.info.push(shown.clone());
+                    p.form = Some(page::Form {
+                        id: "kc-oauth".into(),
+                        action: action.clone(),
+                        hidden: vec![
+                            ("csrf".into(), csrf.clone()),
+                            ("user_code".into(), shown.clone()),
+                        ],
+                        submit_name: "decision".into(),
+                        submit_value: "allow".into(),
+                        submit_id: "kc-login".into(),
+                        submit_label: b.get("doYes").to_owned(),
+                        secondary_value: "deny".into(),
+                        secondary_id: "kc-cancel".into(),
+                        secondary_label: b.get("doNo").to_owned(),
+                        ..page::Form::default()
+                    });
+                },
+            )
+            .await
+        }
         Some(decision @ ("allow" | "deny")) => {
             let allow = decision == "allow";
             if allow {
@@ -512,11 +599,20 @@ pub async fn device_submit(
                 rec.status = DeviceStatus::Denied;
             }
             if !state.store.decide_device_code(rec).await? {
-                return Ok(page(
+                return render(
+                    &state,
+                    &mount,
+                    &realm,
+                    &headers,
                     StatusCode::CONFLICT,
-                    "Sign in a device",
-                    "<p>This code was answered already.</p>",
-                ));
+                    "info",
+                    "oauth2DeviceVerificationFailedHeader",
+                    |b, p| {
+                        p.instructions
+                            .push(b.get("oauth2DeviceExpiredUserCodeMessage").to_owned());
+                    },
+                )
+                .await;
             }
             state
                 .store
@@ -538,15 +634,30 @@ pub async fn device_submit(
                     details: BTreeMap::new(),
                 })
                 .await?;
-            Ok(page(
+            let (heading, text) = if allow {
+                (
+                    "oauth2DeviceVerificationCompleteHeader",
+                    "oauth2DeviceVerificationCompleteMessage",
+                )
+            } else {
+                (
+                    "oauth2DeviceVerificationFailedHeader",
+                    "oauth2DeviceConsentDeniedMessage",
+                )
+            };
+            render(
+                &state,
+                &mount,
+                &realm,
+                &headers,
                 StatusCode::OK,
-                "Sign in a device",
-                if allow {
-                    "<p>Device signed in. You can close this window and go back to your device.</p>"
-                } else {
-                    "<p>Access denied. The device gets no sign-in.</p>"
+                "info",
+                heading,
+                |b, p| {
+                    p.instructions.push(b.get(text).to_owned());
                 },
-            ))
+            )
+            .await
         }
         Some(_) => Err(KaisatsuError::invalid_request("decision is allow or deny")),
     }

@@ -647,7 +647,10 @@ pub static MAX_FOLD_DOCS: std::sync::LazyLock<usize> = std::sync::LazyLock::new(
 /// Depth of the change→matcher ring, the same size the local bus uses. A
 /// full ring drops the batch and counts it
 /// (`antares_notification_changes_dropped_total`), so this number is the
-/// back-pressure a deployment has before delivery loss starts.
+/// back-pressure a deployment has before delivery loss starts. The ring also
+/// holds at most [`DELIVERY_LANE_BYTES`] of documents (`changeQueueBytes`):
+/// a slot is a whole request batch, and 1,024 batch deletes of 500 polygons
+/// would otherwise hold every before-document at once (jc-delete-mem).
 pub const CHANGE_QUEUE: usize = 1024;
 /// Groups one subscription may have waiting for delivery. Each subscription
 /// is served on a lane of its own, so a slow or dead endpoint backs up its
@@ -876,6 +879,7 @@ impl LimitStats {
             "maxRegexCacheBytes": antares_ql::regex::cache_bytes(),
             "maxRegexProgramBytes": MAX_REGEX_PROGRAM_BYTES,
             "changeQueue": CHANGE_QUEUE,
+            "changeQueueBytes": *DELIVERY_LANE_BYTES,
             "deliveryLane": DELIVERY_LANE,
             "batchInflight": *BATCH_INFLIGHT,
             "batchInflightBytes": *BATCH_INFLIGHT_BYTES,
@@ -1316,6 +1320,7 @@ mod tests {
                 "batchInflight",
                 "batchInflightBytes",
                 "changeQueue",
+                "changeQueueBytes",
                 "defaultLimit",
                 "deliveryLane",
                 "deliveryLaneBytes",

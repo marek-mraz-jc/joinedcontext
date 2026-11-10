@@ -580,7 +580,7 @@ async fn an_empty_get_names_the_octet_stream_type_as_bento_does() {
 }
 
 /// A token endpoint that keeps each request's `Authorization` and body, and answers 401 to the
-/// style it is told to refuse (`header` or `params`).
+/// style it is told to refuse (`header` or `params`), or 429 to every request (`busy`).
 async fn token_server(refuse: &'static str) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let kept = seen.clone();
@@ -595,6 +595,9 @@ async fn token_server(refuse: &'static str) -> (String, Arc<std::sync::Mutex<Vec
                     .unwrap_or("")
                     .to_string();
                 kept.lock().unwrap().push(format!("{auth}|{body}"));
+                if refuse == "busy" {
+                    return (StatusCode::TOO_MANY_REQUESTS, "{}".to_string());
+                }
                 let refused = match refuse {
                     "header" => !auth.is_empty(),
                     _ => auth.is_empty(),
@@ -660,6 +663,71 @@ async fn oauth2_sends_the_client_as_bento_does() {
         assert!(!res[0][0].is_errored(), "{refuse}");
         assert_eq!(*seen.lock().unwrap(), want, "{refuse}");
     }
+}
+
+/// On jc-prod a project's pipelines asked the realm again at once after each 429 (1,262 token
+/// requests in 5 min, two per refusal), which kept the edge's shared bucket empty for the
+/// Portal's sign-ins. Components of one client share its token and its backoff: a 429 is asked
+/// once, with no second, form-style request, and nobody asks again inside the wait.
+#[tokio::test]
+async fn components_of_one_client_share_its_token_and_its_backoff() {
+    let (reg, pctx, _) = setup_contexts(true);
+    let (api, _) = start_mock_server().await;
+    let build = |base: &str, key: &str| {
+        let conf = ComponentConfig::from_json_value(
+            &serde_json::json!({ "http": {
+                "url": format!("{api}/content-type"),
+                "verb": "GET",
+                "retries": 0,
+                "oauth2": {
+                    "enabled": true,
+                    "client_key": key,
+                    "client_secret": "s",
+                    "token_url": format!("{base}/token")
+                }
+            }}),
+            "noop",
+            None,
+        )
+        .unwrap();
+        reg.build_processor(&conf, &pctx, "0").unwrap()
+    };
+
+    let (busy, refused) = token_server("busy").await;
+    let procs = [build(&busy, "busy-client"), build(&busy, "busy-client")];
+    for _ in 0..3 {
+        let res = execute_all(&pctx, &procs[..1], vec![vec![Part::from_str("")]])
+            .await
+            .unwrap();
+        assert!(res[0][0].is_errored());
+        let res = execute_all(&pctx, &procs[1..], vec![vec![Part::from_str("")]])
+            .await
+            .unwrap();
+        assert!(res[0][0].is_errored());
+    }
+    assert_eq!(
+        refused.lock().unwrap().len(),
+        1,
+        "one token request for six calls"
+    );
+
+    let (good, asked) = token_server("params").await;
+    let procs = [build(&good, "good-client"), build(&good, "good-client")];
+    for p in &procs {
+        let res = execute_all(
+            &pctx,
+            std::slice::from_ref(p),
+            vec![vec![Part::from_str("")]],
+        )
+        .await
+        .unwrap();
+        assert!(!res[0][0].is_errored());
+    }
+    assert_eq!(
+        asked.lock().unwrap().len(),
+        1,
+        "the second component reuses the token"
+    );
 }
 
 /// A server that answers every request with the status line it is given, as some sources do

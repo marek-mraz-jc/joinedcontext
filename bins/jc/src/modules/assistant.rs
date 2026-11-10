@@ -719,6 +719,30 @@ mod tests {
         assert!(why.contains("CLIENT_SECRET_FILE"), "{why}");
     }
 
+    /// A shared embedder that is down fails each embedding, and the module never turns to a
+    /// model in this process: a question then gets the chat's "search is not available" turn
+    /// (assistant chat/agent.rs), and passages wait for the next indexing round.
+    #[tokio::test]
+    async fn a_shared_embedder_that_is_down_is_an_error_never_the_local_model() {
+        let (_cfg, siblings, setup, _dir) = fixture();
+        // Bound and never listening: every connect is refused at once.
+        let dead = tokio::net::TcpSocket::new_v4().unwrap();
+        dead.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let at = dead.local_addr().unwrap();
+        let mut filled = vars(&siblings, &setup, None, Some(&format!("http://{at}")));
+        filled.insert(
+            "JC_ASSISTANT_EMBEDDER_TOKEN_URL".into(),
+            format!("http://{at}/realms/jc/protocol/openid-connect/token"),
+        );
+        // A model on disk changes nothing: the service is named.
+        let model = |k: &str| (k == "JC_ASSISTANT_MODEL_DIR").then(|| "/opt/e5-small".to_owned());
+        let embedder = embedder(&lookup(&model, &filled)).await.unwrap();
+        assert!(embedder.is_remote());
+        assert!(embedder.query("kde je stanica").await.is_err());
+        assert!(embedder.passages(&["a passage".into()]).await.is_err());
+        assert!(embedder.is_remote(), "still the service after it failed");
+    }
+
     /// A writer the test's tracing subscriber appends to, read after the module started.
     #[derive(Clone, Default)]
     struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);

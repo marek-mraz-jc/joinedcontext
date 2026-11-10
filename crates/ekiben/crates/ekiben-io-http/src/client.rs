@@ -7,8 +7,10 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use ekiben_bloblang::{Environment, FieldExpression, Value};
 use ekiben_core::config::{extract_metadata_filter, parse_duration_str, MetadataFilter};
+use ekiben_core::token_backoff::retry_after;
 use ekiben_core::{
     redact_url_str, Batch, CoreError, OrgContext, Part, PartsView, ResourceManager, SecretString,
+    TokenBackoff,
 };
 use futures::StreamExt;
 use reqwest::redirect::Policy as RedirectPolicy;
@@ -130,6 +132,40 @@ struct CachedOAuthToken {
     expires_at: Instant,
 }
 
+/// One client's token, shared by every `http` component of the process asking the same token
+/// URL with the same form for the same organization, and fetched by one caller at a time: a
+/// project's streams no longer each ask the realm, and none asks again inside the
+/// [`TokenBackoff`] wait after a refusal.
+#[derive(Default)]
+struct OAuthSlot {
+    cached: Option<CachedOAuthToken>,
+    backoff: TokenBackoff,
+}
+
+/// The most token slots the process keeps; when full, the ones no fetch holds are dropped.
+const MAX_OAUTH_SLOTS: usize = 1024;
+
+fn oauth_slot(org: &OrgContext, oa: &OAuth2Config) -> Arc<AsyncMutex<OAuthSlot>> {
+    use sha2::Digest as _;
+    type Slots = std::sync::Mutex<HashMap<String, Arc<AsyncMutex<OAuthSlot>>>>;
+    static SLOTS: std::sync::OnceLock<Slots> = std::sync::OnceLock::new();
+    // A digest, so no secret sits in the key.
+    let mut hash = sha2::Sha256::new();
+    for part in [org.org_id.0.as_str(), &oa.token_url, &oauth2_form(oa, true)] {
+        hash.update(part.as_bytes());
+        hash.update([0]);
+    }
+    let key = hex::encode(hash.finalize());
+    let mut map = SLOTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !map.contains_key(&key) && map.len() >= MAX_OAUTH_SLOTS {
+        map.retain(|_, slot| Arc::strong_count(slot) > 1);
+    }
+    map.entry(key).or_default().clone()
+}
+
 /// Shared HTTP client matching `internal/httpclient/client.go` with strict security controls.
 pub struct HttpClient {
     /// Refuses private, loopback and link-local peers, also after DNS and on redirects.
@@ -157,7 +193,6 @@ pub struct HttpClient {
     oauth2: Option<OAuth2Config>,
     basic_auth: Option<BasicAuthConfig>,
     max_response_bytes: usize,
-    cached_token: AsyncMutex<Option<CachedOAuthToken>>,
     /// This client's id: a call to the host's own listener is `X-Request-Id: {run}-<n>`, so the
     /// gateway's and the broker's lines for a stream's write carry the stream's reference.
     run: String,
@@ -387,7 +422,6 @@ impl HttpClient {
             oauth2,
             basic_auth,
             max_response_bytes,
-            cached_token: AsyncMutex::new(None),
             run: uuid::Uuid::now_v7().simple().to_string(),
             calls: AtomicU64::new(0),
             named: AtomicBool::new(false),
@@ -438,19 +472,47 @@ impl HttpClient {
         oa: &OAuth2Config,
         org: &OrgContext,
     ) -> Result<String, CoreError> {
-        {
-            let guard = self.cached_token.lock().await;
-            if let Some(ref cached) = *guard {
-                if Instant::now() < cached.expires_at {
-                    return Ok(cached.access_token.expose().to_string());
-                }
+        let slot = oauth_slot(org, oa);
+        let mut held = slot.lock().await;
+        if let Some(cached) = held.cached.as_ref() {
+            if Instant::now() < cached.expires_at {
+                return Ok(cached.access_token.expose().to_string());
             }
         }
+        if let Some(left) = held.backoff.wait() {
+            return Err(CoreError::other(format!(
+                "OAuth2 token request held back {} s after the token endpoint failed",
+                left.as_secs().max(1)
+            )));
+        }
+        match self.request_oauth2_token(oa, org).await {
+            Ok((token, life)) => {
+                held.cached = Some(CachedOAuthToken {
+                    access_token: SecretString::new(token.clone()),
+                    expires_at: Instant::now() + life,
+                });
+                held.backoff.succeeded();
+                Ok(token)
+            }
+            Err((error, asked)) => {
+                held.backoff.failed(asked);
+                Err(error)
+            }
+        }
+    }
 
-        let parsed_token_url = validate_resolved_url(&oa.token_url, org)?;
+    /// One token request (two when the header style is refused): the token and its life, or the
+    /// error with the endpoint's `Retry-After`.
+    async fn request_oauth2_token(
+        &self,
+        oa: &OAuth2Config,
+        org: &OrgContext,
+    ) -> Result<(String, Duration), (CoreError, Option<Duration>)> {
+        let parsed_token_url = validate_resolved_url(&oa.token_url, org).map_err(|e| (e, None))?;
         org.admit_http_request().await;
         // As golang.org/x/oauth2 under Bento (AuthStyleAutoDetect): the client's credentials in a
-        // Basic header first, and only when the endpoint refuses that, in the form instead.
+        // Basic header first, and only when the endpoint refuses that, in the form instead. A 429
+        // or a 5xx is the endpoint's state, and a second request would only add to it.
         let mut resp = self
             .client_for(org, &parsed_token_url)
             .post(parsed_token_url.clone())
@@ -459,8 +521,9 @@ impl HttpClient {
             .body(oauth2_form(oa, false))
             .send()
             .await
-            .map_err(|e| oauth2_failed(&e))?;
-        if !resp.status().is_success() {
+            .map_err(|e| (oauth2_failed(&e), None))?;
+        let status = resp.status();
+        if status.is_client_error() && status != reqwest::StatusCode::TOO_MANY_REQUESTS {
             resp = self
                 .client_for(org, &parsed_token_url)
                 .post(parsed_token_url)
@@ -468,36 +531,48 @@ impl HttpClient {
                 .body(oauth2_form(oa, true))
                 .send()
                 .await
-                .map_err(|e| oauth2_failed(&e))?;
+                .map_err(|e| (oauth2_failed(&e), None))?;
         }
 
         if !resp.status().is_success() {
-            return Err(CoreError::other(format!(
-                "OAuth2 token endpoint returned status {}",
-                resp.status()
-            )));
+            let asked = retry_after(
+                resp.headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok()),
+            );
+            return Err((
+                CoreError::other(format!(
+                    "OAuth2 token endpoint returned status {}",
+                    resp.status()
+                )),
+                asked,
+            ));
         }
 
-        let body_json: JsonValue = resp
-            .json()
-            .await
-            .map_err(|e| CoreError::other(format!("invalid OAuth2 token response: {e}")))?;
+        let body_json: JsonValue = resp.json().await.map_err(|e| {
+            (
+                CoreError::other(format!("invalid OAuth2 token response: {e}")),
+                None,
+            )
+        })?;
         let token_str = body_json
             .get("access_token")
             .and_then(JsonValue::as_str)
-            .ok_or_else(|| CoreError::other("OAuth2 response missing access_token"))?
+            .ok_or_else(|| {
+                (
+                    CoreError::other("OAuth2 response missing access_token"),
+                    None,
+                )
+            })?
             .to_string();
         let expires_in = body_json
             .get("expires_in")
             .and_then(JsonValue::as_u64)
             .unwrap_or(3600);
-
-        let mut guard = self.cached_token.lock().await;
-        *guard = Some(CachedOAuthToken {
-            access_token: SecretString::new(token_str.clone()),
-            expires_at: Instant::now() + Duration::from_secs(expires_in.saturating_sub(10).max(1)),
-        });
-        Ok(token_str)
+        Ok((
+            token_str,
+            Duration::from_secs(expires_in.saturating_sub(10).max(1)),
+        ))
     }
 
     async fn build_request(

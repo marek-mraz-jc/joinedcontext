@@ -16,8 +16,8 @@ pub mod webauthn;
 pub use jose::{DecodedHeader, JwtHeader, sign_jwt, verify_jwt, verify_jwt_with_jwk};
 pub use keys::{Kek, KeyManager, PublicJwk, PublicJwkSet, SIGNING_ALGORITHMS};
 pub use password::{
-    PasswordVerifyOutcome, check_password_policy, hash_password, verify_and_maybe_rehash,
-    verify_keycloak_credential,
+    PasswordVerifyOutcome, PolicyViolation, check_password_policy, first_policy_violation,
+    hash_password, verify_and_maybe_rehash, verify_keycloak_credential,
 };
 pub use totp::{
     generate_recovery_codes, generate_totp_code, generate_totp_code_for_credential,

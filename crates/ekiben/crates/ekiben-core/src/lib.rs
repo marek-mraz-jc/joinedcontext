@@ -14,6 +14,7 @@ pub mod pipeline;
 pub mod prometheus;
 pub mod redact;
 pub mod registry;
+pub mod token_backoff;
 pub mod traits;
 pub mod transaction;
 
@@ -39,6 +40,7 @@ pub use prometheus::{
 };
 pub use redact::{redact_config_value, redact_url_str, SecretString};
 pub use registry::{LintReport, Registry};
+pub use token_backoff::TokenBackoff;
 pub use traits::{
     Buffer, Cache, Input, Output, Pages, ProcContext, Processor, RateLimit, RunSummary,
     StreamContext,

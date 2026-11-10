@@ -73,6 +73,10 @@ enum Commands {
         /// Seconds between e-mail outbox dispatch passes (K9).
         #[arg(long, default_value_t = 10)]
         outbox_interval_secs: u64,
+        /// The installation's branding file (the deployment's `global.branding` as YAML, the
+        /// Portal's `JC_BRANDING_FILE`), applied at start as every realm's branding.
+        #[arg(long)]
+        branding_file: Option<PathBuf>,
         #[command(flatten)]
         db: DbArgs,
     },
@@ -372,6 +376,7 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
             sweep_interval_secs,
             smtp_password_file,
             outbox_interval_secs,
+            branding_file,
             db,
         } => {
             let kek = Kek::from_file(&kek_file).map_err(fail(EXIT_INVALID_INPUT))?;
@@ -421,6 +426,13 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                             }
                         }
                     });
+                }
+            }
+            if let Some(file) = &branding_file {
+                // A broken file leaves the pages plain; sign-in stays up.
+                match kaisatsu_server::apply_branding_file(&store, file).await {
+                    Ok(n) => tracing::info!(realms = n, "branding file applied"),
+                    Err(e) => tracing::error!(error = %e, "branding file not applied"),
                 }
             }
             if let Some(pg) = pg {

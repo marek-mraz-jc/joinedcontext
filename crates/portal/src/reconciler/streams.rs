@@ -146,6 +146,8 @@ pub struct StreamDeployer {
     /// Whether each stream presents its own pipeline's identity through the runner's token
     /// sidecar rather than its project's `pipelines` account (PL-19, Architecture/12 §3).
     pipeline_identity: bool,
+    /// How such a stream proves its pipeline's client: the sidecar, or the client's secret (jc).
+    pipeline_credential: PipelineCredential,
     /// [`REPLACE_TIMEOUT`], shorter in tests.
     replace_timeout: Duration,
     /// The pipelines that do not wait for pushes, each loaded only for its run (PL-78).
@@ -367,6 +369,7 @@ impl StreamDeployer {
             validation: None,
             unqualified_retired: Mutex::new(HashSet::new()),
             pipeline_identity: false,
+            pipeline_credential: PipelineCredential::Sidecar,
             replace_timeout: REPLACE_TIMEOUT,
             queue: Mutex::new(RunQueue::new(1, 1)),
             run_ends: None,
@@ -474,9 +477,15 @@ impl StreamDeployer {
         self
     }
 
+    /// How a stream proves its pipeline's client under [`Self::with_pipeline_identity`].
+    pub fn with_pipeline_credential(mut self, credential: PipelineCredential) -> Self {
+        self.pipeline_credential = credential;
+        self
+    }
+
     fn identified(&self, stream: &mut Value, project: &str, pipeline: &str) {
         if self.pipeline_identity {
-            with_pipeline_identity(stream, project, pipeline);
+            as_pipeline(stream, project, pipeline, self.pipeline_credential);
         }
     }
 
@@ -2440,6 +2449,54 @@ output:
         );
     }
 
+    /// PL-19 in jc (jc-pipeline-audience): every credential of the project's `pipelines` account
+    /// becomes the pipeline's own client `{project}-pl-{pipeline}` with that client's secret
+    /// variable at the realm's token endpoint, and no text of the stream names the project's
+    /// client or its secret any more: the project's token holds every Endpoint the account's roles
+    /// reach, the pipeline's only those it writes.
+    #[test]
+    fn with_pipeline_secret_a_stream_signs_in_as_its_pipelines_own_client() {
+        let mut stream = serde_json::json!({
+            "input": { "http_client": { "url": "src", "oauth2": pipeline_oauth2("zilina") } },
+            "pipeline": { "processors": [{ "http": { "url": "x", "headers": {
+                "X-Basic": "${JC_CLIENT_SECRET_ZILINA}" } } }] },
+            "output": gateway_output("zilina", "slug")
+        });
+        as_pipeline(&mut stream, "zilina", "drepo", PipelineCredential::Secret);
+        let after = stream.to_string();
+        assert!(
+            !after.contains("JC_CLIENT_SECRET_ZILINA") && !after.contains("zilina-pipelines"),
+            "{after}"
+        );
+        for oauth2 in [
+            &stream["input"]["http_client"]["oauth2"],
+            &stream["output"]["http_client"]["oauth2"],
+        ] {
+            assert_eq!(oauth2["client_key"], "zilina-pl-drepo");
+            assert_eq!(
+                oauth2["client_secret"],
+                "${JC_PIPELINE_SECRET_ZILINA_PL_DREPO}"
+            );
+            assert_eq!(oauth2["token_url"], "${JC_TOKEN_URL}");
+        }
+        assert_eq!(
+            stream["pipeline"]["processors"][0]["http"]["headers"]["X-Basic"],
+            "${JC_PIPELINE_SECRET_ZILINA_PL_DREPO}"
+        );
+
+        // Another project's credential in the stream is not this pipeline's to take.
+        let mut other = serde_json::json!({ "output": gateway_output("bbsk", "slug") });
+        with_pipeline_secret(&mut other, "zilina", "drepo");
+        assert_eq!(
+            other["output"]["http_client"]["oauth2"]["client_key"],
+            "bbsk-pipelines"
+        );
+        assert_eq!(
+            pipeline_secret_var("helsinki-mobility", "pipeline-test"),
+            "JC_PIPELINE_SECRET_HELSINKI_MOBILITY_PL_PIPELINE_TEST"
+        );
+    }
+
     /// T-4038: every sink a stream reports to the Portal's internal listener through (the
     /// outcome sink, the pass report, the samples taps) presents a client the listener admits for
     /// that pipeline (T-3193): its project's `pipelines` client, or with pipeline identity its own.
@@ -3364,6 +3421,68 @@ output:
                 "{text}"
             );
             assert!(text.contains("\"helsinki/citybikes-free\""), "{text}");
+        }
+    }
+
+    /// jc-pipeline-audience: with the pipeline's secret (jc), the stream, its reports, an
+    /// author's own credential step and its sweep all sign in as `helsinki-pl-citybikes-free`
+    /// and none as the project's `helsinki-pipelines`, whose token would open every Endpoint of
+    /// the project's account.
+    #[tokio::test]
+    async fn with_pipeline_secret_no_stream_sent_to_the_runner_presents_the_project_client() {
+        let server = runner().await;
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let deployer = StreamDeployer::new(server.uri())
+            .with_pipeline_identity(true)
+            .with_pipeline_credential(PipelineCredential::Secret)
+            .with_validation(
+                "http://portal-internal:8081/",
+                Arc::new(crate::pipeline_validation::ModelSchemas::default()),
+            );
+        let mirror = helsinki_test_mirror();
+        let mut pipeline = mirror
+            .get("helsinki", "Pipeline", "citybikes-free")
+            .expect("pipeline");
+        pipeline.spec["expiry"] = serde_json::json!({ "after": "14d", "types": ["Vehicle"] });
+        mirror.upsert(pipeline);
+        let mut bentos = Bentos::new();
+        bentos.insert(
+            ("helsinki".to_owned(), "citybikes-free".to_owned()),
+            "pipeline:\n  processors:\n    - http:\n        url: ${JC_GATEWAY_URL}/api/endpoint/x/ngsi-ld/v1/entityOperations/delete\n        oauth2: { enabled: true, client_key: '${JC_CLIENT_ID}', client_secret: '${JC_CLIENT_SECRET}', token_url: '${JC_TOKEN_URL}' }\n".to_owned(),
+        );
+
+        let outcomes = deployer
+            .converge(&mirror, &bentos, &Default::default())
+            .await;
+        assert!(
+            outcomes.iter().all(|(_, _, o)| *o == StreamOutcome::Live),
+            "{outcomes:?}"
+        );
+        let sent: Vec<Value> = server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .iter()
+            .filter(|r| r.method.as_str() == "PUT")
+            .map(|r| serde_json::from_slice(&r.body).expect("json"))
+            .collect();
+        assert_eq!(sent.len(), 2, "the stream and its sweep");
+        for body in &sent {
+            let text = body.to_string();
+            assert!(
+                !text.contains("helsinki-pipelines")
+                    && !text.contains("JC_CLIENT_SECRET")
+                    && !text.contains("JC_CLIENT_ID"),
+                "{text}"
+            );
+            assert!(
+                text.contains("\"client_key\":\"helsinki-pl-citybikes-free\"")
+                    && text.contains("${JC_PIPELINE_SECRET_HELSINKI_PL_CITYBIKES_FREE}"),
+                "{text}"
+            );
         }
     }
 

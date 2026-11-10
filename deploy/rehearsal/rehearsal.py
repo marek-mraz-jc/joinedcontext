@@ -61,6 +61,9 @@ STATE_CLIENT_SECRETS = {"portal-api": "portal-client-secret", PORTAL_ADMIN_CLIEN
 # join it; an imported realm without it gets it, as it gets rehearsal-tester.
 ADMIN_GROUP = "platform-admins"
 IMPORT_WORKERS = 4  # parallel batch writes into the local broker
+# One batch write may wait this long: on a host at load 50+ a 500-entity upsert took over the
+# client's 60 s (gate 2026-11-10T170300Z-gc, call 600 of 3,757), and one timeout ends the import.
+IMPORT_TIMEOUT = 300
 MAX_REPORTED = 200  # refused calls kept in the report; the rest are only counted
 
 
@@ -151,8 +154,8 @@ class Http:
                 self._store(e.headers)
             return e.code, dict(e.headers or {}), e.read() or b""
 
-    def json(self, method, path, body=None, headers=None, form=None):
-        status, hdrs, raw = self.call(method, path, body, headers, form)
+    def json(self, method, path, body=None, headers=None, form=None, timeout=60):
+        status, hdrs, raw = self.call(method, path, body, headers, form, timeout)
         try:
             value = json.loads(raw) if raw else None
         except ValueError:
@@ -454,17 +457,31 @@ def state_client_secrets(realm: dict) -> list[tuple[str, str]]:
     return sorted(out)
 
 
+def pipeline_own_client(c: dict) -> bool:
+    """Whether `c` is a Pipeline's own client `<project>-pl-<pipeline>` as the Portal made it on
+    the cluster (PL-19, T-1508): its account attribute `<project>/pl-<pipeline>` names it."""
+    project, _, name = str((c.get("attributes") or {}).get("joinedcontext.serviceaccount", "")).partition("/")
+    return name.startswith("pl-") and c.get("clientId") == f"{project}-{name}"
+
+
 def jc_clients_by_secret(realm: dict) -> tuple[dict, list[str]]:
-    """The realm with each client of STATE_CLIENT_SECRETS signing in by its secret: prod and dev
-    give them `federated-jwt` (Keycloak trusts the Kubernetes service account token of the pod),
-    and jc, one process with no Kubernetes issuer, signs in as them with the secret of its state
-    file. Every other client keeps its authenticator. Answers the realm and the clients changed."""
+    """The realm with each client of STATE_CLIENT_SECRETS, and each Pipeline's own client
+    (`pipeline_own_client`), signing in by its secret: prod and dev give them `federated-jwt`
+    (Keycloak trusts the Kubernetes service account token of the pod), and jc, one process with
+    no Kubernetes issuer, signs in as them with the secret of its state file or, for a pipeline,
+    of its file in ekiben's client secrets dir (`pipeline_clients`). Name and audience mappers
+    stay: a stream's token opens the Endpoints its pipeline wrote on prod and no other. A
+    pipeline's client without a secret variable gets `$(env:KC_<CLIENT>_SECRET)`. Every other
+    client keeps its authenticator. Answers the realm and the clients changed."""
     out, changed = dict(realm), []
     clients = []
     for c in realm.get("clients", []):
-        if c.get("clientId") in STATE_CLIENT_SECRETS and c.get("clientAuthenticatorType") == "federated-jwt":
+        own = pipeline_own_client(c)
+        if (c.get("clientId") in STATE_CLIENT_SECRETS or own) and c.get("clientAuthenticatorType") == "federated-jwt":
             attrs = {k: v for k, v in (c.get("attributes") or {}).items() if not k.startswith("jwt.credential.")}
             c = {**c, "clientAuthenticatorType": "client-secret", "attributes": attrs}
+            if own and not SECRET_VAR.fullmatch(str(c.get("secret", "")).strip()):
+                c["secret"] = f"$(env:KC_{re.sub(r'[^A-Z0-9]', '_', c['clientId'].upper())}_SECRET)"
             changed.append(c["clientId"])
         clients.append(c)
     if "clients" in realm:
@@ -488,6 +505,48 @@ def add_service_accounts(realm: dict, shipped: dict) -> tuple[dict, list[str]]:
     if add:
         out["users"] = list(realm.get("users") or []) + add
     return out, sorted(u["serviceAccountClientId"] for u in add)
+
+
+# The shared embedder's scope (deployment components/embedder): the assistant's client asks it, and
+# its audience mapper puts `embedder` into the token, as jc's own realm has it
+# (bins/jc/src/setup.rs assistant_realm_file).
+EMBEDDER_SCOPE = {
+    "name": "embedder",
+    "protocol": "openid-connect",
+    "attributes": {"include.in.token.scope": "true"},
+    "protocolMappers": [{
+        "name": "embedder-audience",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-audience-mapper",
+        "consentRequired": False,
+        "config": {"included.custom.audience": "embedder", "access.token.claim": "true",
+                   "id.token.claim": "false"},
+    }],
+}
+
+
+def add_embedder_scope(realm: dict) -> tuple[dict, bool]:
+    """The `embedder` client scope, optional for `jc-assistant`, in a realm whose export predates the
+    shared embedder (prod's): jc writes nothing into an imported realm, so without it the assistant's
+    token never names audience `embedder` and the embedder refuses it. Nothing else of the client
+    changes. Answers the realm and whether it changed."""
+    clients = realm.get("clients") or []
+    if not any(c.get("clientId") == "jc-assistant" for c in clients):
+        return realm, False
+    out = dict(realm)
+    changed = False
+    scopes = list(realm.get("clientScopes") or [])
+    if not any(s.get("name") == "embedder" for s in scopes):
+        out["clientScopes"] = scopes + [EMBEDDER_SCOPE]
+        changed = True
+    new_clients = []
+    for c in clients:
+        if c.get("clientId") == "jc-assistant" and "embedder" not in (c.get("optionalClientScopes") or []):
+            c = dict(c, optionalClientScopes=list(c.get("optionalClientScopes") or []) + ["embedder"])
+            changed = True
+        new_clients.append(c)
+    out["clients"] = new_clients
+    return out, changed
 
 
 def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
@@ -568,13 +627,16 @@ def to_file_refs(realm: dict) -> dict:
 
 
 def pipeline_clients(realm: dict) -> list[tuple[str, str]]:
-    """(clientId, NAME) of each `<project>-pipelines` client whose secret is `$(env:NAME)`: jc's
+    """(clientId, NAME) of each `<project>-pipelines` client, and each Pipeline's own client
+    `<project>-pl-<pipeline>` (`pipeline_own_client`), whose secret is `$(env:NAME)`: jc's
     `[ekiben] client_secrets_dir` reads `<project>-pipelines` files for the runner's
-    `JC_CLIENT_SECRET_<PROJECT>`, as dev's runner Deployment takes them from the realm's Secret."""
+    `JC_CLIENT_SECRET_<PROJECT>`, as dev's runner Deployment takes them from the realm's Secret,
+    and `<project>-pl-<pipeline>` files for `JC_PIPELINE_SECRET_<CLIENT>`, the secret a stream
+    rendered with `JC_PORTAL_PIPELINE_IDENTITY=pipeline-secret` signs in with."""
     out = []
     for c in realm.get("clients", []):
         cid, m = c.get("clientId", ""), SECRET_VAR.fullmatch(str(c.get("secret", "")).strip())
-        if cid.endswith("-pipelines") and m:
+        if (cid.endswith("-pipelines") or pipeline_own_client(c)) and m:
             out.append((cid, m[1]))
     return sorted(out)
 
@@ -767,6 +829,9 @@ def cmd_realms(a):
         clean, accounts = add_service_accounts(clean, json.loads(SHIPPED_REALM.read_text()))
         if accounts:
             print(f"realm {name}: service accounts of {accounts} taken from jc's shipped realm (the export has none)")
+        clean, embedder = add_embedder_scope(clean)
+        if embedder:
+            print(f"realm {name}: jc-assistant may ask scope embedder (the shared embedder's audience)")
         if by_secret:
             print(f"realm {name}: {by_secret} sign in by their secret (federated-jwt has no Kubernetes issuer in jc)")
         if a.kaisatsu_bin:
@@ -1285,7 +1350,7 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, adm
     def upsert(job):
         tenant, batch = job
         st, body = h.json("POST", f"{base}/entityOperations/upsert?options=update", body=batch,
-                          headers={"NGSILD-Tenant": tenant, **auth})
+                          headers={"NGSILD-Tenant": tenant, **auth}, timeout=IMPORT_TIMEOUT)
         ok = len(batch) if st in (200, 201, 204) else \
             len(body.get("success", [])) if st == 207 and isinstance(body, dict) else 0
         with lock:
@@ -1299,7 +1364,8 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, adm
 
     def temporal(job):
         (tenant, eid), ent = job
-        st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant, **auth})
+        st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant, **auth},
+                          timeout=IMPORT_TIMEOUT)
         if st in (200, 201, 204):
             with lock:
                 out["temporal"] += sum(len(v) for k, v in ent.items() if k not in ("id", "type"))

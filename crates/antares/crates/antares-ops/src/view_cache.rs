@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: EUPL-1.2
 //! The narrowed handles of the views a surface served (T-5896). A handle
-//! carries the view's state and, after its first in-process call, that
-//! state's router: about 250 KiB each, measured over 690 views. A handle no
+//! carries the view's narrowed state; every view of a surface calls through
+//! one shared router (T-6677), so a handle costs about 1.3 KiB, where a
+//! router of its own cost about 250 KiB (690 views measured). A handle no
 //! request used for [`VIEW_IDLE_ENV`] (default one hour) is dropped, and the
 //! next request builds it again from the table as it is then (~2 ms).
 //!
