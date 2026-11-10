@@ -98,8 +98,11 @@ mod tests {
         assert_eq!(from_env(&lookup(None, None)).unwrap(), vec![]);
         let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
         assert_eq!(
-            from_env(&lookup(Some("127.0.0.1:8080"), Some("City.example, api.city.example")))
-                .unwrap(),
+            from_env(&lookup(
+                Some("127.0.0.1:8080"),
+                Some("City.example, api.city.example")
+            ))
+            .unwrap(),
             vec![
                 ("city.example".to_owned(), addr),
                 ("api.city.example".to_owned(), addr)
@@ -113,7 +116,10 @@ mod tests {
             (Some("127.0.0.1:8080"), Some("city.example:443")),
             (Some("127.0.0.1:8080"), Some("evil.example/x")),
         ] {
-            assert!(from_env(&lookup(reach, hosts)).is_err(), "{reach:?} {hosts:?}");
+            assert!(
+                from_env(&lookup(reach, hosts)).is_err(),
+                "{reach:?} {hosts:?}"
+            );
         }
     }
 
@@ -144,7 +150,10 @@ mod tests {
         install(&[]);
         assert_eq!(answer.status(), reqwest::StatusCode::NO_CONTENT);
         let head = served.await.unwrap();
-        assert!(head.starts_with("get /git/api/v1/version http/1.1"), "{head}");
+        assert!(
+            head.starts_with("get /git/api/v1/version http/1.1"),
+            "{head}"
+        );
         assert!(head.contains("\r\nhost: git.reach.invalid\r\n"), "{head}");
     }
 }
