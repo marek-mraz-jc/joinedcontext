@@ -9,7 +9,7 @@ use crate::config::BatchPolicyConfig;
 use crate::error::{BatchError, CoreError};
 use crate::message::{Batch, Part, PartsView, SortGroup};
 use crate::prometheus::{Counter, Timer};
-use crate::traits::{Input, Output, ProcContext, Processor, StreamContext};
+use crate::traits::{Input, Output, Pages, ProcContext, Processor, StreamContext};
 use crate::transaction::{AckResponder, CombinedAcker, Transaction};
 
 /// Executes a slice of processors sequentially over `batches` (`internal/component/processor/execute.go:ExecuteAll`).
@@ -257,6 +257,37 @@ impl Processor for ObservedProcessor {
                 Ok(vec![errored_batch])
             }
         }
+    }
+
+    fn pages(
+        &self,
+        _caller_ctx: &ProcContext,
+        batch: Batch,
+        rows: usize,
+    ) -> Result<Box<Pages>, Batch> {
+        // Over the memory quota: `process_batch` refuses it as it refuses any other batch.
+        let bytes: usize = batch.iter().map(Part::size_estimate).sum();
+        if self.ctx.org.check_batch_memory(bytes).is_err() {
+            return Err(batch);
+        }
+        let in_len = batch.len() as u64;
+        let pages = self.inner.pages(&self.ctx, batch, rows)?;
+        self.ctx
+            .metrics
+            .incr_processor_received(&self.ctx.label, in_len);
+        self.prom.received.incr(in_len);
+        self.prom.batch_received.incr(1);
+        let (ctx, sent, batch_sent) = (
+            self.ctx.clone(),
+            self.prom.sent.clone(),
+            self.prom.batch_sent.clone(),
+        );
+        Ok(Box::new(pages.inspect(move |page| {
+            ctx.metrics
+                .incr_processor_sent(&ctx.label, page.len() as u64, 1);
+            sent.incr(page.len() as u64);
+            batch_sent.incr(1);
+        })))
     }
 
     async fn close(&self) -> Result<(), CoreError> {
