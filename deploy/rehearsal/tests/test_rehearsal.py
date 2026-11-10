@@ -1149,6 +1149,28 @@ def test_a_service_token_jc_holds_in_memory_is_read_from_the_kit_secrets(tmp_pat
     assert rh.read_secret(tmp_path / "state", "antares-admin-token") == "on-disk"
 
 
+def test_held_pipelines_start_every_module_but_ekiben():
+    """The count suites read the import alone (supervisor 2026-11-10): with REHEARSAL_HOLD_PIPELINES=1
+    jc starts without ekiben, so no Portal queue and no restored stream writes a row during or
+    after the import (gate 2026-11-10T131506Z-g6: 108 endpoints rows above the export)."""
+    fn = subprocess.run(["sed", "-n", "/^jc_role()/,/^}/p", str(HERE / "up.sh")], capture_output=True, text=True).stdout
+    assert fn
+
+    def role(**env):
+        return subprocess.run(["bash", "-c", fn + "jc_role"], env={"PATH": os.environ["PATH"], **env},
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    src = (HERE / "../../bins/jc/src/module.rs").read_text()
+    every = re.search(r"pub const ALL: \[Module; \d+\] = \[(.*?)\];", src, re.S)[1]
+    names = {"ModelTools": "model-tools"}
+    modules = [names.get(m, m.lower()) for m in re.findall(r"Module::(\w+)", every)]
+    assert role() == "all"
+    assert role(REHEARSAL_HOLD_PIPELINES="1").split(",") == [m for m in modules if m != "ekiben"]
+    assert role(REHEARSAL_HOLD_PIPELINES="0") == "all"
+    assert role(REHEARSAL_HOLD_PIPELINES="1", REHEARSAL_ROLE="kaisatsu,portal") == "kaisatsu,portal"
+    assert 'nohup "$jc_bin" --role "$role"' in (HERE / "up.sh").read_text()
+
+
 def test_every_secret_up_sh_makes_is_long_enough_for_a_jc_token(tmp_path):
     # dataroom refuses a Portal publisher token under 32 printable characters; up.sh's secret()
     # makes every token, so each one it makes has 64.

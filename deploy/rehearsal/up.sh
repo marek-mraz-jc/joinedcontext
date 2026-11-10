@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Starts one rehearsal environment: PostgreSQL 17 in docker and `jc --role all` on it
-# (REHEARSAL_ROLE: another role list, e.g. one module left out for a red smoke run).
+# (REHEARSAL_ROLE: another role list, e.g. one module left out for a red smoke run;
+# REHEARSAL_HOLD_PIPELINES=1: every module but ekiben, see jc_role).
 #
 #   deploy/rehearsal/up.sh <env> <public port> <postgres port>
 #
@@ -294,9 +295,22 @@ install -m 644 "$here/../../bins/jc/docs/od-datasets.json" "$home/od-datasets.js
 if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then
   cat "$REHEARSAL_JC_TOML_EXTRA" >> "$home/jc.toml"
 fi
+# REHEARSAL_HOLD_PIPELINES=1 (import.sh passes it to both its starts; the gate keeps it through the
+# endpoints and mcp count suites): jc starts without ekiben. The Portal then has no pipeline runner
+# (bins/jc/src/siblings.rs), so its run queue never starts (crates/portal/src/state.rs
+# wire_streams), and ekiben restores no saved stream from Postgres: no pipeline writes a row, and
+# the counts read the import alone. A later up.sh without it starts the pipelines again.
+jc_role() {
+  if [ -n "${REHEARSAL_ROLE:-}" ]; then echo "$REHEARSAL_ROLE"
+  elif [ "${REHEARSAL_HOLD_PIPELINES:-0}" = 1 ]; then
+    echo kaisatsu,dataroom,daiya,antares,gateway,portal,shako,model-tools,assistant,viz
+  else echo all; fi
+}
+role=$(jc_role)
+[ "$role" = all ] || echo "$env_name: jc on roles $role"
 # shellcheck source=deploy/rehearsal/apps.sh
 . "$here/apps.sh"  # the Apps: image bundles, apps cache, prod builds, roles person (jc-apps-export)
-nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \
+nohup "$jc_bin" --role "$role" --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "${origin#http://}" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" \
   --kaisatsu-import-secrets-dir "$home/secrets/realm" \
