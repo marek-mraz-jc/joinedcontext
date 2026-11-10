@@ -189,6 +189,7 @@ impl Table {
             let cells: Vec<(usize, Value)> = flatten(entity)
                 .into_iter()
                 .map(|(name, value)| {
+                    let value = compact(value);
                     let next = self.columns.len();
                     let index = *positions.entry(name).or_insert_with_key(|name| {
                         self.columns.push(name.clone());
@@ -311,6 +312,21 @@ pub fn flatten(entity: &Value) -> Vec<(String, Value)> {
         walk(name, value, &mut cells);
     }
     cells
+}
+
+/// A cell as the table holds it: a list holding lists or objects (a polygon's rings) or a
+/// non-empty object as its compact JSON text, which is what [`csv`] writes for it. A parsed
+/// ring held ~5 times its text: a 64 MiB page walk of polygons held ~700 MiB (jc-memory-cut2).
+fn compact(value: Value) -> Value {
+    let nested = match &value {
+        Value::Array(items) => items.iter().any(|item| item.is_array() || item.is_object()),
+        Value::Object(members) => !members.is_empty(),
+        _ => false,
+    };
+    match nested {
+        true => Value::String(value.to_string()),
+        false => value,
+    }
 }
 
 /// Appends every leaf under `value` to `cells`, named by the path that reaches it.
