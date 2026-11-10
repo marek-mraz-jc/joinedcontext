@@ -2960,7 +2960,10 @@ output:
         fn calls(value: &Value, out: &mut std::collections::BTreeMap<String, Value>) {
             match value {
                 Value::Object(map) => {
-                    if let Some(case) = map.pointer("/http/headers/X-Case").and_then(Value::as_str)
+                    if let Some(case) = map
+                        .get("http")
+                        .and_then(|http| http.pointer("/headers/X-Case"))
+                        .and_then(Value::as_str)
                     {
                         out.insert(case.to_owned(), map["http"]["headers"].clone());
                     }
