@@ -84,6 +84,8 @@ pub async fn build(
     if let Some(addr) = listener.as_ref().and_then(|l| l.local_addr().ok()) {
         runner_reaches(&mut config, addr);
     }
+    // The health probe marks its calls so the gateway door writes them as a poll's.
+    let _ = joinedcontext_portal::health_probe::MARK.set(crate::access::probe_mark().to_owned());
     let state = AppState::from_config(config).await.map_err(err)?;
     // Set once the state is built: a failed attempt's listener goes, the next binds anew.
     if let Some(addr) = listener.as_ref().and_then(|l| l.local_addr().ok()) {
