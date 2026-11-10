@@ -2,15 +2,17 @@
 //! header first and in the form when the endpoint refuses that (x/oauth2's AuthStyleAutoDetect,
 //! as ekiben-io-http does for Bento parity), cached per organization, token URL and client,
 //! refreshed [`REFRESH_AHEAD`] before `expires_in`, fetched by one caller at a time (single
-//! flight). No token or secret is ever logged or put into an error text.
+//! flight), and after a failed fetch not asked again until its [`TokenBackoff`] wait is over. No
+//! token or secret is ever logged or put into an error text.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
-use ekiben_core::{redact_url_str, CoreError, OrgContext, SecretString};
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use ekiben_core::token_backoff::retry_after;
+use ekiben_core::{redact_url_str, CoreError, OrgContext, SecretString, TokenBackoff};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex as AsyncMutex;
@@ -41,7 +43,13 @@ struct Cached {
     refresh_at: Instant,
 }
 
-type Slot = Arc<AsyncMutex<Option<Cached>>>;
+#[derive(Default)]
+struct Held {
+    cached: Option<Cached>,
+    backoff: TokenBackoff,
+}
+
+type Slot = Arc<AsyncMutex<Held>>;
 
 fn slots() -> &'static Mutex<HashMap<TokenKey, Slot>> {
     static SLOTS: OnceLock<Mutex<HashMap<TokenKey, Slot>>> = OnceLock::new();
@@ -58,7 +66,7 @@ fn slot_for(key: &TokenKey) -> Slot {
     if map.len() >= MAX_CACHED_CLIENTS {
         map.retain(|_, s| Arc::strong_count(s) > 1);
     }
-    let slot: Slot = Arc::new(AsyncMutex::new(None));
+    let slot: Slot = Arc::default();
     if map.len() < MAX_CACHED_CLIENTS {
         map.insert(key.clone(), slot.clone());
     }
@@ -101,35 +109,56 @@ impl TokenSource {
         org: &OrgContext,
     ) -> Result<SecretString, CoreError> {
         let mut guard = self.slot.lock().await;
-        if let Some(cached) = guard.as_ref() {
+        if let Some(cached) = guard.cached.as_ref() {
             if Instant::now() < cached.refresh_at {
                 return Ok(cached.token.clone());
             }
         }
-        let fresh = self.fetch(http, org).await?;
-        let token = fresh.token.clone();
-        *guard = Some(fresh);
-        Ok(token)
+        if let Some(left) = guard.backoff.wait() {
+            return Err(CoreError::other(format!(
+                "OAuth2 token request held back {} s after the token endpoint failed",
+                left.as_secs().max(1)
+            )));
+        }
+        match self.fetch(http, org).await {
+            Ok(fresh) => {
+                let token = fresh.token.clone();
+                guard.cached = Some(fresh);
+                guard.backoff.succeeded();
+                Ok(token)
+            }
+            Err((error, asked)) => {
+                guard.backoff.failed(asked);
+                Err(error)
+            }
+        }
     }
 
     /// Drops the cached token when it is still `stale` (one the broker answered 401 to), so the
     /// next caller fetches a new one and concurrent callers do not each refetch.
     pub async fn invalidate(&self, stale: &SecretString) {
         let mut guard = self.slot.lock().await;
-        if guard.as_ref().is_some_and(|c| c.token == *stale) {
-            *guard = None;
+        if guard.cached.as_ref().is_some_and(|c| c.token == *stale) {
+            guard.cached = None;
         }
     }
 
-    async fn fetch(&self, http: &reqwest::Client, org: &OrgContext) -> Result<Cached, CoreError> {
+    /// A fresh token, or the error with the endpoint's `Retry-After`.
+    async fn fetch(
+        &self,
+        http: &reqwest::Client,
+        org: &OrgContext,
+    ) -> Result<Cached, (CoreError, Option<Duration>)> {
         let s = &self.settings;
-        let url = Url::parse(&s.token_url).map_err(|_| {
-            CoreError::config(format!(
-                "oauth2.token_url {:?} is not a URL",
-                redact_url_str(&s.token_url)
-            ))
-        })?;
-        outbound::check_url(&url, org)?;
+        let url = Url::parse(&s.token_url)
+            .map_err(|_| {
+                CoreError::config(format!(
+                    "oauth2.token_url {:?} is not a URL",
+                    redact_url_str(&s.token_url)
+                ))
+            })
+            .map_err(|e| (e, None))?;
+        outbound::check_url(&url, org).map_err(|e| (e, None))?;
         org.admit_http_request().await;
         let mut resp = http
             .post(url.clone())
@@ -139,7 +168,9 @@ impl TokenSource {
             .send()
             .await
             .map_err(failed)?;
-        if !resp.status().is_success() {
+        // Only a refusal of the header style is asked again in the form; a 429 or a 5xx is the
+        // endpoint's state, and a second request would only add to it.
+        if refuses_the_style(resp.status()) {
             org.admit_http_request().await;
             resp = http
                 .post(url)
@@ -151,15 +182,31 @@ impl TokenSource {
         }
         let status = resp.status();
         if !status.is_success() {
-            return Err(CoreError::other(format!(
-                "OAuth2 token request failed: the token endpoint answered {status}"
-            )));
+            let asked = retry_after(
+                resp.headers()
+                    .get(RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok()),
+            );
+            return Err((
+                CoreError::other(format!(
+                    "OAuth2 token request failed: the token endpoint answered {status}"
+                )),
+                asked,
+            ));
         }
         let body = outbound::read_capped(resp, MAX_TOKEN_ANSWER)
             .await
-            .map_err(|e| CoreError::other(format!("OAuth2 token request failed: {e}")))?;
+            .map_err(|e| {
+                (
+                    CoreError::other(format!("OAuth2 token request failed: {e}")),
+                    None,
+                )
+            })?;
         let (token, expires_in) = parse_token_answer(&body).ok_or_else(|| {
-            CoreError::other("OAuth2 token request failed: the answer carries no access_token")
+            (
+                CoreError::other("OAuth2 token request failed: the answer carries no access_token"),
+                None,
+            )
         })?;
         let life = expires_in.map_or(DEFAULT_LIFE, Duration::from_secs);
         let ahead = REFRESH_AHEAD.min(life / 2);
@@ -170,11 +217,18 @@ impl TokenSource {
     }
 }
 
-fn failed(e: reqwest::Error) -> CoreError {
-    CoreError::other(format!(
+fn failed(e: reqwest::Error) -> (CoreError, Option<Duration>) {
+    let error = CoreError::other(format!(
         "OAuth2 token request failed: {}",
         redact_url_str(&outbound::error_chain(&e.without_url()))
-    ))
+    ));
+    (error, None)
+}
+
+/// Whether `status` refuses the client's credentials in the header style, so x/oauth2's
+/// auto-detection asks again with them in the form: a 4xx other than 429.
+pub(crate) fn refuses_the_style(status: reqwest::StatusCode) -> bool {
+    status.is_client_error() && status != reqwest::StatusCode::TOO_MANY_REQUESTS
 }
 
 /// `access_token` and `expires_in` of a JSON answer, or of a form-encoded one (x/oauth2 reads
