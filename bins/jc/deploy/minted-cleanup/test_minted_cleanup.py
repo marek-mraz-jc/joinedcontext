@@ -12,7 +12,8 @@ import sys
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stdout
+import urllib.parse
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -21,6 +22,8 @@ import minted_cleanup as mc
 
 P = "portal.smartcity.joinedcontext.com"
 TOKEN = "stub-token-6b1f0c2e9d"
+FETCHED = "stub-fetched-token-41d07a"
+SECRET = "stub-client-secret-9e2c55"
 SLUG = "si6epqkx364lprho5uaigutk274r5grb"
 
 
@@ -43,6 +46,9 @@ class Stub:
         self.status: int | None = None
         self.calls: list[dict] = []
         self.child_pid: int | None = None
+        self.token_forms: list[dict] = []
+        self.token_status = 200
+        self.expires_in: float = 300
         self.cmdlines: list[bytes] = []
         stub = self
 
@@ -51,6 +57,18 @@ class Stub:
                 pass
 
             def do_POST(self):
+                if self.path == "/token":
+                    form = urllib.parse.parse_qs(self.rfile.read(int(self.headers["Content-Length"])).decode())
+                    stub.token_forms.append({k: v[0] for k, v in form.items()})
+                    if stub.child_pid:
+                        stub.cmdlines.append(Path(f"/proc/{stub.child_pid}/cmdline").read_bytes())
+                    body = json.dumps({"access_token": FETCHED, "token_type": "Bearer",
+                                       "expires_in": stub.expires_in}).encode()
+                    self.send_response(stub.token_status)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 ids = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 stub.calls.append({"path": self.path, "ids": ids, "auth": self.headers["Authorization"],
                                    "reason": self.headers["JC-Reason"]})
@@ -95,6 +113,9 @@ class Case(unittest.TestCase):
         self.token = self.dir / "token"
         self.token.write_text(TOKEN + "\n")
         self.token.chmod(0o600)
+        self.secret = self.dir / "secret"
+        self.secret.write_text(SECRET + "\n")
+        self.secret.chmod(0o600)
         self.mem = self.dir / "mem"
         self.mem.write_text("41.5\n")
         self.endpoints(f"helsinki\t{SLUG}\thelsinki\thelsinki\n")
@@ -122,6 +143,12 @@ class Case(unittest.TestCase):
             a += ["--apply", "--gateway", apply_to.url, "--token-file", str(self.token),
                   "--mem-cmd", f"cat {self.mem}"]
         return a
+
+    def fetching(self, s: Stub, *extra: str) -> list[str]:
+        """The run's arguments with the token fetched from the stub instead of a token file."""
+        a = self.args(*extra, apply_to=s)
+        i = a.index("--token-file")
+        return a[:i] + ["--token-url", f"{s.url}/token", "--client-secret-file", str(self.secret)] + a[i + 2:]
 
     def main(self, argv: list[str]) -> tuple[int, str]:
         out = io.StringIO()
@@ -329,6 +356,133 @@ class Apply(Case):
         self.assertEqual(s.calls[0]["auth"], f"Bearer {TOKEN}")
 
 
+class Canary(Case):
+    def test_max_batches_pauses_cleanly_and_the_rerun_resumes(self):
+        rows = [row("Tree", i) for i in range(1201)]
+        self.listing(rows)
+        s = self.stub(rows)
+        code, out = self.main(self.args("--max-batches", "1", apply_to=s))
+        self.assertEqual(code, 0, out)
+        self.assertEqual([len(c["ids"]) for c in s.calls], [500])
+        self.assertIn("paused after 1 batch(es) (--max-batches 1): 500 deleted", out)
+        self.assertEqual(len((self.state / "done.txt").read_text().split()), 500)
+        self.assertEqual((self.state / "inflight.txt").read_text(), "", "nothing in flight after a pause")
+        self.assertEqual(len(s.entities), 701)
+        s.calls.clear()
+        code, out = self.main(self.args("--max-batches", "5", apply_to=s))
+        self.assertEqual(code, 0, out)
+        self.assertEqual([len(c["ids"]) for c in s.calls], [500, 201])
+        self.assertIn("500 done before, 701 to delete", out)
+        self.assertEqual(s.entities, {})
+
+    def test_max_batches_leaves_a_batch_in_flight_for_the_resume(self):
+        rows = [row("Tree", i) for i in range(600)]
+        self.listing(rows)
+        s = self.stub(rows)
+        s.status = 502
+        self.assertEqual(self.main(self.args(apply_to=s))[0], 1)
+        before = (self.state / "inflight.txt").read_text()
+        self.assertEqual(len(before.split()), 500)
+        s.status = None
+        for i in before.split()[:10]:
+            del s.entities[i]  # the 502 hid a partial delete
+        code, out = self.main(self.args("--max-batches", "1", apply_to=s))
+        self.assertEqual(code, 0, out)
+        self.assertIn("490 deleted, 10 already gone", out)
+        self.assertEqual(len(s.entities), 100)
+
+    def test_max_batches_below_one_is_refused(self):
+        self.listing([row("Tree", 1)])
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+            mc.main(self.args("--max-batches", "0"))
+
+
+class FetchedToken(Case):
+    def test_the_token_is_fetched_by_client_credentials_of_the_projects_account(self):
+        rows = [row("Tree", i) for i in range(1201)]
+        self.listing(rows)
+        s = self.stub(rows)
+        code, out = self.main(self.fetching(s))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(s.token_forms, [{"grant_type": "client_credentials", "client_id": "helsinki-cleanup-t6676",
+                                          "client_secret": SECRET}], "one fetch while the token is young")
+        self.assertEqual({c["auth"] for c in s.calls}, {f"Bearer {FETCHED}"})
+        self.assertEqual(s.entities, {})
+
+    def test_the_token_is_fetched_again_past_half_its_lifetime(self):
+        rows = [row("Tree", i) for i in range(1201)]
+        self.listing(rows)
+        s = self.stub(rows)
+        s.expires_in = 0.001
+        code, out = self.main(self.fetching(s, "--client-id", "helsinki-other"))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(s.token_forms), 3)
+        self.assertEqual({f["client_id"] for f in s.token_forms}, {"helsinki-other"})
+
+    def test_a_refused_token_request_stops_before_any_delete(self):
+        rows = [row("Tree", 1)]
+        self.listing(rows)
+        s = self.stub(rows)
+        s.token_status = 401
+        code, out = self.main(self.fetching(s))
+        self.assertEqual((code, s.calls), (1, []), out)
+        self.assertIn("token request for helsinki-cleanup-t6676: answer 401", out)
+        self.assertNotIn(SECRET, out)
+
+    def test_a_secret_file_others_can_read_is_refused(self):
+        rows = [row("Tree", 1)]
+        self.listing(rows)
+        s = self.stub(rows)
+        self.secret.chmod(0o640)
+        code, out = self.main(self.fetching(s))
+        self.assertEqual((code, s.calls, s.token_forms), (1, [], []), out)
+
+    def test_a_plain_http_token_url_off_loopback_is_refused(self):
+        rows = [row("Tree", 1)]
+        self.listing(rows)
+        s = self.stub(rows)
+        a = self.fetching(s)
+        a[a.index("--token-url") + 1] = "http://jc.example.org/id/realms/smartcity/protocol/openid-connect/token"
+        code, out = self.main(a)
+        self.assertEqual((code, s.calls), (1, []), out)
+        self.assertIn("https only", out)
+
+    def test_token_file_and_client_secret_are_exclusive(self):
+        rows = [row("Tree", 1)]
+        self.listing(rows)
+        s = self.stub(rows)
+        a = self.fetching(s) + ["--token-file", str(self.token)]
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+            mc.main(a)
+
+    def test_a_client_id_over_two_projects_is_refused(self):
+        self.endpoints(f"helsinki\t{SLUG}\thelsinki\thelsinki\nzilina-mesto\tzslug\tzilina-mesto\tzilina\n")
+        rows = [row("Tree", 1), ("zilina-mesto", f"urn:ngsi-ld:Tree:{P}:zilina:1", "Tree", "", "")]
+        self.listing(rows)
+        s = self.stub(rows)
+        code, out = self.main(self.fetching(s, "--client-id", "helsinki-cleanup-t6676"))
+        self.assertEqual((code, s.calls), (1, []), out)
+
+    def test_neither_secret_nor_fetched_token_reaches_argv_the_log_or_the_state(self):
+        rows = [row("Tree", i) for i in range(3)]
+        self.listing(rows)
+        s = self.stub(rows)
+        proc = subprocess.Popen([sys.executable, str(HERE / "minted_cleanup.py"), *self.fetching(s)],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        s.child_pid = proc.pid
+        out, _ = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, out)
+        self.assertEqual(len(s.cmdlines), 2, "the stub read /proc/<pid>/cmdline at the token fetch and the delete")
+        for cmdline in s.cmdlines:
+            self.assertNotIn(SECRET.encode(), cmdline)
+            self.assertNotIn(FETCHED.encode(), cmdline)
+            self.assertIn(b"--client-secret-file", cmdline)
+        for text in [out] + [f.read_text() for f in self.state.iterdir()]:
+            self.assertNotIn(SECRET, text)
+            self.assertNotIn(FETCHED, text)
+        self.assertEqual(s.calls[0]["auth"], f"Bearer {FETCHED}")
+
+
 class Policies(Case):
     def test_one_deletebatch_grant_per_space_with_a_selector_per_minted_type(self):
         self.listing([row("Tree", 1), row("NoiseZone", 2), row("Tree", 3)])
@@ -343,10 +497,21 @@ class Policies(Case):
         self.assertEqual(spec["validity"], {"to": "2026-11-10T20:00:00Z"})
         sel = spec["information"][0]["entities"]
         self.assertEqual([e["type"] for e in sel], ["NoiseZone", "Tree"])
-        pat = re.compile(sel[1]["idPattern"])
-        self.assertTrue(pat.match(urn("Tree", 1)))
-        self.assertFalse(pat.match("urn:ngsi-ld:Tree:hel.fi:helsinki:1"))
-        self.assertFalse(pat.match("urn:ngsi-ld:Tree:portalXsmartcity.joinedcontext.com:1"))
+        p = sel[1]["idPattern"]
+        self.assertEqual(p, r"^urn:ngsi-ld:Tree:portal\.smartcity\.joinedcontext\.com:.+$")
+        # jc-core EntitySelector::validate: anchored at both ends, or the Portal refuses the Policy.
+        self.assertTrue(p.startswith("^") and p.endswith("$"))
+        engine = re.compile(f"^(?:{p})$")  # Antares Rule::selects_id: anchored at both ends
+        gateway = re.compile(p)  # context-gateway pdp/id_match.rs: regex is_match, unanchored
+        for decide in (engine.fullmatch, gateway.search):
+            self.assertTrue(decide(urn("Tree", 1)))
+            for outside in ("urn:ngsi-ld:Tree:hel.fi:helsinki:1",
+                            f"urn:ngsi-ld:Tree:{P}.evil:helsinki:1",
+                            f"urn:ngsi-ld:Tree:{P}:",
+                            "urn:ngsi-ld:Tree:portalXsmartcity.joinedcontext.com:1",
+                            f"urn:ngsi-ld:NoiseZone:{P}:helsinki:1",
+                            f"x-urn:ngsi-ld:Tree:{P}:helsinki:1"):
+                self.assertFalse(decide(outside), outside)
 
 
 class Verify(Case):
