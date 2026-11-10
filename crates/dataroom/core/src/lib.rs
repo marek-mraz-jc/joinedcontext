@@ -26,5 +26,3 @@ pub use model::*;
 pub use odata_defs::{dataroom_service, scope_for_context};
 pub use ops::{all_operations, execute_operation, OpContext, OperationDef};
 pub use store::{DatasetFilter, Store};
-
-// ci probe: forces a rebuild of this crate (reverted)

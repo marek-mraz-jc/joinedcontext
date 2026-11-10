@@ -2154,5 +2154,3 @@ mod f_ant2_019_background_count {
         );
     }
 }
-
-// ci probe: forces a rebuild of this crate (reverted)
