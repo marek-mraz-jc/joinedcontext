@@ -707,30 +707,35 @@ mod tests {
         // and the sheet, a CSV named by the entity type that its harvest writes when the
         // Endpoint answers the dataset's `file.csv`. Each file answers here for a dataset whose
         // sheet prod holds; for the other two (their file is the whole Endpoint) none answers.
+        // Every file answers 503 once first, as the gateway does while its download slots are
+        // full (jc's start, the Portal probing each Endpoint): prod's read asks again.
         let prod_resources: BTreeMap<String, serde_json::Value> = serde_json::from_str(
             include_str!("../../tests/fixtures/harvest/prod-resources.json"),
         )
         .unwrap();
+        let mut files = BTreeSet::new();
         for (name, shown) in &prod_resources {
             let entry = nkod
                 .converted
                 .get(name)
                 .or_else(|| hub.converted.get(name))
                 .unwrap_or_else(|| panic!("{name} is converted"));
+            let file = dataroom_harvest::converted::sheet_address(
+                &format!("{GATEWAY}/api/endpoint/{}/", entry.endpoint),
+                entry,
+            );
             if shown["sheet"].as_array().is_some_and(|s| !s.is_empty()) {
-                fetcher.insert(
-                    dataroom_harvest::converted::sheet_address(
-                        &format!("{GATEWAY}/api/endpoint/{}/", entry.endpoint),
-                        entry,
-                    ),
-                    Some("text/csv"),
-                    "id,type\n",
-                );
+                fetcher.insert(file.clone(), Some("text/csv"), "id,type\n");
+            }
+            if files.insert(file.clone()) {
+                fetcher.insert_status(file, 503);
             }
         }
-        let engine = HarvestEngine::new(Arc::new(fetcher.clone())).with_custom_dns(|_, port| {
-            Ok(vec![std::net::SocketAddr::from(([93, 184, 216, 34], port))])
-        });
+        let engine = HarvestEngine::new(Arc::new(fetcher.clone()))
+            .with_custom_dns(|_, port| {
+                Ok(vec![std::net::SocketAddr::from(([93, 184, 216, 34], port))])
+            })
+            .with_retry_waits(vec![std::time::Duration::ZERO]);
         for src in [&nkod, &hub] {
             let run = engine.run_source(&ctx, &store, src).await.expect("run");
             assert_eq!(run.state, HarvestRunState::Succeeded);
