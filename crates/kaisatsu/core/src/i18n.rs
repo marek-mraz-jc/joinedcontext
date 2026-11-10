@@ -238,6 +238,7 @@ email.linkExpirationFormatter.timePeriodUnit.seconds={0,choice,0#seconds|1#secon
 email.linkExpirationFormatter.timePeriodUnit.minutes={0,choice,0#minutes|1#minute|1<minutes}
 email.linkExpirationFormatter.timePeriodUnit.hours={0,choice,0#hours|1#hour|1<hours}
 email.linkExpirationFormatter.timePeriodUnit.days={0,choice,0#days|1#day|1<days}
+authenticatorCode=One-time code
 "#;
 
 const SK_PROPERTIES: &str = r#"
@@ -464,6 +465,7 @@ email.linkExpirationFormatter.timePeriodUnit.seconds={0,choice,0#sekúnd|1#sekun
 email.linkExpirationFormatter.timePeriodUnit.minutes={0,choice,0#minút|1#minúta|2#minúty|4<minút}
 email.linkExpirationFormatter.timePeriodUnit.hours={0,choice,0#hodín|1#hodina|2#hodiny|4<hodín}
 email.linkExpirationFormatter.timePeriodUnit.days={0,choice,0#dní|1#deň|2#dni|4<dní}
+authenticatorCode=Jednorazový kód
 "#;
 
 const CS_PROPERTIES: &str = r#"
@@ -690,6 +692,7 @@ email.linkExpirationFormatter.timePeriodUnit.seconds={0,choice,0#sekund|1#sekund
 email.linkExpirationFormatter.timePeriodUnit.minutes={0,choice,0#minut|1#minuta|2#minuty|4<minut}
 email.linkExpirationFormatter.timePeriodUnit.hours={0,choice,0#hodin|1#hodina|2#hodiny|4<hodin}
 email.linkExpirationFormatter.timePeriodUnit.days={0,choice,0#dní|1#den|2#dny|4<dní}
+authenticatorCode=Jednorázový kód
 "#;
 
 const DE_PROPERTIES: &str = r#"
@@ -916,6 +919,7 @@ email.linkExpirationFormatter.timePeriodUnit.seconds={0,choice,0#Sekunden|1#Seku
 email.linkExpirationFormatter.timePeriodUnit.minutes={0,choice,0#Minuten|1#Minute|1<Minuten}
 email.linkExpirationFormatter.timePeriodUnit.hours={0,choice,0#Stunden|1#Stunde|1<Stunden}
 email.linkExpirationFormatter.timePeriodUnit.days={0,choice,0#Tage|1#Tag|1<Tage}
+authenticatorCode=Einmalcode
 "#;
 
 const HU_PROPERTIES: &str = r#"
@@ -1142,6 +1146,7 @@ email.linkExpirationFormatter.timePeriodUnit.seconds=másodperc
 email.linkExpirationFormatter.timePeriodUnit.minutes=perc
 email.linkExpirationFormatter.timePeriodUnit.hours=óra
 email.linkExpirationFormatter.timePeriodUnit.days=nap
+authenticatorCode=Egyszer használatos hitelesítő kód
 "#;
 
 fn parse_properties(raw: &'static str) -> BTreeMap<&'static str, &'static str> {

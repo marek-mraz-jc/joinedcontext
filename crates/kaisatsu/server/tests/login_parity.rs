@@ -335,3 +335,28 @@ async fn the_logo_is_served_as_an_image_that_runs_nothing() {
     );
     assert_eq!(body, LOGO);
 }
+
+#[tokio::test]
+async fn the_signed_out_page_follows_its_language_picker_and_ends_nothing() {
+    let (app, _) = app("joinedcontext demo").await;
+    let (st, h, html) = send(
+        &app,
+        Method::GET,
+        "/realms/dev/logged-out?kc_locale=sk",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        html.contains("lang=\"sk\"") && html.contains("data-page-id=\"login-info\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("/realms/dev/logged-out?kc_locale=de"),
+        "the picker stays on the page"
+    );
+    assert!(h.get(header::SET_COOKIE).is_none(), "it touches no session");
+    let (st, _, _) = send(&app, Method::GET, "/realms/nope/logged-out", None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}

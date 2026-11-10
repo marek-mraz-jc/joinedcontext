@@ -531,7 +531,7 @@ async fn render_state_page_with(
             form.submit_label = bundle.get("doSubmit").to_owned();
             let mut otp = text_field(
                 "otp",
-                bundle.get("loginOtpOneTime").to_owned(),
+                bundle.get("authenticatorCode").to_owned(),
                 "one-time-code",
             );
             otp.required = true;
@@ -973,13 +973,17 @@ pub(crate) async fn render_expired_session_page(
             mount.path_prefix, realm.realm, s.id, s.client_id
         )
     });
+    let current = base
+        .as_ref()
+        .map(|b| b.replace("{}", "authenticate"))
+        .unwrap_or_default();
     let shell = page::Shell {
         bundle: &bundle,
         realm,
         branding: &branding,
         path_prefix: &mount.path_prefix,
         app: &app,
-        locale_base_url: "",
+        locale_base_url: &current,
     };
     let mut tpl = shell.page("expired", bundle.get("pageExpiredTitle"), &new_nonce());
     tpl.instructions
@@ -2987,7 +2991,7 @@ async fn render_action_form(
         tpl.totp = Some(totp_setup(&bundle, realm, &shell.org(), &account, secret));
         let mut otp = text_field(
             "otp",
-            bundle.get("loginOtpOneTime").to_owned(),
+            bundle.get("authenticatorCode").to_owned(),
             "one-time-code",
         );
         otp.required = true;

@@ -93,6 +93,8 @@
         </ol>
         </div>
         {% endif %}
+        {% let content_id = self.content_id() %}
+        {% if !content_id.is_empty() %}<div id="{{ content_id }}">{% endif %}
         {% for line in instructions %}<p class="instruction"{% if loop.first %} id="instruction1"{% endif %}>{{ line }}</p>
         {% endfor %}
         {% if let Some(f) = form %}
@@ -158,6 +160,7 @@
         {% if !links.is_empty() %}
         <p>{% for l in links %}<a id="{{ l.id }}" class="pf-v5-c-button {{ l.class }}" href="{{ l.url }}">{{ l.label }}</a>{% endfor %}</p>
         {% endif %}
+        {% if !content_id.is_empty() %}</div>{% endif %}
         <div class="pf-v5-c-login__main-footer">
           {% if !info.is_empty() %}
           <div id="kc-info" class="pf-v5-c-login__main-footer-band pf-v5-c-form pf-v5-u-w-100">

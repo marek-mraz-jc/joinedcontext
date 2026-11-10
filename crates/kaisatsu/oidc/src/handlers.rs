@@ -69,6 +69,7 @@ pub fn oidc_router(state: OidcState) -> Router {
             "/realms/{realm}/protocol/openid-connect/auth",
             get(authorize_page),
         )
+        .route("/realms/{realm}/logged-out", get(signed_out_get))
         .route(
             "/realms/{realm}/protocol/openid-connect/auth/device",
             post(crate::device::device_authorization),
@@ -3627,19 +3628,45 @@ fn render_signed_out_page(
     branding: &BrandingBlock,
     bundle: &Bundle,
 ) -> Response {
+    let locale_base_url = format!("{}/realms/{}/logged-out", mount.path_prefix, realm.realm);
     let shell = page::Shell {
         bundle,
         realm,
         branding,
         path_prefix: &mount.path_prefix,
         app: "",
-        locale_base_url: "",
+        locale_base_url: &locale_base_url,
     };
     let nonce = random_handle_256()[..16].to_owned();
     let mut tpl = shell.page("info", bundle.get("successLogout"), &nonce);
     tpl.instructions
         .push(bundle.get("successLogout").to_owned());
     page_response(&tpl)
+}
+
+/// `GET /realms/{realm}/logged-out[?kc_locale=]`: the signed-out page again, in the language
+/// its picker chose. It reads and ends nothing.
+async fn signed_out_get(
+    State(state): State<OidcState>,
+    Path(realm_name): Path<String>,
+    Query(params): Query<BTreeMap<String, String>>,
+    headers: HeaderMap,
+    mount_ext: Option<Extension<Mount>>,
+) -> Result<Response> {
+    let realm = state
+        .store
+        .get_realm(&realm_name)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
+    let bundle = logout_bundle(&params, &headers, &realm);
+    let branding = state
+        .store
+        .get_branding(&realm.id, None)
+        .await?
+        .unwrap_or_default()
+        .sanitised();
+    Ok(render_signed_out_page(&mount, &realm, &branding, &bundle))
 }
 
 fn page_response(tpl: &page::Page) -> Response {

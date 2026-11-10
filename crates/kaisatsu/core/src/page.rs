@@ -200,6 +200,18 @@ impl Page {
         self.heading = heading;
     }
 
+    /// The id keycloak.v2 gives the content of its error, info and logout-confirm pages, which
+    /// joinedcontext.css styles their buttons by; empty for the other pages.
+    #[must_use]
+    pub fn content_id(&self) -> &'static str {
+        match self.page_id.as_str() {
+            "error" => "kc-error-message",
+            "info" | "account-updated" => "kc-info-message",
+            "logout-confirm" => "kc-logout-confirm",
+            _ => "",
+        }
+    }
+
     /// The rendered page; empty only when a template value fails to render.
     #[must_use]
     pub fn html(&self) -> String {
