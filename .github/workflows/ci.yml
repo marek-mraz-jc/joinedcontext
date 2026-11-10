@@ -103,7 +103,9 @@ jobs:
   # Postgres for the store tests of each module (each its own database; kaisatsu and the Portal's
   # apps tests create their own roles). nextest runs the binaries side by side; the tests sharing
   # one module's database stay one at a time (.config/nextest.toml). The tests are split in
-  # three jobs (two took 333 s of tests each, run 42616261654), each with its own Postgres: every job compiles the same warm build (no archive to
+  # four jobs (two of three took 333 s of tests each, run 42616261654; with three, one runner's
+  # 1.4x slower tests still set the run, 42766258305), each with its own Postgres: every job
+  # compiles the same warm build (no archive to
   # upload and download) and runs its partition of the tests, balanced by the times
   # .github/ci-durations.json records (test-part.py --nextest; a test with no recorded time still
   # lands in exactly one); the first also runs the doc tests, which the split counts. The
@@ -116,7 +118,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix: { part: [1, 2, 3] }
+      matrix: { part: [1, 2, 3, 4] }
     services:
       postgres:
         image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
