@@ -10,9 +10,13 @@
 //! - `/api/services/…` and a `ui` App's `/api/functions/…` go to their routes under `/apps/{name}/`;
 //! - a `wasm` App's own server (`/api/…` otherwise) goes to its shard
 //!   `jc-wasm-host-{status.shard}.{JC_PORTAL_WASM_HOST_NAMESPACE}` under `/apps/{name}/api/…`, as
-//!   the edge sent it (AP-143), after the App's visibility admits the caller: the shard never asks.
-//!   An App without a shard, a shard the host does not run, or no WASM host configured, and a
-//!   `ui-rust` App's pod, which this Portal does not run: a `503` naming the App, never a raw error.
+//!   the edge sent it (AP-143), after the App's visibility admits the caller: the shard never asks;
+//! - a `ui-rust` App's pod named in `JC_PORTAL_APP_PODS` gets every other path, streamed, with the
+//!   App's Content-Security-Policy, as the edge file routes Service `app-{name}`, after the App's
+//!   visibility admits the caller;
+//! - a wasm App without a shard, a shard the host does not run, or no WASM host configured, and
+//!   any other `ui-rust` App's pod, which this Portal does not run: a `503` naming the App, never a
+//!   raw error.
 //!
 //! A host one label under the apex that names no published App gets the static host's own `404`.
 //! Any other host passes untouched.
@@ -177,6 +181,18 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
             )
             .await;
         }
+        (Some((project, spec, _)), Some(AppClass::UiRust)) if !services => {
+            let Some(pod) = state.config.app_pods.get(&name) else {
+                return unavailable(&state, &req, &name, "pod");
+            };
+            // The pod never asks who calls: the App's visibility is judged here, as for a shard.
+            if let Some(refused) =
+                super::static_host::refused(&state, req.headers(), project, &name, spec).await
+            {
+                return refused;
+            }
+            return to_pod(&state, req, pod, &rest, project, spec).await;
+        }
         (_, Some(AppClass::UiRust)) if !services => {
             return unavailable(&state, &req, &name, "pod");
         }
@@ -248,12 +264,56 @@ fn http() -> &'static reqwest::Client {
     })
 }
 
+/// The client of an App's pod: no deadline on the whole answer, whose `api/stream` is an event
+/// stream that stays open, but 30 s at most between two reads, as the edge file's upstream
+/// (`read: 30`); hsl-transport's stream sends a keep-alive every 15 s.
+fn pod_http() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(std::time::Duration::from_secs(6))
+            .read_timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
 /// Hands an App's endpoint call to the gateway (`JC_PORTAL_GATEWAY_URL`).
 async fn to_gateway(state: &AppState, req: Request, rest: &str) -> Response {
     let Some(gateway) = state.config.gateway_url.as_deref() else {
         return problem(StatusCode::SERVICE_UNAVAILABLE, "no gateway is configured");
     };
     forward(req, gateway, rest, http(), "gateway").await
+}
+
+/// Hands a request on a `ui-rust` App's host to its pod (`JC_PORTAL_APP_PODS`) at the same path,
+/// the App's base path being `/` there, and the answer back with the App's Content-Security-Policy
+/// in place of any the pod sent, as the edge file's route sets it (AP-12, AP-122).
+async fn to_pod(
+    state: &AppState,
+    req: Request,
+    pod: &str,
+    rest: &str,
+    project: &str,
+    spec: &jc_core::kinds::AppSpec,
+) -> Response {
+    let mut response = forward(req, pod, rest, pod_http(), "App's server").await;
+    let basemap = crate::api::basemap::route_prefix(&state.config, project);
+    let policy = super::static_host::content_security_policy(
+        spec,
+        super::static_host::portal_origin(state).as_deref(),
+        basemap.as_deref(),
+    );
+    let headers = response.headers_mut();
+    headers.remove(header::X_FRAME_OPTIONS);
+    match HeaderValue::from_str(&policy) {
+        Ok(csp) => {
+            headers.insert(header::CONTENT_SECURITY_POLICY, csp);
+        }
+        Err(_) => return problem(StatusCode::BAD_GATEWAY, "the App's policy is no header"),
+    }
+    response
 }
 
 /// The base URL of App `name`'s shard and the client that reaches it, `None` when it has none:

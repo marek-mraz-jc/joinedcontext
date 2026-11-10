@@ -640,6 +640,166 @@ async fn a_dot_segment_never_carries_an_endpoint_call_past_the_slug_check() {
 }
 
 #[tokio::test]
+async fn a_ui_rust_apps_pod_in_app_pods_answers_its_host_alone_with_the_apps_policy() {
+    let bundles = Bundles::new("pods", &["air-quality"]);
+    let (pod, seen) = gateway().await;
+    let pod_authority = pod.trim_start_matches("http://").to_owned();
+    let config = Config {
+        apps_dir: Some(bundles.0.to_string_lossy().into_owned()),
+        public_base_url: "https://portal.example.org".parse().unwrap(),
+        apps_url: Some("https://example.org".parse().unwrap()),
+        serve_app_hosts: true,
+        // air-quality is a `ui` App: a pod named for it is never asked.
+        app_pods: [("air-pod", &pod), ("air-quality", &pod)]
+            .into_iter()
+            .map(|(name, url)| (name.to_owned(), url.clone()))
+            .collect(),
+        ..Config::for_tests()
+    };
+    let portal = server::app(AppState::new(config, None).with_mirror(mirror()));
+    let sent = [
+        ("cookie", "__Host-jc_app_air_pod=x; __Host-portal=session"),
+        ("x-access-token", "edge-token"),
+        ("accept", "text/html"),
+    ];
+    for uri in [
+        "/",
+        "/api/stream?since=1",
+        "/apps/air-pod/api/stream?since=1",
+    ] {
+        let (status, headers, body) = send(&portal, "air-pod.apps.example.org", uri, &sent).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        assert_eq!(body, b"[]", "{uri}");
+        assert!(headers.get(header::SET_COOKIE).is_none(), "{uri}");
+        let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+        assert!(
+            csp.ends_with("frame-ancestors https://portal.example.org"),
+            "{csp}"
+        );
+    }
+    // Neither another App's host nor a `ui` App with a pod named reaches it.
+    let (status, _, _) = send(
+        &portal,
+        "air-quality.apps.example.org",
+        "/apps/air-pod/",
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, body) = send(&portal, "air-quality.apps.example.org", "/", &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(served(&body, INDEX));
+    let seen = seen.lock().unwrap().clone();
+    let paths: Vec<&str> = seen.iter().map(|(_, uri, _)| uri.as_str()).collect();
+    assert_eq!(paths, ["/", "/api/stream?since=1", "/api/stream?since=1"]);
+    for (_, _, headers) in &seen {
+        assert!(headers.get(header::COOKIE).is_none(), "{headers:?}");
+        assert!(headers.get("x-access-token").is_none(), "{headers:?}");
+        assert_eq!(headers[header::HOST], pod_authority.as_str());
+    }
+}
+
+/// A non-public `ui-rust` App's pod hears only whom the App admits: a page file asked for without
+/// a session, a forged token, a token without the App's role or of another App's client is
+/// refused here, and a dot segment never leaves the App's path.
+#[tokio::test]
+async fn a_non_public_apps_pod_hears_only_whom_the_app_admits() {
+    let bundles = Bundles::new("pod-roles", &[]);
+    let (pod, seen) = gateway().await;
+    let mut config = Config::from_vars(|key| {
+        match key {
+            "JC_OIDC_ISSUER" => Some(common::REALM.issuer.as_str()),
+            "JC_PORTAL_COOKIE_KEY" => {
+                Some("cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001")
+            }
+            "JC_OIDC_CLIENT_ID" => Some("portal-api"),
+            "JC_OIDC_CLIENT_SECRET" => Some("secret"),
+            _ => None,
+        }
+        .map(str::to_owned)
+    })
+    .expect("config");
+    config.apps_dir = Some(bundles.0.to_string_lossy().into_owned());
+    config.public_base_url = "https://portal.example.org".parse().unwrap();
+    config.apps_url = Some("https://example.org".parse().unwrap());
+    config.serve_app_hosts = true;
+    config.app_pods = [("pod-roles".to_owned(), pod)].into_iter().collect();
+    let mirror = mirror();
+    let mut spec = app("ui-rust");
+    spec["visibility"] = "roles".into();
+    spec["roles"] = serde_json::json!([{ "name": "viewer" }]);
+    mirror.upsert(envelope("App", "ovzdusie", "pod-roles", spec));
+    let portal = server::app(AppState::new(config, None).with_mirror(mirror));
+    let call = |uri: &str, token: Option<String>| {
+        let req = Request::builder()
+            .uri(uri)
+            .header(header::HOST, "pod-roles.apps.example.org")
+            .header("accept", "*/*");
+        match token {
+            Some(token) => req.header("authorization", format!("Bearer {token}")),
+            None => req,
+        }
+    };
+    let (status, _, _) = send_with(&portal, call("/assets/app.js", None), "").await;
+    assert!(
+        status == StatusCode::FORBIDDEN || status == StatusCode::UNAUTHORIZED,
+        "a file without a session: {status}"
+    );
+    for token in [
+        common::REALM.person_token("pod-roles", "jana", &[]),
+        common::REALM.person_token("air-shard", "jana", &["viewer"]),
+        "not-a-token".to_owned(),
+    ] {
+        let (status, _, _) = send_with(&portal, call("/api/alerts", Some(token)), "").await;
+        assert!(
+            status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND,
+            "{status}"
+        );
+    }
+    assert!(seen.lock().unwrap().is_empty(), "the pod never asked");
+    let token = common::REALM.person_token("pod-roles", "jana", &["viewer"]);
+    let (status, _, _) = send_with(
+        &portal,
+        call("/assets/%2e%2e/secret", Some(token.clone())),
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "a dot segment never reaches the pod"
+    );
+    let (status, _, body) = send_with(&portal, call("/api/alerts", Some(token.clone())), "").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, b"[]");
+    let held = seen.lock().unwrap().clone();
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].1, "/api/alerts");
+    assert_eq!(held[0].2[header::AUTHORIZATION], format!("Bearer {token}"));
+}
+
+#[tokio::test]
+async fn a_pod_that_does_not_answer_is_a_502_problem() {
+    let bundles = Bundles::new("pod-down", &[]);
+    // A port nothing listens on: bound, then released.
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let pod = format!("http://{}", closed.local_addr().unwrap());
+    drop(closed);
+    let config = Config {
+        apps_dir: Some(bundles.0.to_string_lossy().into_owned()),
+        public_base_url: "https://portal.example.org".parse().unwrap(),
+        apps_url: Some("https://example.org".parse().unwrap()),
+        serve_app_hosts: true,
+        app_pods: [("air-pod".to_owned(), pod)].into_iter().collect(),
+        ..Config::for_tests()
+    };
+    let portal = server::app(AppState::new(config, None).with_mirror(mirror()));
+    let (status, headers, _) = send(&portal, "air-pod.apps.example.org", "/", &[]).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/problem+json");
+}
+
+#[tokio::test]
 async fn without_serve_app_hosts_the_portal_leaves_app_hosts_to_the_edge() {
     let bundles = Bundles::new("off", &["air-quality"]);
     let portal = portal(&bundles, None, false);

@@ -18,6 +18,10 @@
 #    platform component CUTOVER.md keeps beside jc), on loopback: it takes the Portal's portal-api
 #    token of the imported realm and sends each function's reads to jc's gateway. JC_FUNCTIONS_URL.
 #    REHEARSAL_FUNCTIONS_IMAGE / REHEARSAL_FUNCTIONS_PORT (default the public port + 1).
+# 6. REHEARSAL_APP_PODS="hsl-transport=<image>": each ui-rust App's image (the monorepo's
+#    image-apps.yml, or the same target built locally) on loopback, at the public port + 2, +3, ...,
+#    reading its Endpoint `app-{name}` of the export on jc's own gateway, as deployment
+#    components/app-pods runs it on jc's Service: JC_PORTAL_APP_PODS.
 # REHEARSAL_APPS=off leaves all of it out.
 # shellcheck disable=SC2154  # here, home, port, export_dir: up.sh's
 
@@ -91,6 +95,30 @@ if [ "${REHEARSAL_APPS:-on}" != off ]; then
     fi
     python3 -I "$here/apps.py" person --realm-file "$realm_file" --files "$export_dir/gitea/files" \
       --password-file "$home/secrets/realm/REHEARSAL_APP_ROLES_PASSWORD" "${holder_id[@]}"
+  fi
+
+  pods=() pod_port=$((port + 2))
+  for pod in ${REHEARSAL_APP_PODS:-}; do
+    name=${pod%%=*} image=${pod#*=}
+    endpoint=$(find "$export_dir/gitea/files" -path "*/spaces/*/endpoints/app-$name.yaml" | head -1)
+    slug=$(sed -n 's/^  slug: //p' "$endpoint" 2>/dev/null)
+    [ -n "$slug" ] || { echo "apps.sh: no Endpoint app-$name with a slug in $export_dir/gitea/files" >&2; exit 1; }
+    project=$(sed -n 's/^  namespace: //p' "$endpoint")
+    space=$(basename "$(dirname "$(dirname "$endpoint")")")
+    config=$(python3 -I -c 'import json, sys; n, s, sp, p, port = sys.argv[1:]; print(json.dumps({"appName": n, "endpointName": f"app-{n}", "endpoints": [{"name": f"app-{n}", "slug": s, "space": sp}], "portal": f"http://localhost:{port}/projects/{p}", "slug": s, "space": sp, "transport": "origin"}))' "$name" "$slug" "$space" "$project" "$port")
+    docker rm -f "rh-app-$name-$port" >/dev/null 2>&1 || true
+    docker run -d --name "rh-app-$name-$port" --network host --restart on-failure:5 --read-only \
+      --tmpfs /tmp:rw,size=16m --cap-drop ALL --security-opt no-new-privileges --user 65532:65532 \
+      -e JC_BIND_ADDRESS="127.0.0.1:$pod_port" -e JC_BASE_PATH=/ -e JC_APP_CONFIG="$config" \
+      -e JC_ENDPOINT_URL="http://localhost:$port/api/endpoint/$slug/" \
+      "$image" >/dev/null || { echo "apps.sh: the pod of $name did not start" >&2; exit 1; }
+    pods+=("$name=http://127.0.0.1:$pod_port")
+    echo "apps.sh: $name's pod on 127.0.0.1:$pod_port ($image, endpoint $slug)"
+    pod_port=$((pod_port + 1))
+  done
+  if [ ${#pods[@]} -gt 0 ]; then
+    JC_PORTAL_APP_PODS=$(IFS=,; echo "${pods[*]}")
+    export JC_PORTAL_APP_PODS
   fi
 
   # Once jc answers: the prod builds into shako, then the holder into the roles Apps' groups.
