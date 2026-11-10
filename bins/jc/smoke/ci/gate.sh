@@ -18,6 +18,17 @@ home=$REHEARSAL_HOME/gate
 export_dir=$REHEARSAL_HOME/gate-export
 
 rm -rf "$export_dir"; mkdir -p "$export_dir"
+# Every 30 s into the step log (a runner that is lost uploads no artifact): free memory, jc's RSS,
+# the three largest processes and the disk under REHEARSAL_HOME, so a cut-off run tells an
+# out-of-memory or full runner from a signal (smoke runs 42873989236, 42907019912: no verdict).
+( while sleep 30; do
+    echo "gate probe $(date -u +%T): $(free -m | awk 'NR==2{print "mem used "$3" avail "$7" MB"}')," \
+      "jc rss $(ps -o rss= -p "$(cat "$home/jc.pid" 2>/dev/null)" 2>/dev/null || echo -) kB," \
+      "top $(ps -eo rss=,comm= --sort=-rss | head -3 | awk '{printf "%s:%dMB ", $2, $1/1024}')," \
+      "disk $(df -m "$REHEARSAL_HOME" | awk 'NR==2{print "free "$4" MB"}')"
+  done ) &
+probe=$!
+trap 'kill "$probe" 2>/dev/null' EXIT
 tar -xzf "$here/synth-export.tgz" -C "$export_dir"
 python3 -I "$here/redate.py" "$export_dir"
 "$repo/deploy/rehearsal/import.sh" gate "$port" "$pg_port" "$export_dir"
