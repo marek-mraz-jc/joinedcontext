@@ -27,7 +27,7 @@ pub const SLOW_MS: u64 = 3_000;
 const TIMEOUT: StdDuration = StdDuration::from_secs(10);
 const AT_ONCE: usize = 8;
 
-/// The header a probe call carries [`MARK`] in, so the host's access layer can tell a probe
+/// The header a probe call (and every read of the views reconciler) carries [`MARK`] in, so the host's access layer can tell a background read
 /// from a visitor and write its answered calls as it writes a poll's (one line a minute).
 pub const MARK_HEADER: &str = "x-probe-mark";
 /// A secret of the process hosting the Portal beside its gateway (`jc` sets it at start, never
@@ -45,11 +45,15 @@ pub struct Answer {
 /// The request that asks surface `surface` of the Endpoint at `base` whether it is up; `None`
 /// for a surface the probes do not ask.
 fn request(client: &reqwest::Client, base: &str, surface: &str) -> Option<reqwest::RequestBuilder> {
-    let ask = asked(client, base, surface)?;
-    Some(match MARK.get() {
+    Some(marked(asked(client, base, surface)?))
+}
+
+/// `ask` with [`MARK`] when the host set one: a background read the host writes as a poll's.
+pub fn marked(ask: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    match MARK.get() {
         Some(mark) => ask.header(MARK_HEADER, mark),
         None => ask,
-    })
+    }
 }
 
 fn asked(client: &reqwest::Client, base: &str, surface: &str) -> Option<reqwest::RequestBuilder> {
@@ -317,8 +321,17 @@ impl Probes {
                 }
             }
         }
+        // The gateway builds two downloads at once (`MAX_DOWNLOADS`) and answers a third 503 at
+        // once: with 8 asks in flight a round refused ~480 of its own 540 `file.csv` asks on the
+        // prod rehearsal. One at a time leaves the other build slot to a visitor.
+        let files = tokio::sync::Semaphore::new(1);
+        let files = &files;
         let judged = stream::iter(asks)
             .map(|(project, name, surface, public, ask)| async move {
+                let _file = match surface == "csv" {
+                    true => files.acquire().await.ok(),
+                    false => None,
+                };
                 let started = Instant::now();
                 let sent = ask.send().await;
                 let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -671,5 +684,55 @@ mod tests {
             6,
             "every call carries the mark"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_round_builds_one_file_at_a_time() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let building = Arc::new(AtomicUsize::new(0));
+        let held = Arc::clone(&building);
+        // Like the gateway past its build slots: a second file asked while one builds is a 503.
+        let app = axum::Router::new().fallback(move |uri: axum::http::Uri| {
+            let held = Arc::clone(&held);
+            async move {
+                if !uri.path().ends_with("/file.csv") {
+                    return axum::http::StatusCode::OK;
+                }
+                if held.fetch_add(1, Ordering::SeqCst) > 0 {
+                    held.fetch_sub(1, Ordering::SeqCst);
+                    return axum::http::StatusCode::SERVICE_UNAVAILABLE;
+                }
+                tokio::time::sleep(StdDuration::from_millis(20)).await;
+                held.fetch_sub(1, Ordering::SeqCst);
+                axum::http::StatusCode::OK
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let gateway = Url::parse(&format!(
+            "http://{}/",
+            listener.local_addr().expect("an address")
+        ))
+        .expect("a url");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let mirror = Mirror::default();
+        for slug in ["f-0", "f-1", "f-2", "f-3"] {
+            mirror.upsert(
+                serde_json::from_value(serde_json::json!({
+                    "apiVersion": crate::resource::API_VERSION, "kind": "Endpoint",
+                    "metadata": {"name": slug, "namespace": "bbsk"},
+                    "spec": {"slug": slug, "audience": "public", "enabledRepresentations": ["csv"], "mcp": false},
+                    "status": {"phase": "Live"},
+                }))
+                .expect("an endpoint"),
+            );
+        }
+        let (found, _) =
+            logged(Probes::new(Some(gateway), None).findings(&mirror, Utc::now())).await;
+        let files: Vec<_> = found.iter().filter(|f| f.check == "csv").collect();
+        assert_eq!(files.len(), 4, "{found:?}");
+        assert!(files.iter().all(|f| f.status == Status::Ok), "{files:?}");
+        assert_eq!(building.load(Ordering::SeqCst), 0);
     }
 }
