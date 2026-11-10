@@ -19,7 +19,7 @@ use crate::module::Module;
 use crate::modules::BuildCtx;
 use crate::modules::Hop;
 use crate::setup::{self, Secret, Setup};
-use crate::siblings::{Siblings, reach};
+use crate::siblings::{Sibling, Siblings, reach};
 use axum::Router;
 use axum::extract::Request;
 use axum::http::{HeaderName, HeaderValue, Uri};
@@ -28,6 +28,7 @@ use axum::response::Response;
 use context_gateway::config::Config;
 use jc_router::Mount;
 use std::collections::{BTreeMap, BTreeSet};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -80,7 +81,7 @@ pub fn work_dir(setup: &Setup) -> PathBuf {
 /// | `JC_GATEWAY_ORG_DOMAIN`, `JC_GATEWAY_PUBLIC_URL`, `JC_GATEWAY_PREVIEWS_DIR` | the mounts, the state dir |
 /// | `JC_GATEWAY_ASSISTANT_URL` | the assistant's internal listener |
 /// | `JC_GATEWAY_OAUTH_KEY` | the generated `gateway-oauth-key` |
-/// | `JC_OIDC_ISSUER`, `_JWKS_URL`, `_CLIENT_ID`, `_CLIENT_SECRET`, `JC_GATEWAY_REVOCATIONS_URL`, `_CONNECTORS_URL`, `_USAGE_URL` | kaisatsu and the Portal |
+/// | `JC_OIDC_ISSUER`, `_JWKS_URL`, `_JWKS_REACH` (host mode), `_CLIENT_ID`, `_CLIENT_SECRET`, `JC_GATEWAY_REVOCATIONS_URL`, `_CONNECTORS_URL`, `_USAGE_URL` | kaisatsu and the Portal |
 /// | `JC_GATEWAY_REPO_DIR`, `_PROJECTS_DIR`, `_ASSEMBLY_DIR` | shako, checked out by [`follow_forge`] |
 #[must_use]
 pub fn vars(
@@ -148,14 +149,12 @@ pub fn vars(
         // request reached it on and the Portal's internal listener checks it. The keys are read
         // on the listener (`JC_OIDC_JWKS_URL`).
         let realm = format!("/realms/{}", setup.realm);
-        group(vec![
+        let (keys, keys_reach) = realm_keys(id, siblings.listener);
+        let mut oidc = vec![
             ("JC_OIDC_ISSUER", Some(format!("{}{realm}", id.public))),
             (
                 "JC_OIDC_JWKS_URL",
-                Some(format!(
-                    "{}{realm}/protocol/openid-connect/certs",
-                    id.internal
-                )),
+                Some(format!("{keys}{realm}/protocol/openid-connect/certs")),
             ),
             ("JC_OIDC_CLIENT_ID", Some(setup::GATEWAY_CLIENT.to_owned())),
             ("JC_OIDC_CLIENT_SECRET", secret(Secret::GatewayClientSecret)),
@@ -171,7 +170,11 @@ pub fn vars(
                 "JC_GATEWAY_USAGE_URL",
                 Some(format!("{internal}/internal/usage")),
             ),
-        ]);
+        ];
+        if let Some(reach) = keys_reach {
+            oidc.push(("JC_OIDC_JWKS_REACH", Some(reach.to_string())));
+        }
+        group(oidc);
     }
     if siblings.get(Module::Shako).is_some() && setup.value(Secret::ShakoToken).is_some() {
         group(vec![
@@ -202,6 +205,21 @@ const MAX_ENTRIES: usize = 10_000;
 const MAX_TREE: u64 = 4 * MAX_ARCHIVE;
 /// The largest branch answer read.
 const MAX_ANSWER: u64 = 64 * 1024;
+
+/// Where the gateway reads the realm's keys: kaisatsu's internal address, or, for kaisatsu on a
+/// host of its own (host mode), that host over plain http dialed at `jc`'s listener (the
+/// `JC_OIDC_JWKS_REACH` address), which routes it by the host as it does a request through the
+/// edge. The gateway reads keys over http only, and the public base is https behind the edge.
+fn realm_keys(id: &Sibling, listener: SocketAddr) -> (String, Option<SocketAddr>) {
+    let rest = id
+        .public
+        .strip_prefix("https://")
+        .or_else(|| id.public.strip_prefix("http://"));
+    match rest {
+        Some(rest) if id.internal == id.public => (format!("http://{rest}"), Some(listener)),
+        _ => (id.internal.clone(), None),
+    }
+}
 
 /// Repositories of shako read over its HTTP API, never with a `git` binary (the image has none):
 /// the commit of a ref from `branches/{ref}` (or the ref itself when it is a commit id), then
@@ -1054,6 +1072,74 @@ mod tests {
             );
             assert_eq!(text(res).await, "cookie=true auth=true", "{method} {path}");
         }
+    }
+
+    /// T-6705: in host mode kaisatsu's public base is https behind the edge, which the gateway's
+    /// key reader refuses ("the JWKS URL must be the in-cluster http:// address"), so the gateway
+    /// never built with a realm. It reads the keys at kaisatsu's host over http on jc's listener
+    /// instead, which routes them by that host; the issuer stays public.
+    #[tokio::test]
+    async fn host_mode_reads_the_realm_keys_at_kaisatsus_host_on_the_own_listener() {
+        let mut cfg = JcConfig::merge(
+            Cli {
+                role: Some("all".into()),
+                base_host: Some("city.example".into()),
+                scheme: Some("https".into()),
+                ..Cli::default()
+            },
+            FileConfig::default(),
+        )
+        .unwrap();
+        cfg.mode = crate::config::MountMode::Host;
+        let plans = crate::app::plan_mounts(&cfg).unwrap();
+        let mount = plans
+            .iter()
+            .find(|p| p.module == Module::Gateway)
+            .map(|p| p.mount.clone())
+            .unwrap();
+        // jc's listener in host mode, with kaisatsu's keys on its own host only.
+        let certs = "/realms/jc/protocol/openid-connect/certs";
+        let kaisatsu =
+            Router::new().route(certs, axum::routing::get(|| async { r#"{"keys":[]}"# }));
+        let table = jc_router::JcRouterBuilder::new("https", "city.example")
+            .mount(
+                jc_router::MountSpec {
+                    module: "kaisatsu".into(),
+                    host: Some("id.city.example".into()),
+                    path_prefix: None,
+                },
+                kaisatsu,
+            )
+            .build()
+            .unwrap();
+        let listener: SocketAddr = serve(table.into_axum_router())
+            .strip_prefix("http://")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let siblings = Siblings::new(&plans, SocketAddr::new([0; 4].into(), listener.port()));
+        let dir = tempfile::tempdir().unwrap();
+        let setup =
+            Setup::prepare(dir.path(), &Module::ALL, &std::collections::BTreeMap::new()).unwrap();
+        let taken = Some("127.0.0.1:40123".parse().unwrap());
+        let v = vars(&siblings, &setup, true, &mount, None, taken, |_: &str| None);
+        assert_eq!(v["JC_OIDC_ISSUER"], "https://id.city.example/realms/jc");
+        let url = &v["JC_OIDC_JWKS_URL"];
+        assert!(!url.starts_with("https://"), "the gateway refuses {url}");
+        assert_eq!(url, &format!("http://id.city.example{certs}"));
+        assert_eq!(v["JC_OIDC_JWKS_REACH"], listener.to_string());
+        // The gateway's own reader takes the keys from there, never from DNS.
+        let verifier = jc_core::auth::token::Verifier::new(v["JC_OIDC_ISSUER"].clone());
+        let reach = v["JC_OIDC_JWKS_REACH"].parse().ok();
+        jc_core::auth::jwks::refresh_at(&verifier, url, reach)
+            .await
+            .expect("the realm's keys on jc's listener");
+        // The URL alone (no reach) takes DNS for a name nothing serves.
+        assert!(jc_core::auth::jwks::refresh(&verifier, url).await.is_err());
+        // Slug mode reads the keys on a loopback address already: no reach.
+        let (slug, setup, mount, _d) = fixture();
+        let v = vars(&slug, &setup, true, &mount, None, taken, |_: &str| None);
+        assert!(!v.contains_key("JC_OIDC_JWKS_REACH"));
     }
 
     /// The siblings and secrets of `--role all` in slug mode, and the gateway's mount.
