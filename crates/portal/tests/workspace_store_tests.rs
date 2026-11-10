@@ -206,7 +206,9 @@ async fn a_preview_start_keeps_its_author_and_salt_until_the_next_start() {
         ))),
         None => eprintln!("skipped on PostgreSQL: JC_PORTAL_TEST_DATABASE_URL is not set"),
     }
-    let name = format!("p{}", crate::unique::unique());
+    // A workspace name is a DNS label of at most 20 characters: the unique tail, the low 40 bits
+    // of the clock with the process id and counter.
+    let name = format!("p{}", &crate::unique::unique()[7..]);
     for store in stores {
         store.create(opening(&name, "helsinki", 1)).await.unwrap();
         assert_eq!(store.get(&name).await.unwrap().unwrap().preview, None);
