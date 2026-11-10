@@ -30,6 +30,8 @@ linkml-model = { path = "../linkml-model" }
 ogc-cql2 = { path = "../ogc-cql2" }
 serde_json = { version = "1", default-features = false, features = ["std"] }
 uuid = { version = "1", default-features = false, features = ["v4"] }
+# extent reads share one process-wide bound (jc-memory-cut2)
+tokio = { version = "1", default-features = false, features = ["sync"] }
 
 [dev-dependencies]
 antares-ops = { workspace = true, features = ["test-kit"] }
