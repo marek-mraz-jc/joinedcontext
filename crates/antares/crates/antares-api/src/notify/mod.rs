@@ -63,18 +63,51 @@ use crate::bounds::{CHANGE_QUEUE, DELIVERY_WIDTH};
 use crate::bounds::{DELIVERY_LANE, DELIVERY_WIDTH_PER_TENANT};
 static CHANGES_DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static TASK_PANICS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// One queued request batch: its tick, its changes and their bytes on
+/// [`QUEUE_LEDGER`], given back when the drain has matched them.
+type Queued = (u64, Vec<Change>, Held);
+
 /// Hand a batch to the matcher queue: counted as pending on acceptance,
-/// counted as dropped when the queue is full. Not the durable outbox
-/// (`antares_sql::store::pg::outbox::enqueue`), which is a row inside the
-/// caller's transaction: this ring lives in the process and a full one
-/// drops, which is why the drop is counted.
+/// counted as dropped when the queue is full, by count or by bytes. Not the
+/// durable outbox (`antares_sql::store::pg::outbox::enqueue`), which is a
+/// row inside the caller's transaction: this ring lives in the process and a
+/// full one drops, which is why the drop is counted.
 fn queue_for_matching(
-    tx: &tokio::sync::mpsc::Sender<(u64, Vec<Change>)>,
+    tx: &tokio::sync::mpsc::Sender<Queued>,
     pending: &std::sync::atomic::AtomicUsize,
     changes: Vec<Change>,
 ) {
+    queue_within(
+        tx,
+        pending,
+        changes,
+        &QUEUE_LEDGER,
+        *crate::bounds::DELIVERY_LANE_BYTES,
+    );
+}
+
+/// [`queue_for_matching`] against `ledger` and its `budget`.
+fn queue_within(
+    tx: &tokio::sync::mpsc::Sender<Queued>,
+    pending: &std::sync::atomic::AtomicUsize,
+    changes: Vec<Change>,
+    ledger: &'static Ledger,
+    budget: usize,
+) {
+    let bytes = changes.iter().fold(0usize, |n, (tenant, before, after)| {
+        [before, after]
+            .into_iter()
+            .flatten()
+            .fold(n.saturating_add(tenant.len()), |n, doc| {
+                n.saturating_add(heap_estimate(doc))
+            })
+    });
+    let Some(held) = ledger.take(bytes, budget) else {
+        note_drop();
+        return;
+    };
     // stamped now, after the write: a subscription made later never matches it
-    if tx.try_send((crate::mirror::tick(), changes)).is_ok() {
+    if tx.try_send((crate::mirror::tick(), changes, held)).is_ok() {
         pending.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     } else {
         note_drop();
@@ -219,9 +252,9 @@ pub(crate) async fn wire_matcher(state: &mut AppState) {
 
     // The queue carries whole before+after payloads and is drained one
     // inline delivery at a time, so behind one slow subscriber an unbounded
-    // queue grows until the process dies. Bounded instead: a full queue drops
-    // the change and counts it.
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<(u64, Vec<Change>)>(CHANGE_QUEUE);
+    // queue grows until the process dies. Bounded instead, by batches and by
+    // the bytes of their documents: a full queue drops the change and counts it.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Queued>(CHANGE_QUEUE);
     let flush_tx = tx.clone();
     let flush_pending = state.pending_changes.clone();
     state.change_flush = Some(Arc::new(move |changes: Vec<Change>| {
@@ -256,19 +289,21 @@ pub(crate) async fn wire_matcher(state: &mut AppState) {
     let st = state.clone();
     let pending = state.pending_changes.clone();
     crate::spawn_loop(async move {
-        while let Some((queued, first)) = rx.recv().await {
+        while let Some((queued, first, held)) = rx.recv().await {
             let mut batch: Vec<(u64, Change)> = first.into_iter().map(|c| (queued, c)).collect();
-            let mut taken: usize = 1;
+            // the queue's bytes stay held until this pass has matched them
+            let mut holds = vec![held];
             // everything already queued behind it rides the same pass
             while batch.len() < CHANGE_BATCH {
                 match rx.try_recv() {
-                    Ok((queued, c)) => {
+                    Ok((queued, c, held)) => {
                         batch.extend(c.into_iter().map(|c| (queued, c)));
-                        taken = taken.saturating_add(1);
+                        holds.push(held);
                     }
                     Err(_) => break,
                 }
             }
+            let taken = holds.len();
             let st = st.clone();
             // The batch stays pending until its last group is delivered: the
             // groups leave on their subscriptions' lanes, after this drain.
@@ -277,6 +312,7 @@ pub(crate) async fn wire_matcher(state: &mut AppState) {
                 taken,
             });
             guarded(async move { process_queued(&st, batch, Some(done)).await }).await;
+            drop(holds);
         }
     });
     let st = state.clone();
