@@ -174,20 +174,36 @@ pub fn pin_caller(
         headers.insert(PROVENANCE_ACTOR_KIND, HeaderValue::from_static(kind));
     }
     request_id(headers);
-    if subject.read_only {
-        headers.insert(READ_ONLY, HeaderValue::from_static("true"));
-    }
+    headers.extend(caller_headers(subject));
     if subject.agreement.is_some() {
-        one(headers, DID, subject.did.as_deref());
         return Ok(());
     }
-    one(headers, SUBJECT, subject.user_principal());
     let named = subject.client.as_deref();
     one(
         headers,
         PROVENANCE_CLIENT,
         named.filter(|c| *c != GATEWAY_CLIENT),
     );
+    if asked {
+        headers.insert(RESTRICTED, HeaderValue::from_static("true"));
+    }
+    Ok(())
+}
+
+/// Who `subject` is to the broker, as the `x-jc-*` headers it decides on (Antares
+/// `addons/joinedcontext-policy/README.md` section 1): what [`pin_caller`] writes on every hop,
+/// and what any other server reading the broker for a caller sends, so both name the caller
+/// alike. Built from the verified subject alone, never from a request's headers.
+pub fn caller_headers(subject: &Subject) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    if subject.read_only {
+        headers.insert(READ_ONLY, HeaderValue::from_static("true"));
+    }
+    if subject.agreement.is_some() {
+        one(&mut headers, DID, subject.did.as_deref());
+        return headers;
+    }
+    one(&mut headers, SUBJECT, subject.user_principal());
     // Only the gateway's own hops speak as the gateway, never a token of its client. A project's
     // account is `{project}/{name}`, the form a Policy assignee names it by (PL-92): the broker
     // compares the header with the assignee as written, and a bare name would let two projects'
@@ -200,17 +216,14 @@ pub fn pin_caller(
             Some(project) => format!("{project}/{name}"),
             None => name.to_owned(),
         });
-    one(headers, CLIENT, client.as_deref());
+    one(&mut headers, CLIENT, client.as_deref());
     // The broker matches a `group` assignee as the gateway does (ADR-N-067 2.3).
-    list(headers, GROUPS, subject.grant_groups(), false);
-    list(headers, ROLES, &subject.roles, true);
+    list(&mut headers, GROUPS, subject.grant_groups(), false);
+    list(&mut headers, ROLES, &subject.roles, true);
     if subject.member_of_organization {
         headers.insert(MEMBER, HeaderValue::from_static("true"));
     }
-    if asked {
-        headers.insert(RESTRICTED, HeaderValue::from_static("true"));
-    }
-    Ok(())
+    headers
 }
 
 /// The channel and the actor of a write by `subject` (ADR-N-054 2.3, DM-111): a Pipeline's
@@ -621,5 +634,74 @@ mod tests {
         headers.insert(REASON, HeaderValue::from_static("kept"));
         drop_identity(&mut headers);
         assert_eq!(headers.len(), 1, "{headers:?}");
+    }
+
+    /// One copy of the rules (jc-preview-subject): every `x-jc-*` header a hop carries about the
+    /// caller is [`caller_headers`]' for that subject, for each kind of caller, and a forged
+    /// identity header the request brought never survives beside them.
+    #[test]
+    fn a_hop_names_the_caller_exactly_as_caller_headers_do() {
+        let person = Subject {
+            user: Some("jana".to_owned()),
+            id: Some("2f0c".to_owned()),
+            groups: ["analysts".to_owned()].into(),
+            organization_groups: Some(["helsinki-team".to_owned()].into()),
+            member_of_organization: true,
+            roles: ["endpoint:city/air".to_owned()].into(),
+            read_only: true,
+            ..Subject::default()
+        };
+        let account = Subject {
+            service_account: Some("ingest".to_owned()),
+            service_account_project: Some("city".to_owned()),
+            roles: ["writer".to_owned()].into(),
+            ..Subject::default()
+        };
+        let participant = Subject {
+            did: Some("did:web:a.example".to_owned()),
+            agreement: Some("agr-1".to_owned()),
+            ..Subject::default()
+        };
+        for subject in [
+            Subject::anonymous(),
+            person,
+            account,
+            participant,
+            Subject::default(),
+        ] {
+            let mut request = Request::new(axum::body::Body::empty());
+            for name in [SUBJECT, ROLES, GROUPS, MEMBER, CLIENT, DID] {
+                request
+                    .headers_mut()
+                    .insert(name, HeaderValue::from_static("forged"));
+            }
+            pin_caller(&mut request, "air", &subject).expect("a usable space");
+            let identity = |headers: &HeaderMap| {
+                let mut pairs: Vec<(String, String)> = headers
+                    .iter()
+                    .filter(|(name, _)| {
+                        [
+                            &SUBJECT, &ROLES, &GROUPS, &MEMBER, &CLIENT, &DID, &READ_ONLY,
+                        ]
+                        .contains(name)
+                    })
+                    .map(|(name, value)| {
+                        (name.to_string(), value.to_str().unwrap_or("?").to_owned())
+                    })
+                    .collect();
+                pairs.sort();
+                pairs
+            };
+            assert_eq!(
+                identity(request.headers()),
+                identity(&caller_headers(&subject)),
+                "{subject:?}"
+            );
+            assert!(
+                !request.headers().values().any(|v| v == "forged"),
+                "{subject:?}: {:?}",
+                request.headers()
+            );
+        }
     }
 }

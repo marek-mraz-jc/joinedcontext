@@ -1917,6 +1917,7 @@
       "hiddenMark": "neposkytuje se",
       "empty": "Na této stránce nejsou žádné entity.",
       "refused": "Návrh filtru byl odmítnut: {reason}",
+      "notGranted": "Váš přístup k tomuto rozhraní nezahrnuje čtení {type}, proto porovnání nemůže ukázat, co by váš návrh poskytoval. O čtení požádejte v části Požádat o přístup na stránce rozhraní; rozhodují o něm zásady rozhraní.",
       "failed": "Nepodařilo se přečíst, co filtr poskytuje: {reason}. Změňte filtr nebo to zkuste znovu.",
       "notLive": "Porovnání čte přes rozhraní, proto se zobrazí, když je rozhraní aktivní.",
       "noType": "Porovnání potřebuje alespoň jeden typ, který rozhraní obsluhuje.",

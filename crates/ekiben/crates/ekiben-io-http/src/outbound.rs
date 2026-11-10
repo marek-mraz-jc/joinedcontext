@@ -8,7 +8,7 @@
 //!   RFC 1918, CGNAT (100.64/10), benchmarking (198.18/15), IPv6 unique-local, site-local and
 //!   Teredo, and every IPv4 address embedded in IPv6 (mapped, compatible, NAT64, 6to4) by the
 //!   rule of the address it embeds.
-//! - An organization's `private_hosts` (exact names) may resolve to private ranges (RFC 1918,
+//! - An organization's `private_hosts` (exact names, or `name:port` for one port) may resolve to private ranges (RFC 1918,
 //!   CGNAT, ULA) but never to loopback, link-local, metadata, unspecified or multicast.
 //! - A name resolving to several addresses is refused when any one of them is.
 //! - The organization's `allowed_http_hosts` allow-list applies as for `http_client`.
@@ -192,7 +192,7 @@ pub async fn resolve_host_checked(
     let bare = host.trim_start_matches('[').trim_end_matches(']');
     org.check_http_host(bare)?;
     let quotas = org.get_quotas();
-    let private_host = org.is_private_host_allowed(bare);
+    let private_host = org.is_private_host_port_allowed(bare, port);
 
     let addrs: Vec<SocketAddr> = match bare.parse::<IpAddr>() {
         Ok(ip) => vec![SocketAddr::new(ip, port)],

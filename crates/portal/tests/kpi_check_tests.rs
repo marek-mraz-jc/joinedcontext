@@ -15,6 +15,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{envelope, person, send};
 use joinedcontext_portal::api::kpi_check::records_verdict;
+use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::pipeline_validation::ModelSchema;
@@ -27,6 +28,15 @@ const SECRET: &str = "x7nq7pzk2mtv6hx5brj4gcdsfa";
 const WRITER: &str = "w3nq7pzk2mtv6hx5brj4gcdsfa";
 const TOKEN: &str = "an-admin-token-of-at-least-32-bytes!";
 const ROUTE: &str = "/api/v1/projects/city/kpis/check";
+
+/// `name`, in the group of the project `city`: the gateway's door admits them on its
+/// `organization` Endpoints (EP-14), and so does the preview that reads as they would.
+fn member(name: &str) -> Identity {
+    Identity {
+        groups: vec!["city".into()],
+        ..person(name)
+    }
+}
 
 /// The spaces `mobility` (parking and stops) and `secret` of `city`, as the reconciler reads them.
 fn repository(dir: &Path) -> jcctl::loader::Repository {
@@ -258,7 +268,7 @@ async fn a_valid_draft_previews_one_value_per_area() {
     let r = rig().await;
     let answer = send(
         &r.state,
-        person("jana"),
+        member("jana"),
         "POST",
         ROUTE,
         Some(draft("sum(parking.occupied) / count(stops)", "stops")),
@@ -293,7 +303,7 @@ async fn a_refused_formula_names_its_field_and_reads_nothing() {
     let r = rig().await;
     let answer = send(
         &r.state,
-        person("jana"),
+        member("jana"),
         "POST",
         ROUTE,
         Some(draft("sum(parking.free) / count(stops)", "stops")),
@@ -326,7 +336,7 @@ async fn a_source_in_an_unread_space_is_unknown() {
     let r = rig().await;
     let hidden = send(
         &r.state,
-        person("jana"),
+        member("jana"),
         "POST",
         ROUTE,
         Some(draft("sum(parking.occupied) / count(stops)", "hidden")),
@@ -334,7 +344,7 @@ async fn a_source_in_an_unread_space_is_unknown() {
     .await;
     let absent = send(
         &r.state,
-        person("jana"),
+        member("jana"),
         "POST",
         ROUTE,
         Some(draft("sum(parking.occupied) / count(stops)", "absent")),
@@ -382,7 +392,7 @@ fn with_model(rig: &Rig) {
 
 /// The check's answer to jana.
 async fn checked(rig: &Rig, body: Value) -> Value {
-    let answer = send(&rig.state, person("jana"), "POST", ROUTE, Some(body)).await;
+    let answer = send(&rig.state, member("jana"), "POST", ROUTE, Some(body)).await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
     serde_json::from_str(&answer.text).expect("JSON")
 }

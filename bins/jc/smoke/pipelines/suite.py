@@ -167,6 +167,19 @@ def queue_wait(http: Http, projects, base: str, wait: float):
     return min(RUN_TIMEOUT, max(wait, ahead * each)), ahead, each
 
 
+RUNNING = re.compile(r"running since (\S+?Z)")
+ENDED = re.compile(r"the last run ended (\S+?Z)")
+
+
+def started_since(http: Http, base: str, t0: float) -> bool:
+    """The pipeline left the queue for the run asked at `t0`: running now, or its last run ended
+    after it."""
+    st, _, raw = http.call("GET", base)
+    said = " ".join(c.get("message") or "" for c in conditions(as_json(raw) or {})) if st == 200 else ""
+    ended = ENDED.search(said)
+    return bool(RUNNING.search(said) or (ended and (_ts(ended.group(1)) or 0) >= t0))
+
+
 def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, projects=()) -> None:
     base = f"/api/v1/projects/{p.project}/pipelines/{p.name}"
     st, _, raw = http.call("GET", base + "/runs?limit=5")
@@ -179,7 +192,7 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
             r.skip(x, p.key, "", "", f"the run did not start ({st})")
         return
     started = (as_json(raw) or {}).get("run")
-    run, deadline, extended, rounds = None, time.time() + wait, None, 0
+    run, deadline, extended, rounds, ran_on = None, time.time() + wait, None, 0, False
     while True:
         while time.time() < deadline:
             time.sleep(5)
@@ -202,6 +215,12 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
         # than at the last look (the queue moves), and stop once a round sees no progress.
         ahead = extended[1] if extended else None
         extended = queue_wait(http, projects, base, wait)
+        if not extended and not ran_on and started_since(http, base, t0):
+            # Out of the queue: running, or ended after the request. The runs list holds a run
+            # once its log has lines (gate 2026-11-10T053657Z: kataster started at 240 s, ended at
+            # 305 s), so wait once more, as long as a run may take (prod's RUN_TIMEOUT).
+            ran_on, deadline = True, time.time() + RUN_TIMEOUT
+            continue
         if not extended or (ahead is not None and extended[1] >= ahead):
             break
         rounds += 1

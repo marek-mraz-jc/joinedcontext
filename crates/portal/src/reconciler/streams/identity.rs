@@ -92,6 +92,81 @@ pub(crate) fn own_credential(value: &mut Value, project: &str) {
     own_caches(value, project);
 }
 
+/// The header the gateway reads a delete's reason from (DM-113).
+const REASON_HEADER: &str = "JC-Reason";
+
+/// The two ways a step names the instance's own gateway, each with the `/` that ends the host:
+/// `${JC_GATEWAY_URL}@evil.com/` or `${JC_GATEWAY_HOST}:1/` is some other host and gets nothing.
+const GATEWAY_PREFIXES: &[&str] = &["${JC_GATEWAY_URL}/", "http://${JC_GATEWAY_HOST}/"];
+
+/// Gives every delete an author's step sends to the instance's gateway a `JC-Reason` naming the
+/// pipeline and its stream (DM-113): the gateway answers `400 reason-required` to a delete
+/// without one, so HSL's withdrawn alerts and OSM's removed objects never left their spaces.
+/// Any `http` processor at any depth (branch, switch, try, catch, workflow, while) counts; a
+/// reason the step sets itself, in any letter case, is kept. The reason is built from the
+/// manifest's names alone, through the shared encoder, so no source data and no `${...}` reach
+/// the header, and it goes nowhere but the gateway.
+pub(crate) fn reasoned_deletes(value: &mut Value, project: &str, pipeline: &str) {
+    let reason = crate::pipeline_source_deletes::reason_header(&format!(
+        "pipeline step: a delete in the pipeline's own steps, pipeline {pipeline} stream {}",
+        super::stream_id(project, pipeline)
+    ));
+    name_deletes(value, &reason);
+}
+
+fn name_deletes(value: &mut Value, reason: &str) {
+    match value {
+        Value::Array(items) => items.iter_mut().for_each(|item| name_deletes(item, reason)),
+        Value::Object(map) => {
+            if let Some(Value::Object(http)) = map.get_mut("http") {
+                if deletes_through_gateway(http) {
+                    let headers = http
+                        .entry("headers")
+                        .or_insert_with(|| Value::Object(Default::default()));
+                    if headers.is_null() {
+                        *headers = Value::Object(Default::default());
+                    }
+                    if let Some(headers) = headers.as_object_mut() {
+                        if !headers
+                            .keys()
+                            .any(|key| key.eq_ignore_ascii_case(REASON_HEADER))
+                        {
+                            headers.insert(REASON_HEADER.to_owned(), reason.into());
+                        }
+                    }
+                }
+            }
+            map.values_mut().for_each(|item| name_deletes(item, reason));
+        }
+        _ => {}
+    }
+}
+
+/// An `http` processor that deletes context data through the instance's gateway: `POST
+/// …/entityOperations/delete` (Bento's verb defaults to POST), or `DELETE` on an entity, its
+/// attributes or its temporal history (`…/entities/…`). The path is judged by its literal text:
+/// a `${! }` in the entity id still reads as `/entities/`, a delete whose operation itself is
+/// interpolated gets no reason and stays refused, as before.
+fn deletes_through_gateway(http: &serde_json::Map<String, Value>) -> bool {
+    let Some(url) = http.get("url").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(rest) = GATEWAY_PREFIXES
+        .iter()
+        .find_map(|prefix| url.strip_prefix(prefix))
+    else {
+        return false;
+    };
+    let path = rest.split('?').next().unwrap_or_default();
+    let verb = http.get("verb").and_then(Value::as_str).unwrap_or("POST");
+    if verb.eq_ignore_ascii_case("POST") {
+        path.trim_end_matches('/')
+            .ends_with("/entityOperations/delete")
+    } else {
+        verb.eq_ignore_ascii_case("DELETE") && path.contains("/entities/")
+    }
+}
+
 /// Rewrites an author's `${JC_CLIENT_ID}` and `${JC_CLIENT_SECRET}` into the stream's own
 /// project's pipeline client (PL-16, T-3163).
 ///

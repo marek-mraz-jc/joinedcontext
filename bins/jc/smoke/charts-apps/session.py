@@ -168,23 +168,22 @@ FILE_REF = re.compile(r"\$\(file:([^)]+)\)")
 
 class Realm:
     """The realm file kaisatsu imported (<state>/realms/<realm>.json, 0600): an App client's secret
-    and a rehearsal person's password, each read from the file its `$(file:...)` names."""
+    and a rehearsal person's password, each read from the file its `$(file:...)` names, a relative
+    name under kaisatsu's import secrets dir <home>/secrets/realm (the kit's secret_file)."""
 
     def __init__(self, state):
         from pathlib import Path
 
         files = sorted((Path(state) / "realms").glob("*.json")) if state else []
+        self.secrets = Path(state).parent / "secrets" / "realm" if state else Path()
         self.doc = json.loads(files[0].read_text()) if files else {}
         self.name = self.doc.get("realm", "")
         self.clients = {c.get("clientId"): c for c in self.doc.get("clients") or []}
         self.users = {u.get("username"): u for u in self.doc.get("users") or []}
 
-    @staticmethod
-    def _read(ref: str) -> str | None:
-        from pathlib import Path
-
+    def _read(self, ref: str) -> str | None:
         m = FILE_REF.fullmatch((ref or "").strip())
-        f = Path(m[1]) if m else None
+        f = self.secrets / m[1] if m else None
         return f.read_text().strip() if f and f.is_file() else None
 
     def client(self, client_id: str) -> tuple[str | None, str | None]:
@@ -209,8 +208,9 @@ def app_token(base: str, realm: Realm, client_id: str, username: str, timeout: f
     secret, redirect = realm.client(client_id)
     password = realm.password(username)
     if not (secret and redirect and password):
-        raise RuntimeError(f"no {'secret' if not secret else 'redirect URI' if not redirect else 'password'} "
-                           f"for {client_id if password else username} in the realm file")
+        what, whom = ("secret", client_id) if not secret else ("redirect URI", client_id) if not redirect \
+            else ("password", username)
+        raise RuntimeError(f"no {what} for {whom} in the realm file")
     s = Session(base, timeout)
     verifier = secrets.token_urlsafe(48)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()

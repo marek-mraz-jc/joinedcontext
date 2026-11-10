@@ -21,6 +21,12 @@ jc_bin=${JC_BIN:-${CARGO_TARGET_DIR:-$here/../../target}/debug/jc}
 "$here/ui-fresh.sh" "$here/../.." "$jc_bin" || exit 1
 export_dir=${REHEARSAL_EXPORT:-$home/export}
 bind=${REHEARSAL_BIND:-127.0.0.1}
+# The rehearsal's one origin. kaisatsu names its issuer by the host a request reached it on, and
+# ekiben's guard lets the Portal's sweeps reach only the literal http://127.0.0.1:<port> (jc
+# ekiben.rs host_target): a token URL on `localhost` is refused as SSRF and every *.expiry sweep
+# and pipeline_oauth2 stream stops (supervisor 2026-11-10). So realm, jc, Apps and import all say
+# 127.0.0.1; the guard stays as it is.
+origin="http://127.0.0.1:$port"
 
 mkdir -p "$home"/secrets "$home"/state/realms "$home"/import "$home"/repos "$home"/files
 chmod 700 "$home/state" "$home/state/realms"
@@ -125,7 +131,7 @@ fi
 if [ -d "$export_dir/keycloak" ]; then
   python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/state/realms" \
     --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}" --secrets-dir "$home/secrets/realm" \
-    --public-base "http://localhost:$port"
+    --public-base "$origin"
   # Each secret the realm config names gets a fresh value of the rehearsal (never the old one), in
   # a file of its own under secrets/realm: kaisatsu inside jc reads $(file:...) there and no
   # environment. secrets/realm-NAME stays a link to it for the smoke and shots.
@@ -240,10 +246,17 @@ done
 # default $home/dashboards: a rehearsal.py dashboards dir); daiya lets only file-provisioned
 # datasources reach it.
 REHEARSAL_DASHBOARDS=${REHEARSAL_DASHBOARDS:-$home/dashboards}
+daiya_lines=
+rm -f "$home/daiya-provisioning/datasources/prometheus.yaml"
 if compgen -G "$REHEARSAL_DASHBOARDS/*.datasource.*.json" >/dev/null; then
   python3 -I "$here/rehearsal.py" provisioning --dashboards "$REHEARSAL_DASHBOARDS" --port "$port" \
     --out "$home/daiya-provisioning"
-  db_config+=$(printf '\n[daiya]\nprovisioning_dir = "%s"\n' "$home/daiya-provisioning")
+  daiya_lines+="provisioning_dir = \"$home/daiya-provisioning\""$'\n'
+fi
+# shellcheck source=deploy/rehearsal/prometheus.sh
+. "$here/prometheus.sh"  # the Prometheus the dashboards read, through its label proxy (jc-prod-metrics)
+if [ -n "$daiya_lines" ]; then
+  db_config+=$(printf '\n[daiya]\n%s' "$daiya_lines")
 fi
 # The hub's search_documents searches the sources the deployment names (base-values of the
 # context-gateway; REHEARSAL_DEPLOYMENT is a deployment clone); jc fills the assistant's address.
@@ -258,10 +271,13 @@ elif [ -z "${JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:-}" ]; then
 fi
 # The datasets this kit renames answer their old names too (RENAMES.md, rehearsal.py CKAN_NAMES).
 alias_config=$(python3 -I "$here/rehearsal.py" aliases)
-# REHEARSAL_APP_HOSTS=on: the Portal also on every App host {name}.apps.localhost:<port>, as jc-prod's
-# *.apps.{domain} entry (edge-session-design S4a); jc sets JC_PORTAL_APPS_URL from it.
+# The Portal also on every App host {name}.apps.localhost:<port>, as jc-prod's *.apps.{domain} entry
+# (edge-session-design S4a; deployment components/jc/values/server/base-values.yaml.gotmpl); jc
+# sets JC_PORTAL_APPS_URL and JC_PORTAL_SERVE_APP_HOSTS from it. Without it every App host gets the
+# Portal's own page (gate 5 rerun, 2026-11-10: charts-apps app.server 200 text/html).
+# REHEARSAL_APP_HOSTS=off leaves it out.
 portal_mounts='[mounts.portal]\npath_prefix = ""\n'
-if [ "${REHEARSAL_APP_HOSTS:-off}" = on ]; then
+if [ "${REHEARSAL_APP_HOSTS:-on}" = on ]; then
   portal_mounts="[[mounts.portal]]\npath_prefix = \"\"\n\n[[mounts.portal]]\nhost = \"*.apps.localhost:$port\"\n"
 fi
 printf "$portal_mounts"'%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_config" > "$home/jc.toml"
@@ -281,7 +297,7 @@ fi
 # shellcheck source=deploy/rehearsal/apps.sh
 . "$here/apps.sh"  # the Apps: image bundles, apps cache, prod builds, roles person (jc-apps-export)
 nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \
-  --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
+  --listen "$bind:$port" --base-host "${origin#http://}" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" \
   --kaisatsu-import-secrets-dir "$home/secrets/realm" \
   --ekiben-client-secrets-dir "$home/secrets/realm" \
@@ -292,7 +308,7 @@ nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text 
   > "$home/jc.log" 2>&1 &
 echo $! > "$home/jc.pid"
 "$here/wait-jc.sh" "$(cat "$home/jc.pid")" "$home/jc.log" || exit 1
-echo "$env_name: jc on http://localhost:$port (log $home/jc.log)"
+echo "$env_name: jc on $origin (log $home/jc.log)"
 
 
 # The 24 h rule, now and hourly, beside jc (rehearsal database only).

@@ -385,6 +385,14 @@ pub fn in_process_depth() -> usize {
     INPROCESS_DEPTH.try_with(|d| *d).unwrap_or(0)
 }
 
+/// `f` run `depth` [`AppState::call`] frames deep: a streamed body is polled
+/// after the call that answered it returned, outside that call's frames, so
+/// the reads it makes take back the depth its handler ran at
+/// ([`in_process_depth`] then) rather than starting again from zero.
+pub async fn at_depth<F: std::future::Future>(depth: usize, f: F) -> F::Output {
+    INPROCESS_DEPTH.scope(depth, f).await
+}
+
 tokio::task_local! {
     /// How many [`AppState::call`] frames this task is already inside, held
     /// against [`crate::bounds::MAX_IN_PROCESS_CALL_DEPTH`]. Absent outside a
@@ -2417,5 +2425,18 @@ mod hit_batch {
         assert!(!batch.bump(Some(&a), url, |_| async { false }).await);
         assert!(batch.bump(Some(&b), url, |_| async { true }).await);
         assert!(batch.bump(None, url, |n| async move { n == 1 }).await);
+    }
+}
+
+#[cfg(test)]
+mod depth_tests {
+    /// A streamed body polled after its call returned takes back the depth its handler ran
+    /// at, and leaves the task's own depth as it was (jc-ogc-stream).
+    #[tokio::test]
+    async fn a_future_runs_at_the_depth_it_is_given() {
+        assert_eq!(super::in_process_depth(), 0);
+        let inside = super::at_depth(3, async { super::in_process_depth() }).await;
+        assert_eq!(inside, 3);
+        assert_eq!(super::in_process_depth(), 0);
     }
 }

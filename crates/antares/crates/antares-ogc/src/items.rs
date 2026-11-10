@@ -43,8 +43,9 @@ pub(crate) struct Params {
     /// The NGSI-LD `lang` a `LanguageProperty` is read in: the caller's `Accept-Language`.
     pub lang: Option<String>,
     /// Read the page without the store's whole count (T-6508), which walks every matching
-    /// row: the [`Page`] states no `matched`, and its `next` comes from one Entity read past
-    /// the page. A page read from a `next` token is read so too (R3-001).
+    /// row: the [`Page`] states no `matched`, and its `next` comes from the store's keyset
+    /// cursor or one Entity read past the page. A page read from a `next` token is read so
+    /// too (R3-001).
     pub uncounted: bool,
 }
 
@@ -611,15 +612,47 @@ pub(crate) fn token(part: usize, offset: usize, digest: u64) -> String {
     format!("{part}.{offset}.{digest:016x}")
 }
 
+/// [`token`] with the store's keyset cursor of the read at `offset` appended, when the scan
+/// named one: `part.offset.digest.cursor` (the cursor holds dots of its own).
+pub(crate) fn keyset_token(
+    part: usize,
+    offset: usize,
+    digest: u64,
+    cursor: Option<&str>,
+) -> String {
+    let plain = token(part, offset, digest);
+    match cursor {
+        Some(c) => format!("{plain}.{c}"),
+        None => plain,
+    }
+}
+
 pub(crate) fn read_token(text: &str, digest: u64, parts: usize) -> Option<(usize, usize)> {
-    let mut it = text.split('.');
-    let (Some(part), Some(offset), Some(tag), None) = (it.next(), it.next(), it.next(), it.next())
-    else {
+    match read_keyset_token(text, digest, parts)? {
+        (part, offset, None) => Some((part, offset)),
+        _ => None,
+    }
+}
+
+/// The part, the offset and the store cursor of a [`keyset_token`]; `None` when it was made
+/// for another request or its cursor is none the scan writes.
+pub(crate) fn read_keyset_token(
+    text: &str,
+    digest: u64,
+    parts: usize,
+) -> Option<(usize, usize, Option<String>)> {
+    let mut it = text.splitn(4, '.');
+    let (Some(part), Some(offset), Some(tag)) = (it.next(), it.next(), it.next()) else {
         return None;
+    };
+    let cursor = match it.next() {
+        Some(c) if antares_ops::is_cursor(c) => Some(c.to_owned()),
+        Some(_) => return None,
+        None => None,
     };
     let part: usize = part.parse().ok()?;
     (tag == format!("{digest:016x}") && part < parts).then_some(())?;
-    Some((part, offset.parse().ok()?))
+    Some((part, offset.parse().ok()?, cursor))
 }
 
 /// One page of Features (C8 to C18).
@@ -666,6 +699,8 @@ pub(crate) struct Cursor {
     attrs: Option<Vec<String>>,
     /// The part and its upstream offset the page starts at, from its `next` token.
     start: (usize, usize),
+    /// The store's keyset cursor of the read at `start`, from the token.
+    resume: Option<String>,
     limit: usize,
     digest: u64,
     /// Whether the page states `numberMatched`: the request's first page, unless
@@ -688,6 +723,8 @@ struct Reading {
     pushdown: Pushdown,
     /// The upstream offset of the part's next read.
     pos: usize,
+    /// The store's keyset cursor of the read at `pos`, when the read before named one.
+    cursor: Option<String>,
     first: bool,
     /// What is left of the part's residual budget.
     budget: usize,
@@ -706,23 +743,25 @@ impl Cursor {
             None => Lowered::default(),
         };
         // `id` conjuncts no Entity id meets: nothing to ask the store.
-        let (parts, start) = if lowered.ids.as_ref().is_some_and(Vec::is_empty) {
-            (Vec::new(), (0, 0))
+        let (parts, (part, offset, resume)) = if lowered.ids.as_ref().is_some_and(Vec::is_empty) {
+            (Vec::new(), (0, 0, None))
         } else {
             let parts = targets(c, &terms, p, &lowered);
             let start = match &p.next {
-                None => (0, 0),
-                Some(t) => read_token(t, digest, parts.len())
+                None => (0, 0, None),
+                Some(t) => read_keyset_token(t, digest, parts.len())
                     .ok_or_else(|| bad("the next token does not belong to this request"))?,
             };
             (parts, start)
         };
+        let start = (part, offset);
         Ok(Self {
             order: order(&terms, p),
             attrs: attrs(c, &terms, p),
             terms,
             parts,
             start,
+            resume,
             limit: usize::try_from(p.limit).unwrap_or(usize::MAX),
             digest,
             counted: !p.uncounted && p.next.is_none(),
@@ -820,7 +859,8 @@ impl Cursor {
         };
         // A part after the one that filled the page answers its whole count and, holding
         // anything, starts the next page at its offset 0.
-        self.next = next.map(|next| token(i, next, self.digest));
+        let cursor = r.cursor.as_deref().filter(|_| next == Some(r.pos));
+        self.next = next.map(|next| keyset_token(i, next, self.digest, cursor));
         Ok(Some(features))
     }
 
@@ -833,8 +873,13 @@ impl Cursor {
         }
     }
 
-    /// One store read of the part `r` reads, at most `size` Entities of the page's `room`;
-    /// an uncounted read that ends the page asks one more, whose presence is its `next`.
+    /// One store read of the part `r` reads, at most `size` Entities of the page's `room`.
+    /// Without a residual it follows the store's keyset cursor of the read before
+    /// ([`ViewOps::scan_from`]), so a deep page seeks instead of skipping rows, and keeps the
+    /// cursor of the read after it in `r`. An uncounted read that ends the page learns its
+    /// `next` from that cursor, which the store names only when more remain; without one
+    /// (a sorted page, or a full page past which nothing may remain) it asks for one Entity
+    /// past the page, whose presence is its `next`.
     async fn read_part(
         &self,
         view: &ViewOps,
@@ -844,15 +889,38 @@ impl Cursor {
         room: usize,
     ) -> Result<Read, Problem> {
         let ahead = !self.counted && r.residual.is_none() && size == room;
-        let page = self.store_page(r, size.saturating_add(usize::from(ahead)));
+        // a sorted page has no keyset (the store's cursor follows id order): it reads the
+        // one past in the same read
+        let keyset = ahead && self.order.is_empty();
+        let extra = usize::from(ahead && !keyset);
+        let page = self.store_page(r, size.saturating_add(extra));
         let (mut docs, mut next, count) = match &r.residual {
-            None => scanned(view.scan(caller, &r.pushdown, None, page).await)?,
+            None => {
+                let answer = view
+                    .scan_from(caller, &r.pushdown, page, r.cursor.as_deref())
+                    .await;
+                r.cursor = match &answer {
+                    Ok(Scanned::Page { cursor, .. }) => cursor.clone(),
+                    _ => None,
+                };
+                scanned(answer)?
+            }
             Some(program) => scanned(
                 view.scan_within(caller, &r.pushdown, program, page, &mut r.budget)
                     .await,
             )?,
         };
-        if ahead {
+        if keyset && r.cursor.is_none() && docs.len() == size {
+            let past = antares_ops::Page {
+                start: r.pos.saturating_add(size),
+                size: 1,
+                whole: false,
+            };
+            let (one, _, _) = scanned(view.scan(caller, &r.pushdown, None, past).await)?;
+            next = (!one.is_empty()).then(|| r.pos.saturating_add(size));
+        } else if keyset {
+            next = r.cursor.as_ref().map(|_| r.pos.saturating_add(docs.len()));
+        } else if ahead {
             let more = docs.len() > size;
             docs.truncate(size);
             next = more.then(|| r.pos.saturating_add(size));
@@ -917,6 +985,7 @@ impl Cursor {
             } else {
                 0
             },
+            cursor: self.resume.clone().filter(|_| self.part == self.start.0),
             first: true,
             budget: antares_ops::RESIDUAL_SCAN,
             count: None,

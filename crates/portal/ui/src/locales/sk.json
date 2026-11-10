@@ -1917,6 +1917,7 @@
       "hiddenMark": "neposkytuje sa",
       "empty": "Na tejto strane nie sú žiadne entity.",
       "refused": "Návrh filtra bol odmietnutý: {reason}",
+      "notGranted": "Váš prístup k tomuto endpointu nezahŕňa čítanie {type}, preto porovnanie nemôže ukázať, čo by váš návrh poskytoval. O čítanie požiadajte v časti Požiadať o prístup na stránke endpointu; rozhodujú o ňom politiky endpointu.",
       "failed": "Nepodarilo sa prečítať, čo filter poskytuje: {reason}. Zmeňte filter alebo to skúste znova.",
       "notLive": "Porovnanie číta cez endpoint, preto sa zobrazí, keď je endpoint aktívny.",
       "noType": "Porovnanie potrebuje aspoň jeden typ, ktorý endpoint obsluhuje.",

@@ -659,6 +659,12 @@ class Suite:
 
     # ------------------------------------------------------------ run
 
+    def classes(self, endpoints) -> dict:
+        out = defaultdict(list)
+        for e in endpoints:
+            out[self.x.klass(e)].append(e)
+        return out
+
     def run(self):
         x = self.x
         public = [e for e in x.endpoints if e.audience == "public"]
@@ -668,6 +674,20 @@ class Suite:
             for t in x.granted(e):
                 self.by_type[t].append(e)
         self.hub_door(public, closed)
+        if self.a.anonymous:
+            served = [e for e in public if "mcp" in e.representations]
+            chosen = served if not self.a.per_class else \
+                [e for k, v in self.classes(served).items() for e in v[:self.a.per_class]]
+            with cf.ThreadPoolExecutor(self.a.workers) as pool:
+                list(pool.map(self.hub_endpoint, chosen))
+                firsts = [v[0] for v in self.classes(served).values()]
+                list(pool.map(self.hub_search, firsts))
+                list(pool.map(self.hub_write, firsts))
+            for id, target in (("door", "/api/endpoint/{slug}/mcp"), ("portal", "portal /api/v1/mcp"),
+                               ("portal.personas", "portal /api/v1/mcp"), ("connector", "/c/{id}")):
+                self.r.skip(id, target, "parts 2-4", "as on the rehearsal",
+                            "--anonymous: part 1 alone (tokens, personas and writes are rehearsal only)")
+            return {"classes": {k: len(v) for k, v in self.classes(served).items()}}
         served = [e for e in public if "mcp" in e.representations]
         classes = defaultdict(list)
         for e in served + [c for c in closed if "mcp" in c.representations]:
@@ -731,6 +751,8 @@ def main(argv=None):
     p.add_argument("--bind-wait", type=float, default=120, help="seconds to wait for the reconciler to read the bindings")
     p.add_argument("--cache", default=str(Path.home() / ".cache" / "jc-smoke"))
     p.add_argument("--keep", action="store_true", help="leave the smoke-mcp-* people, bindings and connectors")
+    p.add_argument("--anonymous", action="store_true",
+                   help="part 1 alone (the public hub, anonymously); parts 2-4 skipped by name")
     p.add_argument("--admin-token-file", help="unused by this suite (accepted for the common runner)")
     p.add_argument("--person-token-file", help="unused by this suite: it makes its own personas")
     a = p.parse_args(argv)

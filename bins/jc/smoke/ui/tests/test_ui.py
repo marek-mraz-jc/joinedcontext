@@ -55,6 +55,37 @@ def test_the_checks_name_every_defect_of_a_bad_page(page):
     assert {"purpose-line", "empty-state-next-step", "raw-json", "bare-urn", "table-urn", "viewer-write"} <= found
 
 
+def test_a_signed_in_browser_on_a_127_origin_reads_the_api_with_its_session_cookie(page):
+    """jc-ip-signin 2026-11-10: on the rehearsal's http://127.0.0.1 origin Chromium keeps and sends
+    the Portal's __Host- session cookie, but Playwright's request client did not, so every sign-in
+    row read /api/v1/auth/me 401. browser_get sends what the browser would."""
+    import http.server
+    import threading
+
+    class Portal(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            if self.path == "/login":
+                self.send_header("Set-Cookie", "__Host-jc_session=s1; Path=/; Secure; HttpOnly; SameSite=Lax")
+            self.end_headers()
+            self.wfile.write((self.headers.get("Cookie") or "").encode())
+
+        def log_message(self, *_):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Portal)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_port}"
+    try:
+        page.goto(base + "/login")
+        assert page.evaluate("fetch('/me').then(r => r.text())") == "__Host-jc_session=s1"
+        assert suite.browser_get(page, base + "/api/v1/auth/me").text() == "__Host-jc_session=s1"
+        assert suite.browser_get(page, base + "/me", headers={"Cookie": "own=1"}).text() == "own=1"
+    finally:
+        srv.shutdown()
+        page.context.clear_cookies()
+
+
 def test_the_stripped_source_keeps_no_typescript():
     js = checks.script()
     assert not re.search(r"\bas HTML|: string\b|: Element\b|<string>", js)

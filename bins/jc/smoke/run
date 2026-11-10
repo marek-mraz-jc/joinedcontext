@@ -24,6 +24,8 @@ def main(argv):
         print(f"unknown suite {name!r}; suites: {' '.join(suites())}", file=sys.stderr)
         return 2
     sys.path.insert(0, str(HERE))
+    import live
+    live.install_from_env()  # live mode: the guard `run all --deployment` set up (live.py)
     spec = importlib.util.spec_from_file_location(f"smoke_{name}", HERE / name / "suite.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

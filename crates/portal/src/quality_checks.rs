@@ -135,7 +135,7 @@ pub struct Readings {
 impl Readings {
     pub fn new(gateway_url: Option<String>) -> Self {
         let source = gateway_url.and_then(|url| {
-            let http = reqwest::Client::builder().timeout(TIMEOUT).build().ok()?;
+            let http = crate::reach::builder().timeout(TIMEOUT).build().ok()?;
             Some((http, format!("{}/metrics", url.trim_end_matches('/'))))
         });
         Self {

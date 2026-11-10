@@ -1524,7 +1524,7 @@ impl ViewSync {
     /// A writer against one broker, its admin token read from `token_file` on every run.
     pub fn new(broker: impl Into<String>, token_file: impl Into<PathBuf>) -> Self {
         Self {
-            http: reqwest::Client::builder()
+            http: crate::reach::builder()
                 .timeout(TIMEOUT)
                 .build()
                 .unwrap_or_default(),
@@ -1669,6 +1669,35 @@ impl ViewSync {
     /// its saved projection and hidden attributes (T-3802, EP-85): its Policies, audience and
     /// view mapping stay as the last run read them. `Ok(None)` when that run read no such
     /// Endpoint; `Err` names the draft's member at fault, or why the Endpoint has no view.
+    /// The roles the gateway gives callers of Endpoint `name` of `project`, its audience and its
+    /// allowed projects, read from the repository the views were compiled from by the gateway's own rule
+    /// (`EndpointRoles`, an App's `app-{name}` Endpoint with its client); `None` before a
+    /// converge saw it.
+    pub fn caller_roles(
+        &self,
+        project: &str,
+        name: &str,
+    ) -> Option<(
+        context_gateway::resolver::EndpointRoles,
+        jc_core::kinds::Audience,
+        Vec<String>,
+    )> {
+        use context_gateway::resolver::{app_client, EndpointRoles};
+        let sources = lock(&self.last).clone()?;
+        let e = sources
+            .endpoints
+            .iter()
+            .find(|e| e.project == project && e.name == name)?;
+        let client = app_client(name, |app| {
+            sources.apps.contains(&(project.to_owned(), app.to_owned()))
+        });
+        let roles = match client {
+            Some(client) => EndpointRoles::of_app(project, name, &e.spec, client),
+            None => EndpointRoles::of(project, name, &e.spec),
+        };
+        Some((roles, e.spec.audience, e.spec.allowed_projects.clone()))
+    }
+
     pub fn draft_view(
         &self,
         project: &str,
@@ -1756,7 +1785,7 @@ impl ViewSync {
         id: &str,
         view: &Value,
         query: &str,
-        headers: &[(&'static str, String)],
+        headers: &reqwest::header::HeaderMap,
     ) -> Result<(u16, Value), String> {
         let token = match std::fs::read_to_string(&self.token_file) {
             Ok(token) if !token.trim().is_empty() => token.trim().to_owned(),
@@ -1776,14 +1805,14 @@ impl ViewSync {
         let base = self
             .address(&broker)
             .ok_or_else(|| format!("the space's broker '{broker}' has no address"))?;
-        let mut request = self
-            .http
-            .post(format!("{base}/q/views/{id}/preview?{query}"))
-            .bearer_auth(token)
-            .json(view);
-        for (name, value) in headers {
-            request = request.header(*name, value);
-        }
+        // The person's request id: the broker's line for the preview (a refusal too) carries it.
+        let request = crate::request_id::forward(
+            self.http
+                .post(format!("{base}/q/views/{id}/preview?{query}")),
+        )
+        .bearer_auth(token)
+        .json(view)
+        .headers(headers.clone());
         let answer = request
             .send()
             .await
@@ -2970,8 +2999,8 @@ mod tests {
         assert_eq!(refused.beyond(&before).refused.len(), 1);
     }
 
-    /// T-3813: the page is asked with the admin token, the candidate view as the body and the
-    /// subject headers as given; no admin token, no question.
+    /// T-3813: the page is asked with the admin token, the candidate view as the body, the
+    /// subject headers as given and the person's request id; no admin token, no question.
     #[tokio::test]
     async fn a_preview_asks_the_broker_with_the_view_and_the_subject() {
         let broker = MockServer::start().await;
@@ -2981,6 +3010,7 @@ mod tests {
             .and(wiremock::matchers::query_param("type", "Car"))
             .and(header("authorization", format!("Bearer {TOKEN}")))
             .and(header("x-jc-subject", "jana%40hel.fi"))
+            .and(header("x-request-id", "ui-preview-0001"))
             .and(body_json(&view))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(json!({"count": 1, "entities": []})),
@@ -2989,10 +3019,17 @@ mod tests {
             .mount(&broker)
             .await;
         let sync = ViewSync::new(broker.uri(), token_file());
-        let headers = [("x-jc-subject", "jana%40hel.fi".to_owned())];
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "x-jc-subject",
+            "jana%40hel.fi".parse().expect("a header value"),
+        );
         assert_eq!(
-            sync.preview(SLUG, &view, "type=Car&limit=50&offset=0", &headers)
-                .await,
+            crate::request_id::answering(
+                "ui-preview-0001",
+                sync.preview(SLUG, &view, "type=Car&limit=50&offset=0", &headers)
+            )
+            .await,
             Ok((200, json!({"count": 1, "entities": []})))
         );
         let tokenless = ViewSync::new(broker.uri(), "/nonexistent/token");

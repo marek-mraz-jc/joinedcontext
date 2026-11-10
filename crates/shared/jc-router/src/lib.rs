@@ -149,6 +149,19 @@ fn one_label_under(host: &str, suffix: &str) -> bool {
         .is_some_and(|label| !label.is_empty() && !label.contains('.'))
 }
 
+/// The header the Linkerd inbound proxy sets to the caller's mTLS identity (and removes when there
+/// is none): linkerd2-proxy `linkerd/app/inbound/src/http/set_identity_header.rs`.
+const MESH_IDENTITY: &str = "l5d-client-id";
+
+/// The headers a proxy names the client, its host and its scheme in.
+const FORWARDING_HEADERS: [&str; 5] = [
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+];
+
 struct MountedEntry {
     module: String,
     host: Option<String>,
@@ -162,6 +175,7 @@ pub struct JcRouter {
     default_scheme: String,
     default_host: String,
     trusted_proxies: Arc<Vec<IpNet>>,
+    trusted_identities: Arc<Vec<String>>,
 }
 
 pub struct JcRouterBuilder {
@@ -169,6 +183,7 @@ pub struct JcRouterBuilder {
     default_scheme: String,
     default_host: String,
     trusted_proxies: Vec<IpNet>,
+    trusted_identities: Vec<String>,
 }
 
 impl Default for JcRouterBuilder {
@@ -185,12 +200,23 @@ impl JcRouterBuilder {
             default_scheme: default_scheme.into(),
             default_host: default_host.into(),
             trusted_proxies: Vec::new(),
+            trusted_identities: Vec::new(),
         }
     }
 
     #[must_use]
     pub fn trust_proxy(mut self, net: IpNet) -> Self {
         self.trusted_proxies.push(net);
+        self
+    }
+
+    /// The mesh identity (`l5d-client-id`) of the edge. Once one is named, a trusted proxy's
+    /// forwarding headers count only on a request that carries one of them: in a mesh every caller
+    /// reaches jc from its own proxy's address, so the address alone names no edge. The Linkerd
+    /// inbound proxy sets the header from the caller's mTLS identity and removes it otherwise.
+    #[must_use]
+    pub fn trust_identity(mut self, identity: impl Into<String>) -> Self {
+        self.trusted_identities.push(identity.into());
         self
     }
 
@@ -254,6 +280,7 @@ impl JcRouterBuilder {
             default_scheme: self.default_scheme,
             default_host: self.default_host,
             trusted_proxies: Arc::new(self.trusted_proxies),
+            trusted_identities: Arc::new(self.trusted_identities),
         })
     }
 }
@@ -266,9 +293,26 @@ impl JcRouter {
         self.trusted_proxies.iter().any(|net| net.contains(&ip))
     }
 
-    fn resolve_client_addr(&self, req: &Request<Body>, peer: Option<IpAddr>) -> Option<IpAddr> {
+    /// Whether `req` came from the edge: a trusted proxy's address and, once an identity is
+    /// named, the edge's mesh identity.
+    fn came_from_edge(&self, req: &Request<Body>, peer: Option<IpAddr>) -> bool {
+        self.is_trusted_proxy(peer)
+            && (self.trusted_identities.is_empty()
+                || req
+                    .headers()
+                    .get(MESH_IDENTITY)
+                    .and_then(|v| v.to_str().ok())
+                    .is_some_and(|id| self.trusted_identities.iter().any(|t| t == id)))
+    }
+
+    fn resolve_client_addr(
+        &self,
+        req: &Request<Body>,
+        peer: Option<IpAddr>,
+        from_edge: bool,
+    ) -> Option<IpAddr> {
         let peer = peer?;
-        if !self.is_trusted_proxy(Some(peer)) {
+        if !from_edge {
             return Some(peer);
         }
         let hops: Vec<IpAddr> = req
@@ -287,12 +331,7 @@ impl JcRouter {
             .or(Some(peer))
     }
 
-    fn resolve_scheme_and_host(
-        &self,
-        req: &Request<Body>,
-        peer: Option<IpAddr>,
-    ) -> (String, String) {
-        let trust_fwd = self.is_trusted_proxy(peer);
+    fn resolve_scheme_and_host(&self, req: &Request<Body>, trust_fwd: bool) -> (String, String) {
         let scheme = if trust_fwd {
             req.headers()
                 .get("x-forwarded-proto")
@@ -361,8 +400,16 @@ impl JcRouter {
                 .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
                 .map(|c| c.0.ip())
         });
-        let client = self.resolve_client_addr(&req, peer);
-        let (scheme, host_with_port) = self.resolve_scheme_and_host(&req, peer);
+        let from_edge = self.came_from_edge(&req, peer);
+        let client = self.resolve_client_addr(&req, peer, from_edge);
+        let (scheme, host_with_port) = self.resolve_scheme_and_host(&req, from_edge);
+        // A module reads `X-Forwarded-For` itself (rate limits, the assistant's visitor): one that
+        // did not come from the edge reaches no module with a forwarding header of its own.
+        if !from_edge {
+            for name in FORWARDING_HEADERS {
+                req.headers_mut().remove(name);
+            }
+        }
         let host_only = host_with_port
             .split_once(':')
             .map_or(host_with_port.as_str(), |(h, _)| h);
@@ -493,6 +540,78 @@ mod tests {
         assert_eq!(client_of(&router, Some("10.0.0.5"), None).await, "10.0.0.5");
         // Unknown peer: no address, never a shared placeholder.
         assert_eq!(client_of(&router, None, Some("198.51.100.1")).await, "none");
+    }
+
+    /// In a mesh every caller reaches jc from its own proxy's address, so the edge is named by its
+    /// mTLS identity: a meshed tenant workload (a wasm shard) on the same address names no client,
+    /// host or scheme, and no module sees the forwarding headers it sent.
+    #[tokio::test]
+    async fn forwarding_headers_count_only_from_the_edges_mesh_identity() {
+        const EDGE: &str = "apisix.jc-prod.serviceaccount.identity.linkerd.cluster.local";
+        async fn seen(
+            client: Option<Extension<ClientAddr>>,
+            headers: axum::http::HeaderMap,
+        ) -> String {
+            let names: Vec<&str> = FORWARDING_HEADERS
+                .iter()
+                .copied()
+                .filter(|name| headers.contains_key(*name))
+                .collect();
+            format!(
+                "{} {}",
+                client.map_or_else(|| "none".to_owned(), |c| c.0.0.to_string()),
+                names.join(",")
+            )
+        }
+        let router = JcRouterBuilder::new("https", "city.example")
+            .trust_proxy("10.0.0.0/8".parse().unwrap())
+            .trust_identity(EDGE)
+            .mount(
+                MountSpec {
+                    module: "m".into(),
+                    host: Some("city.example".into()),
+                    path_prefix: None,
+                },
+                Router::new().route("/ip", get(seen)),
+            )
+            .mount(
+                MountSpec {
+                    module: "other".into(),
+                    host: Some("other.example".into()),
+                    path_prefix: None,
+                },
+                Router::new().route("/ip", get(|| async { "other" })),
+            )
+            .build()
+            .unwrap();
+        let ask = |identity: Option<&str>| {
+            let mut b = Request::builder()
+                .uri("/ip")
+                .header("host", "city.example")
+                .header("x-forwarded-for", "198.51.100.1")
+                .header("x-forwarded-host", "other.example")
+                .header("forwarded", "for=198.51.100.1")
+                .header("x-real-ip", "198.51.100.1");
+            if let Some(id) = identity {
+                b = b.header(MESH_IDENTITY, id);
+            }
+            let req = b.body(Body::empty()).unwrap();
+            let router = router.clone();
+            async move {
+                let resp = router
+                    .dispatch(req, Some("10.0.0.5".parse().unwrap()))
+                    .await;
+                let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+                String::from_utf8(bytes.to_vec()).unwrap()
+            }
+        };
+        // The edge: its X-Forwarded-Host routes and its client counts.
+        assert_eq!(ask(Some(EDGE)).await, "other");
+        // A shard on the same address: its own host, its peer, and no forwarding header left.
+        let shard = "shard.jc-prod.serviceaccount.identity.linkerd.cluster.local";
+        assert_eq!(ask(Some(shard)).await, "10.0.0.5 ");
+        // No identity (an unmeshed caller): the same.
+        assert_eq!(ask(None).await, "10.0.0.5 ");
     }
 
     #[tokio::test]

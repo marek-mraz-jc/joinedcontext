@@ -280,6 +280,40 @@ def test_a_run_behind_a_queue_that_moves_is_waited_for_until_it_starts(monkeypat
     assert 87 * 28 <= took < 87 * 28 + 1300, took
 
 
+def test_a_run_that_leaves_the_queue_near_the_deadline_is_waited_for_until_it_is_listed(monkeypatch):
+    """Gate 2026-11-10T053657Z: banskabystrica/kataster left the queue at 240 s, ran 65 s and
+    reached the runs list (it lists a run once it ended) at 305 s, after the suite's 300 s; the
+    status then said Running, later Waiting with the last run ended after the request, never
+    Queued, so the queue wait gave up. Out of the queue the suite waits for the run itself."""
+    import suite
+    clock = Clock(monkeypatch)
+    t0 = clock.now
+    stamp = lambda t: suite.time.strftime("%Y-%m-%dT%H:%M:%SZ", suite.time.gmtime(t))
+    start, end = t0 + 240, t0 + 305
+
+    class P:
+        def call(self, method, path, *a, **k):
+            if method == "POST":
+                return 202, {}, json.dumps({"run": stamp(start)}).encode()
+            if path.endswith("/runs?limit=5"):
+                items = [{"run": stamp(start), "sent": 0, "lastAt": stamp(end)}] if clock.now >= end else []
+                return 200, {}, json.dumps({"items": items}).encode()
+            if path.endswith("/log?limit=50"):
+                return 200, {}, b'{"items":[{"outcome":"failed","message":"x"}]}'
+            if "/pipelines?" in path:
+                return 200, {}, b'{"items":[]}'
+            msg = ("queued, due " + stamp(t0) if clock.now < start else "running since " + stamp(start)
+                   if clock.now < end else f"next run 2026-11-15T02:41:00Z; the last run ended {stamp(end)} after 65 s")
+            return 200, {}, json.dumps({"status": {"conditions": [{"reason": "x", "message": msg}]}}).encode()
+
+    r = suite.Results("pipelines", "http://x")
+    p = manifests.Pipeline("banskabystrica", "kataster", "p.yaml", {"period": "168h"}, True)
+    suite.run_pipeline(r, P(), P(), p, 300, ["banskabystrica"])
+    row = next(c for c in r.rows if c["id"] == "history")
+    assert row["result"] == "pass", row
+    assert clock.now - t0 < 360
+
+
 def test_expectations_from_prods_run_log(tmp_path):
     """praha/golemio-garages never ran on prod (run log 2026-10-18..11-09): its refusal is a
     same-on-prod skip; helsinki/vision-counts last ran on prod 2026-10-28 with 1024 sent and holds

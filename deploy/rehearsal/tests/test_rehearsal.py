@@ -941,6 +941,19 @@ def test_datasources_are_provisioned_on_the_exact_own_address_in_org_1(tmp_path)
         rh.provisioning_files(src, 42101, out)
 
 
+def test_prometheus_files_label_jc_and_point_daiya_at_the_proxy(tmp_path):
+    # prometheus.sh: jc's admin listener as a jc-prod target (its token by file, never inline),
+    # Prometheus itself as another namespace, daiya's org-1 datasource `prometheus` on the proxy.
+    rh.prometheus_files("127.0.0.1:55642", "127.0.0.1:55742", "127.0.0.1:55743",
+                        tmp_path / "prometheus.yml", tmp_path / "ds.yaml")
+    jobs = {j["job_name"]: j for j in json.loads((tmp_path / "prometheus.yml").read_text())["scrape_configs"]}
+    assert jobs["jc"]["static_configs"] == [{"targets": ["127.0.0.1:55642"], "labels": {"namespace": "jc-prod"}}]
+    assert jobs["jc"]["authorization"] == {"credentials_file": "/etc/rh/token"}
+    assert jobs["prometheus"]["static_configs"][0]["labels"] == {"namespace": "monitoring"}
+    (ds,) = json.loads((tmp_path / "ds.yaml").read_text())["datasources"]
+    assert (ds["uid"], ds["type"], ds["orgId"], ds["url"]) == ("prometheus", "prometheus", 1, "http://127.0.0.1:55743")
+
+
 def test_org_1_panels_count_data_and_red_apart(tmp_path):
     class Daiya(http.server.BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
@@ -1423,3 +1436,18 @@ def test_up_sh_refuses_realm_lines_without_an_export_to_render(tmp_path):
     assert run({}).stdout.strip() == "started"
     (tmp_path / "keycloak").mkdir()
     assert run({"REHEARSAL_REALM_LINES_FROM": "a", "REHEARSAL_REALM_LINES_TO": "b"}).stdout.strip() == "started"
+
+
+def test_the_kit_names_its_own_origin_by_the_literal_loopback_address():
+    """Supervisor 2026-11-10: kaisatsu names its issuer by the host a request reached it on, and
+    ekiben's guard lets the Portal's sweeps reach only the literal http://127.0.0.1:<port> (jc
+    ekiben.rs host_target). With --base-host localhost the token URL was refused as SSRF and every
+    *.expiry sweep stopped. jc's base host, the realm's public base, the Apps and the import all
+    name one origin, 127.0.0.1; no script of the kit names its own origin as localhost."""
+    up = (HERE / "up.sh").read_text()
+    assert re.search(r'^origin="http://127\.0\.0\.1:\$port"$', up, re.M), "up.sh sets no 127.0.0.1 origin"
+    assert '--base-host "${origin#http://}"' in up and '--public-base "$origin"' in up
+    for name in ("up.sh", "apps.sh", "import.sh"):
+        code = [line for line in (HERE / name).read_text().splitlines() if not line.lstrip().startswith("#")]
+        own = [line for line in code if re.search(r"http://localhost[:/]|\"localhost:\$port\"", line)]
+        assert not own, f"{name} names the rehearsal's origin as localhost: {own}"

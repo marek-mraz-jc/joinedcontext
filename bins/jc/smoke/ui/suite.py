@@ -53,7 +53,7 @@ sys.path.insert(0, str(HERE.parent))
 import checks  # noqa: E402
 import personas as ps  # noqa: E402
 import walk  # noqa: E402
-from common import FAIL, SKIP, Http, Results, loopback_only, read_token, realm_of  # noqa: E402
+from common import FAIL, SKIP, Http, Results, browser_get, loopback_only, read_token, realm_of  # noqa: E402
 
 LOGIN = "/api/v1/auth/login"
 HEIGHT = {400: 860, 1440: 900}
@@ -133,7 +133,7 @@ class Walker:
             page.wait_for_url(re.compile(re.escape(self.base) + r"/(?!id/).*"), timeout=30000)
         except Exception as e:  # noqa: BLE001 - the row says what the page did
             return False, f"{type(e).__name__}: {str(e)[:160]} at {self.rel(page.url)}"
-        st = page.request.get(self.base + "/api/v1/auth/me")
+        st = browser_get(page, self.base + "/api/v1/auth/me")
         return st.status == 200, f"/api/v1/auth/me {st.status} at {self.rel(page.url)}"
 
     # -- one address, judged at every width ------------------------------------------------------
@@ -235,7 +235,7 @@ class Walker:
 
 def admin_only(w: Walker, page, who: str):
     """PF-61: the cross-project Endpoints and /api/v1/endpoints reach no one but an administrator."""
-    r = page.request.get(w.base + "/api/v1/endpoints")
+    r = browser_get(page, w.base + "/api/v1/endpoints")
     want = 200 if who == "admin" else 404
     w.res.check(f"portal.admin-only:{who}", "portal", f"GET /api/v1/endpoints as {who}", str(want),
                 str(r.status), r.status == want)
@@ -278,7 +278,7 @@ def dashboards(w: Walker, page, who: str, project: str):
     """The daiya dashboards the Portal lists for the project, against the export's files."""
     want = [f.name for f in sorted((w.a.export / "grafana" / "dashboards").glob(f"org*-project-{project}.json"))] \
         if w.a.export else []
-    r = page.request.get(f"{w.base}/api/v1/projects/{project}/grafana/dashboards")
+    r = browser_get(page, f"{w.base}/api/v1/projects/{project}/grafana/dashboards")
     try:
         body = r.json()
     except Exception:  # noqa: BLE001
@@ -301,11 +301,11 @@ def other_uis(w: Walker, page, who: str, project: str):
     answers the person 200 (crates/shako/web browser_to_portal)."""
     for path, want in (("/git/", "/"),
                        (f"/git/joinedcontext/{project}", f"/projects/{project}/repositories/{project}")):
-        r = page.request.get(f"{w.base}{path}", max_redirects=0)
+        r = browser_get(page, f"{w.base}{path}", max_redirects=0)
         target = urljoin(f"{w.base}{path}", r.headers.get("location", ""))
         moved = r.status == 302 and urlsplit(target).path == want \
             and urlsplit(target).netloc == urlsplit(w.base).netloc
-        landed = page.request.get(target).status if moved else None
+        landed = browser_get(page, target).status if moved else None
         w.res.check(f"shako.browser:{who}" + ("" if path == "/git/" else ":repository"), "shako",
                     f"GET {path} in a signed-in browser as {who}",
                     f"302 to the Portal's {want}, which answers 200", f"{r.status} -> {target} {landed or ''}".strip(),
@@ -341,7 +341,7 @@ def frame_csp_rows(w: Walker, page, shared: bool):
     """A direct GET of each explorer page: a CSP `sandbox` without allow-same-origin when viz shares
     its origin with the Portal (the boundary is the header, not the frame's attribute)."""
     for path in SANDBOX_PAGES:
-        r = page.request.get(w.base + path)
+        r = browser_get(page, w.base + path)
         csp = r.headers.get("content-security-policy", "")
         sandboxed = "sandbox allow-scripts" in csp and "allow-same-origin" not in csp
         w.res.check(f"viz.csp:{path}", "viz", f"GET {path}",
@@ -402,7 +402,7 @@ def grid_rows(frame) -> tuple[int, str]:
 
 
 def endpoint_count(w: Walker, page, slug: str, entity_type: str) -> int:
-    r = page.request.get(f"{w.base}/api/endpoint/{slug}/ngsi-ld/v1/entities",
+    r = browser_get(page, f"{w.base}/api/endpoint/{slug}/ngsi-ld/v1/entities",
                          params={"type": entity_type, "count": "true", "limit": "0"})
     return int(r.headers.get("ngsild-results-count", "0") or 0) if r.ok else 0
 
@@ -417,7 +417,7 @@ def other_type_rows(w: Walker, page, frame) -> tuple[int, str]:
     held = endpoint_count(w, page, slug, shown) if shown else 0
     if held:
         return 0, f"the grid shows no {shown} while the Endpoint holds {held}"
-    r = page.request.get(f"{w.base}/api/endpoint/{slug}/ngsi-ld/v1/types")
+    r = browser_get(page, f"{w.base}/api/endpoint/{slug}/ngsi-ld/v1/types")
     types = (r.json().get("typeList") if r.ok else None) or []
     full = next((t for t in types if t != shown and endpoint_count(w, page, slug, t)), None)
     if not full:

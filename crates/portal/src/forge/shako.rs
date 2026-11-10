@@ -557,7 +557,7 @@ impl ShakoClient {
         repo: impl Into<String>,
         token: impl Into<String>,
     ) -> Result<Self, GitError> {
-        let http = reqwest::ClientBuilder::new()
+        let http = crate::reach::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(15))
             .build()

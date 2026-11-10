@@ -75,6 +75,8 @@ jobs:
           BEFORE: ${{ github.event.before }}
           BRANCH: ${{ github.ref_name }}
         run: sh .github/scripts/gitleaks.sh
+      # The T-6676 R cleanup tool's selftests against a stub gateway (stdlib, seconds).
+      - run: python3 -m unittest discover -s bins/jc/deploy/minted-cleanup
       - if: steps.paths.outputs.workflows == 'true'
         run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
       - if: steps.paths.outputs.workflows == 'true'
@@ -103,10 +105,13 @@ jobs:
   # Postgres for the store tests of each module (each its own database; kaisatsu and the Portal's
   # apps tests create their own roles). nextest runs the binaries side by side; the tests sharing
   # one module's database stay one at a time (.config/nextest.toml). The tests are split in
-  # three jobs (two took 333 s of tests each, run 42616261654), each with its own Postgres: every job compiles the same warm build (no archive to
-  # upload and download) and runs its `--partition slice:k/N` (round robin over all tests; count:
-  # deals each binary's first test to job 1); the first also runs the doc tests. The partition job
-  # names are listed in changes.sh (covered).
+  # four jobs (two of three took 333 s of tests each, run 42616261654; with three, one runner's
+  # 1.4x slower tests still set the run, 42766258305), each with its own Postgres: every job
+  # compiles the same warm build (no archive to
+  # upload and download) and runs its partition of the tests, balanced by the times
+  # .github/ci-durations.json records (test-part.py --nextest; a test with no recorded time still
+  # lands in exactly one); the first also runs the doc tests, which the split counts. The
+  # partition job names are listed in changes.sh (covered).
   root-test:
     name: root-test-${{ matrix.part }}
     needs: changes
@@ -115,7 +120,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix: { part: [1, 2, 3] }
+      matrix: { part: [1, 2, 3, 4] }
     services:
       postgres:
         image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
@@ -147,14 +152,15 @@ jobs:
           } >> "$GITHUB_ENV"
       # The cluster's own PostgreSQL image (pgvector 0.8.6, pinned in deployment's
       # components/postgres/images.yaml). It has no entrypoint of its own (CloudNativePG drives
-      # it), so the step initialises and starts it.
+      # it), so the step initialises and starts it. Its pull (about 20 s) runs beside the cache
+      # restore and the build: the test step waits for it to answer.
       - run: >-
-          docker run -d --name assistant-pg -p 5433:5432 --entrypoint bash
+          (docker run -d --name assistant-pg -p 5433:5432 --entrypoint bash
           ghcr.io/cloudnative-pg/postgis@sha256:9d597fcf4350e4bae9ff40cbe0e4383746a9c7f9c60da72483b0e966e4c20765
           -c 'export PATH=/usr/lib/postgresql/16/bin:$PATH; initdb -D /tmp/pg -U postgres --auth=trust >/dev/null
           && echo "host all all 0.0.0.0/0 trust" >> /tmp/pg/pg_hba.conf
           && exec postgres -D /tmp/pg -c listen_addresses=* -c unix_socket_directories=/tmp'
-          && for _ in $(seq 1 30); do docker exec assistant-pg /usr/lib/postgresql/16/bin/pg_isready -h 127.0.0.1 -U postgres && break; sleep 1; done
+          > "$RUNNER_TEMP/assistant-pg.log" 2>&1 &)
       - run: |
           for db in kaisatsu dataroom daiya shako; do
             psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
@@ -163,7 +169,7 @@ jobs:
         with: { key: root-test }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: cargo-nextest }
-      # Build once, then run the slice from the built binaries (no cargo call, so no build lock):
+      # Build once, then run this job's partition from the built binaries (no cargo call, so no build lock):
       # job 1 compiles and runs the doc tests beside it instead of after it (1-2 min when a crate
       # every lib links changed, run 42617984832).
       - run: |
@@ -173,9 +179,14 @@ jobs:
           if [ "${{ matrix.part }}" = 1 ]; then
             cargo test --workspace --locked --no-fail-fast --doc > "$RUNNER_TEMP/doc.log" 2>&1 & doc=$!
           fi
+          for _ in $(seq 1 60); do docker exec assistant-pg /usr/lib/postgresql/16/bin/pg_isready -h 127.0.0.1 -U postgres && break; sleep 1; done
+          # the doc build beside the first job's tests slowed them by up to 1.7x (run 42756711313)
+          python3 .github/scripts/test-part.py --nextest root ${{ matrix.part }} ${{ strategy.job-total }} --extra 1=45 \
+            --reuse "$RUNNER_TEMP/binaries.json" "$RUNNER_TEMP/cargo-metadata.json" > "$RUNNER_TEMP/part.txt"
+          set --; while IFS= read -r term; do set -- "$@" -E "$term"; done < "$RUNNER_TEMP/part.txt"
           tests=0
-          cargo nextest run --profile ci --no-fail-fast --partition "slice:${{ matrix.part }}/${{ strategy.job-total }}" \
-            --binaries-metadata "$RUNNER_TEMP/binaries.json" --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" || tests=$?
+          cargo nextest run --profile ci --no-fail-fast \
+            --binaries-metadata "$RUNNER_TEMP/binaries.json" --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" "$@" || tests=$?
           docs=0
           if [ -n "$doc" ]; then
             wait "$doc" || docs=$?
@@ -223,11 +234,14 @@ jobs:
         with: { workspace: crates/antares, key: antares-clippy, components: "clippy, rustfmt" }
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-  # nextest with Antares' own groups (crates/antares/.config/nextest.toml), in three jobs, each
-  # with its own PostGIS: the first runs pg_explain and the doc tests, the other two a slice each
-  # of every other test. pg_explain seeds 200 000 Entities and ANALYZEs them in one transaction
-  # held for about a minute, once per database: beside every slice it deadlocked a concurrent
-  # index build and timed out a week partition's DDL in two of three jobs (run 42610186767).
+  # nextest with Antares' own groups (crates/antares/.config/nextest.toml), in four jobs, each
+  # with its own PostGIS: the first builds and runs only pg_explain, then the view matrix and the
+  # doc tests; the other three run every other test, split by the times .github/ci-durations.json
+  # records (test-part.py --nextest; with two, one slow runner set the run: 211 s of tests where
+  # 153 s ran the same split, runs 42767791074, 42766258305). pg_explain seeds 200 000
+  # Entities and ANALYZEs them in one transaction held for about a minute, once per database:
+  # beside every slice it deadlocked a concurrent index build and timed out a week partition's DDL
+  # in two of three jobs (run 42610186767).
   antares-test:
     name: antares-test-${{ matrix.part }}
     needs: changes
@@ -236,11 +250,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { part: 1, tests: "-E 'binary(pg_explain)'" }
-          - { part: 2, tests: "-E 'not binary(pg_explain)' --partition slice:1/2" }
-          - { part: 3, tests: "-E 'not binary(pg_explain)' --partition slice:2/2" }
+      matrix: { part: [1, 2, 3, 4] }
     defaults: { run: { working-directory: crates/antares } }
     services:
       postgis:
@@ -262,7 +272,18 @@ jobs:
         with: { workspace: crates/antares, key: antares-test }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: cargo-nextest }
-      - run: cargo nextest run --workspace --locked --profile ci ${{ matrix.tests }}
+      # --test: only pg_explain's binary is built (--workspace keeps the workspace's features)
+      - if: matrix.part == 1
+        run: cargo nextest run --workspace --locked --profile ci --no-fail-fast --test pg_explain -E 'binary(pg_explain)'
+      - if: matrix.part != 1
+        run: |
+          cargo nextest list --workspace --locked --profile ci --list-type binaries-only --message-format json > "$RUNNER_TEMP/binaries.json"
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
+          python3 ../../.github/scripts/test-part.py --nextest antares $(( ${{ matrix.part }} - 1 )) $(( ${{ strategy.job-total }} - 1 )) \
+            --filter 'not binary(pg_explain)' --reuse "$RUNNER_TEMP/binaries.json" "$RUNNER_TEMP/cargo-metadata.json" > "$RUNNER_TEMP/part.txt"
+          set --; while IFS= read -r term; do set -- "$@" -E "$term"; done < "$RUNNER_TEMP/part.txt"
+          cargo nextest run --profile ci --no-fail-fast \
+            --binaries-metadata "$RUNNER_TEMP/binaries.json" --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" "$@"
       # The view and policy matrix compiles only with `full,jc-policy` (no member turns them on):
       # jc's own feature set (bins/jc/Cargo.toml antares-broker), so each view sees only its own
       # data through the shared Router and an unvouched subject is refused (T-6677, F-01).
@@ -302,9 +323,10 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
   # cargo test, not nextest: the Portal's database tests serialize on in-process locks
   # (KNOWLEDGE: the DATABASE mutex), which separate processes would not hold. The test binaries
-  # are split in two jobs, each with its own Postgres (.github/scripts/test-part.py: round robin
-  # over every tests/*.rs, the libs and bins in the first, the doc tests in the second); binaries
-  # of one job still run one after another, as before.
+  # are split in four jobs, each with its own Postgres (.github/scripts/test-part.py: every
+  # tests/*.rs by its recorded build and run time in .github/ci-durations.json, the libs and bins
+  # in the first, the doc tests in the second); binaries of one job still run one after another,
+  # as before. The partition job names are listed in changes.sh (covered).
   portal-test:
     name: portal-test-${{ matrix.part }}
     needs: changes
@@ -313,7 +335,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix: { part: [1, 2] }
+      matrix: { part: [1, 2, 3, 4] }
     defaults: { run: { working-directory: crates/portal } }
     services:
       postgres:
@@ -346,7 +368,7 @@ jobs:
           (while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/ {print "mem used " $3 "/" $2 " MB"}') $(df -h / | awk 'NR == 2 {print "disk free " $4}')"; done) &
           # -j 4: the runner's four cores for the link phase (~160 test binaries); a flag, not
           # CARGO_BUILD_JOBS, which is part of the rust-cache key
-          targets=$(python3 ../../.github/scripts/test-part.py ${{ matrix.part }} ${{ strategy.job-total }})
+          targets=$(python3 ../../.github/scripts/test-part.py ${{ matrix.part }} ${{ strategy.job-total }} --doc 2)
           # shellcheck disable=SC2086
           cargo test --workspace --locked --no-fail-fast -j 4 $targets
       # in the second job: the first runs the lib tests and compiles the lib's test build
@@ -478,3 +500,13 @@ jobs:
     permissions: { contents: read, packages: write, id-token: write }
     uses: ./.github/workflows/image.yml
     with: { mode: sign, digest: "${{ needs.image.outputs.digest }}" }
+  # The ui-rust App images (image-apps.yml) of the commit whose jc image was just signed, when
+  # the push touches an App, the build stage or a workflow (changes.sh dockerfiles, workflows):
+  # other pushes do not wait for it before deploy-pin, and a dispatch or a `v*` tag rebuilds.
+  ship-apps:
+    needs: [changes, promote]
+    if: >-
+      always() && needs.promote.result == 'success' &&
+      (needs.changes.outputs.dockerfiles == 'true' || needs.changes.outputs.workflows == 'true')
+    permissions: { contents: read, packages: write, id-token: write }
+    uses: ./.github/workflows/image-apps.yml

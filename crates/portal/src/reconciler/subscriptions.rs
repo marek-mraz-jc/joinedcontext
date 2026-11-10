@@ -118,7 +118,7 @@ impl SubscriptionSync {
         org_domain: impl Into<String>,
     ) -> Self {
         Self {
-            http: reqwest::Client::builder()
+            http: crate::reach::builder()
                 .timeout(TIMEOUT)
                 .build()
                 .unwrap_or_default(),

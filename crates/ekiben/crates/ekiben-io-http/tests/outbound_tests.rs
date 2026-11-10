@@ -83,3 +83,30 @@ async fn resolution_checks_scheme_host_and_every_address() {
     assert!(org.is_private_host_allowed("GATEWAY.internal"));
     assert!(!org.is_private_host_allowed("other.internal"));
 }
+
+/// A `name:port` entry opens a private address on that port alone: jc lists the MQTT brokers'
+/// 1883 so, and a stream still cannot reach their HTTP API on the same address.
+#[tokio::test]
+async fn a_private_host_with_a_port_resolves_on_that_port_alone() {
+    let resources = ResourceManager::new();
+    let org = resources.set_org_quotas(
+        &OrgId::new("o"),
+        OrgQuotas {
+            private_hosts: vec!["10.43.0.9:1883".to_string()],
+            ..Default::default()
+        },
+    );
+    let mqtt = url::Url::parse("http://10.43.0.9:1883/").unwrap();
+    assert_eq!(resolve_checked(&mqtt, &org).await.unwrap()[0].port(), 1883);
+    let api = url::Url::parse("http://10.43.0.9:6060/").unwrap();
+    assert!(resolve_checked(&api, &org).await.is_err());
+    let loopback = resources.set_org_quotas(
+        &OrgId::new("l"),
+        OrgQuotas {
+            private_hosts: vec!["127.0.0.1:1883".to_string()],
+            ..Default::default()
+        },
+    );
+    let own = url::Url::parse("http://127.0.0.1:1883/").unwrap();
+    assert!(resolve_checked(&own, &loopback).await.is_err());
+}

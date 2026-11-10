@@ -566,6 +566,23 @@ async fn a_one_attribute_week_reads_only_its_rows_in_the_window() {
         doc[name] = Value::Array(insts);
     }
     assert!(s.create(&t, id, &doc).await.expect("create"));
+    // the planner judges the bound with statistics that hold these rows, as on dev: another
+    // test's ANALYZE of a near-empty history (pg.rs) turned the plan into one bitmap scan of
+    // the window per arm whenever it ran first in the same database
+    // waiting for the locks of a neighbour's partition DDL rather than the pool's lock timeout
+    // (55P03 in ci 42795501780)
+    let mut tx = pool.begin().await.expect("tx");
+    for statement in [
+        "SET LOCAL lock_timeout = 0",
+        "SET LOCAL statement_timeout = 0",
+        "ANALYZE attr_instances",
+    ] {
+        sqlx::query(statement)
+            .execute(&mut *tx)
+            .await
+            .expect(statement);
+    }
+    tx.commit().await.expect("analyze");
 
     let asked = [names[0].clone()];
     let (from, to) = ("2026-02-15T00:00:00Z", "2026-02-22T00:00:00Z");

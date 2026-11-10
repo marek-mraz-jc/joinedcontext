@@ -22,7 +22,9 @@ def edge_rewrite(base: str, name: str, url: str) -> str | None:
     """Where the edge sends a request on the App's host, by the two rules the Portal's edge file
     gives APISIX (crates/portal/src/reconciler/edge_file.rs, static App): `/api/endpoint/*` to the
     gateway with any `/apps/{name}` prefix stripped, everything else to `/apps/{name}/`. The
-    rehearsal runs no APISIX, so the suite stands in for it. `None` for a request off that host."""
+    rehearsal runs no APISIX, so the suite stands in for it; the request keeps the App's host as
+    its `Host` (Browser.app), where jc's App host layer takes either path, since the main host
+    answers `/apps/{name}/` with prod's 308 to that host. `None` for a request off that host."""
     u = urllib.parse.urlparse(url)
     if f"{u.scheme}://{u.netloc}" != app_host(base, name):
         return None
@@ -109,7 +111,8 @@ class Browser:
                 url = edge_rewrite(base, name, request.url)
                 # The edge's login hands the person's token on as the edge file says: the
                 # gateway's bearer on the endpoint route, X-Access-Token on the App's own.
-                headers = {k: v for k, v in request.headers.items() if k.lower() != "authorization"}
+                headers = {k: v for k, v in request.headers.items() if k.lower() not in ("authorization", "host")}
+                headers["host"] = urllib.parse.urlparse(request.url).netloc
                 if token and "/api/endpoint/" in url:
                     headers["authorization"] = f"Bearer {token}"
                 elif token:

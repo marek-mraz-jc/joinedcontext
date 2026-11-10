@@ -10,6 +10,7 @@ mod filter;
 mod geojson;
 mod history;
 mod items;
+mod keyset;
 mod matrix;
 mod oas30;
 mod outputs;

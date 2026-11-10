@@ -54,6 +54,11 @@ pub struct Cli {
     /// cluster-internal address; it is never mounted on the public listener).
     #[arg(long, env = "JCBIN_ADMIN_LISTEN")]
     pub admin_listen: Option<SocketAddr>,
+    /// Optional listener for App pods: the gateway's Endpoint reads (`GET`/`HEAD`
+    /// `/api/endpoint/...`) and nothing else, so a pod beside jc reads its Endpoint without the
+    /// public listener the edge holds. Needs the gateway in the role set.
+    #[arg(long, env = "JCBIN_APPS_LISTEN")]
+    pub apps_listen: Option<SocketAddr>,
     /// File holding the bearer token `/metrics` of the admin listener asks for (required with
     /// `--admin-listen`: it carries every module's series, Antares' among them, which the
     /// standalone broker serves only behind its admin token).
@@ -66,6 +71,14 @@ pub struct Cli {
         value_delimiter = ','
     )]
     pub trusted_proxies: Vec<IpNet>,
+    /// The edge's mesh identity (`l5d-client-id`); once named, a trusted proxy's `X-Forwarded-*`
+    /// count only on requests carrying it. Repeat or comma-separate.
+    #[arg(
+        long = "trusted-proxy-identity",
+        env = "JCBIN_TRUSTED_PROXY_IDENTITIES",
+        value_delimiter = ','
+    )]
+    pub trusted_proxy_identities: Vec<String>,
     /// Log format: `json` or `text`.
     #[arg(long, env = "JCBIN_LOG_FORMAT")]
     pub log_format: Option<LogFormat>,
@@ -282,8 +295,14 @@ pub struct DaiyaSection {
     pub provisioning_dir: Option<PathBuf>,
     /// Organizations held from the start under their Grafana numbers (`{ id = 4, name =
     /// "bbsk" }`), so the provisioning files can name each by `orgId`.
+    /// Only in a build with daiya: a build without it refuses the key as unknown.
+    #[cfg(feature = "daiya")]
     #[serde(default)]
     pub organizations: Vec<daiya_server::config::NumberedOrganization>,
+    /// The one address organization 1's Prometheus datasources may reach over http on a
+    /// non-public network (`http://<host>:<port>`, the instance's label-enforcing proxy on a
+    /// shared cluster); every other datasource keeps the default outbound policy.
+    pub prometheus_reach: Option<String>,
 }
 
 /// `[dataroom]` section (a key left out keeps its default).
@@ -613,8 +632,11 @@ pub struct FileConfig {
     pub scheme: Option<String>,
     pub admin_listen: Option<SocketAddr>,
     pub admin_token_file: Option<PathBuf>,
+    pub apps_listen: Option<SocketAddr>,
     #[serde(default)]
     pub trusted_proxies: Vec<IpNet>,
+    #[serde(default)]
+    pub trusted_proxy_identities: Vec<String>,
     pub log_format: Option<LogFormat>,
     pub profile: Option<Profile>,
     pub state_dir: Option<PathBuf>,
@@ -669,6 +691,10 @@ pub enum ConfigError {
         "the admin listener needs a token (JCBIN_ADMIN_TOKEN_FILE, admin_token_file or JCBIN_ADMIN_TOKEN)"
     )]
     AdminToken,
+    #[error(
+        "the App pods' listener (apps_listen, JCBIN_APPS_LISTEN) serves the gateway's reads: add the gateway to the role set"
+    )]
+    AppsListen,
     #[error("{0}")]
     Secret(#[from] jc_secret::ReadError),
     #[error("{0} is a file only: set {0}_FILE (or the config file's key) to its path")]
@@ -703,7 +729,10 @@ pub struct Config {
     pub scheme: String,
     pub admin_listen: Option<SocketAddr>,
     pub admin_token_file: Option<PathBuf>,
+    /// The App pods' listener: the gateway's Endpoint reads alone (`app::serve_apps`).
+    pub apps_listen: Option<SocketAddr>,
     pub trusted_proxies: Vec<IpNet>,
+    pub trusted_proxy_identities: Vec<String>,
     pub log_format: LogFormat,
     pub profile: Profile,
     pub state_dir: PathBuf,
@@ -801,6 +830,8 @@ impl Config {
         }
         let mut trusted_proxies = file.trusted_proxies;
         trusted_proxies.extend(cli.trusted_proxies);
+        let mut trusted_proxy_identities = file.trusted_proxy_identities;
+        trusted_proxy_identities.extend(cli.trusted_proxy_identities);
         let kaisatsu = KaisatsuSection {
             kek_file: cli.kaisatsu_kek_file.or(file.kaisatsu.kek_file),
             import_dir: cli.kaisatsu_import_dir.or(file.kaisatsu.import_dir),
@@ -853,7 +884,9 @@ impl Config {
                 .or(file.daiya.portal_password_file),
             database: file.daiya.database,
             provisioning_dir: file.daiya.provisioning_dir,
+            #[cfg(feature = "daiya")]
             organizations: file.daiya.organizations,
+            prometheus_reach: file.daiya.prometheus_reach,
         };
         let mut assistant = file.assistant;
         assistant.model_key_file = cli.model_key_file.or(assistant.model_key_file);
@@ -895,6 +928,10 @@ impl Config {
         }
         let admin_listen = cli.admin_listen.or(file.admin_listen);
         let admin_token_file = cli.admin_token_file.or(file.admin_token_file);
+        let apps_listen = cli.apps_listen.or(file.apps_listen);
+        if apps_listen.is_some() && !roles.contains(&Module::Gateway) {
+            return Err(ConfigError::AppsListen);
+        }
         let portal = PortalSection {
             age_key_file: cli.portal_age_key_file.or(file.portal.age_key_file),
         };
@@ -920,7 +957,9 @@ impl Config {
             scheme,
             admin_listen,
             admin_token_file,
+            apps_listen,
             trusted_proxies,
+            trusted_proxy_identities,
             log_format: cli.log_format.or(file.log_format).unwrap_or_default(),
             profile: cli.profile.or(file.profile).unwrap_or_default(),
             state_dir: cli
@@ -1038,6 +1077,17 @@ pub fn portal_env(key: &str) -> Option<String> {
 pub fn antares_env(key: &str) -> Option<String> {
     debug_assert!(key.starts_with("ANTARES_"));
     std::env::var(key).ok()
+}
+
+/// `JC_EKIBEN_PRIVATE_HOSTS`: the in-cluster names ekiben's streams may reach although they
+/// resolve to private addresses (ekiben's `private_hosts`; `name:port` opens one port), comma
+/// separated `project=name:port`: the MQTT brokers' internal listeners a DataSource reads, each
+/// open only to its project's streams (`modules::ekiben::admit`). A variable rather than a
+/// `jc.toml` key, so a deployment can name it before the image reads it.
+#[must_use]
+#[allow(clippy::disallowed_methods)] // The one reader, for ekiben's private hosts.
+pub fn ekiben_private_hosts() -> String {
+    std::env::var("JC_EKIBEN_PRIVATE_HOSTS").unwrap_or_default()
 }
 
 /// The prefix of the variables `jc` hands ekiben's streams as `${NAME}` (ekiben's own
@@ -1419,6 +1469,7 @@ scheme = "http"
 admin_listen = "127.0.0.1:2"
 admin_token_file = "/run/jc/admin-token"
 trusted_proxies = ["10.0.0.0/8"]
+trusted_proxy_identities = ["apisix.jc-prod.serviceaccount.identity.linkerd.cluster.local"]
 log_format = "text"
 
 [mounts.daiya]
@@ -1474,6 +1525,10 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         assert_eq!(merged.scheme, "https");
         assert_eq!(merged.log_format, LogFormat::Json);
         assert_eq!(merged.trusted_proxies.len(), 3);
+        assert_eq!(
+            merged.trusted_proxy_identities,
+            vec!["apisix.jc-prod.serviceaccount.identity.linkerd.cluster.local".to_owned()]
+        );
     }
 
     #[test]
@@ -1661,6 +1716,20 @@ path_prefix = "/api/endpoint"
             ok.antares.admin_token_file.as_deref(),
             Some(Path::new("/x"))
         );
+    }
+
+    #[test]
+    fn the_apps_listener_needs_the_gateway() {
+        let file =
+            Config::parse_file(Path::new("jc.toml"), "apps_listen = \"0.0.0.0:8083\"\n").unwrap();
+        assert!(matches!(
+            Config::merge(cli(&["--role", "daiya"]), file.clone()),
+            Err(ConfigError::AppsListen)
+        ));
+        let cfg = Config::merge(cli(&["--role", "gateway"]), file).unwrap();
+        assert_eq!(cfg.apps_listen, Some("0.0.0.0:8083".parse().unwrap()));
+        let off = Config::merge(cli(&["--role", "gateway"]), FileConfig::default()).unwrap();
+        assert_eq!(off.apps_listen, None);
     }
 
     #[test]
