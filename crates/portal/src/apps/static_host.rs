@@ -117,9 +117,23 @@ async fn admit(
     let Some((project, spec, _)) = published_app(&state, &name) else {
         return missing(&state, &headers, &name);
     };
-    let person = super::roles::person(&state, &headers, &spec, &name).await;
-    kept_out(&state, &headers, &project, &name, &spec, person.as_ref())
+    refused(&state, &headers, &project, &name, &spec)
+        .await
         .unwrap_or_else(|| StatusCode::NO_CONTENT.into_response())
+}
+
+/// The refusal of a caller published App `name` keeps out, as its token of the App's own client
+/// says who they are; `None` for one it admits. What `admit` answers the edge, and what the App
+/// host asks before it hands a call to a wasm App's shard.
+pub(crate) async fn refused(
+    state: &AppState,
+    headers: &HeaderMap,
+    project: &str,
+    name: &str,
+    spec: &AppSpec,
+) -> Option<Response> {
+    let person = super::roles::person(state, headers, spec, name).await;
+    kept_out(state, headers, project, name, spec, person.as_ref())
 }
 
 /// Serves `/apps/{name}/{path}`.
