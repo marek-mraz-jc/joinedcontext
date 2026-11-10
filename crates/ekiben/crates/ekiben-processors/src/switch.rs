@@ -107,9 +107,6 @@ impl Processor for SwitchProcessor {
             let mut passed = std::mem::take(&mut carry_over);
             let mut failed = Vec::new();
 
-            for p in &mut remaining {
-                let _ = p.as_bytes();
-            }
             let test_view = PartsView(&remaining);
 
             for (j, part) in remaining.iter().enumerate() {

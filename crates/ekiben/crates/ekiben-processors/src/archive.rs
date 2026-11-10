@@ -162,9 +162,6 @@ impl Processor for ArchiveProcessor {
                 first_part.set_bytes(Bytes::from(serialize_bytes(&slices)));
             }
             "tar" => {
-                for p in &mut batch {
-                    let _ = p.as_bytes();
-                }
                 let view = PartsView(&batch);
                 let mut buf = Vec::new();
                 {
@@ -189,9 +186,6 @@ impl Processor for ArchiveProcessor {
                 first_part.set_bytes(Bytes::from(buf));
             }
             "zip" => {
-                for p in &mut batch {
-                    let _ = p.as_bytes();
-                }
                 let view = PartsView(&batch);
                 let mut buf = Cursor::new(Vec::new());
                 {
@@ -587,9 +581,10 @@ impl Processor for SplitProcessor {
         let mut next_batch = Vec::new();
         let mut current_bytes = 0usize;
 
-        for mut part in batch {
+        for part in batch {
+            // Measured, not cached: a structured part keeps no serialised copy past this.
             let part_len = if self.byte_size > 0 {
-                part.as_bytes().len()
+                part.as_bytes_ref().len()
             } else {
                 0
             };

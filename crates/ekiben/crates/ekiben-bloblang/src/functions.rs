@@ -86,7 +86,7 @@ pub(crate) fn eval_function(
         "nothing" => Ok(Value::Nothing),
         "batch_index" => Ok(Value::Int(ctx.index as i64)),
         "batch_size" => Ok(Value::Int(ctx.batch.len() as i64)),
-        "content" => Ok(Value::Bytes(ctx.batch.part_bytes(ctx.index).to_vec())),
+        "content" => Ok(Value::Bytes(ctx.batch.part_bytes(ctx.index).into_owned())),
         "errored" => Ok(Value::Bool(ctx.batch.part_error(ctx.index).is_some())),
         "error" => match ctx.batch.part_error(ctx.index) {
             Some(err) => Ok(Value::String(err.message)),

@@ -38,7 +38,7 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Reads this commit's other ci runs (changes.sh REUSE).
+    # Reads this commit's other push runs of ci.yml in this repository (changes.sh REUSE).
     permissions: { contents: read, actions: read }
     outputs:
       root: ${{ steps.paths.outputs.root }}
@@ -63,7 +63,9 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}
-          REUSE: ${{ steps.release.outputs.release == 'true' && '1' || '0' }}
+          # Every push: a job that passed in another push run of this commit is not run again;
+          # image, scan, promote and ship-apps are no reused key and always run on main.
+          REUSE: ${{ github.event_name == 'push' && '1' || '0' }}
           GH_TOKEN: ${{ github.token }}
         run: sh .github/scripts/changes.sh
       # The checks that need no build ride in this job (one runner slot, not four): gitleaks over
@@ -464,12 +466,18 @@ jobs:
   # no push), which the shipped image skips by handing in its compiled binary.
   # It reads the layer cache (scope jc) and, through the Actions cache token handed in as build
   # secrets, the sccache the Dockerfile's cargo builds use; both are written only by
-  # dockerfile-cache.yml on every jc-portal-1 push (the default branch, whose caches every branch
-  # reads; without a writer every branch built cold: 39 min, runs 42617814130 and 42611953211). This
-  # job writes neither (sccache READ_ONLY), so no branch evicts those entries.
+  # dockerfile-cache.yml on each jc-portal-1 push that changes a layer input (the default branch,
+  # whose caches every branch reads; without a writer every branch built cold: 39 min, runs
+  # 42617814130 and 42611953211). This job writes neither (sccache READ_ONLY), so no branch evicts
+  # those entries.
+  # Not on jc-portal-1: dockerfile-cache.yml runs this same build (and check-build-context.sh) on
+  # every jc-portal-1 push that changes a Dockerfile input, the Dockerfile and its ignore file
+  # included, and a fast-forward of a branch head that passed here reuses that job (changes.sh).
   dockerfile:
     needs: changes
-    if: needs.changes.outputs.image == 'true' && needs.changes.outputs.release != 'true'
+    if: >-
+      needs.changes.outputs.image == 'true' && needs.changes.outputs.release != 'true' &&
+      github.ref != 'refs/heads/jc-portal-1'
     runs-on: ubuntu-latest
     timeout-minutes: 150
     steps:

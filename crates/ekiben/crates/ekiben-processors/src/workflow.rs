@@ -314,9 +314,6 @@ impl Processor for WorkflowProcessor {
             .collect();
 
         for layer in &self.dag {
-            for p in &mut batch {
-                let _ = p.as_bytes();
-            }
             let ref_batch: Batch = batch.iter().map(Part::shallow_copy).collect();
 
             let mut futs = Vec::with_capacity(layer.len());
