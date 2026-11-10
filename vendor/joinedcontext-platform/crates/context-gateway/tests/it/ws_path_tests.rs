@@ -496,6 +496,30 @@ async fn every_client_of_an_endpoint_shares_one_upstream() {
     assert_eq!(stub.upgrades().len(), 1, "one upstream for three clients");
 }
 
+/// The upstream a client starts names that client's request to the broker, so the broker's
+/// lines for the hub carry the request that opened it; the id is no part of the hub's key.
+#[tokio::test]
+async fn the_upstream_names_the_request_that_started_it() {
+    let realm = common::Realm::new();
+    let (upstream, stub) = broker().await;
+    let at = gateway("named", &upstream, &realm).await;
+    let mut sockets = Vec::new();
+    for n in 0..2 {
+        let headers = [("x-request-id", format!("ws-hub-start-000{n}"))];
+        let (mut socket, _) = open(&at, PUBLIC, "", &headers).await.expect("upgraded");
+        next_op(&mut socket, "x-welcome").await.expect("welcomed");
+        sockets.push(socket);
+    }
+    upstreams(&stub, 1).await;
+    let upgrades = stub.upgrades();
+    assert_eq!(upgrades.len(), 1, "one upstream for both clients");
+    let named = upgrades
+        .first()
+        .and_then(|h| h.get("x-request-id"))
+        .and_then(|v| v.to_str().ok());
+    assert_eq!(named, Some("ws-hub-start-0000"));
+}
+
 /// The broker's own `Origin` rule refuses every browser, so the gateway judges it: a page on
 /// another site is refused before the broker is asked.
 #[tokio::test]
