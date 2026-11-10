@@ -1,0 +1,32 @@
+name: ci-full
+# The slow checks no branch waits on. `jc-each-feature`: bins/jc built and linted with each module
+# feature alone (cargo hack --each-feature: no default features, then every feature by itself, then
+# all of them), as the README promises ("each module also builds alone"); branch ci builds only the
+# default set, so a module that reaches into another one ungated (daiya_server in config.rs,
+# jc-catalogue-host 2026-11-10) only shows here. It runs once a night on jc-portal-1 (the default
+# branch, where a schedule fires), on dispatch, and on a push to ci-full/** (a branch's proof run
+# before it merges).
+on:
+  schedule: [{ cron: "7 2 * * *" }]
+  push:
+    branches: ["ci-full/**"]
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency:
+  group: "ci-full-${{ github.ref }}"
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
+jobs:
+  jc-each-feature:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust
+        with: { key: root-clippy, components: clippy }
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+        with: { tool: cargo-hack }
+      - run: cargo hack clippy -p jc --each-feature --locked -- -D warnings

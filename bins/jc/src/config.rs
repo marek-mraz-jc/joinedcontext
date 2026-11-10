@@ -295,6 +295,8 @@ pub struct DaiyaSection {
     pub provisioning_dir: Option<PathBuf>,
     /// Organizations held from the start under their Grafana numbers (`{ id = 4, name =
     /// "bbsk" }`), so the provisioning files can name each by `orgId`.
+    /// Only in a build with daiya: a build without it refuses the key as unknown.
+    #[cfg(feature = "daiya")]
     #[serde(default)]
     pub organizations: Vec<daiya_server::config::NumberedOrganization>,
     /// The one address organization 1's Prometheus datasources may reach over http on a
@@ -882,6 +884,7 @@ impl Config {
                 .or(file.daiya.portal_password_file),
             database: file.daiya.database,
             provisioning_dir: file.daiya.provisioning_dir,
+            #[cfg(feature = "daiya")]
             organizations: file.daiya.organizations,
             prometheus_reach: file.daiya.prometheus_reach,
         };
