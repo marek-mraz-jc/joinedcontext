@@ -768,7 +768,10 @@ mod change_pipeline {
             "the queue holds {} bytes against a budget of {budget} ({accepted} of 64 batches of {one} bytes)",
             ledger.used()
         );
-        assert!((1..64).contains(&accepted), "{accepted} of 64 batches queued");
+        assert!(
+            (1..64).contains(&accepted),
+            "{accepted} of 64 batches queued"
+        );
         assert!(
             changes_dropped().saturating_sub(dropped) >= (64 - accepted) as u64,
             "every refused batch is counted"
