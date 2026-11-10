@@ -1149,6 +1149,28 @@ def test_a_service_token_jc_holds_in_memory_is_read_from_the_kit_secrets(tmp_pat
     assert rh.read_secret(tmp_path / "state", "antares-admin-token") == "on-disk"
 
 
+def test_held_pipelines_start_every_module_but_ekiben():
+    """The count suites read the import alone (supervisor 2026-11-10): with REHEARSAL_HOLD_PIPELINES=1
+    jc starts without ekiben, so no Portal queue and no restored stream writes a row during or
+    after the import (gate 2026-11-10T131506Z-g6: 108 endpoints rows above the export)."""
+    fn = subprocess.run(["sed", "-n", "/^jc_role()/,/^}/p", str(HERE / "up.sh")], capture_output=True, text=True, check=True).stdout
+    assert fn
+
+    def role(**env):
+        return subprocess.run(["bash", "-c", fn + "jc_role"], env={"PATH": os.environ["PATH"], **env},
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    src = (HERE / "../../bins/jc/src/module.rs").read_text()
+    every = re.search(r"pub const ALL: \[Module; \d+\] = \[(.*?)\];", src, re.DOTALL)[1]
+    names = {"ModelTools": "model-tools"}
+    modules = [names.get(m, m.lower()) for m in re.findall(r"Module::(\w+)", every)]
+    assert role() == "all"
+    assert role(REHEARSAL_HOLD_PIPELINES="1").split(",") == [m for m in modules if m != "ekiben"]
+    assert role(REHEARSAL_HOLD_PIPELINES="0") == "all"
+    assert role(REHEARSAL_HOLD_PIPELINES="1", REHEARSAL_ROLE="kaisatsu,portal") == "kaisatsu,portal"
+    assert 'nohup "$jc_bin" --role "$role"' in (HERE / "up.sh").read_text()
+
+
 def test_every_secret_up_sh_makes_is_long_enough_for_a_jc_token(tmp_path):
     # dataroom refuses a Portal publisher token under 32 printable characters; up.sh's secret()
     # makes every token, so each one it makes has 64.
@@ -1287,6 +1309,26 @@ def test_client_urls_of_the_source_host_get_a_twin_on_the_rehearsal_and_keep_the
     assert by["other"] == realm["clients"][2]
     assert n == 5
     assert rh.add_rehearsal_origin({"clients": [{"clientId": "x"}]}, "http://localhost:1") == ({"clients": [{"clientId": "x"}]}, 0)
+
+
+def test_an_app_client_gets_its_loopback_app_host_twin():
+    """The role-gated App pages sign in on `http://<app>.apps.localhost:<port>/callback` (gate
+    2026-11-10T120138Z-apps-redirect: 22 app.page rows, 400 invalid redirect_uri); prod's App client
+    holds only `https://<app>.apps.<domain>/*`. An IP-literal base mounts App hosts under localhost."""
+    a = "https://air-quality.apps.smartcity.joinedcontext.com"
+    realm = {"clients": [
+        {"clientId": "portal-api", "rootUrl": "https://portal.smartcity.joinedcontext.com"},
+        {"clientId": "app-air-quality", "redirectUris": [f"{a}/*"], "webOrigins": [a]},
+        {"clientId": "other", "redirectUris": ["https://x.apps.smartcity.joinedcontext.com.evil.example/*",
+                                               "https://a.b.apps.smartcity.joinedcontext.com/*"]},
+    ]}
+    for base, host in (("http://127.0.0.1:42102", "localhost:42102"), ("http://localhost:42102/", "localhost:42102")):
+        out, n = rh.add_rehearsal_origin(realm, base)
+        by = {c["clientId"]: c for c in out["clients"]}
+        assert by["app-air-quality"]["redirectUris"] == [f"{a}/*", f"http://air-quality.apps.{host}/*"]
+        assert by["app-air-quality"]["webOrigins"] == [a, f"http://air-quality.apps.{host}"]
+        assert by["other"] == realm["clients"][2]
+        assert n == 2
 
 
 def test_every_kit_secret_is_long_enough_for_the_strictest_reader(tmp_path):
