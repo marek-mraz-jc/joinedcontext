@@ -240,10 +240,17 @@ done
 # default $home/dashboards: a rehearsal.py dashboards dir); daiya lets only file-provisioned
 # datasources reach it.
 REHEARSAL_DASHBOARDS=${REHEARSAL_DASHBOARDS:-$home/dashboards}
+daiya_lines=
+rm -f "$home/daiya-provisioning/datasources/prometheus.yaml"
 if compgen -G "$REHEARSAL_DASHBOARDS/*.datasource.*.json" >/dev/null; then
   python3 -I "$here/rehearsal.py" provisioning --dashboards "$REHEARSAL_DASHBOARDS" --port "$port" \
     --out "$home/daiya-provisioning"
-  db_config+=$(printf '\n[daiya]\nprovisioning_dir = "%s"\n' "$home/daiya-provisioning")
+  daiya_lines+="provisioning_dir = \"$home/daiya-provisioning\""$'\n'
+fi
+# shellcheck source=deploy/rehearsal/prometheus.sh
+. "$here/prometheus.sh"  # the Prometheus the dashboards read, through its label proxy (jc-prod-metrics)
+if [ -n "$daiya_lines" ]; then
+  db_config+=$(printf '\n[daiya]\n%s' "$daiya_lines")
 fi
 # The hub's search_documents searches the sources the deployment names (base-values of the
 # context-gateway; REHEARSAL_DEPLOYMENT is a deployment clone); jc fills the assistant's address.

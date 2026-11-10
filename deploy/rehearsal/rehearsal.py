@@ -2080,6 +2080,25 @@ def provisioning_files(dashboards: Path, port: int, out: Path) -> int:
     return len(rows)
 
 
+def prometheus_files(admin: str, own: str, proxy: str, config: Path, datasource: Path) -> None:
+    """prometheus.sh's two files: the scrape configuration (jc's admin listener with the token
+    file mounted at /etc/rh/token, under namespace="jc-prod" as dev's Prometheus labels jc-prod's
+    targets; Prometheus itself under namespace="monitoring", a series the proxy must hide) and
+    daiya's datasource `prometheus` of organization 1 on the label proxy. JSON is YAML."""
+    scrape = {"global": {"scrape_interval": "15s", "scrape_timeout": "10s"}, "scrape_configs": [
+        {"job_name": "jc", "metrics_path": "/metrics", "authorization": {"credentials_file": "/etc/rh/token"},
+         "static_configs": [{"targets": [admin], "labels": {"namespace": "jc-prod"}}]},
+        {"job_name": "prometheus", "static_configs": [{"targets": [own], "labels": {"namespace": "monitoring"}}]}]}
+    config.write_text(json.dumps(scrape, indent=1))
+    datasource.write_text(json.dumps({"apiVersion": 1, "datasources": [
+        {"name": "Prometheus", "uid": "prometheus", "type": "prometheus", "access": "proxy", "orgId": 1,
+         "url": f"http://{proxy}", "editable": False, "jsonData": {"timeInterval": "15s"}}]}, indent=1))
+
+
+def cmd_prometheus_config(a):
+    prometheus_files(a.admin, a.self, a.proxy, Path(a.config), Path(a.datasource))
+
+
 def cmd_provisioning(a):
     n = provisioning_files(Path(a.dashboards), a.port, Path(a.out))
     print(f"daiya provisioning: {n} datasources into organization 1 ({a.out})")
@@ -2254,11 +2273,14 @@ def main(argv=None):
     s.add_argument("--dashboards", required=True); s.add_argument("--report", required=True)
     s = sub.add_parser("provisioning"); s.add_argument("--dashboards", required=True)
     s.add_argument("--port", type=int, required=True); s.add_argument("--out", required=True)
+    s = sub.add_parser("prometheus-config"); s.add_argument("--admin", required=True)
+    s.add_argument("--self", required=True); s.add_argument("--proxy", required=True)
+    s.add_argument("--config", required=True); s.add_argument("--datasource", required=True)
     sub.add_parser("aliases")
     s = sub.add_parser("hub-sources"); s.add_argument("--deployment", required=True)
     s = sub.add_parser("policy-check"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     a = p.parse_args(argv)
-    return {"provisioning": cmd_provisioning, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import, "aliases": cmd_aliases, "hub-sources": cmd_hub_sources,
+    return {"provisioning": cmd_provisioning, "prometheus-config": cmd_prometheus_config, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import, "aliases": cmd_aliases, "hub-sources": cmd_hub_sources,
             "retain": cmd_retain, "smoke": cmd_smoke, "import-runlog": cmd_import_runlog}[a.cmd](a) or 0
 
 
