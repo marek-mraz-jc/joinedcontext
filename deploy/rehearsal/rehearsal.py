@@ -478,7 +478,7 @@ def jc_clients_by_secret(realm: dict) -> tuple[dict, list[str]]:
             attrs = {k: v for k, v in (c.get("attributes") or {}).items() if not k.startswith("jwt.credential.")}
             c = {**c, "clientAuthenticatorType": "client-secret", "attributes": attrs}
             if own and not SECRET_VAR.fullmatch(str(c.get("secret", "")).strip()):
-                c["secret"] = "$(env:KC_%s_SECRET)" % re.sub(r"[^A-Z0-9]", "_", c["clientId"].upper())
+                c["secret"] = f"$(env:KC_{re.sub(r'[^A-Z0-9]', '_', c['clientId'].upper())}_SECRET)"
             changed.append(c["clientId"])
         clients.append(c)
     if "clients" in realm:
