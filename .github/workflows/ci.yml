@@ -180,9 +180,10 @@ jobs:
       - run: |
           echo "nproc: $(nproc)"
           # the doc build beside the first job's build and tests slowed them by up to 1.7x (runs
-          # 42756711313, 42823061257); beside a job without the lib block it costs about 15-30 s
-          # (42829330070), which the split counts
-          plan="root ${{ matrix.part }} ${{ strategy.job-total }} --extra 1=30"
+          # 42756711313, 42823061257). At 30 s, part 1 still ended 96, 81 and 107 s after the other
+          # parts' mean (42903345215, 42904656041, 42905125870; once 56 s before, 42907020038): its
+          # tests run slower beside the doc build and then wait 0-62 s for it, so the split counts 120
+          plan="root ${{ matrix.part }} ${{ strategy.job-total }} --extra 1=120"
           # shellcheck disable=SC2086
           python3 .github/scripts/test-part.py --binaries $plan > "$RUNNER_TEMP/targets.txt"
           set --; while IFS= read -r arg; do set -- "$@" "$arg"; done < "$RUNNER_TEMP/targets.txt"
