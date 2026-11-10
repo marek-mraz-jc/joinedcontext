@@ -53,7 +53,7 @@ const ENDPOINT_PRIORITY: u64 = 35;
 /// services routes (AP-143).
 const SERVER_PRIORITY: u64 = 32;
 /// The port of a WASM shard's Service on which the Apps' APIs answer (AP-143, T-3857).
-const WASM_HOST_PORT: u16 = 8080;
+pub(crate) const WASM_HOST_PORT: u16 = 8080;
 /// The base's plugin config an App's own route is modelled on: the edge login, the header strip,
 /// the rate limit and the security headers of a page.
 const APPS_SURFACE: &str = "apps-surface";

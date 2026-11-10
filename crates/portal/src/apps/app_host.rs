@@ -8,8 +8,15 @@
 //! - `/api/endpoint/{slug}/…` goes to the gateway for the App's own slugs alone, never the egress
 //!   path, without the browser's cookies;
 //! - `/api/services/…` and a `ui` App's `/api/functions/…` go to their routes under `/apps/{name}/`;
-//! - a `wasm` App's own server (`/api/…` otherwise) and a `ui-rust` App's pod are not run by this
-//!   Portal: a `503` naming the App, never a raw error.
+//! - a `wasm` App's own server (`/api/…` otherwise) goes to its shard
+//!   `jc-wasm-host-{status.shard}.{JC_PORTAL_WASM_HOST_NAMESPACE}` under `/apps/{name}/api/…`, as
+//!   the edge sent it (AP-143), after the App's visibility admits the caller: the shard never asks;
+//! - a `ui-rust` App's pod named in `JC_PORTAL_APP_PODS` gets every other path, streamed, with the
+//!   App's Content-Security-Policy, as the edge file routes Service `app-{name}`, after the App's
+//!   visibility admits the caller;
+//! - a wasm App without a shard, a shard the host does not run, or no WASM host configured, and
+//!   any other `ui-rust` App's pod, which this Portal does not run: a `503` naming the App, never a
+//!   raw error.
 //!
 //! A host one label under the apex that names no published App gets the static host's own `404`.
 //! Any other host passes untouched.
@@ -18,7 +25,8 @@
 //! App's client `app-{name}` with its secret from the realm, PKCE, `redirect_uri`
 //! `https://{host}/callback`, `/logout`, and a session cookie `__Host-jc_app_{name}`, host-only on
 //! the App's host, holding a random id; the tokens stay in this process. A non-public App's page
-//! asked for without a session goes to the realm; every request with one carries the App's access
+//! asked for without a session goes to the realm, and its `/api/…` without a session or a bearer
+//! answers `401` before anything is handed on; every request with one carries the App's access
 //! token as its bearer, renewed by the refresh token when it expired (the client's lifespan is a
 //! minute, T-4914). Another App's cookie never reaches this host, and a session id is bound to its
 //! App, so one App's session never opens another.
@@ -109,7 +117,6 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
         if slug.is_empty() || egress || !own {
             return problem(StatusCode::NOT_FOUND, "not one of this App's endpoints");
         }
-        return to_gateway(&state, req, &rest).await;
     }
     if let Some((_, spec, _)) = &app {
         match rest.as_str() {
@@ -136,15 +143,59 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
                     .unwrap_or(back);
                 return login::start(&state, &name, back);
             }
+            // A call of a non-public App nobody signed in to is handed to nothing (AP-29).
+            None if spec.visibility != jc_core::kinds::AppVisibility::Public
+                && rest.starts_with("/api/")
+                && super::roles::presented(&state, req.headers()).is_none() =>
+            {
+                return problem(
+                    StatusCode::UNAUTHORIZED,
+                    &format!("sign in to App '{name}' first"),
+                );
+            }
             None => {}
         }
     }
+    if rest.starts_with("/api/endpoint/") {
+        return to_gateway(&state, req, &rest).await;
+    }
     let services = rest.starts_with("/api/services/");
-    match kind {
-        Some(AppClass::Wasm) if rest.starts_with("/api/") && !services => {
-            return unavailable(&state, &req, &name, "server");
+    match (&app, kind) {
+        (Some((project, spec, _)), Some(AppClass::Wasm))
+            if rest.starts_with("/api/") && !services =>
+        {
+            if let Some(refused) =
+                super::static_host::refused(&state, req.headers(), project, &name, spec).await
+            {
+                return refused;
+            }
+            let Some((base, client)) = wasm_server(&state, project, &name) else {
+                return unavailable(&state, &req, &name, "server");
+            };
+            return forward(
+                req,
+                &base,
+                &format!("/apps/{name}{rest}"),
+                &client,
+                "App server",
+            )
+            .await;
         }
-        Some(AppClass::UiRust) if !services => return unavailable(&state, &req, &name, "pod"),
+        (Some((project, spec, _)), Some(AppClass::UiRust)) if !services => {
+            let Some(pod) = state.config.app_pods.get(&name) else {
+                return unavailable(&state, &req, &name, "pod");
+            };
+            // The pod never asks who calls: the App's visibility is judged here, as for a shard.
+            if let Some(refused) =
+                super::static_host::refused(&state, req.headers(), project, &name, spec).await
+            {
+                return refused;
+            }
+            return to_pod(&state, req, pod, &rest, project, spec).await;
+        }
+        (_, Some(AppClass::UiRust)) if !services => {
+            return unavailable(&state, &req, &name, "pod");
+        }
         _ => {}
     }
     let query = req
@@ -213,20 +264,114 @@ fn http() -> &'static reqwest::Client {
     })
 }
 
-/// Hands an App's endpoint call to the gateway (`JC_PORTAL_GATEWAY_URL`) and its answer back,
-/// both streamed. The browser's cookies stay here; the gateway sees the bearer the call carries.
+/// The client of an App's pod: no deadline on the whole answer, whose `api/stream` is an event
+/// stream that stays open, but 30 s at most between two reads, as the edge file's upstream
+/// (`read: 30`); hsl-transport's stream sends a keep-alive every 15 s.
+fn pod_http() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(std::time::Duration::from_secs(6))
+            .read_timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
+/// Hands an App's endpoint call to the gateway (`JC_PORTAL_GATEWAY_URL`).
 async fn to_gateway(state: &AppState, req: Request, rest: &str) -> Response {
     let Some(gateway) = state.config.gateway_url.as_deref() else {
         return problem(StatusCode::SERVICE_UNAVAILABLE, "no gateway is configured");
     };
+    forward(req, gateway, rest, http(), "gateway").await
+}
+
+/// Hands a request on a `ui-rust` App's host to its pod (`JC_PORTAL_APP_PODS`) at the same path,
+/// the App's base path being `/` there, and the answer back with the App's Content-Security-Policy
+/// in place of any the pod sent, as the edge file's route sets it (AP-12, AP-122).
+async fn to_pod(
+    state: &AppState,
+    req: Request,
+    pod: &str,
+    rest: &str,
+    project: &str,
+    spec: &jc_core::kinds::AppSpec,
+) -> Response {
+    let mut response = forward(req, pod, rest, pod_http(), "App's server").await;
+    let basemap = crate::api::basemap::route_prefix(&state.config, project);
+    let policy = super::static_host::content_security_policy(
+        spec,
+        super::static_host::portal_origin(state).as_deref(),
+        basemap.as_deref(),
+    );
+    let headers = response.headers_mut();
+    headers.remove(header::X_FRAME_OPTIONS);
+    match HeaderValue::from_str(&policy) {
+        Ok(csp) => {
+            headers.insert(header::CONTENT_SECURITY_POLICY, csp);
+        }
+        Err(_) => return problem(StatusCode::BAD_GATEWAY, "the App's policy is no header"),
+    }
+    response
+}
+
+/// The base URL of App `name`'s shard and the client that reaches it, `None` when it has none:
+/// the shard only from the App's `status.shard`, below the shards the host runs
+/// (`JC_PORTAL_WASM_SHARDS`), and the namespace only from `JC_PORTAL_WASM_HOST_NAMESPACE`, so no
+/// part of the host comes from the request.
+fn wasm_server(state: &AppState, project: &str, name: &str) -> Option<(String, reqwest::Client)> {
+    let settings = state.config.apps_db.as_ref()?;
+    let namespace = settings
+        .host_namespace
+        .as_deref()
+        .filter(|ns| crate::resource::is_dns1123(ns) && !ns.contains('.'))?;
+    let shard = state
+        .mirror
+        .get(project, "App", name)?
+        .status?
+        .shard
+        .filter(|shard| *shard < settings.shards)?;
+    let host = format!("jc-wasm-host-{shard}.{namespace}.svc.cluster.local");
+    let port = crate::reconciler::edge_file::WASM_HOST_PORT;
+    let client = match settings.shards_through {
+        None => http().clone(),
+        Some(stub) => reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .proxy(reqwest::Proxy::http(format!("http://{stub}")).ok()?)
+            .build()
+            .ok()?,
+    };
+    Some((format!("http://{host}:{port}"), client))
+}
+
+/// Hands a call to `base` + `path` with the request's query and its answer back, both streamed.
+/// The browser's cookies and the hop headers stay here both ways (`DROPPED`); the upstream sees
+/// the bearer the call carries. A path with a dot segment is refused: the URL would resolve it
+/// and leave the prefix the caller was checked for (another slug, another App on the shard).
+async fn forward(
+    req: Request,
+    base: &str,
+    path: &str,
+    client: &reqwest::Client,
+    upstream: &str,
+) -> Response {
+    let dotted = path.split('/').any(|segment| {
+        let segment = segment.to_ascii_lowercase().replace("%2e", ".");
+        segment == "." || segment == ".."
+    });
+    // A `\` is a `/` to the URL of an `http` address.
+    if dotted || path.contains('\\') {
+        return problem(StatusCode::NOT_FOUND, "no such path");
+    }
     let query = req
         .uri()
         .query()
         .map(|query| format!("?{query}"))
         .unwrap_or_default();
-    let url = format!("{}{rest}{query}", gateway.trim_end_matches('/'));
+    let url = format!("{}{path}{query}", base.trim_end_matches('/'));
     let (parts, body) = req.into_parts();
-    let mut out = http().request(parts.method.clone(), url);
+    let mut out = client.request(parts.method.clone(), url);
     for (key, value) in &parts.headers {
         if !DROPPED.contains(&key.as_str()) {
             out = out.header(key, value);
@@ -237,8 +382,11 @@ async fn to_gateway(state: &AppState, req: Request, rest: &str) -> Response {
     let answer = match out.send().await {
         Ok(answer) => answer,
         Err(err) => {
-            tracing::warn!(error = %err, "an App's endpoint call did not reach the gateway");
-            return problem(StatusCode::BAD_GATEWAY, "the gateway did not answer");
+            tracing::warn!(error = %err, upstream, "an App's call did not reach its upstream");
+            return problem(
+                StatusCode::BAD_GATEWAY,
+                &format!("the {upstream} did not answer"),
+            );
         }
     };
     let mut response = Response::builder().status(answer.status().as_u16());
@@ -873,5 +1021,87 @@ mod tests {
             StatusCode::SEE_OTHER,
             "still signed out on alerts"
         );
+    }
+
+    /// An App's session is the bearer of every call it makes: to its shard and to its own
+    /// endpoints through the gateway, the browser's cookie never. (A public App: the shard's
+    /// visibility check verifies the token, which a test session's is not.)
+    #[tokio::test]
+    async fn a_session_is_the_bearer_its_apps_shard_and_endpoints_see() {
+        type Seen = Arc<std::sync::Mutex<Vec<(String, HeaderMap)>>>;
+        let seen: Seen = Arc::default();
+        let record = seen.clone();
+        let stub = axum::Router::new().fallback(move |req: Request<Body>| {
+            let record = record.clone();
+            async move {
+                let seen = (req.uri().to_string(), req.headers().clone());
+                record.lock().unwrap().push(seen);
+                "{}"
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, stub).await });
+
+        let state = state();
+        let spec = serde_json::json!({
+            "kind": "wasm", "source": { "path": "." }, "build": {},
+            "visibility": "public", "lifecycle": "published",
+            "dataNeeds": [{
+                "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+                "types": ["AirQualityObserved"], "operations": ["queryEntity"]
+            }]
+        });
+        let mut app = ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: "App".into(),
+            metadata: ObjectMeta {
+                name: "counts".into(),
+                namespace: Some("helsinki".into()),
+                ..Default::default()
+            },
+            spec,
+            status: None,
+        };
+        app.status = Some(serde_json::from_value(serde_json::json!({ "shard": 0 })).unwrap());
+        state.mirror.upsert(app);
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: "Endpoint".into(),
+            metadata: ObjectMeta {
+                name: "air".into(),
+                namespace: Some("helsinki".into()),
+                ..Default::default()
+            },
+            spec: serde_json::json!({ "contextSpaceRef": "air", "slug": "airslug" }),
+            status: None,
+        });
+        let mut config = (*state.config).clone();
+        config.gateway_url = Some(format!("http://{addr}"));
+        config.apps_db = Some(crate::config::AppsDbSettings {
+            url: "postgres://apps@db/apps".into(),
+            shards: 1,
+            bucket: "apps".into(),
+            host_namespace: Some("wasm-host".into()),
+            shards_through: Some(addr),
+        });
+        let state = AppState::new(config, None).with_mirror(state.mirror.clone());
+        super::login::insert_for_test("sid-of-counts", "counts", "counts-token");
+        let cookie = ("cookie", "__Host-jc_app_counts=sid-of-counts");
+        for uri in ["/api/totals", "/api/endpoint/airslug/ngsi-ld/v1/entities"] {
+            let response = get(&state, "counts.apps.example.org", uri, &[cookie]).await;
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        }
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(
+            seen[0].0,
+            "http://jc-wasm-host-0.wasm-host.svc.cluster.local:8080/apps/counts/api/totals"
+        );
+        assert_eq!(seen[1].0, "/api/endpoint/airslug/ngsi-ld/v1/entities");
+        for (_, headers) in &seen {
+            assert_eq!(headers[header::AUTHORIZATION], "Bearer counts-token");
+            assert!(headers.get(header::COOKIE).is_none());
+        }
     }
 }

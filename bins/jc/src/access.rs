@@ -41,9 +41,13 @@ pub const PROBE_HEADER: HeaderName = HeaderName::from_static("x-probe-mark");
 const PROBE_KEY: &str = "probe";
 
 static PROBE_MARK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-/// Ids of the probe calls in flight: the broker hop knows a probe by its id, which the gateway
-/// hands on, so no header a caller can send makes a call quiet.
-static PROBES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Ids of the probe calls in flight, and of those that ended under [`PROBE_GRACE`] ago (when
+/// they ended): the broker hop knows a probe by its id, which the gateway hands on, so no header
+/// a caller can send makes a call quiet.
+static PROBES: Mutex<Vec<(String, Option<Instant>)>> = Mutex::new(Vec::new());
+/// How long an ended probe call's id still names a probe: the websocket hub a probe's upgrade
+/// starts opens its broker upstream under the probe's id just after the `101` went out.
+const PROBE_GRACE: Duration = Duration::from_secs(10);
 
 /// This process's probe mark (drawn once, never logged).
 pub fn probe_mark() -> &'static str {
@@ -60,25 +64,37 @@ fn take_mark(req: &mut Request) -> bool {
     sent.len() == mark.len() && sent.iter().zip(mark).fold(0u8, |d, (a, b)| d | (a ^ b)) == 0
 }
 
-fn probes() -> std::sync::MutexGuard<'static, Vec<String>> {
+fn probes() -> std::sync::MutexGuard<'static, Vec<(String, Option<Instant>)>> {
     PROBES.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Keeps `id` among the probes in flight while it lives.
+/// `id` names a probe in flight, or one that ended under [`PROBE_GRACE`] before `now`.
+fn is_probe(id: &str, now: Instant) -> bool {
+    probes().iter().any(|(held, ended)| {
+        held == id && ended.is_none_or(|at| now.duration_since(at) < PROBE_GRACE)
+    })
+}
+
+/// Keeps `id` among the probes while it lives and for [`PROBE_GRACE`] after.
 struct InFlight(String);
 
 impl InFlight {
     fn new(id: &str) -> Self {
-        probes().push(id.to_owned());
+        let now = Instant::now();
+        let mut ids = probes();
+        ids.retain(|(_, ended)| ended.is_none_or(|at| now.duration_since(at) < PROBE_GRACE));
+        ids.push((id.to_owned(), None));
         Self(id.to_owned())
     }
 }
 
 impl Drop for InFlight {
     fn drop(&mut self) {
-        let mut ids = probes();
-        if let Some(at) = ids.iter().position(|id| *id == self.0) {
-            ids.swap_remove(at);
+        let now = Instant::now();
+        for (held, ended) in probes().iter_mut() {
+            if *held == self.0 {
+                *ended = Some(now);
+            }
         }
     }
 }
@@ -198,7 +214,7 @@ async fn access(module: &'static str, door: Door, mut req: Request, next: Next) 
     let id = traced.clone().unwrap_or_else(fresh);
     let probe = match door {
         Door::Outer(_) => marked,
-        Door::Hop => probes().contains(&id),
+        Door::Hop => is_probe(&id, Instant::now()),
     };
     let _in_flight = (probe && matches!(door, Door::Outer(_))).then(|| InFlight::new(&id));
     // `plain` or hex: always a valid header value.
@@ -536,7 +552,15 @@ mod tests {
             "{quiet}"
         );
         drop(in_flight);
-        assert!(!probes().iter().any(|p| p == id));
+        let ended = Instant::now();
+        assert!(
+            is_probe(id, ended),
+            "an ended probe's id holds for the grace"
+        );
+        assert!(!is_probe(
+            id,
+            ended + PROBE_GRACE + Duration::from_millis(5)
+        ));
     }
 
     #[test]

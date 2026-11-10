@@ -17,9 +17,11 @@ Apps (every App manifest of the export's repositories, every joinedcontext-apps 
   bundles, and the prod builds deploy/rehearsal/apps.sh publishes into shako) and its main page
   reads data. A public App is opened anonymously; any other on a token of the App's own client
   (app-{name}, the code flow the edge runs on prod) as rehearsal-app-roles, and refused to
-  rehearsal-tester: 403 for a roles App, 404 for the others. Named skips: a wasm App's page
-  (kept component wasm-host), a ui-rust App (kept component, a Kubernetes Service), an App the
-  source never built.
+  rehearsal-tester: 403 for a roles App, 404 for the others. A wasm App's server half: GET /api/me
+  on the App's own host, which the Portal hands to the App's shard (AP-143), answers the App's own
+  200 JSON (null anonymously, the caller on a token); signed out, a non-public App's answers 401.
+  Named skips: a wasm App's browser page (the suite's stand-in edge routes no server path; app.server
+  checks it), a ui-rust App (kept component, a Kubernetes Service), an App the source never built.
 
 Credentials come from the rehearsal's state dir (0600 files written by up.sh): dashboards-password
 (daiya Basic), portal-admin-client-secret (makes the suite's person), shako-token, and realms/*.json
@@ -55,8 +57,23 @@ NEVER_BUILT = ("same on prod: never built (status.build unset in the export; pro
                "serve either)")
 KEPT = {"ui-rust": ("kept component: Kubernetes Service (a ui-rust App's server runs as its own Service "
                     "beside jc, stamped by the Portal through the cluster API; the rehearsal has no Kubernetes)")}
-KEPT_WASM = ("kept component: wasm-host (the static half is served and checked above; its /api/* reads go "
-             "to jc-wasm-host with apps-db and the artifact store, which the rehearsal does not run)")
+WASM_PAGE = ("the suite's stand-in edge (shots.edge_rewrite) routes no wasm server path; app.server checks "
+             "the server half through the Portal's App host")
+
+
+def server_judge(status: int, headers: dict, raw: bytes, signed_in: bool) -> tuple[str, bool]:
+    """(actual, ok) of a wasm App's GET /api/me on its own host. Every wasm App of the export serves
+    /api/me: 200 JSON, null for an anonymous caller, the caller ({id, ...}) on a token. The Portal's
+    503 (no shard), a problem+json or any other answer fails."""
+    ctype = headers.get("content-type", "")
+    actual = f"{status} {ctype or '-'} {raw[:120].decode(errors='replace')!r}"
+    if status != 200 or not ctype.startswith("application/json"):
+        return actual, False
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        return actual, False
+    return actual, (isinstance(body, dict) and bool(body.get("id"))) if signed_in else body is None
 
 
 def frame_rows(frames) -> int:
@@ -376,7 +393,21 @@ def main(argv=None) -> int:
                 res.skip("app.page", tgt, f"browser /apps/{app.name}/", "main page reads data", "not served (app.served failed)")
                 continue
             if app.kind == "wasm":
-                res.skip("app.page", tgt, f"browser /apps/{app.name}/", "main page reads data", KEPT_WASM)
+                # On the App's own host, without the Portal's cookies (another origin).
+                bare = Session(a.base_url, a.timeout)
+                host = {"Host": f"{app.name}.apps.{urllib.parse.urlparse(a.base_url).netloc}"}
+                call = f"GET {host['Host']}/api/me"
+                if token:
+                    st, _, _ = bare.call("GET", "/api/me", headers=host)
+                    res.check("app.server.signed-out", tgt, call + " anonymously", "401, nothing handed to the shard",
+                              f"{st}", st == 401)
+                    token = app_token(a.base_url, app_realm, f"app-{app.name}", HOLDER, a.timeout)
+                    host["Authorization"] = f"Bearer {token}"
+                st, hdrs, raw = bare.call("GET", "/api/me", headers=host)
+                actual, ok = server_judge(st, hdrs, raw, bool(token))
+                res.check("app.server", tgt, call + who,
+                          f"200 application/json from the App's shard: {'the caller' if token else 'null'}", actual, ok)
+                res.skip("app.page", tgt, f"browser /apps/{app.name}/", "main page reads data", WASM_PAGE)
                 continue
             if not a.shots:
                 res.skip("app.page", tgt, f"browser /apps/{app.name}/", "main page reads data", "--no-shots")

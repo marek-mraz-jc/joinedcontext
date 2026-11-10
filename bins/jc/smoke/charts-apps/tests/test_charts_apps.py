@@ -113,3 +113,17 @@ def test_the_app_host_is_rewritten_as_the_portals_edge_file_does():
         base + "/api/endpoint/s1/ngsi-ld/v1/entities?type=A"
     assert rw(base, "alerts-desk", host + "/apps/alerts-desk/api/endpoint/s1/x") == base + "/api/endpoint/s1/x"
     assert rw(base, "alerts-desk", "https://tiles.example/x.png") is None, "another host is left alone"
+
+
+def test_a_wasm_server_passes_only_on_its_own_json_answer():
+    j = {"content-type": "application/json"}
+    assert suite.server_judge(200, j, b"null", False)[1]
+    assert suite.server_judge(200, j, b'{"id": "s1", "roles": []}', True)[1]
+    # The Portal's 503 for an App without a shard, its 401, a page, a problem and the wrong caller.
+    p = {"content-type": "application/problem+json"}
+    assert not suite.server_judge(503, p, b'{"status": 503}', False)[1]
+    assert not suite.server_judge(401, p, b'{"status": 401}', True)[1]
+    assert not suite.server_judge(200, {"content-type": "text/html"}, b"<html>", False)[1]
+    assert not suite.server_judge(200, j, b'{"id": "s1"}', False)[1], "anonymous yet a caller"
+    assert not suite.server_judge(200, j, b"null", True)[1], "signed in yet nobody"
+    assert not suite.server_judge(0, {}, b"connection refused", False)[1]

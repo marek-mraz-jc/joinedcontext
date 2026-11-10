@@ -1,0 +1,104 @@
+name: ship-apps
+# The ui-rust Apps an installation without a build lane runs as pods (jc-prod: hsl-transport),
+# built after a green ci on main by crates/portal/builder/Dockerfile's `ui-rust-app` target (the
+# fullstack branch of build-app.sh, from crates/portal/apps/<app>), smoke-tested, pushed as
+# ghcr.io/<owner>/jc-app-<app> by digest and signed with cosign, then its SBOM attested and the
+# trivy gate run (HIGH/CRITICAL with a fix), as image-embedder.yml does. Deployments pin the
+# digest (deployment components/jc/images.yaml), never a tag.
+on:
+  workflow_run: { workflows: [ci], types: [completed], branches: [main] }
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency:
+  group: "image-apps-${{ github.sha }}"
+  cancel-in-progress: false
+jobs:
+  build:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_sha == github.sha &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write, id-token: write }
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { app: hsl-transport, title: "HSL live" }
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/jc-app-${{ matrix.app }}
+    outputs:
+      ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: day
+        run: echo "d=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: crates/portal
+          file: crates/portal/builder/Dockerfile
+          target: ui-rust-app
+          build-args: |
+            APP=${{ matrix.app }}
+            APT_REFRESH=${{ steps.day.outputs.d }}
+          load: true
+          tags: jc-app-local:smoke
+          cache-from: type=gha,scope=jc-app-${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=jc-app-${{ matrix.app }}
+      - name: the App starts as 65532 on a read-only root filesystem and serves its page
+        run: sh .github/scripts/app-smoke.sh jc-app-local:smoke "${{ matrix.title }}"
+      - id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: crates/portal
+          file: crates/portal/builder/Dockerfile
+          target: ui-rust-app
+          build-args: |
+            APP=${{ matrix.app }}
+            APT_REFRESH=${{ steps.day.outputs.d }}
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }},${{ env.IMAGE }}:${{ github.ref_name == 'main' && 'main' || format('ref-{0}', github.run_number) }}
+          cache-from: type=gha,scope=jc-app-${{ matrix.app }}
+          provenance: true
+          sbom: true
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - run: cosign sign --yes "$IMAGE@${{ steps.push.outputs.digest }}"
+      - id: ref
+        run: echo "ref=$IMAGE@${{ steps.push.outputs.digest }}" >> "$GITHUB_OUTPUT"
+      - run: echo "jc-app-${{ matrix.app }} digest ${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+  scan:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write, id-token: write }
+    timeout-minutes: 20
+    env:
+      REF: ${{ needs.build.outputs.ref }}
+      TRIVY_USERNAME: ${{ github.actor }}
+      TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.REF }}
+          format: cyclonedx
+          output: ${{ runner.temp }}/sbom.cdx.json
+          cache-dir: ${{ runner.temp }}/trivy
+      - run: cosign attest --yes --type cyclonedx --predicate "$RUNNER_TEMP/sbom.cdx.json" "$REF"
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with: { image-ref: "${{ env.REF }}", severity: "HIGH,CRITICAL", exit-code: "1", ignore-unfixed: true, cache-dir: "${{ runner.temp }}/trivy" }
+      - run: |
+          set -eu
+          jq -n --arg sha "$GITHUB_SHA" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg at "$(date -u +%FT%TZ)" \
+            '{scanner: "trivy", severity: ["HIGH", "CRITICAL"], ignoreUnfixed: true, result: "pass", commit: $sha, run: $run, scannedAt: $at}' \
+            > "$RUNNER_TEMP/scan.json"
+          cosign attest --yes --type https://joinedcontext.com/attestations/vuln-scan/v1 --predicate "$RUNNER_TEMP/scan.json" "$REF"
