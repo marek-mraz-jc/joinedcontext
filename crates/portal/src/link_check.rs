@@ -561,7 +561,7 @@ impl Checker {
             mirror,
             store,
             gateway,
-            http: reqwest::Client::builder()
+            http: crate::reach::builder()
                 .timeout(TIMEOUT)
                 .redirect(reqwest::redirect::Policy::none())
                 .user_agent(USER_AGENT)

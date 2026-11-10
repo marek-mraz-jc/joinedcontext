@@ -151,6 +151,7 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
     running.portal_ready().await;
     // Slug mode calls every sibling on the one listener already: no in-pod listener.
     assert_eq!(running.in_pod_addr, None);
+    assert_eq!(running.apps_addr, None);
     let addr = running.addr;
     for &module in cfg
         .roles
@@ -289,6 +290,7 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
     let mut cfg = config(&fx, MountMode::Host, BTreeMap::new());
     // Behind a trusted proxy the forwarded host chooses the module; from anyone else it is ignored.
     cfg.trusted_proxies = vec!["127.0.0.0/8".parse().unwrap()];
+    cfg.apps_listen = Some("127.0.0.1:0".parse().unwrap());
     let running = jc::start(&cfg, CancellationToken::new())
         .await
         .expect("start");
@@ -339,6 +341,43 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
         let (status, _) = get(in_pod, "localhost", &format!("/{}{path}", module.slug())).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{module} in pod");
     }
+
+    // The App pods' listener: the gateway's Endpoint reads, answered as on the gateway's own
+    // host, whatever the Host; no other path or module, and no write.
+    let apps = running.apps_addr.expect("an apps listener");
+    for path in [
+        "/api/endpoint/x",
+        "/api/endpoint/x/ngsi-ld/v1/entities?type=Alert",
+    ] {
+        let (status, body, gateway) =
+            get_as(apps, "jc.jc-prod.svc.cluster.local:8083", None, path).await;
+        let (own_status, own_body, own) = get_as(addr, "api.city.test", None, path).await;
+        assert!(
+            gateway && own,
+            "{path} on the apps listener: {status} {body}"
+        );
+        assert_eq!((status, &body), (own_status, &own_body), "{path}");
+    }
+    for path in [
+        "/api/endpoints",
+        "/api/mcp",
+        "/api/v1/health",
+        "/realms/jc/.well-known/openid-configuration",
+        "/streams/ping",
+    ] {
+        let (status, _, gateway) = get_as(apps, "api.city.test", None, path).await;
+        assert!(
+            status == StatusCode::NOT_FOUND && !gateway,
+            "{path} on the apps listener: {status}"
+        );
+    }
+    let write = reqwest::Client::new()
+        .post(format!("http://{apps}/api/endpoint/x/ngsi-ld/v1/entities"))
+        .body("{}")
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(write.status(), StatusCode::METHOD_NOT_ALLOWED);
 
     for host in [
         "nope.city.test",

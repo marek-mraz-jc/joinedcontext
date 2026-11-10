@@ -54,6 +54,11 @@ pub struct Cli {
     /// cluster-internal address; it is never mounted on the public listener).
     #[arg(long, env = "JCBIN_ADMIN_LISTEN")]
     pub admin_listen: Option<SocketAddr>,
+    /// Optional listener for App pods: the gateway's Endpoint reads (`GET`/`HEAD`
+    /// `/api/endpoint/...`) and nothing else, so a pod beside jc reads its Endpoint without the
+    /// public listener the edge holds. Needs the gateway in the role set.
+    #[arg(long, env = "JCBIN_APPS_LISTEN")]
+    pub apps_listen: Option<SocketAddr>,
     /// File holding the bearer token `/metrics` of the admin listener asks for (required with
     /// `--admin-listen`: it carries every module's series, Antares' among them, which the
     /// standalone broker serves only behind its admin token).
@@ -625,6 +630,7 @@ pub struct FileConfig {
     pub scheme: Option<String>,
     pub admin_listen: Option<SocketAddr>,
     pub admin_token_file: Option<PathBuf>,
+    pub apps_listen: Option<SocketAddr>,
     #[serde(default)]
     pub trusted_proxies: Vec<IpNet>,
     #[serde(default)]
@@ -683,6 +689,10 @@ pub enum ConfigError {
         "the admin listener needs a token (JCBIN_ADMIN_TOKEN_FILE, admin_token_file or JCBIN_ADMIN_TOKEN)"
     )]
     AdminToken,
+    #[error(
+        "the App pods' listener (apps_listen, JCBIN_APPS_LISTEN) serves the gateway's reads: add the gateway to the role set"
+    )]
+    AppsListen,
     #[error("{0}")]
     Secret(#[from] jc_secret::ReadError),
     #[error("{0} is a file only: set {0}_FILE (or the config file's key) to its path")]
@@ -717,6 +727,8 @@ pub struct Config {
     pub scheme: String,
     pub admin_listen: Option<SocketAddr>,
     pub admin_token_file: Option<PathBuf>,
+    /// The App pods' listener: the gateway's Endpoint reads alone (`app::serve_apps`).
+    pub apps_listen: Option<SocketAddr>,
     pub trusted_proxies: Vec<IpNet>,
     pub trusted_proxy_identities: Vec<String>,
     pub log_format: LogFormat,
@@ -913,6 +925,10 @@ impl Config {
         }
         let admin_listen = cli.admin_listen.or(file.admin_listen);
         let admin_token_file = cli.admin_token_file.or(file.admin_token_file);
+        let apps_listen = cli.apps_listen.or(file.apps_listen);
+        if apps_listen.is_some() && !roles.contains(&Module::Gateway) {
+            return Err(ConfigError::AppsListen);
+        }
         let portal = PortalSection {
             age_key_file: cli.portal_age_key_file.or(file.portal.age_key_file),
         };
@@ -938,6 +954,7 @@ impl Config {
             scheme,
             admin_listen,
             admin_token_file,
+            apps_listen,
             trusted_proxies,
             trusted_proxy_identities,
             log_format: cli.log_format.or(file.log_format).unwrap_or_default(),
@@ -1696,6 +1713,20 @@ path_prefix = "/api/endpoint"
             ok.antares.admin_token_file.as_deref(),
             Some(Path::new("/x"))
         );
+    }
+
+    #[test]
+    fn the_apps_listener_needs_the_gateway() {
+        let file =
+            Config::parse_file(Path::new("jc.toml"), "apps_listen = \"0.0.0.0:8083\"\n").unwrap();
+        assert!(matches!(
+            Config::merge(cli(&["--role", "daiya"]), file.clone()),
+            Err(ConfigError::AppsListen)
+        ));
+        let cfg = Config::merge(cli(&["--role", "gateway"]), file).unwrap();
+        assert_eq!(cfg.apps_listen, Some("0.0.0.0:8083".parse().unwrap()));
+        let off = Config::merge(cli(&["--role", "gateway"]), FileConfig::default()).unwrap();
+        assert_eq!(off.apps_listen, None);
     }
 
     #[test]

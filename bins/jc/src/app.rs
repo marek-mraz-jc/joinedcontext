@@ -408,6 +408,9 @@ pub struct Built {
     /// The in-pod listener's router: every host-mounted module of
     /// [`crate::siblings::IN_POD`] at `/{slug}`, `None` when none is (T-6705).
     pub in_pod: Option<Router>,
+    /// The App pods' listener's router (`apps_listen`): the gateway's Endpoint reads alone,
+    /// `None` without that listener or without the gateway.
+    pub apps: Option<Router>,
     portal: Option<(LateRouter, Mount)>,
     gateway: Option<LateGateway>,
 }
@@ -440,6 +443,8 @@ pub async fn build_router(
     }
     let mut portal = None;
     let mut gateway = None;
+    #[cfg_attr(not(feature = "gateway"), allow(unused_mut))]
+    let mut apps = None;
     let mut hop = None;
     let hosted = crate::siblings::hosted_in_pod(&plans);
     let mut in_pod = (!hosted.is_empty())
@@ -529,6 +534,16 @@ pub async fn build_router(
             #[cfg(not(feature = "gateway"))]
             let router = late.router();
             builder = mount_all(builder, &plan, &router);
+            // The App pods' listener: the same gateway at `/api/endpoint` alone, reads alone. No
+            // proxy is trusted there, so a pod's forwarding headers reach nothing.
+            #[cfg(feature = "gateway")]
+            if cfg.apps_listen.is_some() {
+                apps = Some(modules::gateway::apps_router(
+                    &cfg.scheme,
+                    &cfg.base_host,
+                    router.clone(),
+                )?);
+            }
             gateway = Some(LateGateway {
                 slot: late,
                 mount: plan.mount,
@@ -559,6 +574,7 @@ pub async fn build_router(
     Ok(Built {
         router: builder.build()?.into_axum_router(),
         in_pod,
+        apps,
         portal,
         gateway,
     })
@@ -614,10 +630,7 @@ async fn remote_forwarders(
         tracing::info!(module = module.name(), remote = %base, forwarder = %at, "remote module");
         siblings.insert_remote(
             *module,
-            crate::siblings::Sibling {
-                public: base.clone(),
-                internal: format!("http://{at}"),
-            },
+            crate::siblings::Sibling::direct(base.clone(), format!("http://{at}")),
         );
         out.push((listener, router));
     }
@@ -752,6 +765,8 @@ pub struct Running {
     /// The in-pod loopback listener's address, when a module of [`crate::siblings::IN_POD`] is
     /// mounted on a host (T-6705).
     pub in_pod_addr: Option<SocketAddr>,
+    /// The App pods' listener's address, when `apps_listen` is set.
+    pub apps_addr: Option<SocketAddr>,
     shutdown: CancellationToken,
     tasks: TaskTracker,
     servers: Vec<JoinHandle<std::io::Result<()>>>,
@@ -918,6 +933,13 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     for (listener, router) in forwarders {
         servers.push(serve(listener, router, shutdown.clone()));
     }
+    let mut apps_addr = None;
+    if let (Some(at), Some(router)) = (cfg.apps_listen, built.apps.clone()) {
+        let listener = bind(at).await?;
+        apps_addr = Some(listener.local_addr().map_err(StartError::Serve)?);
+        tracing::info!(addr = ?apps_addr, "gateway: the App pods' listener (Endpoint reads)");
+        servers.push(serve(listener, router, shutdown.clone()));
+    }
     let mut admin_addr = None;
     if let (Some(admin), Some(token)) = (cfg.admin_listen, admin_token) {
         let admin_router = admin_router(token)?;
@@ -930,6 +952,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         addr,
         admin_addr,
         in_pod_addr,
+        apps_addr,
         shutdown,
         tasks,
         servers,
@@ -1157,6 +1180,35 @@ mod tests {
             .await
             .unwrap();
         (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// T-6705: host mode routes by name, so the kubelet's probe names a host jc serves:
+    /// ekiben's open `/ping` answers on its host, and a probe naming the pod's address reaches
+    /// nothing (jc's admin listener `/healthz` answers any Host).
+    #[tokio::test]
+    async fn host_mode_answers_the_liveness_probe_on_ekibens_host_only() {
+        let plans = crate::siblings::tests::host_mode_plans();
+        let (status, body) = routed(&plans, "streams.smartcity.test", "/ping").await;
+        assert_eq!((status, body.as_str()), (StatusCode::OK, "ekiben /ping"));
+        for host in ["10.42.0.17:8080", "localhost:8080", "smartcity.test"] {
+            let (status, body) = routed(&plans, host, "/streams/ping").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{host}: {body}");
+        }
+        // The forge stays on the apex host's path, where only jc's own listener reaches it.
+        let (status, body) = routed(&plans, "smartcity.test", "/git/api/v1/version").await;
+        assert_eq!(
+            (status, body.as_str()),
+            (StatusCode::OK, "shako /api/v1/version")
+        );
+        for (host, path) in [
+            ("localhost:8080", "/git/api/v1/version"),
+            ("smartcity.test", "/%67it/api/v1/version"),
+            ("smartcity.test", "//git/api/v1/version"),
+            ("smartcity.test", "/./git/api/v1/version"),
+        ] {
+            let (_, body) = routed(&plans, host, path).await;
+            assert!(!body.starts_with("shako"), "{host}{path}: {body}");
+        }
     }
 
     #[tokio::test]
