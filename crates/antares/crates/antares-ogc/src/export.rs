@@ -1074,8 +1074,9 @@ mod tests {
         let (more, error) = rest(&mut body).await?;
         assert_eq!(error, None);
         assert_eq!(more, b"urn:b\r\nurn:c\r\n");
+        let both = (gate.take(), gate.take());
         assert!(
-            gate.take().is_ok() && gate.take().is_ok(),
+            both.0.is_ok() && both.1.is_ok(),
             "a file sent frees its place"
         );
         Ok(())
