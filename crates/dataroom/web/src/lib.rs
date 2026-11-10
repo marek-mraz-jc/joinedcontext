@@ -69,8 +69,9 @@ pub const JC_SCRIPTS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Default joinedcontext lockup SVG (`/jc-logo.svg`, paths only, no script, no external href).
-pub const JC_LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="171" height="36" viewBox="0 0 171 36" fill="none"><rect width="36" height="36" rx="8" fill="#0000bf"/><text x="18" y="24" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="18" font-weight="700">jc</text><text x="46" y="24" textLength="121" lengthAdjust="spacingAndGlyphs" fill="currentColor" font-family="system-ui, sans-serif" font-size="18" font-weight="700">joinedcontext</text></svg>"##;
+/// The joinedcontext lockup (`/jc-logo.svg`, old prod's `public__jc-logo.svg`: paths only, no script,
+/// no external href), the header logo and the `/logo.svg` an installation without `logoSvg` serves.
+pub const JC_LOGO_SVG: &str = include_str!("../assets/public__jc-logo.svg");
 
 ///Localized UI strings struct for templates (C3).
 #[derive(Debug, Clone)]
@@ -1044,8 +1045,12 @@ pub fn render_home_page_mounted(
                 .iter()
                 .filter(|d| d.publisher_id == p.name || d.publisher_id == p.id)
                 .count();
-            let (title, image, desc) =
-                publisher_card_info(p, &chrome.lang, &catalogue.default_language);
+            let (title, image, desc) = publisher_card_info(
+                p,
+                chrome.branding.publishers.get(&p.name),
+                &chrome.lang,
+                &catalogue.default_language,
+            );
             let d_str = desc.unwrap_or_default();
             let d_short = if d_str.chars().count() > 80 {
                 format!(
@@ -1246,7 +1251,7 @@ fn dataset_filter_pills(
         match param {
             "organization" | "publisher" => publishers
                 .get(value)
-                .map(|p| publisher_card_info(p, lang, default_lang).0)
+                .map(|p| publisher_card_info(p, None, lang, default_lang).0)
                 .or_else(|| listed(&facets.publisher)),
             "vocab_jc_topic" | "theme" => {
                 Some(dataroom_core::vocab::theme_label(value, lang)).filter(|l| !l.is_empty())
@@ -1455,7 +1460,12 @@ pub fn render_dataset_page_full(
         .map(|p| p.name.clone())
         .unwrap_or_else(|| dataset.publisher_id.clone());
     let (publisher_title, publisher_image, pub_desc_opt) = match publisher {
-        Some(p) => publisher_card_info(p, &chrome.lang, &catalogue.default_language),
+        Some(p) => publisher_card_info(
+            p,
+            chrome.branding.publishers.get(&p.name),
+            &chrome.lang,
+            &catalogue.default_language,
+        ),
         None => (
             publisher_slug.clone(),
             "/base/images/placeholder-organization.png".into(),
@@ -1840,8 +1850,12 @@ pub fn render_organization_list_page(
         .iter()
         .filter(|p| p.state == RecordState::Active)
         .filter_map(|p| {
-            let (title, image, desc) =
-                publisher_card_info(p, &chrome.lang, &catalogue.default_language);
+            let (title, image, desc) = publisher_card_info(
+                p,
+                chrome.branding.publishers.get(&p.name),
+                &chrome.lang,
+                &catalogue.default_language,
+            );
             if !q_lower.is_empty()
                 && !title.to_lowercase().contains(&q_lower)
                 && !p.name.to_lowercase().contains(&q_lower)
@@ -1932,8 +1946,12 @@ pub fn render_organization_read_page(
         csp_nonce,
     );
     let labels = UiLabels::for_lang(&chrome.lang);
-    let (title, image, desc) =
-        publisher_card_info(publisher, &chrome.lang, &catalogue.default_language);
+    let (title, image, desc) = publisher_card_info(
+        publisher,
+        chrome.branding.publishers.get(&publisher.name),
+        &chrome.lang,
+        &catalogue.default_language,
+    );
     let d_str = desc.unwrap_or_default();
     let pub_view = PublisherRowView {
         name: publisher.name.clone(),

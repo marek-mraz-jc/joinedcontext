@@ -495,6 +495,8 @@ def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
     https://portal.smartcity.joinedcontext.com) or its domain's (https://smartcity.joinedcontext.com,
     where the Apps live) gets a twin on the rehearsal's `base` beside it, in redirectUris, webOrigins
     and post.logout.redirect.uris: the rehearsal answers on loopback, and the source URL stays.
+    An App host `https://<app>.apps.<domain>` gets `<app>.apps.<base host>` on the base's scheme and
+    port, under localhost when the base is an IP literal (jc mounts `*.apps.localhost:<port>` there).
     Answers the realm and how many URLs were added."""
     root = next((c.get("rootUrl") for c in realm.get("clients", []) if c.get("clientId") == "portal-api"), None)
     if not root:
@@ -504,13 +506,29 @@ def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
     if u.netloc.startswith("portal."):
         origins.add(f"{u.scheme}://{u.netloc[len('portal.'):]}")
     base = base.rstrip("/")
+    b = urllib.parse.urlsplit(base)
+    try:
+        ipaddress.ip_address(b.hostname or "")
+        app_parent = "localhost"
+    except ValueError:
+        app_parent = b.hostname
+    app_parent += f":{b.port}" if b.port else ""
+    domain = u.netloc.removeprefix("portal.")
+    app_host = re.compile(rf"{re.escape(u.scheme)}://([a-z0-9-]+)\.apps\.{re.escape(domain)}(?=/|$)")
+
+    def twin(v):
+        o = next((o for o in origins if v == o or v.startswith(o + "/")), None)
+        if o:
+            return base + v[len(o):]
+        m = app_host.match(v)
+        return f"{b.scheme}://{m[1]}.apps.{app_parent}{v[m.end():]}" if m else None
 
     def twins(values):
         out = list(values)
         for v in values:
-            o = next((o for o in origins if v == o or v.startswith(o + "/")), None)
-            if o and base + v[len(o):] not in out:
-                out.append(base + v[len(o):])
+            t = twin(v)
+            if t and t not in out:
+                out.append(t)
         return out
 
     added, clients = 0, []

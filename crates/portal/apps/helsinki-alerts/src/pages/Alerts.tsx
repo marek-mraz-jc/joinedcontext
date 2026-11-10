@@ -48,6 +48,10 @@ export function Alerts() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { can } = useAccess();
   const save = useSave();
+  const [removing, setRemoving] = useState(false);
+  const [why, setWhy] = useState("");
+  const [tried, setTried] = useState(false);
+  const missing = tried && why.trim() === "";
   const nameId = useId();
   const selected = shown.find((row) => row.id === selectedId) ?? null;
   const open = (id: string) => {
@@ -92,20 +96,16 @@ export function Alerts() {
                   Correct names and place
                 </button>
               )}
-              {mayRemove && (
+              {mayRemove && !removing && (
                 <button
                   type="button"
                   aria-describedby={nameId}
                   disabled={save.saving}
                   onClick={() => {
-                    if (!window.confirm(`Delete ${displayName(selected)}? This cannot be undone.`)) return;
-                    void save.remove(selected.id).then((ok) => {
-                      if (ok) {
-                        setSelectedId(null);
-                        clear();
-                        reload();
-                      }
-                    });
+                    setWhy("");
+                    setTried(false);
+                    save.clear();
+                    setRemoving(true);
                   }}
                 >
                   Delete
@@ -113,8 +113,57 @@ export function Alerts() {
               )}
             </>
           )}
-          <Problem error={save.problem} />
+          {!removing && <Problem error={save.problem} />}
         </div>
+      )}
+      {mayRemove && removing && (
+        // The confirm step asks why, as the Portal's own delete does (DM-113): the reason goes
+        // with the delete, and nothing is sent without one.
+        <section className="app-confirm" aria-label={`Delete ${displayName(selected)}`}>
+          <p>
+            <strong>{`Delete ${displayName(selected)}?`}</strong> This cannot be undone.
+          </p>
+          <label htmlFor={`${nameId}-why`}>Reason</label>
+          <input
+            id={`${nameId}-why`}
+            required
+            maxLength={500}
+            autoComplete="off"
+            aria-describedby={`${nameId}-hint${missing ? ` ${nameId}-missing` : ""}`}
+            aria-invalid={missing}
+            value={why}
+            onChange={(event) => setWhy(event.target.value)}
+          />
+          <p id={`${nameId}-hint`} className="app-confirm-hint">Why you delete it, recorded with the deletion, for example: Duplicate of the Senaatintori closure.</p>
+          {missing && (
+            <p id={`${nameId}-missing`} className="app-confirm-error" role="alert">
+              Enter why you delete it.
+            </p>
+          )}
+          <button
+            type="button"
+            className="app-confirm-danger"
+            disabled={save.saving}
+            onClick={() => {
+              setTried(true);
+              if (why.trim() === "") return;
+              void save.remove(selected.id, why).then((ok) => {
+                if (ok) {
+                  setRemoving(false);
+                  setSelectedId(null);
+                  clear();
+                  reload();
+                }
+              });
+            }}
+          >
+            Confirm delete
+          </button>
+          <button type="button" disabled={save.saving} onClick={() => setRemoving(false)}>
+            Cancel
+          </button>
+          <Problem error={save.problem} />
+        </section>
       )}
       <Split ratio="2:1">
         <EntityMap rows={shown} location="location" label="name" selected={selectedId} onSelect={(row) => open(row.id)} />

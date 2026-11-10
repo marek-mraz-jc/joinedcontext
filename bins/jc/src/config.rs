@@ -326,6 +326,40 @@ pub struct DataroomSection {
     /// value `hidden`, T-4318; bins/jc/docs/catalogue-hidden.toml), written over the default
     /// catalogue's list on every start. Left out, the stored list stays.
     pub hidden: Option<BTreeMap<String, String>>,
+    /// `[dataroom.publishers.<name>]`: the badge and words of each publisher (CKAN organisation)
+    /// by its name, shown where the publisher has no picture or description of its own (prod's
+    /// CKAN chart value `organizations`, read by `jc_org`; bins/jc/docs/dataroom-publishers.toml).
+    pub publishers: BTreeMap<String, PublisherSeed>,
+    /// `[dataroom.branding]`: the installation's own logo (prod's global `branding.logo`,
+    /// `favicon` and `logoSvg`).
+    pub branding: DataroomBranding,
+}
+
+/// One `[dataroom.publishers.<name>]` entry (prod's chart `organizations.<name>`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublisherSeed {
+    /// Up to four letters on the badge, e.g. `"PHA"`.
+    pub initials: String,
+    /// The badge's colour as `#rrggbb` (or `#rgb`), e.g. `"#b4232a"`.
+    pub colour: String,
+    /// The publisher's words per language code, e.g. `{ en = "...", sk = "..." }`: a page reads
+    /// its own language, then `en`.
+    #[serde(default)]
+    pub description: BTreeMap<String, String>,
+}
+
+/// `[dataroom.branding]` (a key left out keeps the catalogue's own or the lockup).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DataroomBranding {
+    /// The footer mark: `"logo.svg"` (the file `logo_svg` gives) or `"jc-logo.svg"`.
+    pub logo: Option<String>,
+    /// The favicon, the same two names as `logo`.
+    pub favicon: Option<String>,
+    /// The installation's logo as SVG text, served as `/logo.svg`; it must pass the logo
+    /// upload's checks (no script, event handler or external reference).
+    pub logo_svg: Option<String>,
 }
 
 /// One `[[dataroom.harvest]]` source, written over the stored one on every start: prod's
@@ -432,6 +466,8 @@ impl Default for DataroomSection {
             aliases: BTreeMap::new(),
             harvest: Vec::new(),
             hidden: None,
+            publishers: BTreeMap::new(),
+            branding: DataroomBranding::default(),
         }
     }
 }

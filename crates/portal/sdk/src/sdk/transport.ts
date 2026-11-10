@@ -64,8 +64,9 @@ export function originTransport(fetchImpl?: typeof fetch, doc?: Document): Trans
       if (request.reason !== undefined) {
         headers["JC-Reason"] = encodeURIComponent(request.reason);
         // A write a person names a reason for is an edit by hand: the broker keeps the value it
-        // replaces as a version, shown in the row's Changes (ADR-N-054 2.9, T-6333).
-        headers["JC-Record"] = "version";
+        // replaces as a version, shown in the row's Changes (ADR-N-054 2.9, T-6333). A delete
+        // replaces no value, so it asks for none, as the explorer's own delete.
+        if (request.method !== "DELETE") headers["JC-Record"] = "version";
       }
     }
 

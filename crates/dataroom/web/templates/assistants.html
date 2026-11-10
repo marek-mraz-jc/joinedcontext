@@ -61,6 +61,7 @@
             <p>{{ lead }}</p>
             <p class="jc-connector-status">{{ labels.connector_status }}</p>
             <div class="jc-connector-note" role="note">
+              <svg class="jc-note-icon" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 9v5M10 6v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
               <div>
                 <p>{{ labels.connector_note }}</p>
                 <p class="jc-note-prompt"><q id="jc-note-prompt">{{ prompt }}</q>
@@ -71,7 +72,7 @@
             <ul class="jc-assistant-cards">
               {% for (card_id, card_name) in cards %}
                 <li class="jc-assistant-card">
-                  <h2 id="jc-card-{{ card_id }}">{{ card_name }}</h2>
+                  <h2 id="jc-card-{{ card_id }}">{% if card_id == "claude" %}{% include "jc/card-claude.svg" %}{% else if card_id == "chatgpt" %}{% include "jc/card-chatgpt.svg" %}{% else if card_id == "grok" %}{% include "jc/card-grok.svg" %}{% endif %}{{ card_name }}</h2>
                   <p class="jc-card-links">
                     <a class="jc-card-link" href="{{ chrome.lang_prefix }}/assistants/{{ card_id }}" aria-describedby="jc-card-{{ card_id }}">{{ labels.guide_open }}</a>
                   </p>
@@ -103,5 +104,6 @@
       </div>
     </div>
   </div>
+{% include "_footer.html" %}
   </body>
 </html>
