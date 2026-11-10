@@ -1669,6 +1669,34 @@ impl ViewSync {
     /// its saved projection and hidden attributes (T-3802, EP-85): its Policies, audience and
     /// view mapping stay as the last run read them. `Ok(None)` when that run read no such
     /// Endpoint; `Err` names the draft's member at fault, or why the Endpoint has no view.
+    /// The roles the gateway gives callers of Endpoint `name` of `project` and its audience,
+    /// read from the repository the views were compiled from by the gateway's own rule
+    /// (`EndpointRoles`, an App's `app-{name}` Endpoint with its client); `None` before a
+    /// converge saw it.
+    pub fn caller_roles(
+        &self,
+        project: &str,
+        name: &str,
+    ) -> Option<(
+        context_gateway::resolver::EndpointRoles,
+        jc_core::kinds::Audience,
+    )> {
+        use context_gateway::resolver::{app_client, EndpointRoles};
+        let sources = lock(&self.last).clone()?;
+        let e = sources
+            .endpoints
+            .iter()
+            .find(|e| e.project == project && e.name == name)?;
+        let client = app_client(name, |app| {
+            sources.apps.contains(&(project.to_owned(), app.to_owned()))
+        });
+        let roles = match client {
+            Some(client) => EndpointRoles::of_app(project, name, &e.spec, client),
+            None => EndpointRoles::of(project, name, &e.spec),
+        };
+        Some((roles, e.spec.audience))
+    }
+
     pub fn draft_view(
         &self,
         project: &str,
@@ -1756,7 +1784,7 @@ impl ViewSync {
         id: &str,
         view: &Value,
         query: &str,
-        headers: &[(&'static str, String)],
+        headers: &reqwest::header::HeaderMap,
     ) -> Result<(u16, Value), String> {
         let token = match std::fs::read_to_string(&self.token_file) {
             Ok(token) if !token.trim().is_empty() => token.trim().to_owned(),
@@ -1776,14 +1804,12 @@ impl ViewSync {
         let base = self
             .address(&broker)
             .ok_or_else(|| format!("the space's broker '{broker}' has no address"))?;
-        let mut request = self
+        let request = self
             .http
             .post(format!("{base}/q/views/{id}/preview?{query}"))
             .bearer_auth(token)
-            .json(view);
-        for (name, value) in headers {
-            request = request.header(*name, value);
-        }
+            .json(view)
+            .headers(headers.clone());
         let answer = request
             .send()
             .await

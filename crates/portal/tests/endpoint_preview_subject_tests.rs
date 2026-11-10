@@ -18,7 +18,9 @@ use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{envelope, person, session_cookie, CSRF};
-use context_gateway::auth::subject::{anonymous_with, person as gateway_person, with_endpoint_roles};
+use context_gateway::auth::subject::{
+    anonymous_with, person as gateway_person, with_endpoint_roles,
+};
 use context_gateway::auth::token::Claims;
 use context_gateway::middleware::tenancy::caller_headers;
 use context_gateway::resolver::EndpointRoles;
@@ -269,7 +271,9 @@ async fn preview(
     }
     let mut request = Request::builder()
         .method("POST")
-        .uri(format!("/api/v1/projects/city/endpoints/{endpoint}/preview"))
+        .uri(format!(
+            "/api/v1/projects/city/endpoints/{endpoint}/preview"
+        ))
         .header(header::COOKIE, session_cookie(&r.state.config, session))
         .header(CSRF_HEADER, CSRF)
         .header(header::CONTENT_TYPE, "application/json");
@@ -285,7 +289,12 @@ async fn preview(
         .await
         .expect("response");
     let status = response.status();
-    let body = response.into_body().collect().await.expect("a body").to_bytes();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a body")
+        .to_bytes();
     if status != StatusCode::OK {
         eprintln!("{status}: {}", String::from_utf8_lossy(&body));
     }
@@ -451,7 +460,9 @@ async fn another_projects_endpoint_role_never_travels() {
     let (_, asked) = preview(&r, &session_of(&claims), true, "air-staff", &[]).await;
     let asked = asked.expect("the broker was asked");
     assert!(
-        !value(&asked, "x-jc-roles").unwrap_or_default().contains("other"),
+        !value(&asked, "x-jc-roles")
+            .unwrap_or_default()
+            .contains("other"),
         "{asked:?}"
     );
     assert_eq!(asked, gateway(Some(&claims), "air-staff"));

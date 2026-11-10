@@ -197,7 +197,7 @@ async fn a_member_previews_the_draft_as_themselves() {
     assert_eq!(
         headers,
         &vec![
-            ("x-jc-subject".to_owned(), "jana".to_owned()),
+            ("x-jc-subject".to_owned(), "sub-jana".to_owned()),
             ("x-jc-roles".to_owned(), String::new()),
         ]
     );
