@@ -869,6 +869,11 @@ const MODELS_LINKML: &str = concat!(
 /// alone, so a read with the Portal's own token, or with none, finds nothing.
 const EXCHANGED: &str = "scn-exchanged-for-the-endpoint";
 
+/// The reason a person gives for a delete, with a line break that must never split the header.
+const DELETE_REASON: &str = "  counter 1 is a duplicate\r\nJC-Record: version ";
+/// [`DELETE_REASON`] as the gateway receives it: trimmed, percent-encoded once.
+const DELETE_REASON_SENT: &str = "counter%201%20is%20a%20duplicate%0D%0AJC-Record%3A%20version";
+
 /// The realm's token exchange and the gateway's NGSI-LD reads of the fixture's Endpoints.
 async fn data_plane(server: &MockServer) {
     use wiremock::matchers::{body_string_contains, header, path_regex, query_param};
@@ -890,6 +895,25 @@ async fn data_plane(server: &MockServer) {
         .and(path_regex(format!("{counters}/entities$")))
         .and(header("authorization", bearer.as_str()))
         .respond_with(Counters)
+        .mount(server)
+        .await;
+    // The gateway's delete (DM-113): 204 only with the reason the person gave, encoded once;
+    // without it, the gateway's own refusal.
+    Mock::given(method("POST"))
+        .and(path_regex(format!("{counters}/entityOperations/delete$")))
+        .and(header("authorization", bearer.as_str()))
+        .and(header("jc-reason", DELETE_REASON_SENT))
+        .respond_with(ResponseTemplate::new(204))
+        .with_priority(1)
+        .mount(server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(format!("{counters}/entityOperations/delete$")))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "type": "https://joinedcontext.com/problems/reason-required", "status": 400,
+            "title": "Reason Required", "detail": "a delete names why in JC-Reason"
+        })))
+        .with_priority(2)
         .mount(server)
         .await;
     Mock::given(method("GET"))
@@ -4073,4 +4097,48 @@ async fn the_sdm_import_is_the_context_segments_and_a_read_connector_writes_no_e
     }))
     .expect("scenario");
     assert_eq!(harness.run(&read, &own).await, Ok(()));
+}
+
+/// DM-113: a connector's entity delete carries the reason the person gave as `JC-Reason`,
+/// encoded once, and the gateway takes it; without one, with one longer than 500 characters, or
+/// with a credential in it, the door refuses it at `reason` before anything reaches the gateway.
+#[tokio::test]
+async fn a_connector_delete_sends_the_persons_reason_and_none_is_refused_at_the_door() {
+    let harness = Harness::start(1).await;
+    let own = project_of(1);
+    let delete = |reason: Value| {
+        json!({ "endpoint": "{project}-counters", "action": "delete",
+                "ids": ["urn:ngsi-ld:BikeCounter:1"], "reason": reason })
+    };
+    let bare = json!({ "endpoint": "{project}-counters", "action": "delete",
+                       "ids": ["urn:ngsi-ld:BikeCounter:1"] });
+    let token = format!("ghp_{}", "0123456789abcdef".repeat(3));
+    let scenario: Scenario = serde_json::from_value(json!({
+        "id": "S-00", "segment": "data-read", "as": "steward", "says": "selftest",
+        "expect": "selftest", "deny": "selftest", "script": [
+            { "proves": "expect", "manifest": { "kind": "Group", "name": "writers",
+                  "spec": { "members": [{ "user": "scn.steward@hel.fi" }] } } },
+            { "proves": "expect", "manifest": { "kind": "DelegationPolicy", "name": "writers-doprava",
+                  "spec": { "subjects": [{ "kind": "Group", "name": "writers" }], "projects": ["{project}"],
+                            "segments": ["data-read"], "writes": true, "maxExpiry": "P90D" } } },
+            { "proves": "expect", "rest": { "method": "POST", "path": "/connectors",
+                  "body": { "name": "s00-writer", "segments": ["data-read"], "writes": true,
+                            "scope": [{ "project": "{project}", "endpoint": "{project}-counters", "access": "write" }],
+                            "expiresAt": "{in7days}" } },
+              "contains": ["\"state\":\"active\""] },
+            { "proves": "expect", "via": "connector", "call": "jc_data_write", "accepted": true,
+              "args": delete(json!(DELETE_REASON)),
+              "contains": ["\"written\":[\"urn:ngsi-ld:BikeCounter:1\"]"] },
+            { "proves": "deny", "via": "connector", "call": "jc_data_write", "refused": true,
+              "args": bare, "contains": ["\"status\":422", "reason"], "absent": ["elicitationId"] },
+            { "proves": "deny", "via": "connector", "call": "jc_data_write", "refused": true,
+              "args": delete(json!("x".repeat(501))), "contains": ["\"status\":422", "reason"],
+              "absent": ["elicitationId"] },
+            { "proves": "deny", "via": "connector", "call": "jc_data_write", "refused": true,
+              "args": delete(json!(format!("rotated {token}"))), "contains": ["\"status\":422", "/reason"],
+              "absent": ["elicitationId", token.as_str()] }
+        ]
+    }))
+    .expect("scenario");
+    assert_eq!(harness.run(&scenario, &own).await, Ok(()));
 }
