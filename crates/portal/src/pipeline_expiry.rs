@@ -347,10 +347,13 @@ fn pipeline_policy<'a>(
 /// confirmed deleted, so a failed delete is stepped over rather than read forever. A failed read
 /// or delete ends that hour's sweep and is logged; the next hour starts again from the top.
 ///
+/// Each delete names why in `JC-Reason` (DM-113): the expiry rule, the pipeline and the sweep's
+/// stream id. A sweep is a timer stream with no run, so the reason is fixed at render.
+///
 /// `None` when the window or the types are not what PL-64 allows: the reconciler reads a
 /// Pipeline with serde, not jc-core's validation, and a window read as zero would delete every
 /// entity of the types, a query naming no type every entity of the space.
-pub fn render_sweep(project: &str, slug: &str, expiry: &Expiry) -> Option<Value> {
+pub fn render_sweep(project: &str, pipeline: &str, slug: &str, expiry: &Expiry) -> Option<Value> {
     use jc_core::kinds::pipeline::{EXPIRY_MAX_HOURS, EXPIRY_MAX_TYPES};
     let hours = expiry
         .hours()
@@ -371,11 +374,16 @@ pub fn render_sweep(project: &str, slug: &str, expiry: &Expiry) -> Option<Value>
         .map(|t| json!({ "type": t }))
         .collect::<Vec<_>>());
     let base = format!("${{JC_GATEWAY_URL}}/api/endpoint/{slug}/ngsi-ld/v1/entityOperations");
-    let http = |url: String| {
+    let reason = format!(
+        "expiry: not updated for {} (PL-64), pipeline {pipeline} stream {}",
+        expiry.after,
+        crate::reconciler::streams::stream_id(project, &sweep_name(pipeline))
+    );
+    let http = |url: String, headers: Value| {
         json!({
             "url": url,
             "verb": "POST",
-            "headers": { "Content-Type": "application/json", "Accept": "application/json" },
+            "headers": headers,
             "oauth2": crate::reconciler::streams::pipeline_oauth2(project),
             "timeout": "30s",
             "rate_limit": crate::reconciler::streams::egress_label(project)
@@ -401,7 +409,7 @@ pub fn render_sweep(project: &str, slug: &str, expiry: &Expiry) -> Option<Value>
                                 ),
                                 "processors": [{ "http": http(format!(
                                     "{base}/query?options=sysAttrs&limit={PAGE}&offset=${{! @expiry_offset }}"
-                                )) }],
+                                ), json!({ "Content-Type": "application/json", "Accept": "application/json" })) }],
                                 "result_map": "root.page = this"
                             } },
                             { "mapping": format!(
@@ -415,7 +423,11 @@ pub fn render_sweep(project: &str, slug: &str, expiry: &Expiry) -> Option<Value>
                             ) },
                             { "branch": {
                                 "request_map": "root = if this.stale.length() == 0 { deleted() } else { this.stale }",
-                                "processors": [{ "http": http(format!("{base}/delete")) }],
+                                "processors": [{ "http": http(format!("{base}/delete"), json!({
+                                    "Content-Type": "application/json",
+                                    "Accept": "application/json",
+                                    "JC-Reason": crate::pipeline_source_deletes::reason_header(&reason),
+                                })) }],
                                 "result_map": "root.deleted = if content().length() == 0 { @expiry_stale.number() } else { this.success.or([]).length() }"
                             } },
                             { "mapping": "root = this\nroot.offset = this.offset + this.read - this.deleted.or(0)\nroot.more = this.read > 0\nroot.stale = deleted()\nroot.read = deleted()\nroot.deleted = deleted()" }
@@ -713,7 +725,7 @@ mod tests {
         let sweep = |after: &str, types: Vec<&str>| {
             let expiry: Expiry =
                 serde_json::from_value(json!({ "after": after, "types": types })).expect("expiry");
-            render_sweep("helsinki", "ep-slug", &expiry)
+            render_sweep("helsinki", "vehicles", "ep-slug", &expiry)
         };
         for after in [
             "30m", "0h", "0d", "366d", "8761h", "", "d", "14", "-1d", "1.5d",
@@ -742,7 +754,8 @@ mod tests {
         let expiry: Expiry =
             serde_json::from_value(json!({ "after": "2d", "types": ["Vehicle", "Bus"] }))
                 .expect("expiry");
-        let sweep = render_sweep("helsinki", "ep-slug", &expiry).expect("a valid expiry");
+        let sweep =
+            render_sweep("helsinki", "vehicles", "ep-slug", &expiry).expect("a valid expiry");
         assert_eq!(sweep["input"]["generate"]["interval"], "1h");
         assert_eq!(sweep["output"], json!({ "drop": {} }));
         let body = &sweep["pipeline"]["processors"][0]["while"];
@@ -775,5 +788,45 @@ mod tests {
             );
         }
         assert_eq!(sweep_name("vehicles"), "vehicles.expiry");
+    }
+
+    /// The gateway refuses a delete without `JC-Reason` with `400 reason-required` (DM-113): the
+    /// sweep's delete names the rule, the pipeline and its stream, 1 to 500 characters decoded;
+    /// the read is no delete and carries none.
+    #[test]
+    fn the_sweeps_delete_names_why_and_its_read_does_not() {
+        let expiry: Expiry =
+            serde_json::from_value(json!({ "after": "2d", "types": ["Vehicle"] })).expect("expiry");
+        let decoded = |sweep: &Value| {
+            let steps = &sweep["pipeline"]["processors"][0]["while"]["processors"][0]["try"];
+            assert!(steps[0]["branch"]["processors"][0]["http"]["headers"]
+                .get("JC-Reason")
+                .is_none());
+            let header = steps[2]["branch"]["processors"][0]["http"]["headers"]["JC-Reason"]
+                .as_str()
+                .expect("the delete carries JC-Reason")
+                .to_owned();
+            assert!(
+                !header.contains(['$', '{', ' ']),
+                "{header} is interpolated or raw"
+            );
+            let (reason, _) = url::form_urlencoded::parse(header.as_bytes())
+                .next()
+                .expect("a reason");
+            assert!(
+                (1..=500).contains(&reason.trim().chars().count()),
+                "{reason}"
+            );
+            reason.into_owned()
+        };
+        let sweep = render_sweep("helsinki", "vehicles", "ep-slug", &expiry).expect("sweep");
+        assert_eq!(
+            decoded(&sweep),
+            "expiry: not updated for 2d (PL-64), pipeline vehicles stream helsinki.vehicles.expiry"
+        );
+        // Names longer than the gateway takes still leave a reason it accepts.
+        let long = "p".repeat(400);
+        let sweep = render_sweep(&long, &long, "ep-slug", &expiry).expect("sweep");
+        assert!(decoded(&sweep).starts_with("expiry: not updated for 2d (PL-64), pipeline ppp"));
     }
 }
