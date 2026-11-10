@@ -1006,6 +1006,44 @@ async fn refuse_unset_secret_variables(
 }
 
 /// Applies `files` (one or more JSON/YAML realm documents for one realm) to `store` (W1b).
+/// Whether every group of the file (nested ones included) is stored and holds at least the realm
+/// and client roles the file gives it (a role the Portal added since stays out of the question).
+async fn file_groups_hold(
+    store: &Arc<dyn Store>,
+    realm_id: &str,
+    obj: &serde_json::Map<String, Value>,
+) -> Result<bool> {
+    let mut pending: Vec<GroupRepresentation> = Vec::new();
+    for g_val in obj
+        .get("groups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        pending.push(
+            serde_json::from_value(g_val.clone())
+                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?,
+        );
+    }
+    while let Some(mut grp) = pending.pop() {
+        pending.append(&mut grp.sub_groups);
+        let Some(held) = store.get_group_by_path(realm_id, None, &grp.path).await? else {
+            return Ok(false);
+        };
+        let holds = |file: &[String], stored: &[String]| file.iter().all(|r| stored.contains(r));
+        let client_roles_held = grp.client_roles.iter().all(|(client, roles)| {
+            holds(
+                roles,
+                held.client_roles.get(client).map_or(&[][..], Vec::as_slice),
+            )
+        });
+        if !holds(&grp.realm_roles, &held.realm_roles) || !client_roles_held {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub async fn apply_realm_files(
     store: &Arc<dyn Store>,
     files: &[(String, Value)],
@@ -1034,12 +1072,16 @@ pub async fn apply_realm_files(
 
     let mut changes: Vec<ObjectChange> = Vec::new();
 
-    // Fast path: if checksum matches the last apply and mode is NoDelete, everything is Unchanged
+    // Fast path: if checksum matches the last apply and mode is NoDelete, everything is Unchanged,
+    // unless a group the file declares lost its roles behind the import (the Portal deletes a
+    // `managed-by: joinedcontext` group while its repository is still empty and makes it again
+    // without them).
     if existing_realm
         .as_ref()
         .and_then(|r| r.apply_checksum.as_deref())
         == Some(file_checksum.as_str())
         && opts.mode == ApplyMode::NoDelete
+        && file_groups_hold(store, &realm_id, obj).await?
     {
         changes.push(ObjectChange {
             kind: "Realm".into(),
