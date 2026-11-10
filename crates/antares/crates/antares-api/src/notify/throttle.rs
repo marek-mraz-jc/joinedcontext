@@ -284,15 +284,30 @@ pub(super) struct LaneJob {
     pub(super) _held: Held,
 }
 
-/// The estimated heap bytes every delivery lane holds, against
+/// Estimated heap bytes held against a budget, and the gauge that shows them.
+pub(super) struct Ledger(
+    pub(super) std::sync::atomic::AtomicUsize,
+    pub(super) &'static str,
+);
+
+/// What every delivery lane holds, against
 /// [`crate::bounds::DELIVERY_LANE_BYTES`] (T-4549).
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) struct Ledger(pub(super) std::sync::atomic::AtomicUsize);
+pub(super) static LANE_LEDGER: Ledger = Ledger(
+    std::sync::atomic::AtomicUsize::new(0),
+    "antares_notification_lane_bytes",
+);
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) static LANE_LEDGER: Ledger = Ledger(std::sync::atomic::AtomicUsize::new(0));
+/// What the change→matcher queue holds: the before and after documents of
+/// every queued change, against [`crate::bounds::DELIVERY_LANE_BYTES`] too.
+/// [`crate::bounds::CHANGE_QUEUE`] counts request batches, and one batch
+/// delete or upsert of 500 polygons is tens of MB of documents, so the
+/// count alone let a slow drain hold many GB.
+pub(super) static QUEUE_LEDGER: Ledger = Ledger(
+    std::sync::atomic::AtomicUsize::new(0),
+    "antares_notification_queue_bytes",
+);
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Ledger {
     /// `bytes` more on the ledger, or `None` when they would take it past
     /// `budget`. A group larger than the whole budget is still taken on an
@@ -305,7 +320,7 @@ impl Ledger {
                 (used == 0 || after <= budget).then_some(after)
             })
             .ok()?;
-        metrics::gauge!("antares_notification_lane_bytes").increment(bytes as f64);
+        metrics::gauge!(self.1).increment(bytes as f64);
         Some(Held {
             ledger: self,
             bytes,
@@ -320,19 +335,17 @@ impl Ledger {
 
 /// Bytes a waiting group holds on the [`Ledger`], given back when the group
 /// is delivered or dropped.
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) struct Held {
     pub(super) ledger: &'static Ledger,
     pub(super) bytes: usize,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Drop for Held {
     fn drop(&mut self) {
         self.ledger
             .0
             .fetch_sub(self.bytes, std::sync::atomic::Ordering::AcqRel);
-        metrics::gauge!("antares_notification_lane_bytes").decrement(self.bytes as f64);
+        metrics::gauge!(self.ledger.1).decrement(self.bytes as f64);
     }
 }
 
@@ -343,13 +356,11 @@ impl Drop for Held {
 /// a slot per member read 268 MB of lanes that held 620 MB); an array is its
 /// capacity of slots; a string its bytes, rounded to the allocator's
 /// 16-byte classes. Cheap next to the serialization a delivery does.
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn heap_estimate(v: &Value) -> usize {
     std::mem::size_of::<Value>().saturating_add(owned_heap(v))
 }
 
 /// The heap `v` owns beyond its own slot.
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn owned_heap(v: &Value) -> usize {
     const LEAF: usize = 640;
     const SLOT: usize = std::mem::size_of::<Value>();
