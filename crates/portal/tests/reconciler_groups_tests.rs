@@ -820,7 +820,9 @@ async fn a_load_that_declares_no_group_keeps_every_managed_group_and_its_members
     assert!(outcomes.iter().all(|o| o.error.is_none()), "{outcomes:?}");
     let written = wrote(&keycloak).await;
     assert!(
-        !written.iter().any(|w| w.starts_with("DELETE") || w.starts_with("POST /admin")),
+        !written
+            .iter()
+            .any(|w| w.starts_with("DELETE") || w.starts_with("POST /admin")),
         "the held group was rewritten: {written:?}"
     );
 }
