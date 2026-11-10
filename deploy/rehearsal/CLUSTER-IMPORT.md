@@ -71,8 +71,36 @@ python3 -I rehearsal.py realms --export <export> --out <work>/state/realms \
    - The import writes shako repositories (current files, CkanInstances fenced, catalog datasets named apart), Antares current state and temporal instances newer than the later of `exportedAt - 24 h` and `now - 24 h`, and daiya dashboards.
    - It is idempotent: a rerun reports `unchanged`.
 4. Restart jc on its default policy and its normal listener. Then run `rehearsal.py policy-check --base http://localhost:<local> --state <state view>`: an anonymous write must answer 401 and `/broker/q/health` must name `joinedcontext`. If not, scale jc to 0 and stop.
-5. Apps (apps.sh, jc-apps-export): `apps.py publish` (prod builds into shako) and `apps.py grant`, same base. Never `REHEARSAL_APP_HOLDER_ID` on the cluster.
-6. Keep the 24 h rule: `rehearsal.py retain --host <pg> --port <port> --password-file <antares pw> --every 3600` against the instance's Antares database. A CronJob running the same statement is enough: delete temporal instances older than 24 h, audit rows kept.
+5. The wasm Apps' database (jc-prod only, before the publish in step 6). The final export (`agents/prod-deployer/backups/prod-20261109T1958Z-final`, prod's only copy: read it, never move or change it) holds `pg-apps.dump.age` and `globals-apps-db.sql.age`. They restore into jc-prod's `apps-db` once its Cluster is Ready, while jc is still in the window, so no publish runs against a half-restored database. The plaintext stays in a 0700 scratch dir that is deleted afterwards, never under evidence/ or in a repository.
+
+   ```sh
+   X=/workspace/agents/prod-deployer/backups/prod-20261109T1958Z-final
+   W=$(mktemp -d); chmod 700 "$W"
+   for f in pg-apps.dump globals-apps-db.sql; do
+     age -d -i /workspace/.secrets/age-dev.key -o "$W/$f" "$X/$f.age"
+     [ "$(sha256sum < "$W/$f" | cut -c1-64)" = "$(cat "$X/$f.sha256")" ] || { echo "$f: checksum"; exit 1; }
+   done
+   # Only the Apps' own roles and their grants to the managed logins. CloudNativePG and
+   # apps-db's initdb own postgres, streaming_replica, cnpg_metrics_exporter, jc_set_config,
+   # jc_apps_admin and wasm_host_<n>, whose passwords are this instance's generated ones.
+   grep -E '^(CREATE ROLE app_[0-9a-f]{16}(_owner)?;|ALTER ROLE app_[0-9a-f]{16}(_owner)? WITH .*;|GRANT app_[0-9a-f]{16}(_owner)? TO (jc_apps_admin|wasm_host_[0-9]+) .*;)$' \
+     "$W/globals-apps-db.sql" > "$W/roles.sql"
+   [ "$(grep -c PASSWORD "$W/roles.sql")" = 0 ] || exit 1          # 80 lines, no password
+   P=$(kubectl -n jc-prod get pod -l cnpg.io/cluster=apps-db,cnpg.io/instanceRole=primary -o name)
+   kubectl -n jc-prod exec -i "$P" -c postgres -- psql -v ON_ERROR_STOP=1 -d apps < "$W/roles.sql"
+   # The server's own pg_restore (16): a newer client writes SET transaction_timeout, which 16 refuses.
+   # --clean drops what jc's Portal migrated into the empty database at its first start.
+   kubectl -n jc-prod exec -i "$P" -c postgres -- \
+     pg_restore --exit-on-error --single-transaction --clean --if-exists -d apps < "$W/pg-apps.dump"
+   kubectl -n jc-prod exec "$P" -c postgres -- psql -Atd apps -c \
+     "select name, shard from jc_apps.apps order by name"                # 10 rows, as below
+   rm -rf "$W"
+   ```
+
+   - Expected (scratch restore of this export into PostgreSQL 16.15, jc-wasm-deploy 2026-11-10): 10 schemas `app_<16 hex>`, `jc_apps.apps` 10 rows, `jc_apps.migrations` 21, `public._sqlx_migrations` 2 (checksums equal to jc's `crates/portal/apps_db/migrations`, so jc accepts the database), and 887 rows in the App tables. Per App: air-weather-explorer 722 (hourly 720, stations 2), alerts-heatmap 26 (weekly_places), bike-rebalancing 1 (levels), bike-weather-demand 9 (station_models), data-quality-inspector 129 (quality_runs 10, run_types 119); district-compare, event-day-planner, kpi-forecast, news-topics and transit-reach hold their tables with no rows.
+   - The wasm components need no copy: step 6's publish takes each from its bundle (`.jc/component.wasm`) into the store's `apps` bucket as `components/sha256-<hex>.wasm`. The export's 10 wasm bundles match `apps/builds.json`, and each component's digest is one of prod's own bucket objects (jc-wasm-deploy REPORT.md). After the publish every wasm App shows `status.shard`, and `https://<app>.apps.smartcity.joinedcontext.com/api/...` answers from its shard instead of the 503 page.
+6. Apps (apps.sh, jc-apps-export): `apps.py publish` (prod builds into shako) and `apps.py grant`, same base. Never `REHEARSAL_APP_HOLDER_ID` on the cluster.
+7. Keep the 24 h rule: `rehearsal.py retain --host <pg> --port <port> --password-file <antares pw> --every 3600` against the instance's Antares database. A CronJob running the same statement is enough: delete temporal instances older than 24 h, audit rows kept.
 
 ## 7. Proof
 
