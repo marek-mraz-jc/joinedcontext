@@ -937,6 +937,22 @@ def _retention_target(space: str, entity_type: str, rule: dict) -> dict:
     return out
 
 
+def binding_without_people(data: bytes) -> bool:
+    """A RoleBinding file whose subjects the export emptied (prod gets no people): jc-core refuses a
+    binding without a subject, and one refused binding stops the roles of the whole repository from
+    compiling (App roles included). It grants nobody anything, so the import leaves it out."""
+    import yaml  # the CI venv's PyYAML
+
+    try:
+        docs = [d for d in yaml.safe_load_all(data) if d]
+    except (yaml.YAMLError, UnicodeDecodeError):
+        return False
+    return bool(docs) and all(
+        isinstance(d, dict) and d.get("kind") == "RoleBinding"
+        and isinstance(d.get("spec"), dict) and not d["spec"].get("subjects")
+        for d in docs)
+
+
 def bound_retention(data: bytes, space: str, types: set[str]) -> bytes:
     """A ContextSpace's spec.retention with RETENTION applied to each of `types` (the ones the space
     holds): an existing rule is edited in place (comments and attribute recordings kept), a missing one
@@ -1051,6 +1067,9 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
             if p.is_file() and not p.is_symlink():
                 data = p.read_bytes()
                 rel = p.relative_to(root).as_posix()
+                if rel.endswith((".yaml", ".yml")) and binding_without_people(data):
+                    report.setdefault("bindingsWithoutPeople", []).append(f"{owner}/{name}/{rel}")
+                    continue
                 fenced = fence_writes(data, catalogue)
                 named = name_datasets(fenced)
                 hidden = hide_unpublished(named)

@@ -528,6 +528,31 @@ def test_the_import_bounds_the_spaces_of_every_repository_not_only_the_first(tmp
     assert report["retentionBounded"] == ["joinedcontext/a/spaces/first/space.yaml",
                                           "joinedcontext/b/spaces/second/space.yaml"]
 
+def test_the_import_leaves_out_a_role_binding_whose_people_the_export_removed(tmp_path):
+    """prod-final-20261109T1958Z holds 6 RoleBindings with `subjects:` empty: jc-core refuses each,
+    and one refused binding stops every role of the repository compiling (App roles 403)."""
+    head = "apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata:\n  name: {n}\n  namespace: org\nspec:\n"
+    empty = head.format(n="approvers") + "  subjects:\n  role: approver\n  scope: { organization: hel }\n"
+    held = head.format(n="editors") + "  subjects:\n    - group: editors\n  role: editor\n  scope: { organization: hel }\n"
+    d = tmp_path / "gitea" / "files" / "joinedcontext" / "configuration" / "users" / "assignments"
+    d.mkdir(parents=True)
+    (d / "approvers.yaml").write_text(empty)
+    (d / "editors.yaml").write_text(held)
+    (d / "notes.yaml").write_text("kind: Role\nspec: {subjects: []}\n")
+    (tmp_path / "gitea" / "repos.json").write_text(json.dumps([{"owner": "joinedcontext", "name": "configuration"}]))
+
+    class Refusing:
+        def json(self, *a, **k):
+            return 500, {}
+
+    report = {}
+    rh.import_shako(Refusing(), "token", tmp_path, report)
+    assert report["bindingsWithoutPeople"] == ["joinedcontext/configuration/users/assignments/approvers.yaml"]
+    assert rh.binding_without_people(empty.encode()) and not rh.binding_without_people(held.encode())
+    assert not rh.binding_without_people(b"kind: Role\nspec: {subjects: []}\n")
+    assert not rh.binding_without_people(b": not yaml: [")
+
+
 PG_IMAGE = "postgis/postgis:17-3.5"
 
 
