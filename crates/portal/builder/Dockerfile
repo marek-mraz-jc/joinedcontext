@@ -164,6 +164,48 @@ USER 1000:1000
 WORKDIR /tmp
 ENTRYPOINT ["/usr/local/bin/build-app"]
 
+# A `ui-rust` App of apps/${APP} as an image CI builds and signs (.github/workflows/image-apps.yml),
+# for an installation that runs no build lane (jc-prod: hsl-transport, prod's build of commit
+# 32ded579 lost with prod). The fullstack branch of build-app.sh step for step, on the same
+# toolchain, template and lane: the interface's tests, typecheck and build on the linked template
+# packages, then `cargo test` and the release musl binary, offline and locked. Only the crate fetch
+# differs: the lane reads the crates stage's store, this fetches the App's own lock alone.
+FROM toolchain AS ui-rust-build
+ARG APP
+COPY --from=node:24-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 /usr/local/bin/node /usr/local/bin/node
+COPY --from=template /opt/template/ /opt/template/
+COPY builder/lane.mjs /opt/template/
+COPY apps/${APP}/ /tmp/build/app/
+ENV CARGO_HOME=/tmp/build/cargo CARGO_TARGET_DIR=/tmp/build/target
+WORKDIR /tmp/build/app
+RUN test -n "${APP}" && cargo fetch --locked
+RUN set -eu; LANE=/opt/template; APP=/tmp/build/app; export CI=true CARGO_NET_OFFLINE=true; \
+    node "$LANE/lane.mjs" deps "$APP/ui"; \
+    rm -rf "$APP/ui/node_modules" && mkdir "$APP/ui/node_modules"; \
+    for entry in "$LANE"/node_modules/* "$LANE"/node_modules/.bin "$LANE"/node_modules/.pnpm; do ln -s "$entry" "$APP/ui/node_modules/"; done; \
+    cd "$APP/ui"; \
+    TESTS=$(node "$LANE/lane.mjs" vitest-config "$APP/ui"); \
+    node_modules/.bin/vitest run --config "$TESTS"; \
+    node_modules/.bin/tsc -b; \
+    node_modules/.bin/vite build; \
+    cd "$APP"; \
+    cargo test --offline --locked; \
+    cargo build --release --offline --locked --target x86_64-unknown-linux-musl; \
+    NAME=$(cargo metadata --offline --no-deps --format-version 1 | node -e ' \
+      const meta = JSON.parse(require("fs").readFileSync(0, "utf8")); \
+      const root = meta.packages.find((p) => p.manifest_path === process.argv[1]); \
+      const bins = (root?.targets ?? []).filter((t) => t.kind.includes("bin")); \
+      if (bins.length !== 1) { console.error(`Cargo.toml names ${bins.length} binaries; a fullstack App is one`); process.exit(1); } \
+      console.log(bins[0].name);' "$APP/Cargo.toml"); \
+    install -D -m 0755 "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/$NAME" /tmp/build/rootfs/app
+
+# The image of that binary alone, as lane.mjs `ociImage` writes it: no base, `/app` as uid 65532.
+FROM scratch AS ui-rust-app
+COPY --from=ui-rust-build /tmp/build/rootfs/app /app
+USER 65532:65532
+WORKDIR /
+ENTRYPOINT ["/app"]
+
 FROM node:24-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66
 # npm, npx and corepack ship in the base image and nothing here runs them: a build installs
 # nothing (AP-82). Removed, so their bundled packages are neither attack surface nor trivy findings.

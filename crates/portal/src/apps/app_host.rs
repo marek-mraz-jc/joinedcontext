@@ -8,8 +8,10 @@
 //! - `/api/endpoint/{slug}/…` goes to the gateway for the App's own slugs alone, never the egress
 //!   path, without the browser's cookies;
 //! - `/api/services/…` and a `ui` App's `/api/functions/…` go to their routes under `/apps/{name}/`;
-//! - a `wasm` App's own server (`/api/…` otherwise) and a `ui-rust` App's pod are not run by this
-//!   Portal: a `503` naming the App, never a raw error.
+//! - a `ui-rust` App's pod named in `JC_PORTAL_APP_PODS` gets every other path, streamed, with the
+//!   App's Content-Security-Policy, as the edge file routes Service `app-{name}`;
+//! - a `wasm` App's own server (`/api/…` otherwise) and any other `ui-rust` App's pod are not run
+//!   by this Portal: a `503` naming the App, never a raw error.
 //!
 //! A host one label under the apex that names no published App gets the static host's own `404`.
 //! Any other host passes untouched.
@@ -144,7 +146,14 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
         Some(AppClass::Wasm) if rest.starts_with("/api/") && !services => {
             return unavailable(&state, &req, &name, "server");
         }
-        Some(AppClass::UiRust) if !services => return unavailable(&state, &req, &name, "pod"),
+        Some(AppClass::UiRust) if !services => {
+            return match (state.config.app_pods.get(&name), &app) {
+                (Some(pod), Some((project, spec, _))) => {
+                    to_pod(&state, req, pod, &rest, project, spec).await
+                }
+                _ => unavailable(&state, &req, &name, "pod"),
+            };
+        }
         _ => {}
     }
     let query = req
@@ -213,20 +222,76 @@ fn http() -> &'static reqwest::Client {
     })
 }
 
+/// The client of an App's pod: no deadline on the whole answer, whose `api/stream` is an event
+/// stream that stays open, but 30 s at most between two reads, as the edge file's upstream
+/// (`read: 30`); hsl-transport's stream sends a keep-alive every 15 s.
+fn pod_http() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(std::time::Duration::from_secs(6))
+            .read_timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
 /// Hands an App's endpoint call to the gateway (`JC_PORTAL_GATEWAY_URL`) and its answer back,
 /// both streamed. The browser's cookies stay here; the gateway sees the bearer the call carries.
 async fn to_gateway(state: &AppState, req: Request, rest: &str) -> Response {
     let Some(gateway) = state.config.gateway_url.as_deref() else {
         return problem(StatusCode::SERVICE_UNAVAILABLE, "no gateway is configured");
     };
+    relay(http(), req, gateway, rest, "the gateway").await
+}
+
+/// Hands a request on a `ui-rust` App's host to its pod (`JC_PORTAL_APP_PODS`) at the same path,
+/// the App's base path being `/` there, and the answer back with the App's Content-Security-Policy
+/// in place of any the pod sent, as the edge file's route sets it (AP-12, AP-122).
+async fn to_pod(
+    state: &AppState,
+    req: Request,
+    pod: &str,
+    rest: &str,
+    project: &str,
+    spec: &jc_core::kinds::AppSpec,
+) -> Response {
+    let mut response = relay(pod_http(), req, pod, rest, "the App's server").await;
+    let basemap = crate::api::basemap::route_prefix(&state.config, project);
+    let policy = super::static_host::content_security_policy(
+        spec,
+        super::static_host::portal_origin(state).as_deref(),
+        basemap.as_deref(),
+    );
+    let headers = response.headers_mut();
+    headers.remove(header::X_FRAME_OPTIONS);
+    match HeaderValue::from_str(&policy) {
+        Ok(csp) => {
+            headers.insert(header::CONTENT_SECURITY_POLICY, csp);
+        }
+        Err(_) => return problem(StatusCode::BAD_GATEWAY, "the App's policy is no header"),
+    }
+    response
+}
+
+/// `req` to `{base}{rest}?{query}` and its answer back, both streamed, without the hop's headers
+/// or any cookie either way.
+async fn relay(
+    client: &reqwest::Client,
+    req: Request,
+    base: &str,
+    rest: &str,
+    upstream: &str,
+) -> Response {
     let query = req
         .uri()
         .query()
         .map(|query| format!("?{query}"))
         .unwrap_or_default();
-    let url = format!("{}{rest}{query}", gateway.trim_end_matches('/'));
+    let url = format!("{}{rest}{query}", base.trim_end_matches('/'));
     let (parts, body) = req.into_parts();
-    let mut out = http().request(parts.method.clone(), url);
+    let mut out = client.request(parts.method.clone(), url);
     for (key, value) in &parts.headers {
         if !DROPPED.contains(&key.as_str()) {
             out = out.header(key, value);
@@ -237,8 +302,11 @@ async fn to_gateway(state: &AppState, req: Request, rest: &str) -> Response {
     let answer = match out.send().await {
         Ok(answer) => answer,
         Err(err) => {
-            tracing::warn!(error = %err, "an App's endpoint call did not reach the gateway");
-            return problem(StatusCode::BAD_GATEWAY, "the gateway did not answer");
+            tracing::warn!(error = %err, upstream, "an App host's request did not reach its upstream");
+            return problem(
+                StatusCode::BAD_GATEWAY,
+                &format!("{upstream} did not answer"),
+            );
         }
     };
     let mut response = Response::builder().status(answer.status().as_u16());
