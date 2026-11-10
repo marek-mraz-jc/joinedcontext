@@ -191,6 +191,10 @@ pub struct PipelineConfig {
     pub threads: isize,
     #[serde(default)]
     pub processors: Vec<ProcessorConfig>,
+    /// Messages one page of a run holds at most (ekiben, not Bento): a larger batch goes on page by
+    /// page where the processors after it allow (`paging`). Unset: `DEFAULT_PAGE_ROWS`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_rows: Option<usize>,
 }
 
 fn default_pipeline_threads() -> isize {
@@ -202,6 +206,7 @@ impl Default for PipelineConfig {
         Self {
             threads: -1,
             processors: Vec::new(),
+            page_rows: None,
         }
     }
 }

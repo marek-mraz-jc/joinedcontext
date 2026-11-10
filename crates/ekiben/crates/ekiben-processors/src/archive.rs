@@ -8,7 +8,7 @@ use ekiben_bloblang::methods_strings::parse_xml_to_value;
 use ekiben_bloblang::{FieldExpression, Value};
 use ekiben_core::message::batch_collapsed_count;
 use ekiben_core::{
-    deserialize_bytes, serialize_bytes, Batch, ComponentConfig, CoreError, Part, PartsView,
+    deserialize_bytes, serialize_bytes, Batch, ComponentConfig, CoreError, Pages, Part, PartsView,
     ProcContext, Processor, Registry,
 };
 use flate2::read::{DeflateDecoder, GzDecoder, ZlibDecoder};
@@ -236,6 +236,7 @@ fn zip_error_text(e: &zip::result::ZipError) -> String {
 /// ponytail: unarchive materializes the resulting parts into the output `Batch` `Vec<Part>` because Bento's
 /// `Processor` contract operates on a `Batch`; to bound peak memory, `MAX_ARCHIVE_MEMBERS` and `MAX_ARCHIVE_UNPACKED_BYTES`
 /// cap each unarchived part, and file inputs use streaming scanners directly.
+#[derive(Clone)]
 pub struct UnarchiveProcessor {
     format: String,
     csv_delim: u8,
@@ -476,26 +477,11 @@ impl UnarchiveProcessor {
                         headers = Some(rec.iter().map(String::from).collect());
                         continue;
                     };
-                    if rec.len() < hdrs.len() {
-                        return Err(
-                            "failed to parse message as csv: row has too few values".to_string()
-                        );
-                    }
-                    if rec.len() > hdrs.len() {
-                        return Err(
-                            "failed to parse message as csv: row has too many values".to_string()
-                        );
-                    }
+                    csv_row_fits(hdrs, &rec)?;
                     if out.len() >= self.max_members {
                         return Err("csv row count exceeds safety limit".to_string());
                     }
-                    let mut obj = BTreeMap::new();
-                    for (h, val) in hdrs.iter().zip(rec.iter()) {
-                        obj.insert(h.clone(), Value::String(val.to_string()));
-                    }
-                    let mut np = part.shallow_copy();
-                    np.set_structured(Value::Object(obj.into()));
-                    out.push(np);
+                    out.push(csv_row(part, hdrs, &rec));
                 }
                 Ok(out)
             }
@@ -518,6 +504,21 @@ impl Processor for UnarchiveProcessor {
         "unarchive"
     }
 
+    /// Members page by page: a json_array, lines, csv or json_documents message makes each
+    /// member's message only when its page is asked for, so no member count bound applies (the
+    /// message itself stays bounded by the size its source may answer). A csv or json_documents
+    /// message is read through once first, so a bad row still flags the whole message, as in
+    /// `process_batch`, before any row goes on.
+    fn pages(&self, ctx: &ProcContext, batch: Batch, rows: usize) -> Result<Box<Pages>, Batch> {
+        Ok(Box::new(UnarchivePages {
+            unarchiver: self.clone(),
+            ctx: ctx.clone(),
+            input: batch.into_iter(),
+            current: None,
+            rows: rows.max(1),
+        }))
+    }
+
     async fn process_batch(
         &self,
         ctx: &ProcContext,
@@ -538,6 +539,234 @@ impl Processor for UnarchiveProcessor {
         } else {
             Ok(vec![out])
         }
+    }
+}
+
+/// A csv row's message: its header names to its values.
+fn csv_row(template: &Part, hdrs: &[String], rec: &csv::StringRecord) -> Part {
+    let mut obj = BTreeMap::new();
+    for (h, val) in hdrs.iter().zip(rec.iter()) {
+        obj.insert(h.clone(), Value::String(val.to_string()));
+    }
+    let mut np = template.shallow_copy();
+    np.set_structured(Value::Object(obj.into()));
+    np
+}
+
+fn csv_row_fits(hdrs: &[String], rec: &csv::StringRecord) -> Result<(), String> {
+    if rec.len() < hdrs.len() {
+        return Err("failed to parse message as csv: row has too few values".to_string());
+    }
+    if rec.len() > hdrs.len() {
+        return Err("failed to parse message as csv: row has too many values".to_string());
+    }
+    Ok(())
+}
+
+fn csv_reader(bytes: Bytes, delim: u8) -> csv::Reader<Cursor<Bytes>> {
+    csv::ReaderBuilder::new()
+        .has_headers(false)
+        .delimiter(delim)
+        .from_reader(Cursor::new(bytes))
+}
+
+/// The members of one message still to come.
+enum Members {
+    Array {
+        template: Part,
+        items: std::vec::IntoIter<Value>,
+    },
+    Lines {
+        template: Part,
+        bytes: Bytes,
+        /// Where the next line starts; past the end once the last one is out.
+        at: usize,
+    },
+    Csv {
+        template: Part,
+        reader: csv::Reader<Cursor<Bytes>>,
+        headers: Vec<String>,
+    },
+    Documents {
+        template: Part,
+        bytes: Bytes,
+        at: usize,
+    },
+    Ready(std::vec::IntoIter<Part>),
+}
+
+impl Members {
+    fn next_member(&mut self) -> Option<Part> {
+        match self {
+            Members::Array { template, items } => {
+                let mut np = template.shallow_copy();
+                np.set_structured(items.next()?);
+                Some(np)
+            }
+            Members::Lines {
+                template,
+                bytes,
+                at,
+            } => {
+                if *at > bytes.len() {
+                    return None;
+                }
+                let end = bytes[*at..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .map_or(bytes.len(), |i| *at + i);
+                let mut np = template.shallow_copy();
+                np.set_bytes(Bytes::copy_from_slice(&bytes[*at..end]));
+                *at = end + 1;
+                Some(np)
+            }
+            Members::Csv {
+                template,
+                reader,
+                headers,
+            } => {
+                let mut rec = csv::StringRecord::new();
+                // Read through once already: no error is left to meet here.
+                match reader.read_record(&mut rec) {
+                    Ok(true) => Some(csv_row(template, headers, &rec)),
+                    _ => None,
+                }
+            }
+            Members::Documents {
+                template,
+                bytes,
+                at,
+            } => {
+                let mut docs = serde_json::Deserializer::from_slice(&bytes[*at..])
+                    .into_iter::<serde_json::Value>();
+                let jv = docs.next()?.ok()?;
+                *at += docs.byte_offset();
+                let mut np = template.shallow_copy();
+                np.set_structured(Value::from_json_value(jv));
+                Some(np)
+            }
+            Members::Ready(parts) => parts.next(),
+        }
+    }
+}
+
+/// The pages of [`UnarchiveProcessor::pages`].
+struct UnarchivePages {
+    unarchiver: UnarchiveProcessor,
+    ctx: ProcContext,
+    input: std::vec::IntoIter<Part>,
+    current: Option<Members>,
+    rows: usize,
+}
+
+impl UnarchivePages {
+    /// The members of `part`, made one at a time where its format allows.
+    fn open(&self, mut part: Part) -> Members {
+        let opened = match self.unarchiver.format.as_str() {
+            "json_array" => match part.as_structured_ref() {
+                Ok(Value::Array(arr)) => {
+                    // The part lets go of the array, so each member is freed with its page.
+                    part.set_bytes(Bytes::new());
+                    Ok(Members::Array {
+                        template: part,
+                        items: arr.into_inner().into_iter(),
+                    })
+                }
+                _ => Err(part),
+            },
+            "lines" => {
+                let bytes = part.as_bytes();
+                Ok(Members::Lines {
+                    template: part,
+                    bytes,
+                    at: 0,
+                })
+            }
+            "csv" => {
+                let bytes = part.as_bytes();
+                match csv_checked(bytes.clone(), self.unarchiver.csv_delim) {
+                    Ok(Some(headers)) => {
+                        let mut reader = csv_reader(bytes, self.unarchiver.csv_delim);
+                        let mut skip = csv::StringRecord::new();
+                        let _ = reader.read_record(&mut skip);
+                        Ok(Members::Csv {
+                            template: part,
+                            reader,
+                            headers,
+                        })
+                    }
+                    Ok(None) => Ok(Members::Ready(Vec::new().into_iter())),
+                    Err(err) => {
+                        self.ctx.on_error(&mut part, err);
+                        Ok(Members::Ready(vec![part].into_iter()))
+                    }
+                }
+            }
+            "json_documents" => {
+                let bytes = part.as_bytes();
+                let checked = serde_json::Deserializer::from_slice(&bytes)
+                    .into_iter::<serde::de::IgnoredAny>()
+                    .try_for_each(|doc| doc.map(drop));
+                match checked {
+                    Ok(()) => Ok(Members::Documents {
+                        template: part,
+                        bytes,
+                        at: 0,
+                    }),
+                    Err(err) => {
+                        self.ctx.on_error(&mut part, err.to_string());
+                        Ok(Members::Ready(vec![part].into_iter()))
+                    }
+                }
+            }
+            _ => Err(part),
+        };
+        opened.unwrap_or_else(|mut part| match self.unarchiver.unarchive_part(&mut part) {
+            Ok(members) => Members::Ready(members.into_iter()),
+            Err(err) => {
+                self.ctx.on_error(&mut part, err);
+                Members::Ready(vec![part].into_iter())
+            }
+        })
+    }
+}
+
+/// Reads a csv message through: its header row (`None` for an empty message), or the error
+/// `process_batch` would flag it with.
+fn csv_checked(bytes: Bytes, delim: u8) -> Result<Option<Vec<String>>, String> {
+    let mut reader = csv_reader(bytes, delim);
+    let mut headers: Option<Vec<String>> = None;
+    let mut rec = csv::StringRecord::new();
+    loop {
+        match reader.read_record(&mut rec) {
+            Ok(false) => return Ok(headers),
+            Ok(true) => match headers {
+                None => headers = Some(rec.iter().map(String::from).collect()),
+                Some(ref hdrs) => csv_row_fits(hdrs, &rec)?,
+            },
+            Err(e) => return Err(format!("failed to parse message as csv: {e}")),
+        }
+    }
+}
+
+impl Iterator for UnarchivePages {
+    type Item = Batch;
+
+    fn next(&mut self) -> Option<Batch> {
+        let mut page = Vec::new();
+        while page.len() < self.rows {
+            if self.current.is_none() {
+                let Some(part) = self.input.next() else {
+                    break;
+                };
+                self.current = Some(self.open(part));
+            }
+            match self.current.as_mut().and_then(Members::next_member) {
+                Some(member) => page.push(member),
+                None => self.current = None,
+            }
+        }
+        (!page.is_empty()).then_some(page)
     }
 }
 

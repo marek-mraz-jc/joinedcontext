@@ -1513,7 +1513,12 @@ impl Runner for StreamDeployer {
             Ok(answer) if answer.status() == reqwest::StatusCode::NOT_FOUND => RunState::Gone,
             Ok(answer) if answer.status().is_success() => match answer.json::<Value>().await {
                 Ok(held) if held.get("active").and_then(Value::as_bool) == Some(false) => {
-                    RunState::Finished
+                    // ekiben runs a source in pages: a run that failed part way wrote some.
+                    if held.pointer("/last_run/success").and_then(Value::as_bool) == Some(false) {
+                        RunState::Failed
+                    } else {
+                        RunState::Finished
+                    }
                 }
                 _ => RunState::Running,
             },
@@ -2736,6 +2741,29 @@ output:
         ));
         // An empty file is an author who has not written the mapping yet: the stream still renders.
         assert!(render("").is_ok());
+    }
+
+    /// jc-ekiben-paging: a `bento.yaml` may size its run's pages within the bound; the runner's
+    /// default holds when it does not, and a size outside the bound is refused by name.
+    #[test]
+    fn a_bento_sizes_its_pages_within_the_bound_and_nothing_else() {
+        let mut spec = helsinki_pipeline_spec();
+        spec.compute = None;
+        let ds = helsinki_datasource_spec();
+        let render =
+            |bento: &str| render_stream(&spec, "p", "helsinki", &ds, "src", "abc123", Some(bento));
+        let steps = "  processors:\n    - mapping: root = this\n";
+        let sized = render(&format!("pipeline:\n  page_rows: 250\n{steps}")).unwrap();
+        assert_eq!(sized["pipeline"]["page_rows"], 250);
+        let default = render(&format!("pipeline:\n{steps}")).unwrap();
+        assert!(default["pipeline"].get("page_rows").is_none());
+        for refused in ["0", "10001", "-5", "1.5", "lots"] {
+            let err = render(&format!("pipeline:\n  page_rows: {refused}\n{steps}")).unwrap_err();
+            assert!(
+                matches!(&err, RenderError::Bento(why) if why.starts_with("pipeline.page_rows")),
+                "{refused}: {err:?}"
+            );
+        }
     }
 
     /// T-3167 (PL-16, PL-07): a `bento.yaml` step reads its own pipeline's declared variable and
@@ -4175,6 +4203,29 @@ output:
                 .converge(&mirror, &Bentos::new(), &Default::default())
                 .await;
             assert_eq!(outcomes[0].2, StreamOutcome::Live, "{held}: {outcomes:?}");
+        }
+    }
+
+    /// jc-ekiben-paging: a stream the runner stopped after a failed run is a failed run, not a
+    /// finished one; one it stopped after a run that succeeded, or that names no run, finished.
+    #[tokio::test]
+    async fn a_stopped_stream_whose_run_failed_is_a_failed_run() {
+        let key = ("helsinki".to_owned(), "citybikes-free".to_owned());
+        for (held, state) in [
+            (
+                serde_json::json!({ "active": false, "last_run": { "success": false, "error": "quota" } }),
+                RunState::Failed,
+            ),
+            (
+                serde_json::json!({ "active": false, "last_run": { "success": true } }),
+                RunState::Finished,
+            ),
+            (serde_json::json!({ "active": false }), RunState::Finished),
+            (serde_json::json!({ "active": true }), RunState::Running),
+        ] {
+            let runner = runner_holding(held.clone(), 0).await;
+            let deployer = StreamDeployer::new(runner.uri());
+            assert_eq!(deployer.state(&key).await, state, "{held}");
         }
     }
 

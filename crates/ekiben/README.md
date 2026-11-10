@@ -12,6 +12,16 @@ End-to-end parity: `scripts/e2e-parity.sh` runs every deployment seed pipeline, 
 (`tools/portal-render`), in Bento 1.22.0 and in `ekiben run` against a replay stub; the verdicts are in
 `docs/parity/e2e-pipelines.md`. CI checks a frozen sample of 20 (`tests/e2e-parity`) without the Bento binary.
 
+## Pages (a deviation from Bento)
+
+A stream's processors run depth first, and a batch larger than `pipeline.page_rows` (default 1,000) goes on as pages
+wherever every later step up to the next `split` reads each message on its own (`ekiben-core/src/paging.rs`):
+`unarchive` (json_array, lines, csv, json_documents) makes each page's messages only when that page runs, and the
+runner writes a page before the next is read, so a run holds a few pages, not its source. A step that joins the
+batch (`archive`, `group_by*`, `while`, a mapping naming `batch_index()`, `batch_size()`, `from()` or `from_all()`)
+keeps it whole. The rows written and their order are Bento's; a later `split` groups each page on its own, and a
+run that fails on a page has written the pages before it (the run ends failed: `last_run.success` false).
+
 ## Decoders
 
 `parquet_decode` (crate `ekiben-parquet`, arrow-rs parquet) and `protobuf` (crate `ekiben-protobuf`, protox +

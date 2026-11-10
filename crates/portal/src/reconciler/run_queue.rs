@@ -363,6 +363,9 @@ pub enum RunState {
     Running,
     /// It ended: its input is exhausted.
     Finished,
+    /// It ended failed part way, its earlier pages written: its source was not read through,
+    /// so it never counts as finished (its source deletes wait, PL-97).
+    Failed,
     /// The runner does not hold it.
     Gone,
 }
@@ -649,6 +652,13 @@ impl RunQueue {
             let cap = entry.cap(self.timeout);
             let outcome = match state {
                 RunState::Finished => Some(("finished", None)),
+                RunState::Failed => Some((
+                    "failed",
+                    Some(
+                        "the runner ended the run failed before its source was read through"
+                            .to_owned(),
+                    ),
+                )),
                 RunState::Gone => Some((
                     "failed",
                     Some("the runner no longer holds the run".to_owned()),
@@ -1152,6 +1162,24 @@ mod tests {
                 ("a".to_owned(), "2026-10-17T05:00:00Z".to_owned(), true),
                 ("b".to_owned(), "2026-10-17T05:00:00Z".to_owned(), false),
             ]
+        );
+    }
+
+    /// jc-ekiben-paging: a run the runner ended failed part way wrote its earlier pages only, so
+    /// it ends as not finished, its source deletes held, never as a complete read.
+    #[tokio::test]
+    async fn a_run_the_runner_ended_failed_is_told_as_not_finished() {
+        let queue = Mutex::new(RunQueue::new(2, 1));
+        let fake = Fake::default();
+        let now = at("2026-10-17T05:00:00Z");
+        let wanted = [(key("a"), planned(Clock::Once))].into_iter().collect();
+        queue.lock().unwrap().plan(wanted, now);
+        step(&queue, &fake, now).await;
+        fake.end("a", RunState::Failed);
+        step(&queue, &fake, now + Span::minutes(1)).await;
+        assert_eq!(
+            *fake.ends.lock().unwrap(),
+            [("a".to_owned(), "2026-10-17T05:00:00Z".to_owned(), false)]
         );
     }
 

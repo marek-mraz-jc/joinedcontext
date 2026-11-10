@@ -449,6 +449,34 @@ async fn an_outage_a_partial_read_or_an_empty_answer_deletes_nothing_and_holds()
         .is_none());
 }
 
+/// jc-ekiben-paging: the runner writes a source page by page, so a run that failed on its fourth
+/// page reported the first three pages' ids and no failed line. Its end is not finished (the
+/// runner's failed run, `RunState::Failed`): it counts no miss and deletes nothing, however often
+/// it fails there, and the next complete run deletes nothing either.
+#[tokio::test]
+async fn a_run_that_failed_on_a_later_page_deletes_nothing_its_earlier_pages_did_not_see() {
+    let (state, runner) = world(100).await;
+    run(&state, "registry", "r1", &without(&[]), 0, true).await;
+    let pages_seen: Vec<String> = (0..30).map(id).collect();
+    for r in ["r2", "r3", "r4"] {
+        run(&state, "registry", r, &pages_seen, 0, false).await;
+    }
+    let (rows, hold) = state
+        .source_ledger
+        .book("helsinki", "registry")
+        .await
+        .expect("book");
+    assert!(
+        rows.values().all(|row| row.misses == 0),
+        "no miss from a failed run"
+    );
+    assert_eq!(hold.map(|h| h.reason), Some(HoldReason::Incomplete));
+    assert!(handed(&runner).await.is_empty(), "nothing was deleted");
+    run(&state, "registry", "r5", &without(&[]), 0, true).await;
+    run(&state, "registry", "r6", &without(&[]), 0, true).await;
+    assert!(handed(&runner).await.is_empty(), "every id came back");
+}
+
 /// F-POR3-006: the ledger and the run log learn of a write from the same outcome report, so a run
 /// whose first report the runner dropped looks complete and short of those ids. The runner's own
 /// count of dropped reports makes it incomplete: it counts no miss and deletes nothing, and a run

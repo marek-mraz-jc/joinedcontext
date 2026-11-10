@@ -79,7 +79,31 @@ pub fn render_stream(
         "output": labelled(written(), "output")
     });
     bound_in_flight(&mut stream, in_flight([Some(source)]));
+    if let Some(rows) = bento.map(bento_page_rows).transpose()?.flatten() {
+        stream["pipeline"]["page_rows"] = rows.into();
+    }
     Ok(stream)
+}
+
+/// The most messages a `bento.yaml` may ask one page of its run to hold: a page's rows are what
+/// the runner holds at once, so the author tunes it within this bound, never past it.
+pub const MAX_PAGE_ROWS: u64 = 10_000;
+
+/// The author's `pipeline.page_rows` from a `bento.yaml`: how many messages one page of a run
+/// holds (the runner's default 1,000 when unset), 1 to [`MAX_PAGE_ROWS`].
+fn bento_page_rows(bento: &str) -> Result<Option<u64>, RenderError> {
+    let config: Value =
+        serde_norway::from_str(bento).map_err(|e| RenderError::Bento(e.to_string()))?;
+    let Some(rows) = config.pointer("/pipeline/page_rows") else {
+        return Ok(None);
+    };
+    match rows.as_u64() {
+        Some(n @ 1..=MAX_PAGE_ROWS) => Ok(Some(n)),
+        _ => Err(RenderError::Bento(format!(
+            "pipeline.page_rows: {rows} is not a whole number from 1 to {MAX_PAGE_ROWS} \
+             (messages one page of a run holds, e.g. 500)"
+        ))),
+    }
 }
 
 /// The label of a pipeline's compute step, the studio's `compute` node (PL-66).

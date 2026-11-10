@@ -9,6 +9,7 @@ pub mod message;
 pub mod metrics;
 pub mod observed;
 pub mod org;
+pub mod paging;
 pub mod pipeline;
 pub mod prometheus;
 pub mod redact;
@@ -30,6 +31,7 @@ pub use message::{
 pub use metrics::{MetricsRegistry, StreamMetrics, TimingStats};
 pub use observed::{ObservedInput, ObservedOutput};
 pub use org::{HostTarget, OrgContext, OrgId, OrgQuotas, ResourceManager};
+pub use paging::{execute_paged, Paging, DEFAULT_PAGE_ROWS};
 pub use pipeline::{
     execute_all, execute_catch_all, execute_try_all, Batcher, ObservedProcessor, PipelineWorkerPool,
 };
@@ -40,7 +42,8 @@ pub use redact::{redact_config_value, redact_url_str, SecretString};
 pub use registry::{LintReport, Registry};
 pub use token_backoff::TokenBackoff;
 pub use traits::{
-    Buffer, Cache, Input, Output, ProcContext, Processor, RateLimit, RunSummary, StreamContext,
+    Buffer, Cache, Input, Output, Pages, ProcContext, Processor, RateLimit, RunSummary,
+    StreamContext,
 };
 pub use transaction::{
     AckResponder, CombinedAcker, SyncResponseStore, TrackedTransaction, Transaction,

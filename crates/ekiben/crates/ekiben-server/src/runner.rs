@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 
 use ekiben_core::config::build_blobl_env_for_stream;
 use ekiben_core::{
-    execute_all, AckResponder, Batch, BatchError, CoreError, EnvAccess, MetricsRegistry, OrgId,
-    Part, ProcContext, Registry, ResourceManager, RunSummary, SortGroup, StreamConfig,
-    StreamContext, StreamMetrics,
+    execute_paged, AckResponder, Batch, BatchError, CoreError, EnvAccess, MetricsRegistry, OrgId,
+    Paging, Part, ProcContext, Registry, ResourceManager, RunSummary, SortGroup, StreamConfig,
+    StreamContext, StreamMetrics, DEFAULT_PAGE_ROWS,
 };
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
@@ -15,6 +15,10 @@ use tokio::task::JoinHandle;
 /// A processed result up to this size (estimated JSON bytes) is encoded on its worker; a larger one
 /// is encoded batch by batch as the writer writes it.
 const ENCODE_AHEAD_BYTES: usize = 8 << 20;
+
+/// Pages a worker may finish ahead of the writer: past them it waits, so a run holds a few pages
+/// of results, never its whole source.
+const PAGES_AHEAD: usize = 2;
 
 /// Handle to a running resident stream (`internal/stream/type.go` & `internal/stream/manager/type.go`).
 pub struct RunningStreamHandle {
@@ -153,6 +157,10 @@ pub fn spawn_stream(
     let procs = registry.build_processor_list(&conf.pipeline.processors, &pctx)?;
     let output = registry.build_output(&conf.output, &sctx)?;
     let threads = conf.pipeline.threads;
+    let paging = Paging::new(
+        &conf.pipeline.processors,
+        conf.pipeline.page_rows.unwrap_or(DEFAULT_PAGE_ROWS),
+    );
 
     let created_at = Instant::now();
     let stopped_after_ns = Arc::new(AtomicU64::new(0));
@@ -179,6 +187,7 @@ pub fn spawn_stream(
             sctx,
             pctx,
             threads,
+            paging,
             in_conn_clone,
             out_conn_clone,
         )
@@ -290,6 +299,7 @@ async fn execute_stream_loop(
     sctx: StreamContext,
     pctx: ProcContext,
     threads: isize,
+    paging: Paging,
     input_connected: Arc<AtomicBool>,
     output_connected: Arc<AtomicBool>,
 ) -> RunSummary {
@@ -380,6 +390,7 @@ async fn execute_stream_loop(
         output: output.clone(),
         sctx: sctx.clone(),
         pctx,
+        paging,
         cpu_limit_ns: cpu_limit_ms.saturating_mul(1_000_000),
         busy_ns: AtomicU64::new(0),
         stop: AtomicBool::new(false),
@@ -459,13 +470,15 @@ fn worker_count(threads: isize) -> usize {
 
 /// The workers of one stream: each takes the next input batch and runs the pipeline over it, so
 /// batches run in parallel; one writer writes the results in input order, so a run's output does
-/// not depend on the thread count.
+/// not depend on the thread count. A worker hands its results over page by page
+/// ([`execute_paged`]) and waits once [`PAGES_AHEAD`] wait unwritten.
 struct WorkerPool {
     rx: tokio::sync::Mutex<mpsc::Receiver<(Batch, AckResponder)>>,
     procs: Vec<Arc<dyn ekiben_core::Processor>>,
     output: Arc<dyn ekiben_core::Output>,
     sctx: StreamContext,
     pctx: ProcContext,
+    paging: Paging,
     /// `max_cpu_time_ms_per_run`, charged with the time workers spend inside the processors.
     cpu_limit_ns: u64,
     busy_ns: AtomicU64,
@@ -478,13 +491,14 @@ struct WorkerPool {
     in_flight: Arc<tokio::sync::Semaphore>,
 }
 
-/// A batch the pipeline has run over, waiting for its turn to be written.
+/// A batch the pipeline runs over, its results waiting for their turn to be written.
 struct Processed {
     seq: u64,
     sorter: SortGroup,
     tagged_batch: Batch,
     ack: AckResponder,
-    result: Result<Vec<Batch>, String>,
+    /// The results as each is done; an `Err` ends them with the reason the run failed.
+    results: mpsc::Receiver<Result<Batch, String>>,
     slot: tokio::sync::OwnedSemaphorePermit,
 }
 
@@ -513,44 +527,67 @@ impl WorkerPool {
             // out this CPU-bound one (without this the workers ran one after another, 12-14 s).
             tokio::task::yield_now().await;
             let (sorter, tagged_batch) = SortGroup::new(batch);
-            let result = if self.stop.load(Ordering::Acquire) {
-                Err("stream stopped".to_string())
-            } else if self.busy_ns.load(Ordering::Relaxed) > self.cpu_limit_ns {
-                Err(format!(
-                    "stream run exceeded per-run processing time budget ({} ms)",
-                    self.cpu_limit_ns / 1_000_000
-                ))
-            } else {
-                let started = Instant::now();
-                let res = execute_all(&self.pctx, &self.procs, vec![tagged_batch.clone()]).await;
-                self.busy_ns
-                    .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                res.map(|mut out_batches| {
-                    // Encode structured results here, in parallel, rather than in the one writer.
-                    // A large result is encoded batch by batch as it is written instead: its
-                    // bytes never all sit beside its values (a 14,961-feature run's 113 MiB).
-                    let size: usize = out_batches.iter().flatten().map(Part::size_estimate).sum();
-                    if size <= ENCODE_AHEAD_BYTES {
-                        for part in out_batches.iter_mut().flatten() {
-                            let _ = part.as_bytes();
-                        }
-                    }
-                    out_batches
-                })
-                .map_err(|e| e.to_string())
-            };
+            let (results, rx) = mpsc::channel(PAGES_AHEAD);
             let processed = Processed {
                 seq,
                 sorter,
-                tagged_batch,
+                tagged_batch: tagged_batch.clone(),
                 ack,
-                result,
+                results: rx,
                 slot,
             };
             if done.send(processed).await.is_err() {
                 return;
             }
+            let failed = if self.stop.load(Ordering::Acquire) {
+                Some("stream stopped".to_string())
+            } else if self.busy_ns.load(Ordering::Relaxed) > self.cpu_limit_ns {
+                Some(format!(
+                    "stream run exceeded per-run processing time budget ({} ms)",
+                    self.cpu_limit_ns / 1_000_000
+                ))
+            } else {
+                self.run(tagged_batch, &results).await.err()
+            };
+            if let Some(reason) = failed {
+                let _ = results.send(Err(reason)).await;
+            }
         }
+    }
+
+    /// Runs the pipeline over one input batch, sending each result to the writer as it is done.
+    /// Only the time inside the processors counts against the run's budget, not the waits for
+    /// the writer.
+    async fn run(
+        &self,
+        batch: Batch,
+        results: &mpsc::Sender<Result<Batch, String>>,
+    ) -> Result<(), String> {
+        let started = Instant::now();
+        let waited = AtomicU64::new(0);
+        let res = execute_paged(&self.pctx, &self.procs, batch, &self.paging, |mut page| {
+            // Encode a small result here, in parallel, rather than in the one writer; a larger
+            // one is encoded as it is written, so its bytes never all sit beside its values.
+            if page.iter().map(Part::size_estimate).sum::<usize>() <= ENCODE_AHEAD_BYTES {
+                for part in &mut page {
+                    let _ = part.as_bytes();
+                }
+            }
+            let waited = &waited;
+            async move {
+                if self.stop.load(Ordering::Acquire) {
+                    return Err(CoreError::other("stream stopped"));
+                }
+                let at = Instant::now();
+                let sent = results.send(Ok(page)).await;
+                waited.fetch_add(at.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                sent.map_err(|_| CoreError::other("stream stopped"))
+            }
+        })
+        .await;
+        let busy = (started.elapsed().as_nanos() as u64).saturating_sub(waited.into_inner());
+        self.busy_ns.fetch_add(busy, Ordering::Relaxed);
+        res.map_err(|e| e.to_string())
     }
 
     /// Writes processed batches in sequence order as they arrive, holding early ones back.
@@ -561,52 +598,51 @@ impl WorkerPool {
             held.insert(p.seq, p);
             while let Some(p) = held.remove(&next) {
                 next += 1;
-                match p.result {
-                    Ok(out_batches) => {
-                        self.write_all(&out_batches, &p.sorter, &p.tagged_batch, p.ack)
-                            .await;
-                        // Freeing a batch's messages costs more than writing them (glibc frees
-                        // memory other threads allocated slowly): free on the blocking pool, in
-                        // parallel, and give the in-flight slot back once that is done.
-                        let leftovers = (out_batches, p.tagged_batch, p.slot);
-                        tokio::task::spawn_blocking(move || drop(leftovers));
-                    }
-                    Err(reason) => {
-                        p.ack.nack(BatchError::new(p.tagged_batch, reason.clone()));
-                        self.fail(reason);
-                        self.stop.store(true, Ordering::Release);
-                    }
-                }
+                self.write_all(p).await;
             }
         }
     }
 
-    /// Writes a processed batch's results, then acks it, or nacks the messages a write failed.
-    async fn write_all(
-        &self,
-        out_batches: &[Batch],
-        sorter: &SortGroup,
-        tagged_batch: &Batch,
-        ack: AckResponder,
-    ) {
+    /// Writes a processed batch's results as they come, then acks it, or nacks the messages a
+    /// write failed, or the whole batch when the pipeline failed part way: the results written
+    /// before stay written.
+    async fn write_all(&self, mut p: Processed) {
         let mut batch_err: Option<BatchError> = None;
-        for out_batch in out_batches.iter().filter(|b| !b.is_empty()) {
-            if let Err(e) = self.write(out_batch).await {
-                let reason = e.to_string();
-                self.fail(reason.clone());
-                let b_err = batch_err
-                    .get_or_insert_with(|| BatchError::new(tagged_batch.clone(), reason.clone()));
-                for p in out_batch {
-                    if let Some(orig_idx) = sorter.get_index(p) {
-                        b_err.failed(orig_idx, reason.clone());
+        while let Some(result) = p.results.recv().await {
+            let out_batch = match result {
+                Ok(out_batch) => out_batch,
+                Err(reason) => {
+                    p.ack.nack(BatchError::new(p.tagged_batch, reason.clone()));
+                    self.fail(reason);
+                    self.stop.store(true, Ordering::Release);
+                    return;
+                }
+            };
+            if !out_batch.is_empty() {
+                if let Err(e) = self.write(&out_batch).await {
+                    let reason = e.to_string();
+                    self.fail(reason.clone());
+                    let b_err = batch_err.get_or_insert_with(|| {
+                        BatchError::new(p.tagged_batch.clone(), reason.clone())
+                    });
+                    for part in &out_batch {
+                        if let Some(orig_idx) = p.sorter.get_index(part) {
+                            b_err.failed(orig_idx, reason.clone());
+                        }
                     }
                 }
             }
+            // Freeing a batch's messages costs more than writing them (glibc frees memory
+            // other threads allocated slowly): free on the blocking pool, in parallel.
+            tokio::task::spawn_blocking(move || drop(out_batch));
         }
         match batch_err {
-            Some(b_err) => ack.nack(b_err),
-            None => ack.ack(),
+            Some(b_err) => p.ack.nack(b_err),
+            None => p.ack.ack(),
         }
+        // The in-flight slot goes back once its batch is freed.
+        let leftovers = (p.tagged_batch, p.slot);
+        tokio::task::spawn_blocking(move || drop(leftovers));
     }
 
     /// Writes one batch and counts the messages written (`messages_out`).

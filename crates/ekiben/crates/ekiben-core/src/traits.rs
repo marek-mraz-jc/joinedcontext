@@ -153,10 +153,19 @@ pub trait Processor: Send + Sync {
     fn may_fail_batch(&self) -> bool {
         true
     }
+    /// What `process_batch` would return, as pages of at most `rows` messages made one at a time,
+    /// for a processor that expands a message into many (`unarchive`): only the page running
+    /// exists. `Err` hands the batch back to run through `process_batch` (the default).
+    fn pages(&self, _ctx: &ProcContext, batch: Batch, _rows: usize) -> Result<Box<Pages>, Batch> {
+        Err(batch)
+    }
     async fn close(&self) -> Result<(), CoreError> {
         Ok(())
     }
 }
+
+/// The pages of [`Processor::pages`], each made when it is asked for.
+pub type Pages = dyn Iterator<Item = Batch> + Send;
 
 #[async_trait]
 pub trait Input: Send + Sync {
