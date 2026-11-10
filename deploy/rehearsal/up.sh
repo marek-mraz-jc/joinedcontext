@@ -290,6 +290,15 @@ cat "$here/../../bins/jc/docs/catalogue-hidden.toml" >> "$home/jc.toml"
 # converted, from od-datasets.json, which the toml names relative to jc.toml.
 cat "$here/../../bins/jc/docs/harvest-sources.toml" >> "$home/jc.toml"
 install -m 644 "$here/../../bins/jc/docs/od-datasets.json" "$home/od-datasets.json"
+# prod's publisher badges and words ([dataroom.publishers], the CKAN chart's `organizations`).
+cat "$here/../../bins/jc/docs/dataroom-publishers.toml" >> "$home/jc.toml"
+# The installation's logo ([dataroom.branding], prod's global branding logo, favicon and logoSvg):
+# the footer mark and the favicon, from the deployment clone's branding/logo.svg.
+logo_svg="$deployment/.ci/example-deployments/environments/smartcity/branding/logo.svg"
+if [ -f "$logo_svg" ]; then
+  { printf '\n[dataroom.branding]\nlogo = "logo.svg"\nfavicon = "logo.svg"\nlogo_svg = \x27\x27\x27\n'
+    cat "$logo_svg"; printf '\x27\x27\x27\n'; } >> "$home/jc.toml"
+fi
 # REHEARSAL_JC_TOML_EXTRA: a file appended to jc.toml as is, e.g. the [[organizations]] of a
 # host-mode multiorg run (each Organization on its own *.localhost hosts).
 if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then
