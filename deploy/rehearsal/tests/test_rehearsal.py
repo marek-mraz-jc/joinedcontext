@@ -1153,7 +1153,7 @@ def test_held_pipelines_start_every_module_but_ekiben():
     """The count suites read the import alone (supervisor 2026-11-10): with REHEARSAL_HOLD_PIPELINES=1
     jc starts without ekiben, so no Portal queue and no restored stream writes a row during or
     after the import (gate 2026-11-10T131506Z-g6: 108 endpoints rows above the export)."""
-    fn = subprocess.run(["sed", "-n", "/^jc_role()/,/^}/p", str(HERE / "up.sh")], capture_output=True, text=True).stdout
+    fn = subprocess.run(["sed", "-n", "/^jc_role()/,/^}/p", str(HERE / "up.sh")], capture_output=True, text=True, check=True).stdout
     assert fn
 
     def role(**env):
@@ -1161,7 +1161,7 @@ def test_held_pipelines_start_every_module_but_ekiben():
                               capture_output=True, text=True, check=True).stdout.strip()
 
     src = (HERE / "../../bins/jc/src/module.rs").read_text()
-    every = re.search(r"pub const ALL: \[Module; \d+\] = \[(.*?)\];", src, re.S)[1]
+    every = re.search(r"pub const ALL: \[Module; \d+\] = \[(.*?)\];", src, re.DOTALL)[1]
     names = {"ModelTools": "model-tools"}
     modules = [names.get(m, m.lower()) for m in re.findall(r"Module::(\w+)", every)]
     assert role() == "all"
