@@ -92,6 +92,7 @@ impl Writer {
         let over = Arc::new(AtomicBool::new(false));
         let sink = Bounded {
             bytes: Vec::new(),
+            written: 0,
             max: max_bytes,
             over: Arc::clone(&over),
         };
@@ -163,6 +164,14 @@ impl Sink for Writer {
         }
         let written = self.group(features);
         written.map_err(|e| refused(&self.over, e))
+    }
+
+    /// The row groups written since the last drain; the footer, which names every row group,
+    /// comes with [`Sink::finish`].
+    fn drain(&mut self) -> Result<Vec<u8>, Error> {
+        let flushed = self.file.flush().map_err(Error::from);
+        flushed.map_err(|e| refused(&self.over, e))?;
+        Ok(std::mem::take(&mut self.file.inner_mut().bytes))
     }
 
     /// The footer: the `geo` metadata when there is a geometry, and each provenance pair as
@@ -291,21 +300,24 @@ fn refused(over: &AtomicBool, e: Error) -> Error {
     }
 }
 
-/// The file's bytes, refusing to grow past `max`.
+/// The file's bytes not drained yet, refusing to grow past `max` written in all.
 struct Bounded {
     bytes: Vec<u8>,
+    written: usize,
     max: usize,
     over: Arc<AtomicBool>,
 }
 
 impl Write for Bounded {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.bytes.len().saturating_add(buf.len()) > self.max {
+        let written = self.written.saturating_add(buf.len());
+        if written > self.max {
             self.over.store(true, Ordering::Relaxed);
             return Err(io::Error::other(
                 "the file is larger than the answer may be",
             ));
         }
+        self.written = written;
         self.bytes.extend_from_slice(buf);
         Ok(buf.len())
     }
@@ -531,6 +543,43 @@ mod tests {
             matches!(tiny, Err(Error::TooLarge)),
             "even an empty file is past three bytes"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_file_drained_after_each_page_reads_back_whole() -> Outcome {
+        let mut writer = Box::new(Writer::new(columns(), true, 1 << 20)?);
+        let all = features(5);
+        let mut file = Vec::new();
+        writer.page(all.get(..3).ok_or("three")?)?;
+        let first = writer.drain()?;
+        assert!(first.starts_with(b"PAR1"), "the magic and the first row group");
+        file.extend(first);
+        writer.page(all.get(3..).ok_or("two")?)?;
+        file.extend(writer.drain()?);
+        let len = file.len();
+        file.extend(writer.finish(&[])?);
+        assert!(file.len() > len, "the footer comes last");
+        let file = SerializedFileReader::new(bytes::Bytes::from(file))?;
+        assert_eq!(file.metadata().num_row_groups(), 2);
+        assert_eq!(rows(&file)?.len(), 5);
+        Ok(())
+    }
+
+    #[test]
+    fn drained_bytes_still_count_against_the_ceiling() -> Outcome {
+        let mut writer = Box::new(Writer::new(columns(), true, 3000)?);
+        writer.page(&features(20))?;
+        let drained = writer.drain()?.len();
+        assert!(drained > 0 && drained < 3000, "{drained}");
+        let mut past = Ok(());
+        for _ in 0..50 {
+            past = writer.page(&features(20)).and_then(|()| writer.drain().map(drop));
+            if past.is_err() {
+                break;
+            }
+        }
+        assert_eq!(past, Err(Error::TooLarge));
         Ok(())
     }
 

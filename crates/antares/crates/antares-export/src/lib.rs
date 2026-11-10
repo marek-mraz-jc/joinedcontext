@@ -2,8 +2,9 @@
 //! File encodings of an answer read page by page (T-4465, T-4477, EP-119, EP-08, EP-41). Each
 //! encoding sits behind its own feature and none depends on a surface: a surface hands over
 //! `GeoJSON` Features one page at a time with the columns its schema gives, the encoder writes
-//! as it goes, and it refuses to grow past the byte ceiling it was given, so a file is whole or
-//! not written. One file holds one collection, one entity type: an `id` column, a `geometry`
+//! as it goes, and it refuses to grow past the byte ceiling it was given. A surface that sends
+//! the file as it is written takes the bytes after each page ([`Sink::drain`]), so it holds one
+//! page, never the file; past the ceiling it ends the transfer broken, never as a whole file. One file holds one collection, one entity type: an `id` column, a `geometry`
 //! column when the collection has one, then a column per property.
 
 use serde_json::Value;
@@ -69,7 +70,14 @@ pub trait Sink: Send {
     /// [`Error::TooLarge`] past the ceiling, [`Error::Write`] when the writer refuses a value.
     fn page(&mut self, features: &[Value]) -> Result<(), Error>;
 
-    /// The whole file; `provenance` (what was asked, by whom it was served, when) goes where
+    /// The bytes written since the last drain, taken out of the writer: a surface streaming the
+    /// file sends them on. They still count against the ceiling.
+    ///
+    /// # Errors
+    /// [`Error::TooLarge`] when the bytes the writer still buffered pass the ceiling.
+    fn drain(&mut self) -> Result<Vec<u8>, Error>;
+
+    /// The rest of the file, after the bytes [`Sink::drain`] took; `provenance` (what was asked, by whom it was served, when) goes where
     /// the format keeps such pairs, or nowhere when it keeps none.
     ///
     /// # Errors
