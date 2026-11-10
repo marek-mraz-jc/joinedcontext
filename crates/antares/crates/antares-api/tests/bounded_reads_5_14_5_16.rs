@@ -209,16 +209,29 @@ mod paging_store {
             "postgres",
         );
         antares_api::wire(&mut st).await;
-        for doc in st.store.list(&tenant, Kind::Entity).await.expect("list") {
-            if let Some(id) = doc["id"].as_str() {
-                st.store
-                    .delete(&tenant, Kind::Entity, id)
-                    .await
-                    .expect("clean");
-            }
-        }
+        clear(&st, &tenant).await;
         st.max_limit = chunk;
         Some((st, tenant))
+    }
+
+    /// Empties the tenant a page at a time: `list` refuses a tenant past the
+    /// store's ceiling, which a seed below leaves behind if its test dies.
+    async fn clear(st: &AppState, tenant: &TenantId) {
+        loop {
+            let page = st
+                .store
+                .list_page(tenant, Kind::Entity, None, 1000)
+                .await
+                .expect("list");
+            let ids: Vec<String> = page
+                .iter()
+                .filter_map(|d| d["id"].as_str().map(str::to_owned))
+                .collect();
+            if ids.is_empty() {
+                return;
+            }
+            st.store.batch_delete(tenant, &ids).await.expect("clean");
+        }
     }
 
     async fn seed(st: &AppState, tenant: &TenantId, n: usize) {
@@ -384,6 +397,194 @@ mod paging_store {
                     .expect("clean");
             }
         }
+    }
+
+    /// More points of one type inside the box than the store's undecided
+    /// ceiling (`MAX_UNDECIDED_ROWS`), ids `p00001..`, and three outside it.
+    const IN_BOX: usize = 10_050;
+    const BOX: &str = "georel=within&geometry=Polygon\
+        &coordinates=%5B%5B%5B0,0%5D,%5B1,0%5D,%5B1,1%5D,%5B0,1%5D,%5B0,0%5D%5D%5D";
+
+    fn poi(id: &str, t: &str, x: f64) -> (String, Value) {
+        (
+            id.to_owned(),
+            json!({"id": id, "type": [format!("https://uri.etsi.org/ngsi-ld/default-context/{t}")],
+                   "https://uri.etsi.org/ngsi-ld/location": {"type": "GeoProperty",
+                       "value": {"type": "Point", "coordinates": [x, 0.5]}}}),
+        )
+    }
+
+    async fn seed_box(st: &AppState, tenant: &TenantId) {
+        let mut items: Vec<(String, Value)> = (1..=IN_BOX)
+            .map(|i| {
+                poi(
+                    &format!("urn:ngsi-ld:PointOfInterest:p{i:05}"),
+                    "PointOfInterest",
+                    0.1 + i as f64 * 0.00005,
+                )
+            })
+            .collect();
+        items.extend((1..=3).map(|i| {
+            poi(
+                &format!("urn:ngsi-ld:PointOfInterest:q{i}"),
+                "PointOfInterest",
+                5.0,
+            )
+        }));
+        for chunk in items.chunks(2000) {
+            st.store
+                .batch_create(tenant, chunk.to_vec())
+                .await
+                .expect("seed");
+        }
+    }
+
+    fn count_of(headers: &axum::http::HeaderMap) -> Option<u64> {
+        headers
+            .get("NGSILD-Results-Count")
+            .and_then(|v| v.to_str().ok()?.parse().ok())
+    }
+
+    fn ids_of(body: &Value) -> Vec<&str> {
+        body.as_array()
+            .map(|a| a.iter().filter_map(|e| e["id"].as_str()).collect())
+            .unwrap_or_default()
+    }
+
+    /// A counted map viewport (jc praha-mapa at 1440 px) whose box holds more
+    /// than the store's undecided ceiling walks the candidates in pages and
+    /// answers its page and the exact count, where one flat read refused it
+    /// with TooManyResults. A read the store cannot page at all still does.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_counted_geoquery_past_the_ceiling_answers_its_page() {
+        let Some((st, tenant)) = pg_state(1000, "boundedgeocount").await else {
+            return;
+        };
+        seed_box(&st, &tenant).await;
+        let (status, headers, body) = send_t(
+            &st,
+            &tenant,
+            "GET",
+            &format!("/ngsi-ld/v1/entities?type=PointOfInterest&count=true&limit=200&{BOX}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let ids = ids_of(&body);
+        assert_eq!(ids.len(), 200);
+        assert_eq!(ids.first(), Some(&"urn:ngsi-ld:PointOfInterest:p00001"));
+        assert_eq!(ids.last(), Some(&"urn:ngsi-ld:PointOfInterest:p00200"));
+        assert_eq!(count_of(&headers), Some(IN_BOX as u64));
+        // a later page of the same read is the same walk's window
+        let (status, headers, body) = send_t(
+            &st,
+            &tenant,
+            "GET",
+            &format!(
+                "/ngsi-ld/v1/entities?type=PointOfInterest&count=true&limit=200&offset=10000&{BOX}"
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(ids_of(&body).len(), 50, "the last 50 of the box");
+        assert_eq!(count_of(&headers), Some(IN_BOX as u64));
+        // a geoproperty the store has no column for leaves the store blind to
+        // the geoquery: one flat read of every PointOfInterest, refused (5.5.6)
+        let (status, _, body) = send_t(
+            &st,
+            &tenant,
+            "GET",
+            &format!(
+                "/ngsi-ld/v1/entities?type=PointOfInterest&count=true&limit=200&{BOX}\
+                 &geoproperty=otherLocation"
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert!(
+            body["type"].as_str().is_some_and(|t| t.ends_with("TooManyResults")),
+            "{body}"
+        );
+        clear(&st, &tenant).await;
+    }
+
+    /// Serves PointOfInterest only, whatever the request selects.
+    struct OnlyPoi;
+
+    impl antares_api::policy::PolicyEngine for OnlyPoi {
+        fn name(&self) -> &str {
+            "only-poi"
+        }
+
+        fn decide<'a>(
+            &'a self,
+            _s: &'a antares_api::policy::Subject,
+            op: &'a antares_api::policy::Operation<'a>,
+        ) -> antares_api::policy::DecisionFuture<'a> {
+            use antares_api::policy::{Decision, Filter, Rule};
+            let answer = if antares_api::policy::FILTERABLE.contains(&op.clause) {
+                Decision::Filter(Arc::new(Filter {
+                    rules: vec![Rule {
+                        types: vec![
+                            "https://uri.etsi.org/ngsi-ld/default-context/PointOfInterest".into(),
+                        ],
+                        ..Rule::default()
+                    }],
+                    ..Filter::default()
+                }))
+            } else {
+                Decision::Allow
+            };
+            Box::pin(std::future::ready(answer))
+        }
+    }
+
+    /// The same counted viewport under a view that serves one type: the walk
+    /// counts and serves only what the view admits, and a type the view
+    /// leaves out stays out of the page and the count, inside the box or not.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_counted_geoquery_past_the_ceiling_keeps_the_narrowing() {
+        let Some((st, tenant)) = pg_state(1000, "boundedgeoview").await else {
+            return;
+        };
+        seed_box(&st, &tenant).await;
+        let hidden: Vec<(String, Value)> = (1..=5)
+            .map(|i| poi(&format!("urn:ngsi-ld:Secret:s{i}"), "Secret", 0.2))
+            .collect();
+        st.store
+            .batch_create(&tenant, hidden)
+            .await
+            .expect("seed");
+        let st = st.with_policy(Arc::new(OnlyPoi));
+        let (status, headers, body) = send_t(
+            &st,
+            &tenant,
+            "GET",
+            &format!(
+                "/ngsi-ld/v1/entities?type=PointOfInterest,Secret&count=true&limit=200&{BOX}"
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let ids = ids_of(&body);
+        assert_eq!(ids.len(), 200);
+        assert!(ids.iter().all(|i| !i.contains(":Secret:")), "{ids:?}");
+        assert_eq!(count_of(&headers), Some(IN_BOX as u64));
+        let (status, headers, body) = send_t(
+            &st,
+            &tenant,
+            "GET",
+            &format!("/ngsi-ld/v1/entities?type=Secret&count=true&limit=200&{BOX}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(ids_of(&body), Vec::<&str>::new());
+        assert_eq!(count_of(&headers), Some(0));
+        clear(&st, &tenant).await;
     }
 
     /// 5.14.4.4: the candidate ids are the query's matches, and an idPattern
