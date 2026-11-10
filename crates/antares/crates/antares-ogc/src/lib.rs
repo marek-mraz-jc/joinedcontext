@@ -1130,7 +1130,10 @@ mod tests {
         let info = Ogc.version_info();
         assert_eq!(info.pointer("/encodings"), Some(&json!(encodings)));
         assert_eq!(info.pointer("/bundles"), Some(&json!(bundles)));
-        assert_eq!(info.pointer("/limits/exportFiles"), Some(&json!(EXPORT_FILES)));
+        assert_eq!(
+            info.pointer("/limits/exportFiles"),
+            Some(&json!(EXPORT_FILES))
+        );
     }
 
     #[test]
