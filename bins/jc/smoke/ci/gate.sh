@@ -38,11 +38,13 @@ echo "gate: $(tail -n +"$((mark + 1))" "$home/jc.log" | grep -c 'sync run finish
 
 # jc names itself 127.0.0.1:<port> (up.sh --base-host): tokens carry that issuer.
 # The suites read their credentials from one state dir: jc's own, plus the service tokens
-# up.sh gave jc from the secrets dir (jc keeps no file of them). Links only, in a 0700 dir.
+# up.sh gave jc from the secrets dir (jc keeps no file of them). Links only, in a 0700 dir, and
+# directories too: the kaisatsu suite reads the realm kaisatsu serves from <state>/realms/, and
+# without it judges the export's realm (gate 2026-11-10T203500Z-gc: main's realm lines unseen).
 view="$home/smoke-state"
 rm -rf "$view" && mkdir -m 700 "$view"
 for f in "$home"/state/* "$home"/secrets/{shako-token,ekiben-token,dashboards-password}; do
-  [ -f "$f" ] && ln -s "$f" "$view/"
+  [ -e "$f" ] && ln -s "$f" "$view/"
 done
 args=(--base-url "http://127.0.0.1:$port" --out "$out" --export "$export_dir" --state "$view"
       --log-file "$home/jc.log" --admin-url "http://127.0.0.1:$((pg_port + 200))"
