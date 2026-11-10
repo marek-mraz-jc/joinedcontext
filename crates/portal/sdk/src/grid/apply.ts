@@ -9,18 +9,12 @@
  */
 import type { EntitySource } from "./source";
 import { SourceError } from "./source";
+import { MAX_REASON, reasonOk } from "../sdk/reason";
 
 /** At most this many entities in one batch: `MAX_ENTITIES` in `src/agents/entity_write.rs`. */
 export const MAX_ENTITIES = 50;
 
-/** The longest reason the gateway takes in `JC-Reason` (DM-113): 1 to 500 characters. */
-export const MAX_REASON = 500;
-
-/** Whether `reason` is one the gateway takes: 1 to 500 characters once trimmed (DM-113). */
-export function reasonOk(reason: string): boolean {
-  const trimmed = reason.trim();
-  return trimmed.length > 0 && trimmed.length <= MAX_REASON;
-}
+export { MAX_REASON, reasonOk } from "../sdk/reason";
 
 /** One attribute a person changed, as the grid and the card both hold it. */
 export interface AttributeChange {

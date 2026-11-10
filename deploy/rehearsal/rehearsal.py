@@ -61,6 +61,9 @@ STATE_CLIENT_SECRETS = {"portal-api": "portal-client-secret", PORTAL_ADMIN_CLIEN
 # join it; an imported realm without it gets it, as it gets rehearsal-tester.
 ADMIN_GROUP = "platform-admins"
 IMPORT_WORKERS = 4  # parallel batch writes into the local broker
+# One batch write may wait this long: on a host at load 50+ a 500-entity upsert took over the
+# client's 60 s (gate 2026-11-10T170300Z-gc, call 600 of 3,757), and one timeout ends the import.
+IMPORT_TIMEOUT = 300
 MAX_REPORTED = 200  # refused calls kept in the report; the rest are only counted
 
 
@@ -151,8 +154,8 @@ class Http:
                 self._store(e.headers)
             return e.code, dict(e.headers or {}), e.read() or b""
 
-    def json(self, method, path, body=None, headers=None, form=None):
-        status, hdrs, raw = self.call(method, path, body, headers, form)
+    def json(self, method, path, body=None, headers=None, form=None, timeout=60):
+        status, hdrs, raw = self.call(method, path, body, headers, form, timeout)
         try:
             value = json.loads(raw) if raw else None
         except ValueError:
@@ -509,6 +512,8 @@ def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
     https://portal.smartcity.joinedcontext.com) or its domain's (https://smartcity.joinedcontext.com,
     where the Apps live) gets a twin on the rehearsal's `base` beside it, in redirectUris, webOrigins
     and post.logout.redirect.uris: the rehearsal answers on loopback, and the source URL stays.
+    An App host `https://<app>.apps.<domain>` gets `<app>.apps.<base host>` on the base's scheme and
+    port, under localhost when the base is an IP literal (jc mounts `*.apps.localhost:<port>` there).
     Answers the realm and how many URLs were added."""
     root = next((c.get("rootUrl") for c in realm.get("clients", []) if c.get("clientId") == "portal-api"), None)
     if not root:
@@ -518,13 +523,29 @@ def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
     if u.netloc.startswith("portal."):
         origins.add(f"{u.scheme}://{u.netloc[len('portal.'):]}")
     base = base.rstrip("/")
+    b = urllib.parse.urlsplit(base)
+    try:
+        ipaddress.ip_address(b.hostname or "")
+        app_parent = "localhost"
+    except ValueError:
+        app_parent = b.hostname
+    app_parent += f":{b.port}" if b.port else ""
+    domain = u.netloc.removeprefix("portal.")
+    app_host = re.compile(rf"{re.escape(u.scheme)}://([a-z0-9-]+)\.apps\.{re.escape(domain)}(?=/|$)")
+
+    def twin(v):
+        o = next((o for o in origins if v == o or v.startswith(o + "/")), None)
+        if o:
+            return base + v[len(o):]
+        m = app_host.match(v)
+        return f"{b.scheme}://{m[1]}.apps.{app_parent}{v[m.end():]}" if m else None
 
     def twins(values):
         out = list(values)
         for v in values:
-            o = next((o for o in origins if v == o or v.startswith(o + "/")), None)
-            if o and base + v[len(o):] not in out:
-                out.append(base + v[len(o):])
+            t = twin(v)
+            if t and t not in out:
+                out.append(t)
         return out
 
     added, clients = 0, []
@@ -1284,7 +1305,7 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, adm
     def upsert(job):
         tenant, batch = job
         st, body = h.json("POST", f"{base}/entityOperations/upsert?options=update", body=batch,
-                          headers={"NGSILD-Tenant": tenant, **auth})
+                          headers={"NGSILD-Tenant": tenant, **auth}, timeout=IMPORT_TIMEOUT)
         ok = len(batch) if st in (200, 201, 204) else \
             len(body.get("success", [])) if st == 207 and isinstance(body, dict) else 0
         with lock:
@@ -1298,7 +1319,8 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, adm
 
     def temporal(job):
         (tenant, eid), ent = job
-        st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant, **auth})
+        st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant, **auth},
+                          timeout=IMPORT_TIMEOUT)
         if st in (200, 201, 204):
             with lock:
                 out["temporal"] += sum(len(v) for k, v in ent.items() if k not in ("id", "type"))

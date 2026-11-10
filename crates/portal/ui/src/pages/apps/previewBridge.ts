@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
 import { api, readCsrfToken } from "../../api/client";
 import { pickElement } from "../../assistant/state";
-import { MAX_REASON } from "../../components/entities/filters";
+import { MAX_REASON, reasonProblem } from "../../components/entities/reason";
 
 /**
  * The bridge of a sandboxed preview (SDK-18, AP-63, Architecture/20 §5). The frame has no origin
@@ -337,7 +337,11 @@ export interface Preview {
 
 export type Outcome = "forwarded" | "refused" | "relayed" | "ignored";
 
-/** What a preview's write says when the application names no reason of its own (DM-113). */
+/**
+ * What a preview's create or update says when the application names no reason of its own
+ * (DM-113): the SDK asks none for those, and the reviewer made the write by trying the App. A
+ * delete never gets it: it carries the reason the person typed in the App, else it is refused.
+ */
 export const PREVIEW_REASON = "written by an application preview";
 
 /** The frame's own reason when the gateway would take it (1 to 500 characters), else the preview's. */
@@ -358,8 +362,9 @@ async function perform(
     headers["x-csrf-token"] = readCsrfToken() ?? "";
     if (reason !== undefined) {
       headers["JC-Reason"] = encodeURIComponent(reason);
-      // As the SDK transport: a write with a reason keeps the value it replaces (T-6333).
-      headers["JC-Record"] = "version";
+      // As the SDK transport: a write with a reason keeps the value it replaces (T-6333); a
+      // delete replaces none.
+      if (method !== "DELETE") headers["JC-Record"] = "version";
     }
     if (body !== undefined) {
       headers["content-type"] = "application/json";
@@ -466,6 +471,18 @@ export async function handleBridgeMessage(
   if (refusal !== null) {
     source.postMessage(
       { kind: "jc-response", id: m.id, status: 403, body: { title: "Refused by the preview bridge", status: 403, detail: refusal } },
+      "*",
+    );
+    return "refused";
+  }
+  if (m.method === "DELETE" && reasonProblem(typeof m.reason === "string" ? m.reason : "") !== null) {
+    source.postMessage(
+      {
+        kind: "jc-response",
+        id: m.id,
+        status: 400,
+        body: { title: "Reason Required", status: 400, detail: `A delete names why in 1 to ${MAX_REASON} characters (reason).` },
+      },
       "*",
     );
     return "refused";

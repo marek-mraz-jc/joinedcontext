@@ -36,10 +36,21 @@ const HOOKS: &[&str] = &[
 ];
 
 fn template_classes() -> BTreeSet<String> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let mut dirs = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")];
+    let mut files = Vec::new();
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(dir).expect("templates") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                dirs.push(path); // templates/jc: the inlined brand marks
+            } else {
+                files.push(path);
+            }
+        }
+    }
     let mut out = BTreeSet::new();
-    for entry in std::fs::read_dir(dir).expect("templates") {
-        let text = std::fs::read_to_string(entry.expect("entry").path()).expect("template");
+    for path in files {
+        let text = std::fs::read_to_string(path).expect("template");
         for chunk in text.split("class=\"").skip(1) {
             let value = chunk.split('"').next().unwrap_or_default();
             if value.contains('{') {
@@ -98,16 +109,13 @@ fn the_base_layout_comes_before_the_theme_so_the_theme_wins() {
 }
 
 #[test]
-fn the_default_logo_text_fits_its_box() {
-    // At 18 px bold "joinedcontext" is wider than the 125 px left of the mark: the parity shots
-    // showed "joinedconte" cut, so the word is held to its box.
+fn the_default_logo_draws_its_words_as_paths_so_nothing_is_cut() {
+    // The parity shots showed the drawn stand-in's "joinedconte" cut; the lockup old prod served
+    // (public__jc-logo.svg, 266x56) draws its words as paths, so no font can widen them.
     let svg = dataroom_web::JC_LOGO_SVG;
-    let text = svg.split("<text x=\"46\"").nth(1).expect("the word");
-    let len: f32 = text
-        .split("textLength=\"")
-        .nth(1)
-        .and_then(|t| t.split('"').next())
-        .and_then(|t| t.parse().ok())
-        .expect("textLength on the word");
-    assert!(46.0 + len <= 171.0, "{len}");
+    assert!(svg.contains("viewBox=\"0 0 266 56\""), "the 266x56 lockup");
+    assert!(
+        svg.contains("<path") && !svg.contains("<text"),
+        "words as paths"
+    );
 }

@@ -186,6 +186,34 @@ describe("handleBridgeMessage", () => {
     );
   });
 
+  // DM-113: a delete carries the reason the person typed in the App, never the preview's.
+  it("sends a delete only with the frame's reason, and refuses one without it before a request", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const remove = async (reason: unknown) => {
+      const source = frame();
+      const outcome = await handleBridgeMessage(
+        { source, data: request({ method: "DELETE", path: `${BASE}/${ID}`, body: undefined, reason }) },
+        { slug: SLUG, operations: new Set([...GRANTED, "deleteEntity"]), functions: FUNCTIONS, source },
+        () => undefined,
+        fetchImpl as unknown as typeof fetch,
+      );
+      return { outcome, source: source as Window & { postMessage: ReturnType<typeof vi.fn> } };
+    };
+    for (const bad of [undefined, "  ", "x".repeat(501), 42]) {
+      const { outcome, source } = await remove(bad);
+      expect(outcome).toBe("refused");
+      expect(source.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 400, body: expect.objectContaining({ detail: expect.stringContaining("(reason)") }) }),
+        "*",
+      );
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect((await remove(" Station closed for good\r\n ")).outcome).toBe("forwarded");
+    const headers = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].headers as Record<string, string>;
+    expect(headers["JC-Reason"]).toBe(encodeURIComponent("Station closed for good"));
+    expect(headers["JC-Record"]).toBeUndefined();
+  });
+
   it("refuses a traversal, another slug and a malformed write without a request", async () => {
     for (const data of [
       request({ path: `${BASE}/..%2F..%2F..%2F..%2F..%2Fv1%2Fprojects%2Fhelsinki/attrs` }),

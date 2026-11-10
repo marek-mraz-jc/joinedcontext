@@ -204,3 +204,12 @@ def test_without_a_wasm_host_only_the_portals_designed_503_naming_the_app_passes
     leak = body[:-2] + b' (jc-wasm-host-0.wasm-host.svc.cluster.local)"}'
     assert not suite.no_shard_judge(503, p, leak, "kpi-forecast")[1]
     assert not suite.server_judge(0, {}, b"connection refused", False)[1]
+
+
+def test_an_ip_literal_base_has_its_app_hosts_under_localhost():
+    """The kit on http://127.0.0.1:<port> mounts App hosts as *.apps.localhost:<port>, and jc's 308
+    names that host: an IP literal has no subdomains (gate rerun 2026-11-10T131506Z-g6: 48 rows
+    expected banskabystrica-data.apps.127.0.0.1:42102)."""
+    assert suite.shots_app_host("http://127.0.0.1:42102", "bike") == "http://bike.apps.localhost:42102"
+    assert suite.shots_app_host("http://localhost:42102", "bike") == "http://bike.apps.localhost:42102"
+    assert suite.shots_app_host("https://smartcity.example", "bike") == "https://bike.apps.smartcity.example"

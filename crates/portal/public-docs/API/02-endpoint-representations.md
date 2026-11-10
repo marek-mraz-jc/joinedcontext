@@ -235,7 +235,7 @@ Headers:
 
 | Header | Direction | Meaning |
 |---|---|---|
-| `JC-Reason` | request | why a correction, a delete or a UI edit is made, 1 to 500 characters of UTF-8, percent-encoded; without one such a write answers `400` with the problem type `reason-required` |
+| `JC-Reason` | request | why a correction, a delete or a UI edit is made, 1 to 500 characters of UTF-8, percent-encoded; without one such a write answers `400` with the problem type `reason-required`. A person-made delete carries the person's own words: no client fills one in, and the Portal's clients refuse a reason that is blank or longer than 500 characters once trimmed instead of cutting it |
 | `JC-Record` | request | `version` on a write keeps each changed value as a version ([ADR-N-054 §2.9](../Decisions/adr-n-054-history-versions-provenance-gdpr.md#29-versions-on-request)); dropped on a read; any other value answers `400` with the problem type `bad-request` |
 | `X-Request-Id` | response | the id the row's `provenance.requestId` holds |
 | `JC-Provenance-*` | never | dropped at the edge; the gateway sets them for the broker (DM-112, DM-136) |

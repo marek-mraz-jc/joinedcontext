@@ -751,6 +751,16 @@ async fn answer_call(
         answered_in_arguments = map.remove("elicitation");
     }
 
+    // A credential in an argument is refused before the question, which may show the argument to
+    // the person and keeps it in the pending question (MF-24, T-5971).
+    let pasted = crate::secret_scan::find(&input);
+    if !pasted.is_empty() {
+        return result(
+            id,
+            problem_result(crate::ops::OpError::Api(ApiError::SecretInArgument(pasted))),
+        );
+    }
+
     // Refusal before the question (AG-63): a caller who may not run this is told so,
     // rather than asked to confirm something that would be refused after they answered.
     if let Err(refused) = caller
@@ -773,6 +783,10 @@ async fn answer_call(
         let digest = elicitation::digest_of(&input);
         match params.get("elicitation").or(answered_in_arguments.as_ref()) {
             None => {
+                // An input the operation refuses is refused before the person is asked to confirm it.
+                if let Err(refused) = (op.validate)(&input) {
+                    return result(id, problem_result(refused));
+                }
                 // PF-57: a proposal whose check has not run is refused on every door
                 // with the same three fields, so a client that reads
                 // `verdict_required` on the REST route reads it here too. The
@@ -795,8 +809,14 @@ async fn answer_call(
                         )
                     },
                 );
+                // A delete shows the reason that goes with it, so the person confirms their own words.
+                let deletes = (op.name == crate::ops::data_write::NAME)
+                    .then(|| crate::ops::data_write::question(&input))
+                    .flatten()
+                    .map(|q| format!(" {q}"))
+                    .unwrap_or_default();
                 let message = format!(
-                    "{} in project '{project}' ({} lane). {reason}",
+                    "{} in project '{project}' ({} lane).{deletes} {reason}",
                     op.title,
                     lane_word(lane)
                 );

@@ -54,7 +54,7 @@
         },
         {
           "name": "useSave",
-          "signature": "function useSave(): { create: (type: string, attrs: Record<string, Cell>, localId?: string, options?: { endpoint?: string }) => Promise<string | null>; update: (id: string, patch: Record<string, Cell>) => Promise<boolean>; remove: (id: string) => Promise<boolean>; saving: boolean; problem: ProblemError | null; clear: () => void }"
+          "signature": "function useSave(): { create: (type: string, attrs: Record<string, Cell>, localId?: string, options?: { endpoint?: string }) => Promise<string | null>; update: (id: string, patch: Record<string, Cell>) => Promise<boolean>; remove: (id: string, reason: string) => Promise<boolean>; saving: boolean; problem: ProblemError | null; clear: () => void }"
         },
         {
           "name": "useSchema",
