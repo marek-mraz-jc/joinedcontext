@@ -436,6 +436,37 @@ async fn an_endpoint_created_renamed_and_deleted_shows_in_the_catalog_within_one
             format!("urn:ngsi-ld:Dataset:{BIKES}"),
         ]
     );
+    // The gateway refuses a delete without `JC-Reason` (DM-113): the catalogue names its rule and
+    // its Endpoint, percent-encoded, 1 to 500 characters decoded; an upsert carries none.
+    let requests = gateway.server.received_requests().await.expect("recorded");
+    let reason_of = |operation: &str| {
+        requests
+            .iter()
+            .filter(|r| r.url.path().ends_with(operation))
+            .map(|r| {
+                r.headers
+                    .get("jc-reason")
+                    .map(|v| v.to_str().expect("ascii").to_owned())
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(reason_of("/upsert").iter().all(Option::is_none));
+    let deletes = reason_of("/delete");
+    assert!(!deletes.is_empty());
+    for header in deletes {
+        let header = header.expect("a delete names why");
+        let (reason, _) = url::form_urlencoded::parse(header.as_bytes())
+            .next()
+            .expect("a reason");
+        assert!((1..=500).contains(&reason.trim().chars().count()));
+        assert_eq!(
+            reason,
+            format!(
+                "catalogue (EP-140): no longer a public Endpoint or CKAN dataset, catalogue \
+                 Endpoint {CATALOG_SLUG}"
+            )
+        );
+    }
 }
 
 #[tokio::test]

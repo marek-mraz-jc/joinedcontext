@@ -15,9 +15,9 @@ protocols = ["linkml-model", "ogc-cql2", "antares-export"]
 
 [features]
 # T-4465: items as Apache Parquet and GeoParquet 1.1.
-parquet = ["dep:antares-export", "antares-export/parquet", "dep:chrono"]
+parquet = ["dep:antares-export", "antares-export/parquet", "dep:chrono", "dep:tokio"]
 # T-4477: items as CSV, /collections as a ZIP of a CSV per collection (no Excel: owner 2026-10-18, T-4597).
-tabular = ["dep:antares-export", "antares-export/csv", "antares-export/zip", "dep:chrono"]
+tabular = ["dep:antares-export", "antares-export/csv", "antares-export/zip", "dep:chrono", "dep:tokio"]
 
 [dependencies]
 antares-ops = { workspace = true }
@@ -30,6 +30,8 @@ linkml-model = { path = "../linkml-model" }
 ogc-cql2 = { path = "../ogc-cql2" }
 serde_json = { version = "1", default-features = false, features = ["std"] }
 uuid = { version = "1", default-features = false, features = ["v4"] }
+# a file is written on its own task, sent as it is written, within its time (jc-ogc-stream)
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "time"], optional = true }
 
 [dev-dependencies]
 antares-ops = { workspace = true, features = ["test-kit"] }

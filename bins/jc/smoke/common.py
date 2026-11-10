@@ -14,6 +14,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import live
+
 PASS, FAIL, SKIP = "pass", "fail", "skip"
 
 # jc's `[identity] realm` rule (setup::Realm::parse): a realm name goes into URL paths.
@@ -33,9 +35,10 @@ def realm_of(state) -> str:
 
 
 def loopback_only(base: str) -> None:
-    """The suites run against a rehearsal on this host only: never dev or prod."""
+    """The suites run against a rehearsal on this host only, or in live mode (live.py) on the
+    virtual base of the guard this process installed: never a bare dev or prod address."""
     host = urllib.parse.urlparse(base).hostname or ""
-    if host == "localhost":
+    if host == "localhost" or live.serves(base):
         return
     try:
         if ipaddress.ip_address(host).is_loopback:
@@ -151,6 +154,8 @@ class Results:
     def write(self, out: Path, meta: dict | None = None) -> None:
         out.mkdir(parents=True, exist_ok=True)
         rows = sorted(self.rows, key=lambda r: (r["target"], r["id"]))
+        if live.active():  # a live deployment's answers hold real people: kept redacted
+            rows = [{**r, "actual": live.redact(r["actual"]), "reason": live.redact(r["reason"])} for r in rows]
         doc = {"suite": self.suite, "base": self.base, "seconds": round(time.time() - self.started),
                "totals": self.totals(), **(meta or {}), "checks": rows}
         (out / "results.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False))
