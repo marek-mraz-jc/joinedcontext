@@ -148,14 +148,15 @@ jobs:
           } >> "$GITHUB_ENV"
       # The cluster's own PostgreSQL image (pgvector 0.8.6, pinned in deployment's
       # components/postgres/images.yaml). It has no entrypoint of its own (CloudNativePG drives
-      # it), so the step initialises and starts it.
+      # it), so the step initialises and starts it. Its pull (about 20 s) runs beside the cache
+      # restore and the build: the test step waits for it to answer.
       - run: >-
-          docker run -d --name assistant-pg -p 5433:5432 --entrypoint bash
+          (docker run -d --name assistant-pg -p 5433:5432 --entrypoint bash
           ghcr.io/cloudnative-pg/postgis@sha256:9d597fcf4350e4bae9ff40cbe0e4383746a9c7f9c60da72483b0e966e4c20765
           -c 'export PATH=/usr/lib/postgresql/16/bin:$PATH; initdb -D /tmp/pg -U postgres --auth=trust >/dev/null
           && echo "host all all 0.0.0.0/0 trust" >> /tmp/pg/pg_hba.conf
           && exec postgres -D /tmp/pg -c listen_addresses=* -c unix_socket_directories=/tmp'
-          && for _ in $(seq 1 30); do docker exec assistant-pg /usr/lib/postgresql/16/bin/pg_isready -h 127.0.0.1 -U postgres && break; sleep 1; done
+          > "$RUNNER_TEMP/assistant-pg.log" 2>&1 &)
       - run: |
           for db in kaisatsu dataroom daiya shako; do
             psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
@@ -164,7 +165,7 @@ jobs:
         with: { key: root-test }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with: { tool: cargo-nextest }
-      # Build once, then run the slice from the built binaries (no cargo call, so no build lock):
+      # Build once, then run this job's partition from the built binaries (no cargo call, so no build lock):
       # job 1 compiles and runs the doc tests beside it instead of after it (1-2 min when a crate
       # every lib links changed, run 42617984832).
       - run: |
@@ -174,6 +175,7 @@ jobs:
           if [ "${{ matrix.part }}" = 1 ]; then
             cargo test --workspace --locked --no-fail-fast --doc > "$RUNNER_TEMP/doc.log" 2>&1 & doc=$!
           fi
+          for _ in $(seq 1 60); do docker exec assistant-pg /usr/lib/postgresql/16/bin/pg_isready -h 127.0.0.1 -U postgres && break; sleep 1; done
           # the doc build beside the first job's tests slowed them by up to 1.7x (run 42756711313)
           python3 .github/scripts/test-part.py --nextest root ${{ matrix.part }} ${{ strategy.job-total }} --extra 1=45 \
             --reuse "$RUNNER_TEMP/binaries.json" "$RUNNER_TEMP/cargo-metadata.json" > "$RUNNER_TEMP/part.txt"
