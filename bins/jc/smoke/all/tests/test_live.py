@@ -264,3 +264,20 @@ def test_run_all_live_runs_the_cleared_suites_and_skips_the_rest_by_name(tmp_pat
     assert code == 0 and doc["base"] == "https://t.smoke.invalid"
     assert "Live: deployment t" in (out / "REPORT.md").read_text()
     assert os.environ.get(live.ENV)  # the suites' processes inherit the guard
+
+
+def test_playwright_and_the_socket_clients_cannot_start_under_the_guard(guard, edge):
+    """The ui, multiorg and charts-apps browsers and the subscriptions socket clients are skipped
+    by name in live mode; were one to run anyway, the guard stops it before any byte leaves."""
+    sys.path.insert(0, str(HERE.parent.parent / "subscriptions"))
+    import mqttclient
+    import wsclient
+    port, seen = edge
+    with pytest.raises(live.Refused):
+        wsclient.Ws(f"http://api.city.test:{port}", "/api/endpoint/abc/ws")
+    with pytest.raises(live.Refused):
+        mqttclient.Mqtt(f"mqtt://127.0.0.1:{port}")
+    sync_api = pytest.importorskip("playwright.sync_api")
+    with pytest.raises(live.Refused, match="exec"):
+        sync_api.sync_playwright().start()
+    assert seen == []
