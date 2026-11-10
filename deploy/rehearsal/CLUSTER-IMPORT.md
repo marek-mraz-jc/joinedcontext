@@ -50,6 +50,10 @@ python3 -I rehearsal.py realms --export <export> --out <work>/state/realms \
 ## 5. jc's configuration (as up.sh writes jc.toml)
 
 - `[identity] realm`: `dev` or `smartcity` (from `realm-name.txt`).
+- `trusted_proxies` and `trusted_proxy_identities` (cluster only; the rehearsal has no edge and sets neither):
+  - `trusted_proxies`: the pod network APISIX runs in (`["10.42.0.0/16"]` on k3s; the chart's `jc.server.trustedProxies`, `JCBIN_TRUSTED_PROXIES`).
+  - `trusted_proxy_identities`: APISIX's Linkerd identity, e.g. `apisix.<namespace>.serviceaccount.identity.linkerd.cluster.local` (`JCBIN_TRUSTED_PROXY_IDENTITIES`, jc a964cea1 and later). Without it any pod that reaches jc can set `X-Forwarded-*` (jc-wasm-deploy, test_jc_component).
+  - Check live before the pin (deployer RUNBOOK-apply.md): the ConfigMap's `trusted_proxies`, and the APISIX pod IP inside that range.
 - `[dataroom.aliases]`: `catalog = "zilina-catalog"` for jc-prod (`rehearsal.py aliases`; RENAMES.md).
 - `[dataroom.hidden]`: `bins/jc/docs/catalogue-hidden.toml` appended (prod's publish-gate list).
 - `[[dataroom.harvest]]`: `bins/jc/docs/harvest-sources.toml` appended, with `bins/jc/docs/od-datasets.json` copied beside jc.toml (the toml names it relatively). jc harvests hub-bbsk and nkod-banskabystrica at start, then on schedule.
