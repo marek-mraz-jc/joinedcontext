@@ -411,7 +411,10 @@ impl HarvestEngine {
             .strip_prefix(public.as_str())
             .filter(|r| r.starts_with("/api/endpoint/"))
             .filter(|r| {
-                let lower = r.to_ascii_lowercase();
+                // The path alone: a query or fragment reaches no mount (a filtered dataset's
+                // sheet probe carries its encoded `isPartOf` IRI there).
+                let path = r.split(['?', '#']).next().unwrap_or(r);
+                let lower = path.to_ascii_lowercase();
                 !["%2e", "%2f", "%5c", "\\"]
                     .iter()
                     .any(|bad| lower.contains(bad))
@@ -1501,6 +1504,30 @@ mod tests {
             "http://localhost:42102/api/endpoint\\..\\portal",
             "http://localhost:421020/api/endpoint/a",
             "http://localhost:42102.evil.example/api/endpoint/a",
+        ] {
+            assert!(own(other).is_none(), "{other}");
+        }
+    }
+
+    /// A filtered dataset's sheet probe carries its `isPartOf` IRI percent-encoded in the query
+    /// (`%2F`): the query reaches no mount, so the shortcut takes it; the path check stays.
+    #[test]
+    fn the_own_gateway_takes_an_endpoint_read_whose_query_is_encoded() {
+        let internal: SocketAddr = "127.0.0.1:42102".parse().unwrap();
+        let engine = HarvestEngine::new(Arc::new(MapFetcher::new()))
+            .with_own_gateway("http://localhost:42102", internal);
+        let own = |u: &str| engine.own_target(u).expect("no parse error");
+        let sheet = "/api/endpoint/bbsk-poi/file.csv?type=PointOfInterest\
+                     &q=isPartOf%3D%3D%22https%3A%2F%2Fdata.example%2Fds%2Fa%5Cb%2e%22";
+        let read = own(&format!("http://localhost:42102{sheet}")).expect("shortcut");
+        assert_eq!(read.url.as_str(), format!("http://127.0.0.1:42102{sheet}"));
+        assert!(own("http://localhost:42102/api/endpoint/a/file.csv#x%2F").is_some());
+        for other in [
+            "http://localhost:42102/api/endpoint/a%2F..%2F..%2Fportal?q=1",
+            "http://localhost:42102/api/endpoint/%2e%2e/portal?q=%2F",
+            "http://localhost:42102/api/endpoint\\..\\portal?q=1",
+            "http://localhost:42102/api/endpoint/a/../../portal?q=%2F",
+            "http://localhost:42102/portal/api?x=/api/endpoint/",
         ] {
             assert!(own(other).is_none(), "{other}");
         }
