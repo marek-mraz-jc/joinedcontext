@@ -12,6 +12,7 @@ import { api, unwrap } from "../../api/client";
 import type { components } from "../../api/schema";
 import type { EntitySource, RichRow } from "@joinedcontext/sdk";
 import { Alert, Button } from "../../components/ui";
+import { MAX_REASON, reasonProblem } from "../../components/entities/reason";
 
 /** One option of an enum slot, as the model titles it (UI-86). */
 export interface EnumChoice {
@@ -43,8 +44,10 @@ export function writable(entity: Record<string, unknown>): Record<string, unknow
  * through the gateway with their session; a delete the gateway refuses forgets the copy again and
  * says the gateway's words.
  */
-export async function deleteRow(project: string, space: string, source: EntitySource, row: RichRow): Promise<void> {
+export async function deleteRow(project: string, space: string, source: EntitySource, row: RichRow, reason: string): Promise<void> {
   if (!source.remove) throw new Error("this view cannot delete");
+  // Refused before the copy is kept: the gateway would refuse the delete anyway (DM-113).
+  if (reasonProblem(reason) !== null) throw new Error(`a delete names why in 1 to ${MAX_REASON} characters`);
   const path = { project, space };
   const kept = await api.POST("/api/v1/projects/{project}/spaces/{space}/trash", {
     params: { path },
@@ -56,7 +59,7 @@ export async function deleteRow(project: string, space: string, source: EntitySo
     throw new Error(typeof detail === "string" ? detail : `HTTP ${kept.response.status}`);
   }
   try {
-    await source.remove(row.id);
+    await source.remove(row.id, reason);
   } catch (error) {
     const forgot = await api.DELETE("/api/v1/projects/{project}/spaces/{space}/trash/{id}", {
       params: { path: { ...path, id: kept.data.id } },

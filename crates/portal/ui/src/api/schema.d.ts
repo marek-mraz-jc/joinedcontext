@@ -4245,7 +4245,7 @@ export interface paths {
         put?: never;
         /**
          * Write Data
-         * @description Creates, upserts, merges or deletes up to 100 entities through one Endpoint of the project, as you; its Policy decides each
+         * @description Creates, upserts, merges or deletes up to 100 entities through one Endpoint, as you; its Policy decides each
          */
         post: operations["jc_data_write"];
         delete?: never;
@@ -28044,16 +28044,18 @@ export interface operations {
                  */
                 "application/json": {
                     /**
-                     * @description create: new entities; upsert: create or replace attributes; merge: patch existing ones; delete: ids
+                     * @description create: new entities; upsert: create or replace attributes; merge: patch existing ones
                      * @enum {string}
                      */
                     action: "create" | "upsert" | "merge" | "delete";
-                    /** @description Endpoint name of the project, e.g. bike-stations */
+                    /** @description Endpoint name, e.g. bike-stations */
                     endpoint: string;
-                    /** @description create, upsert, merge: NGSI-LD entities with id and type, e.g. {id: urn:ngsi-ld:BikeHireDockingStation:s1, type: BikeHireDockingStation, name: {type: Property, value: Main}} */
+                    /** @description create, upsert, merge: NGSI-LD entities, e.g. {id: urn:ngsi-ld:Bike:s1, type: Bike, name: {type: Property, value: Main}} */
                     entities?: Record<string, never>[];
                     /** @description delete: entity ids */
                     ids?: string[];
+                    /** @description delete: why, in the person's words */
+                    reason?: string;
                 };
             };
         };
@@ -28065,9 +28067,9 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** @description Entities the Endpoint refused, each with its id and why */
+                        /** @description Refused entities, each with its id and why */
                         errors: Record<string, never>[];
-                        /** @description Ids the Endpoint took */
+                        /** @description Ids written */
                         written: string[];
                     };
                 };

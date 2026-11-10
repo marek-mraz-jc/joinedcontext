@@ -219,6 +219,13 @@ CKAN's fixed 178 px floats with `word-break: break-all`. */
 .media-item { float: none; width: auto; margin: 0; background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); box-shadow: var(--jc-shadow-1); }
 .media-heading, .media-description { word-break: normal; overflow-wrap: break-word; hyphens: auto; }
 .media-heading { font-size: 1.0625rem; }
+/* On a phone a publisher card is one row: its badge beside its name and words, not a 360 px banner
+(UI judge, jc-dataroom-brand: two publishers per screen). */
+@media (max-width: 575.98px) {
+.media-item:has(> .media-image) { display: grid; grid-template-columns: 6rem 1fr; column-gap: .875rem; align-items: start; }
+.media-item > .media-image { grid-row: 1 / span 3; }
+.media-item > br { display: none; }
+}
 /* The publisher box: CKAN nests a `.module.context-info` inside a `.module`, so without this the
 card drew twice, the inner one adding its margin and padding below "read more" (owner,
 2026-10-12); and CKAN breaks its description at any letter. */

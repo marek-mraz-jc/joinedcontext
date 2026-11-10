@@ -7,6 +7,7 @@ import { parseAccess } from "./access";
 import type { JcConfig, JcEndpoint, JcUser } from "./config";
 import { readConfig } from "./config";
 import { queryString, randomId } from "./query";
+import { MAX_REASON, reasonOk } from "./reason";
 import type { Transport } from "./transport";
 import { transportFor } from "./transport";
 
@@ -202,7 +203,12 @@ export interface DataClient {
     update(id: string, patch: Record<string, WriteValue>, options?: EndpointOption): Promise<void>;
     /** Every language of one LanguageProperty, which a row reduces to one; `{}` when it has none. */
     languages(id: string, attr: string, options?: EndpointOption): Promise<Record<string, string>>;
-    remove(id: string, options?: EndpointOption): Promise<void>;
+    /**
+     * Deletes one entity. `reason` is why, in the words the person typed in the confirm step (1 to
+     * 500 characters once trimmed), sent as `JC-Reason` (DM-113); a blank or longer one throws a
+     * `ProblemError` with status 0 before any request. Never fill one in for the person.
+     */
+    remove(id: string, reason: string, options?: EndpointOption): Promise<void>;
   };
   temporal: { list(type: string, query: TemporalQuery): Promise<TemporalRow[]> };
   /** The endpoint's OGC API - Features surface: the same Entities its view and Policy admit (EP-29). */
@@ -561,12 +567,18 @@ export function createClient(config: JcConfig, transport: Transport): Client {
       return Object.fromEntries(Object.entries(map).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
     },
 
-    async remove(id: string, options?: EndpointOption): Promise<void> {
+    async remove(id: string, reason: string, options?: EndpointOption): Promise<void> {
+      if (!reasonOk(reason)) {
+        throw new ProblemError(0, {
+          title: "reason-required",
+          detail: `entities.remove: a delete names why in the person's words, 1 to ${MAX_REASON} characters (reason)`,
+        });
+      }
       const { slug } = endpointOfId(id, options?.endpoint);
       const path = `/api/endpoint/${encodeURIComponent(slug)}/ngsi-ld/v1/entities/${encodeURIComponent(id)}`;
       checkEndpointPath(slug, path);
 
-      const resp = await transport({ method: "DELETE", path });
+      const resp = await transport({ method: "DELETE", path, reason: reason.trim() });
       if (resp.status < 200 || resp.status >= 300) {
         throw new ProblemError(resp.status, resp.body);
       }

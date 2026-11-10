@@ -13,3 +13,55 @@
   align-items: center;
   gap: var(--jc-space-2, 0.5rem);
 }
+
+/* The delete's confirm step: its own full-width row of the actions, the reason above its buttons. */
+.app-confirm {
+  margin-block: var(--jc-space-2, 0.5rem);
+  max-width: 40rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jc-space-2, 0.5rem);
+  padding: var(--jc-space-3, 0.75rem);
+  border: 1px solid var(--jc-color-danger, #b91c1c);
+  border-radius: 0.5rem;
+  background: var(--jc-color-card, #fff);
+}
+
+.app-confirm > p,
+.app-confirm > label,
+.app-confirm > input {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.app-confirm > label {
+  font-weight: 600;
+}
+
+.app-confirm-hint {
+  color: var(--jc-color-muted, #64748b);
+  font-size: 0.875rem;
+}
+
+.app-confirm-error {
+  color: var(--jc-color-danger, #b91c1c);
+  font-size: 0.875rem;
+}
+
+/* The field must be filled: said beside its label, as the Portal's forms mark it. */
+.app-confirm > label::after {
+  content: " *";
+  color: var(--jc-color-danger, #b91c1c);
+}
+
+/* The delete itself: the one destructive button. */
+.app-confirm .app-confirm-danger {
+  background: var(--jc-color-danger, #b91c1c);
+  border-color: var(--jc-color-danger, #b91c1c);
+  color: #fff;
+}
+
+.app-confirm > input[aria-invalid="true"] {
+  border-color: var(--jc-color-danger, #b91c1c);
+}

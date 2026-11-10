@@ -64,7 +64,7 @@ describe("an application of several endpoints", () => {
     expect(id).toBe("urn:ngsi-ld:KeyPerformanceIndicator:hel.fi:transportation-kpi:bikes-avg");
     expect(calls[0].path).toBe("/api/endpoint/kpis1/ngsi-ld/v1/entities");
     await client.entities.update("urn:ngsi-ld:Alert:hel.fi:transportation-kpi:a1", { level: "high" }, { endpoint: "transportation-kpis" });
-    await client.entities.remove("urn:ngsi-ld:Alert:hel.fi:transportation:a2", { endpoint: "transportation" });
+    await client.entities.remove("urn:ngsi-ld:Alert:hel.fi:transportation:a2", "a duplicate", { endpoint: "transportation" });
     await client.entities.get("urn:ngsi-ld:Vehicle:hel.fi:transportation:v1");
     expect(calls.slice(1).map((c) => c.path.split("/")[3])).toEqual(["kpis1", "transport1", "transport1"]);
     expect(client.entityId("Vehicle", "v9")).toBe("urn:ngsi-ld:Vehicle:hel.fi:transportation:v9");
@@ -79,9 +79,9 @@ describe("an application of several endpoints", () => {
     await expect(client.entities.update("urn:ngsi-ld:Alert:hel.fi:transportation-kpi:a1", { level: "high" })).rejects.toThrow(
       /pass \{ endpoint/,
     );
-    await expect(client.entities.remove("urn:ngsi-ld:Alert:hel.fi:transportation:a2")).rejects.toThrow(ProblemError);
+    await expect(client.entities.remove("urn:ngsi-ld:Alert:hel.fi:transportation:a2", "a duplicate")).rejects.toThrow(ProblemError);
     expect(calls).toHaveLength(0);
-    await client.entities.remove("urn:ngsi-ld:Alert:hel.fi:transportation:a2", { endpoint: "transportation-kpis" });
+    await client.entities.remove("urn:ngsi-ld:Alert:hel.fi:transportation:a2", "a duplicate", { endpoint: "transportation-kpis" });
     expect(calls[0].path).toContain("/api/endpoint/kpis1/");
     // A Vehicle is served by one endpoint only: a URN naming the KPI space still goes there.
     await client.entities.get("urn:ngsi-ld:Vehicle:hel.fi:transportation-kpi:v1");

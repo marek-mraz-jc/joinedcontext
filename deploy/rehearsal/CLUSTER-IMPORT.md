@@ -56,6 +56,8 @@ python3 -I rehearsal.py realms --export <export> --out <work>/state/realms \
   - Check live before the pin (deployer RUNBOOK-apply.md): the ConfigMap's `trusted_proxies`, and the APISIX pod IP inside that range.
 - `[dataroom.aliases]`: `catalog = "zilina-catalog"` for jc-prod (`rehearsal.py aliases`; RENAMES.md).
 - `[dataroom.hidden]`: `bins/jc/docs/catalogue-hidden.toml` appended (prod's publish-gate list).
+- `[dataroom.publishers]`: `bins/jc/docs/dataroom-publishers.toml` appended (prod's publisher badges and words, the CKAN chart's `organizations`).
+- `[dataroom.branding]`: `logo` and `favicon` `"logo.svg"`, `logo_svg` the deployment's `branding/logo.svg` (prod's global `branding.logo`, `favicon`, `logoSvg`).
 - `[[dataroom.harvest]]`: `bins/jc/docs/harvest-sources.toml` appended, with `bins/jc/docs/od-datasets.json` copied beside jc.toml (the toml names it relatively). jc harvests hub-bbsk and nkod-banskabystrica at start, then on schedule.
 - `JC_GATEWAY_HUB_KNOWLEDGE_SOURCES`: `rehearsal.py hub-sources --deployment <clone at the instance's ref>`.
 - `JCBIN_EKIBEN_RESOURCES_FILE`: `components/pipeline-runner/streams/resources.yaml`.

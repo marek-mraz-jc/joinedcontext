@@ -165,7 +165,11 @@ async fn a_write_without_an_access_token_is_401_and_never_reaches_the_endpoint()
             format!("{BASE}api/stations/{STATION}"),
             Some(json!({ "stewardNote": "Sensor cleaned." })),
         ),
-        ("DELETE", format!("{BASE}api/stations/{STATION}"), None),
+        (
+            "DELETE",
+            format!("{BASE}api/stations/{STATION}"),
+            Some(json!({ "reason": "Sensor gone" })),
+        ),
     ] {
         let endpoint = MockServer::start().await;
         let (status, body) = call(app_at(&endpoint), anonymous(verb, &uri, body)).await;
@@ -380,13 +384,15 @@ async fn a_new_station_in_an_empty_space_is_409_and_writes_nothing() {
         .all(|request| request.method.as_str() == "GET"));
 }
 
-/// A removal is one DELETE with the user's token; which station may go is the gateway's call.
+/// A removal is one DELETE with the user's token and the reason they typed as `JC-Reason`
+/// (DM-113); which station may go is the gateway's call.
 #[tokio::test]
 async fn a_removal_is_one_delete_with_the_forwarded_token() {
     let endpoint = MockServer::start().await;
     Mock::given(method("DELETE"))
         .and(path(format!("/ngsi-ld/v1/entities/{STATION}")))
         .and(header("authorization", format!("Bearer {TOKEN}").as_str()))
+        .and(header("jc-reason", "Sensor%20gone%0D%0AX-Evil%3A%201"))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
         .mount(&endpoint)
@@ -394,11 +400,42 @@ async fn a_removal_is_one_delete_with_the_forwarded_token() {
 
     let (status, body) = call(
         app_at(&endpoint),
-        signed_in("DELETE", &format!("{BASE}api/stations/{STATION}"), None),
+        signed_in(
+            "DELETE",
+            &format!("{BASE}api/stations/{STATION}"),
+            Some(json!({ "reason": "  Sensor gone\r\nX-Evil: 1 " })),
+        ),
     )
     .await;
 
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+}
+
+/// DM-113: a removal without a reason, with a blank one or with one over 500 characters is
+/// refused here, naming `reason`, and never reaches the gateway, which would refuse it too.
+#[tokio::test]
+async fn a_removal_without_a_reason_is_refused_before_the_gateway() {
+    let endpoint = MockServer::start().await;
+    for body in [
+        None,
+        Some(json!({})),
+        Some(json!({ "reason": "   " })),
+        Some(json!({ "reason": "x".repeat(501) })),
+        Some(json!({ "reason": "Sensor gone", "force": true })),
+    ] {
+        let (status, shown) = call(
+            app_at(&endpoint),
+            signed_in(
+                "DELETE",
+                &format!("{BASE}api/stations/{STATION}"),
+                body.clone(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body:?}: {shown}");
+        assert!(shown.contains("reason"), "{shown}");
+    }
+    assert!(untouched_writes(&endpoint).await);
 }
 
 /// GW10, AP-40: the gateway refuses a signed-in viewer, and the app repeats the refusal rather
@@ -417,7 +454,11 @@ async fn the_endpoints_refusal_reaches_the_browser_word_for_word() {
             format!("/ngsi-ld/v1/entities/{STATION}/attrs"),
             Some(json!({ "stewardNote": "x" })),
         ),
-        ("DELETE", format!("/ngsi-ld/v1/entities/{STATION}"), None),
+        (
+            "DELETE",
+            format!("/ngsi-ld/v1/entities/{STATION}"),
+            Some(json!({ "reason": "Sensor gone" })),
+        ),
     ] {
         let endpoint = MockServer::start().await;
         Mock::given(method(verb))

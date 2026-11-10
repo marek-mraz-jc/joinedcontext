@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tomllib
 from pathlib import Path
 from urllib.parse import quote
 
@@ -45,13 +46,35 @@ def portal_base(side: str, base: str) -> str:
     return OLD["portal"] if side == "old" else base
 
 
-def F(name, sel=None, old=None, new=None, texts=False, js=None, what=None):
-    return {"name": name, "sel": sel, "old": old, "new": new, "texts": texts, "js": js, "what": what}
+def F(name, sel=None, old=None, new=None, texts=False, js=None, what=None, must=False):
+    """`must`: the new page needs it whatever the old capture shows (old prod drew it; a capture
+    taken before the check existed has no row for it)."""
+    return {"name": name, "sel": sel, "old": old, "new": new, "texts": texts, "js": js, "what": what, "must": must}
 
 
-def J(name, js, what):
+def J(name, js, what, must=False):
     """A content or layout check: a JS expression true in the page or one of its frames."""
-    return F(name, js=js, what=what)
+    return F(name, js=js, what=what, must=must)
+
+
+# Each publisher's badge as old prod drew it (chart `organizations`, jc.toml [dataroom.publishers]).
+PUBLISHERS_TOML = Path(__file__).resolve().parents[2] / "docs" / "dataroom-publishers.toml"
+BADGES = {name: [e["initials"], e["colour"]]
+          for name, e in tomllib.loads(PUBLISHERS_TOML.read_text())["dataroom"]["publishers"].items()}
+# Every image linked to a configured publisher: CKAN's own picture (a URL) passes, a drawn badge
+# must carry that publisher's initials on its colour; at least one such image on the page.
+BADGE_JS = ("(()=>{const want=" + json.dumps(BADGES) + ";let seen=0;"
+            "for(const img of document.querySelectorAll('img')){"
+            "const box=img.closest('a[href*=\"/organization/\"]')?img:img.closest('li,.module-content,.jc-publisher,section');"
+            "const a=img.closest('a[href*=\"/organization/\"]')||box?.querySelector('a[href*=\"/organization/\"]');"
+            "if(!a) continue;const name=decodeURIComponent(a.getAttribute('href').split('/organization/')[1].split(/[?#/]/)[0]);"
+            "const w=want[name];if(!w) continue;seen++;const src=img.getAttribute('src')||'';"
+            "if(!src.startsWith('data:image/svg+xml;base64,')){if(/placeholder-organization/.test(src)) return false;continue}"
+            "const svg=atob(src.split(',')[1]);"
+            "if(!svg.includes('fill=\"'+w[1]+'\"')||!svg.includes('>'+w[0]+'</text>')) return false}"
+            "return seen>0})()")
+BADGE = J("publisher badge initials and colour as configured", BADGE_JS,
+          "each configured publisher's badge holds its initials on its colour", must=True)
 
 
 # What the images showed missing (supervisor 2026-11-08): content and layout, not only presence.
@@ -71,6 +94,15 @@ LAYOUT = [
     J("AI chips Claude / ChatGPT / Copilot", "document.querySelectorAll('.jc-assistants-link .jc-seg').length>=3"
       " && [...document.querySelectorAll('.jc-assistants-link .jc-seg')].every(e=>e.getBoundingClientRect().width>8)",
       "three drawn chips in .jc-assistants-link"),
+    # Old prod inlined each brand mark (footer.html: jc/brand-{claude,chatgpt,mcp}.svg); empty
+    # coloured bars passed the width check above (jc-prod a20151ca, owner 2026-11-10).
+    J("AI chips hold their brand marks", "(()=>{const s=[...document.querySelectorAll('.jc-assistants-link .jc-seg')];"
+      "return s.length>=3 && s.every(e=>{const g=e.querySelector('svg');if(!g) return false;"
+      "const r=g.getBoundingClientRect();return r.width>0&&r.height>0})})()",
+      "an svg with a non-zero box in each .jc-seg", must=True),
+    J("footer brand shows the site logo", "(()=>{const i=document.querySelector('footer .jc-footer-brand img');"
+      "if(!i) return false;const r=i.getBoundingClientRect();return i.complete&&i.naturalWidth>0&&r.width>0&&r.height>0})()",
+      "a loaded img with a box in .jc-footer-brand", must=True),
 ]
 DATASET_CONTENT = [
     J("Živé dáta grid with filters and paging", "!!document.querySelector('table, [role=grid]') && /Filter/.test(document.body.innerText)"
@@ -130,6 +162,7 @@ CKAN_DATASET = [
     F("tags", "a[href*='tags=']"),
     F("license", "text=/[Ll]icen/"),
     F("organization link", "a[href*='/organization/']"),
+    BADGE,
 ]
 CKAN_RESOURCE = [
     F("title h1", "h1"),
@@ -142,8 +175,8 @@ CKAN_API = [F("JSON body", "pre, body")]
 CKAN_PAGES_ = [
     {"id": "home", "old": "/", "new": "/opendata/", "features": CKAN_HOME},
     {"id": "organizations", "old": "/organization/", "new": "/opendata/organization/",
-     "features": [F("organization cards", "a[href*='/organization/']"), F("search box", "input[name=q]")]},
-    {"id": "organization", "old": "/organization/{org}", "new": "/opendata/organization/{org}", "features": CKAN_LIST},
+     "features": [F("organization cards", "a[href*='/organization/']"), F("search box", "input[name=q]"), BADGE]},
+    {"id": "organization", "old": "/organization/{org}", "new": "/opendata/organization/{org}", "features": CKAN_LIST + [BADGE]},
     {"id": "datasets", "old": "/dataset/", "new": "/opendata/dataset/", "features": CKAN_LIST},
     {"id": "datasets-search", "old": "/dataset/?q=podujatia", "new": "/opendata/dataset/?q=podujatia", "features": CKAN_LIST},
     {"id": "datasets-filter", "old": "/dataset/?organization=bbsk&res_format=CSV",

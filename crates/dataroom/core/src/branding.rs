@@ -137,6 +137,11 @@ pub struct BrandingBlock {
     /// The live parts' bases one by one; each left empty falls back to `{label}.{domain}`.
     #[serde(default, skip_serializing_if = "BrandingAddresses::is_empty")]
     pub addresses: BrandingAddresses,
+    /// Each publisher's badge and words by its name (`organizations` of prod's CKAN chart, read
+    /// by `jc_org`), for a publisher with no picture or description of its own. Only the host
+    /// sets it (`jc.toml [dataroom.publishers]`): serde skips it, so no catalogue override writes it.
+    #[serde(skip)]
+    pub publishers: BTreeMap<String, PublisherBranding>,
 }
 
 /// Where the live parts of a catalogue answer (G1), each a base URL without a trailing slash
@@ -292,6 +297,7 @@ impl Default for BrandingBlock {
             samples: BTreeMap::new(),
             assistant_widget: None,
             addresses: BrandingAddresses::default(),
+            publishers: BTreeMap::new(),
         }
     }
 }
@@ -989,6 +995,12 @@ pub fn validate_and_sanitise_logo(bytes: &[u8], content_type: &str) -> Result<Sa
         url_path,
         bytes: bytes.to_vec(),
     })
+}
+
+/// Whether `text` passes the logo upload's SVG checks: no script, event handler, external
+/// reference or entity (`logoSvg`, served as `/logo.svg` on the catalogue's origin).
+pub fn is_safe_logo_svg(text: &str) -> bool {
+    validate_svg_bytes(text.as_bytes()).is_ok()
 }
 
 fn validate_svg_bytes(bytes: &[u8]) -> Result<()> {

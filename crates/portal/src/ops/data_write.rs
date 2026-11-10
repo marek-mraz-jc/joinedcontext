@@ -15,6 +15,7 @@ use super::data_query::{capped_page, detail_of, readable_slug, Target, GATEWAY_T
 use super::{parse_input, Caller, OpError, Operation, OperationAnnotations};
 use crate::change::Lane;
 use crate::error::ApiError;
+use crate::pipeline_source_deletes::{reason_header, MAX_REASON};
 use crate::state::AppState;
 
 pub const NAME: &str = "jc_data_write";
@@ -40,22 +41,25 @@ pub struct DataWriteInput {
     pub entities: Vec<Value>,
     #[serde(default)]
     pub ids: Vec<String>,
+    /// Why the person deletes, in their words (DM-113); a delete needs it, other actions ignore it.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 fn input_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "endpoint": text("Endpoint name of the project, e.g. bike-stations", bounds::NAME),
+            "endpoint": text("Endpoint name, e.g. bike-stations", bounds::NAME),
             "action": {
                 "type": "string",
                 "enum": ["create", "upsert", "merge", "delete"],
-                "description": "create: new entities; upsert: create or replace attributes; merge: patch existing ones; delete: ids"
+                "description": "create: new entities; upsert: create or replace attributes; merge: patch existing ones"
             },
             "entities": {
                 "type": "array",
                 "maxItems": MAX_ENTITIES,
-                "description": "create, upsert, merge: NGSI-LD entities with id and type, e.g. {id: urn:ngsi-ld:BikeHireDockingStation:s1, type: BikeHireDockingStation, name: {type: Property, value: Main}}",
+                "description": "create, upsert, merge: NGSI-LD entities, e.g. {id: urn:ngsi-ld:Bike:s1, type: Bike, name: {type: Property, value: Main}}",
                 "items": { "type": "object", "maxProperties": RECORD_MEMBERS }
             },
             "ids": {
@@ -63,7 +67,9 @@ fn input_schema() -> Value {
                 "maxItems": MAX_ENTITIES,
                 "description": "delete: entity ids",
                 "items": { "type": "string", "maxLength": ID }
-            }
+            },
+            // Twice the gateway's 500: whitespace around a reason is trimmed, `checked` counts the rest.
+            "reason": text("delete: why, in the person's words", 2 * MAX_REASON as u64)
         },
         "required": ["endpoint", "action"],
         "additionalProperties": false
@@ -74,10 +80,10 @@ fn output_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "written": { "type": "array", "items": { "type": "string" }, "description": "Ids the Endpoint took" },
+            "written": { "type": "array", "items": { "type": "string" }, "description": "Ids written" },
             "errors": {
                 "type": "array",
-                "description": "Entities the Endpoint refused, each with its id and why",
+                "description": "Refused entities, each with its id and why",
                 "items": { "type": "object" }
             }
         },
@@ -102,13 +108,28 @@ pub fn checked(input: &DataWriteInput) -> Result<(), OpError> {
                 "a delete names the entity ids, and no entities",
             ));
         }
-        return match input.ids.iter().position(|id| id.trim().is_empty()) {
-            Some(at) => Err(invalid(
+        if let Some(at) = input.ids.iter().position(|id| id.trim().is_empty()) {
+            return Err(invalid(
                 &format!("/ids/{at}"),
                 "an id is an entity URN, e.g. urn:ngsi-ld:T:1",
-            )),
-            None => Ok(()),
-        };
+            ));
+        }
+        if delete_reason(input).is_none() {
+            return Err(invalid(
+                "/reason",
+                format!(
+                    "a delete names why in the person's own words, 1 to {MAX_REASON} characters: \
+                     ask them, never write one yourself"
+                ),
+            ));
+        }
+        if delete_reason(input).is_some_and(crate::secret_scan::quoted_secret) {
+            return Err(invalid(
+                "/reason",
+                "the reason reads like a credential: it would be kept with the delete, so leave the credential out",
+            ));
+        }
+        return Ok(());
     }
     if input.entities.is_empty() || !input.ids.is_empty() {
         return Err(invalid(
@@ -141,6 +162,34 @@ pub fn checked(input: &DataWriteInput) -> Result<(), OpError> {
 
 fn validate_write(val: &Value) -> Result<(), OpError> {
     checked(&parse_input(val.clone())?)
+}
+
+/// The reason of a delete as the gateway counts it (DM-113): trimmed, 1 to [`MAX_REASON`]
+/// characters; `None` for any other length, which is refused, never cut.
+fn delete_reason(input: &DataWriteInput) -> Option<&str> {
+    let reason = input.reason.as_deref()?.trim();
+    (1..=MAX_REASON)
+        .contains(&reason.chars().count())
+        .then_some(reason)
+}
+
+/// What the person confirms for a delete before it runs (AG-63): the Endpoint, the ids and the
+/// reason that goes to the gateway, so a reason the model made up is the person's to decline.
+pub fn question(input: &Value) -> Option<String> {
+    let input: DataWriteInput = parse_input(input.clone()).ok()?;
+    let reason = delete_reason(&input).filter(|_| input.action == Action::Delete)?;
+    let shown: Vec<&str> = input.ids.iter().take(3).map(String::as_str).collect();
+    let more = input.ids.len().saturating_sub(shown.len());
+    let more = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "Deletes {}{more} through Endpoint {}, with the reason \"{reason}\".",
+        shown.join(", "),
+        input.endpoint
+    ))
 }
 
 /// The broker's entity operation of `action`, and its body.
@@ -254,10 +303,18 @@ async fn run(
     })?;
     let token = oidc.exchange_for_endpoint(&bearer.0, &slug).await?;
     let (path, body) = request_of(&input);
-    let answer = crate::api::pipelines::http()
-        .post(format!("{}/api/endpoint/{slug}/{path}", base.trim_end_matches('/')))
+    let mut request = crate::api::pipelines::http()
+        .post(format!(
+            "{}/api/endpoint/{slug}/{path}",
+            base.trim_end_matches('/')
+        ))
         .bearer_auth(token)
-        .header("accept", "application/json")
+        .header("accept", "application/json");
+    // Encoded once, so a line break in it is `%0A` and never a header of its own.
+    if let Some(reason) = delete_reason(&input).filter(|_| input.action == Action::Delete) {
+        request = request.header("JC-Reason", reason_header(reason));
+    }
+    let answer = request
         .json(&body)
         .timeout(GATEWAY_TIMEOUT)
         .send()
@@ -280,7 +337,7 @@ pub fn operations() -> Vec<Operation> {
     vec![Operation {
         name: NAME,
         title: "Write Data",
-        description: "Creates, upserts, merges or deletes up to 100 entities through one Endpoint of the project, as you; its Policy decides each",
+        description: "Creates, upserts, merges or deletes up to 100 entities through one Endpoint, as you; its Policy decides each",
         input: input_schema,
         output: output_schema,
         annotations: OperationAnnotations {
@@ -322,10 +379,11 @@ mod tests {
             &json!({ "endpoint": "bikes", "action": "create", "entities": [station] })
         )
         .is_ok());
-        assert!(validate_write(
-            &json!({ "endpoint": "bikes", "action": "delete", "ids": ["urn:ngsi-ld:T:1"] })
-        )
-        .is_ok());
+        assert!(
+            validate_write(&json!({ "endpoint": "bikes", "action": "delete",
+                                        "ids": ["urn:ngsi-ld:T:1"], "reason": "a duplicate" }))
+            .is_ok()
+        );
         assert_eq!(
             refused_at(json!({ "endpoint": "bikes", "action": "create" })),
             "/entities"
@@ -354,6 +412,67 @@ mod tests {
         assert!(
             validate_write(&json!({ "endpoint": "bikes", "action": "replace", "ids": ["a"] }))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn a_delete_names_the_persons_reason_and_nothing_cuts_it() {
+        let delete = |reason: Value| json!({ "endpoint": "bikes", "action": "delete", "ids": ["urn:ngsi-ld:T:1"], "reason": reason });
+        let bare = json!({ "endpoint": "bikes", "action": "delete", "ids": ["urn:ngsi-ld:T:1"] });
+        assert_eq!(refused_at(bare), "/reason");
+        assert_eq!(refused_at(delete(json!(""))), "/reason");
+        assert_eq!(refused_at(delete(json!(" \n\t "))), "/reason");
+        // Counted as the gateway counts: characters once trimmed, not bytes.
+        assert_eq!(
+            refused_at(delete(json!("ž".repeat(MAX_REASON + 1)))),
+            "/reason"
+        );
+        assert!(validate_write(&delete(json!(format!("  {}\n", "ž".repeat(MAX_REASON))))).is_ok());
+        // A credential quoted in the reason would be kept with the delete.
+        let token = format!("ghp_{}", "0123456789abcdef".repeat(3));
+        assert_eq!(
+            refused_at(delete(json!(format!("rotated {token}")))),
+            "/reason"
+        );
+        // Other actions ignore it.
+        let station = json!({ "id": "urn:ngsi-ld:T:1", "type": "T" });
+        assert!(validate_write(
+            &json!({ "endpoint": "bikes", "action": "create", "entities": [station] })
+        )
+        .is_ok());
+
+        let call = input(delete(json!("  line one\r\nJC-Record: version  ")));
+        let reason = delete_reason(&call).expect("reason");
+        assert_eq!(reason, "line one\r\nJC-Record: version");
+        let header = reason_header(reason);
+        assert!(!header.contains(['\r', '\n', ' ', ':']), "{header}");
+        assert_eq!(header, "line%20one%0D%0AJC-Record%3A%20version");
+        assert!(reqwest::header::HeaderValue::from_str(&header).is_ok());
+    }
+
+    #[test]
+    fn the_person_confirms_the_reason_a_delete_sends() {
+        let ids: Vec<String> = (1..=5).map(|n| format!("urn:ngsi-ld:T:{n}")).collect();
+        let asked = question(
+            &json!({ "endpoint": "bikes", "action": "delete", "ids": ids,
+                                      "reason": " duplicate of station 042 " }),
+        )
+        .expect("a question");
+        assert!(asked.contains("urn:ngsi-ld:T:3 and 2 more"), "{asked}");
+        assert!(asked.contains("Endpoint bikes"), "{asked}");
+        assert!(asked.contains("\"duplicate of station 042\""), "{asked}");
+        let station = json!({ "id": "urn:ngsi-ld:T:1", "type": "T" });
+        assert_eq!(
+            question(
+                &json!({ "endpoint": "bikes", "action": "create", "entities": [station], "reason": "x" })
+            ),
+            None
+        );
+        assert_eq!(
+            question(
+                &json!({ "endpoint": "bikes", "action": "delete", "ids": ["urn:ngsi-ld:T:1"] })
+            ),
+            None
         );
     }
 
