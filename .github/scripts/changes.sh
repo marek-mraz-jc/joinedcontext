@@ -3,10 +3,15 @@
 # `job=true|false` lines, to $GITHUB_OUTPUT when set. Without a usable base (a dispatch, a new
 # branch, a base git cannot reach) every job runs.
 # `ship` says whether the push changes what the jc image holds (ci.yml builds and promotes one on
-# main and ship-proof/** only). With REUSE=1 (a push to those refs) a check job whose exact
-# name already concluded success in another ci run of this same commit (a fast-forward merge of a
-# branch head ci passed) is not run again: the same commit is the same input, workflow file
-# included. supply-chain, gitleaks and the image always run.
+# main and ship-proof/** only). With REUSE=1 (every push) a check job whose exact name already
+# concluded success in another ci run of this same commit (a fast-forward of a branch head ci
+# passed) is not run again: the same commit is the same input, workflow file included. The
+# repository is public, so only a push run of ci.yml in this repository counts: a pull_request run
+# tests refs/pull/N/merge (another tree, with that merge's own ci.yml) and a fork's run is
+# anyone's. Each key turned off prints `reused <job> from run <id>` per job. Reuse is per job,
+# never per run: a run's own diff base decides which jobs it ran, so a green run can have tested
+# fewer jobs than this one needs. supply-chain, gitleaks, the image, its scan and its signature
+# always run.
 #   EVENT=push BEFORE=<sha> sh changes.sh      # in ci.yml (reads GITHUB_REF)
 #   sh changes.sh --selftest
 set -eu
@@ -49,38 +54,82 @@ trunk() { case "$1" in refs/heads/main | refs/heads/jc-portal-1 | refs/heads/shi
 # ship: the image holds the Rust build (root reaches every crate) and the embedded UI
 ship() { awk -F= '($1 == "root" || $1 == "ui" || $1 == "image") && $2 == "true" { s = 1 } END { print "ship=" (s ? "true" : "false") }'; }
 
-# covered <job names that succeeded, one per line>: turns off each key all of whose jobs are in it
+# covered <"job run-id" lines that succeeded>: turns off each key all of whose jobs are in it and
+# prints, to stderr, the run each of its jobs is reused from
 covered() {
   printf '%b\n' "$1" > "${TMPDIR:-/tmp}/ci-done.$$"
   awk -v done="${TMPDIR:-/tmp}/ci-done.$$" '
     BEGIN {
-      while ((getline l < done) > 0) ok[l] = 1
+      while ((getline l < done) > 0) { split(l, d, " "); if (d[1] != "") ok[d[1]] = d[2] }
       # every job of a key, each test partition of ci.yml (matrix part) by its name
       jobs["root"] = "root-clippy root-test-1 root-test-2 root-test-3 root-test-4"
       jobs["antares"] = "antares-clippy antares-test-1 antares-test-2 antares-test-3 antares-test-4"
       jobs["platform"] = "platform-test"
       jobs["ekiben"] = "ekiben"; jobs["portal"] = "portal-clippy portal-test-1 portal-test-2 portal-test-3 portal-test-4"; jobs["ui"] = "ui ui-test-1 ui-test-2 ui-test-3 ui-test-4"
+      jobs["image"] = "dockerfile"
     }
     {
       split($0, kv, "=")
       if (kv[2] == "true" && (kv[1] in jobs)) {
         n = split(jobs[kv[1]], need, " "); all = 1
         for (i = 1; i <= n; i++) if (!(need[i] in ok)) all = 0
-        if (all) { print kv[1] "=false"; next }
+        if (all) {
+          for (i = 1; i <= n; i++) print "reused " need[i] " from run " ok[need[i]] > "/dev/stderr"
+          print kv[1] "=false"; next
+        }
       }
       print
     }'
   rm -f "${TMPDIR:-/tmp}/ci-done.$$"
 }
 
-# The names of the jobs that concluded success in any other ci run of this commit.
+# `job run-id` for each job that concluded success in another push run of ci.yml in this repository
+# on this commit (the first such run per job name). The query's filters are repeated in jq: the
+# API's are not the trust boundary.
 done_jobs() {
-  gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=20" \
-    --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID) | .id" |
+  gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=50" |
+    jq -r --arg repo "$GITHUB_REPOSITORY" --arg sha "$GITHUB_SHA" --arg self "$GITHUB_RUN_ID" '
+      .workflow_runs[]
+      | select((.id | tostring) != $self and .event == "push" and .head_sha == $sha
+          and .path == ".github/workflows/ci.yml"
+          and .repository.full_name == $repo and .head_repository.full_name == $repo)
+      | .id' |
     while read -r id; do
-      gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" \
-        --jq '.jobs[] | select(.conclusion == "success") | .name'
-    done | sort -u
+      gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" |
+        jq -r --arg id "$id" '.jobs[] | select(.status == "completed" and .conclusion == "success") | "\(.name) \($id)"'
+    done | sort -s -k1,1 -u
+}
+
+# reuse_selftest: done_jobs against stubbed API answers (one run per case, each with one job)
+reuse_selftest() {
+  GITHUB_REPOSITORY=o/r GITHUB_SHA=aaa GITHUB_RUN_ID=1
+  run() { # id event head-repo sha path
+    printf '{"id":%s,"event":"%s","head_sha":"%s","path":"%s","repository":{"full_name":"o/r"},"head_repository":{"full_name":"%s"}}' "$1" "$2" "$4" "$5" "$3"
+  }
+  ci=.github/workflows/ci.yml
+  runs="$(run 1 push o/r aaa $ci),$(run 10 push o/r aaa $ci),$(run 11 pull_request o/r aaa $ci),$(run 12 push fork/r aaa $ci)"
+  runs="$runs,$(run 13 push o/r aaa $ci),$(run 14 push o/r aaa $ci),$(run 15 push o/r aaa $ci),$(run 16 push o/r aaa $ci)"
+  runs="$runs,$(run 17 push o/r bbb $ci),$(run 18 push o/r aaa .github/workflows/other.yml)"
+  job() { printf '{"jobs":[{"name":"%s","status":"%s","conclusion":%s}]}' "$1" "$2" "$3"; }
+  gh() {
+    case "$*" in
+      *"/workflows/ci.yml/runs?"*) printf '{"workflow_runs":[%s]}' "$runs" ;;
+      *runs/1/jobs*) job self completed '"success"' ;;
+      *runs/10/jobs*) job push-same-repo completed '"success"' ;;
+      *runs/11/jobs*) job pull-request completed '"success"' ;;
+      *runs/12/jobs*) job fork completed '"success"' ;;
+      *runs/13/jobs*) job failed completed '"failure"' ;;
+      *runs/14/jobs*) job cancelled completed '"cancelled"' ;;
+      *runs/15/jobs*) job skipped completed '"skipped"' ;;
+      *runs/16/jobs*) job in-progress in_progress null ;;
+      *runs/17/jobs*) job other-sha completed '"success"' ;;
+      *runs/18/jobs*) job other-workflow completed '"success"' ;;
+      *) echo "unexpected gh $*" >&2; return 1 ;;
+    esac
+  }
+  got=$(done_jobs)
+  [ "$got" = "push-same-repo 10" ] || { echo "FAIL: done_jobs -> [$got], want [push-same-repo 10]"; exit 1; }
+  unset -f gh
 }
 
 if [ "${1:-}" = --selftest ]; then
@@ -108,11 +157,14 @@ if [ "${1:-}" = --selftest ]; then
   for r in refs/heads/jc-ui-node24 refs/pull/1/merge; do ! trunk "$r" || { echo "FAIL: branch $r"; exit 1; }; done
   [ "$(printf 'root=false\nui=true\nimage=false\n' | ship)" = ship=true ] || { echo "FAIL: ship ui"; exit 1; }
   [ "$(printf 'root=false\nui=false\nimage=false\n' | ship)" = ship=false ] || { echo "FAIL: ship docs"; exit 1; }
-  [ "$(printf 'root=true\nportal=true\nsupply=true\n' | covered 'root-clippy\nroot-test-1\nroot-test-2\nroot-test-3\nroot-test-4\nportal-clippy\nportal-test-1')" = "$(printf 'root=false\nportal=true\nsupply=true')" ] \
+  [ "$(printf 'root=true\nportal=true\nsupply=true\n' | covered 'root-clippy 1\nroot-test-1 1\nroot-test-2 1\nroot-test-3 1\nroot-test-4 1\nportal-clippy 1\nportal-test-1 1' 2>/dev/null)" = "$(printf 'root=false\nportal=true\nsupply=true')" ] \
     || { echo "FAIL: covered"; exit 1; }
-  [ "$(printf 'portal=true\n' | covered 'portal-clippy\nportal-test-1\nportal-test-2\nportal-test-3')" = portal=true ] \
-    && [ "$(printf 'portal=true\n' | covered 'portal-clippy\nportal-test-1\nportal-test-2\nportal-test-3\nportal-test-4')" = portal=false ] \
+  [ "$(printf 'portal=true\n' | covered 'portal-clippy 1\nportal-test-1 1\nportal-test-2 1\nportal-test-3 1' 2>/dev/null)" = portal=true ] \
+    && [ "$(printf 'portal=true\n' | covered 'portal-clippy 1\nportal-test-1 1\nportal-test-2 1\nportal-test-3 1\nportal-test-4 1' 2>/dev/null)" = portal=false ] \
     || { echo "FAIL: covered portal parts"; exit 1; }
+  [ "$(printf 'image=true\nsupply=true\n' | covered 'dockerfile 7' 2>&1 >/dev/null)" = "reused dockerfile from run 7" ] \
+    || { echo "FAIL: covered names its source run"; exit 1; }
+  reuse_selftest
   echo "changes.sh selftest ok"
   exit 0
 fi
@@ -140,8 +192,9 @@ echo "$lines" | ship | tee -a "$out"
 if [ "${REUSE:-0}" = 1 ]; then
   ok=$(done_jobs)
   if [ -n "$ok" ]; then
-    echo "jobs already green on $GITHUB_SHA in another ci run:"; echo "$ok" | sed 's/^/  /'
-    lines=$(echo "$lines" | covered "$ok")
+    echo "jobs already green on $GITHUB_SHA in another push run of ci.yml here:"; echo "$ok" | sed 's/^/  /'
+    lines=$(echo "$lines" | covered "$ok" 2>"${TMPDIR:-/tmp}/ci-reused.$$")
+    cat "${TMPDIR:-/tmp}/ci-reused.$$"; rm -f "${TMPDIR:-/tmp}/ci-reused.$$"
   fi
 fi
 echo "$lines" | tee -a "$out"
