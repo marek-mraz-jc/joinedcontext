@@ -1669,8 +1669,8 @@ impl ViewSync {
     /// its saved projection and hidden attributes (T-3802, EP-85): its Policies, audience and
     /// view mapping stay as the last run read them. `Ok(None)` when that run read no such
     /// Endpoint; `Err` names the draft's member at fault, or why the Endpoint has no view.
-    /// The roles the gateway gives callers of Endpoint `name` of `project` and its audience,
-    /// read from the repository the views were compiled from by the gateway's own rule
+    /// The roles the gateway gives callers of Endpoint `name` of `project`, its audience and its
+    /// allowed projects, read from the repository the views were compiled from by the gateway's own rule
     /// (`EndpointRoles`, an App's `app-{name}` Endpoint with its client); `None` before a
     /// converge saw it.
     pub fn caller_roles(
@@ -1680,6 +1680,7 @@ impl ViewSync {
     ) -> Option<(
         context_gateway::resolver::EndpointRoles,
         jc_core::kinds::Audience,
+        Vec<String>,
     )> {
         use context_gateway::resolver::{app_client, EndpointRoles};
         let sources = lock(&self.last).clone()?;
@@ -1694,7 +1695,7 @@ impl ViewSync {
             Some(client) => EndpointRoles::of_app(project, name, &e.spec, client),
             None => EndpointRoles::of(project, name, &e.spec),
         };
-        Some((roles, e.spec.audience))
+        Some((roles, e.spec.audience, e.spec.allowed_projects.clone()))
     }
 
     pub fn draft_view(

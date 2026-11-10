@@ -101,6 +101,22 @@ pub fn app_client(endpoint: &str, has_app: impl FnOnce(&str) -> bool) -> Option<
         .map(|_| endpoint.to_owned())
 }
 
+/// [`Endpoint::admits`] for an Endpoint of `project` with `audience` and `allowed_projects`.
+pub fn audience_admits(
+    audience: Audience,
+    project: &str,
+    allowed_projects: &[String],
+    caller: Option<&str>,
+) -> bool {
+    match audience {
+        Audience::Public => true,
+        Audience::Organization => caller.is_some_and(|caller| !caller.is_empty()),
+        Audience::ProjectList => caller.is_some_and(|caller| {
+            caller == project || allowed_projects.iter().any(|p| p == caller)
+        }),
+    }
+}
+
 /// Everything the gateway needs about one endpoint, resolved in a single lookup.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Endpoint {
@@ -246,13 +262,12 @@ impl Endpoint {
     /// `None` is an anonymous caller: only a public endpoint serves one. An empty project is a
     /// person whose groups name no project, a member of nothing (F-SEC1-009).
     pub fn admits(&self, project: Option<&str>) -> bool {
-        match self.audience {
-            Audience::Public => true,
-            Audience::Organization => project.is_some_and(|caller| !caller.is_empty()),
-            Audience::ProjectList => project.is_some_and(|caller| {
-                caller == self.project || self.allowed_projects.iter().any(|p| p == caller)
-            }),
-        }
+        audience_admits(
+            self.audience,
+            &self.project,
+            &self.allowed_projects,
+            project,
+        )
     }
 
     /// [`Endpoint::admits`] for a caller from `project`, with an `organization` audience held to

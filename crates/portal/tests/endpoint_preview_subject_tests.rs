@@ -226,7 +226,7 @@ fn jana_claims() -> Value {
 
 fn ola_claims() -> Value {
     json!({ "sub": "sub-ola", "iss": "https://kc.example/realms/jc", "exp": 4_102_444_800_i64,
-            "azp": "portal-ui", "preferred_username": "ola" })
+            "azp": "portal-ui", "preferred_username": "ola", "groups": ["/city"] })
 }
 
 /// The Portal session of the person `claims` name, the way sign-in makes it.
@@ -432,7 +432,8 @@ async fn an_apps_role_is_refused_to_a_portal_session_on_both() {
     assert_eq!(asked, gateway(Some(&jana_claims()), "app-tool"));
 }
 
-/// A person no grant names: named by Keycloak id with an empty `x-jc-roles`, which the broker
+/// A person no grant names, admitted by the project group `city`: named by Keycloak id with an
+/// empty `x-jc-roles`, which the broker
 /// reads as that person holding no role (never the cluster's own hop, never the anonymous
 /// caller), on the preview as on the gateway.
 #[tokio::test]
@@ -443,6 +444,7 @@ async fn a_person_without_a_grant_is_refused_on_both() {
     assert_eq!(
         asked,
         vec![
+            ("x-jc-groups".to_owned(), "city".to_owned()),
             ("x-jc-roles".to_owned(), String::new()),
             ("x-jc-subject".to_owned(), "sub-ola".to_owned()),
         ]
@@ -500,4 +502,28 @@ async fn without_the_kept_id_token_the_preview_reads_narrower() {
         asked.iter().all(|pair| gateway.contains(pair)),
         "{asked:?} vs {gateway:?}"
     );
+}
+
+/// EP-14, F-SEC1-009: a space member whose groups name no project of the Endpoint and who is no
+/// member of its Organization is refused at the gateway's door; the preview refuses them too and
+/// asks the broker nothing, whatever an endpoint role would give them by Keycloak id.
+#[tokio::test]
+async fn a_person_the_gateways_door_refuses_is_refused_the_preview() {
+    let r = rig().await;
+    let claims = json!({ "sub": "sub-jana", "iss": "https://kc.example/realms/jc",
+                         "exp": 4_102_444_800_i64, "azp": "portal-ui",
+                         "preferred_username": "jana" });
+    let (status, asked) = preview(&r, &session_of(&claims), true, "air-staff", &[]).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(asked, None);
+    let groups = std::collections::BTreeSet::new();
+    assert!(context_gateway::auth::subject::admission(
+        "city",
+        jc_core::kinds::Audience::Organization,
+        &[],
+        &groups,
+        false,
+        |_| Some("hel".to_owned()),
+    )
+    .is_err());
 }

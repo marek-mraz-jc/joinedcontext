@@ -16,7 +16,7 @@ use serde_json::Value;
 use utoipa::ToSchema;
 
 use axum::http::HeaderMap;
-use context_gateway::auth::subject::{anonymous_with, person, with_endpoint_roles};
+use context_gateway::auth::subject::{admission, anonymous_with, person, with_endpoint_roles};
 use context_gateway::auth::token::{Claims, RealmAccess};
 use jc_core::kinds::Audience;
 
@@ -229,9 +229,12 @@ pub(crate) fn subject(
     project: &str,
     name: &str,
 ) -> Result<HeaderMap, ApiError> {
-    let (roles, audience) = views.caller_roles(project, name).ok_or_else(|| {
-        ApiError::Unavailable("the Endpoint's view is not compiled yet; try again shortly".into())
-    })?;
+    let (roles, audience, allowed_projects) =
+        views.caller_roles(project, name).ok_or_else(|| {
+            ApiError::Unavailable(
+                "the Endpoint's view is not compiled yet; try again shortly".into(),
+            )
+        })?;
     if audience == Audience::Public {
         return Ok(context_gateway::middleware::tenancy::caller_headers(
             &anonymous_with(&roles),
@@ -241,6 +244,21 @@ pub(crate) fn subject(
     let organization = organization_of(state, project);
     let mut caller = person(&claims, audience, organization.as_deref()).ok_or_else(|| {
         ApiError::Denied("the gateway names nobody by this session's username".into())
+    })?;
+    // The gateway reads for nobody its door refuses (EP-14, EP-15), and neither does the preview.
+    admission(
+        project,
+        audience,
+        &allowed_projects,
+        &caller.groups,
+        caller.member_of_organization,
+        |project| organization_of(state, project),
+    )
+    .map_err(|_| {
+        ApiError::Denied(
+            "the Endpoint's audience does not admit you; ask a steward for its project's group"
+                .into(),
+        )
     })?;
     with_endpoint_roles(&mut caller, &roles, Some(&claims));
     Ok(context_gateway::middleware::tenancy::caller_headers(
