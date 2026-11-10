@@ -126,13 +126,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix: { part: [1, 2, 3, 4] }
-    services:
-      postgres:
-        image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
-        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres }
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       KAISATSU_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/kaisatsu
       DATAROOM_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/dataroom
@@ -166,10 +159,13 @@ jobs:
           && echo "host all all 0.0.0.0/0 trust" >> /tmp/pg/pg_hba.conf
           && exec postgres -D /tmp/pg -c listen_addresses=* -c unix_socket_directories=/tmp'
           > "$RUNNER_TEMP/assistant-pg.log" 2>&1 &)
-      - run: |
-          for db in kaisatsu dataroom daiya shako; do
-            psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
-          done
+      # The modules' Postgres, started like the assistant's beside the cache restore and the build
+      # (as a service container its pull and health checks held every step for 15-19 s, run
+      # 42829330070); the test step waits for it and creates the databases.
+      - run: >-
+          (docker run -d --name pg -p 5432:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres
+          postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
+          > "$RUNNER_TEMP/pg.log" 2>&1 &)
       - uses: ./.github/actions/rust
         with: { key: root-test }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
@@ -194,6 +190,11 @@ jobs:
             cargo test --workspace --locked --no-fail-fast --doc > "$RUNNER_TEMP/doc.log" 2>&1 & doc=$!
           fi
           for _ in $(seq 1 60); do docker exec assistant-pg /usr/lib/postgresql/16/bin/pg_isready -h 127.0.0.1 -U postgres && break; sleep 1; done
+          # the official image answers on TCP only once its init is done; CREATE DATABASE fails the step if it never does
+          for _ in $(seq 1 60); do pg_isready -q -h 127.0.0.1 -p 5432 && break; sleep 1; done
+          for db in kaisatsu dataroom daiya shako; do
+            psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db" || { cat "$RUNNER_TEMP/pg.log"; exit 1; }
+          done
           # shellcheck disable=SC2086
           python3 .github/scripts/test-part.py --pieces $plan \
             --reuse "$RUNNER_TEMP/binaries.json" "$RUNNER_TEMP/cargo-metadata.json" > "$RUNNER_TEMP/part.txt"
