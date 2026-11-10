@@ -2087,6 +2087,9 @@ def prometheus_files(admin: str, own: str, proxy: str, config: Path, datasource:
     daiya's datasource `prometheus` of organization 1 on the label proxy. JSON is YAML."""
     scrape = {"global": {"scrape_interval": "15s", "scrape_timeout": "10s"}, "scrape_configs": [
         {"job_name": "jc", "metrics_path": "/metrics", "authorization": {"credentials_file": "/etc/rh/token"},
+         # as the deployment's jc ServiceMonitor: the gateway latency summary's quantiles stay out
+         "metric_relabel_configs": [{"source_labels": ["__name__", "quantile"],
+                                     "regex": "jc_gateway_request_duration_seconds;.+", "action": "drop"}],
          "static_configs": [{"targets": [admin], "labels": {"namespace": "jc-prod"}}]},
         {"job_name": "prometheus", "static_configs": [{"targets": [own], "labels": {"namespace": "monitoring"}}]}]}
     config.write_text(json.dumps(scrape, indent=1))
