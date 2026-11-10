@@ -2457,12 +2457,7 @@ output:
                 "X-Basic": "${JC_CLIENT_SECRET_ZILINA}" } } }] },
             "output": gateway_output("zilina", "slug")
         });
-        as_pipeline(
-            &mut stream,
-            "zilina",
-            "drepo",
-            PipelineCredential::Secret,
-        );
+        as_pipeline(&mut stream, "zilina", "drepo", PipelineCredential::Secret);
         let after = stream.to_string();
         assert!(
             !after.contains("JC_CLIENT_SECRET_ZILINA") && !after.contains("zilina-pipelines"),

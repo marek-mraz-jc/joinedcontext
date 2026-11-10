@@ -1824,7 +1824,6 @@ async fn the_feed_project(jc: &Jc) {
         },
     )
     .await;
-
 }
 
 /// [`the_feed_project`], then one administrator proposes [`pipeline`] and a second approves it;

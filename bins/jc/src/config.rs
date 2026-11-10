@@ -2018,7 +2018,10 @@ path_prefix = "/api/endpoint"
         let dir = tempfile::tempdir().unwrap();
         let at = |name: &str, value: &str| std::fs::write(dir.path().join(name), value).unwrap();
         at("banskabystrica-pipelines", "s-project");
-        at("banskabystrica-pl-od-dtm-bb-register-statickej-dopravy", "s-own\n");
+        at(
+            "banskabystrica-pl-od-dtm-bb-register-statickej-dopravy",
+            "s-own\n",
+        );
         at("KC_BANSKABYSTRICA_PL_KATASTER_SECRET", "x");
         at("-pl-x", "x");
         let secrets = Secrets::load_from(
@@ -2047,10 +2050,7 @@ path_prefix = "/api/endpoint"
                 "JC_PIPELINE_SECRET_BANSKABYSTRICA_PL_OD_DTM_BB_REGISTER_STATICKEJ_DOPRAVY"
             ]
         );
-        assert_eq!(
-            secrets.pipeline_client_secrets[names[1]].expose(),
-            "s-own"
-        );
+        assert_eq!(secrets.pipeline_client_secrets[names[1]].expose(), "s-own");
     }
 
     #[test]
