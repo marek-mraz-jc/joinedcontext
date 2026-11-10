@@ -224,7 +224,7 @@ ended broken (a CSV ends with a `#` row naming why), never sent as a
 whole file. The answer ceiling bounds each page it reads.
 
 The surface writes at most `ANTARES_EXPORT_FILES` files at once (default
-2, [Configuration](configuration.md)), Parquet, CSV and ZIP together; a
+6, [Configuration](configuration.md)), Parquet, CSV and ZIP together; a
 file holds its place until its last byte is sent or its client leaves.
 One more is `503` with `Retry-After: 6`, never queued; `/q/health` shows
 the caps as `limits.exportFiles`, `limits.fileBytes` and

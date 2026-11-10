@@ -229,7 +229,7 @@ impl PolicyEngine for Hold {
     }
 }
 
-/// The two files a router writes at once (`ANTARES_EXPORT_FILES` unset) are dropped mid-read,
+/// The files a router writes at once (`ANTARES_EXPORT_FILES` unset) are all dropped mid-read,
 /// as a caller cut at the gateway's deadline is: each frees its place, and the next file is
 /// written instead of refused 503.
 #[cfg(feature = "tabular")]
@@ -240,13 +240,13 @@ async fn a_file_dropped_while_written_frees_its_place() -> Result<(), String> {
     let f = keyset_fixture(engine.clone()).await?;
     engine.0.store(true, SeqCst);
     let uri = format!("{CARS}?f=csv");
-    for _ in 0..2 {
+    for _ in 0..antares_ogc::EXPORT_FILES {
         let held = tokio::time::timeout(std::time::Duration::from_millis(200), raw(&f, &uri)).await;
         assert!(held.is_err(), "the file waits in its store read");
     }
     engine.0.store(false, SeqCst);
     let (status, _, _) = raw(&f, &uri).await;
-    assert_eq!(status, StatusCode::OK, "both places were freed");
+    assert_eq!(status, StatusCode::OK, "every place was freed");
     Ok(())
 }
 
@@ -334,7 +334,7 @@ async fn a_streamed_file_reads_every_page_through_its_view() -> Result<(), Strin
 async fn head_of_a_file_states_no_length_and_frees_its_place() -> Result<(), String> {
     use tower::ServiceExt;
     let f = keyset_fixture(Arc::new(SlowOnly(q_filter("speed<50")?))).await?;
-    for _ in 0..3 {
+    for _ in 0..=antares_ogc::EXPORT_FILES {
         let req = axum::http::Request::builder()
             .method("HEAD")
             .uri(format!("{CARS}?f=csv"))

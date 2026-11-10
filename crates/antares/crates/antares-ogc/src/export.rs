@@ -74,11 +74,12 @@ pub(crate) fn asked(
     }
 }
 
-/// How many files a router writes at once: `raw` when it is 1 to 64, else 2 (T-4465 review).
+/// How many files a router writes at once: `raw` when it is 1 to 64, else
+/// [`crate::EXPORT_FILES`] (T-4465 review).
 pub(crate) fn files_of(raw: Option<&str>) -> usize {
     raw.and_then(|v| v.parse().ok())
         .filter(|n| (1..=64).contains(n))
-        .unwrap_or(2)
+        .unwrap_or(crate::EXPORT_FILES)
 }
 
 /// The bytes one file may hold unless `ANTARES_EXPORT_FILE_BYTES` names another (jc-ogc-stream):
@@ -901,10 +902,10 @@ mod tests {
 
     #[test]
     fn the_cap_of_files_is_one_to_64_else_two() {
-        assert_eq!(files_of(None), 2);
+        assert_eq!(files_of(None), crate::EXPORT_FILES);
         assert_eq!(files_of(Some("5")), 5);
         for wrong in ["0", "65", "-1", "two", ""] {
-            assert_eq!(files_of(Some(wrong)), 2, "{wrong}");
+            assert_eq!(files_of(Some(wrong)), crate::EXPORT_FILES, "{wrong}");
         }
     }
 
