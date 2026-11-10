@@ -653,6 +653,69 @@ def kaisatsu_check(kaisatsu_bin: str, tmp: Path):
     return check
 
 
+# The realm lists keyed by a member's name, as keycloak-config-cli matches them (people never: the
+# realm lines carry no person into an export, prod gets none).
+REALM_LIST_KEYS = {"clients": "clientId", "clientScopes": "name", "groups": "name",
+                   "identityProviders": "alias", "authenticationFlows": "alias"}
+MEMBER_LIST_KEYS = {"protocolMappers": "name", "subGroups": "name"}
+# The keyed lists inside a realm's dicts (`roles.realm`); a client's roles are a dict of such lists.
+NESTED_KEYS = {"roles": {"realm": "name"}}
+
+
+def rendered_realm(values_file: Path, realm: str) -> dict:
+    """The realm `realm` of a deployment's rendered keycloak-config values (rehearsal.py render)."""
+    import yaml  # PyYAML is in the CI venv; only render/synth/realm lines need it
+
+    inline = yaml.safe_load(values_file.read_text())["config"][realm]["inline"]
+    return yaml.safe_load(inline) if isinstance(inline, str) else inline
+
+
+def _overlay(have: dict, old: dict, new: dict, keys: dict, where: str, lines: list[str]) -> dict:
+    """`have` with every member `new` adds or changes against `old` put in: a changed scalar or list
+    takes `new`'s value, a keyed list adds its new members and overlays its changed ones by key, a
+    dict overlays its changed keys. What `new` removed stays (keycloak-config-cli prunes nothing)."""
+    out = dict(have)
+    for k in new:
+        if k in old and old[k] == new[k]:
+            continue
+        key = keys.get(k)
+        if isinstance(new[k], list) and k in keys and key:
+            byold = {m.get(key): m for m in old.get(k) or [] if isinstance(m, dict)}
+            items = [dict(m) if isinstance(m, dict) else m for m in out.get(k) or []]
+            index = {m.get(key): i for i, m in enumerate(items) if isinstance(m, dict)}
+            for m in new[k]:
+                name = m.get(key)
+                if name in byold and byold[name] == m:
+                    continue
+                if name in index and name in byold:
+                    items[index[name]] = _overlay(items[index[name]], byold[name], m, MEMBER_LIST_KEYS,
+                                                  f"{where}{k}[{name}].", lines)
+                elif name in index:
+                    items[index[name]] = m
+                    lines.append(f"{where}{k}[{name}] (taken whole)")
+                else:
+                    items.append(m)
+                    lines.append(f"{where}{k}[{name}] (added)")
+            out[k] = items
+        elif isinstance(new[k], dict) and isinstance(old.get(k), dict) and isinstance(out.get(k), dict):
+            out[k] = _overlay(out[k], old[k], new[k], NESTED_KEYS.get(k, {}), f"{where}{k}.", lines)
+        else:
+            out[k] = new[k]
+            lines.append(f"{where}{k}")
+    return out
+
+
+def realm_lines(realm: dict, release: dict, main: dict) -> tuple[dict, list[str]]:
+    """The export's realm with every line the deployment's main realm has that its release realm
+    lacks (supervisor 2026-11-09 16:1xZ: the cutover carries main's realm, as the next prod release
+    would apply it over prod's live realm). People stay out; the export's own values elsewhere stay.
+    Answers the realm and one line per member put in."""
+    lines: list[str] = []
+    old = {k: v for k, v in release.items() if k not in PEOPLE_KEYS}
+    new = {k: v for k, v in main.items() if k not in PEOPLE_KEYS and k != "realm"}
+    return _overlay(realm, old, new, REALM_LIST_KEYS, "", lines), lines
+
+
 def cmd_realms(a):
     src, dst = Path(a.export) / "keycloak", Path(a.out)
     dst.mkdir(parents=True, exist_ok=True)
@@ -666,6 +729,11 @@ def cmd_realms(a):
         if name in SKIPPED_REALMS:
             continue
         clean = strip_people(realm)
+        if a.lines_from and a.lines_to:
+            clean, lines = realm_lines(clean, rendered_realm(Path(a.lines_from), name),
+                                       rendered_realm(Path(a.lines_to), name))
+            (dst.parent / f"realm-{name}-lines.json").write_text(json.dumps(lines, indent=1))
+            print(f"realm {name}: {len(lines)} realm lines of the deployment's main put in (realm-{name}-lines.json)")
         people_file = Path(a.people) / f"users-{name}.jsonl" if a.people else None
         if people_file and people_file.exists():
             clean, counts = add_people(clean, _jsonl(people_file), personas(Path(a.demo_users) if a.demo_users else None))
@@ -722,13 +790,25 @@ CKAN_URL = re.compile(rb"^(\s+url:\s*)\S+", re.M)
 REHEARSAL_CATALOGUE = b"https://catalogue.rehearsal.invalid"
 
 
-def fence_writes(data: bytes) -> bytes:
+_CATALOGUE_URL = re.compile(r"https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+")
+
+
+def catalogue_url(value: str) -> bytes:
+    """--catalogue-url: the instance's own catalogue (a cluster import), an https origin and
+    nothing else, since it lands verbatim in every CkanInstance's YAML."""
+    if not _CATALOGUE_URL.fullmatch(value):
+        raise SystemExit(f"--catalogue-url {value!r}: give https://<host> only, no port, path or user")
+    return value.encode()
+
+
+def fence_writes(data: bytes, catalogue: bytes = REHEARSAL_CATALOGUE) -> bytes:
     """A CkanInstance is the one manifest the Portal writes to an outside host with (its API
-    token publishes datasets there): its `spec.url` is turned to the rehearsal's catalogue name,
-    so a rehearsal never publishes into the catalogue of the environment it was copied from."""
+    token publishes datasets there): its `spec.url` is turned to the rehearsal's catalogue name
+    (on the cluster, the instance's own --catalogue-url), so an import never publishes into the
+    catalogue of the environment it was copied from."""
     if not re.search(rb"^kind:\s*CkanInstance\s*$", data, re.M):
         return data
-    return CKAN_URL.sub(lambda m: m.group(1) + REHEARSAL_CATALOGUE, data)
+    return CKAN_URL.sub(lambda m: m.group(1) + catalogue, data)
 
 
 # The one rename of evidence/jc-dev/RENAMES.md: prod's three catalog Endpoints publish one CKAN
@@ -763,6 +843,185 @@ def name_datasets(data: bytes) -> bytes:
     return data[:m.end()] + indent + b"name: " + new.encode() + b"\n" + rest
 
 
+
+_SPEC_KEY = re.compile(rb"^  (\w+):(.*)\n((?:(?:    .*|[ \t]*(?:#.*)?)\n)*)", re.M)
+
+
+def hide_unpublished(data: bytes) -> bytes:
+    """Prod's catalogue holds only Endpoints with spec.publish.ckan; jc lists every Endpoint with a
+    catalog block (ADR-N-068). An imported Endpoint without spec.publish.ckan gets
+    catalog.harvest: false, so jc lists what prod lists and no more (supervisor 2026-11-09).
+    Every other file is returned as it is."""
+    if not re.search(rb"^kind:\s*Endpoint\s*$", data, re.M) or not re.search(rb"^spec:\s*$", data, re.M):
+        return data
+    keys = {m.group(1): m for m in _SPEC_KEY.finditer(data, re.search(rb"^spec:\s*$", data, re.M).end())}
+    pub, cat = keys.get(b"publish"), keys.get(b"catalog")
+    if (pub and re.search(rb"^    ckan:", pub.group(3), re.M)) or not cat:
+        return data
+    head, block = cat.group(2), cat.group(3)
+    if head.strip().startswith(b"{"):
+        inner = re.sub(rb",?\s*harvest:\s*\w+\s*,?", b",", head.strip()[1:-1]).strip(b" ,")
+        new = b" { harvest: false" + (b", " + inner if inner else b"") + b" }\n"
+        return data[:cat.start(2)] + new + data[cat.end(2) + 1:]
+    if re.search(rb"^    harvest:", block, re.M):
+        block = re.sub(rb"^(    harvest:)[^\n#]*", rb"\1 false", block, count=1, flags=re.M)
+    else:
+        block = b"    harvest: false\n" + block
+    return data[:cat.start(3)] + block + data[cat.end(3):]
+
+
+# Retention of the imported spaces (owner 2026-11-09 20:3xZ, GOAL-prod-decommission.md "Retention on
+# jc-prod and jc-dev"): the high-rate types keep a bounded history recorded on change. Per type:
+# (history, heartbeat); every one records onChange. A KPI keeps its whole history ("one value per
+# period, written once"); bbsk-otvorene-data's KPI writes 41k rows a day and keeps 30 days.
+RETENTION = {
+    "BikeHireDockingStation": ("P1D", "PT15M"), "TrafficFlowObserved": ("P1D", "PT15M"),
+    "WeatherObserved": ("P7D", "PT1H"), "OffStreetParking": ("P7D", "PT1H"),
+    "EVChargingStation": ("P7D", "PT1H"), "AirQualityObserved": ("P7D", "PT1H"),
+    "KeyPerformanceIndicator": ("forever", "P1D"),
+}
+RETENTION_SPACE = {("bbsk-otvorene-data", "KeyPerformanceIndicator"): ("P30D", "P1D")}
+KPI_REASON = "one value per period, written once"
+KPI_KEPT = 365 * 86400
+_DUR = re.compile(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?")
+
+
+def duration_seconds(v: str | None) -> float:
+    """An ISO duration of a retention rule in seconds; `forever` and an unset history are infinite,
+    `off` is 0."""
+    if v is None or v == "forever":
+        return float("inf")
+    if v == "off":
+        return 0
+    m = _DUR.fullmatch(v)
+    if not m or not any(m.groups()):
+        raise ValueError(f"not a retention duration: {v!r}")
+    d, h, mi, se = (int(x or 0) for x in m.groups())
+    return ((d * 24 + h) * 60 + mi) * 60 + se
+
+
+def space_types(export: Path) -> dict[str, set[str]]:
+    """The RETENTION types each tenant (= space) of the export holds."""
+    held: dict[str, set[str]] = {}
+    needles = [t.encode() for t in RETENTION]
+    with open(export / "antares" / "entities.jsonl", "rb") as f:
+        for line in f:
+            if not any(n in line for n in needles):
+                continue
+            d = json.loads(line)
+            t = d["entity"].get("type")
+            for x in (t if isinstance(t, list) else [t]):
+                if x in RETENTION:
+                    held.setdefault(d["tenant"], set()).add(x)
+    return held
+
+
+def _retention_target(space: str, entity_type: str, rule: dict) -> dict:
+    """The rule's history/record/heartbeat/reason after the bound: the shorter history and the longer
+    heartbeat of the rule's own and the owner's, `record: never` kept."""
+    history, heartbeat = RETENTION_SPACE.get((space, entity_type), RETENTION[entity_type])
+    have = rule.get("history")
+    if history == "forever":
+        # A KPI's history stays whole: a shorter rule of the export would delete the periods the
+        # import keeps (2023, 2025); one of a year or more already covers them and stays.
+        if have is not None and duration_seconds(have) >= KPI_KEPT:
+            history = have
+    elif have is not None and duration_seconds(have) <= duration_seconds(history):
+        history = have
+    if rule.get("heartbeat") and duration_seconds(rule["heartbeat"]) > duration_seconds(heartbeat):
+        heartbeat = rule["heartbeat"]
+    out = {"history": history, "record": rule.get("record") if rule.get("record") == "never" else "onChange",
+           "heartbeat": heartbeat}
+    if history == "forever":
+        out["reason"] = rule.get("reason") or KPI_REASON
+    return out
+
+
+def binding_without_people(data: bytes) -> bool:
+    """A RoleBinding file whose subjects the export emptied (prod gets no people): jc-core refuses a
+    binding without a subject, and one refused binding stops the roles of the whole repository from
+    compiling (App roles included). It grants nobody anything, so the import leaves it out."""
+    import yaml  # the CI venv's PyYAML
+
+    try:
+        docs = [d for d in yaml.safe_load_all(data) if d]
+    except (yaml.YAMLError, UnicodeDecodeError):
+        return False
+    return bool(docs) and all(
+        isinstance(d, dict) and d.get("kind") == "RoleBinding"
+        and isinstance(d.get("spec"), dict) and not d["spec"].get("subjects")
+        for d in docs)
+
+
+def bound_retention(data: bytes, space: str, types: set[str]) -> bytes:
+    """A ContextSpace's spec.retention with RETENTION applied to each of `types` (the ones the space
+    holds): an existing rule is edited in place (comments and attribute recordings kept), a missing one
+    is added; a rule with history `off` records nothing and stays. Every other file comes back as is."""
+    if not types or not re.search(rb"^kind:\s*ContextSpace\s*$", data, re.M):
+        return data
+    import yaml  # the CI venv's PyYAML, as render/synth/realm lines
+    text = data.decode()
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, l in enumerate(lines) if re.match(r"^  retention:\s*(\[\s*\])?\s*$", l)), None)
+    if start is None:
+        spec = next(i for i, l in enumerate(lines) if re.match(r"^spec:\s*$", l))
+        lines[spec + 1:spec + 1] = ["  retention:\n"]
+        start = spec + 1
+    lines[start] = "  retention:\n"
+    # The list: its items at one indent ("  - " or "    - "), each item's keys two deeper.
+    end, item_indent = start + 1, None
+    for i in range(start + 1, len(lines)):
+        l = lines[i]
+        if not l.strip() or l.lstrip().startswith("#"):
+            continue
+        ind = len(l) - len(l.lstrip())
+        if item_indent is None and l.lstrip().startswith("- "):
+            item_indent = ind
+        if item_indent is None or ind < item_indent or (ind == item_indent and not l.lstrip().startswith("- ")):
+            break
+        end = i + 1
+    item_indent = 4 if item_indent is None else item_indent
+    pad, key = " " * item_indent, " " * (item_indent + 2)
+    items = [i for i in range(start + 1, end) if lines[i].startswith(pad + "- ")]
+    bounds = list(zip(items, items[1:] + [end]))
+    added = []
+    for entity_type in sorted(types):
+        found = next(((a, b) for a, b in bounds
+                      if re.match(rf"^{pad}- entityType:\s*['\"]?{entity_type}['\"]?\s*$", lines[a])), None)
+        if found is None:
+            want = _retention_target(space, entity_type, {})
+            added.append(f"{pad}- entityType: {entity_type}\n"
+                         + "".join(f"{key}{k}: {_yaml_scalar(v)}\n" for k, v in want.items()))
+            continue
+        a, b = found
+        rule = (yaml.safe_load("".join(lines[a:b]).replace(pad + "- ", pad + "  ", 1)) or {})
+        if rule.get("history") == "off":
+            continue
+        want = _retention_target(space, entity_type, rule)
+        put = a + 1  # a key the rule lacks goes after the ones before it, in RETENTION's order
+        for k, v in want.items():
+            at = next((i for i in range(a + 1, b) if lines[i].startswith(f"{key}{k}:")), None)
+            new = f"{key}{k}: {_yaml_scalar(v)}\n"
+            if at is not None:
+                lines[at] = new
+                put = max(put, at + 1)
+            else:
+                lines[put:put] = [new]
+                bounds = [(x + (x >= put), y + (y >= put)) for x, y in bounds]
+                put, b, end = put + 1, b + 1, end + 1
+        if "reason" not in want:
+            at = next((i for i in range(a + 1, b) if lines[i].startswith(f"{key}reason:")), None)
+            if at is not None:
+                del lines[at]
+                bounds = [(x - (x > at), y - (y > at)) for x, y in bounds]
+                end -= 1
+    lines[end:end] = added
+    return "".join(lines).encode()
+
+
+def _yaml_scalar(v: str) -> str:
+    return f"'{v}'" if v in ("off", "on", "yes", "no") or ":" in v or "," in v else v
+
 # The hub's `search_documents` sources, as the deployment gives the gateway (MF-57).
 GATEWAY_VALUES = "components/context-gateway/values/gateway/base-values.yaml.gotmpl"
 _HUB_SOURCES = re.compile(r'^\s*JC_GATEWAY_HUB_KNOWLEDGE_SOURCES:\s*"([^"]*)"\s*$', re.M)
@@ -795,8 +1054,9 @@ def cmd_aliases(a):
     return 0
 
 
-def import_shako(h: Http, token: str, export: Path, report: dict):
+def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: bytes = REHEARSAL_CATALOGUE):
     auth = {"Authorization": f"token {token}"}
+    types_of = space_types(export) if (export / "antares" / "entities.jsonl").is_file() else {}
     listing = json.loads((export / "gitea" / "repos.json").read_text())
     rows = []
     for r in listing:
@@ -807,8 +1067,19 @@ def import_shako(h: Http, token: str, export: Path, report: dict):
             if p.is_file() and not p.is_symlink():
                 data = p.read_bytes()
                 rel = p.relative_to(root).as_posix()
-                fenced = fence_writes(data)
-                files[rel] = named = name_datasets(fenced)
+                if rel.endswith((".yaml", ".yml")) and binding_without_people(data):
+                    report.setdefault("bindingsWithoutPeople", []).append(f"{owner}/{name}/{rel}")
+                    continue
+                fenced = fence_writes(data, catalogue)
+                named = name_datasets(fenced)
+                hidden = hide_unpublished(named)
+                if hidden != named:
+                    report.setdefault("harvestOff", []).append(f"{owner}/{name}/{rel}")
+                space = re.fullmatch(r"spaces/([^/]+)/space\.yaml", rel)
+                files[rel] = bounded = bound_retention(hidden, space.group(1), types_of.get(space.group(1), set())) \
+                    if space else hidden
+                if bounded != hidden:
+                    report.setdefault("retentionBounded", []).append(f"{owner}/{name}/{rel}")
                 if fenced != data:
                     report.setdefault("fenced", []).append(f"{owner}/{name}/{rel}")
                 if named != fenced:
@@ -873,9 +1144,22 @@ def import_shako(h: Http, token: str, export: Path, report: dict):
     report["shako"] = rows
 
 
+# Types whose whole history is kept (supervisor 2026-11-09 20:1xZ, GOAL-prod-decommission.md): a
+# KPI instance carries the observedAt of its period (from 2023/2025), so a 24 h cut would empty every
+# KPI chart and dashboard.
+WHOLE_HISTORY = ("KeyPerformanceIndicator",)
+# The same types as Antares stores them (expanded IRIs, any context): the last segment matches.
+_WHOLE_IRI = "(^|[/#:])(" + "|".join(WHOLE_HISTORY) + ")$"
+
+
+def whole_history(t: dict) -> bool:
+    types = t.get("type")
+    return any(x in WHOLE_HISTORY for x in (types if isinstance(types, list) else [types]))
+
+
 def split_by_cutoff(lines, cutoff: dt.datetime):
-    """Temporal instances observed at or after `cutoff` are taken; older ones and ones without an
-    observedAt are refused, each with its reason."""
+    """Temporal instances observed at or after `cutoff` are taken, and every instance of a
+    WHOLE_HISTORY type; older ones and ones without an observedAt are refused, each with its reason."""
     kept, refused = [], []
     for t in lines:
         at = t.get("instance", {}).get("observedAt")
@@ -887,7 +1171,7 @@ def split_by_cutoff(lines, cutoff: dt.datetime):
         except ValueError:
             refused.append({**_key(t), "kind": "bad-observedAt", "reason": f"bad observedAt {at!r}"})
             continue
-        if when < cutoff:
+        if when < cutoff and not whole_history(t):
             refused.append({**_key(t), "kind": "cut-off", "observedAt": at,
                             "reason": f"older than the cut-off {iso(cutoff)}"})
         else:
@@ -1215,13 +1499,15 @@ def import_portal_made(h: Http, auth: dict, export: Path, orgs: dict) -> list[di
 def bundle_settled(export: Path) -> str:
     """Why the bundle is still being written, or "" when it is not: manifest.json is written last,
     so a data file newer than it belongs to an export in progress. An exporter's own work
-    directories (`.parts`) are not read."""
+    directories (`.parts`) and the bundle's prose description (EXPORT.md, read by no import and
+    written beside the manifest) are not read."""
     manifest = export / "manifest.json"
     if not manifest.exists():
         return "no manifest.json"
     at = manifest.stat().st_mtime
     newer = sorted(str(p.relative_to(export)) for p in export.rglob("*")
-                   if p.is_file() and ".parts" not in p.parts and p.stat().st_mtime > at)
+                   if p.is_file() and ".parts" not in p.parts and p != export / "EXPORT.md"
+                   and p.stat().st_mtime > at)
     return f"written after manifest.json: {newer[:3]}" if newer else ""
 
 
@@ -1264,7 +1550,8 @@ def cmd_import(a):
     h = Http(a.base)
     steps = a.only.split(",") if a.only else ["shako", "antares", "daiya"]
     if "shako" in steps:
-        import_shako(h, read_secret(state, "shako-token"), export, report)
+        import_shako(h, read_secret(state, "shako-token"), export, report,
+                     catalogue_url(a.catalogue_url) if a.catalogue_url else REHEARSAL_CATALOGUE)
     if "antares" in steps:
         import_antares(h, export, cutoff, report, read_secret(state, "antares-admin-token"))
     if "daiya" in steps:
@@ -1300,6 +1587,21 @@ def _count(rows, key):
 # rows kept, service mode for the forced row-level security. Current state (entities) is never
 # touched: it lives in other tables.
 HISTORY_TABLES = ("attr_instances", "attr_rows")
+# A history row of a WHOLE_HISTORY type stays: attr_instances names its Entity by id, attr_rows by
+# number (iri_ids); temporal_entities holds each Entity's types.
+_KEEP = {
+    "attr_instances": "SELECT 1 FROM public.temporal_entities te WHERE te.tenant_id = h.tenant_id AND te.id = h.entity_id",
+    "attr_rows": "SELECT 1 FROM public.iri_ids i JOIN public.temporal_entities te ON te.tenant_id = i.tenant_id "
+                 "AND te.id = i.iri WHERE i.tenant_id = h.tenant_id AND i.id = h.entity_no",
+}
+
+
+def _old_rows(table: str, at: str) -> str:
+    """The WHERE of the rows retain deletes from `table`: older than `at`, no audit row, no row of
+    a WHOLE_HISTORY type."""
+    return (f"h.observed_at < {at} AND NOT coalesce(h.provenance @> '{{\"audit\": true}}', false) "
+            f"AND NOT EXISTS ({_KEEP[table]} AND EXISTS (SELECT 1 FROM unnest(te.types) t "
+            f"WHERE t ~ '{_WHOLE_IRI}'))")
 
 
 def retain_sql(cutoff: dt.datetime) -> str:
@@ -1308,8 +1610,7 @@ def retain_sql(cutoff: dt.datetime) -> str:
         stmts.append(
             f"SELECT to_regclass('public.{table}') IS NOT NULL AS has \\gset\n"
             f"\\if :has\n"
-            f"PREPARE d_{table}(timestamptz) AS DELETE FROM public.{table} WHERE observed_at < $1 "
-            f"AND NOT coalesce(provenance @> '{{\"audit\": true}}', false);\n"
+            f"PREPARE d_{table}(timestamptz) AS DELETE FROM public.{table} h WHERE {_old_rows(table, '$1')};\n"
             f"EXECUTE d_{table}('{iso(cutoff)}');\n"
             f"\\endif")
     stmts.append("COMMIT;")
@@ -1333,8 +1634,7 @@ def old_history_sql(cutoff: dt.datetime) -> str:
         stmts.append(
             f"SELECT to_regclass('public.{table}') IS NOT NULL AS has \\gset\n"
             f"\\if :has\n"
-            f"SELECT 'old {table} ' || count(*) FROM public.{table} WHERE observed_at < '{iso(cutoff)}' "
-            f"AND NOT coalesce(provenance @> '{{\"audit\": true}}', false);\n"
+            f"SELECT 'old {table} ' || count(*) FROM public.{table} h WHERE {_old_rows(table, repr(iso(cutoff)))};\n"
             f"\\endif")
     stmts.append("COMMIT;")
     return "\n".join(stmts) + "\n"
@@ -1349,6 +1649,55 @@ def _psql(host, port, user, db, password_file, sql: str) -> str:
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip()[-300:])
     return r.stdout
+
+
+# The prod Portal's run log, cut from the final dump beside the frozen bundle (<bundle>-runlog):
+# every logged run, and the lines of each pipeline's newest run. Loaded before jc restarts on its
+# default policy, the run queue reads it and keeps each pipeline's clock instead of running the
+# whole backlog at once (run_queue.rs: "until the log has been read").
+RUNLOG_FILES = {"pipeline_runs": "pipeline_runs.jsonl", "pipeline_log": "pipeline_log.newest-run.jsonl.gz"}
+RUNLOG_COLUMNS = {
+    "pipeline_runs": "project, pipeline, run, first_at, last_at, sent, rejected, failed, created, updated, unchanged, stream_hash",
+    "pipeline_log": "project, pipeline, run, at, record_id, step, outcome, message",
+}
+
+
+def runlog_sql(table: str, lines) -> str:
+    """One transaction loading `lines` (JSON objects, one per line) into `table`: a row already
+    held (same run, same line) is skipped, so a second load adds nothing. CSV with control-byte
+    quote and delimiter carries the JSON text untouched (JSON escapes every control byte)."""
+    cols = RUNLOG_COLUMNS[table]
+    dedupe = ("ON CONFLICT DO NOTHING" if table == "pipeline_runs" else
+              "WHERE NOT EXISTS (SELECT 1 FROM public.pipeline_log l WHERE (l.project, l.pipeline, l.run, l.at, l.record_id, l.message)"
+              " = (r.project, r.pipeline, r.run, r.at, r.record_id, r.message))")
+    body = "".join(line if line.endswith("\n") else line + "\n" for line in lines if line.strip())
+    if "\x01" in body or "\x02" in body:
+        raise SystemExit(f"{table}: a control byte in the run log; refusing to load it")
+    return (f"BEGIN;\nCREATE TEMP TABLE runlog_in (j jsonb) ON COMMIT DROP;\n"
+            f"COPY runlog_in FROM STDIN WITH (FORMAT csv, QUOTE E'\\x01', DELIMITER E'\\x02');\n{body}\\.\n"
+            f"INSERT INTO public.{table} ({cols}) SELECT {cols} FROM runlog_in, "
+            f"jsonb_populate_record(NULL::public.{table}, j) r {dedupe};\n"
+            f"SELECT '{table} ' || count(*) FROM runlog_in;\nCOMMIT;\n")
+
+
+def import_runlog(host, port, user, db, password_file, runlog: Path) -> dict:
+    import gzip
+
+    out = {}
+    for table, name in RUNLOG_FILES.items():
+        f = runlog / name
+        opener = gzip.open if name.endswith(".gz") else open
+        with opener(f, "rt", encoding="utf-8") as fh:
+            sql = runlog_sql(table, fh)
+        before = int(_psql(host, port, user, db, password_file, f"SELECT count(*) FROM public.{table}").strip())
+        _psql(host, port, user, db, password_file, sql)
+        after = int(_psql(host, port, user, db, password_file, f"SELECT count(*) FROM public.{table}").strip())
+        out[table] = {"file": sum(1 for _ in opener(f, "rt", encoding="utf-8")), "added": after - before}
+    return out
+
+
+def cmd_import_runlog(a):
+    print(json.dumps(import_runlog(a.host, a.port, a.user, a.db, a.password_file, Path(a.runlog))))
 
 
 def old_history(host, port, user, db, password_file, cutoff: dt.datetime) -> int:
@@ -1878,15 +2227,22 @@ def main(argv=None):
     s.add_argument("--people", help="a 0700 dir holding users-<realm>.jsonl (dev only): people without credentials")
     s.add_argument("--demo-users", help="the deployment's demo-users.yaml: the personas that keep e-mail and names")
     s.add_argument("--secrets-dir", help="write each secret as $(file:<dir>/NAME), the form kaisatsu in jc reads")
+    s.add_argument("--lines-from", help="the release's rendered keycloak-config values (rehearsal.py render)")
+    s.add_argument("--lines-to", help="main's rendered keycloak-config values: its realm lines go over the export")
     s = sub.add_parser("import"); s.add_argument("--export", required=True); s.add_argument("--base", required=True)
     s.add_argument("--state", required=True); s.add_argument("--report", required=True)
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin")
     s.add_argument("--dashboards", help="Grafana provisioning files (rehearsal.py dashboards) instead of the bundle's")
+    s.add_argument("--catalogue-url", help="the instance's own catalogue (cluster import): every CkanInstance names it")
     s = sub.add_parser("dashboards"); s.add_argument("--render", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("retain"); s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", required=True)
     s.add_argument("--user", default="antares"); s.add_argument("--db", default="antares")
     s.add_argument("--password-file", required=True); s.add_argument("--now")
     s.add_argument("--every", type=int, default=0, help="repeat every N seconds (0: once)")
+    s = sub.add_parser("import-runlog"); s.add_argument("--runlog", required=True)
+    s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", required=True)
+    s.add_argument("--user", default="portal"); s.add_argument("--db", default="portal")
+    s.add_argument("--password-file", required=True)
     s = sub.add_parser("smoke"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     s.add_argument("--export", required=True); s.add_argument("--report", required=True); s.add_argument("--realms")
     s.add_argument("--pg-port"); s.add_argument("--antares-password-file")
@@ -1901,7 +2257,7 @@ def main(argv=None):
     s = sub.add_parser("policy-check"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     a = p.parse_args(argv)
     return {"provisioning": cmd_provisioning, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import, "aliases": cmd_aliases, "hub-sources": cmd_hub_sources,
-            "retain": cmd_retain, "smoke": cmd_smoke}[a.cmd](a) or 0
+            "retain": cmd_retain, "smoke": cmd_smoke, "import-runlog": cmd_import_runlog}[a.cmd](a) or 0
 
 
 if __name__ == "__main__":

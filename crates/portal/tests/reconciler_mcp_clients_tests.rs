@@ -434,6 +434,31 @@ async fn the_client_of_a_removed_server_is_deleted_and_nothing_else() {
         .any(|o| o.app == "helsinki/gone" && o.drift.iter().any(|d| d.contains("server is gone"))));
 }
 
+/// The last named server dropped from a loaded source: its client goes (a revocation), while
+/// before the source has loaded once (Mirror::hold_removals) it stays.
+#[tokio::test]
+async fn a_loaded_source_that_drops_its_last_server_deletes_its_client_and_none_before() {
+    for held_back in [true, false] {
+        let keycloak = realm(json!([held("uuid-gone", "helsinki", "gone")])).await;
+        let mirror = mirror_with(vec![]);
+        mirror.hold_removals(held_back);
+        let outcomes = sync(&keycloak).converge(&mirror).await;
+        assert!(outcomes.iter().all(|o| o.error.is_none()), "{outcomes:?}");
+        let expected: Vec<String> = if held_back {
+            vec![]
+        } else {
+            vec![format!("DELETE {REALM}/clients/uuid-gone")]
+        };
+        assert_eq!(wrote(&keycloak).await, expected, "held back: {held_back}");
+        let said: Vec<String> = if held_back {
+            vec!["MCP client helsinki/gone".to_owned()]
+        } else {
+            vec![]
+        };
+        assert_eq!(mirror.held_back(), said);
+    }
+}
+
 /// EP-122: `org/all` has no manifest, and still gets its client in a realm that has none.
 #[tokio::test]
 async fn org_all_gets_its_client_without_a_manifest() {

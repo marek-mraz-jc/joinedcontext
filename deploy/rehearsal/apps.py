@@ -28,6 +28,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -36,6 +37,7 @@ import urllib.request
 from pathlib import Path
 
 PERSON = "rehearsal-app-roles"
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 APPS_OWNER = "jc-apps"
 
 
@@ -100,15 +102,22 @@ def group_paths(realm: dict) -> dict[str, str]:
     return out
 
 
-def with_person(realm: dict, groups: list[str], password_file: Path) -> tuple[dict, list[str]]:
+def with_person(realm: dict, groups: list[str], password_file: Path,
+                person_id: str | None = None) -> tuple[dict, list[str]]:
     """The realm with PERSON (made again, never twice) in each of `groups` the realm holds, and the
-    names it does not hold."""
+    names it does not hold. `person_id` gives PERSON the id a prod read Policy names (the loopback
+    prod rehearsal only, supervisor 2026-11-09: banskabystrica-zaznamy's one reader); the person
+    keeps the rehearsal's name, password and no e-mail of the source."""
+    if person_id is not None and not UUID.fullmatch(person_id):
+        raise SystemExit(f"apps.py: --id {person_id!r} is no user id")
     paths = group_paths(realm)
     missing = [g for g in groups if g not in paths]
     person = {"username": PERSON, "enabled": True, "email": f"{PERSON}@rehearsal.invalid", "emailVerified": True,
               "firstName": "Rehearsal", "lastName": "App roles",
               "groups": sorted(paths[g] for g in groups if g in paths),
               "credentials": [{"type": "password", "value": f"$(file:{password_file})", "temporary": False}]}
+    if person_id:
+        person["id"] = person_id
     out = dict(realm)
     out["users"] = [u for u in realm.get("users") or [] if u.get("username") != PERSON] + [person]
     return out, missing
@@ -118,7 +127,7 @@ def cmd_person(a) -> int:
     path = Path(a.realm_file)
     realm = json.loads(path.read_text())
     groups = sorted({*viewer_groups(Path(a.files)), *app_projects(Path(a.files))})
-    realm, missing = with_person(realm, groups, Path(a.password_file))
+    realm, missing = with_person(realm, groups, Path(a.password_file), a.id)
     fd = os.open(path, os.O_WRONLY | os.O_TRUNC)  # the file keeps its 0600
     with os.fdopen(fd, "w") as f:
         f.write(json.dumps(realm, indent=1))
@@ -324,6 +333,7 @@ def main(argv=None) -> int:
     s.add_argument("--realm-file", required=True)
     s.add_argument("--files", required=True)
     s.add_argument("--password-file", required=True)
+    s.add_argument("--id", help="the user id a prod read Policy names (loopback prod rehearsal only)")
     s = sub.add_parser("publish")
     s.add_argument("--base", required=True)
     s.add_argument("--export", required=True)

@@ -7,6 +7,7 @@ built jc (JC_BIN or $CARGO_TARGET_DIR/debug/jc).
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import http.server
 import json
@@ -20,6 +21,7 @@ import urllib.parse
 from pathlib import Path
 
 import pytest
+import yaml
 
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
@@ -185,6 +187,38 @@ def test_a_catalogue_instance_publishes_only_into_the_rehearsal():
     assert rh.fence_writes(endpoint) == endpoint
 
 
+def test_a_cluster_import_fences_catalogues_to_the_instances_own_host_and_nothing_else():
+    ckan = b"kind: CkanInstance\nspec:\n  url: https://opendata.dev.joinedcontext.com\n"
+    own = rh.catalogue_url("https://jcprod-opendata.dev.joinedcontext.com")
+    assert rh.fence_writes(ckan, own) == b"kind: CkanInstance\nspec:\n  url: https://jcprod-opendata.dev.joinedcontext.com\n"
+    for bad in ["http://jcprod-opendata.dev.joinedcontext.com", "https://x.dev.joinedcontext.com/path",
+                "https://u@x.example", "https://x.example:8443", "https://x.example\n  apiKey: y", "https://localhost"]:
+        with pytest.raises(SystemExit):
+            rh.catalogue_url(bad)
+
+
+
+def test_an_imported_endpoint_without_a_ckan_publish_leaves_jcs_catalogue_as_prods():
+    head = b"apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: e\nspec:\n  slug: s\n"
+    cat = b"  catalog:\n    # the city's own words\n    license: CC_BY_4_0\n    themes: [SOCI]\n"
+    # No spec.publish.ckan: prod lists nothing, so jc gets harvest: false in the block.
+    out = rh.hide_unpublished(head + cat + b"  audience: public\n")
+    assert yaml.safe_load(out)["spec"]["catalog"] == {"harvest": False, "license": "CC_BY_4_0", "themes": ["SOCI"]}
+    assert yaml.safe_load(out)["spec"]["audience"] == "public" and b"# the city's own words" in out
+    flip = rh.hide_unpublished(head + b"  catalog:\n    harvest: true\n    license: x\n")
+    assert yaml.safe_load(flip)["spec"]["catalog"] == {"harvest": False, "license": "x"}
+    flow = rh.hide_unpublished(head + b"  catalog: { license: x, harvest: true }\n")
+    assert yaml.safe_load(flow)["spec"]["catalog"] == {"harvest": False, "license": "x"}
+    # A publish block without ckan publishes nothing on prod either.
+    other = rh.hide_unpublished(head + b"  publish:\n    feeds: {}\n" + cat)
+    assert yaml.safe_load(other)["spec"]["catalog"]["harvest"] is False
+    # With spec.publish.ckan prod lists it: unchanged, as is an Endpoint without a catalog block.
+    published = head + b"  publish:\n    ckan:\n      instanceRef: { kind: CkanInstance, name: zilina }\n" + cat
+    assert rh.hide_unpublished(published) == published
+    assert rh.hide_unpublished(head) == head
+    pipeline = b"kind: Pipeline\nspec:\n  catalog:\n    license: x\n"
+    assert rh.hide_unpublished(pipeline) == pipeline
+
 def test_entity_batches_keep_their_tenant_and_stay_under_the_caps():
     lines = ([{"tenant": "a", "entity": {"id": f"urn:ngsi-ld:X:{i}"}} for i in range(1203)]
              + [{"tenant": "b", "entity": {"id": "urn:ngsi-ld:X:b"}}]
@@ -345,6 +379,19 @@ def test_a_restart_signs_jc_in_with_the_realms_secret_of_each_of_its_clients(tmp
 
 
 
+def test_a_bundles_description_written_after_its_manifest_does_not_stop_the_import(tmp_path):
+    # prod-final-20261109T1958Z: EXPORT.md 4 ms after manifest.json; a data file still stops it.
+    (tmp_path / "antares").mkdir()
+    (tmp_path / "antares" / "entities.jsonl").write_text("")
+    os.utime(tmp_path / "antares" / "entities.jsonl", (1, 1))
+    (tmp_path / "manifest.json").write_text("{}")
+    os.utime(tmp_path / "manifest.json", (2, 2))
+    (tmp_path / "EXPORT.md").write_text("# bundle")
+    assert rh.bundle_settled(tmp_path) == ""
+    (tmp_path / "antares" / "EXPORT.md").write_text("")
+    assert "antares/EXPORT.md" in rh.bundle_settled(tmp_path)
+
+
 def test_a_bundle_still_being_written_is_not_imported(tmp_path):
     (tmp_path / "antares").mkdir()
     data = tmp_path / "antares" / "entities.jsonl"
@@ -379,6 +426,232 @@ def test_the_old_history_check_fails_when_it_cannot_read(tmp_path):
     with pytest.raises(RuntimeError):
         rh.old_history("127.0.0.1", 1, "antares", "antares", str(pw), dt.datetime(2026, 11, 7, tzinfo=dt.UTC))
 
+
+
+def test_the_import_keeps_a_kpis_whole_history_and_cuts_every_other_type():
+    cutoff = dt.datetime(2026, 11, 8, 18, tzinfo=dt.UTC)
+    line = lambda t, at: {"tenant": "a", "id": f"urn:ngsi-ld:{t}:1", "type": t, "attr": "v",
+                          "instance": {"type": "Property", "value": 1, "observedAt": at}}
+    kept, refused = rh.split_by_cutoff([line("KeyPerformanceIndicator", "2023-12-31T00:00:00Z"),
+                                        line("BikeHireDockingStation", "2026-11-07T00:00:00Z"),
+                                        line("BikeHireDockingStation", "2026-11-09T00:00:00Z"),
+                                        {**line("X", "2025-01-01T00:00:00Z"), "type": ["X", "KeyPerformanceIndicator"]}],
+                                       cutoff)
+    assert [(k["type"], k["instance"]["observedAt"]) for k in kept] == [
+        ("KeyPerformanceIndicator", "2023-12-31T00:00:00Z"), ("BikeHireDockingStation", "2026-11-09T00:00:00Z"),
+        (["X", "KeyPerformanceIndicator"], "2025-01-01T00:00:00Z")]
+    assert [r["kind"] for r in refused] == ["cut-off"]
+
+
+
+SPACE = """apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: city
+spec:
+  dataModelRef: city
+  retention:
+    - entityType: Tree
+      history: 'off'
+    - entityType: BikeHireDockingStation
+      history: P30D
+      # a level the pipeline repeats
+      record: onChange
+      heartbeat: PT1H
+      attributes:
+        dateModified: { record: never }
+    - entityType: KeyPerformanceIndicator
+      history: P30D
+  # the space's place
+  quality: []
+"""
+
+
+def test_the_import_bounds_each_high_rate_types_history_in_the_space_manifest():
+    out = rh.bound_retention(SPACE.encode(), "city", {"BikeHireDockingStation", "KeyPerformanceIndicator",
+                                                       "AirQualityObserved", "TrafficFlowObserved"})
+    doc = yaml.safe_load(out)
+    rules = {r["entityType"]: r for r in doc["spec"]["retention"]}
+    assert rules["Tree"] == {"entityType": "Tree", "history": "off"}
+    # bikes: one day; the rule's longer heartbeat (fewer rows) and its attribute recording stay
+    assert rules["BikeHireDockingStation"] == {"entityType": "BikeHireDockingStation", "history": "P1D",
+                                               "record": "onChange", "heartbeat": "PT1H",
+                                               "attributes": {"dateModified": {"record": "never"}}}
+    # a KPI keeps its whole history: the export's 30 days would delete the periods the import keeps
+    assert rules["KeyPerformanceIndicator"] == {"entityType": "KeyPerformanceIndicator", "history": "forever",
+                                                "record": "onChange", "heartbeat": "P1D",
+                                                "reason": "one value per period, written once"}
+    assert rules["AirQualityObserved"] == {"entityType": "AirQualityObserved", "history": "P7D",
+                                           "record": "onChange", "heartbeat": "PT1H"}
+    assert rules["TrafficFlowObserved"]["heartbeat"] == "PT15M"
+    assert doc["spec"]["quality"] == [] and b"# a level the pipeline repeats" in out and b"# the space's place" in out
+    assert out.index(b"TrafficFlowObserved") < out.index(b"# the space's place")
+    # bbsk-otvorene-data's KPI: 30 days; a space without these types, another kind: unchanged
+    bbsk = yaml.safe_load(rh.bound_retention(SPACE.encode(), "bbsk-otvorene-data", {"KeyPerformanceIndicator"}))
+    assert [r for r in bbsk["spec"]["retention"] if r["entityType"] == "KeyPerformanceIndicator"][0]["history"] == "P30D"
+    assert rh.bound_retention(SPACE.encode(), "city", set()) == SPACE.encode()
+    endpoint = SPACE.replace("kind: ContextSpace", "kind: Endpoint").encode()
+    assert rh.bound_retention(endpoint, "city", {"BikeHireDockingStation"}) == endpoint
+    # a space with no retention block gets one
+    bare = rh.bound_retention(b"kind: ContextSpace\nmetadata:\n  name: c\nspec:\n  dataModelRef: c\n", "c",
+                              {"WeatherObserved"})
+    assert yaml.safe_load(bare)["spec"] == {"retention": [{"entityType": "WeatherObserved", "history": "P7D",
+                                                           "record": "onChange", "heartbeat": "PT1H"}],
+                                            "dataModelRef": "c"}
+    # a list at the key's own indent ("  - ") is edited in place too
+    flat = SPACE.replace("    - ", "  - ").replace("\n      ", "\n    ").replace("\n        ", "\n      ")
+    assert yaml.safe_load(rh.bound_retention(flat.encode(), "city", {"BikeHireDockingStation"})) \
+        ["spec"]["retention"][1]["history"] == "P1D"
+
+
+def test_the_import_bounds_the_spaces_of_every_repository_not_only_the_first(tmp_path):
+    export = tmp_path / "export"
+    (export / "antares").mkdir(parents=True)
+    (export / "antares" / "entities.jsonl").write_text("".join(
+        json.dumps({"tenant": t, "entity": {"id": f"urn:ngsi-ld:BikeHireDockingStation:{t}", "type": "BikeHireDockingStation"}}) + "\n"
+        for t in ("first", "second")))
+    repos = []
+    for repo in ("a", "b"):
+        space = "first" if repo == "a" else "second"
+        d = export / "gitea" / "files" / "joinedcontext" / repo / "spaces" / space
+        d.mkdir(parents=True)
+        (d / "space.yaml").write_text(SPACE.replace("name: city", f"name: {space}"))
+        repos.append({"owner": "joinedcontext", "name": repo})
+    (export / "gitea" / "repos.json").write_text(json.dumps(repos))
+
+    class Refusing:  # every forge call fails: only the files the import would write are of interest
+        def json(self, *a, **k):
+            return 500, {}
+
+    report = {}
+    rh.import_shako(Refusing(), "token", export, report)
+    assert report["retentionBounded"] == ["joinedcontext/a/spaces/first/space.yaml",
+                                          "joinedcontext/b/spaces/second/space.yaml"]
+
+def test_the_import_leaves_out_a_role_binding_whose_people_the_export_removed(tmp_path):
+    """prod-final-20261109T1958Z holds 6 RoleBindings with `subjects:` empty: jc-core refuses each,
+    and one refused binding stops every role of the repository compiling (App roles 403)."""
+    head = "apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata:\n  name: {n}\n  namespace: org\nspec:\n"
+    empty = head.format(n="approvers") + "  subjects:\n  role: approver\n  scope: { organization: hel }\n"
+    held = head.format(n="editors") + "  subjects:\n    - group: editors\n  role: editor\n  scope: { organization: hel }\n"
+    d = tmp_path / "gitea" / "files" / "joinedcontext" / "configuration" / "users" / "assignments"
+    d.mkdir(parents=True)
+    (d / "approvers.yaml").write_text(empty)
+    (d / "editors.yaml").write_text(held)
+    (d / "notes.yaml").write_text("kind: Role\nspec: {subjects: []}\n")
+    (tmp_path / "gitea" / "repos.json").write_text(json.dumps([{"owner": "joinedcontext", "name": "configuration"}]))
+
+    class Refusing:
+        def json(self, *a, **k):
+            return 500, {}
+
+    report = {}
+    rh.import_shako(Refusing(), "token", tmp_path, report)
+    assert report["bindingsWithoutPeople"] == ["joinedcontext/configuration/users/assignments/approvers.yaml"]
+    assert rh.binding_without_people(empty.encode()) and not rh.binding_without_people(held.encode())
+    assert not rh.binding_without_people(b"kind: Role\nspec: {subjects: []}\n")
+    assert not rh.binding_without_people(b": not yaml: [")
+
+
+PG_IMAGE = "postgis/postgis:17-3.5"
+
+
+@pytest.mark.skipif(subprocess.run(["docker", "image", "inspect", PG_IMAGE], capture_output=True).returncode != 0,
+                    reason=f"no docker or no {PG_IMAGE} on this host")
+def test_retain_keeps_a_kpis_whole_history_in_real_postgres(tmp_path):
+    """retain against a real PostgreSQL with Antares' history tables: an old KPI row stays in both
+    tables, an old sensor row goes, an audit row stays, a fresh row stays."""
+    name, port = "rh-pg-retain-test", 55449
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+    subprocess.run(["docker", "run", "-d", "--name", name, "-p", f"127.0.0.1:{port}:5432",
+                    "-e", "POSTGRES_PASSWORD=retain-test", "-e", "POSTGRES_USER=antares", PG_IMAGE],
+                   check=True, capture_output=True)
+    pw = tmp_path / "pw"
+    pw.write_text("retain-test")
+    try:
+        schema = """
+        CREATE TABLE temporal_entities (tenant_id text, id text, types text[]);
+        CREATE TABLE iri_ids (tenant_id text, id bigint, iri text);
+        CREATE TABLE attr_instances (tenant_id text, entity_id text, observed_at timestamptz, provenance jsonb);
+        CREATE TABLE attr_rows (tenant_id text, entity_no bigint, observed_at timestamptz, provenance jsonb);
+        INSERT INTO temporal_entities VALUES
+          ('a', 'urn:k', ARRAY['https://uri.etsi.org/ngsi-ld/default-context/KeyPerformanceIndicator']),
+          ('a', 'urn:s', ARRAY['https://smartdatamodels.org/dataModel.Transportation/BikeHireDockingStation']),
+          ('b', 'urn:k', ARRAY['https://uri.etsi.org/ngsi-ld/default-context/NotAKeyPerformanceIndicatorX']);
+        INSERT INTO iri_ids VALUES ('a', 1, 'urn:k'), ('a', 2, 'urn:s');
+        INSERT INTO attr_instances VALUES ('a', 'urn:k', '2023-12-31', NULL), ('a', 'urn:s', '2026-11-01', NULL),
+          ('a', 'urn:s', '2026-11-01', '{"audit": true}'), ('a', 'urn:s', '2026-11-09T12:00:00Z', NULL),
+          ('b', 'urn:k', '2026-11-01', NULL);
+        INSERT INTO attr_rows VALUES ('a', 1, '2025-01-01', NULL), ('a', 2, '2026-11-01', NULL);
+        """
+        for _ in range(60):
+            if rh_psql(port, pw, "SELECT 1").returncode == 0:
+                break
+            time.sleep(1)
+        assert rh_psql(port, pw, schema).returncode == 0
+        now = dt.datetime(2026, 11, 9, 13, tzinfo=dt.UTC)
+        cutoff = rh.cutoff_for(now)
+        assert rh.old_history("127.0.0.1", port, "antares", "antares", str(pw), cutoff) == 3
+        args = argparse.Namespace(host="127.0.0.1", port=port, user="antares", db="antares", password_file=str(pw))
+        assert rh.retain_once(args, now)["deleted"] == 3
+        left = rh_psql(port, pw, "SELECT tenant_id, entity_id, observed_at::date FROM attr_instances ORDER BY 1, 3;"
+                                 "SELECT entity_no FROM attr_rows").stdout.split()
+        assert left == ["a|urn:k|2023-12-31", "a|urn:s|2026-11-01", "a|urn:s|2026-11-09", "1"]
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+
+@pytest.mark.skipif(subprocess.run(["docker", "image", "inspect", PG_IMAGE], capture_output=True).returncode != 0,
+                    reason=f"no docker or no {PG_IMAGE} on this host")
+def test_the_prod_run_log_loads_into_the_portals_own_tables_once(tmp_path):
+    """import-runlog against the Portal's migrations in a real PostgreSQL: every run and line goes
+    in, a JSON text with quotes, backslashes and a newline arrives unchanged, a second load adds
+    nothing, and a control byte refuses the file."""
+    import gzip
+    name, port = "rh-pg-runlog-test", 55448
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+    subprocess.run(["docker", "run", "-d", "--name", name, "-p", f"127.0.0.1:{port}:5432",
+                    "-e", "POSTGRES_PASSWORD=runlog-test", "-e", "POSTGRES_USER=antares", PG_IMAGE],
+                   check=True, capture_output=True)
+    pw = tmp_path / "pw"
+    pw.write_text("runlog-test")
+    migrations = HERE.parent.parent / "crates" / "portal" / "migrations"
+    try:
+        for _ in range(60):
+            if rh_psql(port, pw, "SELECT 1").returncode == 0:
+                break
+            time.sleep(1)
+        for m in ("0020_pipeline_outcomes.sql", "0029_run_changes.sql", "0050_run_stream_hash.sql"):
+            assert rh_psql(port, pw, (migrations / m).read_text()).returncode == 0, m
+        runlog = tmp_path / "runlog"
+        runlog.mkdir()
+        runs = [{"project": "helsinki", "pipeline": "vision-counts", "run": f"2026-10-28T10:2{i}Z",
+                 "first_at": "2026-10-28T10:24:23Z", "last_at": f"2026-10-28T10:2{i}:52Z", "sent": 1024,
+                 "rejected": 0, "failed": 0, "created": None, "updated": None, "unchanged": None,
+                 "stream_hash": None} for i in range(3)]
+        (runlog / "pipeline_runs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in runs))
+        tricky = 'a "quoted" \\ path\nsecond line'
+        lines = [{"id": 7, "project": "helsinki", "pipeline": "vision-counts", "run": "2026-10-28T10:22Z",
+                  "at": "2026-10-28T10:24:52Z", "record_id": "urn:ngsi-ld:X:1", "step": None,
+                  "outcome": "sent", "message": tricky}]
+        with gzip.open(runlog / "pipeline_log.newest-run.jsonl.gz", "wt") as fh:
+            fh.write("".join(json.dumps(r) + "\n" for r in lines))
+        load = lambda: rh.import_runlog("127.0.0.1", port, "antares", "antares", str(pw), runlog)  # noqa: E731
+        assert load() == {"pipeline_runs": {"file": 3, "added": 3}, "pipeline_log": {"file": 1, "added": 1}}
+        assert load() == {"pipeline_runs": {"file": 3, "added": 0}, "pipeline_log": {"file": 1, "added": 0}}
+        got = rh_psql(port, pw, "SELECT message FROM pipeline_log").stdout
+        assert got.rstrip("\n") == tricky
+        assert rh_psql(port, pw, "SELECT max(sent) FROM pipeline_runs").stdout.strip() == "1024"
+        with pytest.raises(SystemExit):
+            rh.runlog_sql("pipeline_runs", ['{"a": "x"}\x01'])
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+
+def rh_psql(port, pw, sql):
+    env = dict(os.environ, PGPASSWORD=pw.read_text())
+    return subprocess.run(["psql", "-AXt", "-v", "ON_ERROR_STOP=1", "-h", "127.0.0.1", "-p", str(port), "-U", "antares",
+                           "-d", "antares"], input=sql, env=env, capture_output=True, text=True)
 
 def test_a_datasource_reads_the_same_endpoint_on_the_rehearsal():
     gw = "http://context-gateway.smartcity.svc.cluster.local:8080/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
@@ -1051,3 +1324,63 @@ def test_the_hub_sources_are_the_deployments_and_a_malformed_list_stops(tmp_path
         f.write_text(f'  JC_GATEWAY_HUB_KNOWLEDGE_SOURCES: "{bad}"\n')
         with pytest.raises(SystemExit):
             rh.hub_sources(tmp_path)
+
+
+def test_mains_realm_lines_go_over_the_export_and_nothing_else_moves():
+    release = {"realm": "smartcity", "clients": [
+        {"clientId": "portal-api", "optionalClientScopes": ["address"], "attributes": {"a": "1"},
+         "protocolMappers": [{"name": "groups", "config": {"full.path": "false", "claim.name": "groups"}}]},
+        {"clientId": "same", "redirectUris": ["https://x/*"]}],
+        "clientScopes": [{"name": "mcp:portal"}], "roles": {"realm": [{"name": "r1"}]},
+        "users": [{"username": "u"}]}
+    main = {"realm": "smartcity", "clients": [
+        {"clientId": "portal-api", "optionalClientScopes": ["address", "gateway-hub"],
+         "attributes": {"a": "1", "standard.token.exchange.enabled": "true"},
+         "protocolMappers": [{"name": "groups", "config": {"full.path": "true", "claim.name": "groups"}},
+                             {"name": "jc_org", "config": {}}]},
+        {"clientId": "same", "redirectUris": ["https://x/*"]},
+        {"clientId": "grafana", "secret": "$(CLIENT_SECRET_GRAFANA)"}],
+        "clientScopes": [{"name": "mcp:portal"}, {"name": "gateway-hub"}],
+        "defaultOptionalClientScopes": ["connector", "offline_access"],
+        "roles": {"realm": [{"name": "r1"}, {"name": "r2"}]},
+        "users": [{"username": "u"}, {"username": "presenter@hel.fi"}]}
+    export = {"realm": "smartcity", "clients": [
+        {"clientId": "portal-api", "secret": "$(env:KC_PORTAL_API_SECRET)", "optionalClientScopes": ["address"],
+         "attributes": {"a": "1", "live": "kept"},
+         "protocolMappers": [{"name": "groups", "id": "m1", "config": {"full.path": "false", "claim.name": "groups"}},
+                             {"name": "prod-only", "config": {}}]},
+        {"clientId": "same", "redirectUris": ["https://prod-live/*"]},
+        {"clientId": "prod-only"}],
+        "clientScopes": [{"name": "mcp:portal", "id": "s1"}], "roles": {"realm": [{"name": "r1"}, {"name": "live"}]}}
+    out, lines = rh.realm_lines(export, release, main)
+    by = {c["clientId"]: c for c in out["clients"]}
+    api = by["portal-api"]
+    assert api["optionalClientScopes"] == ["address", "gateway-hub"]
+    assert api["attributes"] == {"a": "1", "live": "kept", "standard.token.exchange.enabled": "true"}
+    assert api["secret"] == "$(env:KC_PORTAL_API_SECRET)"
+    mappers = {m["name"]: m for m in api["protocolMappers"]}
+    assert mappers["groups"]["config"]["full.path"] == "true" and mappers["groups"]["id"] == "m1"
+    assert set(mappers) == {"groups", "prod-only", "jc_org"}
+    # What main did not change keeps prod's live value; what prod has alone stays.
+    assert by["same"]["redirectUris"] == ["https://prod-live/*"] and "prod-only" in by
+    assert by["grafana"]["secret"] == "$(CLIENT_SECRET_GRAFANA)"
+    assert [s["name"] for s in out["clientScopes"]] == ["mcp:portal", "gateway-hub"]
+    assert out["defaultOptionalClientScopes"] == ["connector", "offline_access"]
+    assert [r["name"] for r in out["roles"]["realm"]] == ["r1", "live", "r2"]
+    assert "users" not in out, "no person comes in with the realm lines"
+    assert "clients[grafana] (added)" in lines and "defaultOptionalClientScopes" in lines
+    assert export["clients"][0]["optionalClientScopes"] == ["address"], "the export is not changed in place"
+
+
+def test_up_sh_gives_dataroom_prods_publish_gate_hidden_list():
+    """jc.toml carries [dataroom.hidden] beside the aliases, and the two parse as one file."""
+    import tomllib
+    text = (HERE / "up.sh").read_text()
+    m = re.search(r'^cat "\$here/(\S+catalogue-hidden\.toml)" >> "\$home/jc\.toml"$', text, re.M)
+    assert m, "up.sh appends no [dataroom.hidden] to jc.toml"
+    aliases = subprocess.run([sys.executable, "-I", str(HERE / "rehearsal.py"), "aliases"],
+                             capture_output=True, text=True, check=True).stdout
+    hidden = (HERE / m.group(1)).read_text()
+    doc = tomllib.loads(aliases + "\n" + hidden)
+    rows = sum(1 for line in hidden.splitlines() if line.startswith('"'))
+    assert rows > 50 and len(doc["dataroom"]["hidden"]) == rows and doc["dataroom"]["aliases"]

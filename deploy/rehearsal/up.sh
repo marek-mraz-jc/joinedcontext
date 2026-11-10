@@ -110,6 +110,12 @@ demo_users=${REHEARSAL_DEMO_USERS:-$(dirname "$home")/demo-users.yaml}
 people_args=()
 [ -d "$people" ] && people_args+=(--people "$people")
 [ -f "$demo_users" ] && people_args+=(--demo-users "$demo_users")
+# Deployment main's realm lines over the export (supervisor 2026-11-09: the cutover carries main's
+# realm, not the release prod runs): REHEARSAL_REALM_LINES_FROM / _TO are the rendered
+# keycloak-config values of release and main for this environment (rehearsal.py render).
+if [ -n "${REHEARSAL_REALM_LINES_FROM:-}" ] && [ -n "${REHEARSAL_REALM_LINES_TO:-}" ]; then
+  people_args+=(--lines-from "$REHEARSAL_REALM_LINES_FROM" --lines-to "$REHEARSAL_REALM_LINES_TO")
+fi
 if [ -d "$export_dir/keycloak" ]; then
   python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/state/realms" \
     --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}" --secrets-dir "$home/secrets/realm" \
@@ -253,6 +259,9 @@ if [ "${REHEARSAL_APP_HOSTS:-off}" = on ]; then
   portal_mounts="[[mounts.portal]]\npath_prefix = \"\"\n\n[[mounts.portal]]\nhost = \"*.apps.localhost:$port\"\n"
 fi
 printf "$portal_mounts"'%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_config" > "$home/jc.toml"
+# prod's publish-gate hidden list ([dataroom.hidden]): dataroom leaves those datasets out of search
+# and DCAT as prod's catalogue does (jc-catalogue-parity).
+cat "$here/../../bins/jc/docs/catalogue-hidden.toml" >> "$home/jc.toml"
 # REHEARSAL_JC_TOML_EXTRA: a file appended to jc.toml as is, e.g. the [[organizations]] of a
 # host-mode multiorg run (each Organization on its own *.localhost hosts).
 if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then

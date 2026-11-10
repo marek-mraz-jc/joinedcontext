@@ -98,6 +98,17 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   The rehearsal answers on `http://localhost:<port>`, so each client URL on the source Portal's
   host (or its domain, where the Apps live) gets a twin on that address beside it (`realms
   --public-base`); the source URLs stay. Rehearsal only: the cutover runs jc on the source hosts.
+- One prod reader, loopback prod rehearsal only (supervisor 2026-11-09): banskabystrica-zaznamy's
+  Endpoint has one read Policy naming one user id (fc3b55df, demo.steward). `REHEARSAL_APP_HOLDER_ID`
+  gives the Apps' holder `rehearsal-app-roles` that id, with its own rehearsal password, no e-mail,
+  name or credential of the source; apps.sh refuses it on any non-loopback bind. Never on jc-prod.
+- Realm lines of deployment main (supervisor 2026-11-09 16:1xZ: the cutover carries main's realm,
+  as dev runs main): `rehearsal.py render` of release and of main for the environment, then
+  `REHEARSAL_REALM_LINES_FROM=<release>/keycloak-config.values.yaml` and
+  `REHEARSAL_REALM_LINES_TO=<main>/keycloak-config.values.yaml`. `realms` puts every member main adds
+  or changes against release over the export by key (clients by clientId, scopes and groups by name,
+  mappers by name, realm settings), keeps what main did not touch at prod's live value and what prod
+  has alone, and brings in no person. Each line is in `state/realm-<name>-lines.json`.
 - Dataset names (evidence/jc-dev/RENAMES.md): prod's `helsinki/catalog`, `praha/catalog` and
   `zilina/catalog` all publish the CKAN name `catalog`, which jc refuses as a collision. `import`
   writes `spec.publish.ckan.name` `helsinki-catalog`, `praha-catalog` and `zilina-catalog` into
