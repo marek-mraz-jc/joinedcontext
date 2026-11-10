@@ -51,11 +51,30 @@ use std::collections::BTreeMap;
 pub const PREFIX: &str = "/x/views";
 
 /// How many files (`f=parquet`, `csv`, `zip`) the surface writes at once, 1 to 64,
-/// default 2; past it a file is `503` with `Retry-After` (T-4465 review).
+/// default [`EXPORT_FILES`]; past it a file is `503` with `Retry-After` (T-4465 review).
 pub const EXPORT_FILES_ENV: &str = "ANTARES_EXPORT_FILES";
 
+/// The files the surface writes at once unless `ANTARES_EXPORT_FILES` names another
+/// (jc-ogc-stream): a file holds one page in memory and its place for its whole transfer, up to
+/// 58 s for the frozen prod export's Garden ZIP, so 2 places refused the endpoints suite's six
+/// workers past their retries. Six (one per worker) passed every OGC file row of the scoped
+/// rehearsal with jc's peak resident memory within 60 MiB of two places.
+pub const EXPORT_FILES: usize = 6;
+
+/// The bytes one file may hold, 1 MiB to 4 GiB less one byte; past it the file is `413`
+/// before its first byte and cut after it (jc-ogc-stream).
+pub const EXPORT_FILE_BYTES_ENV: &str = "ANTARES_EXPORT_FILE_BYTES";
+
+/// The seconds one file may take to write, 1 to 3600; past them the file is `503` before its
+/// first byte and cut after it (jc-ogc-stream).
+pub const EXPORT_FILE_SECONDS_ENV: &str = "ANTARES_EXPORT_FILE_SECONDS";
+
 /// The variables this surface reads.
-pub const ENV_KEYS: &[&str] = &[EXPORT_FILES_ENV];
+pub const ENV_KEYS: &[&str] = &[
+    EXPORT_FILES_ENV,
+    EXPORT_FILE_BYTES_ENV,
+    EXPORT_FILE_SECONDS_ENV,
+];
 
 /// The bounds a Tenant's schema is read under (threat LK7), as the `OData` surface reads it.
 pub const SCHEMA_LIMITS: linkml_model::Limits = linkml_model::Limits {
@@ -175,7 +194,11 @@ impl Surface for Ogc {
             "conformsTo": CONFORMANCE,
             "encodings": encodings,
             "bundles": bundles,
-            "limits": {"exportFiles": export::files_of(std::env::var(EXPORT_FILES_ENV).ok().as_deref())},
+            "limits": {
+                "exportFiles": export::files_of(std::env::var(EXPORT_FILES_ENV).ok().as_deref()),
+                "fileBytes": export::bytes_of(std::env::var(EXPORT_FILE_BYTES_ENV).ok().as_deref()),
+                "fileSeconds": export::seconds_of(std::env::var(EXPORT_FILE_SECONDS_ENV).ok().as_deref()),
+            },
         })
     }
 
@@ -721,7 +744,7 @@ impl<'a> Here<'a> {
         collections: &'a BTreeMap<String, Collection>,
         (ops, parts): (&Ops, &Parts),
     ) -> Self {
-        // read only by the export budget
+        // read by no field: the export budget comes from the request's gate
         let _ = ops;
         Self {
             view,
@@ -731,7 +754,7 @@ impl<'a> Here<'a> {
             caller,
             collections,
             #[cfg(any(feature = "parquet", feature = "tabular"))]
-            budget: export::Budget::of(ops, parts),
+            budget: export::Budget::of(parts),
         }
     }
 }
@@ -1107,7 +1130,10 @@ mod tests {
         let info = Ogc.version_info();
         assert_eq!(info.pointer("/encodings"), Some(&json!(encodings)));
         assert_eq!(info.pointer("/bundles"), Some(&json!(bundles)));
-        assert_eq!(info.pointer("/limits/exportFiles"), Some(&json!(2)));
+        assert_eq!(
+            info.pointer("/limits/exportFiles"),
+            Some(&json!(EXPORT_FILES))
+        );
     }
 
     #[test]

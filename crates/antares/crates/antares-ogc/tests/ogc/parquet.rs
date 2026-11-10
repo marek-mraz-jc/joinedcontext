@@ -285,22 +285,36 @@ async fn the_geojson_links_its_parquet_and_a_file_is_only_in_crs84() -> Result<(
     Ok(())
 }
 
-#[tokio::test]
-async fn a_file_past_the_answer_ceiling_is_refused_whole() -> Result<(), String> {
+/// A Parquet is held to its own byte cap, never to the answer ceiling, which still bounds each
+/// page it reads (jc-ogc-stream): under a ceiling of 1,500 bytes and store reads of two Cars, a
+/// Parquet of 44 Cars larger than the ceiling comes whole, its footer last.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_parquet_is_held_to_its_own_cap_not_the_answer_ceiling() -> Result<(), String> {
     schemas_on();
-    let f = fixture_with(TestBroker::with_max_answer_bytes(600).await?).await?;
-    let (status, headers, bytes) = raw(&f, &format!("{CARS}?f=parquet"), None).await;
+    let f = fixture_with(TestBroker::with_max_limit_and_answer_bytes(2, 1500).await?).await?;
+    for n in 10..50 {
+        let car = json!({"id": format!("urn:ngsi-ld:Car:{n}"), "type": "Car",
+                         "speed": {"type": "Property", "value": n}});
+        let a = send(
+            &f.app,
+            "POST",
+            "/ngsi-ld/v1/entities",
+            &car.to_string(),
+            &[("NGSILD-Tenant", "city")],
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::CREATED, "{}", a.body);
+    }
+    let (status, _, bytes) = raw(&f, &format!("{CARS}?f=parquet"), None).await;
     assert_eq!(
         status,
-        StatusCode::PAYLOAD_TOO_LARGE,
+        StatusCode::OK,
         "{}",
         String::from_utf8_lossy(&bytes)
     );
-    assert_eq!(
-        headers.get("content-type").and_then(|v| v.to_str().ok()),
-        Some("application/problem+json"),
-        "an error, never a cut file"
-    );
+    assert!(bytes.len() > 1500, "{}", bytes.len());
+    let file = SerializedFileReader::new(bytes::Bytes::from(bytes)).map_err(|e| e.to_string())?;
+    assert_eq!(file.metadata().file_metadata().num_rows(), 44);
     Ok(())
 }
 

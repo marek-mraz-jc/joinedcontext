@@ -14,6 +14,8 @@ pub const MEDIA_TYPE: &str = "text/csv; charset=utf-8; header=present";
 /// A CSV file being written one page at a time.
 pub struct Writer {
     out: Vec<u8>,
+    /// The bytes written, drained ones included.
+    written: usize,
     columns: Vec<Column>,
     geometry: bool,
     max: usize,
@@ -28,6 +30,7 @@ impl Writer {
     pub fn new(columns: Vec<Column>, geometry: bool, max_bytes: usize) -> Result<Self, Error> {
         let mut writer = Self {
             out: Vec::new(),
+            written: 0,
             columns: distinct(columns),
             geometry,
             max: max_bytes,
@@ -41,9 +44,11 @@ impl Writer {
     fn record(&mut self, cells: &[&Value]) -> Result<(), Error> {
         let fields: Vec<String> = cells.iter().map(|v| quoted(&guarded(v))).collect();
         let line = format!("{}\r\n", fields.join(","));
-        if self.out.len().saturating_add(line.len()) > self.max {
+        let written = self.written.saturating_add(line.len());
+        if written > self.max {
             return Err(Error::TooLarge);
         }
+        self.written = written;
         self.out.extend_from_slice(line.as_bytes());
         Ok(())
     }
@@ -56,6 +61,10 @@ impl Sink for Writer {
             self.record(&row)?;
         }
         Ok(())
+    }
+
+    fn drain(&mut self) -> Result<Vec<u8>, Error> {
+        Ok(std::mem::take(&mut self.out))
     }
 
     /// A CSV keeps no metadata: the provenance goes nowhere.
@@ -152,6 +161,18 @@ mod tests {
             b"id\r\n",
             "the row that crossed is not kept"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn drained_rows_leave_the_writer_and_still_count() -> Result<(), Error> {
+        let mut writer = Box::new(Writer::new(Vec::new(), false, 14)?);
+        writer.page(&[json!({"id": "urn:a"})])?;
+        assert_eq!(writer.drain()?, b"id\r\nurn:a\r\n");
+        assert_eq!(writer.drain()?, b"", "nothing written since");
+        let past = writer.page(&[json!({"id": "urn:b"})]);
+        assert_eq!(past, Err(Error::TooLarge), "the drained bytes count");
+        assert_eq!(writer.finish(&[])?, b"");
         Ok(())
     }
 }

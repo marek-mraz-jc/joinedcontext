@@ -390,7 +390,7 @@ class Suite:
                          st == 200 and raw.lstrip().startswith(b"BEGIN:VCALENDAR"))
 
     def file(self, path, token):
-        """GET a file; the broker writes ANTARES_EXPORT_FILES (default 2) files at once and answers
+        """GET a file; the broker writes ANTARES_EXPORT_FILES (default 6) files at once and answers
         503 past it, so a busy answer is asked again a few times before it counts."""
         for _ in range(FILE_TRIES - 1):
             st, h, raw = self.get(path, token, "*/*")

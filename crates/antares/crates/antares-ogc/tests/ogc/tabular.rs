@@ -274,24 +274,48 @@ async fn several_collections_are_never_one_table() -> Outcome {
     Ok(())
 }
 
-#[tokio::test]
-async fn a_file_past_the_answer_ceiling_is_refused_whole() -> Outcome {
+/// A file is held to its own byte cap (`ANTARES_EXPORT_FILE_BYTES`, jc-ogc-stream), never to
+/// the answer ceiling, which still bounds each page it reads: under a ceiling of 1,500 bytes and
+/// store reads of two Cars, a CSV and a ZIP of 64 Cars, sent as they are written, come whole
+/// and larger than the ceiling. The cap itself is pinned by
+/// `export::tests::a_file_is_whole_at_its_byte_cap_and_cut_past_it`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_is_held_to_its_own_cap_not_the_answer_ceiling() -> Outcome {
     schemas_on();
-    let f = fixture_with(TestBroker::with_max_answer_bytes(300).await?).await?;
-    for uri in [format!("{CARS}?f=csv"), format!("{ALL}?f=zip")] {
-        let (status, headers, bytes) = raw(&f, &uri, None).await;
-        assert_eq!(
-            status,
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "{uri}: {}",
-            String::from_utf8_lossy(&bytes)
-        );
-        assert_eq!(
-            header(&headers, "content-type"),
-            Some("application/problem+json"),
-            "{uri}"
-        );
+    let f = fixture_with(TestBroker::with_max_limit_and_answer_bytes(2, 1500).await?).await?;
+    for n in 10..70 {
+        let car = serde_json::json!({"id": format!("urn:ngsi-ld:Car:{n}"), "type": "Car",
+                                     "speed": {"type": "Property", "value": n}});
+        let a = crate::common::send(
+            &f.app,
+            "POST",
+            "/ngsi-ld/v1/entities",
+            &car.to_string(),
+            &[("NGSILD-Tenant", "city")],
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::CREATED, "{}", a.body);
     }
+    let (status, headers, bytes) = raw(&f, &format!("{CARS}?f=csv"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    assert!(bytes.len() > 1500, "{}", bytes.len());
+    assert!(header(&headers, "content-type").is_some_and(|t| t.starts_with("text/csv")));
+    let (status, _, bytes) = raw(&f, &format!("{ALL}?f=zip&collections=Car"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
+    let mut csv = String::new();
+    archive.by_name("Car.csv")?.read_to_string(&mut csv)?;
+    assert!(csv.len() > 1500 && csv.lines().count() == 65, "{csv}");
     Ok(())
 }
 
