@@ -360,3 +360,50 @@ async fn the_signed_out_page_follows_its_language_picker_and_ends_nothing() {
     let (st, _, _) = send(&app, Method::GET, "/realms/nope/logged-out", None, None).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
+
+/// "Start signing in again": only the browser holding the session restarts it, and nothing the
+/// person had passed survives.
+#[tokio::test]
+async fn restart_needs_the_sessions_browser_and_clears_what_was_passed() {
+    let (app, store) = app("joinedcontext demo").await;
+    let (_, cookie, html) = sign_in_page(&app, "en").await;
+    let code = extract_hidden_input(&html, "session_code");
+    let mut s = store
+        .get_auth_session_by_id("dev", &code)
+        .await
+        .unwrap()
+        .unwrap();
+    s.user_id = Some("someone".into());
+    s.pending_email_code_hash = Some("hash".into());
+    s.kc_action_done = true;
+    store.put_auth_session(s).await.unwrap();
+    let restart = format!("/realms/dev/login-actions/restart?session_code={code}&client_id=edge");
+
+    let (st, _, html) = send(&app, Method::GET, &restart, None, None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{html}");
+    let kept = store
+        .get_auth_session_by_id("dev", &code)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        kept.user_id.as_deref(),
+        Some("someone"),
+        "another browser changes nothing"
+    );
+
+    let (st, h, _) = send(&app, Method::GET, &restart, None, Some(&cookie)).await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    assert!(
+        h[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .contains("/login-actions/authenticate?session_code=")
+    );
+    let s = store
+        .get_auth_session_by_id("dev", &code)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(s.user_id.is_none() && s.pending_email_code_hash.is_none() && !s.kc_action_done);
+}

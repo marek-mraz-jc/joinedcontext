@@ -1054,6 +1054,8 @@ async fn restart_login_get(
     auth_session.acr_achieved.clear();
     auth_session.pending_totp_secret = None;
     auth_session.webauthn_challenge = None;
+    auth_session.pending_email_code_hash = None;
+    auth_session.kc_action_done = false;
     let location = format!(
         "{}/realms/{}/login-actions/authenticate?session_code={}&client_id={}",
         mount.path_prefix, realm.realm, auth_session.id, auth_session.client_id

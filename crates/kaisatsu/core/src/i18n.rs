@@ -1203,10 +1203,30 @@ impl Bundle {
 
     #[must_use]
     pub fn format(&self, key: &str, args: &[&str]) -> String {
-        let mut out = self.get(key).to_owned();
-        for (i, arg) in args.iter().enumerate() {
-            out = out.replace(&format!("{{{i}}}"), arg);
+        // One pass over the message: a `{1}` inside an argument (a display name, an address)
+        // stays as typed.
+        let message = self.get(key);
+        let mut out = String::with_capacity(message.len());
+        let mut rest = message;
+        while let Some(open) = rest.find('{') {
+            out.push_str(&rest[..open]);
+            let tail = &rest[open + 1..];
+            let arg = tail.find('}').and_then(|close| {
+                let index: usize = tail[..close].parse().ok()?;
+                Some((args.get(index)?, close))
+            });
+            match arg {
+                Some((value, close)) => {
+                    out.push_str(value);
+                    rest = &tail[close + 1..];
+                }
+                None => {
+                    out.push('{');
+                    rest = tail;
+                }
+            }
         }
+        out.push_str(rest);
         out
     }
 
@@ -1316,6 +1336,20 @@ pub fn negotiate_locale(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn format_fills_each_placeholder_once() {
+        let en = Bundle::for_locale("en");
+        assert_eq!(
+            en.format("jcSignInTo", &["{1}", "City {0}"]),
+            "Sign in to {1} · City {0}"
+        );
+        assert_eq!(
+            en.format("jcSignInTo", &["the Portal"]),
+            "Sign in to the Portal · {1}"
+        );
+    }
+
     use super::*;
 
     #[test]
