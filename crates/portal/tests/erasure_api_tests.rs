@@ -43,7 +43,7 @@ async fn world() -> Option<(AppState, String)> {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let project = format!("fe-{:x}", crate::common::unique::unique());
+    let project = format!("fe-{}", crate::common::unique::unique());
     let mut config = Config::for_tests();
     config.artifact_store = Some(joinedcontext_portal::artifact_store::Settings {
         endpoint: "http://127.0.0.1:9".into(),
