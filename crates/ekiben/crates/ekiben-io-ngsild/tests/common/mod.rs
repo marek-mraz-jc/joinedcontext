@@ -76,6 +76,8 @@ pub struct FakeState {
     pub token_auth: Vec<String>,
     pub token_bodies: Vec<String>,
     pub token_form_answer: bool,
+    /// When set, the token endpoint answers this status (and `Retry-After: 0`) to every request.
+    pub token_status: Option<u16>,
     /// The entities `GET /entities` pages through.
     pub entities: Vec<JsonValue>,
     pub send_count: bool,
@@ -201,6 +203,9 @@ async fn token(
     );
     s.token_bodies
         .push(String::from_utf8_lossy(&body).into_owned());
+    if let Some(status) = s.token_status {
+        return answer(status, &[("retry-after".into(), "0".into())], "{}".into());
+    }
     let tok = format!("tok-{}", s.token_requests);
     let ttl = s.token_ttl;
     s.tokens

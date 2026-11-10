@@ -235,6 +235,35 @@ pub fn verify_keycloak_credential(
 
 /// Enforces RI's password policy (`length(N)`, `upperCase(N)`, `lowerCase(N)`, `digits(N)`,
 /// `specialChars(N)`, `notUsername`, `notEmail`, `passwordHistory(N)`), W7.
+/// The first rule of a Keycloak password policy (`length(12) and upperCase(1) and ...`) a
+/// password breaks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PolicyViolation {
+    MinLength(usize),
+    UpperCase(usize),
+    LowerCase(usize),
+    Digits(usize),
+    SpecialChars(usize),
+    NotUsername,
+    NotEmail,
+    History(usize),
+}
+
+impl PolicyViolation {
+    fn detail(&self) -> String {
+        match self {
+            Self::MinLength(min) => format!("must be at least {min} characters"),
+            Self::UpperCase(min) => format!("must contain at least {min} uppercase character(s)"),
+            Self::LowerCase(min) => format!("must contain at least {min} lowercase character(s)"),
+            Self::Digits(min) => format!("must contain at least {min} digit(s)"),
+            Self::SpecialChars(min) => format!("must contain at least {min} special character(s)"),
+            Self::NotUsername => "must not contain the username".into(),
+            Self::NotEmail => "must not contain the e-mail address".into(),
+            Self::History(count) => format!("must not match any of the last {count} passwords"),
+        }
+    }
+}
+
 pub fn check_password_policy(
     policy: &str,
     password: &str,
@@ -242,65 +271,54 @@ pub fn check_password_policy(
     email: Option<&str>,
     history_records: &[CredentialRecord],
 ) -> Result<()> {
+    match first_policy_violation(policy, password, username, email, history_records) {
+        Some(v) => Err(KaisatsuError::field_error("password", v.detail())),
+        None => Ok(()),
+    }
+}
+
+/// [`check_password_policy`]'s rule check, naming the rule broken (the login pages say it in
+/// the person's language).
+#[must_use]
+pub fn first_policy_violation(
+    policy: &str,
+    password: &str,
+    username: &str,
+    email: Option<&str>,
+    history_records: &[CredentialRecord],
+) -> Option<PolicyViolation> {
+    let arg = |clause: &str, name: &str, default: usize| -> Option<usize> {
+        clause
+            .strip_prefix(name)
+            .and_then(|s| s.strip_prefix('('))
+            .and_then(|s| s.strip_suffix(')'))
+            .map(|a| a.parse().unwrap_or(default))
+    };
+    let count = |f: fn(&char) -> bool| password.chars().filter(f).count();
     for clause in policy
         .split(" and ")
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if let Some(arg) = clause
-            .strip_prefix("length(")
-            .and_then(|s| s.strip_suffix(')'))
-        {
-            let min: usize = arg.parse().unwrap_or(12);
+        if let Some(min) = arg(clause, "length", 12) {
             if password.chars().count() < min {
-                return Err(KaisatsuError::field_error(
-                    "password",
-                    format!("must be at least {min} characters"),
-                ));
+                return Some(PolicyViolation::MinLength(min));
             }
-        } else if let Some(arg) = clause
-            .strip_prefix("upperCase(")
-            .and_then(|s| s.strip_suffix(')'))
-        {
-            let min: usize = arg.parse().unwrap_or(1);
-            if password.chars().filter(|c| c.is_uppercase()).count() < min {
-                return Err(KaisatsuError::field_error(
-                    "password",
-                    format!("must contain at least {min} uppercase character(s)"),
-                ));
+        } else if let Some(min) = arg(clause, "upperCase", 1) {
+            if count(|c| c.is_uppercase()) < min {
+                return Some(PolicyViolation::UpperCase(min));
             }
-        } else if let Some(arg) = clause
-            .strip_prefix("lowerCase(")
-            .and_then(|s| s.strip_suffix(')'))
-        {
-            let min: usize = arg.parse().unwrap_or(1);
-            if password.chars().filter(|c| c.is_lowercase()).count() < min {
-                return Err(KaisatsuError::field_error(
-                    "password",
-                    format!("must contain at least {min} lowercase character(s)"),
-                ));
+        } else if let Some(min) = arg(clause, "lowerCase", 1) {
+            if count(|c| c.is_lowercase()) < min {
+                return Some(PolicyViolation::LowerCase(min));
             }
-        } else if let Some(arg) = clause
-            .strip_prefix("digits(")
-            .and_then(|s| s.strip_suffix(')'))
-        {
-            let min: usize = arg.parse().unwrap_or(1);
-            if password.chars().filter(|c| c.is_ascii_digit()).count() < min {
-                return Err(KaisatsuError::field_error(
-                    "password",
-                    format!("must contain at least {min} digit(s)"),
-                ));
+        } else if let Some(min) = arg(clause, "digits", 1) {
+            if count(char::is_ascii_digit) < min {
+                return Some(PolicyViolation::Digits(min));
             }
-        } else if let Some(arg) = clause
-            .strip_prefix("specialChars(")
-            .and_then(|s| s.strip_suffix(')'))
-        {
-            let min: usize = arg.parse().unwrap_or(1);
-            if password.chars().filter(|c| !c.is_alphanumeric()).count() < min {
-                return Err(KaisatsuError::field_error(
-                    "password",
-                    format!("must contain at least {min} special character(s)"),
-                ));
+        } else if let Some(min) = arg(clause, "specialChars", 1) {
+            if count(|c| !c.is_alphanumeric()) < min {
+                return Some(PolicyViolation::SpecialChars(min));
             }
         } else if clause.starts_with("notUsername") {
             if !username.is_empty()
@@ -308,10 +326,7 @@ pub fn check_password_policy(
                     .to_ascii_lowercase()
                     .contains(&username.to_ascii_lowercase())
             {
-                return Err(KaisatsuError::field_error(
-                    "password",
-                    "must not contain the username",
-                ));
+                return Some(PolicyViolation::NotUsername);
             }
         } else if clause.starts_with("notEmail") {
             if let Some(em) = email.filter(|e| !e.is_empty())
@@ -319,29 +334,19 @@ pub fn check_password_policy(
                     .to_ascii_lowercase()
                     .contains(&em.to_ascii_lowercase())
             {
-                return Err(KaisatsuError::field_error(
-                    "password",
-                    "must not contain the e-mail address",
-                ));
+                return Some(PolicyViolation::NotEmail);
             }
-        } else if let Some(arg) = clause
-            .strip_prefix("passwordHistory(")
-            .and_then(|s| s.strip_suffix(')'))
-        {
-            let count: usize = arg.parse().unwrap_or(5);
+        } else if let Some(count) = arg(clause, "passwordHistory", 5) {
             for old in history_records.iter().take(count) {
                 if let Ok(outcome) = verify_and_maybe_rehash(password, old)
                     && outcome.valid
                 {
-                    return Err(KaisatsuError::field_error(
-                        "password",
-                        format!("must not match any of the last {count} passwords"),
-                    ));
+                    return Some(PolicyViolation::History(count));
                 }
             }
         }
     }
-    Ok(())
+    None
 }
 
 #[cfg(test)]

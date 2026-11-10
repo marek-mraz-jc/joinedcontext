@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html class="login-pf" lang="{{ lang }}" dir="ltr">
+<head>
+    <meta charset="utf-8">
+    <meta name="color-scheme" content="light">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }}</title>
+    {% if !logo_url.is_empty() %}<link rel="icon" href="{{ logo_url }}">{% endif %}
+    <link href="{{ css_url }}" rel="stylesheet">
+    <style nonce="{{ nonce }}">
+{{ branding_css|safe }}
+    </style>
+</head>
+<body id="keycloak-bg" data-page-id="login-{{ page_id }}">
+<div class="pf-v5-c-login">
+  <div class="pf-v5-c-login__container">
+    <header id="kc-header" class="pf-v5-c-login__header">
+      <div id="kc-header-wrapper" class="pf-v5-c-brand">
+        {% if !logo_url.is_empty() %}<img class="jc-logo" src="{{ logo_url }}" alt="">{% endif %}
+        <span class="jc-org">{{ org }}</span>
+      </div>
+    </header>
+    <main class="pf-v5-c-login__main">
+      <div class="pf-v5-c-login__main-header">
+        <div class="jc-heading">
+          {% if !app_context.is_empty() %}<p class="jc-context" id="jc-context">{{ app_context }}</p>{% endif %}
+          <h1 class="pf-v5-c-title pf-m-3xl" id="kc-page-title">{{ heading }}</h1>
+        </div>
+        {% if locales.len() > 1 %}
+        <div class="pf-v5-c-login__main-header-utilities">
+          <div class="pf-v5-c-form-control">
+            <select aria-label="{{ languages_label }}" id="login-select-toggle">
+              {% for l in locales %}<option value="{{ l.url }}"{% if l.selected %} selected{% endif %}>{{ l.label }}</option>
+              {% endfor %}
+            </select>
+            <span class="pf-v5-c-form-control__utilities">
+              <span class="pf-v5-c-form-control__toggle-icon">
+                <svg class="pf-v5-svg" viewBox="0 0 320 512" fill="currentColor" aria-hidden="true" role="img" width="1em" height="1em"><path d="M31.3 192h257.3c17.8 0 26.7 21.5 14.1 34.1L174.1 354.8c-7.8 7.8-20.5 7.8-28.3 0L17.2 226.1C4.6 213.5 13.5 192 31.3 192z"></path></svg>
+              </span>
+            </span>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      <div class="pf-v5-c-login__main-body">
+        {% if let Some(a) = attempted %}
+        <div class="pf-v5-c-form pf-v5-u-w-100 pf-v5-u-mb-md-on-md">
+          <div class="pf-v5-c-form__group">
+            <div class="pf-v5-c-form__group-label pf-v5-u-pb-xs">
+              <label for="kc-attempted-username" class="pf-v5-c-form__label"><span class="pf-v5-c-form__label-text">{{ a.label }}</span></label>
+            </div>
+            <div class="pf-v5-c-input-group">
+              <div class="pf-v5-c-input-group__item pf-m-fill">
+                <span class="pf-v5-c-form-control pf-m-readonly"><input id="kc-attempted-username" value="{{ a.username }}" readonly></span>
+              </div>
+              <div class="pf-v5-c-input-group__item">
+                <a id="reset-login" class="pf-v5-c-button pf-m-control kc-login-tooltip" href="{{ a.restart_url }}" aria-label="{{ a.restart_label }}">{{ crate::page::ICON_SYNC|safe }}<span class="kc-tooltip-text">{{ a.restart_label }}</span></a>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+        {% if let Some(a) = alert %}
+        <div class="pf-v5-c-alert pf-m-inline pf-v5-u-mb-md pf-m-{{ a.kind }}" role="alert">
+          <div class="pf-v5-c-alert__icon">{{ a.icon()|safe }}</div>
+          <span class="pf-v5-c-alert__title kc-feedback-text">{{ a.text }}</span>
+        </div>
+        {% endif %}
+        {% if let Some(t) = totp %}
+        <div id="kc-totp-steps">
+        <ol id="kc-totp-settings" class="pf-v5-c-list pf-v5-u-mb-md">
+          <li>
+            <p>{{ t.step1 }}</p>
+            <ul id="kc-totp-supported-apps">{% for app in t.apps %}<li>{{ app }}</li>{% endfor %}</ul>
+          </li>
+          <li>
+            <p>{{ t.step2 }}</p>
+            <div id="kc-totp-qr" class="kc-qr-code pf-v5-u-display-flex pf-v5-u-flex-direction-column pf-v5-u-align-items-center pf-v5-u-my-sm">
+              {{ t.qr_svg|safe }}
+            </div>
+            <details id="kc-totp-manual">
+              <summary id="mode-manual">{{ t.unable_to_scan }}</summary>
+              <p id="kc-key-label">{{ t.manual_step2 }}</p>
+              <p><span id="kc-totp-secret-key" aria-labelledby="kc-key-label">{{ t.key }}</span></p>
+              <p>{{ t.manual_step3 }}</p>
+              <ul>{% for line in t.config %}<li>{{ line }}</li>{% endfor %}</ul>
+            </details>
+          </li>
+          <li>
+            <p>{{ t.step3 }}</p>
+            <p>{{ t.step3_device }}</p>
+          </li>
+        </ol>
+        </div>
+        {% endif %}
+        {% let content_id = self.content_id() %}
+        {% if !content_id.is_empty() %}<div id="{{ content_id }}">{% endif %}
+        {% for line in instructions %}<p class="instruction"{% if loop.first %} id="instruction1"{% endif %}>{{ line }}</p>
+        {% endfor %}
+        {% if let Some(f) = form %}
+        <form id="{{ f.id }}" class="pf-v5-c-form pf-v5-u-w-100" action="{{ f.action }}" method="post" novalidate="novalidate">
+          {% for h in f.hidden %}<input type="hidden" name="{{ h.0 }}" value="{{ h.1 }}">
+          {% endfor %}
+          {% for field in f.fields %}
+          {% if field.input_type == "checkbox" %}
+          <div class="pf-v5-c-form__group">
+            <div id="kc-form-options"><div>
+              <div class="pf-v5-c-check">
+                <label for="{{ field.name }}" class="pf-v5-c-check">
+                  <input class="pf-v5-c-check__input" type="checkbox" id="{{ field.name }}" name="{{ field.name }}"{% if field.value == "checked" %} checked{% endif %}>
+                  <span class="pf-v5-c-check__label">{{ field.label }}</span>
+                </label>
+              </div>
+            </div></div>
+          </div>
+          {% else %}
+          <div class="pf-v5-c-form__group">
+            <div class="pf-v5-c-form__group-label pf-v5-u-pb-xs">
+              <label for="{{ field.name }}" class="pf-v5-c-form__label"><span class="pf-v5-c-form__label-text">{{ field.label }}</span>{% if field.required %}&nbsp;<span class="pf-v5-c-form__label-required" aria-hidden="true">*</span>{% endif %}</label>
+            </div>
+            {% if field.input_type == "password" %}<div class="pf-v5-c-input-group"><div class="pf-v5-c-input-group__item pf-m-fill">{% endif %}
+            <span class="pf-v5-c-form-control{% if !field.error.is_empty() %} pf-m-error{% endif %}">
+              <input id="{{ field.name }}" name="{{ field.name }}" value="{{ field.value }}" type="{{ field.input_type }}" autocomplete="{{ field.autocomplete }}"{% if field.autofocus %} autofocus{% endif %}{% if field.autocomplete == "one-time-code" %} inputmode="numeric"{% endif %}{% if !field.error.is_empty() %} aria-invalid="true" aria-describedby="input-error-{{ field.name }}"{% endif %}>
+              {% if !field.error.is_empty() %}<span class="pf-v5-c-form-control__utilities"><span class="pf-v5-c-form-control__icon pf-m-status">{{ crate::page::ICON_ERROR|safe }}</span></span>{% endif %}
+            </span>
+            {% if field.input_type == "password" %}</div>
+              <div class="pf-v5-c-input-group__item">
+                <button class="pf-v5-c-button pf-m-control" type="button" aria-label="{{ show_label }}" aria-controls="{{ field.name }}" data-password-toggle id="{{ field.name }}-show-password">{{ crate::page::ICON_EYE|safe }}{{ crate::page::ICON_EYE_SLASH|safe }}</button>
+              </div>
+            </div>
+            {% endif %}
+            {% if !field.link_url.is_empty() %}
+            <div class="pf-v5-c-form__helper-text" aria-live="polite">
+              <div class="pf-v5-c-helper-text pf-v5-u-display-flex pf-v5-u-justify-content-space-between">
+                <div class="pf-v5-c-helper-text__item"><span class="pf-v5-c-helper-text__item-text"><a id="{{ field.link_id }}" href="{{ field.link_url }}">{{ field.link_label }}</a></span></div>
+              </div>
+            </div>
+            {% endif %}
+            <div id="input-error-container-{{ field.name }}">
+              {% if !field.error.is_empty() %}
+              <div class="pf-v5-c-form__helper-text" aria-live="polite">
+                <div class="pf-v5-c-helper-text pf-v5-u-display-flex pf-v5-u-justify-content-space-between">
+                  <div class="pf-v5-c-helper-text__item pf-m-error" id="input-error-{{ field.name }}"><span class="pf-v5-c-helper-text__item-text pf-m-error kc-feedback-text">{{ field.error }}</span></div>
+                </div>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+          {% endif %}
+          {% endfor %}
+          <div class="pf-v5-c-form__group" id="kc-form-buttons">
+            <div class="pf-v5-c-form__actions pf-v5-u-pt-xs pf-v5-u-flex-wrap">
+              <button class="pf-v5-c-button pf-m-primary pf-m-block" name="{{ f.submit_name }}"{% if !f.submit_value.is_empty() %} value="{{ f.submit_value }}"{% endif %} id="{{ f.submit_id }}" type="submit">{{ f.submit_label }}</button>
+              {% if !f.secondary_value.is_empty() %}<button class="pf-v5-c-button pf-m-secondary pf-m-block" name="{{ f.submit_name }}" value="{{ f.secondary_value }}" id="{{ f.secondary_id }}" type="submit">{{ f.secondary_label }}</button>{% endif %}
+              {% if !f.secondary_url.is_empty() %}<a id="{{ f.secondary_id }}" href="{{ f.secondary_url }}" class="pf-v5-c-button pf-m-secondary pf-m-block">{{ f.secondary_label }}</a>{% endif %}
+            </div>
+          </div>
+        </form>
+        {% endif %}
+        {% if !links.is_empty() %}
+        <p>{% for l in links %}<a id="{{ l.id }}" class="pf-v5-c-button {{ l.class }}" href="{{ l.url }}">{{ l.label }}</a>{% endfor %}</p>
+        {% endif %}
+        {% if !content_id.is_empty() %}</div>{% endif %}
+        <div class="pf-v5-c-login__main-footer">
+          {% if !info.is_empty() %}
+          <div id="kc-info" class="pf-v5-c-login__main-footer-band pf-v5-c-form pf-v5-u-w-100">
+            <div id="kc-info-wrapper" class="pf-v5-c-login__main-footer-band-item">
+              {% for line in info %}<span class="pf-v5-u-font-size-sm pf-v5-u-color-200">{{ line }}</span>{% endfor %}
+            </div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<script nonce="{{ nonce }}" id="kc-page-script" data-show="{{ show_label }}" data-hide="{{ hide_label }}">
+(function () {
+    var me = document.getElementById("kc-page-script");
+    document.querySelectorAll("button[data-password-toggle]").forEach(function (b) {
+        var input = document.getElementById(b.getAttribute("aria-controls"));
+        var icons = b.querySelectorAll("svg");
+        icons[1].style.display = "none";
+        b.addEventListener("click", function () {
+            var show = input.type === "password";
+            input.type = show ? "text" : "password";
+            icons[0].style.display = show ? "none" : "";
+            icons[1].style.display = show ? "" : "none";
+            b.setAttribute("aria-label", show ? me.dataset.hide : me.dataset.show);
+        });
+    });
+    var pick = document.getElementById("login-select-toggle");
+    if (pick) {
+        pick.addEventListener("change", function () {
+            if (pick.value) { window.location.href = pick.value; }
+        });
+    }
+    var form = document.querySelector("main form");
+    if (form) {
+        form.addEventListener("submit", function () {
+            var b = form.querySelector("button[type=submit]");
+            if (b) { setTimeout(function () { b.disabled = true; }, 0); }
+        });
+    }
+})();
+</script>
+</body>
+</html>

@@ -80,6 +80,7 @@ pub fn env_key(setting: Setting) -> &'static str {
         Setting::EndpointUrl => "JC_ASSISTANT_ENDPOINT_URL",
         Setting::PortalUrl => "JC_ASSISTANT_PORTAL_URL",
         Setting::VizUrl => "JC_ASSISTANT_VIZ_URL",
+        Setting::Reach => "JC_ASSISTANT_REACH",
     }
 }
 
@@ -107,6 +108,7 @@ pub fn chat_settings(
         endpoint_url: lookup(env_key(Setting::EndpointUrl)),
         portal_url: lookup(env_key(Setting::PortalUrl)),
         viz_url: lookup(env_key(Setting::VizUrl)),
+        reach: lookup(env_key(Setting::Reach)),
     })
 }
 
@@ -125,6 +127,7 @@ pub fn chat_config(
             Setting::EndpointUrl => "the public Endpoint address is not usable",
             Setting::PortalUrl => "the Portal address is not usable",
             Setting::VizUrl => "the chart renderer's address is not usable",
+            Setting::Reach => "the gateway's reach is not usable",
         };
         (what, invalid.problem.named(env_key(invalid.setting)))
     })
@@ -240,7 +243,11 @@ impl Minute {
             );
         }
         // The context pages' entity counts, so no visitor's request asks the gateway (T-4692).
-        tokio::spawn(chat::context::count(Arc::clone(&self.chat_state)));
+        tokio::spawn(chat::context::count(
+            Arc::clone(&self.chat_state),
+            self.reader.http.clone(),
+            self.reader.gateway.clone(),
+        ));
         let sources = &snapshot.sources;
         self.ready.store(true, Ordering::Relaxed);
         let pool = &self.pool;

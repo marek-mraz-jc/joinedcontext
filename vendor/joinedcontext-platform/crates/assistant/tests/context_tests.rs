@@ -239,7 +239,8 @@ async fn app(test: &str) -> (axum::Router, MockServer, MockServer, Database) {
         contexts: Default::default(),
         turns: Default::default(),
     });
-    assistant::chat::context::count(Arc::clone(&state)).await;
+    let base = url::Url::parse(&format!("{}/", gateway.uri())).ok();
+    assistant::chat::context::count(Arc::clone(&state), state.http.clone(), base).await;
     (router(state), gateway, realm, database)
 }
 

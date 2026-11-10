@@ -1002,7 +1002,10 @@ async fn k5_logout_without_hint_needs_a_confirmed_single_use_token() {
 
     let (st, h, body) = post_form(&app, logout, &[("logout_csrf_token", &token)], Some(&sso)).await;
     assert_eq!(st, StatusCode::OK, "{body}");
-    assert!(body.contains("Signed out"));
+    assert!(
+        body.contains("data-page-id=\"login-info\"") && body.contains("You are logged out"),
+        "{body}"
+    );
     assert!(
         h[header::SET_COOKIE]
             .to_str()

@@ -45,6 +45,7 @@ const DEFAULT_MODEL_PROVIDER: &str = "openai-compatible";
 /// | settings | from |
 /// |---|---|
 /// | `JC_ASSISTANT_GATEWAY_URL`, `_ENDPOINT_URL` | gateway (internal, public) |
+/// | `JC_ASSISTANT_REACH` | `jc`'s own listener, when the gateway is on a host of its own |
 /// | `JC_ASSISTANT_TOKEN_URL`, `_CLIENT_ID`, `_CLIENT_SECRET_FILE` | kaisatsu, client `jc-assistant` |
 /// | `JC_ASSISTANT_PORTAL_URL`, `_ORG_DOMAIN` | the Portal's mount |
 /// | `JC_ASSISTANT_PUBLIC_ORIGIN` | the assistant's own mount |
@@ -68,10 +69,18 @@ pub fn vars(
     // The chat links into these as origins (`/api/endpoint/{slug}`, the guide's pages): a module
     // under a path prefix leaves its key unset.
     let origin = |m: Module| public(m).filter(|url| crate::siblings::origin(url) == *url);
-    // ponytail: the assistant has no reach setting yet, so a host mount is called at its public
-    // base (through the edge); give it one as the Portal's `JC_PORTAL_REACH` when it matters.
+    // A host-mounted gateway keeps its public base for the connectors' MCP calls; the Endpoint
+    // counts go to its host at jc's own listener (as the Portal's `JC_PORTAL_REACH`), so the
+    // minute round never leaves the pod through the edge (brief 119: ~1,100 a minute on jc-prod).
     let internal = |m: Module| siblings.get(m).map(|s| s.callable().to_owned());
     put("JC_ASSISTANT_GATEWAY_URL", internal(Module::Gateway));
+    put(
+        "JC_ASSISTANT_REACH",
+        siblings
+            .get(Module::Gateway)
+            .and_then(crate::siblings::Sibling::reached_host)
+            .map(|(_, at)| at.to_string()),
+    );
     put("JC_ASSISTANT_ENDPOINT_URL", origin(Module::Gateway));
     // The issuer's public token endpoint, as the gateway's own token: kaisatsu names the issuer
     // by the host a request reached it on, and the proxy introspects at the same address.
@@ -379,12 +388,16 @@ async fn try_start(
         Some(p) => Some(p.listener.local_addr().map_err(|e| e.to_string())?),
         None => None,
     };
-    let filled = vars(
+    let mut filled = vars(
         siblings,
         setup,
         proxy_at,
         cfg.assistant.embedder_url.as_deref(),
     );
+    // An operator's own gateway is dialed where its URL says, never at this jc's listener.
+    if env("JC_ASSISTANT_GATEWAY_URL").is_some_and(|v| !v.trim().is_empty()) {
+        filled.remove("JC_ASSISTANT_REACH");
+    }
     let lookup = lookup(env, &filled);
     if let Some(why) = missing(cfg, siblings, setup, &lookup) {
         return Err(why);
@@ -581,6 +594,83 @@ mod tests {
         );
     }
 
+    /// Brief 119: in host mode the assistant's Endpoint counts reach jc's own listener under the
+    /// gateway's host, never the public base through the edge. The reach is the listener jc
+    /// bound already, so no listener is added; slug mode needs none.
+    #[tokio::test]
+    async fn host_mode_counts_reach_the_own_listener_under_the_gateways_host() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let at = listener.local_addr().unwrap();
+        let siblings = Siblings::new(&crate::siblings::tests::host_mode_plans(), at);
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
+        let filled = vars(
+            &siblings,
+            &setup,
+            Some("127.0.0.1:4100".parse().unwrap()),
+            None,
+        );
+        assert_eq!(filled["JC_ASSISTANT_REACH"], siblings.listener.to_string());
+        assert!(
+            filled["JC_ASSISTANT_GATEWAY_URL"].starts_with("https://api.smartcity.test"),
+            "the connectors keep the public base: {}",
+            filled["JC_ASSISTANT_GATEWAY_URL"]
+        );
+        let none = |_: &str| None;
+        let config = assistant::host::chat_config(
+            &lookup(&none, &filled),
+            jc_core::ClientCredential::Secret(jc_core::Secret::new("not-a-secret".to_owned())),
+        )
+        .unwrap();
+        let (http, base) = assistant::service::counter(&config, &reqwest::Client::new()).unwrap();
+        let served = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut head = vec![0; 4096];
+            let n = socket.read(&mut head).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nngsild-results-count: 3\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&head[..n]).to_ascii_lowercase()
+        });
+        let page = assistant::catalogue::EndpointPage {
+            name: "things".into(),
+            title: None,
+            description: None,
+            space: "s".into(),
+            slug: "thingsslug".into(),
+            audience: "public".into(),
+            ckan_dataset: None,
+            types: vec![assistant::catalogue::EntityType {
+                class: "Thing".into(),
+                description: None,
+                attributes: Vec::new(),
+            }],
+            datasets: Vec::new(),
+        };
+        let counts = assistant::catalogue::counts(&http, &base.unwrap(), &page)
+            .await
+            .unwrap();
+        assert_eq!(
+            counts.get("Thing"),
+            Some(&3),
+            "the count never reached jc's listener"
+        );
+        let head = served.await.unwrap();
+        assert!(
+            head.starts_with(
+                "get /api/endpoint/thingsslug/ngsi-ld/v1/entities?type=thing&count=true&limit=0 http/1.1"
+            ),
+            "{head}"
+        );
+        assert!(head.contains("\r\nhost: api.smartcity.test\r\n"), "{head}");
+        let (_cfg, slug, setup, _d) = fixture();
+        assert!(!vars(&slug, &setup, None, None).contains_key("JC_ASSISTANT_REACH"));
+    }
+
     #[test]
     fn the_proxy_table_names_no_secret_and_follows_the_models_base() {
         let (_cfg, siblings, _setup, _d) = fixture();
@@ -717,6 +807,30 @@ mod tests {
             panic!("a service without its secret file started");
         };
         assert!(why.contains("CLIENT_SECRET_FILE"), "{why}");
+    }
+
+    /// A shared embedder that is down fails each embedding, and the module never turns to a
+    /// model in this process: a question then gets the chat's "search is not available" turn
+    /// (assistant chat/agent.rs), and passages wait for the next indexing round.
+    #[tokio::test]
+    async fn a_shared_embedder_that_is_down_is_an_error_never_the_local_model() {
+        let (_cfg, siblings, setup, _dir) = fixture();
+        // Bound and never listening: every connect is refused at once.
+        let dead = tokio::net::TcpSocket::new_v4().unwrap();
+        dead.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let at = dead.local_addr().unwrap();
+        let mut filled = vars(&siblings, &setup, None, Some(&format!("http://{at}")));
+        filled.insert(
+            "JC_ASSISTANT_EMBEDDER_TOKEN_URL".into(),
+            format!("http://{at}/realms/jc/protocol/openid-connect/token"),
+        );
+        // A model on disk changes nothing: the service is named.
+        let model = |k: &str| (k == "JC_ASSISTANT_MODEL_DIR").then(|| "/opt/e5-small".to_owned());
+        let embedder = embedder(&lookup(&model, &filled)).await.unwrap();
+        assert!(embedder.is_remote());
+        assert!(embedder.query("kde je stanica").await.is_err());
+        assert!(embedder.passages(&["a passage".into()]).await.is_err());
+        assert!(embedder.is_remote(), "still the service after it failed");
     }
 
     /// A writer the test's tracing subscriber appends to, read after the module started.

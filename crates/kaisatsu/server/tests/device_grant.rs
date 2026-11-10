@@ -237,10 +237,14 @@ async fn a_signed_in_person_allows_a_device_once() {
     let csrf = page_form(&app, &sso, &user_code).await;
     let (st, html) = answer(&app, &sso, &csrf, &user_code, None).await;
     assert_eq!(st, StatusCode::OK, "{html}");
-    assert!(html.contains("jcctl asks to sign in as you"), "{html}");
+    assert!(
+        html.contains("Grant Access to jcctl")
+            && html.contains("Do you grant these access privileges?"),
+        "{html}"
+    );
     let (st, html) = answer(&app, &sso, &csrf, &user_code, Some("allow")).await;
     assert_eq!(st, StatusCode::OK, "{html}");
-    assert!(html.contains("Device signed in"), "{html}");
+    assert!(html.contains("Device Login Successful"), "{html}");
     // A code answers once.
     let (st, _) = answer(&app, &sso, &csrf, &user_code, Some("deny")).await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "the code is no longer pending");
@@ -278,7 +282,10 @@ async fn a_denied_device_gets_access_denied() {
     let csrf = page_form(&app, &sso, &user_code).await;
     let (st, html) = answer(&app, &sso, &csrf, &user_code, Some("deny")).await;
     assert_eq!(st, StatusCode::OK, "{html}");
-    assert!(html.contains("Access denied"), "{html}");
+    assert!(
+        html.contains("Consent denied for connecting the device."),
+        "{html}"
+    );
     let (st, body) = poll(&app, "jcctl", &device_code).await;
     assert_eq!(
         (st, error(&body).as_str()),
@@ -361,7 +368,7 @@ async fn an_expired_code_is_expired_at_the_token_endpoint_and_on_the_page() {
     let csrf = page_form(&app, &sso, &user_code).await;
     let (st, html) = answer(&app, &sso, &csrf, "CDFG-HJKL", None).await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "{html}");
-    assert!(html.contains("not valid, or it expired"), "{html}");
+    assert!(html.contains("Invalid code, please try again."), "{html}");
 }
 
 #[tokio::test]
