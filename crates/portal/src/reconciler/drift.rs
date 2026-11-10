@@ -110,7 +110,7 @@ impl Watch {
     /// A watch on one platform host, authenticating as the Portal's own client.
     pub fn new(base: impl Into<String>, issuer: &str, client_id: String, auth: ClientAuth) -> Self {
         Self {
-            http: reqwest::Client::builder()
+            http: crate::reach::builder()
                 .timeout(TIMEOUT)
                 .build()
                 .unwrap_or_default(),

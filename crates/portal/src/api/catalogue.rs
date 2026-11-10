@@ -54,7 +54,7 @@ const GEOMETRIES: &[&str] = &[
 ];
 
 static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
+    crate::reach::builder()
         .user_agent("joinedcontext-portal catalogue")
         .timeout(Duration::from_secs(10))
         .build()

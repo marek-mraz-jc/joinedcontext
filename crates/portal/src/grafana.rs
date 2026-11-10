@@ -41,7 +41,7 @@ const MAX_PANEL_ANSWER: usize = 8 << 20;
 
 /// Outside calls stop here; redirects are refused so the credentials go nowhere else.
 static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
+    crate::reach::builder()
         .timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
         .build()

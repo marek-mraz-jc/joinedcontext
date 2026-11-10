@@ -5,10 +5,11 @@
 //! - `public`: its mount's public base, the address a browser and a token issuer use;
 //! - `internal`: the address the Portal calls it at. In slug mode (no host of its own) that is
 //!   `jc`'s own listener on loopback plus the slug, so a sibling call never leaves the host; a
-//!   module mounted on a host of its own is called at its public base (the host routes by name),
-//!   but for the modules of [`IN_POD`], which `jc` also serves on a loopback listener of its own
-//!   ([`hosted_in_pod`]): the edge in front of a host mode installation never routes their public
-//!   base to them (shako's `/git` is blocked there, the broker and ekiben have no route; T-6705).
+//!   module mounted on a host of its own (host mode) is `http://{host}{prefix}` dialed at `jc`'s
+//!   listener (`reach`): the request carries the host the router dispatches on, as one through
+//!   the edge does, but never leaves the pod, so DNS and the edge do not apply. The modules of
+//!   [`IN_POD`] are called on `jc`'s in-pod loopback listener at their slug instead
+//!   ([`hosted_in_pod`]; T-6705).
 //!
 //! A setting comes from a sibling only when the sibling is in the role set and the environment
 //! does not set it; an explicit value always wins. A sibling's credential is filled only together
@@ -18,7 +19,7 @@
 use crate::app::MountPlan;
 use crate::module::Module;
 use crate::setup::{self, Secret, Setup};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 /// The two addresses of one mounted module, without a trailing slash.
@@ -26,6 +27,48 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 pub struct Sibling {
     pub public: String,
     pub internal: String,
+    /// Where `internal`'s host is dialed instead of through DNS: `jc`'s loopback listener for a
+    /// module on a host of its own, `None` when `internal` is a loopback address already.
+    pub reach: Option<SocketAddr>,
+}
+
+impl Sibling {
+    /// A sibling dialed at its own address.
+    #[must_use]
+    pub fn direct(public: String, internal: String) -> Self {
+        Self {
+            public,
+            internal,
+            reach: None,
+        }
+    }
+
+    /// The address a client without a reach setting calls: `internal`, or the public base when
+    /// `internal` needs `reach` (host mode).
+    #[must_use]
+    pub fn callable(&self) -> &str {
+        if self.reach.is_some() {
+            &self.public
+        } else {
+            &self.internal
+        }
+    }
+
+    /// The host name of `internal` (no port) and the address it is dialed at, when `reach` is
+    /// set: what a client's resolve override takes.
+    #[must_use]
+    pub fn reached_host(&self) -> Option<(&str, SocketAddr)> {
+        let reach = self.reach?;
+        Some((host_of(&self.internal), reach))
+    }
+}
+
+/// The host name (without user or port) of a URL string.
+pub(crate) fn host_of(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, a)| a);
+    authority.split(':').next().unwrap_or(authority)
 }
 
 /// Every mounted module's addresses, plus `jc`'s own listener.
@@ -74,11 +117,19 @@ impl Siblings {
             .iter()
             .map(|plan| {
                 let public = plan.mount.public_base();
-                let internal = match plan.spec.host {
-                    None => format!("http://{reach}{}", plan.mount.path_prefix),
-                    Some(_) => public.clone(),
+                let (internal, via) = match plan.spec.host {
+                    None => (format!("http://{reach}{}", plan.mount.path_prefix), None),
+                    Some(_) => (
+                        format!("http://{}{}", plan.mount.host, plan.mount.path_prefix),
+                        Some(reach),
+                    ),
                 };
-                (plan.module, Sibling { public, internal })
+                let sibling = Sibling {
+                    public,
+                    internal,
+                    reach: via,
+                };
+                (plan.module, sibling)
             })
             .collect();
         Self {
@@ -98,13 +149,8 @@ impl Siblings {
     /// addresses are that listener.
     pub fn insert_loopback(&mut self, module: Module, addr: SocketAddr) {
         let url = format!("http://{}", reach(addr));
-        self.modules.insert(
-            module,
-            Sibling {
-                public: url.clone(),
-                internal: url,
-            },
-        );
+        self.modules
+            .insert(module, Sibling::direct(url.clone(), url));
     }
 
     /// Points a mounted module's internal address at a loopback listener of its own, keeping its
@@ -112,6 +158,7 @@ impl Siblings {
     pub fn set_internal(&mut self, module: Module, addr: SocketAddr) {
         if let Some(sibling) = self.modules.get_mut(&module) {
             sibling.internal = format!("http://{}", reach(addr));
+            sibling.reach = None;
         }
     }
 
@@ -120,6 +167,7 @@ impl Siblings {
     pub fn set_in_pod(&mut self, module: Module, addr: SocketAddr) {
         if let Some(sibling) = self.modules.get_mut(&module) {
             sibling.internal = format!("http://{}/{}", reach(addr), module.slug());
+            sibling.reach = None;
         }
     }
 
@@ -249,12 +297,13 @@ pub fn portal_vars(
     let mut out = BTreeMap::new();
     let unset = |key: &str| env(key).is_none_or(|v| v.trim().is_empty());
     // A group of settings: filled only when its URL key is unset, and then every other key of
-    // the group the environment leaves unset. A value is `None` when its secret is not held.
+    // the group the environment leaves unset. A value is `None` when its secret is not held; the
+    // group is then left out unless the environment names that key itself.
     let mut group = |url_key: &str, values: Vec<(&str, Option<String>)>| {
         if !unset(url_key) {
             return;
         }
-        if values.iter().any(|(_, v)| v.is_none()) {
+        if values.iter().any(|(k, v)| v.is_none() && unset(k)) {
             return;
         }
         for (key, value) in values {
@@ -341,13 +390,8 @@ pub fn portal_vars(
         // that host reached on the listener (`JC_PORTAL_CKAN_API_REACH`).
         let rehearsal = env("JC_PORTAL_CKAN_ALLOW_HTTP").as_deref() == Some("true");
         if catalogue.public.starts_with("https://") || rehearsal {
-            let (api, reach) = match catalogue.public.strip_prefix("https://") {
-                Some(rest) if catalogue.internal == catalogue.public => (
-                    format!("http://{rest}"),
-                    Some(siblings.listener.to_string()),
-                ),
-                _ => (catalogue.internal.clone(), None),
-            };
+            let reach = catalogue.reach.map(|addr| addr.to_string());
+            let api = catalogue.internal.clone();
             let mut values = vec![
                 ("JC_PORTAL_CKAN_URL", Some(catalogue.public.clone())),
                 ("JC_PORTAL_CKAN_API_URL", Some(api)),
@@ -414,6 +458,30 @@ pub fn portal_vars(
             vec![("JC_PORTAL_KNOWLEDGE_URL", Some(assistant.internal.clone()))],
         );
     }
+    // Host mode: the Portal dials each host-mounted sibling URL it was handed at jc's listener
+    // (`JC_PORTAL_REACH`), so a call never takes DNS to the public edge.
+    let reached: BTreeSet<&str> = [
+        ("JC_KEYCLOAK_ADMIN_URL", Module::Kaisatsu),
+        ("JC_SHAKO_URL", Module::Shako),
+        ("JC_PORTAL_PIPELINE_RUNNER_URL", Module::Ekiben),
+        ("JC_PORTAL_GRAFANA_URL", Module::Daiya),
+        ("JC_PORTAL_BROKER_URL", Module::Antares),
+        ("JC_PORTAL_GATEWAY_URL", Module::Gateway),
+    ]
+    .into_iter()
+    .filter_map(|(key, module)| {
+        let (host, _) = siblings.get(module)?.reached_host()?;
+        let url = out.get(key)?;
+        (url.starts_with("http://") && host_of(url) == host).then_some(host)
+    })
+    .collect();
+    if !reached.is_empty() && unset("JC_PORTAL_REACH") && unset("JC_PORTAL_REACH_HOSTS") {
+        out.insert("JC_PORTAL_REACH".to_owned(), siblings.listener.to_string());
+        out.insert(
+            "JC_PORTAL_REACH_HOSTS".to_owned(),
+            reached.into_iter().collect::<Vec<_>>().join(","),
+        );
+    }
     // The Portal's own secret backend (SOPS + age) unless the environment names a backend: the
     // identity the operator gave (checked at start), else the one setup generated.
     if unset("JC_PORTAL_SOPS_AGE_KEY_FILE")
@@ -432,7 +500,7 @@ pub fn portal_vars(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::config::{Cli, Config, FileConfig, MountOverride};
 
@@ -464,6 +532,75 @@ mod tests {
         None
     }
 
+    /// Host mode as jc-prod runs it: shako and daiya on the apex host's paths, the edge's
+    /// uri-blocker in front of `/git`, ekiben and the broker on their default hosts.
+    pub(crate) fn host_mode_plans() -> Vec<MountPlan> {
+        let file = "mode = \"host\"\nbase_host = \"smartcity.test\"\n\
+                    [[mounts.shako]]\nhost = \"smartcity.test\"\npath_prefix = \"/git\"\n\
+                    [[mounts.daiya]]\nhost = \"smartcity.test\"\npath_prefix = \"/grafana\"\n";
+        let file = Config::parse_file(std::path::Path::new("jc.toml"), file).unwrap();
+        let cli = Cli {
+            role: Some("all".into()),
+            scheme: Some("https".into()),
+            ..Cli::default()
+        };
+        crate::app::plan_mounts(&Config::merge(cli, file).unwrap()).unwrap()
+    }
+
+    /// T-6705: in host mode every sibling URL the Portal is handed is its host on jc's own
+    /// listener (`JC_PORTAL_REACH`), never its public base: shako's public base is the apex
+    /// host's `/git`, which the edge refuses, so the Portal never built.
+    #[test]
+    fn host_mode_hands_the_portal_every_sibling_on_the_own_listener() {
+        let plans = host_mode_plans();
+        let mut siblings = Siblings::new(&plans, "0.0.0.0:8080".parse().unwrap());
+        // As `start` does: the modules the edge never routes are on the in-pod listener.
+        for module in hosted_in_pod(&plans) {
+            siblings.set_in_pod(module, "127.0.0.1:40125".parse().unwrap());
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
+        let v = portal_vars(&siblings, &setup, none);
+        assert_eq!(v["JC_SHAKO_URL"], "http://127.0.0.1:40125/git");
+        assert_eq!(v["JC_PORTAL_PIPELINE_RUNNER_URL"], "http://127.0.0.1:40125/streams");
+        assert_eq!(v["JC_PORTAL_BROKER_URL"], "http://127.0.0.1:40125/broker");
+        assert_eq!(v["JC_SHAKO_PUBLIC_URL"], "https://smartcity.test/git");
+        // The routed host-mounted siblings: their host over http, dialed at jc's listener.
+        assert_eq!(v["JC_PORTAL_REACH"], "127.0.0.1:8080");
+        let reached: BTreeSet<&str> = v["JC_PORTAL_REACH_HOSTS"].split(',').collect();
+        assert_eq!(
+            reached,
+            BTreeSet::from(["api.smartcity.test", "id.smartcity.test", "smartcity.test"])
+        );
+        for (key, module) in [
+            ("JC_KEYCLOAK_ADMIN_URL", Module::Kaisatsu),
+            ("JC_PORTAL_GRAFANA_URL", Module::Daiya),
+            ("JC_PORTAL_GATEWAY_URL", Module::Gateway),
+        ] {
+            let url = &v[key];
+            let public = &siblings.get(module).unwrap().public;
+            assert!(url.starts_with("http://"), "{key}: {url}");
+            assert_ne!(url, public, "{key}: the public base");
+            assert!(reached.contains(host_of(url)), "{key}: {url} not reached");
+        }
+        assert_eq!(v["JC_PORTAL_GRAFANA_URL"], "http://smartcity.test/grafana");
+        assert_eq!(v["JC_PORTAL_GATEWAY_URL"], "http://api.smartcity.test");
+        assert_eq!(v["JC_KEYCLOAK_ADMIN_URL"], "http://id.smartcity.test");
+        // The issuer stays the public name: a token names it, and kaisatsu names it the same
+        // for a request on the listener under its host.
+        assert_eq!(v["JC_OIDC_ISSUER"], "https://id.smartcity.test/realms/jc");
+        // An operator's own sibling URL keeps its address and is not reached.
+        let own = |k: &str| (k == "JC_PORTAL_GATEWAY_URL").then(|| "http://g.svc:8080".to_owned());
+        let v = portal_vars(&siblings, &setup, own);
+        assert!(!v.contains_key("JC_PORTAL_GATEWAY_URL"));
+        assert!(!v["JC_PORTAL_REACH_HOSTS"].contains("api."));
+        // Slug mode needs no reach: every sibling is a loopback address already.
+        let (slug, setup, _d) = fixture("https");
+        let v = portal_vars(&slug, &setup, none);
+        assert!(!v.contains_key("JC_PORTAL_REACH"));
+        assert!(!v.contains_key("JC_PORTAL_REACH_HOSTS"));
+    }
+
     #[test]
     fn slug_mode_calls_siblings_on_loopback_and_host_mounts_at_their_host() {
         let (siblings, _, _d) = fixture("https");
@@ -485,8 +622,10 @@ mod tests {
         );
         let siblings = Siblings::new(&plans(mounts, "https"), "[::]:1".parse().unwrap());
         let git = siblings.get(Module::Shako).unwrap();
-        assert_eq!(git.internal, git.public);
         assert_eq!(git.public, "https://git.city.example");
+        // Its host on jc's listener, never its public name through DNS and the edge.
+        assert_eq!(git.internal, "http://git.city.example");
+        assert_eq!(git.reach, Some("[::1]:1".parse().unwrap()));
         assert_eq!(siblings.listener, "[::1]:1".parse().unwrap());
     }
 
@@ -533,9 +672,10 @@ mod tests {
         }
         // Their public bases stay what a browser and a token use.
         assert_eq!(vars["JC_SHAKO_PUBLIC_URL"], "https://git.city.example");
-        // Every other host-mounted sibling keeps its host.
+        // Every other host-mounted sibling keeps its host, dialed at jc's listener.
         let dash = siblings.get(Module::Daiya).unwrap();
-        assert_eq!(dash.internal, dash.public);
+        assert_eq!(dash.internal, "http://dashboards.city.example");
+        assert_eq!(dash.reach, Some("127.0.0.1:8443".parse().unwrap()));
         assert_eq!(hosted_in_pod(&plans_slug()), Vec::<Module>::new());
     }
 

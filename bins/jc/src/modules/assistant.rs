@@ -68,7 +68,9 @@ pub fn vars(
     // The chat links into these as origins (`/api/endpoint/{slug}`, the guide's pages): a module
     // under a path prefix leaves its key unset.
     let origin = |m: Module| public(m).filter(|url| crate::siblings::origin(url) == *url);
-    let internal = |m: Module| siblings.get(m).map(|s| s.internal.clone());
+    // ponytail: the assistant has no reach setting yet, so a host mount is called at its public
+    // base (through the edge); give it one as the Portal's `JC_PORTAL_REACH` when it matters.
+    let internal = |m: Module| siblings.get(m).map(|s| s.callable().to_owned());
     put("JC_ASSISTANT_GATEWAY_URL", internal(Module::Gateway));
     put("JC_ASSISTANT_ENDPOINT_URL", origin(Module::Gateway));
     // The issuer's public token endpoint, as the gateway's own token: kaisatsu names the issuer
@@ -175,7 +177,7 @@ fn proxy_lookup(
         ("JC_FORGE_BASE", Module::Shako),
     ] {
         if let Some(s) = siblings.get(module) {
-            out.insert(key, s.internal.clone());
+            out.insert(key, s.callable().to_owned());
         }
     }
     // The listener is loopback only: no mesh in front of it to name a caller.

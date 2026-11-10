@@ -255,7 +255,7 @@ fn unavailable(state: &AppState, req: &Request, name: &str, half: &str) -> Respo
 fn http() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::reach::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(std::time::Duration::from_secs(6))
             .timeout(std::time::Duration::from_secs(120))

@@ -42,7 +42,7 @@ const EQUALITY_TRIES: usize = 3;
 const STANDARDS: [&str; 4] = ["ngsi-ld", "ogc-features", "odata", "sta"];
 
 static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
+    crate::reach::builder()
         .user_agent("joinedcontext-portal endpoint standards")
         .timeout(Duration::from_secs(10))
         .build()

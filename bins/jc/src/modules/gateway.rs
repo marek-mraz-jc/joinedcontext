@@ -149,7 +149,9 @@ pub fn vars(
         // request reached it on and the Portal's internal listener checks it. The keys are read
         // on the listener (`JC_OIDC_JWKS_URL`).
         let realm = format!("/realms/{}", setup.realm);
-        let (keys, keys_reach) = realm_keys(id, siblings.listener);
+        // Host mode: kaisatsu's host over http on jc's listener (`Sibling::reach`); the key
+        // reader takes http only, and the public base is https behind the edge.
+        let (keys, keys_reach) = (&id.internal, id.reach);
         let mut oidc = vec![
             ("JC_OIDC_ISSUER", Some(format!("{}{realm}", id.public))),
             (
@@ -205,21 +207,6 @@ const MAX_ENTRIES: usize = 10_000;
 const MAX_TREE: u64 = 4 * MAX_ARCHIVE;
 /// The largest branch answer read.
 const MAX_ANSWER: u64 = 64 * 1024;
-
-/// Where the gateway reads the realm's keys: kaisatsu's internal address, or, for kaisatsu on a
-/// host of its own (host mode), that host over plain http dialed at `jc`'s listener (the
-/// `JC_OIDC_JWKS_REACH` address), which routes it by the host as it does a request through the
-/// edge. The gateway reads keys over http only, and the public base is https behind the edge.
-fn realm_keys(id: &Sibling, listener: SocketAddr) -> (String, Option<SocketAddr>) {
-    let rest = id
-        .public
-        .strip_prefix("https://")
-        .or_else(|| id.public.strip_prefix("http://"));
-    match rest {
-        Some(rest) if id.internal == id.public => (format!("http://{rest}"), Some(listener)),
-        _ => (id.internal.clone(), None),
-    }
-}
 
 /// Repositories of shako read over its HTTP API, never with a `git` binary (the image has none):
 /// the commit of a ref from `branches/{ref}` (or the ref itself when it is a commit id), then

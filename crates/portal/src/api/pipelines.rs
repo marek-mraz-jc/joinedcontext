@@ -290,7 +290,7 @@ pub(crate) fn scrape(body: &str, stream: &str, scraped_at: String) -> PipelineMe
 pub(crate) fn http() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::reach::builder()
             .timeout(SCRAPE_TIMEOUT)
             .pool_max_idle_per_host(0)
             .build()
@@ -303,7 +303,7 @@ pub(crate) fn http() -> &'static reqwest::Client {
 /// carries it.
 pub(crate) fn runner_http(config: &crate::config::Config) -> reqwest::Client {
     crate::reconciler::streams::runner_client(
-        reqwest::Client::builder()
+        crate::reach::builder()
             .timeout(SCRAPE_TIMEOUT)
             .pool_max_idle_per_host(0),
         config.pipeline_runner_token.as_deref(),

@@ -107,7 +107,7 @@ const IDLE: Duration = Duration::from_secs(120);
 /// sending fails the copy after `idle` of silence instead of holding the space read-only for
 /// good.
 fn client(idle: Duration) -> reqwest::Client {
-    reqwest::Client::builder()
+    crate::reach::builder()
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(idle)
         .build()

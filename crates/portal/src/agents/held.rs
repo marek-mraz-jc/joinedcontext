@@ -180,7 +180,7 @@ pub fn portal_reads<'a>(
 pub fn client() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::reach::builder()
             .timeout(ACCESS_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
             .build()

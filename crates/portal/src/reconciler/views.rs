@@ -1524,7 +1524,7 @@ impl ViewSync {
     /// A writer against one broker, its admin token read from `token_file` on every run.
     pub fn new(broker: impl Into<String>, token_file: impl Into<PathBuf>) -> Self {
         Self {
-            http: reqwest::Client::builder()
+            http: crate::reach::builder()
                 .timeout(TIMEOUT)
                 .build()
                 .unwrap_or_default(),

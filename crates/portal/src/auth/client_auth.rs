@@ -20,7 +20,7 @@ pub const JWT_BEARER: &str = "urn:ietf:params:oauth:client-assertion-type:jwt-be
 /// redirect: a 307 or 308 would resend the grant or the admin call, credential included, to
 /// whatever host the answer names (T-3592).
 pub fn realm_http(timeout: std::time::Duration) -> Option<reqwest::Client> {
-    reqwest::Client::builder()
+    crate::reach::builder()
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
         .build()

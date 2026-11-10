@@ -491,10 +491,7 @@ mod tests {
             let mut s = Siblings::new(&[], listener);
             s.insert_remote(
                 Module::Gateway,
-                Sibling {
-                    public: public.into(),
-                    internal: internal.into(),
-                },
+                Sibling::direct(public.into(), internal.into()),
             );
             s
         };
