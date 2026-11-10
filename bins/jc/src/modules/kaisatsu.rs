@@ -489,6 +489,13 @@ pub async fn build(
             apply_import_dir(&store, dir, cfg.import_secrets_dir.clone(), realm).await?;
     }
     apply_portal_realm(&store, ctx, existed_before, import_brings_portal).await?;
+    if let Some(file) = &cfg.branding_file {
+        // A broken file leaves the pages plain; sign-in stays up.
+        match kaisatsu_server::apply_branding_file(&store, file).await {
+            Ok(n) => tracing::info!(realms = n, "kaisatsu branding file applied"),
+            Err(e) => tracing::error!(error = %e, "kaisatsu branding file not applied"),
+        }
+    }
     check_edge_client(&store, realm).await?;
     follow_endpoint_scopes(store.clone(), realm.clone(), shutdown, tasks);
     let state = KaisatsuState::new(
@@ -816,6 +823,7 @@ mod tests {
             db_password_file: None,
             db_max_connections: None,
             database: None,
+            branding_file: None,
         };
         let store = open_kaisatsu_store(&mem_section, kek).await.unwrap();
         assert!(store.list_realms().await.unwrap().is_empty());
@@ -857,6 +865,7 @@ mod tests {
                 db_password_file: Some(pw_file),
                 db_max_connections: Some(2),
                 database: None,
+                branding_file: None,
             }
         };
 

@@ -245,6 +245,9 @@ pub struct KaisatsuSection {
     pub db_max_connections: Option<u32>,
     /// Postgres (the alternative to `database_url_file`; not both).
     pub database: Option<DatabaseSection>,
+    /// The installation's branding (the deployment's `global.branding` as YAML, the Portal's
+    /// `JC_BRANDING_FILE`, its logo file beside it): every realm's login pages wear it.
+    pub branding_file: Option<PathBuf>,
 }
 
 /// `[ekiben]` section.
@@ -848,6 +851,7 @@ impl Config {
                 .kaisatsu_db_max_connections
                 .or(file.kaisatsu.db_max_connections),
             database: file.kaisatsu.database,
+            branding_file: file.kaisatsu.branding_file,
         };
         if kaisatsu.database.is_some() && kaisatsu.database_url_file.is_some() {
             return Err(ConfigError::Database {
@@ -2154,6 +2158,30 @@ path_prefix = "/api/endpoint"
         .unwrap_err();
         assert!(matches!(err, ConfigError::Read { .. }), "{err}");
         assert!(err.to_string().contains("missing.toml"));
+    }
+
+    #[test]
+    fn the_kaisatsu_section_names_the_branding_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jc.toml");
+        std::fs::write(
+            &path,
+            "[kaisatsu]\nbranding_file = \"/etc/jc/branding/branding.yaml\"\n",
+        )
+        .unwrap();
+        let cfg = Config::resolve(Cli {
+            config: Some(path),
+            ..Cli::default()
+        })
+        .unwrap();
+        assert_eq!(
+            cfg.kaisatsu.branding_file.as_deref(),
+            Some(Path::new("/etc/jc/branding/branding.yaml"))
+        );
+        assert!(
+            Config::parse_file(Path::new("jc.toml"), "[kaisatsu]\nbranding = \"x\"\n").is_err(),
+            "an unknown key is refused"
+        );
     }
 
     #[test]
