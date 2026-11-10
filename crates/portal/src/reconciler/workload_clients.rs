@@ -796,7 +796,8 @@ impl WorkloadClientSync {
             else {
                 continue;
             };
-            if !managed(client) || wanted.contains(account) {
+            // An empty `wanted` (no account loaded yet) removes nothing: see groups.rs.
+            if !managed(client) || wanted.is_empty() || wanted.contains(account) {
                 continue;
             }
             if !self.derives(account) {

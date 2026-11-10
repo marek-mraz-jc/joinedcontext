@@ -288,7 +288,13 @@ impl GroupSync {
 
         // A managed group the repository no longer declares is this wave's to remove; one
         // without the attribute belongs to whoever made it (PF-63).
-        for group in existing.iter().filter(|g| g.managed()) {
+        // A load that declares none of them (a repository still empty or not loaded yet, as on
+        // a fresh installation before its import) is no source for a removal: the run waits
+        // for one that declares something, or it would delete every imported object.
+        for group in existing
+            .iter()
+            .filter(|g| g.managed() && !wanted.is_empty())
+        {
             if wanted.contains(&group.name) {
                 continue;
             }

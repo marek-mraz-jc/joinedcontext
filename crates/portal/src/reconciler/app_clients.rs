@@ -1093,7 +1093,12 @@ impl AppClientSync {
                     let Some(id) = client.get("clientId").and_then(Value::as_str) else {
                         continue;
                     };
-                    if !id.starts_with("app-") || !managed(client) || wanted.contains(id) {
+                    // An empty `wanted` (no App loaded yet) removes nothing: see groups.rs.
+                    if !id.starts_with("app-")
+                        || !managed(client)
+                        || wanted.is_empty()
+                        || wanted.contains(id)
+                    {
                         continue;
                     }
                     let app = id.trim_start_matches("app-");

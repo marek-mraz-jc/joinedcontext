@@ -153,7 +153,8 @@ impl McpClientSync {
             else {
                 continue;
             };
-            if !managed(client) || wanted.contains(server) {
+            // An empty `wanted` (no server loaded yet) removes nothing: see groups.rs.
+            if !managed(client) || wanted.is_empty() || wanted.contains(server) {
                 continue;
             }
             let mut outcome = ClientOutcome::of(server);

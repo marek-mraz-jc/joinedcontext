@@ -228,7 +228,8 @@ impl HubScopeSync {
             let Some(name) = scope["name"].as_str() else {
                 continue;
             };
-            if !ours(scope) || names.contains_key(name) {
+            // No serving Endpoint loaded yet removes nothing: see groups.rs.
+            if !ours(scope) || names.is_empty() || names.contains_key(name) {
                 continue;
             }
             let Some(id) = scope["id"].as_str() else {

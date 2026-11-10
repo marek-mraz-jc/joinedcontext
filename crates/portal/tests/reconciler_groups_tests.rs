@@ -768,3 +768,59 @@ async fn a_projects_derived_groups_follow_its_bindings_and_never_take_a_manifest
     // The writer the bindings name is not written into the manifest's group.
     assert!(!wrote.iter().any(|w| w.contains("/groups/w1")), "{wrote:?}");
 }
+
+/// Prod rehearsal gate 4: on a fresh installation jc started the Portal while its repository held
+/// only the first-start files, and the run deleted every imported `managed-by: joinedcontext` group
+/// with its members. A load declaring no group (and no project) removes nothing; the run that
+/// loads the manifest converges the group the realm already holds, members kept.
+#[tokio::test]
+async fn a_load_that_declares_no_group_keeps_every_managed_group_and_its_members() {
+    let keycloak = realm().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups")))
+        .and(query_param("briefRepresentation", "false"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": "g9", "name": "skoly-viewer", "attributes": { MANAGED_BY: [MANAGED_VALUE] } }
+        ])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups/g9/members")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "id": READER }])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/users/{READER}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": READER })))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("DELETE"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("PUT"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&keycloak)
+        .await;
+    let sync = sync(&keycloak);
+
+    // The repository still empty: no group, no project.
+    let outcomes = sync.converge_with(&mirror_with(vec![]), &[]).await;
+    assert!(outcomes.iter().all(|o| o.error.is_none()), "{outcomes:?}");
+    let written = wrote(&keycloak).await;
+    assert!(
+        !written.iter().any(|w| w.starts_with("DELETE")),
+        "an empty load removed {written:?}"
+    );
+
+    // The manifest arrives: the group the realm holds converges, its member stays.
+    let outcomes = sync
+        .converge_with(&mirror_with(vec![group("skoly-viewer", &[READER])]), &[])
+        .await;
+    assert!(outcomes.iter().all(|o| o.error.is_none()), "{outcomes:?}");
+    let written = wrote(&keycloak).await;
+    assert!(
+        !written.iter().any(|w| w.starts_with("DELETE") || w.starts_with("POST /admin")),
+        "the held group was rewritten: {written:?}"
+    );
+}
