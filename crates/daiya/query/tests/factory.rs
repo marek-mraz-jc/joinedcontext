@@ -171,26 +171,53 @@ async fn the_operator_reach_opens_one_address_to_one_organizations_prometheus() 
                 .await
         }
     };
-    let ok = query(record("prom", "prometheus", &url, json!({}))).await.unwrap();
+    let ok = query(record("prom", "prometheus", &url, json!({})))
+        .await
+        .unwrap();
     assert_eq!(ok[0].frames.len(), 1);
     assert_eq!(seen.lock().len(), 1);
 
     let mut other_org = record("prom", "prometheus", &url, json!({}));
     other_org.org_id = OrgId::from_u128(7);
-    let other_port = url.rsplit_once(':').map(|(h, p)| format!("{h}:{}", p.parse::<u16>().unwrap() ^ 1)).unwrap();
+    let other_port = url
+        .rsplit_once(':')
+        .map(|(h, p)| format!("{h}:{}", p.parse::<u16>().unwrap() ^ 1))
+        .unwrap();
     for (rec, why) in [
         (other_org, "another organization"),
         (record("ld", "ngsild", &url, json!({})), "another kind"),
-        (record("prom", "prometheus", &other_port, json!({})), "another port"),
-        (record("prom", "prometheus", &url.replace("127.0.0.1", "localhost"), json!({})), "another host name"),
+        (
+            record("prom", "prometheus", &other_port, json!({})),
+            "another port",
+        ),
+        (
+            record(
+                "prom",
+                "prometheus",
+                &url.replace("127.0.0.1", "localhost"),
+                json!({}),
+            ),
+            "another host name",
+        ),
     ] {
         let err = query(rec).await.map(|_| ()).unwrap_err();
         let refused = matches!(&err, DsError::GuardRefused(_))
             || matches!(&err, DsError::InvalidQuery { reason, .. } if reason.contains("refused"));
         assert!(refused, "{why}: {err:?}");
     }
-    assert_eq!(seen.lock().len(), 1, "no refused datasource reached the address");
-    for bad in ["http://p:8080/x", "http://p", "http://u@p:1", "http://169.254.169.254:80", "p:80", "http://p:1/?q"] {
+    assert_eq!(
+        seen.lock().len(),
+        1,
+        "no refused datasource reached the address"
+    );
+    for bad in [
+        "http://p:8080/x",
+        "http://p",
+        "http://u@p:1",
+        "http://169.254.169.254:80",
+        "p:80",
+        "http://p:1/?q",
+    ] {
         assert!(OperatorReach::parse(bad).is_err(), "{bad}");
     }
 }
