@@ -968,7 +968,7 @@ impl StreamDeployer {
                 });
                 let stream = slug
                     .as_deref()
-                    .map(|slug| crate::pipeline_expiry::render_sweep(&ns, slug, expiry));
+                    .map(|slug| crate::pipeline_expiry::render_sweep(&ns, &name, slug, expiry));
                 let outcome = match stream {
                     Some(Some(mut stream)) => {
                         // The sweep deletes as the pipeline it sweeps for (PL-20).

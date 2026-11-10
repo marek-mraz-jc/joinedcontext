@@ -179,10 +179,22 @@ impl CatalogSync {
             .filter(|id| !wanted.contains_key(*id))
             .collect();
         for batch in changed.chunks(BATCH) {
-            post(http, &surface, "upsert", token, &json!(batch)).await?;
+            post(http, &surface, "upsert", token, &json!(batch), None).await?;
         }
+        // The gateway refuses a delete that does not name why (DM-113).
+        let reason = format!(
+            "catalogue (EP-140): no longer a public Endpoint or CKAN dataset, catalogue Endpoint {slug}"
+        );
         for batch in gone.chunks(BATCH) {
-            post(http, &surface, "delete", token, &json!(batch)).await?;
+            post(
+                http,
+                &surface,
+                "delete",
+                token,
+                &json!(batch),
+                Some(&reason),
+            )
+            .await?;
         }
         let run = Run {
             upserted: changed.len(),
@@ -606,18 +618,27 @@ const REASONS: usize = 3;
 /// How long one reported reason may be.
 const REASON_CHARS: usize = 200;
 
-/// One batch operation; a multi-status answer is a failure, with what failed and why.
+/// One batch operation, with `JC-Reason` when it names one; a multi-status answer is a failure,
+/// with what failed and why.
 async fn post(
     http: &reqwest::Client,
     surface: &str,
     operation: &str,
     token: &str,
     body: &Value,
+    reason: Option<&str>,
 ) -> Result<(), String> {
-    let response = http
+    let mut request = http
         .post(format!("{surface}/entityOperations/{operation}"))
         .bearer_auth(token)
-        .json(body)
+        .json(body);
+    if let Some(reason) = reason {
+        request = request.header(
+            "JC-Reason",
+            crate::pipeline_source_deletes::reason_header(reason),
+        );
+    }
+    let response = request
         .send()
         .await
         .map_err(|err| format!("the catalogue {operation} did not reach the gateway: {err}"))?;

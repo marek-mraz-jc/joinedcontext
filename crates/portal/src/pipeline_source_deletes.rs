@@ -1288,9 +1288,16 @@ fn reason(cause: Cause, pipeline: &str, run: &str) -> String {
     format!("{}: pipeline {pipeline} run {run}", cause.as_str())
 }
 
-/// `JC-Reason` as the gateway reads it: percent-encoded UTF-8.
-fn reason_header(cause: Cause, pipeline: &str, run: &str) -> String {
-    reason(cause, pipeline, run)
+/// The most characters of a reason the gateway takes (DM-113).
+const MAX_REASON: usize = 500;
+
+/// `JC-Reason` as the gateway reads it: percent-encoded UTF-8, cut to [`MAX_REASON`] characters,
+/// so a long pipeline or project name never turns the delete into `400 reason-required`.
+pub(crate) fn reason_header(reason: &str) -> String {
+    reason
+        .chars()
+        .take(MAX_REASON)
+        .collect::<String>()
         .bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
@@ -1391,7 +1398,7 @@ pub fn render(
                         "headers": {
                             "Content-Type": "application/json",
                             "Accept": "application/json",
-                            "JC-Reason": reason_header(cause, pipeline, run),
+                            "JC-Reason": reason_header(&reason(cause, pipeline, run)),
                         },
                         "oauth2": oauth2,
                         "timeout": "30s",
