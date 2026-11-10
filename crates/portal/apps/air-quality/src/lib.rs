@@ -589,22 +589,59 @@ async fn update_station(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// A removal. The gateway admits it only for a station a steward added, one without `source`,
-/// by evaluating the grant's `q` against the stored entity (R45); this app does not repeat that.
+/// What a removal sends: why the person removes the station, in their words (DM-113).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Removal {
+    reason: String,
+}
+
+/// The most characters of a reason the gateway takes (DM-113).
+const MAX_REASON: usize = 500;
+
+/// `JC-Reason` as the gateway reads it: trimmed, 1 to [`MAX_REASON`] characters, percent-encoded
+/// UTF-8 (unreserved characters stay). Any other length is `None`: refused, never cut.
+fn reason_header(reason: &str) -> Option<String> {
+    let reason = reason.trim();
+    if !(1..=MAX_REASON).contains(&reason.chars().count()) {
+        return None;
+    }
+    Some(
+        reason
+            .bytes()
+            .map(|b| match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                    char::from(b).to_string()
+                }
+                _ => format!("%{b:02X}"),
+            })
+            .collect(),
+    )
+}
+
+/// A removal, with the reason the person typed (`{"reason": …}`), sent as `JC-Reason`. The
+/// gateway admits it only for a station a steward added, one without `source`, by evaluating the
+/// grant's `q` against the stored entity (R45); this app does not repeat that.
 async fn delete_station(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
     headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<Response, AppError> {
     let caller = Caller::of(&headers);
     let token = token_of(&caller)?;
     if !valid_urn(&id) {
         return Err(refused("a station id is an NGSI-LD URN"));
     }
+    let reason = serde_json::from_slice::<Removal>(&body)
+        .ok()
+        .and_then(|removal| reason_header(&removal.reason))
+        .ok_or_else(|| refused("a removal names why in reason, 1 to 500 characters"))?;
     app.write(
         app.http
             .delete(app.url(&format!("ngsi-ld/v1/entities/{id}")))
-            .bearer_auth(token),
+            .bearer_auth(token)
+            .header("JC-Reason", reason),
     )
     .await?;
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -689,6 +726,18 @@ fn format_utc(seconds: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reason_is_counted_as_the_gateway_counts_and_encoded_once() {
+        assert_eq!(reason_header(""), None);
+        assert_eq!(reason_header(" \r\n\t "), None);
+        assert_eq!(reason_header(&"ž".repeat(MAX_REASON + 1)), None);
+        let most = reason_header(&format!(" {} ", "ž".repeat(MAX_REASON))).expect("500 characters");
+        assert_eq!(most, "%C5%BE".repeat(MAX_REASON));
+        let split = reason_header(" Sensor gone\r\nJC-Record: version ").expect("a reason");
+        assert_eq!(split, "Sensor%20gone%0D%0AJC-Record%3A%20version");
+        assert!(axum::http::HeaderValue::from_str(&split).is_ok());
+    }
 
     #[test]
     fn a_caller_debug_never_shows_the_token() {

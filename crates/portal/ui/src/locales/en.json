@@ -1320,7 +1320,9 @@
       "keyFieldOf": "{legend}, field {n}",
       "keyRemoveOf": "Remove {field}",
       "keyNoField": "Every field of this type is already in the list.",
-      "groupCount": "{count, plural, one {# row} other {# rows}}"
+      "groupCount": "{count, plural, one {# row} other {# rows}}",
+      "deleteReasonHint": "Why you delete them. It is recorded with each deletion.",
+      "deleteReasonRequired": "Enter why you delete them."
     },
     "temporal": {
       "title": "How history rows are created",

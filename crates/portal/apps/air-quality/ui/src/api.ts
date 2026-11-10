@@ -65,7 +65,8 @@ export const createStation = (fields: StationFields): Promise<{ id: string }> =>
   call<{ id: string }>("stations", { method: "POST", body: JSON.stringify(fields) });
 export const updateStation = (id: string, fields: StationFields): Promise<void> =>
   call<void>(station(id), { method: "PATCH", body: JSON.stringify(fields) });
-export const deleteStation = (id: string): Promise<void> =>
-  call<void>(station(id), { method: "DELETE" });
+/** `reason`: why the steward removes it, as they typed it (DM-113), sent on as `JC-Reason`. */
+export const deleteStation = (id: string, reason: string): Promise<void> =>
+  call<void>(station(id), { method: "DELETE", body: JSON.stringify({ reason }) });
 /** One day of the station's PM10 and PM2.5, the temporal entity as the endpoint answered it. */
 export const getHistory = (id: string): Promise<unknown> => call<unknown>(`${station(id)}/history`);

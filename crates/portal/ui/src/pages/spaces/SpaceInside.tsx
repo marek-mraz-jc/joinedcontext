@@ -98,6 +98,7 @@ import {
   Term,
 } from "../../components/ui";
 import { Card, ConfirmDialog, Field, Input, Select } from "../../components/ui";
+import { MAX_REASON, reasonProblem } from "../../components/entities/reason";
 import { ResourcePageFailed } from "../../components/ui/PageState";
 import { SourceRemovalsPanel } from "../pipelines/PipelineSourceReport";
 import { useUrlParam, useUrlText, useUrlUrn } from "../../navigation/urlState";
@@ -1368,12 +1369,18 @@ export function BulkBar({
   const [confirming, setConfirming] = useState(false);
   const [running, setRunning] = useState(false);
   const [refused, setRefused] = useState<{ name: string; reason: string }[]>([]);
+  // Why the person deletes, typed in the confirm step as in Explore's row delete (DM-113).
+  const [why, setWhy] = useState("");
+  const [tried, setTried] = useState(false);
+  const whyError = tried ? reasonProblem(why) : null;
   const remove = async () => {
+    setTried(true);
+    if (reasonProblem(why) !== null) return;
     setRunning(true);
     const failed: { id: string; name: string; reason: string }[] = [];
     for (const row of rows) {
       try {
-        await deleteRow(project, space, source, row);
+        await deleteRow(project, space, source, row, why);
       } catch (error) {
         failed.push({ id: row.id, name: cellText(row.cells.name) || row.id, reason: error instanceof Error ? error.message : String(error) });
       }
@@ -1393,7 +1400,11 @@ export function BulkBar({
           variant="danger"
           disabled={!canDelete || rows.length === 0}
           disabledReason={t("spaces.toolbar.deleteNotGranted")}
-          onClick={() => setConfirming(true)}
+          onClick={() => {
+            setWhy("");
+            setTried(false);
+            setConfirming(true);
+          }}
         >
           {t("spaces.toolbar.deleteSelected")}
         </Button>
@@ -1433,7 +1444,28 @@ export function BulkBar({
         tone="danger"
         pending={running}
         onConfirm={() => void remove()}
-      />
+      >
+        <Field
+          id="spaces-delete-reason"
+          label={t("explore.removeReason")}
+          required
+          help={t("spaces.toolbar.deleteReasonHint")}
+          errors={
+            whyError
+              ? [whyError === "required" ? t("spaces.toolbar.deleteReasonRequired") : t("explore.removeReasonError.tooLong", { max: MAX_REASON })]
+              : undefined
+          }
+        >
+          <Input
+            id="spaces-delete-reason"
+            data-testid="spaces-delete-reason"
+            value={why}
+            maxLength={MAX_REASON}
+            autoComplete="off"
+            onChange={(event) => setWhy(event.target.value)}
+          />
+        </Field>
+      </ConfirmDialog>
       <BulkSetDialog open={setting} onOpenChange={setSetting} rows={rows} slots={writable} source={writeSource} onDone={onChanged} />
     </div>
   );

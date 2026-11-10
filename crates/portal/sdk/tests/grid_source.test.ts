@@ -371,3 +371,23 @@ describe("orderBy", () => {
     expect(page.total).toBe(3);
   });
 });
+
+// DM-113: the Spaces delete sends the person's reason, and none is refused before the request.
+describe("remove", () => {
+  it("deletes with the person's reason, and refuses a missing, blank or too long one unsent", async () => {
+    const calls: JcRequest[] = [];
+    const transport = async (req: JcRequest): Promise<JcResponse> => {
+      calls.push(req);
+      return { status: 204, body: null };
+    };
+    const source = endpointSource("demo", transport);
+    for (const bad of [undefined, " ", "x".repeat(501)]) {
+      const thrown = await source.remove!("urn:ngsi-ld:T:1", bad as unknown as string).catch((e: unknown) => e);
+      expect(thrown).toBeInstanceOf(SourceError);
+      expect((thrown as SourceError).slot).toBe("reason");
+    }
+    expect(calls).toEqual([]);
+    await source.remove!("urn:ngsi-ld:T:1", " duplicate of T:2 ");
+    expect(calls).toEqual([expect.objectContaining({ method: "DELETE", reason: "duplicate of T:2" })]);
+  });
+});

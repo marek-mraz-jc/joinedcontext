@@ -165,7 +165,8 @@ describe("air-quality app", () => {
     });
   });
 
-  it("removes only a station a steward added, after a second click", async () => {
+  // DM-113: the steward says why in the confirm step; without a reason nothing is sent.
+  it("removes only a station a steward added, once the steward says why", async () => {
     const user = userEvent.setup();
     const fetchMock = serve(steward);
     render(<App />);
@@ -175,12 +176,21 @@ describe("air-quality app", () => {
 
     await user.click(screen.getByRole("button", { name: "Remove Kumpula" }));
     expect(writes(fetchMock)).toHaveLength(0);
+    await user.type(screen.getByLabelText("Reason"), "   ");
+    await user.click(screen.getByRole("button", { name: "Confirm removal of Kumpula" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter why you remove it");
+    expect(screen.getByLabelText("Reason")).toHaveAttribute("aria-invalid", "true");
+    expect(writes(fetchMock)).toHaveLength(0);
+
+    await user.clear(screen.getByLabelText("Reason"));
+    await user.type(screen.getByLabelText("Reason"), " Sensor moved to Kallio ");
     await user.click(screen.getByRole("button", { name: "Confirm removal of Kumpula" }));
 
     await waitFor(() => expect(writes(fetchMock)).toHaveLength(1));
     const [url, init] = writes(fetchMock)[0];
     expect(init?.method).toBe("DELETE");
     expect(String(url)).toContain(`api/stations/${encodeURIComponent(OWN)}`);
+    expect(JSON.parse(String(init?.body))).toEqual({ reason: "Sensor moved to Kallio" });
   });
 
   it("picks a station from the list beside the map", async () => {
@@ -205,9 +215,12 @@ describe("air-quality app", () => {
     serve(steward, 409, "the station still has readings this week");
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "Remove Kumpula" }));
+    await user.type(screen.getByLabelText("Reason"), "Duplicate");
     await user.click(screen.getByRole("button", { name: "Confirm removal of Kumpula" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("the station still has readings this week");
-    expect(screen.getByRole("button", { name: "Remove Kumpula" })).toBeInTheDocument();
+    // The reason stays typed, so the steward can try again or cancel.
+    expect(screen.getByLabelText("Reason")).toHaveValue("Duplicate");
+    expect(screen.getByRole("button", { name: "Confirm removal of Kumpula" })).toBeInTheDocument();
   });
 
   it("repeats the gateway's refusal instead of a generic failure", async () => {
