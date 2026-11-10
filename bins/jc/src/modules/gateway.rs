@@ -693,6 +693,42 @@ pub fn at_root(router: Router) -> Router {
         .layer(axum::middleware::from_fn(whole_path))
 }
 
+/// The App pods' listener's router (`apps_listen`): `router`, the gateway as the public
+/// listener serves it, mounted at `/api/endpoint` alone on any host and for `GET` and `HEAD`
+/// alone (any other method is 405 before the gateway sees it). It trusts no proxy, so a pod's
+/// `X-Forwarded-*` headers are dropped and its own address is the client's.
+pub fn apps_router(
+    scheme: &str,
+    base_host: &str,
+    router: Router,
+) -> Result<Router, jc_router::RouterError> {
+    use axum::http::{Method, StatusCode, header};
+    use axum::response::IntoResponse;
+    let reads = at_root(router).layer(axum::middleware::from_fn(
+        |req: Request, next: Next| async move {
+            if req.method() == Method::GET || req.method() == Method::HEAD {
+                next.run(req).await
+            } else {
+                (
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    [(header::ALLOW, "GET, HEAD")],
+                )
+                    .into_response()
+            }
+        },
+    ));
+    let name = Module::Gateway.name();
+    let spec = jc_router::MountSpec {
+        module: name.to_owned(),
+        host: None,
+        path_prefix: Some("/api/endpoint".to_owned()),
+    };
+    Ok(jc_router::JcRouterBuilder::new(scheme, base_host)
+        .mount(spec, crate::access::layer(name, reads))
+        .build()?
+        .into_axum_router())
+}
+
 /// `router` with the Organization of each request's host in its extensions
 /// (`context_gateway::app::HostOrganization`), from the host `jc-router` resolved (its
 /// `Mount`), for the `[[organizations]]` API, MCP and Portal hosts: there the gateway lists that
@@ -885,6 +921,65 @@ mod tests {
             .unwrap();
         let answer = app.oneshot(req).await.unwrap();
         assert_eq!(answer.status(), axum::http::StatusCode::OK);
+    }
+
+    /// The App pods' listener hands the gateway its Endpoint reads and nothing else: no other
+    /// path, no write, and no forwarding header a pod made up.
+    #[tokio::test]
+    async fn the_apps_listener_passes_endpoint_reads_alone() {
+        use axum::http::{Request as HttpRequest, StatusCode};
+        use tower::ServiceExt;
+        let inner = Router::new().fallback(|req: Request| async move {
+            format!(
+                "{} {} xff={}",
+                req.method(),
+                req.uri(),
+                req.headers().contains_key("x-forwarded-for")
+            )
+        });
+        let app = apps_router("https", "city.example", inner).unwrap();
+        let send = |method: &str, path: &str| {
+            let req = HttpRequest::builder()
+                .method(method)
+                .uri(path)
+                .header("host", "jc.jc-prod.svc.cluster.local:8083")
+                .header("x-forwarded-for", "203.0.113.9")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            app.clone().oneshot(req)
+        };
+        let text = |res: Response| async move {
+            String::from_utf8_lossy(
+                &axum::body::to_bytes(res.into_body(), usize::MAX)
+                    .await
+                    .unwrap(),
+            )
+            .into_owned()
+        };
+        let read = "/api/endpoint/sv4ibpm/ngsi-ld/v1/entities?type=Alert";
+        for method in ["GET", "HEAD"] {
+            let res = send(method, read).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK, "{method}");
+            if method == "GET" {
+                assert_eq!(text(res).await, format!("GET {read} xff=false"));
+            }
+        }
+        for method in ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"] {
+            let res = send(method, read).await.unwrap();
+            assert_eq!(res.status(), StatusCode::METHOD_NOT_ALLOWED, "{method}");
+        }
+        for path in [
+            "/api/mcp",
+            "/api/v1/access",
+            "/portal/api/v1/me",
+            "/api/endpointx/a",
+            "/",
+            "/internal/mqtt/auth",
+        ] {
+            let res = send("GET", path).await.unwrap();
+            assert_eq!(res.status(), StatusCode::NOT_FOUND, "{path}");
+            assert_eq!(text(res).await, "unmounted path", "{path}");
+        }
     }
 
     /// A read from a sandboxed page reaches the gateway anonymously and gets CORS for `null`; a
