@@ -8,6 +8,7 @@
  */
 import type { Transport } from "../sdk/transport";
 import { queryString } from "../sdk/query";
+import { MAX_REASON, reasonOk } from "../sdk/reason";
 import type { GeoQuery } from "./geoarea";
 import type { Geometry } from "../geo/validate";
 import type { RichRow } from "./model";
@@ -137,7 +138,8 @@ export interface EntitySource {
   changes?(id: string, attrs: string[]): Promise<EntityChange[]>;
   /** `reason` is why the person writes, sent as `JC-Reason` (DM-113). */
   patch?(id: string, attrs: Record<string, unknown>, reason?: string): Promise<void>;
-  remove?(id: string): Promise<void>;
+  /** `reason` is why the person deletes, sent as `JC-Reason` (DM-113); the gateway refuses a delete without one. */
+  remove?(id: string, reason: string): Promise<void>;
   /** The caller's decisions per attribute of `type`, where the source can ask (an Endpoint). */
   access?(type: string): Promise<AttributeAccess[]>;
 }
@@ -428,8 +430,9 @@ function ngsiSource(base: string, transport: Transport, language: string, hidden
       const { status, body } = await transport({ method: "PATCH", path: `${entity(id)}/attrs`, body: attrs, reason });
       if (!ok(status)) refuse(status, body, "the write was refused");
     },
-    async remove(id) {
-      const { status, body } = await transport({ method: "DELETE", path: entity(id) });
+    async remove(id, reason) {
+      if (!reasonOk(reason)) throw new SourceError(0, `a delete names why in 1 to ${MAX_REASON} characters`, "reason");
+      const { status, body } = await transport({ method: "DELETE", path: entity(id), reason: reason.trim() });
       if (!ok(status)) refuse(status, body, "the removal was refused");
     },
   };

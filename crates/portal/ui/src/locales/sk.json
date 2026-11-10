@@ -1320,7 +1320,9 @@
       "keyFieldOf": "{legend}, pole {n}",
       "keyRemoveOf": "Odstrániť {field}",
       "keyNoField": "Každé pole tohto typu už je v zozname.",
-      "groupCount": "{count, plural, one {# riadok} few {# riadky} other {# riadkov}}"
+      "groupCount": "{count, plural, one {# riadok} few {# riadky} other {# riadkov}}",
+      "deleteReasonHint": "Prečo ich mažete, zaznamená sa s každým zmazaním, napríklad: Duplikáty po starom zdroji.",
+      "deleteReasonRequired": "Napíšte, prečo ich mažete, napríklad: Duplicitné záznamy."
     },
     "temporal": {
       "title": "Ako vznikajú riadky histórie",

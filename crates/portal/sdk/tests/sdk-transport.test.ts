@@ -26,6 +26,22 @@ describe("originTransport", () => {
     expect(sent[1]["JC-Record"]).toBeUndefined();
   });
 
+  // DM-113: entities.remove reaches the gateway with the person's reason in one header, a line
+  // break encoded, and asks for no version: a delete replaces no value.
+  it("sends entities.remove's reason as one JC-Reason header and no JC-Record", async () => {
+    const sent: Record<string, string>[] = [];
+    const fakeFetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      sent.push(init?.headers as Record<string, string>);
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+    const transport = originTransport(fakeFetch, { cookie: "" } as Document);
+    const client = createClient({ slug: "demo", orgDomain: "hel.fi", space: "h" }, transport);
+    await client.entities.remove("urn:ngsi-ld:T:1", "Sensor gone\r\nX-Evil: 1");
+    expect(sent[0]["JC-Reason"]).toBe("Sensor%20gone%0D%0AX-Evil%3A%201");
+    expect(Object.keys(sent[0])).not.toContain("X-Evil");
+    expect(sent[0]["JC-Record"]).toBeUndefined();
+  });
+
   it("includes CSRF header and content-type on PATCH, and omits them on GET", async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const fakeFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

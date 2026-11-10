@@ -1320,7 +1320,9 @@
       "keyFieldOf": "{legend}, pole {n}",
       "keyRemoveOf": "Odebrat {field}",
       "keyNoField": "Každé pole tohoto typu už je v seznamu.",
-      "groupCount": "{count, plural, one {# řádek} few {# řádky} other {# řádků}}"
+      "groupCount": "{count, plural, one {# řádek} few {# řádky} other {# řádků}}",
+      "deleteReasonHint": "Proč je mažete, zaznamená se s každým smazáním, například: Duplikáty po starém zdroji.",
+      "deleteReasonRequired": "Napište, proč je mažete, například: Duplicitní záznamy."
     },
     "temporal": {
       "title": "Jak vznikají řádky historie",
