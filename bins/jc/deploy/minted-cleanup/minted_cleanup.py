@@ -3,14 +3,17 @@
 (T-6676 R) through each space's Endpoint, as the temporary cleanup identity. Stdlib only.
 
   minted_cleanup.py run --list L.tsv --endpoints E.tsv --state DIR [--only TENANT]...
-                        [--apply --gateway URL --token-file F --mem-cmd CMD]
-  minted_cleanup.py policies --list L.tsv --endpoints E.tsv --state DIR --until ISO
+                        [--apply --gateway URL --mem-cmd CMD [--max-batches N]
+                         (--token-file F | --token-url URL --client-secret-file F [--client-id ID])]
+  minted_cleanup.py policies --list L.tsv --endpoints E.tsv --state DIR --until ISO [--owner USER-ID]
   minted_cleanup.py verify --recount R.tsv --history H.tsv --state DIR
 
-L.tsv (README.md's read-only SELECT): tenant, id, types (space-separated), expires_at (ISO or
+L.tsv (sql/list.sql, read-only): tenant, id, types (space-separated), expires_at (ISO or
 empty), refs (the minted ids the entity's document names, space-separated). E.tsv: tenant, the
 Endpoint's slug, the space that Endpoint names (spec.contextSpaceRef, read from the Portal), the
-project. `policies` writes per space the temporary Policy (README.md) for the types listed.
+project. `policies` writes per space the temporary Policy (README.md) for the types listed and,
+with --owner, per project the temporary ServiceAccount: role `public` (the anonymous reader's)
+in each of its spaces until --until, since jc-core refuses an account without a role.
 
 `run` checks every row first: the id lies under urn:ngsi-ld:<Type>:portal.smartcity.joinedcontext.com:,
 <Type> is one of the row's types, the row's tenant is the space of its group's Endpoint. A group
@@ -20,11 +23,15 @@ does not count ids of the same batch), in batches of at most 500 ids. Without --
 sent. With it, each batch goes to POST <gateway>/api/endpoint/<slug>/ngsi-ld/v1/entityOperations/delete;
 ResourceNotFound counts as done only for an expired copy or one an interrupted batch sent; any
 other member error, any other answer and memory at or above 95 % (the last number --mem-cmd
-prints) stop the run. DIR keeps done.txt and the batch in flight, so a rerun resumes. The token is
-read from its file per batch, never from argv or the environment, and never logged.
+prints) stop the run. DIR keeps done.txt and the batch in flight, so a rerun resumes; --max-batches N
+pauses the run after N batches (a canary: exit 0, state kept for the resume). The token is read
+from --token-file per batch, or, with --client-secret-file, fetched by client credentials of
+--client-id (default <project>-cleanup-t6676) from --token-url and fetched again once half its
+expires_in has passed (the secret read from its 0600 file per fetch); neither comes from argv or
+the environment, and neither is logged or kept in DIR.
 
-`verify` reads the recount (tenant, id, expires_at) and the history count (tenant, id, temporal
-rows, attr rows) under the prefix: non-expired copies left fail it; when history remains, it
+`verify` reads the recount (tenant, id, expires_at) and the history count (tenant, id, then the
+rows of temporal_entities, attr_instances, attr_versions and attr_rows) under the prefix: non-expired copies left fail it; when history remains, it
 lists expired copies for the broker's expiry sweep and deleted ids whose history stayed.
 """
 
@@ -39,6 +46,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -173,14 +181,36 @@ def write_ids(path: Path, ids: set[str]) -> None:
     path.write_text("".join(i + "\n" for i in sorted(ids)), encoding="utf-8")
 
 
-def token_of(path: str) -> str:
+def secret_of(path: str) -> str:
     st = os.stat(path)
     if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
         raise Stop(f"{path} is readable by others; chmod 600 it")
-    token = Path(path).read_text(encoding="utf-8").strip()
-    if not token or any(c.isspace() for c in token):
-        raise Stop(f"{path} holds no single token")
-    return token
+    value = Path(path).read_text(encoding="utf-8").strip()
+    if not value or any(c.isspace() for c in value):
+        raise Stop(f"{path} holds no single secret")
+    return value
+
+
+def fetch_token(token_url: str, client_id: str, secret_file: str) -> tuple[str, float]:
+    """A client-credentials access token of client_id and its lifetime in seconds (300 when the
+    answer names none); the secret goes in the form body only."""
+    form = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": client_id,
+                                   "client_secret": secret_of(secret_file)}).encode()
+    req = urllib.request.Request(token_url, data=form, method="POST",
+                                 headers={"Content-Type": "application/x-www-form-urlencoded",
+                                          "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            body = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raise Stop(f"token request for {client_id}: answer {e.code}; nothing more is sent") from None
+    except (OSError, ValueError) as e:
+        raise Stop(f"token request for {client_id}: {type(e).__name__}; nothing more is sent") from None
+    token = body.get("access_token") if isinstance(body, dict) else None
+    if not isinstance(token, str) or not token or any(c.isspace() for c in token):
+        raise Stop(f"token request for {client_id}: no access_token in the answer")
+    life = body.get("expires_in")
+    return token, float(life) if isinstance(life, (int, float)) and life > 0 else 300.0
 
 
 def check_gateway(url: str) -> str:
@@ -232,7 +262,7 @@ def judge(ids: list[str], status: int, body: dict, rows: dict, inflight: set[str
     if status in (200, 204):
         return ids, 0, None
     if status == 401:
-        return [], 0, "401: the token expired or was refused; refresh the token file and rerun"
+        return [], 0, "401: the token expired or was refused; refresh the token file (or check the client secret) and rerun"
     if status != 207:
         problem = f"{body.get('type', '')} {body.get('title', '')}".strip()
         return [], 0, f"answer {status} {problem}: nothing of this batch counted"
@@ -270,15 +300,33 @@ def run(a) -> int:
         log(state, "dry run: nothing sent")
         return 0
     gateway = check_gateway(a.gateway)
+    token_url = check_gateway(a.token_url) if a.token_url else None
+    projects = sorted({g["project"] for g in groups.values()})
+    if len(projects) > 1:  # one token is one project's ServiceAccount
+        raise Stop(f"--apply serves one project's account; these tenants span {projects}: add --only")
     totals = {"deleted": 0, "gone": 0}
+    sent = 0
+    held: dict[str, tuple[str, float]] = {}  # client id -> (token, monotonic time to refetch at)
     for tenant, plan in sorted(plans.items()):
         g = groups[tenant]
         for n, layer in enumerate(plan):
             for b, ids in enumerate(batches(layer), 1):
+                if a.max_batches is not None and sent >= a.max_batches:
+                    log(state, f"paused after {sent} batch(es) (--max-batches {a.max_batches}): "
+                               f"{totals['deleted']} deleted, {totals['gone']} already gone; rerun to resume")
+                    return 0
                 pct = memory(a.mem_cmd)
                 if pct >= MEM_STOP:
                     raise Stop(f"memory {pct:g} % >= {MEM_STOP:g} %: stopped; rerun to resume")
-                token = token_of(a.token_file)
+                if token_url:
+                    client = a.client_id or f"{g['project']}-{ACCOUNT}"
+                    token, renew = held.get(client, ("", 0.0))
+                    if time.monotonic() >= renew:
+                        token, life = fetch_token(token_url, client, a.client_secret_file)
+                        held[client] = (token, time.monotonic() + life / 2)
+                else:
+                    token = secret_of(a.token_file)
+                sent += 1
                 write_ids(state / "inflight.txt", inflight | set(ids))
                 try:
                     status, body = post(gateway, g["slug"], token, ids)
@@ -299,6 +347,13 @@ def run(a) -> int:
     return 0
 
 
+def id_pattern(t: str) -> str:
+    """The Policy's idPattern of type t. Antares compiles it as ^(?:p)$ (antares-api policy.rs
+    Rule::selects_id), the gateway unanchored (context-gateway pdp/id_match.rs): both anchors and
+    the tail are written, so both select exactly the ids under the prefix."""
+    return f"^urn:ngsi-ld:{t}:" + re.escape(DOMAIN) + ":.+$"
+
+
 def policies(a) -> int:
     """Per space the temporary grant: deleteBatch only, for the cleanup account, one selector per
     minted type with the id pattern of that type under the prefix, valid until --until."""
@@ -307,7 +362,25 @@ def policies(a) -> int:
         raise Stop("--until needs a UTC time, e.g. 2026-11-10T20:00:00Z")
     state = Path(a.state)
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for tenant, g in sorted(load(a.list, a.endpoints, []).items()):
+    groups = load(a.list, a.endpoints, [])
+    to = until.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for project in sorted({g["project"] for g in groups.values()} if a.owner else ()):
+        spaces = sorted(t for t, g in groups.items() if g["project"] == project)
+        doc = {
+            "apiVersion": "joinedcontext.com/v1alpha1", "kind": "ServiceAccount",
+            "metadata": {"name": ACCOUNT, "namespace": project,
+                         "title": {"en": "Temporary cleanup account (T-6676 R)"}},
+            "spec": {
+                "owner": {"user": a.owner},
+                "purpose": "temporary: deletes the T-6676 R copies; removed after the run",
+                "roles": [{"role": "public", "scope": {"contextSpace": s}, "validity": {"notAfter": to}}
+                          for s in spaces],
+                "credentials": [{"kind": "oauth-client", "name": "main"}],
+            },
+        }
+        (state / f"serviceaccount-{project}.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        log(state, f"{project}: serviceaccount-{project}.json, space(s) {', '.join(spaces)}")
+    for tenant, g in sorted(groups.items()):
         types = sorted({r["type"] for r in g["rows"].values()})
         doc = {
             "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Policy",
@@ -318,9 +391,9 @@ def policies(a) -> int:
                 "assigner": "did:web:{orgDomain}",
                 "assignee": {"kind": "serviceAccount", "id": ACCOUNT},
                 "operations": ["deleteBatch"],
-                "validity": {"to": until.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                "validity": {"to": to},
                 "information": [{"entities": [
-                    {"type": t, "idPattern": f"^urn:ngsi-ld:{t}:" + re.escape(DOMAIN) + ":"} for t in types]}],
+                    {"type": t, "idPattern": id_pattern(t)} for t in types]}],
             },
         }
         (state / f"policy-{tenant}.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
@@ -339,15 +412,15 @@ def verify(a) -> int:
             live[t] += 1
     expired = len(left) - sum(live.values())
     log(state, f"recount: {sum(live.values())} non-expired left {dict(live)}, {expired} expired left")
-    history = tsv(a.history, 4)
+    history = tsv(a.history, 6)
     if not history:
         log(state, "history: none under the prefix; history step skipped")
         return 1 if live else 0
     sweep, stayed = [], []
-    for t, i, temporal, attrs in history:
+    for t, i, *counts in history:
         e = left.get((t, i), "deleted")
         if e == "deleted":
-            stayed.append(f"{t}\t{i}\t{temporal}\t{attrs}")
+            stayed.append("\t".join([t, i, *counts]))
         elif e is not None and e <= now:
             sweep.append(f"{t}\t{i}")
     (state / "history-for-sweep.tsv").write_text("".join(s + "\n" for s in sweep), encoding="utf-8")
@@ -368,19 +441,29 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--apply", action="store_true")
     r.add_argument("--gateway")
     r.add_argument("--token-file")
+    r.add_argument("--token-url")
+    r.add_argument("--client-secret-file")
+    r.add_argument("--client-id")
     r.add_argument("--mem-cmd")
+    r.add_argument("--max-batches", type=int)
     q = sub.add_parser("policies")
     q.add_argument("--list", required=True)
     q.add_argument("--endpoints", required=True)
     q.add_argument("--state", required=True)
     q.add_argument("--until", required=True)
+    q.add_argument("--owner")
     v = sub.add_parser("verify")
     v.add_argument("--recount", required=True)
     v.add_argument("--history", required=True)
     v.add_argument("--state", required=True)
     a = p.parse_args(argv)
-    if a.cmd == "run" and a.apply and not (a.gateway and a.token_file and a.mem_cmd):
-        p.error("--apply needs --gateway, --token-file and --mem-cmd")
+    if a.cmd == "run" and a.apply:
+        if not (a.gateway and a.mem_cmd):
+            p.error("--apply needs --gateway and --mem-cmd")
+        if bool(a.token_file) == bool(a.client_secret_file) or bool(a.token_url) != bool(a.client_secret_file):
+            p.error("--apply needs either --token-file or --token-url with --client-secret-file")
+    if a.cmd == "run" and a.max_batches is not None and a.max_batches < 1:
+        p.error("--max-batches needs a number >= 1")
     try:
         return {"run": run, "policies": policies, "verify": verify}[a.cmd](a)
     except Stop as e:
