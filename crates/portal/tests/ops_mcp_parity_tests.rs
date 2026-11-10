@@ -361,7 +361,8 @@ async fn an_entity_write_goes_as_the_person_through_their_own_endpoint() {
         "jc_data_write",
         &with_bearer(mcp(steward())),
         &state,
-        json!({ "endpoint": "no-such-endpoint", "action": "delete", "ids": ["urn:ngsi-ld:T:1"] }),
+        json!({ "endpoint": "no-such-endpoint", "action": "delete", "ids": ["urn:ngsi-ld:T:1"],
+                "reason": "a duplicate" }),
     )
     .await;
     assert_status(

@@ -2251,6 +2251,7 @@
         "Button": 19
       },
       "tests": [
+        "bulk_bar_delete_reason.test.tsx",
         "bulk_bar_loaded.test.tsx",
         "grid_toolbar.test.tsx",
         "part_space_inside.test.tsx",
