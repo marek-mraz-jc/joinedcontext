@@ -25,6 +25,13 @@ use crate::model::Collection;
 // view's rules) when a deployment needs the extent of one.
 pub(crate) const EXTENT_SCAN: u64 = 1_000;
 
+/// The extent reads the process runs at once, every request and collection together. One read
+/// holds up to [`EXTENT_SCAN`] Features; `/collections` reads every collection side by side, so
+/// unbounded one view of 31 polygon types held ~420 MiB at once on the prod rehearsal
+/// (jc-memory-cut2), and eight health probes asking at once multiplied it.
+const EXTENT_READS: usize = 4;
+static READS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(EXTENT_READS);
+
 /// How long a computed extent is served before it is read again.
 const FRESH_MICROS: i64 = 60_000_000;
 
@@ -67,7 +74,7 @@ pub(crate) async fn of(
     let bbox = if let Some(bbox) = cached {
         bbox
     } else {
-        let bbox = read(view, caller, c).await;
+        let bbox = bounded(Box::pin(read(view, caller, c))).await.flatten();
         let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
         // ponytail: stale extents go on each insert, so the cache holds one minute of keys.
         cache.retain(|_, k| now.saturating_sub(k.at) < FRESH_MICROS);
@@ -82,6 +89,12 @@ pub(crate) async fn of(
         bbox
     };
     bbox.map(|b| json!({"spatial": {"bbox": [b], "crs": crate::crs::CRS84}}))
+}
+
+/// `read` once one of the [`EXTENT_READS`] places is free; `None` if the bound closed.
+async fn bounded<T>(read: impl std::future::Future<Output = T>) -> Option<T> {
+    let _place = READS.acquire().await.ok()?;
+    Some(read.await)
 }
 
 /// The bounding box of the collection's Features as the caller reads them; `None` at
@@ -140,6 +153,23 @@ fn widen(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn extent_reads_run_at_most_extent_reads_at_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let (now, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let reads = (0..EXTENT_READS.saturating_mul(3)).map(|_| {
+            bounded(async {
+                let held = now.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+                most.fetch_max(held, Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                now.fetch_sub(1, Ordering::SeqCst);
+            })
+        });
+        let done = futures_util::future::join_all(reads).await;
+        assert!(done.iter().all(Option::is_some));
+        assert_eq!(most.load(Ordering::SeqCst), EXTENT_READS);
+    }
 
     #[test]
     fn a_geometry_bounds_every_position() {
