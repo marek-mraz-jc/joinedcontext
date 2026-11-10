@@ -6,12 +6,14 @@
 //! whose cursor was altered, is refused. A file dropped while it is written frees its place.
 
 use crate::common::{fixture_with, get, href, ids, local, schemas_on, send, Fixture, SlowOnly};
-use antares_ops::policy::{
-    Decision, DecisionFuture, NotifyDecision, Operation, PolicyEngine, Subject,
-};
+use antares_ops::policy::PolicyEngine;
+#[cfg(feature = "tabular")]
+use antares_ops::policy::{Decision, DecisionFuture, NotifyDecision, Operation, Subject};
 use antares_ops::test_kit::{q_filter, TestBroker};
 use axum::http::StatusCode;
-use serde_json::{json, Value};
+use serde_json::json;
+#[cfg(feature = "tabular")]
+use serde_json::Value;
 use std::sync::Arc;
 
 const CARS: &str = "/x/views/city/ogc/features/collections/Car/items";
@@ -86,7 +88,10 @@ async fn pages_follow_the_cursor_while_rows_are_written() -> Result<(), String> 
     let (first, next) = page(&f, &format!("{CARS}?limit=2")).await?;
     let mut uri = next.ok_or("page 1 has a next link")?;
     let (second, next) = page(&f, &uri).await?;
-    assert_eq!([first, second].concat(), [car("1"), car("3"), car("5"), car("7")]);
+    assert_eq!(
+        [first, second].concat(),
+        [car("1"), car("3"), car("5"), car("7")]
+    );
     uri = next.ok_or("page 2 has a next link")?;
     // part.offset.digest and the store's cursor, which holds a dot of its own
     assert_eq!(token(&uri).split('.').count(), 5, "{uri}");
@@ -131,9 +136,18 @@ async fn a_token_of_another_view_query_or_cursor_is_refused() -> Result<(), Stri
     let other_id = format!("{head}-{}.{tag}", hex(&car("1")));
     for (what, refused) in [
         ("another view", format!("{slow}?limit=2&next={t}")),
-        ("another query", format!("{CARS}?limit=2&filter=speed%3C40&next={t}")),
-        ("a cursor tag altered", format!("{CARS}?limit=2&next={tag_flipped}")),
-        ("a cursor id altered", format!("{CARS}?limit=2&next={other_id}")),
+        (
+            "another query",
+            format!("{CARS}?limit=2&filter=speed%3C40&next={t}"),
+        ),
+        (
+            "a cursor tag altered",
+            format!("{CARS}?limit=2&next={tag_flipped}"),
+        ),
+        (
+            "a cursor id altered",
+            format!("{CARS}?limit=2&next={other_id}"),
+        ),
         ("no cursor text", format!("{CARS}?limit=2&next={t}x")),
     ] {
         let a = get(&f.app, &refused).await;
@@ -146,7 +160,11 @@ async fn a_token_of_another_view_query_or_cursor_is_refused() -> Result<(), Stri
 }
 
 fn hex(text: &str) -> String {
-    text.bytes().map(|b| format!("{b:02x}")).collect()
+    use std::fmt::Write as _;
+    text.bytes().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 /// A file read in store reads of two holds each Feature the Policy shows, once and in order.
@@ -189,9 +207,11 @@ async fn raw(f: &Fixture, uri: &str) -> (StatusCode, axum::http::HeaderMap, Vec<
 
 /// Once holding, every query (clause 5.7) waits and never answers: a file being written stays
 /// in its store read until the request is dropped.
+#[cfg(feature = "tabular")]
 #[derive(Default)]
 struct Hold(std::sync::atomic::AtomicBool);
 
+#[cfg(feature = "tabular")]
 impl PolicyEngine for Hold {
     fn name(&self) -> &'static str {
         "hold"
@@ -221,11 +241,7 @@ async fn a_file_dropped_while_written_frees_its_place() -> Result<(), String> {
     engine.0.store(true, SeqCst);
     let uri = format!("{CARS}?f=csv");
     for _ in 0..2 {
-        let held = tokio::time::timeout(
-            std::time::Duration::from_millis(200),
-            raw(&f, &uri),
-        )
-        .await;
+        let held = tokio::time::timeout(std::time::Duration::from_millis(200), raw(&f, &uri)).await;
         assert!(held.is_err(), "the file waits in its store read");
     }
     engine.0.store(false, SeqCst);

@@ -5,8 +5,8 @@
 //! one, is the store's 400; a cursor of another read size is not sent. Skips loudly without
 //! `ANTARES_TEST_DATABASE_URL` (see antares-sql/tests/pg.rs for the recipe).
 
-use antares_ops::policy::{Decision, DecisionFuture, NotifyDecision, Operation, PolicyEngine};
 use antares_ops::policy::Subject;
+use antares_ops::policy::{Decision, DecisionFuture, NotifyDecision, Operation, PolicyEngine};
 use antares_ops::test_kit::{q_filter, TestBroker};
 use antares_ops::{Caller, Ops, Page, Pushdown, Scanned, Surface};
 use antares_sql::store::any::{AnyStore, PgBackend};
@@ -135,7 +135,11 @@ fn id(n: usize) -> String {
 }
 
 async fn write(admin: &Router, tenant: &str, n: usize) {
-    let (s, b) = send(admin, with_body(Request::post("/ngsi-ld/v1/entities"), tenant, &car(n))).await;
+    let (s, b) = send(
+        admin,
+        with_body(Request::post("/ngsi-ld/v1/entities"), tenant, &car(n)),
+    )
+    .await;
     assert_eq!(s, StatusCode::CREATED, "car {n}: {b}");
 }
 
@@ -154,9 +158,14 @@ async fn page(app: &Router, view: &str, query: &str) -> (StatusCode, Vec<String>
         .body(Body::empty())
         .unwrap_or_default();
     let (s, b) = send(app, req).await;
-    let ids = b["ids"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+    let ids = b
+        .get("ids")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     (s, ids, b)
 }
@@ -195,7 +204,11 @@ async fn a_type_pages_by_cursor_once_and_in_order_on_postgres() {
             "operations": ["query_entities"]});
         let (s, b) = send(
             &admin,
-            with_body(Request::put(format!("/q/views/{view}-{run}")), tenant, &body),
+            with_body(
+                Request::put(format!("/q/views/{view}-{run}")),
+                tenant,
+                &body,
+            ),
         )
         .await;
         assert_eq!(s, StatusCode::CREATED, "the view loads: {b}");
@@ -215,16 +228,16 @@ async fn a_type_pages_by_cursor_once_and_in_order_on_postgres() {
     let (mut seen, mut start, mut cursor) = (Vec::new(), 0usize, None::<String>);
     let mut cursors = 0;
     for n in 0.. {
-        let mut query = format!("start={start}&size=5");
-        if let Some(c) = &cursor {
-            query.push_str(&format!("&cursor={c}"));
-        }
+        let query = match &cursor {
+            Some(c) => format!("start={start}&size=5&cursor={c}"),
+            None => format!("start={start}&size=5"),
+        };
         let (s, ids, b) = page(&app, &cars, &query).await;
         assert_eq!(s, StatusCode::OK, "page {n}: {b}");
         seen.extend(ids);
-        cursor = b["cursor"].as_str().map(String::from);
+        cursor = b.get("cursor").and_then(Value::as_str).map(String::from);
         cursors += usize::from(cursor.is_some());
-        let Some(next) = b["next"].as_u64() else {
+        let Some(next) = b.get("next").and_then(Value::as_u64) else {
             break;
         };
         start = usize::try_from(next).unwrap_or(usize::MAX);
@@ -237,15 +250,32 @@ async fn a_type_pages_by_cursor_once_and_in_order_on_postgres() {
         }
         assert!(n < 20, "the pages end");
     }
-    let red = |n: &usize| n % 3 != 0;
     let want: Vec<String> = (0..40).chain([41]).filter(red).map(id).collect();
     assert_eq!(seen, want, "every red Car once, in id order");
     assert!(cursors >= 4, "the pages were read by cursor ({cursors})");
+    refusals(&app, &cars, &cars_other).await;
+}
 
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "Iterator::filter's argument"
+)]
+fn red(n: &usize) -> bool {
+    !n.is_multiple_of(3)
+}
+
+/// A page cursor of `cars` (Cars 0 to 41, Car 2 deleted) held to another query, view, Tenant
+/// start and size.
+async fn refusals(app: &Router, cars: &str, cars_other: &str) {
     // A cursor of page 1 on another query, another view of another Tenant, altered, or with
     // another start is the store's 400; with another size it is not sent.
-    let (_, first, b) = page(&app, &cars, "start=0&size=5").await;
-    let c = b["cursor"].as_str().expect("page 1 names a cursor").to_owned();
+    let (_, first, b) = page(app, cars, "start=0&size=5").await;
+    let c = b
+        .get("cursor")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    assert!(!c.is_empty(), "page 1 names a cursor: {b}");
     let flipped = {
         let mut t = c.clone();
         let last = if t.ends_with('0') { "1" } else { "0" };
@@ -254,17 +284,34 @@ async fn a_type_pages_by_cursor_once_and_in_order_on_postgres() {
         t
     };
     for (what, view, query) in [
-        ("another query", &cars, format!("start=5&size=5&cursor={c}&q=colour==%22red%22")),
-        ("another Tenant", &cars_other, format!("start=5&size=5&cursor={c}")),
-        ("altered", &cars, format!("start=5&size=5&cursor={flipped}")),
-        ("another start", &cars, format!("start=6&size=5&cursor={c}")),
+        (
+            "another query",
+            cars,
+            format!("start=5&size=5&cursor={c}&q=colour==%22red%22"),
+        ),
+        (
+            "another Tenant",
+            cars_other,
+            format!("start=5&size=5&cursor={c}"),
+        ),
+        ("altered", cars, format!("start=5&size=5&cursor={flipped}")),
+        ("another start", cars, format!("start=6&size=5&cursor={c}")),
     ] {
-        let (s, ids, b) = page(&app, view, &query).await;
+        let (s, ids, b) = page(app, view, &query).await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{what}: {b}");
         assert!(ids.is_empty(), "{what}");
     }
-    let (s, ids, b) = page(&app, &cars, &format!("start=5&size=4&cursor={c}")).await;
+    let (s, ids, b) = page(app, cars, &format!("start=5&size=4&cursor={c}")).await;
     assert_eq!(s, StatusCode::OK, "another size: {b}");
-    let now: Vec<String> = (0..40).chain([41]).filter(|n| *n != 2).filter(red).map(id).collect();
-    assert_eq!(ids, now.get(5..9).unwrap_or_default(), "by offset; page 1 {first:?}");
+    let now: Vec<String> = (0..40)
+        .chain([41])
+        .filter(|n| *n != 2)
+        .filter(red)
+        .map(id)
+        .collect();
+    assert_eq!(
+        ids,
+        now.get(5..9).unwrap_or_default(),
+        "by offset; page 1 {first:?}"
+    );
 }

@@ -700,7 +700,7 @@ pub(crate) struct Cursor {
     /// The part and its upstream offset the page starts at, from its `next` token.
     start: (usize, usize),
     /// The store's keyset cursor of the read at `start`, from the token.
-    start_cursor: Option<String>,
+    resume: Option<String>,
     limit: usize,
     digest: u64,
     /// Whether the page states `numberMatched`: the request's first page, unless
@@ -743,18 +743,17 @@ impl Cursor {
             None => Lowered::default(),
         };
         // `id` conjuncts no Entity id meets: nothing to ask the store.
-        let (parts, (part, offset, start_cursor)) =
-            if lowered.ids.as_ref().is_some_and(Vec::is_empty) {
-                (Vec::new(), (0, 0, None))
-            } else {
-                let parts = targets(c, &terms, p, &lowered);
-                let start = match &p.next {
-                    None => (0, 0, None),
-                    Some(t) => read_keyset_token(t, digest, parts.len())
-                        .ok_or_else(|| bad("the next token does not belong to this request"))?,
-                };
-                (parts, start)
+        let (parts, (part, offset, resume)) = if lowered.ids.as_ref().is_some_and(Vec::is_empty) {
+            (Vec::new(), (0, 0, None))
+        } else {
+            let parts = targets(c, &terms, p, &lowered);
+            let start = match &p.next {
+                None => (0, 0, None),
+                Some(t) => read_keyset_token(t, digest, parts.len())
+                    .ok_or_else(|| bad("the next token does not belong to this request"))?,
             };
+            (parts, start)
+        };
         let start = (part, offset);
         Ok(Self {
             order: order(&terms, p),
@@ -762,7 +761,7 @@ impl Cursor {
             terms,
             parts,
             start,
-            start_cursor,
+            resume,
             limit: usize::try_from(p.limit).unwrap_or(usize::MAX),
             digest,
             counted: !p.uncounted && p.next.is_none(),
@@ -986,10 +985,7 @@ impl Cursor {
             } else {
                 0
             },
-            cursor: self
-                .start_cursor
-                .clone()
-                .filter(|_| self.part == self.start.0),
+            cursor: self.resume.clone().filter(|_| self.part == self.start.0),
             first: true,
             budget: antares_ops::RESIDUAL_SCAN,
             count: None,

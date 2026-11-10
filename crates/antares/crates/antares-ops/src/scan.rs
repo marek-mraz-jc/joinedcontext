@@ -574,7 +574,8 @@ mod tests {
     #[test]
     fn the_cursor_is_read_from_the_next_link() {
         let next = r#"</ngsi-ld/v1/entities?limit=2&offset=2&type=T&cursor=75726e.0a1b>; rel="next";type="application/json""#;
-        let prev = r#"</ngsi-ld/v1/entities?cursor=ff.00&offset=0>; rel="prev";type="application/json""#;
+        let prev =
+            r#"</ngsi-ld/v1/entities?cursor=ff.00&offset=0>; rel="prev";type="application/json""#;
         assert_eq!(
             next_cursor(&linked(&[prev, next])).as_deref(),
             Some("75726e.0a1b")
@@ -592,7 +593,14 @@ mod tests {
             cursor: "75726e.0a1b".into(),
         };
         assert_eq!(Keyset::parse(&k.to_string()), Some(k));
-        for bad in ["", "1000", "x-75.0a", "1000-", "1000-75&count=true", "-1-75"] {
+        for bad in [
+            "",
+            "1000",
+            "x-75.0a",
+            "1000-",
+            "1000-75&count=true",
+            "-1-75",
+        ] {
             assert_eq!(Keyset::parse(bad), None, "{bad}");
         }
     }
