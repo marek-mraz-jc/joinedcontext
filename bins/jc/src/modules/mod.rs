@@ -49,8 +49,10 @@ pub mod viz;
 
 /// The gateway's identity at the broker, what Linkerd names it on dev: the only caller whose
 /// subject and provenance headers Antares believes inside `jc`.
+#[cfg_attr(not(feature = "antares"), allow(dead_code))]
 pub const GATEWAY_IDENTITY: &str = "context-gateway.jc";
 /// The header the gateway's hop to Antares carries its secret in.
+#[cfg_attr(not(feature = "gateway"), allow(dead_code))]
 pub const GATEWAY_HOP_HEADER: &str = "x-jc-gateway-hop";
 
 /// The gateway's private way into the broker: a loopback listener whose every request carries
@@ -58,6 +60,7 @@ pub const GATEWAY_HOP_HEADER: &str = "x-jc-gateway-hop";
 #[derive(Clone)]
 pub struct Hop {
     pub addr: SocketAddr,
+    #[cfg_attr(not(feature = "gateway"), allow(dead_code))]
     pub secret: Arc<str>,
 }
 
@@ -90,7 +93,7 @@ pub async fn build(
     shutdown: &CancellationToken,
     tasks: &TaskTracker,
 ) -> Result<Router, StartError> {
-    let _ = (shutdown, tasks, &ctx);
+    let _ = (shutdown, tasks, &ctx, cfg, &mount);
     match module {
         #[cfg(feature = "kaisatsu")]
         Module::Kaisatsu => kaisatsu::build(&cfg.kaisatsu, ctx, mount, shutdown, tasks).await,

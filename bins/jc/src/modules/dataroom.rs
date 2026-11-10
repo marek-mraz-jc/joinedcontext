@@ -107,7 +107,7 @@ pub async fn build(
     let org_id = OrgId::parse_verified(&cfg.org_id).map_err(|e| err(&e))?;
     let catalogue_id = CatalogueId::parse_verified(&cfg.catalogue_id).map_err(|e| err(&e))?;
     let store = open_store(cfg).await?;
-    dataroom_server::ensure_default_catalogue(store.as_ref(), org_id, catalogue_id, &mount.host)
+    hold_default_host(store.as_ref(), org_id, catalogue_id, &mount.host)
         .await
         .map_err(|e| err(&e))?;
     if let Some(hidden) = &cfg.hidden {
@@ -253,8 +253,53 @@ fn own_gateway(
     Some((live.api.clone(), reach))
 }
 
+/// Holds the default catalogue on the mount's host. A real (not loopback) host moves the stored
+/// row to it, port dropped as the host lookup drops it: an import window or a move from another
+/// instance leaves the row on `localhost:8080`, and the catalogue then answered 404 'unknown
+/// catalogue host' on its own name (jc-prod 2026-11-10). Decided (supervisor, owner may
+/// override): the deployment's configured host wins over a host `catalogue.propose` set on the
+/// default catalogue, because the files are the source of truth. A slug-mode or loopback start
+/// only creates a missing row and never writes a loopback host over a stored one.
+async fn hold_default_host(
+    store: &dyn Store,
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    mount_host: &str,
+) -> dataroom_core::Result<()> {
+    let host = bare_host(mount_host);
+    if is_loopback(host) {
+        return dataroom_server::ensure_default_catalogue(store, org_id, catalogue_id, mount_host)
+            .await;
+    }
+    let stored = store.get_catalogue(org_id, catalogue_id).await?;
+    let name = stored.as_ref().map_or("default", |c| c.name.as_str());
+    let held = dataroom_server::ensure_catalogue(store, org_id, catalogue_id, name, host).await?;
+    if let Some(old) = stored.filter(|c| c.host != held.host) {
+        tracing::info!(
+            from = %old.host,
+            to = %held.host,
+            "dataroom: default catalogue moved to the configured host (the deployment's host wins over one catalogue.propose set)"
+        );
+    }
+    Ok(())
+}
+
+/// `localhost`, `*.localhost` or a loopback address (the host as [`bare_host`] leaves it).
+fn is_loopback(host: &str) -> bool {
+    host.is_empty()
+        || host == "localhost"
+        || host.ends_with(".localhost")
+        || host
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
 fn bare_host(host: &str) -> &str {
-    host.split(':').next().unwrap_or(host)
+    match host.find(']') {
+        Some(end) if host.starts_with('[') => &host[..=end],
+        _ => host.split(':').next().unwrap_or(host),
+    }
 }
 
 /// An Organization's catalogue frames its own Portal and API: the installation's other live
@@ -859,6 +904,98 @@ mod tests {
             .dataroom
             .hidden
             .expect("[dataroom.hidden]")
+    }
+
+    /// The default catalogue of `DataroomSection::default()` stored on `host`, and an
+    /// Organization's catalogue on `other.city.example` beside it.
+    async fn stored_default(host: &str) -> (MemoryStore, OrgId, CatalogueId, CatalogueId) {
+        let d = DataroomSection::default();
+        let org = OrgId::parse_verified(&d.org_id).unwrap();
+        let cat = CatalogueId::parse_verified(&d.catalogue_id).unwrap();
+        let other = CatalogueId::parse_verified("6f1c0b2e-5d3a-4c1e-9a8b-7e2d4f6a1b3c").unwrap();
+        let store = MemoryStore::new();
+        dataroom_server::ensure_default_catalogue(&store, org, cat, host)
+            .await
+            .unwrap();
+        dataroom_server::ensure_catalogue(&store, org, other, "bbsk", "other.city.example")
+            .await
+            .unwrap();
+        (store, org, cat, other)
+    }
+
+    async fn host_of(store: &MemoryStore, org: OrgId, cat: CatalogueId) -> String {
+        store.get_catalogue(org, cat).await.unwrap().unwrap().host
+    }
+
+    /// jc-prod 2026-11-10: the import window left the default catalogue on `localhost:8080`, so
+    /// its own host answered 404. A host-mode start moves it to the bare mount host, keeps its
+    /// name and leaves every other catalogue as it was.
+    #[tokio::test]
+    async fn a_host_mode_start_moves_the_default_catalogue_off_localhost() {
+        let (store, org, cat, other) = stored_default("localhost:8080").await;
+        hold_default_host(&store, org, cat, "opendata.city.example")
+            .await
+            .unwrap();
+        assert_eq!(host_of(&store, org, cat).await, "opendata.city.example");
+        let held = store.resolve_host("opendata.city.example").await.unwrap();
+        assert_eq!(held.map(|c| (c.id, c.name)), Some((cat, "default".into())));
+        assert_eq!(host_of(&store, org, other).await, "other.city.example");
+    }
+
+    /// A slug-mode or loopback start never writes a loopback host over a stored real one, and
+    /// still creates the default catalogue when the store has none.
+    #[tokio::test]
+    async fn a_loopback_start_leaves_a_stored_real_host() {
+        for mount in [
+            "localhost:8080",
+            "localhost",
+            "dataroom.localhost:42102",
+            "127.0.0.1:42102",
+            "[::1]:8080",
+        ] {
+            let (store, org, cat, _) = stored_default("opendata.city.example").await;
+            hold_default_host(&store, org, cat, mount).await.unwrap();
+            assert_eq!(
+                host_of(&store, org, cat).await,
+                "opendata.city.example",
+                "{mount}"
+            );
+            let empty = MemoryStore::new();
+            hold_default_host(&empty, org, cat, mount).await.unwrap();
+            assert_eq!(host_of(&empty, org, cat).await, mount);
+        }
+    }
+
+    /// A stored host with a port never resolves on Postgres (its lookup compares the stored host
+    /// with the request's, port dropped): it is moved to the mount host, port dropped.
+    #[tokio::test]
+    async fn a_stored_host_with_a_port_is_moved_to_the_bare_mount_host() {
+        let (store, org, cat, _) = stored_default("opendata.city.example:8080").await;
+        hold_default_host(&store, org, cat, "opendata.city.example:443")
+            .await
+            .unwrap();
+        assert_eq!(host_of(&store, org, cat).await, "opendata.city.example");
+        assert!(
+            store
+                .resolve_host("opendata.city.example")
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    /// Decided (supervisor, owner may override): the configured host wins over the one
+    /// `catalogue.propose` set on the default catalogue.
+    #[tokio::test]
+    async fn the_configured_host_replaces_a_proposed_one() {
+        let (store, org, cat, _) = stored_default("opendata.city.example").await;
+        let mut proposed = store.get_catalogue(org, cat).await.unwrap().unwrap();
+        proposed.host = "proposed.example".into();
+        store.upsert_catalogue(proposed).await.unwrap();
+        hold_default_host(&store, org, cat, "opendata.city.example")
+            .await
+            .unwrap();
+        assert_eq!(host_of(&store, org, cat).await, "opendata.city.example");
     }
 
     #[tokio::test]
