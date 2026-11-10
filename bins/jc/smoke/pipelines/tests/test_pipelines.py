@@ -207,10 +207,14 @@ class Clock:
         monkeypatch.setattr(suite.time, "sleep", lambda s: setattr(self, "now", self.now + s))
 
 
-def queue_portal(clock, ahead: int, starts_at: float | None):
+def queue_portal(clock, ahead: int, starts_at: float | None, drain: float | None = None):
     """A Portal whose run-now is Queued behind `ahead` runs of 50 s and starts at `starts_at`
-    (never when None); the run then lasts 10 s."""
+    (never when None); the run then lasts 10 s. With `drain`, one run ahead leaves every `drain`
+    seconds and the run-now starts when none is left."""
     import suite
+    t0 = clock.now
+    if drain is not None:
+        starts_at = t0 + ahead * drain
 
     class P:
         polls = 0
@@ -231,17 +235,18 @@ def queue_portal(clock, ahead: int, starts_at: float | None):
             if "/pipelines?" in path:
                 items = [{"status": {"conditions": [{"message": f"queued, due 2026-11-09T14:49:{i % 60:02d}Z; "
                                                                 "the last run ended 2026-11-09T14:40:00Z after 50 s"}]}}
-                         for i in range(ahead)]
+                         for i in range(ahead if drain is None
+                                        else max(0, ahead - int((clock.now - t0) // drain)))]
                 return 200, {}, json.dumps({"items": items}).encode()
             msg = "running since x" if started else "queued, due 2026-11-09T15:59:15Z"
             return 200, {}, json.dumps({"status": {"conditions": [{"reason": "Queued", "message": msg}]}}).encode()
     return P()
 
 
-def history(monkeypatch, ahead, starts_after):
+def history(monkeypatch, ahead, starts_after, drain=None):
     import suite
     clock = Clock(monkeypatch)
-    portal = queue_portal(clock, ahead, None if starts_after is None else clock.now + starts_after)
+    portal = queue_portal(clock, ahead, None if starts_after is None else clock.now + starts_after, drain)
     r = suite.Results("pipelines", "http://x")
     p = manifests.Pipeline("banskabystrica", "kataster", "p.yaml", {"period": "168h"}, True)
     t0 = clock.now
@@ -256,12 +261,23 @@ def test_a_run_queued_behind_the_queue_is_waited_for_as_long_as_the_runs_ahead_t
     row, took = history(monkeypatch, 8, 380)
     assert row["result"] == "pass", row
     row, took = history(monkeypatch, 8, None)
-    assert row["result"] == "fail" and "none within 400 s (8 queued ahead" in row["actual"], row
+    assert row["result"] == "fail" and "none within 400 s (8 still queued ahead after 1 round" in row["actual"], row
     assert 400 <= took < 420
     row, took = history(monkeypatch, 2, None)
     assert row["result"] == "fail" and "none within 300 s" in row["actual"] and took < 320
     row, took = history(monkeypatch, 500, None)
-    assert row["result"] == "fail" and "none within 900 s" in row["actual"] and took < 920
+    assert row["result"] == "fail" and "none within 900 s (500 still queued" in row["actual"] and took < 920
+
+
+def test_a_run_behind_a_queue_that_moves_is_waited_for_until_it_starts(monkeypatch):
+    """Rehearsal 2026-11-10T0255Z: banskabystrica/kataster sat behind 87 queued runs; the statuses
+    said 5-50 s a run, the queue drained one every ~28 s, so one estimate (900 s at most) gave up
+    while the queue still moved. Prod queues a run-now in due order with no spacing
+    (dd7d5ce5 run_queue.rs:767-776), so the suite waits while fewer runs are ahead at each look
+    and stops at the first look that shows no progress."""
+    row, took = history(monkeypatch, 87, None, drain=28)
+    assert row["result"] == "pass", row
+    assert 87 * 28 <= took < 87 * 28 + 1300, took
 
 
 def test_expectations_from_prods_run_log(tmp_path):
