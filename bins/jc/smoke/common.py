@@ -45,6 +45,21 @@ def loopback_only(base: str) -> None:
     raise SystemExit(f"refusing {host}: the smoke suites run against a local rehearsal only")
 
 
+def browser_get(page, url: str, **kw):
+    """`page.request.get` carrying the browser's own cookies for `url`. Chromium sends Secure and
+    __Host- cookies on http://127.0.0.1 (a trustworthy origin), but Playwright's request client
+    keeps them on http://localhost only: on the rehearsal's 127.0.0.1 origin `page.request` alone
+    was signed out (/api/v1/auth/me 401 right after a good sign-in, jc-ip-signin 2026-11-10)."""
+    u = urllib.parse.urlsplit(url)
+    host, path = u.hostname or "", u.path or "/"
+    sent = [f"{c['name']}={c['value']}" for c in page.context.cookies()
+            if c["domain"].lstrip(".") == host and path.startswith(c["path"])]
+    headers = dict(kw.pop("headers", None) or {})
+    if sent and u.scheme == "http":
+        headers.setdefault("Cookie", "; ".join(sent))
+    return page.request.get(url, headers=headers, **kw)
+
+
 def read_token(path: str | None) -> str | None:
     if not path:
         return None
