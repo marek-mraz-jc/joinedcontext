@@ -180,7 +180,7 @@ fn tally(project: &str, spec: &MqttBrokerSpec, clients: &[Client]) -> (Vec<Accou
 pub(crate) fn http() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::reach::builder()
             .timeout(TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
             .build()

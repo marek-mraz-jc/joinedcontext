@@ -89,6 +89,10 @@ pub struct Config {
     pub oidc_issuer: Option<String>,
     /// The realm's JWKS, fetched in the background (`JC_OIDC_JWKS_URL`).
     pub oidc_jwks_url: Option<String>,
+    /// Where the JWKS URL's host is dialed instead of through DNS (`JC_OIDC_JWKS_REACH`, a
+    /// loopback address and port): `jc` in host mode serves its realm on its own listener by the
+    /// host the request names.
+    pub oidc_jwks_reach: Option<std::net::SocketAddr>,
     /// Where the gateway asks for its own token (`JC_OIDC_TOKEN_URL`), for the same reason
     /// `JC_OIDC_JWKS_URL` exists: the issuer is the address a *browser* uses, and a pod that dials
     /// its own cluster's public hostname leaves through the ingress or not at all. The realm's
@@ -234,6 +238,18 @@ impl Config {
         }
 
         let non_empty = |name| var(name).ok().filter(|v: &String| !v.trim().is_empty());
+        let oidc_jwks_reach = match non_empty("JC_OIDC_JWKS_REACH") {
+            None => None,
+            Some(raw) => match raw.trim().parse::<std::net::SocketAddr>() {
+                Ok(addr) if addr.ip().is_loopback() => Some(addr),
+                _ => {
+                    return Err(ConfigError::Invalid {
+                        name: "JC_OIDC_JWKS_REACH",
+                        reason: "a loopback address and port, e.g. 127.0.0.1:8080".to_owned(),
+                    })
+                }
+            },
+        };
         let credential = match (
             non_empty("JC_OIDC_CLIENT_SECRET"),
             non_empty("JC_OIDC_CLIENT_ASSERTION_FILE"),
@@ -397,6 +413,7 @@ impl Config {
             org_domain,
             oidc_issuer,
             oidc_jwks_url,
+            oidc_jwks_reach,
             oidc_token_url: var("JC_OIDC_TOKEN_URL")
                 .ok()
                 .filter(|url| !url.trim().is_empty()),
@@ -582,6 +599,7 @@ mod tests {
             oidc_jwks_url: Some(
                 "http://keycloak/realms/dev/protocol/openid-connect/certs".to_owned(),
             ),
+            oidc_jwks_reach: None,
             oidc_token_url: None,
             oidc_client: Some((
                 "context-gateway".to_owned(),
@@ -682,6 +700,39 @@ mod tests {
     #[test]
     fn no_realm_is_no_endpoint_and_no_identity_presented_anywhere() {
         assert_eq!(token_endpoint(None, None), None);
+    }
+
+    /// T-6705: the JWKS reach dials past DNS, so only a loopback address (jc's own listener) is
+    /// taken; any other address refuses the start.
+    #[test]
+    fn the_jwks_reach_is_a_loopback_address_or_the_start_is_refused() {
+        let with = |reach: &'static str| {
+            Config::from_vars(move |name| match name {
+                "JC_OIDC_JWKS_REACH" => Some(reach.to_owned()),
+                "JC_GATEWAY_BROKER_URL" => Some("http://broker:1026".to_owned()),
+                "JC_GATEWAY_ORG_DOMAIN" => Some("hel.fi".to_owned()),
+                _ => None,
+            })
+        };
+        for refused in ["10.0.0.7:8080", "0.0.0.0:8080", "keycloak:80", "127.0.0.1"] {
+            assert!(
+                matches!(
+                    with(refused),
+                    Err(ConfigError::Invalid {
+                        name: "JC_OIDC_JWKS_REACH",
+                        ..
+                    })
+                ),
+                "{refused}: {:?}",
+                with(refused).err()
+            );
+        }
+        let taken = with("127.0.0.1:8080").expect("a loopback reach");
+        assert_eq!(
+            taken.oidc_jwks_reach,
+            Some("127.0.0.1:8080".parse().expect("an address"))
+        );
+        assert_eq!(with("").expect("no reach").oidc_jwks_reach, None);
     }
 
     #[test]

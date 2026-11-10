@@ -79,6 +79,7 @@ pub mod public_docs;
 pub mod quality;
 pub mod quality_checks;
 pub mod quotas;
+pub mod reach;
 pub mod reconciler;
 pub mod record_check;
 pub mod references;

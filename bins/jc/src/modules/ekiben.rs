@@ -370,11 +370,11 @@ fn runner_defaults(
 ) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     if let Some(gateway) = siblings.get(Module::Gateway) {
-        out.insert("JC_GATEWAY_URL".to_owned(), gateway.internal.clone());
-        let host = gateway
-            .internal
-            .split_once("://")
-            .map_or(gateway.internal.as_str(), |(_, rest)| rest);
+        // ponytail: a stream has no reach (ekiben pins its own DNS), so in host mode it reads the
+        // gateway at its public name; a host-mode HostTarget naming the host is the upgrade.
+        let url = gateway.callable();
+        out.insert("JC_GATEWAY_URL".to_owned(), url.to_owned());
+        let host = url.split_once("://").map_or(url, |(_, rest)| rest);
         out.insert("JC_GATEWAY_HOST".to_owned(), host.to_owned());
     }
     if let Some(id) = siblings.get(Module::Kaisatsu) {

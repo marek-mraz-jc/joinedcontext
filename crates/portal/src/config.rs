@@ -284,6 +284,8 @@ pub struct Config {
     /// (`JC_PORTAL_CKAN_API_REACH`, e.g. `127.0.0.1:8080`): jc's own catalogue on a host mount
     /// is called on jc's listener under its host name, never through the public edge (C1).
     pub ckan_api_reach: Option<std::net::SocketAddr>,
+    /// The sibling hosts dialed at `jc`'s loopback listener ([`crate::reach`]), none by default.
+    pub reach: Vec<(String, std::net::SocketAddr)>,
     /// The directory the ConfigMap `jc-validation-results` is mounted at (`JC_HEALTH_DIR`;
     /// OPS-53): one digest per validation check, read on every request to
     /// `/api/v1/organization/health`. `None` answers an empty list; it is never an error.
@@ -475,6 +477,7 @@ impl std::fmt::Debug for Config {
             .field("branding_file", &self.branding_file)
             .field("ckan_api_route", &self.ckan_api_route)
             .field("ckan_api_reach", &self.ckan_api_reach)
+            .field("reach", &self.reach)
             .field("health_dir", &self.health_dir)
             .field(
                 "database_url",
@@ -2066,6 +2069,7 @@ impl Config {
             .map(|_| ckan_api_reach(&lookup))
             .transpose()?
             .flatten();
+        let reach = crate::reach::from_env(&lookup)?;
         let health_dir = lookup("JC_HEALTH_DIR").filter(|path| !path.trim().is_empty());
         let database_url = lookup("JC_PORTAL_DATABASE_URL").filter(|url| !url.trim().is_empty());
         let bootstrap_admins = lookup("JC_PORTAL_BOOTSTRAP_ADMINS")
@@ -2146,6 +2150,7 @@ impl Config {
             branding_file,
             ckan_api_route,
             ckan_api_reach,
+            reach,
             health_dir,
             database_url,
             bootstrap_admins,
@@ -2234,6 +2239,7 @@ impl Config {
             branding_file: None,
             ckan_api_route: None,
             ckan_api_reach: None,
+            reach: Vec::new(),
             health_dir: None,
             database_url: None,
             // The dev realm's approver role: a test session that carries it may do everything,

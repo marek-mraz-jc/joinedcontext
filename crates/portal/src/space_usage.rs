@@ -106,7 +106,7 @@ impl Counter {
             broker: broker.map(|url| url.trim_end_matches('/').to_owned()),
             template: None,
             token_file,
-            http: reqwest::Client::builder()
+            http: crate::reach::builder()
                 .timeout(TIMEOUT)
                 .build()
                 .unwrap_or_default(),

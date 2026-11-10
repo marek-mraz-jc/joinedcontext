@@ -256,7 +256,7 @@ impl Probes {
         Self {
             gateway,
             counter,
-            client: reqwest::Client::builder()
+            client: crate::reach::builder()
                 .user_agent("joinedcontext-portal health")
                 .timeout(TIMEOUT)
                 .redirect(reqwest::redirect::Policy::none())
