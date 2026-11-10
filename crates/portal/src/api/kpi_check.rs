@@ -24,7 +24,7 @@ use serde_json::Value;
 use utoipa::ToSchema;
 
 use crate::access_requests::{already_granted, Operations, TypeGrant};
-use crate::auth::{CurrentUser, Identity};
+use crate::auth::{CurrentUser, Identity, Session};
 use crate::error::ApiError;
 use crate::resource::is_dns1123;
 use crate::state::AppState;
@@ -168,7 +168,7 @@ pub async fn check_kpi(
     let pipeline = admitted(&state, identity, &project, request.pipeline)?;
     let (mut checked, compiled) = check(&state, identity, &project, &pipeline);
     if let (true, Some((step, expr, inputs))) = (request.preview, compiled) {
-        let reader = Reader::of(&state, identity, &project, &headers);
+        let reader = Reader::of(&state, &user.0, &project, &headers);
         checked.preview = Some(preview(&reader, &step, &expr, &inputs).await);
     }
     Ok(Json(checked))
@@ -486,7 +486,7 @@ fn policies(state: &AppState, project: &str) -> Vec<Value> {
 /// Who a preview reads as, and where.
 struct Reader<'a> {
     state: &'a AppState,
-    identity: &'a Identity,
+    session: &'a Session,
     project: &'a str,
     /// The person's own access token, when this session carries one.
     token: Option<&'a str>,
@@ -496,13 +496,13 @@ impl<'a> Reader<'a> {
     /// The caller of this request.
     fn of(
         state: &'a AppState,
-        identity: &'a Identity,
+        session: &'a Session,
         project: &'a str,
         headers: &'a HeaderMap,
     ) -> Self {
         Self {
             state,
-            identity,
+            session,
             project,
             token: crate::agents::identity::persons_token(headers, state.config.trust_edge_token),
         }
@@ -585,7 +585,7 @@ fn empty_source(name: &str) -> String {
 async fn page(reader: &Reader<'_>, input: &Input, step: &KpiStep) -> Result<Vec<Value>, String> {
     let Reader {
         state,
-        identity,
+        session,
         project,
         ..
     } = *reader;
@@ -596,11 +596,9 @@ async fn page(reader: &Reader<'_>, input: &Input, step: &KpiStep) -> Result<Vec<
     let (id, view) = views
         .saved_view(project, &input.endpoint)?
         .ok_or("the Endpoint's view is not compiled yet; try again shortly")?;
-    let public = state
-        .mirror
-        .get(project, "Endpoint", &input.endpoint)
-        .is_some_and(|e| e.spec["audience"].as_str() == Some("public"));
-    let subject = crate::api::endpoint_preview::subject(identity, public);
+    let subject =
+        crate::api::endpoint_preview::subject(state, views, session, project, &input.endpoint)
+            .map_err(|refused| refused.to_string())?;
     let (status, answer) = views
         .preview(&id, &view, &query_of(input, step), &subject)
         .await?;
