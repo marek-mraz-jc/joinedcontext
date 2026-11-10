@@ -654,12 +654,20 @@ impl Server {
             .await;
         // averages only for a history the broker cut: a raw answer that fits
         // is what the NGSI-LD door serves for the same call (T-5028); only a
-        // 206 carries Content-Range, so a refusal is never retried
-        if aggregated.is_some() && answer.range.is_some() {
+        // 206 carries Content-Range, so a refusal is never retried. The averages
+        // are this server's choice: refused (an Attribute not eligible for avg,
+        // 5.7.4.4), the cut raw page and its `more` stay the answer.
+        let averages = if aggregated.is_some() && answer.range.is_some() {
+            Some(
+                self.run(tool.op, tools::build(tool, &averaged, limit, offset))
+                    .await,
+            )
+        } else {
+            None
+        };
+        if let Some(averages) = averages.filter(|a| a.status.is_success()) {
             args = averaged;
-            answer = self
-                .run(tool.op, tools::build(tool, &args, limit, offset))
-                .await;
+            answer = averages;
         } else {
             aggregated = None;
         }

@@ -449,6 +449,51 @@ async fn a_long_cut_history_window_answers_hourly_averages() -> Result<(), Strin
     Ok(())
 }
 
+/// The averages are asked for the caller, not by it: when the broker refuses
+/// them (a text Attribute is not eligible for avg, 5.7.4.4: 400
+/// InvalidRequest), the cut raw page and its `more` stay the answer
+/// (gate 4 `hub.temporal.24h`, WeatherObserved's `dateObserved`).
+#[tokio::test(flavor = "multi_thread")]
+async fn refused_averages_leave_the_cut_raw_history() -> Result<(), String> {
+    let f = fixture().await?;
+    let now = chrono::Utc::now();
+    let ago = |minutes: i64| {
+        (now - chrono::Duration::minutes(minutes))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string()
+    };
+    let id = "urn:ngsi-ld:Car:text";
+    let at = |i: i64| {
+        json!({"speed": {"type": "Property", "value": i % 80, "observedAt": ago(i)},
+               "colour": {"type": "Property", "value": format!("c{i}"), "observedAt": ago(i)}})
+    };
+    let mut first = at(150);
+    if let Some(o) = first.as_object_mut() {
+        o.insert("id".into(), json!(id));
+        o.insert("type".into(), json!("Car"));
+    }
+    create(&f.app, "city", &first).await?;
+    for i in (0..150).rev() {
+        let uri = format!("/ngsi-ld/v1/entities/{id}/attrs");
+        let s = send(&f.app, axum::http::Method::PATCH, &uri, "city", &at(i)).await;
+        assert!(s.is_success(), "update {i}: {s}");
+    }
+    let a = call(
+        &f.app,
+        "cars",
+        "retrieve_temporal",
+        json!({"id": id, "timerel": "between", "timeAt": ago(25 * 60), "endTimeAt": ago(-5)}),
+    )
+    .await;
+    assert!(!a.is_error(), "{}", a.text);
+    let s = a.structured();
+    assert!(s.get("aggregation").is_none(), "{}", a.text);
+    assert!(s.pointer("/more/next").is_some(), "{}", a.text);
+    let speed = s.pointer("/entity/speed").and_then(Value::as_array);
+    assert!(speed.is_some_and(|v| !v.is_empty()), "{}", a.text);
+    Ok(())
+}
+
 /// T-5028: a history older than a day that fits one answer stays raw, the
 /// instances the NGSI-LD door serves for the same call, with no aggregation.
 #[tokio::test(flavor = "multi_thread")]
