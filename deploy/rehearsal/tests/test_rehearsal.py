@@ -1289,6 +1289,26 @@ def test_client_urls_of_the_source_host_get_a_twin_on_the_rehearsal_and_keep_the
     assert rh.add_rehearsal_origin({"clients": [{"clientId": "x"}]}, "http://localhost:1") == ({"clients": [{"clientId": "x"}]}, 0)
 
 
+def test_an_app_client_gets_its_loopback_app_host_twin():
+    """The role-gated App pages sign in on `http://<app>.apps.localhost:<port>/callback` (gate
+    2026-11-10T120138Z-apps-redirect: 22 app.page rows, 400 invalid redirect_uri); prod's App client
+    holds only `https://<app>.apps.<domain>/*`. An IP-literal base mounts App hosts under localhost."""
+    a = "https://air-quality.apps.smartcity.joinedcontext.com"
+    realm = {"clients": [
+        {"clientId": "portal-api", "rootUrl": "https://portal.smartcity.joinedcontext.com"},
+        {"clientId": "app-air-quality", "redirectUris": [f"{a}/*"], "webOrigins": [a]},
+        {"clientId": "other", "redirectUris": ["https://x.apps.smartcity.joinedcontext.com.evil.example/*",
+                                               "https://a.b.apps.smartcity.joinedcontext.com/*"]},
+    ]}
+    for base, host in (("http://127.0.0.1:42102", "localhost:42102"), ("http://localhost:42102/", "localhost:42102")):
+        out, n = rh.add_rehearsal_origin(realm, base)
+        by = {c["clientId"]: c for c in out["clients"]}
+        assert by["app-air-quality"]["redirectUris"] == [f"{a}/*", f"http://air-quality.apps.{host}/*"]
+        assert by["app-air-quality"]["webOrigins"] == [a, f"http://air-quality.apps.{host}"]
+        assert by["other"] == realm["clients"][2]
+        assert n == 2
+
+
 def test_every_kit_secret_is_long_enough_for_the_strictest_reader(tmp_path):
     """up.sh secret(): dataroom refuses a Portal publisher token under 32 printable characters, and
     a base64 secret with its / + = stripped came out shorter about two times in three."""
