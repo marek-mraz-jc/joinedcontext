@@ -56,7 +56,7 @@ covered() {
       while ((getline l < done) > 0) ok[l] = 1
       # every job of a key, each test partition of ci.yml (matrix part) by its name
       jobs["root"] = "root-clippy root-test-1 root-test-2 root-test-3 root-test-4"
-      jobs["antares"] = "antares-clippy antares-test-1 antares-test-2 antares-test-3"
+      jobs["antares"] = "antares-clippy antares-test-1 antares-test-2 antares-test-3 antares-test-4"
       jobs["platform"] = "platform-test"
       jobs["ekiben"] = "ekiben"; jobs["portal"] = "portal-clippy portal-test-1 portal-test-2 portal-test-3 portal-test-4"; jobs["ui"] = "ui ui-test-1 ui-test-2 ui-test-3 ui-test-4"
     }

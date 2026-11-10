@@ -235,10 +235,11 @@ jobs:
         with: { workspace: crates/antares, key: antares-clippy, components: "clippy, rustfmt" }
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-  # nextest with Antares' own groups (crates/antares/.config/nextest.toml), in three jobs, each
+  # nextest with Antares' own groups (crates/antares/.config/nextest.toml), in four jobs, each
   # with its own PostGIS: the first builds and runs only pg_explain, then the view matrix and the
-  # doc tests; the other two run every other test, split by the times .github/ci-durations.json
-  # records (test-part.py --nextest). pg_explain seeds 200 000
+  # doc tests; the other three run every other test, split by the times .github/ci-durations.json
+  # records (test-part.py --nextest; with two, one slow runner set the run: 211 s of tests where
+  # 153 s ran the same split, runs 42767791074, 42766258305). pg_explain seeds 200 000
   # Entities and ANALYZEs them in one transaction held for about a minute, once per database:
   # beside every slice it deadlocked a concurrent index build and timed out a week partition's DDL
   # in two of three jobs (run 42610186767).
@@ -250,7 +251,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix: { part: [1, 2, 3] }
+      matrix: { part: [1, 2, 3, 4] }
     defaults: { run: { working-directory: crates/antares } }
     services:
       postgis:
@@ -279,7 +280,7 @@ jobs:
         run: |
           cargo nextest list --workspace --locked --profile ci --timings --list-type binaries-only --message-format json > "$RUNNER_TEMP/binaries.json"
           cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
-          python3 ../../.github/scripts/test-part.py --nextest antares $(( ${{ matrix.part }} - 1 )) 2 \
+          python3 ../../.github/scripts/test-part.py --nextest antares $(( ${{ matrix.part }} - 1 )) $(( ${{ strategy.job-total }} - 1 )) \
             --filter 'not binary(pg_explain)' --reuse "$RUNNER_TEMP/binaries.json" "$RUNNER_TEMP/cargo-metadata.json" > "$RUNNER_TEMP/part.txt"
           set --; while IFS= read -r term; do set -- "$@" -E "$term"; done < "$RUNNER_TEMP/part.txt"
           cargo nextest run --profile ci --no-fail-fast \
