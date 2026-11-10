@@ -213,3 +213,54 @@ def test_an_ip_literal_base_has_its_app_hosts_under_localhost():
     assert suite.shots_app_host("http://127.0.0.1:42102", "bike") == "http://bike.apps.localhost:42102"
     assert suite.shots_app_host("http://localhost:42102", "bike") == "http://bike.apps.localhost:42102"
     assert suite.shots_app_host("https://smartcity.example", "bike") == "https://bike.apps.smartcity.example"
+
+
+def test_a_role_gated_app_is_judged_after_the_person_signs_in(tmp_path):
+    """jc's App host answers a role-gated App with the realm's sign-in form (the App client's own
+    code flow), and that form reads no /api/: before the login step every role-gated App failed
+    app.page (gate 2026-11-10T203500Z-gc, 22 rows). The shot signs in as the holder and judges the
+    page behind the form; without `login` the same page still fails."""
+    import http.server
+    import threading
+
+    import shots
+
+    class App(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _send(self, code, body=b"", headers=()):
+            self.send_response(code)
+            for k, v in headers:
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            signed = "sid=holder" in (self.headers.get("Cookie") or "")
+            if self.path.endswith("/api/endpoint/x/ngsi-ld/v1/entities"):
+                return self._send(200 if signed else 401, b"[]", [("Content-Type", "application/json")])
+            page = (b"<title>app</title><script>fetch('/api/endpoint/x/ngsi-ld/v1/entities')</script>" if signed else
+                    b"<title>sign in</title><form method=post action=login><input name=username>"
+                    b"<input type=password name=password><button>Sign in</button></form>")
+            self._send(200, page, [("Content-Type", "text/html")])
+
+        def do_POST(self):
+            form = self.rfile.read(int(self.headers["Content-Length"])).decode()
+            ok = form == "username=holder&password=pw"
+            self._send(302, headers=[("Location", "/"), *([("Set-Cookie", "sid=holder; Path=/")] if ok else [])])
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), App)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    browser = shots.Browser(f"http://127.0.0.1:{srv.server_port}", {}, timeout_ms=5000)
+    try:
+        rows = {"in": browser.app("gated", tmp_path, "tok", ("holder", "pw")),
+                "out": browser.app("gated", tmp_path, "tok")}
+    finally:
+        browser.close()
+        srv.shutdown()
+    for r in rows["in"]:
+        assert (r.get("signedIn"), r.get("title"), r.get("dataCount"), r.get("bad")) == ("holder", "app", 1, []), r
+    for r in rows["out"]:
+        assert (r.get("signedIn"), r.get("title"), r.get("dataCount")) == (None, "sign in", 0), r

@@ -110,9 +110,12 @@ class Browser:
             rows.append(row)
         return rows
 
-    def app(self, name: str, out_dir: Path, token: str | None = None) -> list[dict]:
+    def app(self, name: str, out_dir: Path, token: str | None = None,
+            login: tuple[str, str] | None = None) -> list[dict]:
         """The App on its own host, as prod serves it. `token`: a person's token of the App's own
-        client, sent as the edge sends it on prod."""
+        client, sent as the edge sends it on prod. `login` (username, password): jc's App host runs
+        the App client's own code flow, so a role-gated App first shows the realm's sign-in form;
+        the person signs in there as on prod's edge login, and only what loads after counts."""
         rows, path = [], app_host(self.base, name) + "/"
         for width in WIDTHS:
             ctx, page = self._page(width, portal=False)
@@ -146,6 +149,14 @@ class Browser:
                 resp = page.goto(path)
                 row["status"] = resp.status if resp else 0
                 self._settle(page)
+                if login and page.locator("input[type=password]").count():
+                    page.locator("input[name=username]").fill(login[0])
+                    page.locator("input[type=password]").fill(login[1])
+                    del data[:], bad[:]
+                    with page.expect_navigation():
+                        page.locator("input[type=password]").press("Enter")
+                    self._settle(page)
+                    row["signedIn"] = login[0]
                 row["title"] = page.title()
                 row.update(data=data[:20], dataCount=len(data), bad=bad[:20], console=console[:10])
                 shot = out_dir / f"app--{name}--{width}.png"
