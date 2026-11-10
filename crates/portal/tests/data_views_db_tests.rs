@@ -10,6 +10,9 @@ use joinedcontext_portal::ops::data_views::{
 };
 use serde_json::json;
 
+#[path = "common/unique.rs"]
+mod unique;
+
 fn database_url() -> Option<String> {
     std::env::var("JC_PORTAL_TEST_DATABASE_URL")
         .ok()
@@ -18,11 +21,8 @@ fn database_url() -> Option<String> {
 
 /// A project nobody else's run writes to, so tests share one database without a fixture.
 fn fresh_project() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    format!("views-{nanos}")
+    let id = crate::unique::unique();
+    format!("views-{id}")
 }
 
 fn view(mode: &str) -> CreateView {

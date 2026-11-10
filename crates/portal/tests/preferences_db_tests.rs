@@ -16,6 +16,9 @@ use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
+#[path = "common/unique.rs"]
+mod unique;
+
 const CSRF: &str = "csrf-token-value";
 
 fn session_cookie(config: &Config, subject: &str) -> String {
@@ -94,11 +97,8 @@ fn database_url() -> Option<String> {
 
 /// A subject nobody else's test writes to, so tests share one database without a fixture.
 fn fresh_subject(tag: &str) -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    format!("test:{tag}:{nanos}")
+    let id = crate::unique::unique();
+    format!("test:{tag}:{id}")
 }
 
 #[tokio::test]

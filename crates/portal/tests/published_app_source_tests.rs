@@ -66,10 +66,7 @@ fn apps_dir() -> std::path::PathBuf {
     let root = std::env::temp_dir().join(format!(
         "jc-published-app-source-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_nanos())
-            .unwrap_or_default()
+        crate::common::unique::unique()
     ));
     std::fs::create_dir_all(root.join("shipped")).expect("the apps directory");
     std::fs::write(root.join("shipped/index.html"), "<!doctype html>").expect("the bundle");

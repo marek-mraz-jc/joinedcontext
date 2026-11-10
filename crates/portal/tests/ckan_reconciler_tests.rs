@@ -886,16 +886,26 @@ fn calls_to_the_catalogue_keep_the_gap_across_every_client_of_one_portal() {
     let gap = Duration::from_millis(40);
     let calls = Arc::new(Mutex::new(Vec::new()));
     let last = Arc::new(Mutex::new(None));
+    // Each call's turn as Paced took it under its lock, read back from the gate it left. The
+    // double notes its own time only after that lock is let go, so a thread held up there longer
+    // on one call than on the next shrinks a gap measured between the notes (39.96 ms on ci).
+    let turn = || turn_of(&last, gap);
     let mut first = Paced::new(Clocked(calls.clone()), last.clone(), gap);
     first.show("package_show", "a").expect("show");
+    let mut turns = vec![turn()];
     first.action("package_patch", &json!({})).expect("action");
+    turns.push(turn());
     // The next Endpoint's client is a new one; the gap is the Portal's, not the client's.
-    let second = Paced::new(Clocked(calls.clone()), last, gap);
+    let second = Paced::new(Clocked(calls.clone()), last.clone(), gap);
     second.show("package_show", "b").expect("show");
+    turns.push(turn());
+    for pair in turns.windows(2) {
+        assert!(pair[1] - pair[0] >= gap, "{:?}", pair[1] - pair[0]);
+    }
     let at = calls.lock().expect("calls").clone();
     assert_eq!(at.len(), 3);
-    for pair in at.windows(2) {
-        assert!(pair[1] - pair[0] >= gap, "{:?}", pair[1] - pair[0]);
+    for (call, turn) in at.iter().zip(&turns) {
+        assert!(call >= turn, "a call goes no sooner than its turn");
     }
     assert_eq!(
         CALL_GAP,
@@ -915,32 +925,43 @@ fn the_gateway_reads_of_each_publication_keep_the_catalogues_pace() {
     let api = Paced::new(Clocked(calls.clone()), last.clone(), gap);
     let read = || calls.lock().expect("calls").push(Instant::now());
     let endpoints = 3;
+    // The turns as Paced took them, not as the reads noted them (see the test above).
+    let mut first = None;
     for _ in 0..endpoints {
         api.reads(RECORD_READS, read);
+        first.get_or_insert(turn_of(&last, gap * RECORD_READS));
         api.reads(MODELS_READS, read);
     }
     // The next Endpoint's catalogue call, on a client of its own, waits for every read before it.
-    Paced::new(Clocked(calls.clone()), last, gap)
+    Paced::new(Clocked(calls.clone()), last.clone(), gap)
         .show("package_show", "next")
         .expect("show");
+    let (first, next) = (first.expect("a read"), turn_of(&last, gap));
     let at = calls.lock().expect("calls").clone();
     assert_eq!(at.len(), 2 * endpoints + 1);
     let held = gap * (RECORD_READS + MODELS_READS) * endpoints as u32;
-    assert!(
-        at[at.len() - 1] - at[0] >= held,
-        "{:?} < {held:?}",
-        at[at.len() - 1] - at[0]
-    );
+    assert!(next - first >= held, "{:?} < {held:?}", next - first);
+    assert!(at[0] >= first && at[at.len() - 1] >= next);
     assert_eq!(
         (RECORD_READS, MODELS_READS),
         (3, 2),
         "/, /ws, /ngsi-ld/v1/types; the two schemas"
     );
 
-    // A read of nothing waits for nothing.
+    // A read of nothing waits for nothing and takes no turn, even behind a gate held 10 s out:
+    // waiting would cost the whole 10 s, which no load on a runner stalls a thread for.
+    let far = Duration::from_secs(10);
+    let gate = Some(Instant::now() + far);
+    *last.lock().expect("gate") = gate;
     let before = Instant::now();
     api.reads(0, || ());
-    assert!(before.elapsed() < gap);
+    assert!(before.elapsed() < far);
+    assert_eq!(*last.lock().expect("gate"), gate);
+}
+
+/// The turn the last paced call took: Paced leaves its gate at that turn plus `held`.
+fn turn_of(last: &Mutex<Option<Instant>>, held: Duration) -> Instant {
+    last.lock().expect("gate").expect("a turn taken") - held
 }
 
 /// The publisher's catalogue double behind a shared handle, so each Endpoint's client is a new
@@ -1304,11 +1325,25 @@ fn the_gap_holds_on_the_public_route_and_not_on_the_in_cluster_or_loopback_one()
     public_api
         .action("package_patch", &json!({}))
         .expect("call");
+    let (first, reserved) = (turn_of(&last, gap), *last.lock().expect("gate"));
+    // The loopback call neither waits nor takes a turn, even behind a gate held 10 s out.
+    let far = Duration::from_secs(10);
+    let gate = Some(Instant::now() + far);
+    *last.lock().expect("gate") = gate;
+    let before = Instant::now();
     loopback.show("package_show", "x").expect("call");
+    assert!(before.elapsed() < far, "the loopback call waited");
+    assert_eq!(
+        *last.lock().expect("gate"),
+        gate,
+        "the loopback call took a turn"
+    );
+    *last.lock().expect("gate") = reserved;
     public_api.show("package_show", "y").expect("call");
+    let next = turn_of(&last, gap);
+    assert!(next - first >= gap, "{:?}", next - first);
     let at = calls.lock().expect("calls").clone();
-    assert!(at[1] - at[0] < gap, "the loopback call waited");
-    assert!(at[2] - at[0] >= gap, "{:?}", at[2] - at[0]);
+    assert!(at[0] >= first && at[2] >= next);
 
     // Gateway reads on a public data host keep the gap even when the catalogue is in-cluster.
     let reads = Paced::new(Clocked(calls.clone()), last, Duration::ZERO).with_read_gap(gap);

@@ -6,8 +6,9 @@
 
 use askama::Template;
 use axum::Router;
-use axum::extract::{Extension, Path, Query, State};
+use axum::extract::{Extension, Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
 use jc_router::Mount;
@@ -805,20 +806,56 @@ async fn web_actions_not_served() -> Response {
     not_found_html()
 }
 
+/// The Portal's public base (`https://city.example` or empty for the same origin), where a
+/// browser asking shako's pages without a credential is sent.
+#[derive(Clone, Debug, Default)]
+pub struct PortalBase(pub String);
+
+/// The Portal page for a shako page path, from the path alone: `/{owner}/{repo}[/...]` names the
+/// repository `repo` (`.git` stripped) of the project before its first `_` (`{project}_{app}`,
+/// AP-75) or of the project `repo`; any other shape, or a segment that is no plain name (`%2F`,
+/// `..`, empty), gives the Portal's home `/`. Never a store lookup, so the answer is the same for a
+/// repository that exists and one that does not.
+#[must_use]
+pub fn portal_page(path: &str) -> String {
+    let named = |s: &str| {
+        s.len() <= 100
+            && s.starts_with(|c: char| c.is_ascii_alphanumeric())
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    };
+    let mut parts = path.split('/').skip(1);
+    let (Some(owner), Some(repo)) = (parts.next(), parts.next()) else {
+        return "/".into();
+    };
+    let repo = shako_api::strip_dot_git(repo);
+    let project = repo.split_once('_').map_or(repo, |(p, _)| p);
+    if !named(owner) || !named(repo) || !named(project) {
+        return "/".into();
+    }
+    format!("/projects/{project}/repositories/{repo}")
+}
+
+/// shako keeps no sessions (DECISIONS.md): a browser asking a page without `Authorization` gets a
+/// 302 to the Portal's page for the same repository, which checks the person's rights. A request
+/// with `Authorization` (API, MCP, CLI) reaches the page as before.
+async fn browser_to_portal(req: Request, next: Next) -> Response {
+    if req.headers().contains_key(header::AUTHORIZATION) {
+        return next.run(req).await;
+    }
+    let base = req
+        .extensions()
+        .get::<PortalBase>()
+        .map_or("", |b| b.0.trim_end_matches('/'));
+    let target = format!("{base}{}", portal_page(req.uri().path()));
+    (StatusCode::FOUND, [(header::LOCATION, target)]).into_response()
+}
+
 /// Builds the `shako-web` router (read-only HTML views + Gitea page-path redirects).
 pub fn web_router() -> Router<ShakoState> {
-    Router::new()
+    let pages = Router::new()
         .route("/", get(web_repo_list))
-        .route("/user/oauth2/keycloak", get(redirect_gitea_oauth_keycloak))
-        .route(
-            "/{owner}/-/packages/generic/{pkg}/{ver}",
-            get(redirect_gitea_package_page),
-        )
         .route("/{owner}/{repo}", get(web_repo_home))
-        .route(
-            "/{owner}/{repo}/src/branch/{git_ref}/{*path}",
-            get(redirect_gitea_src_branch),
-        )
         .route("/{owner}/{repo}/blob/{git_ref}/{*path}", get(web_file_view))
         .route("/{owner}/{repo}/raw/{git_ref}/{*path}", get(web_raw_file))
         .route("/{owner}/{repo}/branches", get(web_branches))
@@ -832,6 +869,19 @@ pub fn web_router() -> Router<ShakoState> {
             "/{owner}/{repo}/actions/runs/{number}",
             get(web_actions_not_served),
         )
+        .layer(middleware::from_fn(browser_to_portal));
+    // The Gitea page-path redirects read nothing and keep their targets.
+    Router::new()
+        .route("/user/oauth2/keycloak", get(redirect_gitea_oauth_keycloak))
+        .route(
+            "/{owner}/-/packages/generic/{pkg}/{ver}",
+            get(redirect_gitea_package_page),
+        )
+        .route(
+            "/{owner}/{repo}/src/branch/{git_ref}/{*path}",
+            get(redirect_gitea_src_branch),
+        )
+        .merge(pages)
 }
 
 #[cfg(test)]
@@ -856,5 +906,41 @@ mod tests {
         assert!(!rendered.contains("<h1"), "{rendered}");
         assert!(rendered.contains("<h2>configuration</h2>"), "{rendered}");
         assert!(rendered.contains("<h2>Layout</h2>"), "{rendered}");
+    }
+
+    #[test]
+    fn a_page_path_names_the_portal_page_of_its_repository_and_nothing_else() {
+        for (path, page) in [
+            ("/", "/"),
+            ("", "/"),
+            ("/joinedcontext", "/"),
+            (
+                "/joinedcontext/helsinki",
+                "/projects/helsinki/repositories/helsinki",
+            ),
+            (
+                "/joinedcontext/helsinki.git",
+                "/projects/helsinki/repositories/helsinki",
+            ),
+            (
+                "/joinedcontext/helsinki/blob/main/README.md",
+                "/projects/helsinki/repositories/helsinki",
+            ),
+            (
+                "/joinedcontext-apps/banskabystrica_kiosk/pulls/3",
+                "/projects/banskabystrica/repositories/banskabystrica_kiosk",
+            ),
+            // Odd shapes never leave the Portal's origin and never carry the odd part along.
+            ("//evil.example/x", "/"),
+            ("/joinedcontext//evil.example", "/"),
+            ("/joinedcontext/a%2F..%2F..%2Fevil", "/"),
+            ("/joinedcontext/%2F%2Fevil.example", "/"),
+            ("/joinedcontext/..", "/"),
+            ("/joinedcontext/_x", "/"),
+            ("/joinedcontext/a\\evil", "/"),
+            ("/%2F%2Fevil/helsinki", "/"),
+        ] {
+            assert_eq!(portal_page(path), page, "{path}");
+        }
     }
 }

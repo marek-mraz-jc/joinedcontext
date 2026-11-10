@@ -19,11 +19,8 @@ const KPIS: &str = "city-kpis";
 const HELSINKI: &str = "helsinki";
 
 fn unique(base: &str) -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or_default();
-    format!("{base}-{nanos:x}")
+    let id = crate::common::unique::unique();
+    format!("{base}-{id}")
 }
 
 fn role(state: &AppState, name: &str, user: &str, project: &str, kinds: &[&str], verbs: &[&str]) {

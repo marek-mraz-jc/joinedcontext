@@ -157,6 +157,38 @@ describe("the Organization page's addresses (T-2605)", () => {
     expect(await screen.findByRole("heading", { name: en.access.groups.newTitle })).toBeInTheDocument();
   });
 
+  // Gate 2026-11-09T192034Z: an outsider (no project, every organization read 404) read "this project
+  // is not open to you" above the page's own "Ask an organization administrator".
+  it("tells an outsider at a create address whom to ask, and names no project", async () => {
+    window.history.pushState({}, "", "/organization/groups/new");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const [status, body] = url.includes("/auth/me")
+          ? [200, IDENTITY]
+          : url.endsWith("/api/v1/projects")
+            ? [200, EMPTY_LIST]
+            : url.includes("/api/v1/projects/org/")
+              ? [404, { status: 404, title: "not found", detail: "project 'org' not found" }]
+              : [200, EMPTY_LIST];
+        return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <I18nextProvider i18n={i18n}>
+          <App />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(en.askAdmins.title)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toBeVisible();
+    await waitFor(() => expect(screen.queryByText(en.form.opening)).toBeNull());
+    expect(screen.queryByText(en.form.projectHidden)).toBeNull();
+  });
+
   // T-2750: the organization's Members and Roles answered their `…/new` with "nothing called
   // rolebindings/roles here".
   it("opens Members' grant form at /organization/members/new", async () => {

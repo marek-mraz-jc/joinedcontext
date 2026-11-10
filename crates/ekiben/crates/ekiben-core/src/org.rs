@@ -158,7 +158,7 @@ impl Pacer {
     }
 }
 
-/// The one loopback listener a hosting process (`jc`) lets its streams reach: plain HTTP to
+/// The loopback listener a hosting process (`jc`) lets its streams reach: plain HTTP to
 /// exactly `addr` (a literal address, never a name), under one of `path_prefixes` (whole
 /// segments: `/broker` admits `/broker` and `/broker/...`, not `/brokerx`). Every other private
 /// or loopback target stays refused, other mounts of the same listener included. Set by the
@@ -167,40 +167,53 @@ impl Pacer {
 pub struct HostTarget {
     pub addr: std::net::SocketAddr,
     pub path_prefixes: Vec<String>,
+    /// A second listener of the host whose address is known only once it is bound (jc: the
+    /// Portal's internal listener, which a stream's report sinks post to), under its own
+    /// prefixes and the same rules; nothing passes while it is unset.
+    pub late: Option<(Arc<std::sync::OnceLock<std::net::SocketAddr>>, Vec<String>)>,
 }
 
 impl HostTarget {
-    /// Whether `url` is a request to this listener under an admitted prefix. A path holding an
-    /// encoded dot, slash or backslash is refused: the listener may decode it into another mount.
+    /// Whether `url` is a request to one of these listeners under an admitted prefix. A path
+    /// holding an encoded dot, slash or backslash is refused: the listener may decode it into
+    /// another mount.
     pub fn admits(&self, url: &url::Url) -> bool {
-        if url.scheme() != "http" || !url.username().is_empty() || url.password().is_some() {
-            return false;
-        }
-        let ip = match url.host() {
-            Some(url::Host::Ipv4(ip)) => std::net::IpAddr::V4(ip),
-            Some(url::Host::Ipv6(ip)) => std::net::IpAddr::V6(ip),
-            _ => return false,
-        };
-        if ip != self.addr.ip() || url.port_or_known_default() != Some(self.addr.port()) {
-            return false;
-        }
-        let path = url.path();
-        let lower = path.to_ascii_lowercase();
-        if ["%2e", "%2f", "%5c", "\\"]
-            .iter()
-            .any(|bad| lower.contains(bad))
-        {
-            return false;
-        }
-        self.path_prefixes.iter().any(|prefix| {
-            let prefix = prefix.trim_end_matches('/');
-            !prefix.is_empty()
-                && prefix.starts_with('/')
-                && path
-                    .strip_prefix(prefix)
-                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-        })
+        door_admits(self.addr, &self.path_prefixes, url)
+            || self.late.as_ref().is_some_and(|(addr, prefixes)| {
+                addr.get()
+                    .is_some_and(|addr| door_admits(*addr, prefixes, url))
+            })
     }
+}
+
+fn door_admits(addr: std::net::SocketAddr, prefixes: &[String], url: &url::Url) -> bool {
+    if url.scheme() != "http" || !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    let ip = match url.host() {
+        Some(url::Host::Ipv4(ip)) => std::net::IpAddr::V4(ip),
+        Some(url::Host::Ipv6(ip)) => std::net::IpAddr::V6(ip),
+        _ => return false,
+    };
+    if ip != addr.ip() || url.port_or_known_default() != Some(addr.port()) {
+        return false;
+    }
+    let path = url.path();
+    let lower = path.to_ascii_lowercase();
+    if ["%2e", "%2f", "%5c", "\\"]
+        .iter()
+        .any(|bad| lower.contains(bad))
+    {
+        return false;
+    }
+    prefixes.iter().any(|prefix| {
+        let prefix = prefix.trim_end_matches('/');
+        !prefix.is_empty()
+            && prefix.starts_with('/')
+            && path
+                .strip_prefix(prefix)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    })
 }
 
 /// Live runtime state and quota enforcement for a single organization.

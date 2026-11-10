@@ -303,6 +303,51 @@ pub fn missing_page(
     Some(response)
 }
 
+/// The `503` page of an App half this installation does not run (a `wasm` App's server, a
+/// `ui-rust` App's pod), naming the App in the person's language. `None` when the request does not
+/// ask for a page.
+pub fn unavailable_page(
+    headers: &HeaderMap,
+    name: &str,
+    title: Option<&jc_core::i18n::Text>,
+    portal_origin: Option<&str>,
+) -> Option<Response> {
+    let wants_page = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|accept| accept.contains("text/html"));
+    if !wants_page {
+        return None;
+    }
+    let locale = locale(headers);
+    let app = escape(title.map_or(name, |title| title.resolve(&[locale.to_owned()], name)));
+    let sentence = match locale {
+        "sk" => "Táto aplikácia je na tejto inštalácii dočasne nedostupná. Skúste to neskôr.",
+        "cs" => "Tato aplikace je na této instalaci dočasně nedostupná. Zkuste to později.",
+        "de" => "Diese Anwendung ist auf dieser Installation vorübergehend nicht verfügbar. Bitte später erneut versuchen.",
+        _ => "This application is temporarily unavailable on this installation. Please try again later.",
+    };
+    let page = format!(
+        "<!doctype html><html lang=\"{locale}\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <title>{app}</title></head><body><main><h1>{app}</h1><p>{sentence}</p></main></body></html>"
+    );
+    let mut response = (StatusCode::SERVICE_UNAVAILABLE, page).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    if let Ok(csp) = HeaderValue::from_str(&format!(
+        "default-src 'none'; frame-ancestors {}",
+        portal_origin.unwrap_or("'none'")
+    )) {
+        headers.insert(header::CONTENT_SECURITY_POLICY, csp);
+    }
+    Some(response)
+}
+
 /// The two sentences of the refusal page per locale.
 fn sentences(locale: &str) -> (&'static str, &'static str) {
     match locale {

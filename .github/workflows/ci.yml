@@ -76,7 +76,7 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: sh .github/scripts/gitleaks.sh
       - if: steps.paths.outputs.workflows == 'true'
-        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest
+        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
       - if: steps.paths.outputs.workflows == 'true'
         run: >-
           docker run --rm -v "$PWD:/repo" -w /repo
@@ -423,9 +423,11 @@ jobs:
           if [ -n "$red" ]; then echo "::error::red:$red"; exit 1; fi
   # A branch that changes the Dockerfile or its ignore file: the full `docker build` (every stage,
   # no push), which the shipped image skips by handing in its compiled binary.
-  # The layer cache (scope jc) is written by jc-portal-1 only, the default branch whose caches
-  # every branch reads: without a writer every branch built cold (39 min, runs 42617814130 and
-  # 42611953211); no branch writes it, so none evicts it.
+  # It reads the layer cache (scope jc) and, through the Actions cache token handed in as build
+  # secrets, the sccache the Dockerfile's cargo builds use; both are written only by
+  # dockerfile-cache.yml on every jc-portal-1 push (the default branch, whose caches every branch
+  # reads; without a writer every branch built cold: 39 min, runs 42617814130 and 42611953211). This
+  # job writes neither (sccache READ_ONLY), so no branch evicts those entries.
   dockerfile:
     needs: changes
     if: needs.changes.outputs.image == 'true' && needs.changes.outputs.release != 'true'
@@ -433,15 +435,24 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh .github/scripts/check-build-context.sh
       - run: sh .github/scripts/free-disk.sh --wait
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      # Exports ACTIONS_RESULTS_URL and ACTIONS_RUNTIME_TOKEN to the steps after it (the build's
+      # secrets); the sccache it installs on the runner is not used.
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with: { version: v0.18.0 }
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        env: { SCCACHE_GHA_RW_MODE: READ_ONLY }
         with:
           context: .
           file: bins/jc/Dockerfile
           push: false
           cache-from: type=gha,scope=jc
-          cache-to: ${{ github.ref == 'refs/heads/jc-portal-1' && 'type=gha,scope=jc,mode=max' || '' }}
+          secret-envs: |
+            ACTIONS_RUNTIME_TOKEN=ACTIONS_RUNTIME_TOKEN
+            ACTIONS_RESULTS_URL=ACTIONS_RESULTS_URL
+            SCCACHE_GHA_RW_MODE=SCCACHE_GHA_RW_MODE
   # main and ship-proof/** only, from here on.
   image:
     needs: changes

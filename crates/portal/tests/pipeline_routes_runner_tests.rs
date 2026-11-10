@@ -14,6 +14,9 @@ use serde_json::{json, Value};
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+#[path = "common/unique.rs"]
+mod unique;
+
 fn runner_url() -> Option<String> {
     std::env::var("JC_PORTAL_TEST_BENTO_URL")
         .ok()
@@ -115,14 +118,7 @@ async fn each_record_lands_at_the_outputs_of_its_route_after_its_steps() {
         .timeout(Duration::from_secs(30))
         .build()
         .expect("a client");
-    let name = format!(
-        "t3920-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("after 1970")
-            .as_nanos()
-    );
+    let name = format!("t3920-{}-{}", std::process::id(), crate::unique::unique());
     let created = client
         .post(format!("{runner}/streams/{name}"))
         .json(&stream(&server.uri()))

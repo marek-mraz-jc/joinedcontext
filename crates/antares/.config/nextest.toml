@@ -28,9 +28,18 @@ store-failure-output = true
 # restores the sequencing `cargo test`'s one-binary-at-a-time execution used
 # to provide. `ws` is here because its api pods drain the same outbox (T-4916).
 # Defined on the default profile; ci inherits.
+# The group also holds every binary that runs the history maintenance on the
+# shared database (pg_retention calls it; store_combos, secret_logs and
+# upsert_transactions start a broker whose first tick runs it) and every one
+# that runs `GRANT ... ON ALL TABLES` (pg, read_statement_budget). The
+# maintenance builds the audit index of a week with CREATE INDEX CONCURRENTLY
+# (waits up to 10 s for older snapshots, holding the week's SHARE UPDATE
+# EXCLUSIVE lock), locks attr_instances/attr_rows ACCESS EXCLUSIVE and drops
+# weeks: beside it pg's ANALYZE ran into its 5 s lock_timeout and a GRANT met
+# a dropped week ("tuple concurrently deleted"), runs 42664879047, 42669283046.
 [test-groups]
 db-exclusive = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'binary(nats_e2e) or binary(pg_rls_pentest) or binary(pg_outbox) or binary(pg_temporal) or binary(pg_doc) or binary(pg_entity) or binary(pg) or binary(ws)'
+filter = 'binary(nats_e2e) or binary(pg_rls_pentest) or binary(pg_outbox) or binary(pg_temporal) or binary(pg_doc) or binary(pg_entity) or binary(pg) or binary(ws) or binary(pg_retention) or binary(store_combos) or binary(secret_logs) or binary(upsert_transactions) or binary(read_statement_budget)'
 test-group = 'db-exclusive'

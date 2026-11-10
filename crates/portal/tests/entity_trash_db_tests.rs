@@ -6,6 +6,9 @@
 use joinedcontext_portal::entity_trash::TrashStore;
 use serde_json::json;
 
+#[path = "common/unique.rs"]
+mod unique;
+
 #[tokio::test]
 async fn copies_are_kept_per_keeper_newest_first_and_forgotten_by_their_keeper_only() {
     let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
@@ -19,13 +22,7 @@ async fn copies_are_kept_per_keeper_newest_first_and_forgotten_by_their_keeper_o
         .await
         .expect("the test database answers and migrates");
     let store = TrashStore::new(Some(pool));
-    let project = format!(
-        "trash-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    );
+    let project = format!("trash-{}", crate::unique::unique());
     let mine = (project.as_str(), "air", "f:1:sami");
     let theirs = (project.as_str(), "air", "f:1:anna");
     let entity = |n: u32| json!({ "id": format!("urn:ngsi-ld:T:x:{n}"), "type": "T" });

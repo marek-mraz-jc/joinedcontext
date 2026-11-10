@@ -1,13 +1,13 @@
 # The files bins/jc/src/modules/viz.rs serves, by the path it serves them at (site/<name> at <name>).
 # vendor/ is joinedcontext-deployment fe826623 images/viz/vendor byte for byte; explorer/ is built
 # from this repository's crates/portal/ui (explorer/SHA256SUMS names the commit); site/ is components/viz/charts/renderer/files/site of that commit with
-# jc.patch applied to explore.js, embed.js and map.html (vendor/SOURCES.md).
+# jc.patch applied to explore.js, embed.js, map.html and host.js (vendor/SOURCES.md).
 1fa68fbfc99c7a5c7715440de8ad6ad8e37d7f4e79192f627e07cd758d27fd87  embed.js
 f9659bc1e1e4236ffc54e59dc4ff977366cf07890c09c44a2fef496132b1dd54  explore.css
 27069139d2c71cef2237ab2cb22aece06991472fa40605f9423d4b0a51f2a5fc  explore.html
 bc719f5780ffe89de8055299570df7937c040424575a59033983b11184b527bc  explore.js
 59b948e2ecad2d9b29bdacea71b402a0e9ee2827ed0bd8e55290ab90b945119e  host.css
-1b0b4c1f6813c2641f990dfa643f8eb9e8b953d0bab210057fc8db5b52ac493f  host.js
+46b5405cb28c62cefdde3c730f7625b7cedd2fff0f7d4af14bf937f939bdc3e4  host.js
 57dd801453cd7a724b95f98e4e4c44fe73a0691bd20aa7d3c873c88c16b3e2f2  index.html
 42799803cf3e76176673e0edd162386eef280bba06003297a7f60ab38b7164ab  map.css
 c0b180dab08830cf65d7bd6baaa944bcf3b9ffd2f2eb6eead64ddb0e1bfa1df9  map.html

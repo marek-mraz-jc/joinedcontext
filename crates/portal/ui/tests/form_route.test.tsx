@@ -238,6 +238,36 @@ describe("a kind's forms at their own addresses", () => {
     await act(async () => release());
   });
 
+  // Gate 2026-11-09T192034Z: the outsider's /organization/groups/new lost its h1 at 400 px. A read
+  // that had answered 404 (the organization's Endpoints) was asked again when the phone layout
+  // mounted another reader of it; with no data it counted as a first read and the page went
+  // behind "Opening the form…" for as long as the answer took.
+  it("keeps the page and its heading while a read that answered with a refusal is asked again", async () => {
+    let release = () => {};
+    let held = false;
+    const refused = () => new Response(JSON.stringify({ status: 404, title: "not found" }), { status: 404, headers: { "Content-Type": "application/problem+json" } });
+    const rendered = await renderRoute({
+      path: `${LIST}/no-such-policy/edit`,
+      answer: (path, request) => {
+        if (path.endsWith("/spaces")) {
+          return held ? new Promise<Response>((resolve) => (release = () => resolve(refused()))) : refused();
+        }
+        return answer(path, request);
+      },
+    });
+    await screen.findByRole("alert");
+
+    held = true;
+    await act(async () => {
+      void rendered.client.refetchQueries({ predicate: (query) => query.state.status === "error" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(screen.getByRole("heading", { level: 1, name: en.policies.title })).toBeVisible();
+    expect(screen.queryByText(en.form.opening)).not.toBeInTheDocument();
+    await act(async () => release());
+  });
+
   // T-3241, UI-91: every item has its bare address; a kind with no page of its own opens its form.
   it("opens a kind with no page of its own on its form at the item's bare address", async () => {
     await open(`${LIST}/open-read`);

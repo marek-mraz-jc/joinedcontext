@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+#[path = "common/unique.rs"]
+mod unique;
+
 fn mount(tag: &str, token: &str) -> PathBuf {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("a clock after 1970")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("kube-empty-token-{tag}-{now}"));
+    let id = crate::unique::unique();
+    let dir = std::env::temp_dir().join(format!("kube-empty-token-{tag}-{id}"));
     std::fs::create_dir_all(&dir).expect("a mount");
     std::fs::write(dir.join("token"), token).expect("the token file");
     dir

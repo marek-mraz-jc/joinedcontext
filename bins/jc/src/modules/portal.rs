@@ -69,18 +69,48 @@ pub async fn build(
         keys = ?siblings.keys().collect::<Vec<_>>(),
         "portal: settings filled from sibling modules"
     );
-    let config = config(&mount, env, siblings)?;
+    let mut config = config(&mount, env, siblings)?;
+    // The internal listener opens with a realm (`server::spawn_internal_listener`). It is bound
+    // before the state is built: the stream deployer is wired from the config, and its
+    // validation stage and run-log sinks post to this listener.
+    let listener = match config.oidc {
+        Some(_) => Some(
+            tokio::net::TcpListener::bind(config.internal_bind)
+                .await
+                .map_err(|e| err(format!("internal listener: {e}")))?,
+        ),
+        None => None,
+    };
+    if let Some(addr) = listener.as_ref().and_then(|l| l.local_addr().ok()) {
+        runner_reaches(&mut config, addr);
+    }
     let state = AppState::from_config(config).await.map_err(err)?;
+    // Set once the state is built: a failed attempt's listener goes, the next binds anew.
+    if let Some(addr) = listener.as_ref().and_then(|l| l.local_addr().ok()) {
+        let _ = super::PORTAL_INTERNAL.set(addr);
+    }
     server::spawn_background(&state);
     let token = shutdown.clone();
-    let internal = server::spawn_internal_listener(&state, async move { token.cancelled().await })
-        .await
+    let internal = listener
+        .map(|l| server::serve_internal_listener(&state, l, async move { token.cancelled().await }))
+        .transpose()
         .map_err(|e| err(format!("internal listener: {e}")))?;
     let token = shutdown.clone();
     server::spawn_build_listener(&state, async move { token.cancelled().await })
         .await
         .map_err(|e| err(format!("build listener: {e}")))?;
     Ok((server::app(state), internal))
+}
+
+/// Points jc's own runner at the Portal's internal listener on `addr` (prod's deployment sets
+/// `JC_PORTAL_PIPELINE_TEST_CAPTURE_URL` to it, base-values): without it the Portal renders no
+/// validation stage (PL-60) and no outcome sink, so a run never reaches the run log (PL-62).
+/// Only a loopback listener, which jc's ekiben reaches in the same process; an environment
+/// value wins.
+fn runner_reaches(config: &mut Config, addr: std::net::SocketAddr) {
+    if config.pipeline_test_capture_url.is_none() && addr.ip().is_loopback() {
+        config.pipeline_test_capture_url = Some(format!("http://{addr}"));
+    }
 }
 
 /// The Portal's settings for the `[[organizations]]` of `cfg`, each one's Portal host and own
@@ -135,6 +165,31 @@ pub(crate) fn organization_vars(
     out
 }
 
+/// `JC_PORTAL_APPS_URL`, the apex every App host sits under, from the Portal's App-host entry
+/// `*.apps.{domain}` (edge-session-design S4a): `{scheme}://{domain}`, and
+/// `JC_PORTAL_SERVE_APP_HOSTS`, since no edge composes the App routes in front of jc. Empty
+/// without one; an environment value still wins.
+pub(crate) fn apps_vars(cfg: &crate::config::Config) -> BTreeMap<String, String> {
+    cfg.mounts
+        .get(&Module::Portal)
+        .into_iter()
+        .flatten()
+        .find_map(|entry| {
+            let host = entry.host.as_deref()?.trim().to_ascii_lowercase();
+            crate::app::apps_wildcard(&host).map(str::to_owned)
+        })
+        .map(|domain| {
+            let url = format!("{}://{}", cfg.scheme, domain);
+            [
+                ("JC_PORTAL_APPS_URL".to_owned(), url),
+                ("JC_PORTAL_SERVE_APP_HOSTS".to_owned(), "true".to_owned()),
+            ]
+        })
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
 /// The Portal's router behind the host jc placed the request on (`Mount`, a trusted proxy's
 /// `X-Forwarded-Host` applied), which pins an Organization's host (`organization_host`).
 pub(crate) fn with_request_host(router: Router) -> Router {
@@ -172,6 +227,30 @@ mod tests {
             BTreeMap::new(),
         );
         assert!(bad.is_err());
+    }
+
+    #[test]
+    fn the_runner_reaches_a_loopback_internal_listener_unless_the_environment_names_one() {
+        let mount = Mount::new("portal", "https", "city.example", "/portal").unwrap();
+        let mut cfg = config(&mount, |_| None, BTreeMap::new()).unwrap();
+        runner_reaches(&mut cfg, "127.0.0.1:55551".parse().unwrap());
+        assert_eq!(
+            cfg.pipeline_test_capture_url.as_deref(),
+            Some("http://127.0.0.1:55551")
+        );
+        let mut cfg = config(&mount, |_| None, BTreeMap::new()).unwrap();
+        runner_reaches(&mut cfg, "10.0.0.5:9090".parse().unwrap());
+        assert_eq!(cfg.pipeline_test_capture_url, None);
+        let set = |k: &str| {
+            (k == "JC_PORTAL_PIPELINE_TEST_CAPTURE_URL")
+                .then(|| "http://portal.internal:9090".to_owned())
+        };
+        let mut cfg = config(&mount, set, BTreeMap::new()).unwrap();
+        runner_reaches(&mut cfg, "127.0.0.1:55551".parse().unwrap());
+        assert_eq!(
+            cfg.pipeline_test_capture_url.as_deref(),
+            Some("http://portal.internal:9090")
+        );
     }
 
     #[test]

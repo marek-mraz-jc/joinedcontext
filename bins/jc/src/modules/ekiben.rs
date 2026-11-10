@@ -78,8 +78,9 @@ pub async fn build(
         crate::config::portal_env("JC_PORTAL_ORG_DOMAIN"),
     );
     let mut resources = ResourceManager::new();
-    if let Some(target) = host_target(siblings, &defaults) {
-        tracing::info!(addr = %target.addr, prefixes = ?target.path_prefixes, "ekiben streams reach jc's gateway and token endpoint");
+    let late = portal_beside.then(|| super::PORTAL_INTERNAL.clone());
+    if let Some(target) = host_target(siblings, &defaults, late) {
+        tracing::info!(addr = %target.addr, prefixes = ?target.path_prefixes, portal_internal = target.late.is_some(), "ekiben streams reach jc's gateway and token endpoint");
         resources = resources.with_host_target(target);
     }
     let names: Vec<&String> = defaults
@@ -253,8 +254,15 @@ fn dns_label(text: &str) -> String {
 /// token endpoint, where their URLs name that listener's own address (the gateway's internal URL
 /// in slug mode; the token endpoint only when the public base is that address, as in a loopback
 /// rehearsal with `--base-host 127.0.0.1:<port>`). Any other URL is a public name and passes
-/// ekiben's ordinary checks; a loopback name (`localhost`) stays refused.
-fn host_target(siblings: &Siblings, defaults: &BTreeMap<String, String>) -> Option<HostTarget> {
+/// ekiben's ordinary checks; a loopback name (`localhost`) stays refused. With the Portal beside
+/// it, `portal` is the Portal's internal listener once bound, under the routes a stream's
+/// validation stage, run log and test capture post to (prod's runner reaches that port; each
+/// route admits only the pipeline's own client).
+fn host_target(
+    siblings: &Siblings,
+    defaults: &BTreeMap<String, String>,
+    portal: Option<std::sync::Arc<std::sync::OnceLock<std::net::SocketAddr>>>,
+) -> Option<HostTarget> {
     let origin = format!("http://{}", siblings.listener);
     let prefixes: Vec<String> = [
         defaults
@@ -267,9 +275,19 @@ fn host_target(siblings: &Siblings, defaults: &BTreeMap<String, String>) -> Opti
     .filter_map(|u| u.strip_prefix(&origin).map(str::to_owned))
     .filter(|path| path.starts_with('/'))
     .collect();
-    (!prefixes.is_empty()).then_some(HostTarget {
+    let late = portal.map(|addr| {
+        (
+            addr,
+            vec![
+                "/internal/pipelines".to_owned(),
+                "/internal/pipeline-tests".to_owned(),
+            ],
+        )
+    });
+    (!prefixes.is_empty() || late.is_some()).then_some(HostTarget {
         addr: siblings.listener,
         path_prefixes: prefixes,
+        late,
     })
 }
 
@@ -364,6 +382,7 @@ mod tests {
         let target = host_target(
             &siblings,
             &runner_defaults(&siblings, &crate::setup::Realm::default(), None, None),
+            None,
         )
         .unwrap();
         assert_eq!(target.path_prefixes, ["/api/endpoint"]);
@@ -372,6 +391,7 @@ mod tests {
         let target = host_target(
             &siblings,
             &runner_defaults(&siblings, &crate::setup::Realm::default(), None, None),
+            None,
         )
         .unwrap();
         let admits = |u: &str| target.admits(&url::Url::parse(u).unwrap());
@@ -391,12 +411,35 @@ mod tests {
         ] {
             assert!(!admits(refused), "{refused}");
         }
+        // With the Portal beside it: its internal listener's pipeline routes, once bound.
+        let portal = std::sync::Arc::new(std::sync::OnceLock::new());
+        let target = host_target(
+            &siblings,
+            &runner_defaults(&siblings, &crate::setup::Realm::default(), None, None),
+            Some(portal.clone()),
+        )
+        .unwrap();
+        let admits = |u: &str| target.admits(&url::Url::parse(u).unwrap());
+        let outcomes = "http://127.0.0.1:55551/internal/pipelines/helsinki/p/outcomes";
+        assert!(!admits(outcomes), "refused until the Portal bound it");
+        portal.set("127.0.0.1:55551".parse().unwrap()).unwrap();
+        assert!(admits(outcomes));
+        assert!(admits("http://127.0.0.1:55551/internal/pipeline-tests/abc"));
+        for refused in [
+            "http://127.0.0.1:55551/internal/revocations",
+            "http://127.0.0.1:55551/internal/agent-runs/1/mcp",
+            "http://127.0.0.1:55551/internal/model-key",
+            "http://127.0.0.1:55552/internal/pipelines/helsinki/p/outcomes",
+        ] {
+            assert!(!admits(refused), "{refused}");
+        }
         // Nothing of jc's listener when neither module is there.
         let alone = Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
         assert!(
             host_target(
                 &alone,
-                &runner_defaults(&alone, &crate::setup::Realm::default(), None, None)
+                &runner_defaults(&alone, &crate::setup::Realm::default(), None, None),
+                None,
             )
             .is_none()
         );

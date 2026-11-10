@@ -258,6 +258,11 @@ pub struct Config {
     /// call the Portal API with the viewer's session (T-2476), and another App's. `None` serves
     /// on every host, as a Portal without an edge in front of it does.
     pub apps_url: Option<Url>,
+    /// Whether this Portal answers the App hosts under `apps_url` itself (`JC_PORTAL_SERVE_APP_HOSTS=true`,
+    /// jc with its `*.apps.{domain}` entry): every request on `{name}.apps.{domain}` reaches App
+    /// `name` alone ([`crate::apps::app_host`]), as the edge file has APISIX do where an edge
+    /// composes the App routes. Off by default: there the edge does it.
+    pub serve_app_hosts: bool,
     /// The file the deployment renders `global.branding` into (`JC_BRANDING_FILE`; UI-30,
     /// OPS-46). `None` serves
     /// neutral joinedcontext defaults, which is what an installation without branding looks
@@ -457,6 +462,7 @@ impl std::fmt::Debug for Config {
             .field("apps_dir", &self.apps_dir)
             .field("apps_cache_dir", &self.apps_cache_dir)
             .field("apps_url", &self.apps_url.as_ref().map(Url::as_str))
+            .field("serve_app_hosts", &self.serve_app_hosts)
             .field("artifact_store", &self.artifact_store)
             .field("apps_db", &self.apps_db)
             .field("pipeline_secrets", &self.pipeline_secrets)
@@ -1988,6 +1994,8 @@ impl Config {
         let apps_cache_dir =
             lookup("JC_PORTAL_APPS_CACHE_DIR").filter(|dir| !dir.trim().is_empty());
         let apps_url = apps_url(&lookup)?;
+        let serve_app_hosts = apps_url.is_some()
+            && lookup("JC_PORTAL_SERVE_APP_HOSTS").is_some_and(|v| v.trim() == "true");
         let basemap = basemap_config(&lookup)?;
         let apps_store_origin = apps_store_origin(&lookup)?;
         let app_settings = app_settings(&lookup, &public_base_url, basemap.is_some())?;
@@ -2076,6 +2084,7 @@ impl Config {
             mail_from,
             apps_cache_dir,
             apps_url,
+            serve_app_hosts,
             branding_file,
             ckan_api_route,
             ckan_api_reach,
@@ -2162,6 +2171,7 @@ impl Config {
             mail_from: None,
             apps_cache_dir: None,
             apps_url: None,
+            serve_app_hosts: false,
             branding_file: None,
             ckan_api_route: None,
             ckan_api_reach: None,

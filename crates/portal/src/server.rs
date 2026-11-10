@@ -94,7 +94,7 @@ pub fn app(state: AppState) -> Router {
             axum::routing::get(|| std::future::ready(axum::http::StatusCode::NOT_FOUND)),
         )
     };
-    Router::new()
+    let app = Router::new()
         .merge(apps::static_host::router())
         // The App templates' demos (AP-141): their own CSP, which forbids every connection.
         .merge(apps::template_demos::router())
@@ -124,7 +124,7 @@ pub fn app(state: AppState) -> Router {
         .with_state(state.clone())
         // An Organization's own Portal host pins every request on it, MCP and Apps included.
         .layer(from_fn_with_state(
-            state,
+            state.clone(),
             crate::organization_host::middleware,
         ))
         .layer(from_fn(telemetry::record))
@@ -152,7 +152,13 @@ pub fn app(state: AppState) -> Router {
         // under 32 bytes and answers already encoded upstream (the proxied `/cs` reads included).
         // The session cookie is SameSite=Lax and no answer echoes the CSRF token, so a cross-site
         // page cannot time compressed lengths of a signed-in answer (BREACH).
-        .layer(CompressionLayer::new().gzip(true))
+        .layer(CompressionLayer::new().gzip(true));
+    // An App's own host reaches that App alone, where no edge routes it (AP-133): outside the
+    // whole router, since a route's layer runs after the route was chosen and the App host
+    // rewrites the path the choice is made on.
+    Router::new()
+        .fallback_service(app)
+        .layer(from_fn_with_state(state, apps::app_host::middleware))
 }
 
 /// The sites a public form's page `/f/{slug}` may be framed by: its Endpoint's
@@ -383,6 +389,16 @@ pub async fn spawn_internal_listener(
         return Ok(None);
     }
     let internal = tokio::net::TcpListener::bind(state.config.internal_bind).await?;
+    serve_internal_listener(state, internal, shutdown).map(Some)
+}
+
+/// [`spawn_internal_listener`] on a listener the caller bound already: jc binds it before the
+/// Portal's state is built, so the stream deployer's sinks name its address.
+pub fn serve_internal_listener(
+    state: &AppState,
+    internal: tokio::net::TcpListener,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> std::io::Result<std::net::SocketAddr> {
     let addr = internal.local_addr()?;
     crate::api::pipeline_test::internal_listener_bound(addr);
     tracing::info!(bind = %addr, "portal internal listener listening");
@@ -395,7 +411,7 @@ pub async fn spawn_internal_listener(
             tracing::error!(error = %err, "the internal listener stopped");
         }
     });
-    Ok(Some(addr))
+    Ok(addr)
 }
 
 /// The router of the build listener: the build pods' routes and nothing else.

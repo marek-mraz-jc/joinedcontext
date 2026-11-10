@@ -2880,6 +2880,8 @@
         "title": "Stichprobe",
         "hint": "Die ersten Datensätze, die die Quelle liefert, so wie die Pipeline sie liest.",
         "waiting": "Wählen Sie eine Quelle oder geben Sie eine Datei an, um ihre Datensätze zu sehen.",
+        "generated": "{source} erzeugt seine Datensätze erst beim Lauf der Pipeline, vorab gibt es also nichts zu lesen. Um das Mapping auszuprobieren, fügen Sie in Schritt 1, Quelle, eine Datei mit Datensätzen hinzu.",
+        "credential": "{source} meldet sich mit gespeicherten Zugangsdaten an, die die Stichprobe nie verwendet. Um das Mapping auszuprobieren, fügen Sie in Schritt 1, Quelle, eine Datei seiner Datensätze hinzu.",
         "empty": "Die Quelle hat keine Datensätze geliefert.",
         "count": "{count, plural, one {# Datensatz} other {# Datensätze}} mit {fields, plural, one {# Feld} other {# Feldern}}",
         "countFirst": "Die ersten {count, plural, one {# Datensatz} other {# Datensätze}} mit {fields, plural, one {# Feld} other {# Feldern}}; die Quelle hat mehr",

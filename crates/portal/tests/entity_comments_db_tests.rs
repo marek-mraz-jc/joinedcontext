@@ -7,6 +7,9 @@ use joinedcontext_portal::entity_comments::{
     approvers_of, Author, CommentStore, NewComment, Notice,
 };
 
+#[path = "common/unique.rs"]
+mod unique;
+
 #[tokio::test]
 async fn a_comment_notifies_its_mentions_and_leaves_with_its_notifications() {
     let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
@@ -20,13 +23,7 @@ async fn a_comment_notifies_its_mentions_and_leaves_with_its_notifications() {
         .await
         .expect("the test database answers and migrates");
     let store = CommentStore::new(Some(pool));
-    let project = format!(
-        "comments-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    );
+    let project = format!("comments-{}", crate::unique::unique());
     let anna = format!("anna@{project}.example");
     let pia = format!("pia@{project}.example");
     let mentions = vec![anna.clone(), pia.clone()];
@@ -140,13 +137,7 @@ async fn a_connector_event_reaches_each_reader_of_its_audience_once() {
         .await
         .expect("the test database answers and migrates");
     let store = CommentStore::new(Some(pool));
-    let project = format!(
-        "notices-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    );
+    let project = format!("notices-{}", crate::unique::unique());
     let audience = approvers_of(&project);
     let link = format!("/projects/{project}/approvals/cr-1");
     let key = format!("change.opened:{project}/cr-1");

@@ -14,6 +14,14 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
+/// The Portal's internal listener once its state is built (`portal::build`): jc's ekiben lets a
+/// stream's report sinks post to its pipeline routes there (`ekiben::host_target`), as prod's
+/// runner reaches the Portal's internal port. ponytail: one Portal per process, as the Portal's
+/// own capture fallback assumes.
+#[cfg(any(feature = "ekiben", feature = "portal"))]
+pub(crate) static PORTAL_INTERNAL: std::sync::LazyLock<Arc<std::sync::OnceLock<SocketAddr>>> =
+    std::sync::LazyLock::new(Default::default);
+
 #[cfg(feature = "antares")]
 pub mod antares;
 #[cfg(feature = "assistant")]
@@ -126,7 +134,8 @@ pub async fn build(
             .map(gateway::at_root),
         #[cfg(feature = "portal")]
         Module::Portal => {
-            let organizations = portal::organization_vars(cfg, ctx.siblings.listener);
+            let mut organizations = portal::organization_vars(cfg, ctx.siblings.listener);
+            organizations.extend(portal::apps_vars(cfg));
             portal::build(ctx, cfg.portal_siblings, organizations, mount, shutdown)
                 .await
                 .map(|(router, _)| router)
@@ -134,7 +143,12 @@ pub async fn build(
         #[cfg(feature = "shako")]
         Module::Shako => {
             let state = shako::build_state(&cfg.shako, ctx.setup, ctx.secrets).await?;
-            Ok(shako::build(state, mount).0)
+            Ok(shako::build(
+                state,
+                mount,
+                &ctx.siblings.portal_base().unwrap_or_default(),
+            )
+            .0)
         }
         #[cfg(feature = "viz")]
         Module::Viz => Ok(viz::build(

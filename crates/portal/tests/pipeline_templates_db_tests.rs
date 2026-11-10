@@ -9,6 +9,9 @@ use joinedcontext_portal::ops::pipeline_templates::{
 };
 use serde_json::json;
 
+#[path = "common/unique.rs"]
+mod unique;
+
 fn template(title: &str) -> CreateTemplate {
     CreateTemplate {
         title: title.into(),
@@ -32,11 +35,8 @@ async fn templates_round_trip_through_postgres() {
         .await
         .expect("the test database answers and migrates");
     let store = TemplateStore::new(Some(pool));
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    let (project, other) = (format!("tpl-{nanos}"), format!("tpl-other-{nanos}"));
+    let id = crate::unique::unique();
+    let (project, other) = (format!("tpl-{id}"), format!("tpl-other-{id}"));
 
     for i in 0..MAX_PER_PROJECT {
         store
