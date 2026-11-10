@@ -34,12 +34,13 @@ import subprocess
 import sys
 
 DURATIONS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ci-durations.json")
-# Portal, measured on ci runs 42756711313 and 42760631366 (logs: build phase over target count)
-# and 42764897027 (cargo --timings): one integration target compiles and links in about 2 s at
-# -j 4; the lib test binary alone compiles for 276 s (the other targets build beside it) and its
-# tests run about 25 s; `cargo test --doc` about 135 s when the lib changed.
+# Portal, measured on ci runs 42756711313, 42760631366, 42767791074 and 42769151385 (build phase
+# over target count, four partitions): one integration target compiles and links in about 2 s at
+# -j 4; the lib test binary compiles for up to 276 s (cargo --timings, 42764897027) but beside the
+# lib every partition builds, so it adds about 100 s, and its tests run about 25 s; `cargo test
+# --doc` takes about 135 s when the lib changed.
 PORTAL_BUILD = 2.0
-PORTAL_LIB = 300.0
+PORTAL_LIB = 125.0
 PORTAL_DOC = 135.0
 # a test with at least this many seconds keeps its own time in the file; the rest of a binary's
 # tests are recorded as their mean (keeps the file small)
