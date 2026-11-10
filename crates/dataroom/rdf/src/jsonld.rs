@@ -500,6 +500,11 @@ pub fn serialize_graph_jsonld(graph: &RdfGraph) -> String {
                             json!({ "@value": lit.value, "@language": lang })
                         } else if lit.datatype == ns::XSD_STRING {
                             json!(lit.value)
+                        } else if let (true, Ok(n)) =
+                            (lit.datatype == ns::XSD_INTEGER, lit.value.parse::<i64>())
+                        {
+                            // a number, as prod's ckanext-dcat writes hydra:totalItems
+                            json!({ "@value": n, "@type": iri_text(&lit.datatype) })
                         } else {
                             json!({ "@value": lit.value, "@type": iri_text(&lit.datatype) })
                         }
@@ -1011,6 +1016,16 @@ mod tests {
             format!("{DCT}issued"),
             Term::Literal(LiteralValue::typed("2026-01-01", ns::XSD_DATE)),
         );
+        g.insert(
+            ds.clone(),
+            "http://www.w3.org/ns/hydra/core#totalItems",
+            Term::Literal(LiteralValue::typed("628", ns::XSD_INTEGER)),
+        );
+        g.insert(
+            ds.clone(),
+            format!("{DCAT}byteSize"),
+            Term::Literal(LiteralValue::typed("12", ns::XSD_NON_NEGATIVE_INTEGER)),
+        );
         g.insert(ds.clone(), format!("{DCAT}contactPoint"), bn.to_term());
         g.insert(
             bn.clone(),
@@ -1039,6 +1054,27 @@ mod tests {
             .triples
             .iter()
             .any(|t| t.object == Term::Literal(LiteralValue::typed("2026-01-01", ns::XSD_DATE))));
+        // prod's feed: an xsd:integer is a JSON number, a nonNegativeInteger a string
+        let ds_node = doc["@graph"]
+            .as_array()
+            .and_then(|n| n.iter().find(|n| n["@id"] == "https://e.org/ds"))
+            .expect("the dataset node");
+        assert_eq!(
+            ds_node["http://www.w3.org/ns/hydra/core#totalItems"]["@value"],
+            json!(628)
+        );
+        assert_eq!(ds_node[format!("{DCAT}byteSize")]["@value"], json!("12"));
+        for (value, datatype) in [
+            ("628", ns::XSD_INTEGER),
+            ("12", ns::XSD_NON_NEGATIVE_INTEGER),
+        ] {
+            assert!(
+                back.triples
+                    .iter()
+                    .any(|t| t.object == Term::Literal(LiteralValue::typed(value, datatype))),
+                "{value}^^{datatype}"
+            );
+        }
         assert!(back
             .triples
             .iter()

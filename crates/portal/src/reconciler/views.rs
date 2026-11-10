@@ -2184,11 +2184,11 @@ impl ViewSync {
         outcome
     }
 
-    /// The JSON at `path`, `None` on 404.
+    /// The JSON at `path`, `None` on 404. Every read here is the reconciler's own (the view
+    /// list, the policies, and one read per view every [`CONFIRMED_FOR`]: ~690 unique paths in
+    /// one burst on the prod rehearsal): marked, so the broker's door writes them as a poll's.
     async fn get(&self, base: &str, token: &str, path: &str) -> Result<Option<Value>, String> {
-        let response = self
-            .http
-            .get(format!("{base}{path}"))
+        let response = crate::health_probe::marked(self.http.get(format!("{base}{path}")))
             .bearer_auth(token)
             .send()
             .await
@@ -4068,6 +4068,33 @@ mod tests {
         sync.delete(&base, TOKEN, &at).await.expect("deleted");
         sync.put_if_changed(&base, TOKEN, &at, &changed).await;
         assert_eq!(reads().await, 3, "a deleted document is read again");
+    }
+
+    /// The reconciler's reads are background reads: each carries the host's mark, so jc's
+    /// broker door writes them as a poll's instead of one line per view.
+    #[tokio::test]
+    async fn a_reconciler_read_carries_the_background_mark() {
+        let mark = crate::health_probe::MARK.get_or_init(|| "a-test-mark".to_owned());
+        let server = broker().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/q/views/{SLUG}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": SLUG})))
+            .mount(&server)
+            .await;
+        let sync = ViewSync::new(server.uri(), token_file());
+        let base = server.uri();
+        sync.get(&base, TOKEN, &format!("/q/views/{SLUG}"))
+            .await
+            .expect("read");
+        let got = server.received_requests().await.unwrap_or_default();
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            got[0]
+                .headers
+                .get(crate::health_probe::MARK_HEADER)
+                .and_then(|v| v.to_str().ok()),
+            Some(mark.as_str())
+        );
     }
 
     fn json_at(server_path: &str, status: u16, body: Value) -> Mock {

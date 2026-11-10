@@ -101,7 +101,7 @@ if [ "${REHEARSAL_APPS:-on}" != off ]; then
     fi
     if [ -n "$realm_file" ]; then
       python3 -I "$here/apps.py" grant --base "http://localhost:$port" --export "$export_dir" \
-        --token-file "$JCBIN_SHAKO_TOKEN_FILE" --realm-file "$realm_file"
+        --token-file "$JCBIN_SHAKO_TOKEN_FILE" --realm-file "$realm_file" --secrets-dir "$home/secrets/realm"
     fi
   ) > "$home/apps-publish.log" 2>&1 &
 fi

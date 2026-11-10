@@ -38,6 +38,8 @@ LD = "application/ld+json"
 GEO = "application/geo+json"
 OUTSIDE = "SmokeOutsidePolicy"
 FILE_TRIES = 5
+# A file's cell holds a whole geometry: a NoiseZone polygon passes csv's default 128 KiB field.
+csv.field_size_limit(64 * 1024 * 1024)
 # One iCal feed reads at most RESIDUAL_SCAN entities (antares-ops/src/scan.rs, 10_000 in jc and in
 # prod's broker, deployment release components/context-broker/images.yaml dev-140 = Antares dc1da08)
 # and answers 413 past it: a feed over more entities than that is refused on prod the same way.

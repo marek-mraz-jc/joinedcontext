@@ -310,6 +310,45 @@ async fn a_broker_failure_is_the_gateways_document() {
     assert!(!body.contains("hunter2"), "{body}");
 }
 
+/// An OGC file (`f=csv|parquet|zip`) is the broker's attachment, written up to its own answer
+/// ceiling (64 MiB) and holding no link: it streams through whole, past the 8 MiB the gateway
+/// holds a page to move its links; prod's NoiseZone CSV is tens of MiB. The broker's 503 of a
+/// file past its cap of files written at once keeps its Retry-After.
+#[tokio::test]
+async fn an_ogc_file_past_the_hold_streams_and_a_busy_broker_says_when() {
+    const FILE: usize = 9 * 1024 * 1024;
+    let app = Router::new().fallback(|request: Request<Body>| async move {
+        if request.uri().query() == Some("f=parquet") {
+            let busy = [("content-type", "application/problem+json"), ("retry-after", "6")];
+            let problem = r#"{"status":503,"detail":"the broker is writing as many files as it writes at once: try again later"}"#;
+            return (StatusCode::SERVICE_UNAVAILABLE, busy, problem).into_response();
+        }
+        let file = [("content-type", "text/csv; charset=utf-8; header=present"),
+                    ("content-disposition", "attachment; filename=\"Car.csv\"")];
+        (StatusCode::OK, file, vec![b'x'; FILE]).into_response()
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a free port");
+    let upstream = format!("http://{}", listener.local_addr().expect("an address"));
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let items = format!("/api/endpoint/{SLUG}/ogc/features/collections/Car/items");
+    let (status, headers, body) = call(&upstream, endpoint(), get(&format!("{items}?f=csv"))).await;
+    assert_eq!(status, StatusCode::OK, "{}", &body[..body.len().min(300)]);
+    assert_eq!(body.len(), FILE);
+    assert_eq!(
+        headers["content-disposition"],
+        "attachment; filename=\"Car.csv\""
+    );
+
+    let (status, headers, body) =
+        call(&upstream, endpoint(), get(&format!("{items}?f=parquet"))).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(headers["retry-after"], "6");
+}
+
 /// R22: a caller who asks to be told about narrowing is told under the specification's name,
 /// and the broker's own marker never reaches anyone.
 #[tokio::test]

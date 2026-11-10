@@ -10,6 +10,14 @@
 //! without the query, status and milliseconds; for a refusal or a failure also the reason. An
 //! answered call without a caller's id is written once a minute per method and path ([`Sampler`]).
 //!
+//! The Portal's health probe walks every surface of every Live Endpoint each round, one unique
+//! path per call: its calls carry [`probe_mark`] (`x-probe-mark`), a secret of this process.
+//! The door takes the mark off, writes the probe's answered calls once a minute per door (key
+//! `probe`), and runs the call in a `probe` span; the broker hop finds the call's id among the
+//! probes in flight and does the same. Every line below WARN inside a `probe` span but the
+//! door's own is left out ([`quiet_probes`]): a refusal, a failure and every warning keep
+//! their line, and the Portal writes one line per round with a line per failed surface.
+//!
 //! The same door counts the call into jc's one metrics recorder for the modules that record
 //! nothing of their own (shako, kaisatsu, daiya, dataroom, ekiben): `<module>_http_requests_total`
 //! by status and `<module>_http_request_duration_seconds`. Antares, the gateway and the Portal
@@ -27,6 +35,74 @@ use std::time::{Duration, Instant};
 use tracing::Instrument;
 
 pub const HEADER: HeaderName = HeaderName::from_static("x-request-id");
+/// The Portal's `health_probe::MARK_HEADER`; not `x-jc-*`, which the gateway takes off itself.
+pub const PROBE_HEADER: HeaderName = HeaderName::from_static("x-probe-mark");
+/// The sampler's key for every answered probe call at one door.
+const PROBE_KEY: &str = "probe";
+
+static PROBE_MARK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+/// Ids of the probe calls in flight: the broker hop knows a probe by its id, which the gateway
+/// hands on, so no header a caller can send makes a call quiet.
+static PROBES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// This process's probe mark (drawn once, never logged).
+pub fn probe_mark() -> &'static str {
+    PROBE_MARK.get_or_init(fresh)
+}
+
+/// The request carried this process's mark; the header is taken off either way.
+fn take_mark(req: &mut Request) -> bool {
+    let Some(sent) = req.headers_mut().remove(&PROBE_HEADER) else {
+        return false;
+    };
+    let mark = probe_mark().as_bytes();
+    let sent = sent.as_bytes();
+    sent.len() == mark.len() && sent.iter().zip(mark).fold(0u8, |d, (a, b)| d | (a ^ b)) == 0
+}
+
+fn probes() -> std::sync::MutexGuard<'static, Vec<String>> {
+    PROBES.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Keeps `id` among the probes in flight while it lives.
+struct InFlight(String);
+
+impl InFlight {
+    fn new(id: &str) -> Self {
+        probes().push(id.to_owned());
+        Self(id.to_owned())
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let mut ids = probes();
+        if let Some(at) = ids.iter().position(|id| *id == self.0) {
+            ids.swap_remove(at);
+        }
+    }
+}
+
+/// The span name the [`quiet_probes`] filter keeps quiet.
+const PROBE_SPAN: &str = "probe";
+
+/// Leaves out every event below WARN inside a `probe` span except the door's own `jc::access`
+/// lines, which the sampler already thins out.
+pub fn quiet_probes<S>() -> impl tracing_subscriber::layer::Filter<S>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    tracing_subscriber::filter::dynamic_filter_fn(|meta, cx| {
+        if !meta.is_event()
+            || *meta.level() <= tracing::Level::WARN
+            || meta.target() == "jc::access"
+        {
+            return true;
+        }
+        !cx.lookup_current()
+            .is_some_and(|span| span.scope().any(|s| s.name() == PROBE_SPAN))
+    })
+}
 
 /// Letters, digits and dashes, 8 to 64 of them (the Portal's rule): anything else could forge
 /// a log line or carry more than a reference.
@@ -117,14 +193,24 @@ impl Sampler {
 }
 
 async fn access(module: &'static str, door: Door, mut req: Request, next: Next) -> Response {
-    let traced = callers_id(&req);
+    let marked = take_mark(&mut req);
+    let traced = callers_id(&req).filter(|_| !marked);
     let id = traced.clone().unwrap_or_else(fresh);
+    let probe = match door {
+        Door::Outer(_) => marked,
+        Door::Hop => probes().contains(&id),
+    };
+    let _in_flight = (probe && matches!(door, Door::Outer(_))).then(|| InFlight::new(&id));
     // `plain` or hex: always a valid header value.
     let value = HeaderValue::from_str(&id).unwrap_or(HeaderValue::from_static("invalid"));
     req.headers_mut().insert(HEADER, value.clone());
     let method = req.method().clone();
     let path = req.uri().path().to_owned();
-    let span = tracing::info_span!("request", module, request_id = %id);
+    let span = if probe {
+        tracing::info_span!("probe", module, request_id = %id)
+    } else {
+        tracing::info_span!("request", module, request_id = %id)
+    };
     let started = Instant::now();
     let mut response = next.run(req).instrument(span.clone()).await;
     let status = response.status();
@@ -138,6 +224,7 @@ async fn access(module: &'static str, door: Door, mut req: Request, next: Next) 
         } else if let Door::Outer(sampler) = &door {
             let unlogged = match traced {
                 Some(_) => Some(0),
+                None if probe => sampler.admit(&method, PROBE_KEY, started),
                 None => sampler.admit(&method, &path, started),
             };
             match unlogged {
@@ -344,6 +431,112 @@ mod tests {
                 .any(|l| l.contains("answered") && l.contains("request_id=smokelogs-traced-0001")),
             "{log}"
         );
+    }
+
+    /// A module whose every path logs an INFO and a WARN line and says whether a mark reached it.
+    fn probed() -> Router {
+        Router::new()
+            .route(
+                "/s/{slug}",
+                get(|req: Request| async move {
+                    tracing::info!(target: "context_gateway::x", "forwarded");
+                    tracing::warn!(target: "context_gateway::x", "slow");
+                    if req.headers().contains_key(&PROBE_HEADER) {
+                        "marked"
+                    } else {
+                        "clean"
+                    }
+                }),
+            )
+            .route("/closed", get(|| async { StatusCode::UNAUTHORIZED }))
+    }
+
+    async fn probe_call(app: Router, path: &str, mark: &str) -> (String, String) {
+        use tracing_subscriber::Layer;
+        use tracing_subscriber::layer::SubscriberExt;
+        let buf = Buffer::default();
+        let writer = buf.clone();
+        let fmt = tracing_subscriber::fmt::layer()
+            .with_writer(move || writer.clone())
+            .with_ansi(false);
+        let subscriber = tracing_subscriber::registry().with(fmt.with_filter(quiet_probes()));
+        let req = Request::builder()
+            .uri(path)
+            .header(PROBE_HEADER, mark)
+            .body(Body::empty())
+            .expect("request");
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let response = app.oneshot(req).await.expect("answer");
+        let body = axum::body::to_bytes(response.into_body(), 64)
+            .await
+            .expect("body");
+        let log = String::from_utf8(buf.0.lock().expect("log").clone()).expect("utf8");
+        (String::from_utf8_lossy(&body).into_owned(), log)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_probe_round_writes_one_answered_line_and_keeps_refusals_and_warnings() {
+        let app = layer("gateway", probed());
+        let mut log = String::new();
+        for slug in ["a", "b", "c", "d", "e"] {
+            let (body, line) = probe_call(app.clone(), &format!("/s/{slug}"), probe_mark()).await;
+            assert_eq!(body, "clean", "the mark stops at the door");
+            log += &line;
+        }
+        log += &probe_call(app.clone(), "/closed", probe_mark()).await.1;
+        let count = |what: &str| log.lines().filter(|l| l.contains(what)).count();
+        assert_eq!(count("answered"), 1, "{log}");
+        assert_eq!(count("refused"), 1, "{log}");
+        assert_eq!(count("forwarded"), 0, "{log}");
+        assert_eq!(count("slow"), 5, "{log}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_forged_mark_is_an_ordinary_call() {
+        let app = layer("gateway", probed());
+        let mut log = String::new();
+        for slug in ["a", "b"] {
+            let (body, line) =
+                probe_call(app.clone(), &format!("/s/{slug}"), "0123456789abcdef").await;
+            assert_eq!(body, "clean");
+            log += &line;
+        }
+        let count = |what: &str| log.lines().filter(|l| l.contains(what)).count();
+        assert_eq!((count("answered"), count("forwarded")), (2, 2), "{log}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_hop_keeps_a_probe_in_flight_quiet() {
+        let hop = hop_layer("antares", probed());
+        let id = "probe-in-flight-0001";
+        let call = |hop: Router| async move {
+            let req = Request::builder()
+                .uri("/s/x")
+                .header(HEADER, id)
+                .body(Body::empty())
+                .expect("request");
+            let buf = Buffer::default();
+            let writer = buf.clone();
+            use tracing_subscriber::Layer;
+            use tracing_subscriber::layer::SubscriberExt;
+            let fmt = tracing_subscriber::fmt::layer()
+                .with_writer(move || writer.clone())
+                .with_ansi(false);
+            let subscriber = tracing_subscriber::registry().with(fmt.with_filter(quiet_probes()));
+            let _guard = tracing::subscriber::set_default(subscriber);
+            hop.oneshot(req).await.expect("answer");
+            String::from_utf8(buf.0.lock().expect("log").clone()).expect("utf8")
+        };
+        let plain = call(hop.clone()).await;
+        assert!(plain.contains("forwarded"), "{plain}");
+        let in_flight = InFlight::new(id);
+        let quiet = call(hop.clone()).await;
+        assert!(
+            !quiet.contains("forwarded") && quiet.contains("slow"),
+            "{quiet}"
+        );
+        drop(in_flight);
+        assert!(!probes().iter().any(|p| p == id));
     }
 
     #[test]
