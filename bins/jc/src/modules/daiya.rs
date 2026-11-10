@@ -82,7 +82,7 @@ pub async fn build(
     state.own_reach = gateway_reach(siblings).into_iter().collect();
     if let Some(raw) = &cfg.prometheus_reach {
         let reach = OperatorReach::parse(raw).map_err(|e| e.to_string())?;
-        state.outbound_policy.prometheus_reach = Some((OrgId::from_u128(1), reach));
+        state.outbound_policy.prometheus_reach = Some((state.default_org_id, reach));
     }
     if let Some(dir) = &cfg.provisioning_dir {
         let vars = provisioning_vars_from(crate::config::process_env());

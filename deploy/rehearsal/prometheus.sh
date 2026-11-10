@@ -24,7 +24,7 @@ if [ "${REHEARSAL_PROMETHEUS:-on}" != off ]; then
   # --network host as rh-pg (the per-task dind bridge gives no reachable address); the TSDB on a
   # tmpfs (history starts at each up.sh); the user of this shell, so the 0600 token file reads.
   docker run -d --name "rh-prom-$env_name" --network host --user "$(id -u):$(id -g)" \
-    --read-only --tmpfs /prometheus:size=512m --memory 512m \
+    --read-only --tmpfs "/prometheus:size=512m,uid=$(id -u),gid=$(id -g),mode=0700" --memory 512m \
     -v "$home/prometheus/prometheus.yml":/etc/rh/prometheus.yml:ro \
     -v "$(secret metrics-token)":/etc/rh/token:ro \
     "$prom_image" --config.file=/etc/rh/prometheus.yml --storage.tsdb.path=/prometheus \
