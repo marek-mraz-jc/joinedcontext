@@ -24,10 +24,10 @@ python3 -I rehearsal.py synth  --render <render>/dev --env dev --out $REHEARSAL_
 ```sh
 export REHEARSAL_HOME=~/rehearsal JC_BIN=<target>/debug/jc
 ./import.sh dev 42101 55441 /workspace/evidence/jc-rehearsal/export/dev
-python3 -I rehearsal.py smoke  --base http://localhost:42101 --state $REHEARSAL_HOME/dev/state \
+python3 -I rehearsal.py smoke  --base http://127.0.0.1:42101 --state $REHEARSAL_HOME/dev/state \
   --export <export> --report $REHEARSAL_HOME/dev/smoke.json --realms $REHEARSAL_HOME/dev/state/realms \
   --pg-port 55441 --antares-password-file $REHEARSAL_HOME/dev/secrets/antares-pw
-python3 shots.py --base http://localhost:42101 --state $REHEARSAL_HOME/dev/state --out <shots>/dev
+python3 shots.py --base http://127.0.0.1:42101 --state $REHEARSAL_HOME/dev/state --out <shots>/dev
 ```
 
 Dashboards: dev's and prod's Grafana load them from the deployment's files, not from a database,
@@ -38,9 +38,9 @@ rehearsal's own gateway for the same Endpoint slug, the platform models in the m
 
 ```sh
 python3 -I rehearsal.py dashboards --render <render>/dev --out <dashboards>/dev
-python3 -I rehearsal.py import --export <export> --base http://localhost:42101 --state $REHEARSAL_HOME/dev/state \
+python3 -I rehearsal.py import --export <export> --base http://127.0.0.1:42101 --state $REHEARSAL_HOME/dev/state \
   --report $REHEARSAL_HOME/dev/dashboards-report.json --only daiya --dashboards <dashboards>/dev
-python3 -I rehearsal.py portal-dashboards --base http://localhost:42101 --state $REHEARSAL_HOME/dev/state \
+python3 -I rehearsal.py portal-dashboards --base http://127.0.0.1:42101 --state $REHEARSAL_HOME/dev/state \
   --dashboards <dashboards>/dev --report $REHEARSAL_HOME/dev/portal-dashboards.json
 ```
 
@@ -95,7 +95,7 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   The export carries no users, so the Portal's two service accounts (`service-account-portal-api`,
   `service-account-portal-reconciler`, with prod's `realm-management` roles) come from jc's shipped
   realm `crates/kaisatsu/import/realms/jc-portal.json` when the realm lacks them.
-  The rehearsal answers on `http://localhost:<port>`, so each client URL on the source Portal's
+  The rehearsal answers on `http://127.0.0.1:<port>` (up.sh `origin`), so each client URL on the source Portal's
   host (or its domain, where the Apps live) gets a twin on that address beside it (`realms
   --public-base`); the source URLs stay. Rehearsal only: the cutover runs jc on the source hosts.
 - One prod reader, loopback prod rehearsal only (supervisor 2026-11-09): banskabystrica-zaznamy's

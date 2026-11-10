@@ -73,10 +73,10 @@ if [ "${REHEARSAL_APPS:-on}" != off ]; then
       --cap-drop ALL --security-opt no-new-privileges --memory 1g --pids-limit 256 \
       --entrypoint /usr/local/bin/jc-functions \
       -e JC_FUNCTIONS_BIND="127.0.0.1:$functions_port" \
-      -e JC_OIDC_ISSUER="http://localhost:$port/id/realms/$functions_realm" \
-      -e JC_OIDC_JWKS_URL="http://localhost:$port/id/realms/$functions_realm/protocol/openid-connect/certs" \
+      -e JC_OIDC_ISSUER="$origin/id/realms/$functions_realm" \
+      -e JC_OIDC_JWKS_URL="$origin/id/realms/$functions_realm/protocol/openid-connect/certs" \
       -e JC_FUNCTIONS_CALLER=portal-api -e JC_FUNCTIONS_ASSISTANT_CALLER=jc-assistant \
-      -e JC_FUNCTIONS_AUDIENCE=jc-functions -e JC_GATEWAY_URL="http://localhost:$port" \
+      -e JC_FUNCTIONS_AUDIENCE=jc-functions -e JC_GATEWAY_URL="$origin" \
       "$functions_image" >/dev/null || { echo "apps.sh: jc-functions did not start" >&2; exit 1; }
     export JC_FUNCTIONS_URL=http://127.0.0.1:$functions_port
     echo "apps.sh: jc-functions on $JC_FUNCTIONS_URL (${functions_image##*@})"
@@ -105,12 +105,12 @@ if [ "${REHEARSAL_APPS:-on}" != off ]; then
     [ -n "$slug" ] || { echo "apps.sh: no Endpoint app-$name with a slug in $export_dir/gitea/files" >&2; exit 1; }
     project=$(sed -n 's/^  namespace: //p' "$endpoint")
     space=$(basename "$(dirname "$(dirname "$endpoint")")")
-    config=$(python3 -I -c 'import json, sys; n, s, sp, p, port = sys.argv[1:]; print(json.dumps({"appName": n, "endpointName": f"app-{n}", "endpoints": [{"name": f"app-{n}", "slug": s, "space": sp}], "portal": f"http://localhost:{port}/projects/{p}", "slug": s, "space": sp, "transport": "origin"}))' "$name" "$slug" "$space" "$project" "$port")
+    config=$(python3 -I -c 'import json, sys; n, s, sp, p, port = sys.argv[1:]; print(json.dumps({"appName": n, "endpointName": f"app-{n}", "endpoints": [{"name": f"app-{n}", "slug": s, "space": sp}], "portal": f"http://127.0.0.1:{port}/projects/{p}", "slug": s, "space": sp, "transport": "origin"}))' "$name" "$slug" "$space" "$project" "$port")
     docker rm -f "rh-app-$name-$port" >/dev/null 2>&1 || true
     docker run -d --name "rh-app-$name-$port" --network host --restart on-failure:5 --read-only \
       --tmpfs /tmp:rw,size=16m --cap-drop ALL --security-opt no-new-privileges --user 65532:65532 \
       -e JC_BIND_ADDRESS="127.0.0.1:$pod_port" -e JC_BASE_PATH=/ -e JC_APP_CONFIG="$config" \
-      -e JC_ENDPOINT_URL="http://localhost:$port/api/endpoint/$slug/" \
+      -e JC_ENDPOINT_URL="$origin/api/endpoint/$slug/" \
       "$image" >/dev/null || { echo "apps.sh: the pod of $name did not start" >&2; exit 1; }
     pods+=("$name=http://127.0.0.1:$pod_port")
     echo "apps.sh: $name's pod on 127.0.0.1:$pod_port ($image, endpoint $slug)"
@@ -124,11 +124,11 @@ if [ "${REHEARSAL_APPS:-on}" != off ]; then
   # Once jc answers: the prod builds into shako, then the holder into the roles Apps' groups.
   (
     if [ -d "$export_dir/apps" ]; then
-      python3 -I "$here/apps.py" publish --base "http://localhost:$port" --export "$export_dir" \
+      python3 -I "$here/apps.py" publish --base "$origin" --export "$export_dir" \
         --token-file "$JCBIN_SHAKO_TOKEN_FILE" --report "$home/apps-publish.json"
     fi
     if [ -n "$realm_file" ]; then
-      python3 -I "$here/apps.py" grant --base "http://localhost:$port" --export "$export_dir" \
+      python3 -I "$here/apps.py" grant --base "$origin" --export "$export_dir" \
         --token-file "$JCBIN_SHAKO_TOKEN_FILE" --realm-file "$realm_file" --secrets-dir "$home/secrets/realm"
     fi
   ) > "$home/apps-publish.log" 2>&1 &

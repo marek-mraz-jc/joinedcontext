@@ -134,6 +134,47 @@ def test_the_app_host_is_rewritten_as_the_portals_edge_file_does():
     assert rw(base, "alerts-desk", "https://tiles.example/x.png") is None, "another host is left alone"
 
 
+class FakeHost:
+    """One host's answers by path, with every call it got."""
+
+    def __init__(self, answers):
+        self.answers, self.calls = answers, []
+
+    def call(self, method, path, headers=None):
+        self.calls.append((method, path, dict(headers or {})))
+        return self.answers.get(path, (404, {}, b""))
+
+
+def test_an_app_is_followed_from_the_main_host_to_its_own_host_and_judged_there():
+    base, name = "http://localhost:42102", "praha-mapa"
+    to = {"location": "http://praha-mapa.apps.localhost:42102/"}
+    main = FakeHost({"/apps/praha-mapa/": (308, to, b"")})
+    app = FakeHost({"/": (200, {"content-type": "text/html"}, b"<html>")})
+    st, hdrs, actual = suite.open_app(main, app, base, name, {"Authorization": "Bearer t"})
+    assert st == 200 and "html" in hdrs["content-type"] and actual.startswith("308 http://praha-mapa.apps.localhost:42102/")
+    # the App's host is the base URL with its Host header (loopback, no DNS), the caller's token kept
+    assert app.calls == [("GET", "/", {"Authorization": "Bearer t", "Host": "praha-mapa.apps.localhost:42102"})]
+    # a refusal is the App host's own answer
+    app = FakeHost({"/": (403, {"content-type": "application/problem+json"}, b"")})
+    assert suite.open_app(main, app, base, name, {})[0] == 403
+
+
+def test_a_redirect_off_the_apps_own_origin_is_never_followed_and_no_main_host_answer_passes():
+    base, name = "http://localhost:42102", "praha-mapa"
+    for loc in ("http://evil.example/", "http://praha-mapa.apps.evil.example:42102/", "http://localhost:42102/",
+                "http://other.apps.localhost:42102/", "https://praha-mapa.apps.localhost:42102/",
+                "http://praha-mapa.apps.localhost:9/", None):
+        app = FakeHost({})
+        main = FakeHost({"/apps/praha-mapa/": (308, {"location": loc} if loc else {}, b"")})
+        st, _, actual = suite.open_app(main, app, base, name, {})
+        assert st is None and not app.calls and "not followed" in actual, loc
+    # prod answered 308 on the main host: neither its page nor its refusal there passes
+    for answer, why in (((200, {"content-type": "text/html"}, b""), "REHEARSAL_APP_HOSTS=on"), ((403, {}, b""), "403")):
+        app = FakeHost({})
+        st, _, actual = suite.open_app(FakeHost({"/apps/praha-mapa/": answer}), app, base, name, {})
+        assert st is None and not app.calls and why in actual
+
+
 def test_a_wasm_server_passes_only_on_its_own_json_answer():
     j = {"content-type": "application/json"}
     assert suite.server_judge(200, j, b"null", False)[1]
