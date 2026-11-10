@@ -45,7 +45,7 @@ COMMON = ("--export", "--state", "--log-file", "--admin-url", "--admin-token-fil
 LAST = ("logs",)
 # Live mode: the suites with anonymous read parts, and the flags that keep them to those parts.
 LIVE = {"endpoints": ["--no-writes", "--anon-refusal"], "mcp": ["--anonymous"], "catalogue": [],
-        "names": [], "subscriptions": ["--transports-only"]}
+        "names": ["--anonymous"], "subscriptions": ["--transports-only"]}
 NOT_LIVE = {"restore": "docker: rehearsal only", "image": "docker: rehearsal only",
             "kaisatsu": "sign-in, token exchange and connectors: rehearsal only",
             "charts-apps": "writes dashboards and Apps: rehearsal only",

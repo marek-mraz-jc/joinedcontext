@@ -14,7 +14,8 @@ its own process and in every suite process (`run` installs it from $JC_SMOKE_LIV
 - Requests: GET, HEAD and OPTIONS; POST only to the anonymous MCP JSON-RPC paths and to the
   anonymous write refusal probe; never an Authorization or Cookie header. A refused request
   raises ConnectionRefusedError naming it (the suite's row fails with that text) and is logged.
-- Rate: one cap shared by every thread and process (a lock file), default 5 requests/s.
+- Rate: one cap shared by every thread and process (a lock file), default 5 requests/s, and
+  anonymous MCP calls under the gateway's per-address limit (MCP_RATE).
 """
 
 from __future__ import annotations
@@ -48,9 +49,12 @@ GATEWAY_ROOTS = ("/api/endpoint", "/api/endpoints", "/api/mcp", "/cs", "/catalog
                  "/.well-known/oauth-protected-resource/api/endpoint")
 READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 # POST, anonymous only: the MCP JSON-RPC doors and the gateway's anonymous write refusal probe.
-POST_PATHS = (re.compile(r"/api/mcp(/[^/?]+/[^/?]+)?/?"),
-              re.compile(r"/api/endpoint/[a-z2-7]+/mcp/?"),
-              re.compile(r"/api/endpoint/[a-z2-7]+/ngsi-ld/v1/entities"))
+MCP_PATHS = (re.compile(r"/api/mcp(/[^/?]+/[^/?]+)?/?"), re.compile(r"/api/endpoint/[^/?]+/mcp/?"))
+POST_PATHS = (*MCP_PATHS, re.compile(r"/api/endpoint/[a-z2-7]+/ngsi-ld/v1/entities"))
+# Behind the edge the gateway counts anonymous MCP per client address: 120 a minute, burst 30
+# (context-gateway ANONYMOUS_MCP_RATE_LIMIT, spend_anonymous_mcp). A loopback rehearsal carries no
+# X-Forwarded-For and is never counted, so the suites' own pacing is faster than that.
+MCP_RATE = 1.8
 SECRET_HEADERS = {"authorization", "cookie", "proxy-authorization"}
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 
@@ -154,9 +158,9 @@ class Guard:
             f.write(line + "\n")
         raise Refused(f"jc-smoke live guard refused {what}: {why}")
 
-    def wait(self) -> None:
+    def wait(self, bucket: str | None = None, rate: float | None = None) -> None:
         """One slot of the shared rate: the bucket file holds the time the next request may go."""
-        with open(self.cfg["bucket"], "a+") as f:
+        with open(bucket or self.cfg["bucket"], "a+") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
             f.seek(0)
             try:
@@ -167,7 +171,7 @@ class Guard:
             slot = max(now, nxt)
             f.seek(0)
             f.truncate()
-            f.write(repr(slot + 1 / self.cfg["rate"]))
+            f.write(repr(slot + 1 / (rate or self.cfg["rate"])))
         if slot > now:
             time.sleep(slot - now)
 
@@ -210,6 +214,8 @@ def install(cfg: dict) -> Guard:
             g.refuse(what, "a connection open to another host")
         self.host = host
         self._jc_live = f"{method} {host}{path}"
+        if method == "POST" and any(p.fullmatch(path.split("?", 1)[0]) for p in MCP_PATHS):
+            g.wait(cfg["bucket"] + "-mcp", min(MCP_RATE, cfg["rate"]))
         g.wait()
         return _SAVED["putrequest"](self, method, path, *a, **k)
 

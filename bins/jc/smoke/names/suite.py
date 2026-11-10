@@ -192,33 +192,41 @@ def run(a, prod: dict, jc: Jc, res: Results, renames, prod_tools: dict | None, e
         renamed[r.kind][r.old] = r.new
 
     # ---- projects and everything the Portal lists per project
-    projects, why = jc.projects()
-    # A Portal that just started lists nothing until its first sync of the configuration
-    # repositories ends: wait (bounded) for the projects to appear, then compare what is there.
-    deadline = time.monotonic() + getattr(a, "settle", 0)
-    while projects is not None and not projects & set(prod["projects"]) and time.monotonic() < deadline:
-        time.sleep(5)
+    if getattr(a, "anonymous", False) and getattr(jc, "portal", None) is None:
+        ep_listing = None
+        for kind, n in (("project", prod["projects"]), ("space", prod["spaces"]), ("endpoint-name", prod["endpoints"]),
+                        ("app", prod["apps"]), ("dashboard", prod["dashboards"])):
+            res.skip(kind, f"{len(n)} prod names", "GET /api/v1/projects/...", "listed on jc",
+                     "--anonymous: the Portal lists them to a signed-in person only (rehearsal, or a read-only "
+                     "test person on the deployment)")
+    else:
         projects, why = jc.projects()
-    extra["project"] = cmp.compare(res, "project", prod["projects"], projects, renames,
-                                   lambda old: jc.portal_answers(f"/api/v1/projects/{q(old)}"),
-                                   "GET /api/v1/projects", why)
-    asked = set(prod["projects"]) | set(projects or ()) | set(renamed.get("project", {}).values())
+        # A Portal that just started lists nothing until its first sync of the configuration
+        # repositories ends: wait (bounded) for the projects to appear, then compare what is there.
+        deadline = time.monotonic() + getattr(a, "settle", 0)
+        while projects is not None and not projects & set(prod["projects"]) and time.monotonic() < deadline:
+            time.sleep(5)
+            projects, why = jc.projects()
+        extra["project"] = cmp.compare(res, "project", prod["projects"], projects, renames,
+                                       lambda old: jc.portal_answers(f"/api/v1/projects/{q(old)}"),
+                                       "GET /api/v1/projects", why)
+        asked = set(prod["projects"]) | set(projects or ()) | set(renamed.get("project", {}).values())
 
-    def portal_kind(kind, plural, prod_names, field=None):
-        listing, why = jc.resources(asked, plural) if projects is not None else (None, "no project listing")
-        names = set(listing) if listing is not None else None
+        def portal_kind(kind, plural, prod_names, field=None):
+            listing, why = jc.resources(asked, plural) if projects is not None else (None, "no project listing")
+            names = set(listing) if listing is not None else None
 
-        def old_answers(old):
-            p, _, n = old.partition("/")
-            return jc.portal_answers(f"/api/v1/projects/{q(p)}/{plural}/{q(n)}")
-        extra[kind] = cmp.compare(res, kind, prod_names, names, renames, old_answers,
-                                  f"GET /api/v1/projects/{{p}}/{plural}", why)
-        return listing
+            def old_answers(old):
+                p, _, n = old.partition("/")
+                return jc.portal_answers(f"/api/v1/projects/{q(p)}/{plural}/{q(n)}")
+            extra[kind] = cmp.compare(res, kind, prod_names, names, renames, old_answers,
+                                      f"GET /api/v1/projects/{{p}}/{plural}", why)
+            return listing
 
-    portal_kind("space", "spaces", prod["spaces"])
-    ep_listing = portal_kind("endpoint-name", "endpoints", [f"{e.project}/{e.name}" for e in prod["endpoints"]])
-    portal_kind("app", "apps", prod["apps"])
-    portal_kind("dashboard", "dashboards", prod["dashboards"])
+        portal_kind("space", "spaces", prod["spaces"])
+        ep_listing = portal_kind("endpoint-name", "endpoints", [f"{e.project}/{e.name}" for e in prod["endpoints"]])
+        portal_kind("app", "apps", prod["apps"])
+        portal_kind("dashboard", "dashboards", prod["dashboards"])
     endpoints_and_surfaces(res, jc, prod, renames, renamed, ep_listing, extra)
 
     # ---- MCP doors
@@ -403,6 +411,8 @@ def main(argv=None) -> int:
     ap.add_argument("--repo", default=str(REPO), help="the clone jc was built from (its tool sources)")
     ap.add_argument("--timeout", type=float, default=30)
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--anonymous", action="store_true",
+                    help="no --state: the Portal-listing kinds are named skips instead of failures (live mode)")
     ap.add_argument("--settle", type=float, default=300,
                     help="seconds to wait for a fresh Portal's first sync to list a prod project")
     a = ap.parse_args(argv)

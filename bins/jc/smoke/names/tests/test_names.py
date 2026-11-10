@@ -322,3 +322,21 @@ def test_an_unknown_client_id_and_a_known_one_are_told_apart_by_the_realms_refus
     res, _ = run_fixture(tmp_path)
     r = {(x["id"], x["target"]): x["result"] for x in res.rows}
     assert r[("client.control", "city")] == PASS and r[("client", "city/portal-api")] == PASS
+
+
+def test_anonymous_names_the_portal_listing_kinds_skipped_and_still_reads_the_public_ones(tmp_path):
+    """Live mode: no signed-in administrator, so the Portal-listing kinds are named skips; the
+    anonymous kinds (endpoint, surface, mcp-server, dataset, realm, client) are still read."""
+    export = tmp_path / "export"
+    write_export(export)
+    import prodnames
+    res = Results("names", "http://localhost")
+    a = type("A", (), {"repo": suite.REPO, "state": None, "anonymous": True})()
+    suite.run(a, prodnames.load(export), FakeJc(), res, [], None, export)
+    by = {}
+    for r in res.rows:
+        by.setdefault(r["id"], set()).add(r["result"])
+    for kind in ("project", "space", "endpoint-name", "app", "dashboard"):
+        assert by[kind] == {SKIP}, (kind, by[kind])
+    for kind in ("endpoint", "surface", "mcp-server", "dataset", "realm", "client"):
+        assert by[kind] == {PASS}, (kind, by[kind])
