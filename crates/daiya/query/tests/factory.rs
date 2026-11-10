@@ -7,7 +7,7 @@
 use chrono::Utc;
 use daiya_model::{DatasourceRecord, InstallationId, InstanceId, OrgId, Subject};
 use daiya_query::{
-    DenyTokenExchanger, DriverDeps, DsError, MapSecretResolver, OutboundPolicy,
+    DenyTokenExchanger, DriverDeps, DsError, MapSecretResolver, OperatorReach, OutboundPolicy,
     PassthroughAudienceExchanger, Query, QueryCtx, ResourceReq, build_driver, guard_for,
 };
 use ipnet::IpNet;
@@ -148,6 +148,78 @@ async fn stored_prometheus_record_queries_the_mock_with_its_secret_ref() {
         head.contains("authorization: bearer the-bearer-value"),
         "{head}"
     );
+}
+
+#[tokio::test]
+async fn the_operator_reach_opens_one_address_to_one_organizations_prometheus() {
+    let body = json!({ "status": "success", "data": { "resultType": "vector", "result": [
+        { "metric": { "__name__": "up" }, "value": [1700000000, "1"] } ] } });
+    let (url, seen) = mock(vec![("/api/v1/query", body)]).await;
+    // No http, no loopback by policy: only the operator's one address opens them.
+    let policy = OutboundPolicy {
+        prometheus_reach: Some((ORG, OperatorReach::parse(&url).unwrap())),
+        ..OutboundPolicy::default()
+    };
+    let query = |rec: DatasourceRecord| {
+        let policy = policy.clone();
+        async move {
+            let driver = build_driver(&rec, &deps(policy, MapSecretResolver::new())).await?;
+            let mut ctx = ctx(Subject::anonymous());
+            ctx.org_id = rec.org_id;
+            driver
+                .query(&ctx, &q(json!({ "expr": "up", "instant": true })))
+                .await
+        }
+    };
+    let ok = query(record("prom", "prometheus", &url, json!({})))
+        .await
+        .unwrap();
+    assert_eq!(ok[0].frames.len(), 1);
+    assert_eq!(seen.lock().len(), 1);
+
+    let mut other_org = record("prom", "prometheus", &url, json!({}));
+    other_org.org_id = OrgId::from_u128(7);
+    let other_port = url
+        .rsplit_once(':')
+        .map(|(h, p)| format!("{h}:{}", p.parse::<u16>().unwrap() ^ 1))
+        .unwrap();
+    for (rec, why) in [
+        (other_org, "another organization"),
+        (record("ld", "ngsild", &url, json!({})), "another kind"),
+        (
+            record("prom", "prometheus", &other_port, json!({})),
+            "another port",
+        ),
+        (
+            record(
+                "prom",
+                "prometheus",
+                &url.replace("127.0.0.1", "localhost"),
+                json!({}),
+            ),
+            "another host name",
+        ),
+    ] {
+        let err = query(rec).await.map(|_| ()).unwrap_err();
+        let refused = matches!(&err, DsError::GuardRefused(_))
+            || matches!(&err, DsError::InvalidQuery { reason, .. } if reason.contains("refused"));
+        assert!(refused, "{why}: {err:?}");
+    }
+    assert_eq!(
+        seen.lock().len(),
+        1,
+        "no refused datasource reached the address"
+    );
+    for bad in [
+        "http://p:8080/x",
+        "http://p",
+        "http://u@p:1",
+        "http://169.254.169.254:80",
+        "p:80",
+        "http://p:1/?q",
+    ] {
+        assert!(OperatorReach::parse(bad).is_err(), "{bad}");
+    }
 }
 
 #[tokio::test]

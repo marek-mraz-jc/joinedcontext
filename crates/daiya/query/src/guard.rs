@@ -45,6 +45,53 @@ pub struct GuardConfig {
     /// whatever their address class ([`OwnReach`]). Anything else on that listener stays
     /// refused like any loopback or private address.
     pub own_reach: Vec<OwnReach>,
+    /// One `host:port` the operator opens on purpose ([`OperatorReach`]): a URL naming exactly
+    /// that host and port may use `http` and reach a non-public address. The allow-list still
+    /// applies and the cloud metadata addresses stay blocked.
+    pub operator_reach: Option<OperatorReach>,
+}
+
+/// One address the operator opens to a datasource kind, written `http://<host>:<port>` (the
+/// label-enforcing Prometheus proxy of an instance on a shared cluster): one host and one port,
+/// never a network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorReach {
+    host: String,
+    port: u16,
+}
+
+impl OperatorReach {
+    /// `raw` is `http[s]://<host>:<port>[/]`: the port written, no path, query, fragment or
+    /// credentials, and not a cloud metadata address.
+    pub fn parse(raw: &str) -> Result<Self, DsError> {
+        let refused = |why: &str| DsError::GuardRefused(format!("operator reach '{raw}': {why}"));
+        let url = Url::parse(raw.trim()).map_err(|_| refused("not a URL"))?;
+        let host = url
+            .host_str()
+            .filter(|h| !h.is_empty())
+            .ok_or_else(|| refused("no host"))?
+            .to_ascii_lowercase();
+        let port = url.port().ok_or_else(|| refused("no port written"))?;
+        let metadata = host
+            .trim_matches(['[', ']'])
+            .parse::<IpAddr>()
+            .is_ok_and(is_cloud_metadata);
+        if !matches!(url.scheme(), "http" | "https")
+            || url.path() != "/"
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || metadata
+        {
+            return Err(refused("want http://<host>:<port>"));
+        }
+        Ok(Self { host, port })
+    }
+
+    fn admits(&self, host: &str, port: u16) -> bool {
+        self.host == host && self.port == port
+    }
 }
 
 /// The NGSI-LD and OData Endpoints of the host's own gateway, as one base URL
@@ -145,6 +192,7 @@ impl Default for GuardConfig {
             allow_loopback_for_tests: false,
             allowed_networks: Vec::new(),
             own_reach: Vec::new(),
+            operator_reach: None,
         }
     }
 }
@@ -208,20 +256,19 @@ impl OutboundGuard {
             .iter()
             .find(|reach| reach.admits(raw_url, &parsed))
             .map(OwnReach::addr);
-        if scheme != "https" && !((self.config.allow_http || own.is_some()) && scheme == "http") {
-            return Err(DsError::GuardRefused(format!(
-                "disallowed URL scheme '{scheme}' (https required)"
-            )));
-        }
-
         let host = parsed
             .host_str()
             .ok_or_else(|| DsError::GuardRefused("URL is missing host".into()))?
             .to_ascii_lowercase();
-
-        let port = parsed
-            .port_or_known_default()
-            .ok_or_else(|| DsError::GuardRefused("URL has unknown port".into()))?;
+        let port = parsed.port_or_known_default();
+        let operator = port.is_some_and(|port| self.operator_admits(&host, port));
+        let http_ok = self.config.allow_http || own.is_some() || operator;
+        if scheme != "https" && !(http_ok && scheme == "http") {
+            return Err(DsError::GuardRefused(format!(
+                "disallowed URL scheme '{scheme}' (https required)"
+            )));
+        }
+        let port = port.ok_or_else(|| DsError::GuardRefused("URL has unknown port".into()))?;
 
         let host_with_port = format!("{host}:{port}");
         let allowed = self.config.allow_hosts.iter().any(|entry| {
@@ -239,10 +286,25 @@ impl OutboundGuard {
         if own.is_none()
             && let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>()
         {
-            self.check_ip(ip)?;
+            self.check_addr(ip, operator)?;
         }
 
         Ok((parsed, host, port, own))
+    }
+
+    fn operator_admits(&self, host: &str, port: u16) -> bool {
+        self.config
+            .operator_reach
+            .as_ref()
+            .is_some_and(|reach| reach.admits(host.trim_matches(['[', ']']), port))
+    }
+
+    /// [`Self::check_ip`], or for the operator's one opened address only the metadata check.
+    fn check_addr(&self, ip: IpAddr, operator: bool) -> Result<(), DsError> {
+        if operator && !is_cloud_metadata(ip) {
+            return Ok(());
+        }
+        self.check_ip(ip)
     }
 
     /// Checks one resolved address: the metadata addresses never pass, an operator-opened
@@ -284,8 +346,9 @@ impl OutboundGuard {
                 "host '{clean_host}' is not in the datasource allow-list"
             )));
         }
+        let operator = self.operator_admits(clean_host, port);
         if let Ok(ip) = clean_host.parse::<IpAddr>() {
-            self.check_ip(ip)?;
+            self.check_addr(ip, operator)?;
             return Ok(vec![SocketAddr::new(ip, port)]);
         }
         let resolved: Vec<SocketAddr> = tokio::net::lookup_host((clean_host, port))
@@ -300,7 +363,7 @@ impl OutboundGuard {
             )));
         }
         for addr in &resolved {
-            self.check_ip(addr.ip())?;
+            self.check_addr(addr.ip(), operator)?;
         }
         Ok(resolved)
     }

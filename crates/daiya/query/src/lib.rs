@@ -19,7 +19,9 @@ pub use daiya_model::{
     ColumnValues, FieldColumn, FieldType, Frame, FrameMeta, FrameSet, Notice, NoticeSeverity,
 };
 pub use factory::{DriverDeps, OutboundPolicy, build_driver, guard_for};
-pub use guard::{GuardConfig, OutboundGuard, OutboundRequest, OutboundResponse, OwnReach};
+pub use guard::{
+    GuardConfig, OperatorReach, OutboundGuard, OutboundRequest, OutboundResponse, OwnReach,
+};
 pub use loki::LokiDatasource;
 pub use ngsild::NgsiLdDatasource;
 pub use odata::ODataDatasource;
