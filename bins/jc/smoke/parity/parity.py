@@ -41,7 +41,8 @@ def fingerprint(page, features: list[dict], side: str) -> dict:
                     n += bool(fr.evaluate(f["js"]))
                 except Exception:  # noqa: BLE001 - a frame that went away counts as not holding it
                     pass
-            rows.append({"feature": f["name"], "present": n > 0, "count": n, "element": "js: " + f.get("what", "content check")})
+            rows.append({"feature": f["name"], "present": n > 0, "count": n, "element": "js: " + f.get("what", "content check"),
+                         "must": f.get("must", False)})
             continue
         sel = f.get(side) or f.get("sel")
         if not sel:
@@ -310,8 +311,15 @@ def report(out: Path, pairs) -> list[dict]:
                     continue
                 fo = {r["feature"]: r for r in jo.get("features", [])}
                 fn = {r["feature"]: r for r in jn.get("features", [])}
+                for name, rn in fn.items():
+                    if rn.get("must") and not fo.get(name, {}).get("present"):
+                        rows.append({"id": f"{target}/{name}", "target": target, "call": call, "expected": f"{name} ({rn.get('element')})",
+                                     "actual": f"{rn.get('count', 0)} x {rn.get('element')}", "result": "pass" if rn.get("present") else "fail",
+                                     "reason": "" if rn.get("present") else "required on the new page whatever the old capture shows"})
                 for name, ro in fo.items():
                     rn = fn.get(name, {})
+                    if rn.get("must") and not ro.get("present"):
+                        continue
                     if not ro.get("present"):
                         rows.append({"id": f"{target}/{name}", "target": target, "call": call, "expected": name, "actual": "-",
                                      "result": "skip", "reason": "the old page has no such element either"})

@@ -154,7 +154,8 @@ export function useSave(): {
   /** `options.endpoint` names the endpoint of a type more than one serves (SDK-02). */
   create(type: string, attrs: Record<string, WriteValue>, localId?: string, options?: EndpointOption): Promise<string | null>;
   update(id: string, patch: Record<string, WriteValue>): Promise<boolean>;
-  remove(id: string): Promise<boolean>;
+  /** `reason`: why, as the person typed it in the confirm step (DM-113); never filled in for them. */
+  remove(id: string, reason: string): Promise<boolean>;
   saving: boolean;
   problem: ProblemError | null;
   clear(): void;
@@ -195,11 +196,11 @@ export function useSave(): {
     }
   };
 
-  const remove = async (id: string): Promise<boolean> => {
+  const remove = async (id: string, reason: string): Promise<boolean> => {
     setSaving(true);
     setProblem(null);
     try {
-      await client.entities.remove(id);
+      await client.entities.remove(id, reason);
       return true;
     } catch (err) {
       const p = err instanceof ProblemError ? err : new ProblemError(0, { title: err instanceof Error ? err.message : String(err) });

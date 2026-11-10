@@ -230,26 +230,32 @@ describe("helsinki-alerts", () => {
   });
 
   // AP-09: Delete is offered on an alert a steward added, never on Fintraffic's.
-  it("lets a steward delete an alert a steward added, after confirming", async () => {
+  it("lets a steward delete an alert a steward added, once the steward says why", async () => {
     const client = app(STEWARD, PERSON.steward);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const page = await openAlert("Kauppatori, Helsinki");
     fireEvent.click(within(page).getByRole("button", { name: "Delete" }));
+    // DM-113: no reason, no request.
+    fireEvent.click(within(page).getByRole("button", { name: "Confirm delete" }));
+    expect(within(page).getByRole("alert")).toHaveTextContent("Enter why you delete it.");
+    expect(writes(client)).toEqual([]);
+
+    fireEvent.change(within(page).getByLabelText("Reason"), { target: { value: " Duplicate of the closure " } });
+    fireEvent.click(within(page).getByRole("button", { name: "Confirm delete" }));
 
     await waitFor(() => expect(writes(client)).toHaveLength(1));
-    expect(confirm).toHaveBeenCalledOnce();
     expect(writes(client)[0].method).toBe("DELETE");
     expect(writes(client)[0].path).toContain(encodeURIComponent("urn:ngsi-ld:Alert:hel.fi:helsinki:steward-market-day"));
-    confirm.mockRestore();
+    expect(writes(client)[0].reason).toBe("Duplicate of the closure");
   });
 
   it("sends nothing when the steward cancels the delete", async () => {
     const client = app(STEWARD, PERSON.steward);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const page = await openAlert("Kauppatori, Helsinki");
     fireEvent.click(within(page).getByRole("button", { name: "Delete" }));
+    fireEvent.change(within(page).getByLabelText("Reason"), { target: { value: "Duplicate" } });
+    fireEvent.click(within(page).getByRole("button", { name: "Cancel" }));
     expect(writes(client)).toEqual([]);
-    confirm.mockRestore();
+    expect(within(page).getByRole("button", { name: "Delete" })).toBeInTheDocument();
   });
 
   // AP-93: the steward's own number and their roles; an oldest alert with no one name is named by

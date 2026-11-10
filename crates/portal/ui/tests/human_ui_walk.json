@@ -2136,9 +2136,17 @@
       ]
     },
     "src/pages/spaces/SpaceInside.tsx": {
-      "walkedBy": "deployer",
-      "date": "2026-10-20",
+      "walkedBy": "jc-person-delete-reason",
+      "date": "2026-11-10",
       "screenshots": [
+        "evidence/jc-person-delete-reason/shots/grid-delete-reason-empty-desktop-1440.png",
+        "evidence/jc-person-delete-reason/shots/grid-delete-reason-empty-phone-400.png",
+        "evidence/jc-person-delete-reason/shots/grid-delete-reason-required-desktop-1440.png",
+        "evidence/jc-person-delete-reason/shots/grid-delete-reason-required-phone-400.png",
+        "evidence/jc-person-delete-reason/shots/grid-delete-reason-filled-desktop-1440.png",
+        "evidence/jc-person-delete-reason/shots/grid-delete-reason-filled-phone-400.png",
+        "evidence/jc-person-delete-reason/shots/grid-delete-refused-desktop-1440.png",
+        "evidence/jc-person-delete-reason/shots/grid-delete-refused-phone-400.png",
         "evidence/deployer/T-3986/full-0500/portal-projects-helsinki-endpoints-dialog-view-data-steward-en-1440.png",
         "evidence/deployer/T-3986/full-0500/portal-projects-helsinki-endpoints-dialog-remove-banskabystrica-app-banskabystrica-steward-en-1440.png",
         "evidence/deployer/T-3986/full-0500/portal-projects-helsinki-syncsources-dialog-detach-steward-en-1440.png",

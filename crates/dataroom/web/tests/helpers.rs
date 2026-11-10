@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use dataroom_core::BrandingBlock;
+use dataroom_core::{BrandingBlock, PublisherBranding};
 use dataroom_web::helpers::*;
 use dataroom_web::i18n::jc_t;
 use serde_json::{json, Value};
@@ -1460,16 +1460,107 @@ fn publisher_card_info_falls_back_to_name_badge_and_placeholder() {
         "bratislava-city",
         json!({ "title": {}, "description": { "sk": "Mesto" } }),
     );
-    let (title, image, desc) = publisher_card_info(&p, "en", "sk");
+    let (title, image, desc) = publisher_card_info(&p, None, "en", "sk");
     assert_eq!(title, "bratislava-city");
     assert!(!image.is_empty());
     assert_eq!(desc.as_deref(), Some("Mesto"));
     let logo = publisher("x", json!({ "logoUrl": "https://x.example/logo.png" }));
     assert_eq!(
-        publisher_card_info(&logo, "sk", "sk").1,
+        publisher_card_info(&logo, None, "sk", "sk").1,
         "https://x.example/logo.png"
     );
-    assert_eq!(publisher_card_info(&logo, "sk", "sk").0, "Vydavateľ x");
+    assert_eq!(
+        publisher_card_info(&logo, None, "sk", "sk").0,
+        "Vydavateľ x"
+    );
+}
+
+fn badge_text(image: &str) -> String {
+    use base64::Engine as _;
+    let b64 = image
+        .strip_prefix("data:image/svg+xml;base64,")
+        .expect("a badge data URI");
+    String::from_utf8(
+        base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .expect("base64"),
+    )
+    .expect("utf-8")
+}
+
+fn configured(initials: &str, colour: &str, words: &[(&str, &str)]) -> PublisherBranding {
+    PublisherBranding {
+        initials: Some(initials.into()),
+        colour: Some(colour.into()),
+        description: words
+            .iter()
+            .map(|(l, d)| ((*l).to_owned(), (*d).to_owned()))
+            .collect(),
+        ..PublisherBranding::default()
+    }
+}
+
+#[test]
+fn publisher_card_info_draws_each_publishers_configured_badge_and_words() {
+    // prod's chart `organizations` (jc.toml [dataroom.publishers]): praha PHA on #b4232a, bbsk
+    // BBSK on #7a1f5c, not the name's first letters on #00579c.
+    let praha = publisher("praha", json!({}));
+    let words = configured("PHA", "#b4232a", &[("en", "Prague"), ("sk", "Praha")]);
+    let (_, image, desc) = publisher_card_info(&praha, Some(&words), "sk", "sk");
+    let svg = badge_text(&image);
+    assert!(
+        svg.contains("fill=\"#b4232a\"") && svg.contains(">PHA</text>"),
+        "{svg}"
+    );
+    assert_eq!(desc.as_deref(), Some("Praha"));
+    // A language with no words of its own reads English, not the catalogue default (jc_org).
+    let (_, _, desc) = publisher_card_info(&praha, Some(&words), "cs", "sk");
+    assert_eq!(desc.as_deref(), Some("Prague"));
+    // No words at all: none, as on prod (banskabystrica, bbsk).
+    let bbsk = publisher("bbsk", json!({}));
+    let (_, image, desc) =
+        publisher_card_info(&bbsk, Some(&configured("BBSK", "#7a1f5c", &[])), "sk", "sk");
+    assert!(badge_text(&image).contains(">BBSK</text>"));
+    assert_eq!(desc, None);
+    // Without an entry the card keeps the name's letters.
+    let (_, image, _) = publisher_card_info(&bbsk, None, "sk", "sk");
+    assert!(badge_text(&image).contains(">BBS</text>"));
+}
+
+#[test]
+fn publisher_card_info_keeps_ckans_own_picture_and_words_over_the_configured_ones() {
+    let own = publisher(
+        "praha",
+        json!({ "logoUrl": "https://praha.example/znak.png", "description": { "sk": "Vlastný popis" } }),
+    );
+    let words = configured("PHA", "#b4232a", &[("sk", "Z konfigurácie")]);
+    let (_, image, desc) = publisher_card_info(&own, Some(&words), "sk", "sk");
+    assert_eq!(image, "https://praha.example/znak.png");
+    assert_eq!(desc.as_deref(), Some("Vlastný popis"));
+}
+
+#[test]
+fn publisher_card_info_escapes_configured_initials_and_refuses_a_bad_colour() {
+    let p = publisher("x", json!({}));
+    let (_, image, _) =
+        publisher_card_info(&p, Some(&configured("<b>", "#0000bf", &[])), "sk", "sk");
+    let svg = badge_text(&image);
+    assert!(
+        svg.contains(">&lt;b&gt;</text>") && !svg.contains("<b>"),
+        "{svg}"
+    );
+    // A colour that is no hex value draws no configured badge: the stored or name badge stands.
+    let (_, image, _) = publisher_card_info(
+        &p,
+        Some(&configured("PHA", "red\"/><script>", &[])),
+        "sk",
+        "sk",
+    );
+    let svg = badge_text(&image);
+    assert!(
+        svg.contains(">X</text>") && !svg.contains("script"),
+        "{svg}"
+    );
 }
 
 // ---- small text helpers ----
@@ -1903,11 +1994,11 @@ fn publisher_card_info_never_puts_a_bad_colour_into_the_badge() {
         "x",
         json!({ "badgeColour": "red\"/><script>alert(1)</script>" }),
     );
-    let (_, image, _) = publisher_card_info(&p, "sk", "sk");
+    let (_, image, _) = publisher_card_info(&p, None, "sk", "sk");
     assert_eq!(image, "/base/images/placeholder-organization.png");
     let p = publisher("-", json!({}));
     assert_eq!(
-        publisher_card_info(&p, "sk", "sk").1,
+        publisher_card_info(&p, None, "sk", "sk").1,
         "/base/images/placeholder-organization.png",
         "no initials"
     );
