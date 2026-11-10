@@ -172,9 +172,10 @@ fn hosts<'a>(urls: impl IntoIterator<Item = &'a str>) -> Vec<String> {
 }
 
 /// Counts, once a minute and outside any request, the entities of every public Endpoint a
-/// published deployment reads, as an anonymous caller counts them; a page only reads the
-/// result. An Endpoint with a type that did not come back has no total: a part is not its count.
-pub async fn count(state: Arc<ChatState>) {
+/// published deployment reads, as an anonymous caller counts them, with `http` at `gateway`
+/// (the catalogue reader's, `service::counter`); a page only reads the result. An Endpoint with
+/// a type that did not come back has no total: a part is not its count.
+pub async fn count(state: Arc<ChatState>, http: reqwest::Client, gateway: Option<url::Url>) {
     // The worker starts a round each minute: one still running keeps the gateway alone, so a
     // slow round never doubles the fan-out (T-5781).
     static ROUND: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -184,7 +185,7 @@ pub async fn count(state: Arc<ChatState>) {
     let Ok(snapshot) = state.snapshot.read().map(|s| Arc::clone(&s)) else {
         return;
     };
-    let Ok(gateway) = url::Url::parse(&state.gateway) else {
+    let Some(gateway) = gateway else {
         return;
     };
     let mut slugs: Vec<&str> = Vec::new();
@@ -205,7 +206,7 @@ pub async fn count(state: Arc<ChatState>) {
         .iter()
         .map(|slug| &snapshot.pages[*slug].page)
         .collect();
-    let (counted, shed) = count_round(&state.http, &gateway, &pages).await;
+    let (counted, shed) = count_round(&http, &gateway, &pages).await;
     if let Ok(mut held) = state.contexts.lock() {
         // A shed round counted only some Endpoints: the others keep the last round's totals.
         if shed {

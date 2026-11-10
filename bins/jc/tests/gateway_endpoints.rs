@@ -1422,6 +1422,98 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     );
 }
 
+/// Brief 119: the assistant counts Endpoints on jc's own listener from loopback (`reach`), not
+/// through the edge. An anonymous read of the closed Endpoint gets the same status and body
+/// there as from the edge (a trusted proxy's address with its mesh identity and forwarding
+/// headers). A loopback read that forges the edge's identity, a client address and the gateway's
+/// client and subject headers gets that answer too: neither the gateway nor the broker took any
+/// of them, or the writer's entity would show.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_loopback_self_read_is_decided_as_a_read_through_the_edge() {
+    const EDGE: &str = "apisix.jc.serviceaccount.identity.linkerd.cluster.local";
+    // The edge's address is 127.0.0.2, a loopback address the test's own reads never come from.
+    let jc = start_with_env(
+        false,
+        &[
+            ("JCBIN_TRUSTED_PROXIES", "127.0.0.2/32"),
+            ("JCBIN_TRUSTED_PROXY_IDENTITIES", EDGE),
+        ],
+    )
+    .await;
+    open_project(&jc).await;
+    let person = token(&jc, "e2e-reader").await;
+    let writes = format!("/api/endpoint/{CLOSED}/ngsi-ld/v1/entities");
+    let thing = entity("Thing", "one");
+    eventually("a writer's create lands", &jc, 60, || async {
+        let (status, body) = call(
+            &jc,
+            reqwest::Method::POST,
+            &writes,
+            Some(&person),
+            Some(&thing),
+        )
+        .await;
+        (status == StatusCode::CREATED)
+            .then_some(())
+            .ok_or(format!("{status} {body}"))
+    })
+    .await;
+    let host = jc.base.trim_start_matches("http://").to_owned();
+    let path = format!("{writes}?type=Thing&count=true&limit=0");
+    // Dialed at 127.0.0.1 by number, so the edge's client can bind 127.0.0.2 (`localhost` may
+    // name ::1 first); the request names jc's host either way.
+    let read = |client: Client, headers: Vec<(&'static str, String)>| {
+        let url = jc.url(&path).replacen("//localhost:", "//127.0.0.1:", 1);
+        let host = host.clone();
+        async move {
+            let mut req = client.get(url).header("host", host);
+            for (name, value) in headers {
+                req = req.header(name, value);
+            }
+            let resp = req.send().await.unwrap();
+            let status = resp.status();
+            (status, resp.text().await.unwrap_or_default())
+        }
+    };
+    let edge = Client::builder()
+        .local_address(std::net::IpAddr::from([127, 0, 0, 2]))
+        .build()
+        .unwrap();
+    let through_edge = read(
+        edge,
+        vec![
+            ("l5d-client-id", EDGE.to_owned()),
+            ("x-forwarded-for", "203.0.113.7".to_owned()),
+            ("x-forwarded-proto", "http".to_owned()),
+            ("x-forwarded-host", host.clone()),
+        ],
+    )
+    .await;
+    let on_loopback = read(Client::new(), Vec::new()).await;
+    let forged = read(
+        Client::new(),
+        vec![
+            ("l5d-client-id", EDGE.to_owned()),
+            ("x-forwarded-for", "203.0.113.7".to_owned()),
+            ("x-jc-client", "context-gateway".to_owned()),
+            ("x-jc-subject", PERSON.to_owned()),
+            ("x-jc-groups", format!("{PROJECT}-readers")),
+        ],
+    )
+    .await;
+    jc.mark(&format!(
+        "edge {} loopback {} forged {}",
+        through_edge.0, on_loopback.0, forged.0
+    ));
+    assert!(
+        through_edge.0.is_client_error(),
+        "an anonymous read of the closed Endpoint: {through_edge:?}"
+    );
+    assert_eq!(on_loopback, through_edge, "loopback and edge decide alike");
+    assert_eq!(forged, through_edge, "a forged header changed the decision");
+    assert!(!forged.1.contains("urn:ngsi-ld:Thing:one"), "{forged:?}");
+}
+
 const MODELLED: &str = "modelled";
 const MODELLED_SLUG: &str = "e2emodelledendpointaaaaaaa";
 

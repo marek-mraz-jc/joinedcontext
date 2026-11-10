@@ -614,6 +614,66 @@ mod tests {
         assert_eq!(ask(None).await, "10.0.0.5 ");
     }
 
+    /// Brief 119: the assistant reads the gateway's host on jc's own listener from loopback. A
+    /// loopback request that forges the edge's identity, a client address, a forwarded host and
+    /// a gateway client is not the edge even when the edge's network and identity are named:
+    /// its own host routes, its peer is the client, and no forwarding header reaches a module.
+    #[tokio::test]
+    async fn a_loopback_request_forging_the_edge_is_not_the_edge() {
+        const EDGE: &str = "apisix.jc-prod.serviceaccount.identity.linkerd.cluster.local";
+        async fn seen(
+            client: Option<Extension<ClientAddr>>,
+            headers: axum::http::HeaderMap,
+        ) -> String {
+            let names: Vec<&str> = FORWARDING_HEADERS
+                .iter()
+                .copied()
+                .filter(|name| headers.contains_key(*name))
+                .collect();
+            format!(
+                "{} {}",
+                client.map_or_else(|| "none".to_owned(), |c| c.0.0.to_string()),
+                names.join(",")
+            )
+        }
+        let router = JcRouterBuilder::new("https", "smartcity.test")
+            .trust_proxy("10.42.0.0/16".parse().unwrap())
+            .trust_identity(EDGE)
+            .mount(
+                MountSpec {
+                    module: "gateway".into(),
+                    host: Some("api.smartcity.test".into()),
+                    path_prefix: None,
+                },
+                Router::new().fallback(seen),
+            )
+            .mount(
+                MountSpec {
+                    module: "other".into(),
+                    host: Some("other.smartcity.test".into()),
+                    path_prefix: None,
+                },
+                Router::new().fallback(|| async { "other" }),
+            )
+            .build()
+            .unwrap();
+        for peer in ["127.0.0.1", "::1"] {
+            let req = Request::builder()
+                .uri("/api/endpoint/x/ngsi-ld/v1/entities?type=T&count=true&limit=0")
+                .header("host", "api.smartcity.test")
+                .header(MESH_IDENTITY, EDGE)
+                .header("x-forwarded-for", "203.0.113.7")
+                .header("x-forwarded-host", "other.smartcity.test")
+                .header("x-forwarded-proto", "https")
+                .header("x-jc-client", "context-gateway")
+                .body(Body::empty())
+                .unwrap();
+            let resp = router.dispatch(req, Some(peer.parse().unwrap())).await;
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(String::from_utf8(bytes.to_vec()).unwrap(), format!("{peer} "));
+        }
+    }
+
     #[tokio::test]
     async fn routes_one_domain_with_slugs_and_host_per_module_and_refuses_overlap() {
         // 1. Overlapping mount refusal
