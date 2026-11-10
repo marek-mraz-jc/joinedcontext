@@ -88,17 +88,25 @@ pub fn encode(text: &str) -> String {
 
 pub fn cookie(config: &Config, identity: Identity) -> String {
     let now = session::now_unix();
-    let session = Session {
-        identity,
-        expires_at: now + 3600,
-        issued_at: now,
-        signed_in_at: None,
-        id_token: "id".into(),
-        access_expires_at: now + 3600,
-        refresh_token: None,
-    };
+    session_cookie(
+        config,
+        &Session {
+            identity,
+            expires_at: now + 3600,
+            issued_at: now,
+            signed_in_at: None,
+            id_token: "id".into(),
+            access_expires_at: now + 3600,
+            refresh_token: None,
+        },
+    )
+}
+
+/// [`cookie`] for a session built by the test: one whose claims it keeps on the state with the
+/// same `issued_at` (`AppState::keep_session_claims`).
+pub fn session_cookie(config: &Config, session: &Session) -> String {
     let jar =
-        session::store(PrivateCookieJar::new(config.cookie_key.clone()), &session).expect("store");
+        session::store(PrivateCookieJar::new(config.cookie_key.clone()), session).expect("store");
     let response = (jar, StatusCode::OK).into_response();
     let mut parts: Vec<String> = response
         .headers()
