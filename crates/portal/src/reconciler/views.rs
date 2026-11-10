@@ -3020,7 +3020,10 @@ mod tests {
             .await;
         let sync = ViewSync::new(broker.uri(), token_file());
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("x-jc-subject", "jana%40hel.fi".parse().expect("a header value"));
+        headers.insert(
+            "x-jc-subject",
+            "jana%40hel.fi".parse().expect("a header value"),
+        );
         assert_eq!(
             crate::request_id::answering(
                 "ui-preview-0001",
