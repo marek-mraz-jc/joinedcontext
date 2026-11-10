@@ -77,7 +77,7 @@ interface Recorded {
   live: number;
 }
 
-async function stubApi(page: Page, asked: string[], deleted: string[], extra?: { linkml: string; seen: Recorded }): Promise<void> {
+async function stubApi(page: Page, asked: string[], deleted: string[], extra?: { linkml: string; seen: Recorded }, reasons?: string[]): Promise<void> {
   const linkml = extra?.linkml ?? LINKML;
   await page.route("**/{api,cs}/**", async (route) => {
     const url = new URL(route.request().url());
@@ -109,6 +109,10 @@ async function stubApi(page: Page, asked: string[], deleted: string[], extra?: {
       });
     }
     if (path.includes("/entities/") && method === "DELETE") {
+      // As the gateway (DM-113): a delete without the person's reason is refused.
+      const reason = route.request().headers()["jc-reason"];
+      if (!reason) return json({ title: "Reason Required", detail: "a delete names why in JC-Reason" }, 400);
+      reasons?.push(reason);
       // The Policy refuses the second row: the bar names it and keeps it.
       const id = decodeURIComponent(path.split("/entities/")[1] ?? "");
       if (id.endsWith(":2")) return json({ title: "Forbidden", detail: "the Policy does not grant this delete" }, 403);
@@ -165,8 +169,9 @@ for (const [label, width, height] of [["desktop-1440", 1440, 900], ["phone-400",
   test(`The space grid works like Baserow (${label})`, async ({ page }) => {
     const asked: string[] = [];
     const deleted: string[] = [];
+    const reasons: string[] = [];
     await page.setViewportSize({ width, height });
-    await stubApi(page, asked, deleted);
+    await stubApi(page, asked, deleted, undefined, reasons);
     await page.goto(`/projects/${PROJECT}/spaces/${SPACE}?lang=en`);
 
     // One toolbar row, the grid's own per-column filter row under the header (grid rework), numbered rows of one line.
@@ -223,8 +228,18 @@ for (const [label, width, height] of [["desktop-1440", 1440, 900], ["phone-400",
     await expect(page.getByText("2 selected")).toBeVisible();
     await shot(page, `grid-selected-${label}`);
     await page.getByRole("button", { name: "Delete selected" }).click();
-    await page.getByRole("alertdialog").getByRole("button", { name: "Delete selected" }).click();
+    // The confirm step asks why (DM-113): without a reason nothing is sent.
+    const confirm = page.getByRole("alertdialog");
+    await shot(page, `grid-delete-reason-empty-${label}`);
+    await confirm.getByRole("button", { name: "Delete selected" }).click();
+    await expect(confirm.getByText("Enter why you delete them, for example: Duplicate entries.")).toBeVisible();
+    expect(deleted).toEqual([]);
+    await shot(page, `grid-delete-reason-required-${label}`);
+    await confirm.getByLabel(/Reason/).fill("Duplicates left by the old feed");
+    await shot(page, `grid-delete-reason-filled-${label}`);
+    await confirm.getByRole("button", { name: "Delete selected" }).click();
     await expect(page.getByText("1 rows were not deleted")).toBeVisible();
+    expect(reasons).toEqual(Array(2).fill(encodeURIComponent("Duplicates left by the old feed")));
     await expect(page.getByText(/the Policy does not grant this delete/)).toBeVisible();
     expect(deleted).toEqual(["urn:ngsi-ld:Event:hel.fi:linkedevents:1"]);
     // The refused row stays checked, so the bar keeps naming it.

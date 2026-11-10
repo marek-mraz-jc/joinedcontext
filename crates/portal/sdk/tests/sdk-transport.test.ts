@@ -35,7 +35,7 @@ describe("originTransport", () => {
       return new Response(null, { status: 204 });
     }) as unknown as typeof fetch;
     const transport = originTransport(fakeFetch, { cookie: "" } as Document);
-    const client = createClient({ slug: "demo", orgDomain: "hel.fi", space: "h" }, transport);
+    const client = createClient({ slug: "demo", orgDomain: "hel.fi", space: "h", transport: "origin" }, transport);
     await client.entities.remove("urn:ngsi-ld:T:1", "Sensor gone\r\nX-Evil: 1");
     expect(sent[0]["JC-Reason"]).toBe("Sensor%20gone%0D%0AX-Evil%3A%201");
     expect(Object.keys(sent[0])).not.toContain("X-Evil");

@@ -757,9 +757,7 @@ async fn answer_call(
     if !pasted.is_empty() {
         return result(
             id,
-            problem_result(crate::ops::OpError::Api(
-                ApiError::SecretInArgument(pasted),
-            )),
+            problem_result(crate::ops::OpError::Api(ApiError::SecretInArgument(pasted))),
         );
     }
 

@@ -117,7 +117,9 @@ export function Alerts() {
             // The confirm step asks why, as the Portal's own delete does (DM-113): the reason goes
             // with the delete, and nothing is sent without one.
             <section className="app-confirm" aria-label={`Delete ${displayName(selected)}`}>
-              <p>{`Delete ${displayName(selected)}? This cannot be undone.`}</p>
+              <p>
+                <strong>{`Delete ${displayName(selected)}?`}</strong> This cannot be undone.
+              </p>
               <label htmlFor={`${nameId}-why`}>Reason</label>
               <input
                 id={`${nameId}-why`}
@@ -129,9 +131,9 @@ export function Alerts() {
                 value={why}
                 onChange={(event) => setWhy(event.target.value)}
               />
-              <p id={`${nameId}-hint`}>Why you delete it, recorded with the deletion, for example: Duplicate of the Senaatintori closure.</p>
+              <p id={`${nameId}-hint`} className="app-confirm-hint">Why you delete it, recorded with the deletion, for example: Duplicate of the Senaatintori closure.</p>
               {missing && (
-                <p id={`${nameId}-missing`} role="alert">
+                <p id={`${nameId}-missing`} className="app-confirm-error" role="alert">
                   Enter why you delete it.
                 </p>
               )}

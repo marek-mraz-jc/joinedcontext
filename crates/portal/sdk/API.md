@@ -74,7 +74,7 @@ Loads a single entity by NGSI-LD identifier.
 ```ts
 function useSave(): { create: (type: string, attrs: Record<string, Cell>, localId?: string, options?: { endpoint?: string }) => Promise<string | null>; update: (id: string, patch: Record<string, Cell>) => Promise<boolean>; remove: (id: string, reason: string) => Promise<boolean>; saving: boolean; problem: ProblemError | null; clear: () => void }
 ```
-Provides write operations (`create`, `update`, `remove`) that track saving state and ProblemError refusals without throwing. `remove` and `jc().entities.remove(id, reason, options?)` delete only with `reason`, why the person deletes, in the words the person typed (1 to 500 characters once trimmed, sent as `JC-Reason`, DM-113): ask for it in the confirm step, never fill one in. A blank or longer reason is a `ProblemError` with status `0` before any request.
+Provides write operations (`create`, `update`, `remove`) that track saving state and ProblemError refusals without throwing. `remove` needs `reason`: the person's words from a confirm step (DM-113).
 ```ts
 function useSchema(type?: string): { schema: Schema | null; typeSchema: TypeSchema | null; error: ProblemError | null }
 ```

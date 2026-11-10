@@ -50,16 +50,16 @@ fn input_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "endpoint": text("Endpoint name of the project, e.g. bike-stations", bounds::NAME),
+            "endpoint": text("Endpoint name, e.g. bike-stations", bounds::NAME),
             "action": {
                 "type": "string",
                 "enum": ["create", "upsert", "merge", "delete"],
-                "description": "create: new entities; upsert: create or replace attributes; merge: patch existing ones; delete: ids"
+                "description": "create: new entities; upsert: create or replace attributes; merge: patch existing ones"
             },
             "entities": {
                 "type": "array",
                 "maxItems": MAX_ENTITIES,
-                "description": "create, upsert, merge: NGSI-LD entities with id and type, e.g. {id: urn:ngsi-ld:BikeHireDockingStation:s1, type: BikeHireDockingStation, name: {type: Property, value: Main}}",
+                "description": "create, upsert, merge: NGSI-LD entities, e.g. {id: urn:ngsi-ld:Bike:s1, type: Bike, name: {type: Property, value: Main}}",
                 "items": { "type": "object", "maxProperties": RECORD_MEMBERS }
             },
             "ids": {
@@ -69,7 +69,7 @@ fn input_schema() -> Value {
                 "items": { "type": "string", "maxLength": ID }
             },
             // Twice the gateway's 500: whitespace around a reason is trimmed, `checked` counts the rest.
-            "reason": text("delete: why, as the person said it; never your own words", 2 * MAX_REASON as u64)
+            "reason": text("delete: why, in the person's words", 2 * MAX_REASON as u64)
         },
         "required": ["endpoint", "action"],
         "additionalProperties": false
@@ -80,10 +80,10 @@ fn output_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "written": { "type": "array", "items": { "type": "string" }, "description": "Ids the Endpoint took" },
+            "written": { "type": "array", "items": { "type": "string" }, "description": "Ids written" },
             "errors": {
                 "type": "array",
-                "description": "Entities the Endpoint refused, each with its id and why",
+                "description": "Refused entities, each with its id and why",
                 "items": { "type": "object" }
             }
         },
@@ -174,7 +174,11 @@ pub fn question(input: &Value) -> Option<String> {
     let reason = delete_reason(&input).filter(|_| input.action == Action::Delete)?;
     let shown: Vec<&str> = input.ids.iter().take(3).map(String::as_str).collect();
     let more = input.ids.len().saturating_sub(shown.len());
-    let more = if more > 0 { format!(" and {more} more") } else { String::new() };
+    let more = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
     Some(format!(
         "Deletes {}{more} through Endpoint {}, with the reason \"{reason}\".",
         shown.join(", "),
@@ -294,7 +298,10 @@ async fn run(
     let token = oidc.exchange_for_endpoint(&bearer.0, &slug).await?;
     let (path, body) = request_of(&input);
     let mut request = crate::api::pipelines::http()
-        .post(format!("{}/api/endpoint/{slug}/{path}", base.trim_end_matches('/')))
+        .post(format!(
+            "{}/api/endpoint/{slug}/{path}",
+            base.trim_end_matches('/')
+        ))
         .bearer_auth(token)
         .header("accept", "application/json");
     // Encoded once, so a line break in it is `%0A` and never a header of its own.
@@ -324,7 +331,7 @@ pub fn operations() -> Vec<Operation> {
     vec![Operation {
         name: NAME,
         title: "Write Data",
-        description: "Creates, upserts, merges or deletes up to 100 entities through one Endpoint of the project, as you; its Policy decides each",
+        description: "Creates, upserts, merges or deletes up to 100 entities through one Endpoint, as you; its Policy decides each",
         input: input_schema,
         output: output_schema,
         annotations: OperationAnnotations {
@@ -366,9 +373,11 @@ mod tests {
             &json!({ "endpoint": "bikes", "action": "create", "entities": [station] })
         )
         .is_ok());
-        assert!(validate_write(&json!({ "endpoint": "bikes", "action": "delete",
+        assert!(
+            validate_write(&json!({ "endpoint": "bikes", "action": "delete",
                                         "ids": ["urn:ngsi-ld:T:1"], "reason": "a duplicate" }))
-        .is_ok());
+            .is_ok()
+        );
         assert_eq!(
             refused_at(json!({ "endpoint": "bikes", "action": "create" })),
             "/entities"
@@ -402,15 +411,16 @@ mod tests {
 
     #[test]
     fn a_delete_names_the_persons_reason_and_nothing_cuts_it() {
-        let delete = |reason: Value| {
-            json!({ "endpoint": "bikes", "action": "delete", "ids": ["urn:ngsi-ld:T:1"], "reason": reason })
-        };
+        let delete = |reason: Value| json!({ "endpoint": "bikes", "action": "delete", "ids": ["urn:ngsi-ld:T:1"], "reason": reason });
         let bare = json!({ "endpoint": "bikes", "action": "delete", "ids": ["urn:ngsi-ld:T:1"] });
         assert_eq!(refused_at(bare), "/reason");
         assert_eq!(refused_at(delete(json!(""))), "/reason");
         assert_eq!(refused_at(delete(json!(" \n\t "))), "/reason");
         // Counted as the gateway counts: characters once trimmed, not bytes.
-        assert_eq!(refused_at(delete(json!("ž".repeat(MAX_REASON + 1)))), "/reason");
+        assert_eq!(
+            refused_at(delete(json!("ž".repeat(MAX_REASON + 1)))),
+            "/reason"
+        );
         assert!(validate_write(&delete(json!(format!("  {}\n", "ž".repeat(MAX_REASON))))).is_ok());
         // Other actions ignore it.
         let station = json!({ "id": "urn:ngsi-ld:T:1", "type": "T" });
@@ -431,19 +441,25 @@ mod tests {
     #[test]
     fn the_person_confirms_the_reason_a_delete_sends() {
         let ids: Vec<String> = (1..=5).map(|n| format!("urn:ngsi-ld:T:{n}")).collect();
-        let asked = question(&json!({ "endpoint": "bikes", "action": "delete", "ids": ids,
-                                      "reason": " duplicate of station 042 " }))
+        let asked = question(
+            &json!({ "endpoint": "bikes", "action": "delete", "ids": ids,
+                                      "reason": " duplicate of station 042 " }),
+        )
         .expect("a question");
         assert!(asked.contains("urn:ngsi-ld:T:3 and 2 more"), "{asked}");
         assert!(asked.contains("Endpoint bikes"), "{asked}");
         assert!(asked.contains("\"duplicate of station 042\""), "{asked}");
         let station = json!({ "id": "urn:ngsi-ld:T:1", "type": "T" });
         assert_eq!(
-            question(&json!({ "endpoint": "bikes", "action": "create", "entities": [station], "reason": "x" })),
+            question(
+                &json!({ "endpoint": "bikes", "action": "create", "entities": [station], "reason": "x" })
+            ),
             None
         );
         assert_eq!(
-            question(&json!({ "endpoint": "bikes", "action": "delete", "ids": ["urn:ngsi-ld:T:1"] })),
+            question(
+                &json!({ "endpoint": "bikes", "action": "delete", "ids": ["urn:ngsi-ld:T:1"] })
+            ),
             None
         );
     }
