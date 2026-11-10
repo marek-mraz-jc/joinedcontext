@@ -152,15 +152,19 @@ pub(crate) async fn endpoint_ws(
         gateway: Arc::clone(&gateway),
         caller,
     };
+    let request_id = request.headers().get(tenancy::REQUEST_ID).cloned();
     let (mut parts, _) = request.into_parts();
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
         Ok(upgrade) => upgrade,
         Err(rejection) => return rejection.into_response(),
     };
     let principal = principal_of(&subject);
-    let joined = gateway
-        .hubs
-        .join(&gateway, Arc::clone(&endpoint), subject, principal.clone());
+    let joined = gateway.hubs.join(
+        &gateway,
+        Arc::clone(&endpoint),
+        (subject, request_id),
+        principal.clone(),
+    );
     // Held until the upgrade runs: a failed upgrade drops it, and the connection leaves the hub.
     let joined = match joined {
         Ok(joined) => joined,
@@ -189,18 +193,27 @@ pub(crate) async fn endpoint_ws(
         }
     };
     tracing::info!(slug = %endpoint.slug, space = %endpoint.space, %principal, "WebSocket opened on the fan-out");
+    // The session logs in this request's span, as the lines before the upgrade did.
+    let span = tracing::Span::current();
     upgrade
         .protocols([PROTOCOL])
         .max_message_size(MAX_MESSAGE)
         .max_frame_size(MAX_FRAME)
-        .on_upgrade(move |client| async move {
-            let (hub, conn, queue) = joined.take();
-            let ended =
-                crate::fanout::socket::session(client, hub, conn, queue, principal, lifetime).await;
-            tracing::info!(slug = %endpoint.slug, closed = ?ended, "WebSocket closed");
-            metrics::counter!("jc_gateway_ws_closed_total", "reason" => ended.reason())
-                .increment(1);
-            drop(held);
+        .on_upgrade(move |client| {
+            tracing::Instrument::instrument(
+                async move {
+                    let (hub, conn, queue) = joined.take();
+                    let ended = crate::fanout::socket::session(
+                        client, hub, conn, queue, principal, lifetime,
+                    )
+                    .await;
+                    tracing::info!(slug = %endpoint.slug, closed = ?ended, "WebSocket closed");
+                    metrics::counter!("jc_gateway_ws_closed_total", "reason" => ended.reason())
+                        .increment(1);
+                    drop(held);
+                },
+                span,
+            )
         })
 }
 

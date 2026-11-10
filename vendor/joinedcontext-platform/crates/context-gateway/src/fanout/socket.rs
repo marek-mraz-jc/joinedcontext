@@ -114,15 +114,17 @@ pub enum Refused {
 impl Hubs {
     /// Opens a connection on the hub of the Endpoint and the caller's identity, starting the hub
     /// and its upstream when it has none; under the registry's lock, so a hub never stops between
-    /// the join and the open.
+    /// the join and the open. A hub this join starts names `request_id` (the joining request's)
+    /// to the broker and runs in the joining request's span: its lines and the broker's carry the
+    /// request that started it. The id is no part of the hub's key, so callers still share hubs.
     pub fn join(
         &self,
         gateway: &Arc<Gateway>,
         endpoint: Arc<Endpoint>,
-        subject: Subject,
+        (subject, request_id): (Subject, Option<HeaderValue>),
         principal: String,
     ) -> Result<hub::Joined, Refused> {
-        let headers = upstream_headers(&endpoint.space, &subject).ok_or(Refused::NoIdentity)?;
+        let mut headers = upstream_headers(&endpoint.space, &subject).ok_or(Refused::NoIdentity)?;
         let key = hub_key(&endpoint.slug, &headers);
         let mut hubs = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let in_space: usize = hubs
@@ -140,7 +142,13 @@ impl Hubs {
                 let hub = Arc::new(Hub::new(&endpoint.slug, bound()));
                 hubs.insert(key, (endpoint.space.clone(), Arc::clone(&hub)));
                 metrics::gauge!("jc_gateway_ws_hubs").set(hubs.len() as f64);
-                tokio::spawn(upstream(Arc::clone(gateway), Arc::clone(&hub), headers));
+                if let Some(id) = request_id {
+                    headers.insert(tenancy::REQUEST_ID, id);
+                }
+                tokio::spawn(tracing::Instrument::instrument(
+                    upstream(Arc::clone(gateway), Arc::clone(&hub), headers),
+                    tracing::Span::current(),
+                ));
                 hub
             }
         };
