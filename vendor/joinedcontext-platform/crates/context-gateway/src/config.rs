@@ -702,6 +702,39 @@ mod tests {
         assert_eq!(token_endpoint(None, None), None);
     }
 
+    /// T-6705: the JWKS reach dials past DNS, so only a loopback address (jc's own listener) is
+    /// taken; any other address refuses the start.
+    #[test]
+    fn the_jwks_reach_is_a_loopback_address_or_the_start_is_refused() {
+        let with = |reach: &'static str| {
+            Config::from_vars(move |name| match name {
+                "JC_OIDC_JWKS_REACH" => Some(reach.to_owned()),
+                "JC_GATEWAY_BROKER_URL" => Some("http://broker:1026".to_owned()),
+                "JC_GATEWAY_ORG_DOMAIN" => Some("hel.fi".to_owned()),
+                _ => None,
+            })
+        };
+        for refused in ["10.0.0.7:8080", "0.0.0.0:8080", "keycloak:80", "127.0.0.1"] {
+            assert!(
+                matches!(
+                    with(refused),
+                    Err(ConfigError::Invalid {
+                        name: "JC_OIDC_JWKS_REACH",
+                        ..
+                    })
+                ),
+                "{refused}: {:?}",
+                with(refused).err()
+            );
+        }
+        let taken = with("127.0.0.1:8080").expect("a loopback reach");
+        assert_eq!(
+            taken.oidc_jwks_reach,
+            Some("127.0.0.1:8080".parse().expect("an address"))
+        );
+        assert_eq!(with("").expect("no reach").oidc_jwks_reach, None);
+    }
+
     #[test]
     fn a_realm_without_the_revocations_list_does_not_start() {
         let realm = Some("https://idm.example/realms/dev");
