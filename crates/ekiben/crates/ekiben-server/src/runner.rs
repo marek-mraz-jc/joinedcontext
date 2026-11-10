@@ -6,11 +6,15 @@ use std::time::{Duration, Instant};
 use ekiben_core::config::build_blobl_env_for_stream;
 use ekiben_core::{
     execute_all, AckResponder, Batch, BatchError, CoreError, EnvAccess, MetricsRegistry, OrgId,
-    ProcContext, Registry, ResourceManager, RunSummary, SortGroup, StreamConfig, StreamContext,
-    StreamMetrics,
+    Part, ProcContext, Registry, ResourceManager, RunSummary, SortGroup, StreamConfig,
+    StreamContext, StreamMetrics,
 };
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
+
+/// A processed result up to this size (estimated JSON bytes) is encoded on its worker; a larger one
+/// is encoded batch by batch as the writer writes it.
+const ENCODE_AHEAD_BYTES: usize = 8 << 20;
 
 /// Handle to a running resident stream (`internal/stream/type.go` & `internal/stream/manager/type.go`).
 pub struct RunningStreamHandle {
@@ -523,8 +527,13 @@ impl WorkerPool {
                     .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 res.map(|mut out_batches| {
                     // Encode structured results here, in parallel, rather than in the one writer.
-                    for part in out_batches.iter_mut().flatten() {
-                        let _ = part.as_bytes();
+                    // A large result is encoded batch by batch as it is written instead: its
+                    // bytes never all sit beside its values (a 14,961-feature run's 113 MiB).
+                    let size: usize = out_batches.iter().flatten().map(Part::size_estimate).sum();
+                    if size <= ENCODE_AHEAD_BYTES {
+                        for part in out_batches.iter_mut().flatten() {
+                            let _ = part.as_bytes();
+                        }
                     }
                     out_batches
                 })
@@ -602,16 +611,17 @@ impl WorkerPool {
 
     /// Writes one batch and counts the messages written (`messages_out`).
     async fn write(&self, out_batch: &Batch) -> Result<(), CoreError> {
+        // The output's copy holds the encoded bytes, freed with it once written.
+        let mut out_batch = out_batch.clone();
         let out_bytes: u64 = out_batch
-            .iter()
-            .map(|p| p.as_bytes_ref().len() as u64)
+            .iter_mut()
+            .map(|p| p.as_bytes().len() as u64)
             .sum();
+        let out_len = out_batch.len() as u64;
         let metrics = &self.sctx.metrics;
-        match self.output.write_batch(&self.sctx, out_batch.clone()).await {
+        match self.output.write_batch(&self.sctx, out_batch).await {
             Ok(()) => {
-                metrics
-                    .output_sent
-                    .fetch_add(out_batch.len() as u64, Ordering::Relaxed);
+                metrics.output_sent.fetch_add(out_len, Ordering::Relaxed);
                 metrics.output_batch_sent.fetch_add(1, Ordering::Relaxed);
                 metrics.output_bytes.fetch_add(out_bytes, Ordering::Relaxed);
                 Ok(())
