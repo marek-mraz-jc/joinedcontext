@@ -251,10 +251,20 @@ async fn read_surface(
     };
     let answer = answered(gateway, &endpoint, surface, answer).await;
     if head {
-        let (parts, _) = answer.into_parts();
-        return Response::from_parts(parts, Body::empty());
+        let (parts, body) = answer.into_parts();
+        return Response::from_parts(parts, head_body(&body));
     }
     answer
+}
+
+/// The empty body of a `HEAD`: of no stated size when the `GET`'s body is streamed (an OGC
+/// file, jc-ogc-stream), so no `Content-Length: 0` claims the file is empty; dropping the
+/// `GET`'s body stops the broker writing it.
+fn head_body(get: &Body) -> Body {
+    match axum::body::HttpBody::size_hint(get).exact() {
+        Some(_) => Body::empty(),
+        None => Body::from_stream(futures_util::stream::empty::<Result<Vec<u8>, std::io::Error>>()),
+    }
 }
 
 /// The broker's answer to `target`; an OGC page past `MAX_BODY` is asked again by [`halved`]
@@ -847,6 +857,17 @@ pub(crate) fn routes() -> Router<Arc<Gateway>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `HEAD` of a streamed file states no length; one of a held page keeps the empty body
+    /// whose length the `GET`'s `Content-Length` header states (jc-ogc-stream).
+    #[test]
+    fn head_of_a_streamed_answer_states_no_length() {
+        let streamed =
+            Body::from_stream(futures_util::stream::empty::<Result<Vec<u8>, std::io::Error>>());
+        let size = |b: &Body| axum::body::HttpBody::size_hint(b).exact();
+        assert_eq!(size(&head_body(&streamed)), None);
+        assert_eq!(size(&head_body(&Body::from("abc"))), Some(0));
+    }
 
     #[test]
     fn a_feed_names_the_public_host_in_its_ids_and_author() {

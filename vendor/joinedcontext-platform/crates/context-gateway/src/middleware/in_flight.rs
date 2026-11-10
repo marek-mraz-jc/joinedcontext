@@ -287,7 +287,7 @@ impl InFlight {
     ) -> Response<Body> {
         let mut answer = std::pin::pin!(answer);
         if let Ok(answer) = tokio::time::timeout(self.slow_after, &mut answer).await {
-            return answer;
+            return held(answer, ticket);
         }
         if !self.weigh(&mut ticket) {
             tracing::info!(
@@ -296,9 +296,10 @@ impl InFlight {
             return busy("the gateway works on as many slow reads as it may at once");
         }
         let rest = self.deadline.saturating_sub(self.slow_after);
-        tokio::time::timeout(rest, answer)
-            .await
-            .unwrap_or_else(|_| self.ran_out())
+        match tokio::time::timeout(rest, answer).await {
+            Ok(answer) => held(answer, ticket),
+            Err(_) => self.ran_out(),
+        }
     }
 
     /// The 503 of a read stopped at the deadline.
@@ -312,6 +313,45 @@ impl InFlight {
             ),
             RETRY_SLOW_SECONDS,
         )
+    }
+}
+
+/// `answer` holding `ticket` until its body ends or is dropped: the deadline times the answer's
+/// headers, and a streamed body (an OGC file the broker sends as it writes it, jc-ogc-stream)
+/// goes on after them, so its slots stay taken for as long as it is sent, and a client that goes
+/// away gives them back with the body.
+fn held(answer: Response<Body>, ticket: Ticket) -> Response<Body> {
+    answer.map(|body| {
+        Body::new(Holding {
+            body,
+            _ticket: ticket,
+        })
+    })
+}
+
+/// A body and the ticket it holds.
+struct Holding {
+    body: Body,
+    _ticket: Ticket,
+}
+
+impl http_body::Body for Holding {
+    type Data = axum::body::Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        std::pin::Pin::new(&mut self.get_mut().body).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.body.size_hint()
     }
 }
 
@@ -358,7 +398,7 @@ pub async fn enforce(
         }
     };
     if !is_plain_read(&request) {
-        return next.run(request).await;
+        return held(next.run(request).await, ticket);
     }
     gateway.in_flight.time(ticket, next.run(request)).await
 }
@@ -728,6 +768,59 @@ mod tests {
             .time(ticket, async { Response::new(Body::empty()) })
             .await;
         assert_eq!(answer.status(), 200);
+    }
+
+    /// A streamed answer (an OGC file, jc-ogc-stream) keeps its slots after its headers, for as
+    /// long as its body is sent; its end, or a client dropping it, gives them back.
+    #[tokio::test]
+    async fn a_streamed_answer_holds_its_slots_until_its_body_ends_or_is_dropped() {
+        use http_body_util::BodyExt as _;
+        let gate = InFlight::new(1, 1, 1);
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<&'static str, std::io::Error>>(1);
+        let chunks = futures_util::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|chunk| (chunk, rx))
+        });
+        let ticket = gate.admit("a".into(), SIGNED_READ).expect("a");
+        let answer = gate
+            .time(
+                ticket,
+                async move { Response::new(Body::from_stream(chunks)) },
+            )
+            .await;
+        assert_eq!(answer.status(), 200);
+        assert!(
+            gate.admit("b".into(), SIGNED_READ).is_err(),
+            "the body is still being sent"
+        );
+        let mut body = answer.into_body();
+        tx.send(Ok("row\n")).await.expect("the body reads");
+        let frame = body.frame().await.expect("a frame").expect("its bytes");
+        assert_eq!(frame.into_data().expect("data"), "row\n");
+        assert!(gate.admit("b".into(), SIGNED_READ).is_err());
+        drop(tx);
+        assert!(body.frame().await.is_none(), "the body ended");
+        drop(body);
+        assert!(
+            gate.admit("b".into(), SIGNED_READ).is_ok(),
+            "an ended body gives its slots back"
+        );
+
+        let gate = InFlight::new(1, 1, 1);
+        let ticket = gate.admit("a".into(), SIGNED_READ).expect("a");
+        let pending = futures_util::stream::pending::<Result<&'static str, std::io::Error>>();
+        let answer = gate
+            .time(
+                ticket,
+                async move { Response::new(Body::from_stream(pending)) },
+            )
+            .await;
+        assert!(gate.admit("b".into(), SIGNED_READ).is_err());
+        drop(answer);
+        assert!(
+            gate.admit("b".into(), SIGNED_READ).is_ok(),
+            "a client that leaves gives the slots back with the body"
+        );
+        assert!(gate.callers.lock().expect("the map").get("a").is_none());
     }
 
     #[test]

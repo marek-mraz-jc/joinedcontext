@@ -276,6 +276,21 @@ def test_a_paged_listing_is_read_to_its_end(tmp_path, serve):
     assert [r["result"] for r in listing] == ["pass"], listing
 
 
+def test_no_writes_with_anon_refusal_sends_only_the_anonymous_unknown_type_write(tmp_path, serve):
+    """Live mode's endpoints flags: of the writes only the anonymous POST of a type no Policy
+    names goes out, and it must be refused; the write of a served type stays a named skip."""
+    fake, posts = Fake(), []
+    answer = fake.answer
+    fake.answer = lambda m, p, h: (posts.append((m, p, h.get("Authorization"))) if m != "GET" else None) or answer(m, p, h)
+    b, out = bundle(tmp_path / "x", now_iso()), tmp_path / "out"
+    suite.main(["--base-url", serve(fake), "--export", str(b), "--out", str(out), "--workers", "1",
+                "--no-writes", "--anon-refusal"])
+    rows = {r["id"]: r for r in json.loads((out / "results.json").read_text())["checks"]}
+    assert posts == [("POST", f"/api/endpoint/{OPEN}/ngsi-ld/v1/entities", None)], posts
+    assert rows["anon.write-unknown-type"]["result"] == "pass"
+    assert rows["anon.write-outside"]["result"] == "skip" and rows["anon.write-outside"]["reason"] == "--no-writes"
+
+
 @pytest.mark.parametrize("ops,result", [("upsertBatch, createBatch, queryBatch", "pass"),
                                         ("createEntity", "fail"), ("redirectionOps", "fail")])
 def test_a_view_serving_no_create_refuses_with_405(tmp_path, serve, ops, result):

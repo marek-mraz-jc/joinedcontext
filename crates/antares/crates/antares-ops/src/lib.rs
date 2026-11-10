@@ -107,6 +107,18 @@ pub use antares_api::{
 /// request's `Host`), for a surface whose documents name its resources by
 /// absolute URL.
 pub use antares_api::public_base;
+/// How many in-process calls the running task is inside: a surface that
+/// streams a body takes it in its handler, for [`at_call_depth`].
+#[must_use]
+pub fn call_depth() -> usize {
+    antares_api::state::in_process_depth()
+}
+
+/// `f` run `depth` in-process calls deep: a body polled after its handler
+/// returned reads each page at the depth the handler ran at.
+pub async fn at_call_depth<F: std::future::Future>(depth: usize, f: F) -> F::Output {
+    antares_api::state::at_depth(depth, f).await
+}
 
 /// The headers a surface may never set on an operation: the tenant, the
 /// snapshot and the policy subject come from the outer request alone (G2).
@@ -1552,6 +1564,24 @@ pub mod test_kit {
         pub async fn with_max_limit(limit: usize) -> Result<Self, String> {
             let mut state = AppState::new("antares-test".into());
             state.max_limit = limit;
+            antares_api::wire(&mut state).await;
+            let reload = crate::views::install(&state).await?;
+            Ok(Self { state, reload })
+        }
+
+        /// [`TestBroker::with_max_limit`] that also buffers at most `bytes` of
+        /// one in-process answer: a test reads many small pages under a small
+        /// ceiling, as a streamed file does.
+        ///
+        /// # Errors
+        /// The view table's.
+        pub async fn with_max_limit_and_answer_bytes(
+            limit: usize,
+            bytes: usize,
+        ) -> Result<Self, String> {
+            let mut state = AppState::new("antares-test".into());
+            state.max_limit = limit;
+            state.max_answer_bytes = bytes;
             antares_api::wire(&mut state).await;
             let reload = crate::views::install(&state).await?;
             Ok(Self { state, reload })

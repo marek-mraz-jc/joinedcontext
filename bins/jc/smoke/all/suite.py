@@ -3,6 +3,8 @@
    bins/jc/smoke/run all --base-url <url> --out <dir> [--export e] [--state s] [--log-file f]
        [--admin-url u] [--admin-token-file f] [--person-token-file f] [--e2e]
        [--only a,b] [--skip a,b] [--with <suite>=<args>]... [--suite-timeout s] [--known <file>]
+   bins/jc/smoke/run all --deployment <name> --domain <d> --edge <ip> --jc-config <jc.toml>
+       --export <bundle> --out <dir> [--rate n] [--only a,b] ...
 
 Each suite runs as its own process (`run <suite>`) into <out>/<suite>/ with the common flags it
 declares; logs runs last and scans the others' result dirs. A suite that dies without results.json
@@ -13,7 +15,11 @@ skip, then the failures). Answers 0 only when no check failed outside the --know
 
 --known names gaps already filed (one `<regex over suite/id>  # reason, owner` per line): a failing
 check whose id matches stays a failure in the tables, marked known, and does not turn the verdict
-red; any other failure does. A known line that matches no failure is listed as fixed, to drop."""
+red; any other failure does. A known line that matches no failure is listed as fixed, to drop.
+
+--deployment runs the anonymous read parts of the suites in LIVE against a named deployment on a
+cluster, behind live.py's guard (read-only, anonymous, rate-capped, TLS verified); every other
+suite is one skip row naming why. No token, state or log flag is accepted in that mode."""
 
 from __future__ import annotations
 
@@ -31,11 +37,22 @@ HERE = Path(__file__).resolve().parent
 SMOKE = HERE.parent
 REPO = SMOKE.parent.parent.parent
 sys.path.insert(0, str(SMOKE))
+import live
 from common import FAIL, PASS, SKIP, loopback_only
 
 # Flags `all` hands on, each only to a suite whose suite.py declares it.
 COMMON = ("--export", "--state", "--log-file", "--admin-url", "--admin-token-file", "--person-token-file")
 LAST = ("logs",)
+# Live mode: the suites with anonymous read parts, and the flags that keep them to those parts.
+LIVE = {"endpoints": ["--no-writes", "--anon-refusal"], "mcp": ["--anonymous"], "catalogue": [],
+        "names": [], "subscriptions": ["--transports-only"]}
+NOT_LIVE = {"restore": "docker: rehearsal only", "image": "docker: rehearsal only",
+            "kaisatsu": "sign-in, token exchange and connectors: rehearsal only",
+            "charts-apps": "writes dashboards and Apps: rehearsal only",
+            "multiorg": "signs in personas and writes: rehearsal only",
+            "logs": "reads the rehearsal's own log file", "pipelines": "runs pipelines (writes): rehearsal only",
+            "ui": "signs in personas in Chromium: rehearsal only", "assistant": "signs in and spends the model key",
+            "parity": "signs in a person: rehearsal only"}
 
 
 def suites() -> list[str]:
@@ -175,7 +192,8 @@ def totals(rows) -> dict:
     return t
 
 
-def write(out: Path, base: str, runs: list[dict], seconds: int, fixed: list[str] | None = None) -> bool:
+def write(out: Path, base: str, runs: list[dict], seconds: int, fixed: list[str] | None = None,
+          note: str = "") -> bool:
     rows = [r for x in runs for r in x["rows"]]
     t = totals(rows)
     new_fails = [r for r in rows if r["result"] == FAIL and not r.get("known")]
@@ -190,6 +208,7 @@ def write(out: Path, base: str, runs: list[dict], seconds: int, fixed: list[str]
     lines = [f"# Smoke suite `all`: {verdict}", "",
              (f"Base {base}; {len(rows)} checks, {t[PASS]} pass, {t[FAIL]} fail "
               f"({len(new_fails)} not on the known list), {t[SKIP]} skip ({seconds} s)."), "",
+             *([note, ""] if note else []),
              "| suite | checks | pass | fail | of them known | skip | seconds | report |",
              "|---|---|---|---|---|---|---|---|"]
     for s in summary:
@@ -224,8 +243,13 @@ def write(out: Path, base: str, runs: list[dict], seconds: int, fixed: list[str]
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="run all", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--base-url", required=True)
+    p.add_argument("--base-url", help="the rehearsal (loopback); not with --deployment")
     p.add_argument("--out", required=True)
+    p.add_argument("--deployment", help="live mode: the deployment's name (jc-prod, jc-dev)")
+    p.add_argument("--domain", help="live mode: its domain (jc.toml base_host)")
+    p.add_argument("--edge", help="live mode: the edge's IP every host is reached at")
+    p.add_argument("--jc-config", help="live mode: the deployment's host-mode jc.toml (its [mounts])")
+    p.add_argument("--rate", type=float, default=5.0, help="live mode: requests per second, all suites together")
     for f in COMMON:
         p.add_argument(f)
     p.add_argument("--e2e", action="store_true", help="also cargo test -p jc --tests (from the repository root)")
@@ -236,6 +260,20 @@ def main(argv=None) -> int:
     p.add_argument("--suite-timeout", type=float, default=3600)
     p.add_argument("--known", help="known gaps: <regex over suite/id>  # reason, one per line")
     a = p.parse_args(argv)
+    out = Path(a.out)
+    cfg = None
+    if a.deployment:
+        missing = [f for f in ("domain", "edge", "jc_config", "export") if not getattr(a, f)]
+        given = [f for f in COMMON[1:] if getattr(a, f[2:].replace("-", "_"))] + (["--base-url"] if a.base_url else [])
+        if missing or given or a.e2e:
+            p.error(f"--deployment needs --{', --'.join(m.replace('_', '-') for m in missing) or ' '} and takes "
+                    f"no {', '.join(given + (['--e2e'] if a.e2e else [])) or 'token flag'}")
+        cfg = live.config(a.deployment, a.domain, a.edge, Path(a.jc_config).read_text(), out, a.rate)
+        os.environ[live.ENV] = json.dumps(cfg)
+        live.install(cfg)
+        a.base_url = live.base_url(cfg)
+    elif not a.base_url:
+        p.error("--base-url or --deployment")
     loopback_only(a.base_url)
     a.extra = {}
     for x in a.extra_args:
@@ -247,18 +285,25 @@ def main(argv=None) -> int:
     unknown = [s for s in a.only.split(",") if s and s not in suites()]
     if unknown:
         p.error(f"no suite {', '.join(unknown)}; suites: {' '.join(suites())}")
-    out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     started = time.time()
     runs, done = [], []
     for s in chosen:
         print(f"all: {s} ...", flush=True)
-        r = run_suite(s, argv_for(s, a, out, done), out, a.suite_timeout)
+        if cfg and s not in LIVE:
+            runs.append({"suite": s, "seconds": 0, "exit": None, "call": "", "rows": [
+                row(s, "run", "", "the suite runs", "not run", SKIP,
+                    f"live {cfg['deployment']}: {NOT_LIVE.get(s, 'not cleared for a live deployment')}")]})
+            continue
+        r = run_suite(s, argv_for(s, a, out, done) + (LIVE[s] if cfg else []), out, a.suite_timeout)
         runs.append(r)
         done.append(out / s)
         t = totals(r["rows"])
         print(f"all: {s} {t[PASS]} pass, {t[FAIL]} fail, {t[SKIP]} skip ({r['seconds']} s)", flush=True)
-    if a.e2e:
+    if cfg:
+        runs.append({"suite": "e2e", "seconds": 0, "exit": None, "call": "", "rows": [
+            row("e2e", "cargo", "", "ok", "not run", SKIP, "live mode: jc's e2e tests run on the rehearsal")]})
+    elif a.e2e:
         print("all: e2e (cargo test -p jc --tests) ...", flush=True)
         runs.append(run_e2e(out, a.suite_timeout))
     else:
@@ -267,7 +312,16 @@ def main(argv=None) -> int:
                                   "pass --e2e to run jc's e2e tests")]})
     known = load_known(a.known)
     fixed = mark_known([r for x in runs for r in x["rows"]], known)
-    green = write(out, a.base_url, runs, round(time.time() - started), fixed)
+    note = ""
+    if cfg:
+        refused = (out / "refused.jsonl").read_text().splitlines() if (out / "refused.jsonl").exists() else []
+        note = (f"Live: deployment {cfg['deployment']}, hosts of {cfg['domain']} at edge {cfg['edge']} "
+                f"(TLS verified), {cfg['rate']:g} requests/s across all suites, anonymous and read-only; "
+                f"{len(refused)} requests refused by the guard (refused.jsonl).")
+        for x in runs:
+            for r in x["rows"]:
+                r["actual"], r["reason"] = live.redact(r["actual"]), live.redact(r["reason"])
+    green = write(out, a.base_url, runs, round(time.time() - started), fixed, note)
     print((out / "REPORT.md").read_text().split("\n## Failures")[0])
     return 0 if green else 1
 
