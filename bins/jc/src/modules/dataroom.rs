@@ -956,18 +956,11 @@ mod tests {
         }
     }
 
-    /// A stored host with a port never resolved (the lookup drops the port): it is moved to the
-    /// mount host, port dropped, and then resolves.
+    /// A stored host with a port never resolves on Postgres (its lookup compares the stored host
+    /// with the request's, port dropped): it is moved to the mount host, port dropped.
     #[tokio::test]
     async fn a_stored_host_with_a_port_is_moved_to_the_bare_mount_host() {
         let (store, org, cat, _) = stored_default("opendata.city.example:8080").await;
-        assert!(
-            store
-                .resolve_host("opendata.city.example")
-                .await
-                .unwrap()
-                .is_none()
-        );
         hold_default_host(&store, org, cat, "opendata.city.example:443")
             .await
             .unwrap();

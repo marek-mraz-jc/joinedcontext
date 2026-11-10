@@ -312,6 +312,7 @@ pub struct HostRunner {
 
 impl HostRunner {
     /// The variables after a sync handed `resolved`.
+    #[cfg_attr(not(feature = "portal"), allow(dead_code))]
     fn merged(&self, resolved: BTreeMap<String, String>) -> HashMap<String, String> {
         let mut out: HashMap<String, String> = resolved.into_iter().collect();
         for (name, value) in &self.given {
