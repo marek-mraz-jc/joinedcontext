@@ -442,7 +442,9 @@ class Suite:
         want = " or ".join(map(str, expect))
         for id, t in ((f"{who}.write-outside", types[0] if types else OUTSIDE),
                       (f"{who}.write-unknown-type", OUTSIDE)):
-            if not self.a.writes:
+            # --anon-refusal (live mode): of the writes only the anonymous one of a type no Policy names.
+            probe = self.a.anon_refusal and token is None and t == OUTSIDE
+            if not self.a.writes and not probe:
                 self.r.skip(id, e.slug, f"POST {path}", want, "--no-writes")
                 continue
             eid = f"urn:ngsi-ld:{t}:smoke-{secrets.token_hex(6)}"
@@ -509,6 +511,8 @@ def main(argv=None) -> int:
     p.add_argument("--sweep-minutes", type=int, default=65,
                    help="slack for the hourly 24 h sweep before older history counts as a leak")
     p.add_argument("--no-writes", dest="writes", action="store_false")
+    p.add_argument("--anon-refusal", action="store_true",
+                   help="with --no-writes, still send the anonymous write of a type no Policy names (must be refused)")
     a = p.parse_args(argv)
     loopback_only(a.base_url)
     export, out = Path(a.export), Path(a.out)
