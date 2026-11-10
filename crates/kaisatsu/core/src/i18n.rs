@@ -224,6 +224,20 @@ federatedIdentityConfirmLinkMessage=User with {0} {1} already exists. How do you
 confirmLinkIdpContinue=Add to existing account
 jcDeviceTooManyCodes=Too many wrong codes. Wait a few minutes, then try again.
 oauthGrantTitle=Grant Access to {0}
+email.emailVerificationSubject=Verify email
+email.emailVerificationBody=Someone has created a {2} account with this email address. If this was you, click the link below to verify your email address\n\n{0}\n\nThis link will expire within {3}.\n\nIf you didn't create this account, just ignore this message.
+email.passwordResetSubject=Reset password
+email.passwordResetBody=Someone just requested to change your {2} account's credentials. If this was you, click on the link below to reset them.\n\n{0}\n\nThis link and code will expire within {3}.\n\nIf you don't want to reset your credentials, just ignore this message and nothing will be changed.
+email.executeActionsSubject=Update Your Account
+email.executeActionsBody=Your administrator has just requested that you update your {2} account by performing the following action(s): {3}. Click on the link below to start this process.\n\n{0}\n\nThis link will expire within {4}.\n\nIf you are unaware that your administrator has requested this, just ignore this message and nothing will be changed.
+email.requiredAction.CONFIGURE_TOTP=Configure OTP
+email.requiredAction.UPDATE_PASSWORD=Update Password
+email.requiredAction.VERIFY_EMAIL=Verify Email
+email.requiredAction.UPDATE_PROFILE=Update Profile
+email.linkExpirationFormatter.timePeriodUnit.seconds={0,choice,0#seconds|1#second|1<seconds}
+email.linkExpirationFormatter.timePeriodUnit.minutes={0,choice,0#minutes|1#minute|1<minutes}
+email.linkExpirationFormatter.timePeriodUnit.hours={0,choice,0#hours|1#hour|1<hours}
+email.linkExpirationFormatter.timePeriodUnit.days={0,choice,0#days|1#day|1<days}
 "#;
 
 const SK_PROPERTIES: &str = r#"
@@ -436,6 +450,20 @@ federatedIdentityConfirmLinkMessage=Používateľ s {0} {1} už existuje. Ako ch
 confirmLinkIdpContinue=Pridať do existujúceho účtu
 jcDeviceTooManyCodes=Príliš veľa nesprávnych kódov. Počkajte niekoľko minút a skúste to znova.
 oauthGrantTitle=Poskytnúť prístup {0}
+email.emailVerificationSubject=Overenie e-mailu
+email.emailVerificationBody=Niekto vytvoril účet {2} s touto e-mailovou adresou. Ak ste to vy, kliknite na nižšie uvedený odkaz a overte svoju e-mailovú adresu \n\n{0}\n\nTento odkaz uplynie do {1} minút.\n\nAk ste tento účet nevytvorili, ignorujte túto správu.
+email.passwordResetSubject=Obnovenie hesla
+email.passwordResetBody=Niekto požiadal, aby ste zmenili svoje poverenia účtu {2}. Ak ste to vy, kliknite na odkaz uvedený nižšie, aby ste ich vynulovali.\n\n{0}\n\nTento odkaz a kód uplynie do {1} minút.\n\nAk nechcete obnoviť svoje poverenia , ignorujte túto správu a nič sa nezmení.
+email.executeActionsSubject=Aktualizujte svoj účet
+email.executeActionsBody=Váš administrátor práve požiadal o aktualizáciu Vášho účtu {2} vykonaním nasledujúcich akcií: {3}. Kliknutím na odkaz uvedený nižšie spustíte tento proces.\n\n{0}\n\nTento odkaz vyprší za {4}.\n\nAk si nie ste vedomý, že váš administrátor o toto požiadal, ignorujte túto správu a nič bude zmenené.
+email.requiredAction.CONFIGURE_TOTP=Konfigurácia OTP
+email.requiredAction.UPDATE_PASSWORD=Aktualizovať heslo
+email.requiredAction.VERIFY_EMAIL=Overiť e-mail
+email.requiredAction.UPDATE_PROFILE=Aktualizovať profil
+email.linkExpirationFormatter.timePeriodUnit.seconds={0,choice,0#sekúnd|1#sekunda|2#sekundy|4<sekúnd}
+email.linkExpirationFormatter.timePeriodUnit.minutes={0,choice,0#minút|1#minúta|2#minúty|4<minút}
+email.linkExpirationFormatter.timePeriodUnit.hours={0,choice,0#hodín|1#hodina|2#hodiny|4<hodín}
+email.linkExpirationFormatter.timePeriodUnit.days={0,choice,0#dní|1#deň|2#dni|4<dní}
 "#;
 
 const CS_PROPERTIES: &str = r#"
@@ -648,6 +676,20 @@ federatedIdentityConfirmLinkMessage=Uživatel s {0} {1} již existuje. Jak chcet
 confirmLinkIdpContinue=Přidat do existujícího účtu
 jcDeviceTooManyCodes=Příliš mnoho chybných kódů. Počkejte několik minut a zkuste to znovu.
 oauthGrantTitle=Udělit přístup {0}
+email.emailVerificationSubject=Ověření e-mailu
+email.emailVerificationBody=Někdo vytvořil účet {2} s touto e-mailovou adresou. Pokud jste to vy, klikněte na níže uvedený odkaz a ověřte svou e-mailovou adresu \n\n{0}\n\nTento odkaz vyprší za {3}.\n\nPokud jste tento účet nevytvořili, tuto zprávu ignorujte.
+email.passwordResetSubject=Zapomenuté heslo
+email.passwordResetBody=Někdo právě požádal o změnu hesla u Vašeho účtu {2}. Pokud jste to vy, pro jeho změnu klikněte na odkaz níže.\n\n{0}\n\nPlatnost tohoto odkazu je {3}.\n\nPokud heslo změnit nechcete, tuto zprávu ignorujte a nic se nezmění.
+email.executeActionsSubject=Aktualizujte svůj účet
+email.executeActionsBody=Váš administrátor Vás požádal o provedení následujících akcí u účtu {2}: {3}. Začněte kliknutím na níže uvedený odkaz.\n\n{0}\n\nPlatnost tohoto odkazu je {4}.\n\nPokud si nejste jisti, zda je tento požadavek v pořádku, ignorujte tuto zprávu.
+email.requiredAction.CONFIGURE_TOTP=Konfigurace OTP
+email.requiredAction.UPDATE_PASSWORD=Aktualizace hesla
+email.requiredAction.VERIFY_EMAIL=Ověření e-mailu
+email.requiredAction.UPDATE_PROFILE=Aktualizace profilu
+email.linkExpirationFormatter.timePeriodUnit.seconds={0,choice,0#sekund|1#sekunda|2#sekundy|4<sekund}
+email.linkExpirationFormatter.timePeriodUnit.minutes={0,choice,0#minut|1#minuta|2#minuty|4<minut}
+email.linkExpirationFormatter.timePeriodUnit.hours={0,choice,0#hodin|1#hodina|2#hodiny|4<hodin}
+email.linkExpirationFormatter.timePeriodUnit.days={0,choice,0#dní|1#den|2#dny|4<dní}
 "#;
 
 const DE_PROPERTIES: &str = r#"
@@ -860,6 +902,20 @@ federatedIdentityConfirmLinkMessage=Ein Benutzer mit {0} {1} existiert bereits. 
 confirmLinkIdpContinue=Zu einem bestehenden Benutzerkonto hinzufügen
 jcDeviceTooManyCodes=Zu viele falsche Codes. Warten Sie einige Minuten und versuchen Sie es dann erneut.
 oauthGrantTitle=Zugang zu {0} gewähren
+email.emailVerificationSubject=E-Mail verifizieren
+email.emailVerificationBody=Jemand hat ein {2} Konto mit dieser E-Mail-Adresse erstellt. Falls Sie das waren, dann klicken Sie auf den Link, um die E-Mail-Adresse zu verifizieren.\n\n{0}\n\nDer Link ist {3} gültig.\n\nFalls Sie dieses Konto nicht erstellt haben, dann können Sie diese Nachricht ignorieren.
+email.passwordResetSubject=Passwort zurücksetzen
+email.passwordResetBody=Es wurde eine Änderung der Zugangsdaten für Ihren Account {2} angefordert. Wenn Sie diese Änderung beantragt haben, klicken Sie auf den unten stehenden Link.\n\n{0}\n\nDer Link ist {3} gültig.\n\nSollten Sie keine Änderung vollziehen wollen können Sie diese Nachricht ignorieren und an Ihrem Account wird nichts geändert.
+email.executeActionsSubject=Aktualisieren Sie Ihr Konto
+email.executeActionsBody=Ihr Administrator hat Sie aufgefordert Ihren Account {2} zu aktualisieren und folgende Aktion(en) durchzuführen: {3}. Klicken Sie auf den unten stehenden Link um den Prozess zu starten.\n\n{0}\n\nDer Link ist {4} gültig.\n\nSollten Sie sich dieser Aufforderung nicht bewusst sein, ignorieren Sie diese Nachricht und Ihr Account bleibt unverändert.
+email.requiredAction.CONFIGURE_TOTP=Mehrfachauthentifizierung konfigurieren
+email.requiredAction.UPDATE_PASSWORD=Passwort aktualisieren
+email.requiredAction.VERIFY_EMAIL=E-Mail-Adresse verifizieren
+email.requiredAction.UPDATE_PROFILE=Profil aktualisieren
+email.linkExpirationFormatter.timePeriodUnit.seconds={0,choice,0#Sekunden|1#Sekunde|1<Sekunden}
+email.linkExpirationFormatter.timePeriodUnit.minutes={0,choice,0#Minuten|1#Minute|1<Minuten}
+email.linkExpirationFormatter.timePeriodUnit.hours={0,choice,0#Stunden|1#Stunde|1<Stunden}
+email.linkExpirationFormatter.timePeriodUnit.days={0,choice,0#Tage|1#Tag|1<Tage}
 "#;
 
 const HU_PROPERTIES: &str = r#"
@@ -1072,6 +1128,20 @@ federatedIdentityConfirmLinkMessage=A megadott {0} {1} felhasználó már létez
 confirmLinkIdpContinue=Hozzáadás meglévő fiókhoz
 jcDeviceTooManyCodes=Túl sok hibás kód. Várjon néhány percet, majd próbálja újra.
 oauthGrantTitle=Hozzáférés engedélyezése a következő számára: {0}
+email.emailVerificationSubject=E-mail cím megerősítése
+email.emailVerificationBody=Ezzel az e-mail címmel valaki létrehozott egy {2} tartomány felhasználói fiókot. Amennyiben a fiókot Ön hozta létre, kérem, kattintson a lenti hivatkozásra, hogy megerősítse fiókját és ezt az e-mail címet.\n\n{0}\n\nA hivatkozás érvényét veszti {3} múlva.\n\nHa nem ön hozta létre a felhasználói fiókot, akkor kérem, hagyja figyelmen kívül ezt az üzenetet.
+email.passwordResetSubject=Jelszó visszaállítás
+email.passwordResetBody=Valaki vissza kívánja állítani az Ön "{2}" tartományi fiókjának jelszavát. Amennyiben a jelszó visszaállítást Ön kezdeményezte, kérem, kattintson a lenti hivatkozásra a jelszava megváltoztatásához.\n\n{0}\n\nA hivatkozás érvényét veszti {3} múlva.\n\nHa nem ön kérte a jelszó visszaállítást, akkor kérem, hagyja figyelmen kívül ezt az üzenetet, a jelszava nem fog megváltozni.
+email.executeActionsSubject=Felhasználói fiók adatok módosítása
+email.executeActionsBody=Az alkalmazás adminisztrátora kezdeményezte az Ön "{2}" tartományi felhasználói fiók adatainak módosítását a következő műveletekkel: {3}. Kérem, kattintson a lenti hivatkozásra, hogy megkezdhesse a kért módosításokat.\n\n{0}\n\nA hivatkozás érvényét veszti {4} múlva.\n\nHa nincs tudomása arról, hogy az adminisztrátora módosításokat kért Öntől, akkor kérem, hagyja figyelmen kívül ezt az üzenetet, az adatai nem fognak megváltozni.
+email.requiredAction.CONFIGURE_TOTP=Egyszer használatos jelszó (OTP) beállítása
+email.requiredAction.UPDATE_PASSWORD=Jelszó csere
+email.requiredAction.VERIFY_EMAIL=E-mail cím megerősítése
+email.requiredAction.UPDATE_PROFILE=Fiók adatok módosítása
+email.linkExpirationFormatter.timePeriodUnit.seconds=másodperc
+email.linkExpirationFormatter.timePeriodUnit.minutes=perc
+email.linkExpirationFormatter.timePeriodUnit.hours=óra
+email.linkExpirationFormatter.timePeriodUnit.days=nap
 "#;
 
 fn parse_properties(raw: &'static str) -> BTreeMap<&'static str, &'static str> {

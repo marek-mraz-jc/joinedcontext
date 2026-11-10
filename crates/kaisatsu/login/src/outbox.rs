@@ -213,6 +213,24 @@ impl OutboxDispatcher {
             .claim_outbox_batch(realm_id, batch_size.clamp(1, MAX_OUTBOX_BATCH))
             .await?;
         let mut sent_count = 0usize;
+        // Keycloak's `{2}`: the realm's display name, else its name.
+        let realm_name = if claimed.is_empty() {
+            String::new()
+        } else {
+            self.store
+                .list_realms()
+                .await?
+                .into_iter()
+                .find(|r| r.id == realm_id)
+                .map(|r| {
+                    if r.display_name.trim().is_empty() {
+                        r.realm
+                    } else {
+                        r.display_name
+                    }
+                })
+                .unwrap_or_default()
+        };
         for row in claimed {
             let link = match self.mint_link_for_row(mount, &row).await {
                 Ok(l) => l,
@@ -231,17 +249,11 @@ impl OutboxDispatcher {
                     continue;
                 }
             };
-            let bundle = Bundle::for_locale(&row.locale);
-            let subject_key = if row.template_kind == "VERIFY_EMAIL" {
-                "emailVerifyTitle"
-            } else {
-                "emailForgotTitle"
-            };
-            let subject = bundle.get(subject_key);
-            let body = format!("{}\n\n{link}", bundle.get("emailSentMessage"));
+            let (subject, body) =
+                action_mail(&Bundle::for_locale(&row.locale), &row, &realm_name, &link);
             match self
                 .sender
-                .send_mail(&row.realm_id, &row.to_address, subject, &body, &link)
+                .send_mail(&row.realm_id, &row.to_address, &subject, &body, &link)
                 .await
             {
                 Ok(()) => {
@@ -333,5 +345,101 @@ impl MailSender for RealmSmtpSender {
                 .send_mail(realm_id, to_address, subject, body, action_link)
                 .await
         })
+    }
+}
+
+/// The `(subject, body)` of an action e-mail as Keycloak's e-mail theme words it
+/// (emailVerification, passwordReset or executeActions): `{0}` the link, `{1}` its lifetime in
+/// minutes, `{2}` the realm's name, then the actions (executeActions) and the lifetime in words.
+fn action_mail(
+    bundle: &Bundle,
+    row: &EmailOutboxRecord,
+    realm_name: &str,
+    link: &str,
+) -> (String, String) {
+    let minutes = (row.lifespan_secs / 60).to_string();
+    let expires = link_expiration(bundle, row.lifespan_secs);
+    let actions = row
+        .actions
+        .iter()
+        .map(|a| bundle.get(&format!("email.requiredAction.{a}")).to_owned())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let (key, args) = match row.template_kind.as_str() {
+        "VERIFY_EMAIL" => (
+            "emailVerification",
+            vec![link, &minutes, realm_name, &expires],
+        ),
+        "RESET_CREDENTIALS" => ("passwordReset", vec![link, &minutes, realm_name, &expires]),
+        _ => (
+            "executeActions",
+            vec![link, &minutes, realm_name, &actions, &expires],
+        ),
+    };
+    let subject = bundle.get(&format!("email.{key}Subject")).to_owned();
+    let body = bundle
+        .format(&format!("email.{key}Body"), &args)
+        .replace("\\n", "\n");
+    (subject, body)
+}
+
+/// Keycloak's `linkExpirationFormatter`: the lifetime in the largest whole unit ("5 minutes",
+/// "12 hours"), the unit's word picked by its `{0,choice,...}` pattern.
+fn link_expiration(bundle: &Bundle, secs: i64) -> String {
+    let (n, unit) = [(86_400, "days"), (3_600, "hours"), (60, "minutes")]
+        .into_iter()
+        .find(|(size, _)| secs >= *size && secs % size == 0)
+        .map_or((secs, "seconds"), |(size, unit)| (secs / size, unit));
+    let word = choice(
+        bundle.get(&format!(
+            "email.linkExpirationFormatter.timePeriodUnit.{unit}"
+        )),
+        n,
+    );
+    format!("{n} {word}")
+}
+
+/// Java `ChoiceFormat` for `{0,choice,0#minutes|1#minute|1<minutes}`: the last option whose limit
+/// `n` reaches (`#` at least, `<` above); a plain word stays as it is.
+fn choice(pattern: &str, n: i64) -> String {
+    let Some(options) = pattern
+        .strip_prefix("{0,choice,")
+        .and_then(|p| p.strip_suffix('}'))
+    else {
+        return pattern.to_owned();
+    };
+    let mut picked = "";
+    for option in options.split('|') {
+        let (limit, word, strict) = match option.split_once('#') {
+            Some((l, w)) => (l, w, false),
+            None => match option.split_once('<') {
+                Some((l, w)) => (l, w, true),
+                None => continue,
+            },
+        };
+        if let Ok(limit) = limit.trim().parse::<i64>()
+            && ((strict && n > limit) || (!strict && n >= limit))
+        {
+            picked = word;
+        }
+    }
+    picked.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::choice;
+
+    #[test]
+    fn choice_picks_the_form_of_the_number() {
+        let sk = "{0,choice,0#minút|1#minúta|2#minúty|4<minút}";
+        assert_eq!(choice(sk, 1), "minúta");
+        assert_eq!(choice(sk, 3), "minúty");
+        assert_eq!(choice(sk, 5), "minút");
+        assert_eq!(
+            choice("{0,choice,0#minutes|1#minute|1<minutes}", 2),
+            "minutes"
+        );
+        assert_eq!(choice("perc", 5), "perc");
     }
 }
