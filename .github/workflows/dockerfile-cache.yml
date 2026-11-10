@@ -1,7 +1,8 @@
 name: dockerfile-cache
 # The writer of the caches ci.yml's `dockerfile` job reads: on each jc-portal-1 push that changes a
-# layer input (paths below; the default branch, whose caches every branch reads) the full `docker build` of bins/jc/Dockerfile exports
-# the layer cache (scope jc, mode=max) and writes sccache from the Dockerfile's two cargo builds.
+# layer input (paths below; the default branch, whose caches every branch reads) the full
+# `docker build` of bins/jc/Dockerfile exports the layer cache (scope jc, mode=max) and writes
+# sccache from the Dockerfile's two cargo builds.
 # Without it the scope went stale between Dockerfile changes: a dependency change on jc-portal-1
 # (c79331ab, kaisatsu-server dev-dependencies) missed the dependency layer of every branch after it
 # (13 min, run 42655700338). It is its own workflow so it never gates or delays a merge: no ci

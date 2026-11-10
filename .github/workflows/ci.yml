@@ -466,9 +466,10 @@ jobs:
   # no push), which the shipped image skips by handing in its compiled binary.
   # It reads the layer cache (scope jc) and, through the Actions cache token handed in as build
   # secrets, the sccache the Dockerfile's cargo builds use; both are written only by
-  # dockerfile-cache.yml on each jc-portal-1 push that changes a layer input (the default branch, whose caches every branch
-  # reads; without a writer every branch built cold: 39 min, runs 42617814130 and 42611953211). This
-  # job writes neither (sccache READ_ONLY), so no branch evicts those entries.
+  # dockerfile-cache.yml on each jc-portal-1 push that changes a layer input (the default branch,
+  # whose caches every branch reads; without a writer every branch built cold: 39 min, runs
+  # 42617814130 and 42611953211). This job writes neither (sccache READ_ONLY), so no branch evicts
+  # those entries.
   # Not on jc-portal-1: dockerfile-cache.yml runs this same build (and check-build-context.sh) on
   # every jc-portal-1 push that changes a Dockerfile input, the Dockerfile and its ignore file
   # included, and a fast-forward of a branch head that passed here reuses that job (changes.sh).
