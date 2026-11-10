@@ -11,7 +11,7 @@
 use crate::html_escape as escaped;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::extract::{Path, Query, State};
@@ -37,6 +37,10 @@ const COUNT_DEADLINE: Duration = Duration::from_secs(3);
 /// Endpoints counted at once. A count unanswered after 2 s weighs 4 of the gateway's slots
 /// (in_flight.rs SLOW_WEIGHT), so 4 slow counts hold half the caller's 32 and a question keeps room.
 const COUNT_PARALLEL: usize = 4;
+/// How long an Endpoint's total stands before the minute round asks the gateway again, one
+/// number for the deployment: a round that counted every Endpoint again sent jc-prod's gateway
+/// about 1,100 counts a minute through the edge (brief 119, 2026-11-10).
+pub const COUNT_FRESH: Duration = Duration::from_secs(600);
 
 pub fn router(state: Arc<ChatState>) -> Router {
     // `/api/v1/d/{publicId}/context` is the chat router's, beside its preflight.
@@ -47,11 +51,13 @@ pub fn router(state: Arc<ChatState>) -> Router {
 }
 
 /// The documents computed in the last minute, by `publicId`, and the entities of each public
-/// Endpoint a deployment reads, by slug, as the minute's [`count`] left them.
+/// Endpoint a deployment reads, by slug, as the minute's [`count`] left them, with when the
+/// gateway answered each.
 #[derive(Default)]
 pub struct Held {
     documents: HashMap<String, (Instant, Arc<Context>)>,
     counts: HashMap<String, u64>,
+    answered: HashMap<String, Instant>,
 }
 
 /// One Endpoint as a visitor sees it.
@@ -206,14 +212,44 @@ pub async fn count(state: Arc<ChatState>, http: reqwest::Client, gateway: Option
         .iter()
         .map(|slug| &snapshot.pages[*slug].page)
         .collect();
-    let (counted, shed) = count_round(&http, &gateway, &pages).await;
-    if let Ok(mut held) = state.contexts.lock() {
-        // A shed round counted only some Endpoints: the others keep the last round's totals.
-        if shed {
-            held.counts.extend(counted);
-        } else {
-            held.counts = counted;
+    count_due(&state.contexts, &http, &gateway, &pages, COUNT_FRESH).await;
+}
+
+/// Counts the `pages` whose total is missing or older than `fresh`. An Endpoint not counted
+/// (fresh, refused, timed out or not asked after a shed) keeps its last good total; one no
+/// longer in `pages` is forgotten.
+pub async fn count_due(
+    contexts: &Mutex<Held>,
+    http: &reqwest::Client,
+    gateway: &url::Url,
+    pages: &[&crate::catalogue::EndpointPage],
+    fresh: Duration,
+) {
+    let due: Vec<_> = {
+        let Ok(held) = contexts.lock() else {
+            return;
+        };
+        pages
+            .iter()
+            .filter(|page| {
+                !held
+                    .answered
+                    .get(&page.slug)
+                    .is_some_and(|at| at.elapsed() < fresh)
+            })
+            .copied()
+            .collect()
+    };
+    let (counted, _) = count_round(http, gateway, &due).await;
+    if let Ok(mut held) = contexts.lock() {
+        let now = Instant::now();
+        for (slug, total) in counted {
+            held.answered.insert(slug.clone(), now);
+            held.counts.insert(slug, total);
         }
+        let read = |slug: &String| pages.iter().any(|page| page.slug == *slug);
+        held.counts.retain(|slug, _| read(slug));
+        held.answered.retain(|slug, _| read(slug));
     }
 }
 
@@ -750,6 +786,31 @@ mod tests {
             assert!(shed, "{status}");
             assert!(counted.is_empty(), "{status}");
         }
+    }
+
+    /// Brief 119: a round inside [`COUNT_FRESH`] asks nothing for an Endpoint whose total it
+    /// holds, and an Endpoint the gateway refused keeps its last good total.
+    #[tokio::test]
+    async fn a_held_total_is_not_counted_again_while_fresh() {
+        let (url, _, total) = gateway(StatusCode::OK, Duration::ZERO).await;
+        let pages = endpoints(3, 2);
+        let pages: Vec<_> = pages.iter().collect();
+        let held = Mutex::new(Held::default());
+        let http = reqwest::Client::new();
+        count_due(&held, &http, &url, &pages, COUNT_FRESH).await;
+        assert_eq!(total.load(Ordering::SeqCst), 6);
+        count_due(&held, &http, &url, &pages, COUNT_FRESH).await;
+        assert_eq!(total.load(Ordering::SeqCst), 6, "a second round recounted");
+        assert_eq!(held.lock().unwrap().counts.get("slug1"), Some(&14));
+        // Stale and refused: asked again, the last good total stands.
+        let (refusing, _, refused) =
+            gateway(StatusCode::TOO_MANY_REQUESTS, Duration::ZERO).await;
+        count_due(&held, &http, &refusing, &pages, Duration::ZERO).await;
+        assert!(refused.load(Ordering::SeqCst) > 0, "a stale total was not asked again");
+        assert_eq!(held.lock().unwrap().counts.get("slug1"), Some(&14));
+        // An Endpoint no longer read is forgotten.
+        count_due(&held, &http, &url, &pages[..1], COUNT_FRESH).await;
+        assert_eq!(held.lock().unwrap().counts.len(), 1);
     }
 
     /// A refusal that is not load (an Endpoint a visitor may not read) still counts the other types.
