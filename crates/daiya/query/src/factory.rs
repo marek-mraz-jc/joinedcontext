@@ -11,12 +11,12 @@
 //!   [`SecretResolver`]; a caller's token reaches NGSI-LD and OData only through the
 //!   [`TokenExchanger`].
 
-use crate::guard::{GuardConfig, OutboundGuard, OwnReach};
+use crate::guard::{GuardConfig, OperatorReach, OutboundGuard, OwnReach};
 use crate::{
     Datasource, DsError, LokiDatasource, NgsiLdDatasource, ODataDatasource, PostgresDatasource,
     PrometheusDatasource, SecretResolver, TokenExchanger,
 };
-use daiya_model::DatasourceRecord;
+use daiya_model::{DatasourceRecord, OrgId};
 use ipnet::IpNet;
 use serde_json::Value;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
@@ -36,6 +36,9 @@ pub struct OutboundPolicy {
     /// The host's own gateway Endpoints ([`GuardConfig::own_reach`]), for the `ngsild` and
     /// `odata` kinds only: the guard admits a request by its URL, whoever made the record.
     pub own_reach: Vec<OwnReach>,
+    /// The one address the `prometheus` kind may reach over `http` on a non-public network, and
+    /// only for datasources of this organization ([`GuardConfig::operator_reach`]).
+    pub prometheus_reach: Option<(OrgId, OperatorReach)>,
 }
 
 impl Default for OutboundPolicy {
@@ -47,6 +50,7 @@ impl Default for OutboundPolicy {
             timeout: guard.timeout,
             max_response_bytes: guard.max_response_bytes,
             own_reach: Vec::new(),
+            prometheus_reach: None,
         }
     }
 }
@@ -90,7 +94,8 @@ fn host_and_port(record: &DatasourceRecord, default_port: u16) -> Result<(String
 }
 
 /// The guard of one datasource: its allow-list (or its URL host) and the operator policy. Only
-/// an NGSI-LD or OData datasource gets the policy's [`OutboundPolicy::own_reach`].
+/// an NGSI-LD or OData datasource gets the policy's [`OutboundPolicy::own_reach`], only a
+/// Prometheus datasource of the named organization its [`OutboundPolicy::prometheus_reach`].
 pub fn guard_for(
     record: &DatasourceRecord,
     policy: &OutboundPolicy,
@@ -112,6 +117,11 @@ pub fn guard_for(
             "ngsild" | "ngsild-grafana-datasource" | "odata" => policy.own_reach.clone(),
             _ => Vec::new(),
         },
+        operator_reach: policy
+            .prometheus_reach
+            .as_ref()
+            .filter(|(org, _)| record.kind == "prometheus" && record.org_id == *org)
+            .map(|(_, reach)| reach.clone()),
     }))
 }
 
