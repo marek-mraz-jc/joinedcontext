@@ -111,11 +111,8 @@ impl Processor for SleepProcessor {
     async fn process_batch(
         &self,
         ctx: &ProcContext,
-        mut batch: Batch,
+        batch: Batch,
     ) -> Result<Vec<Batch>, CoreError> {
-        for p in &mut batch {
-            let _ = p.as_bytes();
-        }
         let view = PartsView(&batch);
         for i in 0..batch.len() {
             let Ok(period_str) = self.duration_expr.resolve_string(i, &view) else {
@@ -190,11 +187,8 @@ impl Processor for LogProcessor {
     async fn process_batch(
         &self,
         ctx: &ProcContext,
-        mut batch: Batch,
+        batch: Batch,
     ) -> Result<Vec<Batch>, CoreError> {
-        for p in &mut batch {
-            let _ = p.as_bytes();
-        }
         let view = PartsView(&batch);
         for (i, part) in batch.iter().enumerate() {
             let msg_text = self
@@ -378,9 +372,6 @@ impl Processor for CacheProcessor {
         mut batch: Batch,
     ) -> Result<Vec<Batch>, CoreError> {
         let cache = ctx.resources.get_cache(ctx.org_id(), &self.resource)?;
-        for p in &mut batch {
-            let _ = p.as_bytes();
-        }
 
         for i in 0..batch.len() {
             let key_res = {
@@ -536,12 +527,9 @@ impl Processor for DedupeProcessor {
     async fn process_batch(
         &self,
         ctx: &ProcContext,
-        mut batch: Batch,
+        batch: Batch,
     ) -> Result<Vec<Batch>, CoreError> {
         let cache = ctx.resources.get_cache(ctx.org_id(), &self.cache)?;
-        for p in &mut batch {
-            let _ = p.as_bytes();
-        }
         let view = PartsView(&batch);
         let mut out = Vec::with_capacity(batch.len());
 
@@ -670,13 +658,10 @@ impl Processor for GroupByValueProcessor {
     async fn process_batch(
         &self,
         _ctx: &ProcContext,
-        mut batch: Batch,
+        batch: Batch,
     ) -> Result<Vec<Batch>, CoreError> {
         if batch.is_empty() {
             return Ok(Vec::new());
-        }
-        for p in &mut batch {
-            let _ = p.as_bytes();
         }
         let view = PartsView(&batch);
         let mut order: Vec<String> = Vec::new();
@@ -826,11 +811,8 @@ impl Processor for MetricProcessor {
     async fn process_batch(
         &self,
         ctx: &ProcContext,
-        mut batch: Batch,
+        batch: Batch,
     ) -> Result<Vec<Batch>, CoreError> {
-        for p in &mut batch {
-            let _ = p.as_bytes();
-        }
         let view = PartsView(&batch);
         for i in 0..batch.len() {
             let delta = match &self.value {

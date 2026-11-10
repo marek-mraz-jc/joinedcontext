@@ -202,7 +202,12 @@ impl Processor for ObservedProcessor {
         self.prom.batch_received.incr(1);
         let started = Instant::now();
 
-        match self.inner.process_batch(&self.ctx, batch.clone()).await {
+        let (input, kept) = if self.inner.may_fail_batch() {
+            (batch.clone(), Some(batch))
+        } else {
+            (batch, None)
+        };
+        match self.inner.process_batch(&self.ctx, input).await {
             Ok(out_batches) => {
                 let elapsed = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
                 self.ctx
@@ -229,8 +234,11 @@ impl Processor for ObservedProcessor {
             Err(err) => {
                 // In Bento, if a processor returns a batch-wide error, all parts in the batch are marked
                 // with `DetailedError` and continue through the pipeline!
+                // A processor promising no batch-wide error broke it: fail the run, never drop.
+                let Some(mut errored_batch) = kept else {
+                    return Err(err);
+                };
                 let err_msg = err.to_string();
-                let mut errored_batch = batch;
                 for part in &mut errored_batch {
                     self.ctx.on_error(part, err_msg.clone());
                 }
