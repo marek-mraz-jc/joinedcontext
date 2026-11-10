@@ -285,14 +285,14 @@ export function FilterProof({
   const readable = original.isSuccess;
   // The preview reads through the Endpoint's own Policies, which its `/access` document states for
   // this person: one they refuse is told so and no draft travels. The broker still decides each
-  // preview; this only spares a call it would refuse.
+  // preview; this only spares a call it would refuse, and a document that could not be read
+  // spares nothing.
   const access = useQuery({ ...accessQuery(slug), enabled: live && readable });
   const accessRefused = access.error instanceof ApiError && (access.error.status === 401 || access.error.status === 403);
   const notGranted = readable && (accessRefused || (access.isSuccess && !mayQuery(access.data, type)));
-  const accessFailed = readable && access.isError && !accessRefused;
   const served = useQuery({
     queryKey: ["filter-proof", "served", slug, type, offset, readable ? original.data.entities.map((e) => e.id) : null, readable ? settled : null],
-    enabled: live && type !== "" && !original.isPending && (!readable || (access.isSuccess && !notGranted)),
+    enabled: live && type !== "" && !original.isPending && (!readable || (!access.isPending && !notGranted)),
     retry: false,
     placeholderData: (previous) => previous,
     queryFn: async () => {
@@ -352,26 +352,11 @@ export function FilterProof({
     </div>
   );
 
-  if (notGranted || accessFailed) {
+  if (notGranted) {
     return (
       <section className="space-y-3" aria-labelledby="filter-proof-title">
         {header}
-        {notGranted ? (
-          <Alert tone="warning">{t("endpoints.proof.notGranted", { type })}</Alert>
-        ) : (
-          <Alert
-            tone="danger"
-            actions={
-              <Button size="sm" icon={<Icon name="refresh" className="size-4" />} onClick={() => void access.refetch()}>
-                {t("app.error.retry")}
-              </Button>
-            }
-          >
-            {t("endpoints.proof.failed", {
-              reason: access.error instanceof ApiError ? access.error.message : t("app.error.generic"),
-            })}
-          </Alert>
-        )}
+        <Alert tone="warning">{t("endpoints.proof.notGranted", { type })}</Alert>
       </section>
     );
   }

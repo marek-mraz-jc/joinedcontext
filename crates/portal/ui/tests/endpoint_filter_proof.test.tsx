@@ -155,7 +155,7 @@ function renderPage({
   space?: "readable" | "refused";
   preview?: "serves" | "refuses" | "fails";
   endpoint?: unknown;
-  access?: "queries" | "other-type" | "refused";
+  access?: "queries" | "other-type" | "refused" | "fails";
 } = {}) {
   const sent: Sent[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -179,6 +179,7 @@ function renderPage({
     }
     if (path === `/api/endpoint/${SLUG}/access`) {
       if (access === "refused") return json({ title: "Forbidden", status: 403 }, 403);
+      if (access === "fails") return json({ title: "Service Unavailable", status: 503 }, 503);
       return access === "queries"
         ? json(QUERIES_EVENTS)
         : json({ permissions: [{ resource: { type: "WeatherObserved" }, actions: ["queryEntity"] }] });
@@ -383,12 +384,15 @@ describe("the endpoint's filter editor and its proof", () => {
     }
   });
 
-  it("still asks the preview of a person the Endpoint's access lets query the type", async () => {
-    const sent = renderPage();
+  it("still asks the preview of a person the Endpoint's access lets query the type, or when it could not be read", async () => {
+    for (const access of ["queries", "fails"] as const) {
+      const sent = renderPage({ access });
 
-    expect(await screen.findByText("Serving 1 of 2 Event · hidden attributes: 1")).toBeInTheDocument();
-    expect(previews(sent).length).toBeGreaterThan(0);
-    expect(screen.queryByText(en.endpoints.proof.notGranted.replace("{type}", "Event"))).not.toBeInTheDocument();
+      expect(await screen.findByText("Serving 1 of 2 Event · hidden attributes: 1")).toBeInTheDocument();
+      expect(previews(sent).length).toBeGreaterThan(0);
+      expect(screen.queryByText(en.endpoints.proof.notGranted.replace("{type}", "Event"))).not.toBeInTheDocument();
+      cleanup();
+    }
   });
 
   it("says why the gateway refused the draft", async () => {
