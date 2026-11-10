@@ -74,7 +74,7 @@ pub(crate) async fn of(
     let bbox = if let Some(bbox) = cached {
         bbox
     } else {
-        let bbox = bounded(read(view, caller, c)).await.flatten();
+        let bbox = bounded(Box::pin(read(view, caller, c))).await.flatten();
         let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
         // ponytail: stale extents go on each insert, so the cache holds one minute of keys.
         cache.retain(|_, k| now.saturating_sub(k.at) < FRESH_MICROS);

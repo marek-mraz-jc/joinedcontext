@@ -133,7 +133,11 @@ fn a_nested_cell_is_held_as_its_json_text() {
         json!("[[[24.9,60.1],[24.91,60.1],[24.9,60.11],[24.9,60.1]]]")
     );
     assert_eq!(at("tags.value"), json!("[{\"k\":\"road\"}]"));
-    assert_eq!(at("kinds.value[1]"), json!("y"), "a list of scalars still spreads");
+    assert_eq!(
+        at("kinds.value[1]"),
+        json!("y"),
+        "a list of scalars still spreads"
+    );
     assert_eq!(at("nothing.value"), json!({}), "an empty object is no text");
     let text = csv(&table, &Limits::default(), Dialect::default()).expect("within the limits");
     assert!(
