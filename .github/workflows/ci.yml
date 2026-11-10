@@ -78,7 +78,7 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: sh .github/scripts/gitleaks.sh
       - if: steps.paths.outputs.workflows == 'true'
-        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
+        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/free-disk.sh --selftest && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
       - if: steps.paths.outputs.workflows == 'true'
         run: >-
           docker run --rm -v "$PWD:/repo" -w /repo
@@ -180,9 +180,9 @@ jobs:
       - run: |
           echo "nproc: $(nproc)"
           # the doc build beside the first job's build and tests slowed them by up to 1.7x (runs
-          # 42756711313, 42823061257: about 80 s), so the split loads that job with fewer tests
-          # and the lib block lands elsewhere
-          plan="root ${{ matrix.part }} ${{ strategy.job-total }} --extra 1=80"
+          # 42756711313, 42823061257); beside a job without the lib block it costs about 15-30 s
+          # (42829330070), which the split counts
+          plan="root ${{ matrix.part }} ${{ strategy.job-total }} --extra 1=30"
           # shellcheck disable=SC2086
           python3 .github/scripts/test-part.py --binaries $plan > "$RUNNER_TEMP/targets.txt"
           set --; while IFS= read -r arg; do set -- "$@" "$arg"; done < "$RUNNER_TEMP/targets.txt"
