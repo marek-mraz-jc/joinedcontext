@@ -490,6 +490,48 @@ def add_service_accounts(realm: dict, shipped: dict) -> tuple[dict, list[str]]:
     return out, sorted(u["serviceAccountClientId"] for u in add)
 
 
+# The shared embedder's scope (deployment components/embedder): the assistant's client asks it, and
+# its audience mapper puts `embedder` into the token, as jc's own realm has it
+# (bins/jc/src/setup.rs assistant_realm_file).
+EMBEDDER_SCOPE = {
+    "name": "embedder",
+    "protocol": "openid-connect",
+    "attributes": {"include.in.token.scope": "true"},
+    "protocolMappers": [{
+        "name": "embedder-audience",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-audience-mapper",
+        "consentRequired": False,
+        "config": {"included.custom.audience": "embedder", "access.token.claim": "true",
+                   "id.token.claim": "false"},
+    }],
+}
+
+
+def add_embedder_scope(realm: dict) -> tuple[dict, bool]:
+    """The `embedder` client scope, optional for `jc-assistant`, in a realm whose export predates the
+    shared embedder (prod's): jc writes nothing into an imported realm, so without it the assistant's
+    token never names audience `embedder` and the embedder refuses it. Nothing else of the client
+    changes. Answers the realm and whether it changed."""
+    clients = realm.get("clients") or []
+    if not any(c.get("clientId") == "jc-assistant" for c in clients):
+        return realm, False
+    out = dict(realm)
+    changed = False
+    scopes = list(realm.get("clientScopes") or [])
+    if not any(s.get("name") == "embedder" for s in scopes):
+        out["clientScopes"] = scopes + [EMBEDDER_SCOPE]
+        changed = True
+    new_clients = []
+    for c in clients:
+        if c.get("clientId") == "jc-assistant" and "embedder" not in (c.get("optionalClientScopes") or []):
+            c = dict(c, optionalClientScopes=list(c.get("optionalClientScopes") or []) + ["embedder"])
+            changed = True
+        new_clients.append(c)
+    out["clients"] = new_clients
+    return out, changed
+
+
 def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
     """Each client URL on the source Portal's origin (`portal-api` rootUrl, e.g.
     https://portal.smartcity.joinedcontext.com) or its domain's (https://smartcity.joinedcontext.com,
@@ -749,6 +791,9 @@ def cmd_realms(a):
         clean, accounts = add_service_accounts(clean, json.loads(SHIPPED_REALM.read_text()))
         if accounts:
             print(f"realm {name}: service accounts of {accounts} taken from jc's shipped realm (the export has none)")
+        clean, embedder = add_embedder_scope(clean)
+        if embedder:
+            print(f"realm {name}: jc-assistant may ask scope embedder (the shared embedder's audience)")
         if by_secret:
             print(f"realm {name}: {by_secret} sign in by their secret (federated-jwt has no Kubernetes issuer in jc)")
         if a.kaisatsu_bin:

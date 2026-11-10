@@ -1257,6 +1257,24 @@ def test_only_the_clients_jc_signs_in_as_trade_federated_jwt_for_their_secret():
     assert realm["clients"][0]["clientAuthenticatorType"] == "federated-jwt"
 
 
+def test_the_assistants_client_may_ask_the_shared_embedders_scope_and_nothing_else_moves():
+    realm = {"clients": [{"clientId": "jc-assistant", "secret": "$(file:x)", "optionalClientScopes": ["address"]},
+                         {"clientId": "portal-api", "optionalClientScopes": []}],
+             "clientScopes": [{"name": "address"}]}
+    out, changed = rh.add_embedder_scope(realm)
+    assert changed
+    by_id = {c["clientId"]: c for c in out["clients"]}
+    assert by_id["jc-assistant"] == {"clientId": "jc-assistant", "secret": "$(file:x)",
+                                     "optionalClientScopes": ["address", "embedder"]}
+    assert by_id["portal-api"]["optionalClientScopes"] == []
+    (scope,) = [s for s in out["clientScopes"] if s["name"] == "embedder"]
+    assert scope["protocolMappers"][0]["config"]["included.custom.audience"] == "embedder"
+    assert realm["clients"][0]["optionalClientScopes"] == ["address"], "the input is not changed"
+    # A second pass, and a realm without the assistant, change nothing.
+    assert rh.add_embedder_scope(out) == (out, False)
+    assert rh.add_embedder_scope({"clients": [{"clientId": "portal-api"}]})[1] is False
+
+
 def test_an_export_without_service_accounts_gets_the_portals_from_jcs_shipped_realm():
     shipped = json.loads(rh.SHIPPED_REALM.read_text())
     realm = {"clients": [{"clientId": "portal-api"}, {"clientId": "portal-reconciler"}],
