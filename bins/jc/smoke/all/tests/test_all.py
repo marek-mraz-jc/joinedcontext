@@ -49,7 +49,7 @@ def main(argv):
 def smoke(tmp: Path, suites: dict) -> Path:
     root = tmp / "smoke"
     root.mkdir()
-    for f in ("run", "common.py"):
+    for f in ("run", "common.py", "live.py"):
         shutil.copy(all_suite.SMOKE / f, root / f)
     (root / "all").mkdir()
     for name, text in suites.items():
