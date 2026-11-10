@@ -1170,7 +1170,10 @@ mod tests {
         }
         // The forge stays on the apex host's path, where only jc's own listener reaches it.
         let (status, body) = routed(&plans, "smartcity.test", "/git/api/v1/version").await;
-        assert_eq!((status, body.as_str()), (StatusCode::OK, "shako /api/v1/version"));
+        assert_eq!(
+            (status, body.as_str()),
+            (StatusCode::OK, "shako /api/v1/version")
+        );
         for (host, path) in [
             ("localhost:8080", "/git/api/v1/version"),
             ("smartcity.test", "/%67it/api/v1/version"),

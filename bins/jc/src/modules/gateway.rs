@@ -19,7 +19,7 @@ use crate::module::Module;
 use crate::modules::BuildCtx;
 use crate::modules::Hop;
 use crate::setup::{self, Secret, Setup};
-use crate::siblings::{Sibling, Siblings, reach};
+use crate::siblings::{Siblings, reach};
 use axum::Router;
 use axum::extract::Request;
 use axum::http::{HeaderName, HeaderValue, Uri};
@@ -28,7 +28,6 @@ use axum::response::Response;
 use context_gateway::config::Config;
 use jc_router::Mount;
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -1004,12 +1003,15 @@ mod tests {
             )
             .build()
             .unwrap();
-        let listener: SocketAddr = serve(table.into_axum_router())
+        let listener: std::net::SocketAddr = serve(table.into_axum_router())
             .strip_prefix("http://")
             .unwrap()
             .parse()
             .unwrap();
-        let siblings = Siblings::new(&plans, SocketAddr::new([0; 4].into(), listener.port()));
+        let siblings = Siblings::new(
+            &plans,
+            std::net::SocketAddr::new([0; 4].into(), listener.port()),
+        );
         let dir = tempfile::tempdir().unwrap();
         let setup =
             Setup::prepare(dir.path(), &Module::ALL, &std::collections::BTreeMap::new()).unwrap();

@@ -562,7 +562,10 @@ pub(crate) mod tests {
         let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
         let v = portal_vars(&siblings, &setup, none);
         assert_eq!(v["JC_SHAKO_URL"], "http://127.0.0.1:40125/git");
-        assert_eq!(v["JC_PORTAL_PIPELINE_RUNNER_URL"], "http://127.0.0.1:40125/streams");
+        assert_eq!(
+            v["JC_PORTAL_PIPELINE_RUNNER_URL"],
+            "http://127.0.0.1:40125/streams"
+        );
         assert_eq!(v["JC_PORTAL_BROKER_URL"], "http://127.0.0.1:40125/broker");
         assert_eq!(v["JC_SHAKO_PUBLIC_URL"], "https://smartcity.test/git");
         // The routed host-mounted siblings: their host over http, dialed at jc's listener.
