@@ -1025,10 +1025,7 @@ mod tests {
             host_namespace: Some("wasm-host".into()),
             shards_through: Some(addr),
         });
-        let state = AppState {
-            config: Arc::new(config),
-            ..state
-        };
+        let state = AppState::new(config, None).with_mirror(state.mirror.clone());
         super::login::insert_for_test("sid-of-counts", "counts", "counts-token");
         let cookie = ("cookie", "__Host-jc_app_counts=sid-of-counts");
         for uri in ["/api/totals", "/api/endpoint/airslug/ngsi-ld/v1/entities"] {
