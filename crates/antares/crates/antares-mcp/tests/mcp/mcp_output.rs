@@ -449,48 +449,83 @@ async fn a_long_cut_history_window_answers_hourly_averages() -> Result<(), Strin
     Ok(())
 }
 
-/// The averages are asked for the caller, not by it: when the broker refuses
-/// them (a text Attribute is not eligible for avg, 5.7.4.4: 400
-/// `InvalidRequest`), the cut raw page and its `more` stay the answer
-/// (gate 4 `hub.temporal.24h`, `WeatherObserved`'s `dateObserved`).
+/// The averages are asked for the caller, not by it, and avg takes numbers
+/// only (a text Attribute gets 400 `InvalidRequest`, 5.7.4.4; gate 4
+/// `hub.temporal.24h`, `WeatherObserved`'s `dateObserved`): the numeric
+/// Attributes are averaged and the others named; with none to average the
+/// refusal leaves the cut raw page and its `more`.
 #[tokio::test(flavor = "multi_thread")]
-async fn refused_averages_leave_the_cut_raw_history() -> Result<(), String> {
+async fn averages_take_the_numbers_and_name_the_text() -> Result<(), String> {
     let f = fixture().await?;
     let now = chrono::Utc::now();
-    let ago = |minutes: i64| {
+    let ago = move |minutes: i64| {
         (now - chrono::Duration::minutes(minutes))
             .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string()
     };
-    let id = "urn:ngsi-ld:Car:text";
-    let at = |i: i64| {
-        json!({"speed": {"type": "Property", "value": i % 80, "observedAt": ago(i)},
-               "colour": {"type": "Property", "value": format!("c{i}"), "observedAt": ago(i)}})
+    let history = |id: &'static str, numbers: bool| {
+        let f = &f;
+        async move {
+            let prop = |value: Value, minutes: i64| json!({"type": "Property", "value": value, "observedAt": ago(minutes)});
+            let at = |i: i64| {
+                let mut a = serde_json::Map::new();
+                a.insert("colour".into(), prop(json!(format!("c{i}")), i));
+                if numbers {
+                    a.insert("speed".into(), prop(json!(i % 80), i));
+                }
+                a
+            };
+            let mut first = at(300);
+            // `cars` shows Cars below 80 only: an all-text history keeps one speed from before the window
+            first.insert("speed".into(), prop(json!(1), 3000));
+            first.insert("id".into(), json!(id));
+            first.insert("type".into(), json!("Car"));
+            let first = Value::Object(first);
+            create(&f.app, "city", &first).await?;
+            for i in (0..300).rev() {
+                let uri = format!("/ngsi-ld/v1/entities/{id}/attrs");
+                let s = send(
+                    &f.app,
+                    axum::http::Method::PATCH,
+                    &uri,
+                    "city",
+                    &Value::Object(at(i)),
+                )
+                .await;
+                assert!(s.is_success(), "update {i}: {s}");
+            }
+            let a = call(
+                &f.app,
+                "cars",
+                "retrieve_temporal",
+                json!({"id": id, "timerel": "between", "timeAt": ago(25 * 60), "endTimeAt": ago(-5)}),
+            )
+            .await;
+            assert!(!a.is_error(), "{}", a.text);
+            Ok::<_, String>(a)
+        }
     };
-    let mut first = at(150);
-    if let Some(o) = first.as_object_mut() {
-        o.insert("id".into(), json!(id));
-        o.insert("type".into(), json!("Car"));
-    }
-    create(&f.app, "city", &first).await?;
-    for i in (0..150).rev() {
-        let uri = format!("/ngsi-ld/v1/entities/{id}/attrs");
-        let s = send(&f.app, axum::http::Method::PATCH, &uri, "city", &at(i)).await;
-        assert!(s.is_success(), "update {i}: {s}");
-    }
-    let a = call(
-        &f.app,
-        "cars",
-        "retrieve_temporal",
-        json!({"id": id, "timerel": "between", "timeAt": ago(25 * 60), "endTimeAt": ago(-5)}),
-    )
-    .await;
-    assert!(!a.is_error(), "{}", a.text);
+    // speed is averaged per hour; colour, which avg refuses, is left out and named
+    let a = history("urn:ngsi-ld:Car:mixed", true).await?;
+    let s = a.structured();
+    let note = s
+        .get("aggregation")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        note.contains("not averaged") && note.contains("colour"),
+        "{}",
+        a.text
+    );
+    assert!(s.pointer("/entity/speed/avg").is_some(), "{}", a.text);
+    assert!(s.pointer("/entity/colour").is_none(), "{}", a.text);
+    // nothing to average: the broker's refusal leaves the cut raw page and its `more`
+    let a = history("urn:ngsi-ld:Car:words", false).await?;
     let s = a.structured();
     assert!(s.get("aggregation").is_none(), "{}", a.text);
     assert!(s.pointer("/more/next").is_some(), "{}", a.text);
-    let speed = s.pointer("/entity/speed").and_then(Value::as_array);
-    assert!(speed.is_some_and(|v| !v.is_empty()), "{}", a.text);
+    let colour = s.pointer("/entity/colour").and_then(Value::as_array);
+    assert!(colour.is_some_and(|v| !v.is_empty()), "{}", a.text);
     Ok(())
 }
 

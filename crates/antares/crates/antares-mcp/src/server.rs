@@ -636,7 +636,8 @@ impl Server {
         let digest = cursor::digest(tool.name, &args);
         // after the digest: an `after` window's span moves with the clock
         let mut averaged = args.clone();
-        let mut aggregated = default_aggregation(tool, &mut averaged, chrono::Utc::now());
+        let mut aggregated =
+            default_aggregation(tool, &mut averaged, chrono::Utc::now()).map(str::to_owned);
         let offset = match cursor {
             Some(Checked::One(c)) => match cursor::decode(&c, tool.name, digest) {
                 Ok(offset) => offset,
@@ -655,9 +656,18 @@ impl Server {
         // averages only for a history the broker cut: a raw answer that fits
         // is what the NGSI-LD door serves for the same call (T-5028); only a
         // 206 carries Content-Range, so a refusal is never retried. The averages
-        // are this server's choice: refused (an Attribute not eligible for avg,
-        // 5.7.4.4), the cut raw page and its `more` stay the answer.
+        // are this server's choice: avg takes numbers only (4.5.19.1, else 400
+        // InvalidRequest, 5.7.4.4), so a call naming no attrs averages the
+        // numeric Attributes of the raw page and names the others; refused
+        // anyway, the cut raw page and its `more` stay the answer.
         let second = if aggregated.is_some() && answer.range.is_some() {
+            let left = numeric_attrs(&mut averaged, &answer.body);
+            if let (Some(note), false) = (aggregated.as_mut(), left.is_empty()) {
+                *note = format!(
+                    "{note}; not averaged, as avg takes numbers only: {} (ask format temporalValues and attrs for them)",
+                    left.join(", ")
+                );
+            }
             Some(
                 self.run(tool.op, tools::build(tool, &averaged, limit, offset))
                     .await,
@@ -887,6 +897,49 @@ fn default_aggregation(
         args.insert(key, Checked::One(value.to_owned()));
     }
     Some(note)
+}
+
+/// Narrows the averaged call to the Attributes whose instances in the raw
+/// temporal answer `body` all hold a number (a Boolean counts as one,
+/// 4.5.19.1) when others are there too, and answers those others by the
+/// names the answer gives them; a call that names its own attrs, or a
+/// history with no numeric or no other Attribute, stays as it is.
+fn numeric_attrs(averaged: &mut schema::Args, body: &Value) -> Vec<String> {
+    if averaged.contains_key("attrs") {
+        return Vec::new();
+    }
+    let (mut numeric, mut other) = (
+        std::collections::BTreeSet::new(),
+        std::collections::BTreeSet::new(),
+    );
+    let entities = match body {
+        Value::Array(rows) => rows.iter().collect(),
+        one => vec![one],
+    };
+    for (name, attr) in entities.iter().filter_map(|e| e.as_object()).flatten() {
+        if matches!(name.as_str(), "id" | "type" | "@context" | "scope") {
+            continue;
+        }
+        let instances = match attr {
+            Value::Array(all) => all.iter().collect(),
+            one => vec![one],
+        };
+        let number = instances.iter().all(|i| {
+            i.get("object").is_none()
+                && matches!(i.get("value"), Some(Value::Number(_) | Value::Bool(_)))
+        });
+        if number {
+            numeric.insert(name.clone());
+        } else {
+            other.insert(name.clone());
+        }
+    }
+    numeric.retain(|n| !other.contains(n));
+    if numeric.is_empty() || other.is_empty() {
+        return Vec::new();
+    }
+    averaged.insert("attrs", Checked::Many(numeric.into_iter().collect()));
+    other.into_iter().collect()
 }
 
 /// What a temporal answer leaves out (T-4800): the broker cut it at its
