@@ -455,13 +455,15 @@ class FetchedToken(Case):
         with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
             mc.main(a)
 
-    def test_a_client_id_over_two_projects_is_refused(self):
+    def test_one_apply_over_two_projects_is_refused(self):
         self.endpoints(f"helsinki\t{SLUG}\thelsinki\thelsinki\nzilina-mesto\tzslug\tzilina-mesto\tzilina\n")
         rows = [row("Tree", 1), ("zilina-mesto", f"urn:ngsi-ld:Tree:{P}:zilina:1", "Tree", "", "")]
         self.listing(rows)
         s = self.stub(rows)
-        code, out = self.main(self.fetching(s, "--client-id", "helsinki-cleanup-t6676"))
-        self.assertEqual((code, s.calls), (1, []), out)
+        for argv in (self.fetching(s), self.fetching(s, "--client-id", "helsinki-cleanup-t6676"), self.args(apply_to=s)):
+            code, out = self.main(argv)
+            self.assertEqual((code, s.calls, s.token_forms), (1, [], []), out)
+            self.assertIn("serves one project's account", out)
 
     def test_neither_secret_nor_fetched_token_reaches_argv_the_log_or_the_state(self):
         rows = [row("Tree", i) for i in range(3)]
@@ -512,6 +514,32 @@ class Policies(Case):
                             f"urn:ngsi-ld:NoiseZone:{P}:helsinki:1",
                             f"x-urn:ngsi-ld:Tree:{P}:helsinki:1"):
                 self.assertFalse(decide(outside), outside)
+
+
+    def test_with_an_owner_one_account_per_project_holds_only_the_public_role_until_the_end(self):
+        self.endpoints(f"helsinki\t{SLUG}\thelsinki\thelsinki\nhelsinki-kpi\tkslug\thelsinki-kpi\thelsinki\n"
+                       "zilina-uniza\tzslug\tzilina-uniza\tzilina\n")
+        self.listing([row("Tree", 1), row("KeyPerformanceIndicator", 2, tenant="helsinki-kpi"),
+                      ("zilina-uniza", f"urn:ngsi-ld:Article:{P}:zilina-uniza:1", "Article", "", "")])
+        code, out = self.main(["policies", "--list", str(self.dir / "l.tsv"), "--endpoints", str(self.dir / "e.tsv"),
+                               "--state", str(self.state), "--until", "2026-11-10T20:00:00Z",
+                               "--owner", "de300000-0000-4000-8000-000000000001"])
+        self.assertEqual(code, 0, out)
+        doc = json.loads((self.state / "serviceaccount-helsinki.json").read_text())
+        self.assertEqual((doc["kind"], doc["metadata"]["name"], doc["metadata"]["namespace"]),
+                         ("ServiceAccount", "cleanup-t6676", "helsinki"))
+        self.assertEqual(doc["spec"]["roles"], [
+            {"role": "public", "scope": {"contextSpace": s}, "validity": {"notAfter": "2026-11-10T20:00:00Z"}}
+            for s in ("helsinki", "helsinki-kpi")])
+        self.assertEqual(doc["spec"]["credentials"], [{"kind": "oauth-client", "name": "main"}])
+        self.assertEqual(sorted(f.name for f in self.state.glob("serviceaccount-*")),
+                         ["serviceaccount-helsinki.json", "serviceaccount-zilina.json"])
+
+    def test_without_an_owner_no_account_is_written(self):
+        self.listing([row("Tree", 1)])
+        self.main(["policies", "--list", str(self.dir / "l.tsv"), "--endpoints", str(self.dir / "e.tsv"),
+                   "--state", str(self.state), "--until", "2026-11-10T20:00:00Z"])
+        self.assertEqual(list(self.state.glob("serviceaccount-*")), [])
 
 
 class Verify(Case):

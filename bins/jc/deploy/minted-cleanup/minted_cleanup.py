@@ -5,13 +5,15 @@
   minted_cleanup.py run --list L.tsv --endpoints E.tsv --state DIR [--only TENANT]...
                         [--apply --gateway URL --mem-cmd CMD [--max-batches N]
                          (--token-file F | --token-url URL --client-secret-file F [--client-id ID])]
-  minted_cleanup.py policies --list L.tsv --endpoints E.tsv --state DIR --until ISO
+  minted_cleanup.py policies --list L.tsv --endpoints E.tsv --state DIR --until ISO [--owner USER-ID]
   minted_cleanup.py verify --recount R.tsv --history H.tsv --state DIR
 
 L.tsv (README.md's read-only SELECT): tenant, id, types (space-separated), expires_at (ISO or
 empty), refs (the minted ids the entity's document names, space-separated). E.tsv: tenant, the
 Endpoint's slug, the space that Endpoint names (spec.contextSpaceRef, read from the Portal), the
-project. `policies` writes per space the temporary Policy (README.md) for the types listed.
+project. `policies` writes per space the temporary Policy (README.md) for the types listed and,
+with --owner, per project the temporary ServiceAccount: role `public` (the anonymous reader's)
+in each of its spaces until --until, since jc-core refuses an account without a role.
 
 `run` checks every row first: the id lies under urn:ngsi-ld:<Type>:portal.smartcity.joinedcontext.com:,
 <Type> is one of the row's types, the row's tenant is the space of its group's Endpoint. A group
@@ -299,8 +301,9 @@ def run(a) -> int:
         return 0
     gateway = check_gateway(a.gateway)
     token_url = check_gateway(a.token_url) if a.token_url else None
-    if a.client_id and len({g["project"] for g in groups.values()}) > 1:
-        raise Stop("--client-id names one project's account: add --only for one tenant")
+    projects = sorted({g["project"] for g in groups.values()})
+    if len(projects) > 1:  # one token is one project's ServiceAccount
+        raise Stop(f"--apply serves one project's account; these tenants span {projects}: add --only")
     totals = {"deleted": 0, "gone": 0}
     sent = 0
     held: dict[str, tuple[str, float]] = {}  # client id -> (token, monotonic time to refetch at)
@@ -359,7 +362,25 @@ def policies(a) -> int:
         raise Stop("--until needs a UTC time, e.g. 2026-11-10T20:00:00Z")
     state = Path(a.state)
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for tenant, g in sorted(load(a.list, a.endpoints, []).items()):
+    groups = load(a.list, a.endpoints, [])
+    to = until.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for project in sorted({g["project"] for g in groups.values()} if a.owner else ()):
+        spaces = sorted(t for t, g in groups.items() if g["project"] == project)
+        doc = {
+            "apiVersion": "joinedcontext.com/v1alpha1", "kind": "ServiceAccount",
+            "metadata": {"name": ACCOUNT, "namespace": project,
+                         "title": {"en": "Temporary cleanup account (T-6676 R)"}},
+            "spec": {
+                "owner": {"user": a.owner},
+                "purpose": "temporary: deletes the T-6676 R copies; removed after the run",
+                "roles": [{"role": "public", "scope": {"contextSpace": s}, "validity": {"notAfter": to}}
+                          for s in spaces],
+                "credentials": [{"kind": "oauth-client", "name": "main"}],
+            },
+        }
+        (state / f"serviceaccount-{project}.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        log(state, f"{project}: serviceaccount-{project}.json, space(s) {', '.join(spaces)}")
+    for tenant, g in sorted(groups.items()):
         types = sorted({r["type"] for r in g["rows"].values()})
         doc = {
             "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Policy",
@@ -370,7 +391,7 @@ def policies(a) -> int:
                 "assigner": "did:web:{orgDomain}",
                 "assignee": {"kind": "serviceAccount", "id": ACCOUNT},
                 "operations": ["deleteBatch"],
-                "validity": {"to": until.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                "validity": {"to": to},
                 "information": [{"entities": [
                     {"type": t, "idPattern": id_pattern(t)} for t in types]}],
             },
@@ -430,6 +451,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--endpoints", required=True)
     q.add_argument("--state", required=True)
     q.add_argument("--until", required=True)
+    q.add_argument("--owner")
     v = sub.add_parser("verify")
     v.add_argument("--recount", required=True)
     v.add_argument("--history", required=True)
