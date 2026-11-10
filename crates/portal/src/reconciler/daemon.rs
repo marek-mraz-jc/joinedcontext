@@ -66,6 +66,10 @@ pub struct SyncStatus {
     /// Whether this replica is the one that reconciles (CC-03). A Portal without a database
     /// has no election to run and reconciles on its own, so it reports itself as the leader.
     pub leader: bool,
+    /// The managed realm objects (`Kind name`) the last leader run did not remove because its
+    /// source had not loaded once: a revocation waiting for that load is shown, never silent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held_removals: Vec<String>,
 }
 
 /// Errors returned during repository synchronization.
@@ -215,6 +219,9 @@ pub struct Syncer {
     warned_members: super::warned::Warned,
     warned_unstaged: super::warned::Warned,
     warned_unbuilt: super::warned::Warned,
+    /// Whether the source has loaded once in this process ([`source_loaded`]): until then the
+    /// realm syncs remove nothing (Mirror::hold_removals).
+    source_loaded: std::sync::atomic::AtomicBool,
     /// Each managed roles file the branch was seen holding as compiled, by path, as a hash of
     /// the text, and when: a run read every one from the forge on every sync to find it equal
     /// (jc-smoke-logs: 30 `Shako.File` reads a minute at a 10 s sync). Read again once
@@ -334,6 +341,7 @@ impl Syncer {
             warned_members: Default::default(),
             warned_unstaged: Default::default(),
             warned_unbuilt: Default::default(),
+            source_loaded: Default::default(),
             roles_held: Default::default(),
             activity: None,
             apps_cache_dir: None,
@@ -1147,6 +1155,12 @@ impl Syncer {
         let transitions = super::transitions::Transitions::of(&self.mirror);
         let (fresh_mirror, loaded) =
             self.load_mirror(&scratch, &repository, &revision, &default_branch)?;
+        let past_seed = source_loaded(&fresh_mirror, &scratch.unstaged);
+        let loaded_once = self
+            .source_loaded
+            .fetch_or(past_seed, std::sync::atomic::Ordering::Relaxed)
+            || past_seed;
+        fresh_mirror.hold_removals(!loaded_once);
         steps.mark("mirror");
 
         // 5a. What the sync webhook route authorises a run against (MF-44, T-2297). Before the
@@ -1278,6 +1292,7 @@ impl Syncer {
         //       (EP-96, T-3156).
         self.converge_mcp_clients(&fresh_mirror).await;
         steps.mark("mcp_clients");
+        self.say_held(fresh_mirror.held_back());
 
         // 5e. The file the edge serves: helm's base with the routes of every App whose client
         //     the step above has in place (ADR-N-030, AP-112). A failure leaves APISIX serving
@@ -3447,6 +3462,43 @@ impl Steps {
     fn log(&self, leader: bool) {
         tracing::info!(leader, steps_ms = %self.line(), "sync run steps");
     }
+}
+
+impl Syncer {
+    /// Logs once per run, and puts in the status, what the realm syncs kept because the source
+    /// has not loaded once ([`source_loaded`]); names only, no secret is among them.
+    fn say_held(&self, held: Vec<String>) {
+        if let Some(line) = held_line(&held) {
+            tracing::warn!(held = held.len(), "{line}");
+        }
+        self.status
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .held_removals = held;
+    }
+}
+
+/// The warn line of a run that held removals, or None when it held none.
+fn held_line(held: &[String]) -> Option<String> {
+    (!held.is_empty()).then(|| {
+        format!(
+            "removals held until the repository has loaded once (every project staged, more than \
+             the first-start seed): {}",
+            held.join(", ")
+        )
+    })
+}
+
+/// Whether a load is the source a realm removal may follow: every registered project's
+/// repository staged, and the organization past what jc's first start seeds (its Organization
+/// and Roles). Before that, a managed group, client or scope the load does not name is one the
+/// repository has not been given yet, not one it took away: on the gate 4 rehearsal the group
+/// sync deleted every imported group (and with it its members) against the seed.
+fn source_loaded(mirror: &Mirror, unstaged: &[String]) -> bool {
+    unstaged.is_empty()
+        && mirror
+            .find(|env| !matches!(env.kind.as_str(), "Organization" | "Role"))
+            .is_some()
 }
 
 #[cfg(test)]
@@ -5881,5 +5933,50 @@ output_error{stream="kpi"} 6
             x.conditions[0].message.as_deref(),
             Some("author lost access to source Endpoint ep-b")
         );
+    }
+
+    #[test]
+    fn removals_wait_for_a_load_past_the_seed_with_every_project_staged() {
+        let mirror = Mirror::new();
+        mirror.upsert(envelope("Organization", "org", "city"));
+        mirror.upsert(envelope("Role", "org", "steward"));
+        assert!(
+            !source_loaded(&mirror, &[]),
+            "jc's first-start seed is no source yet"
+        );
+        mirror.upsert(envelope("Group", "org", "skoly-viewer"));
+        assert!(source_loaded(&mirror, &[]));
+        assert!(
+            !source_loaded(&mirror, &["praha".to_owned()]),
+            "a project whose repository did not stage is not loaded"
+        );
+    }
+
+    /// A run that held removals says which, once, at warn and in the status; the next run that
+    /// holds none clears it.
+    #[test]
+    fn held_removals_are_one_warn_line_and_the_status() {
+        assert_eq!(held_line(&[]), None);
+        let held = vec![
+            "Group skoly-viewer".to_owned(),
+            "MCP client helsinki/gone".to_owned(),
+        ];
+        let line = held_line(&held).expect("a line");
+        assert!(
+            line.ends_with(": Group skoly-viewer, MCP client helsinki/gone"),
+            "{line}"
+        );
+        let shako = ShakoClient::new(
+            "http://127.0.0.1:9".parse().expect("forge url"),
+            "test-owner",
+            "test-repo",
+            "token",
+        )
+        .expect("client");
+        let syncer = Syncer::new(Arc::new(shako), Arc::new(Mirror::new()));
+        syncer.say_held(held.clone());
+        assert_eq!(syncer.status().held_removals, held);
+        syncer.say_held(Vec::new());
+        assert!(syncer.status().held_removals.is_empty());
     }
 }

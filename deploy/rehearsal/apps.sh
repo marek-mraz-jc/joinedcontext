@@ -80,8 +80,17 @@ if [ "${REHEARSAL_APPS:-on}" != off ]; then
   if [ -n "$realm_file" ] && [ -d "$export_dir/gitea/files" ]; then
     secret realm/REHEARSAL_APP_ROLES_PASSWORD > /dev/null
     ln -sfn realm/REHEARSAL_APP_ROLES_PASSWORD "$home/secrets/realm-REHEARSAL_APP_ROLES_PASSWORD"
+    # REHEARSAL_APP_HOLDER_ID: the holder takes the user id a prod read Policy names
+    # (banskabystrica-zaznamy reads only as fc3b55df, demo.steward), on a loopback rehearsal only.
+    holder_id=()
+    if [ -n "${REHEARSAL_APP_HOLDER_ID:-}" ]; then
+      case $bind in
+        127.*|::1) holder_id=(--id "$REHEARSAL_APP_HOLDER_ID") ;;
+        *) echo "apps.sh: REHEARSAL_APP_HOLDER_ID only on a loopback rehearsal, not $bind" >&2; exit 1 ;;
+      esac
+    fi
     python3 -I "$here/apps.py" person --realm-file "$realm_file" --files "$export_dir/gitea/files" \
-      --password-file "$home/secrets/realm/REHEARSAL_APP_ROLES_PASSWORD"
+      --password-file "$home/secrets/realm/REHEARSAL_APP_ROLES_PASSWORD" "${holder_id[@]}"
   fi
 
   # Once jc answers: the prod builds into shako, then the holder into the roles Apps' groups.

@@ -629,6 +629,35 @@ async fn a_client_whose_account_lost_its_workload_is_deleted() {
     assert_eq!(outcomes[0].error, None);
 }
 
+/// The last account dropped from a loaded source: its client goes (a revocation), while before
+/// the source has loaded once (Mirror::hold_removals) it stays and is reported.
+#[tokio::test]
+async fn a_loaded_source_that_drops_its_last_account_deletes_its_client_and_none_before() {
+    for held_back in [true, false] {
+        let keycloak = realm(json!([managed_client(
+            "uuid-air",
+            "helsinki",
+            "air-adapter",
+            "env-dept",
+            "adapter"
+        )]))
+        .await;
+        let mirror = mirror_with(vec![]);
+        mirror.hold_removals(held_back);
+        sync(&keycloak).converge(&mirror, &Bentos::new()).await;
+        let (deleted, said) = if held_back {
+            (
+                vec![],
+                vec!["workload client helsinki/air-adapter".to_owned()],
+            )
+        } else {
+            (vec![format!("DELETE {REALM}/clients/uuid-air")], vec![])
+        };
+        assert_eq!(wrote(&keycloak).await, deleted, "held back: {held_back}");
+        assert_eq!(mirror.held_back(), said);
+    }
+}
+
 /// T-5568, AR-6: the removed client's service-account user is revoked before the client goes, so
 /// its unexpired tokens stop opening the gateway at its next poll; a failed lookup is a warning
 /// and the client still goes.

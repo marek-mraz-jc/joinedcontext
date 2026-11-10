@@ -1093,7 +1093,12 @@ impl AppClientSync {
                     let Some(id) = client.get("clientId").and_then(Value::as_str) else {
                         continue;
                     };
-                    if !id.starts_with("app-") || !managed(client) || wanted.contains(id) {
+                    // Nothing goes before the source has loaded once (Mirror::hold_removal).
+                    if !id.starts_with("app-")
+                        || !managed(client)
+                        || wanted.contains(id)
+                        || mirror.hold_removal("App client", id)
+                    {
                         continue;
                     }
                     let app = id.trim_start_matches("app-");

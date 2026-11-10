@@ -10,7 +10,7 @@
 //!   dry-run non-mutation, plan/apply with stale-plan refusal (`EXIT_STALE_OR_LOCK_TIMEOUT`), and
 //!   export round-trip fixed point.
 
-use kaisatsu_core::{ClientRepresentation, Store};
+use kaisatsu_core::{ClientRepresentation, GroupRepresentation, Store};
 use kaisatsu_import::*;
 use kaisatsu_store_memory::MemoryStore;
 use serde_json::{Value, json};
@@ -518,4 +518,70 @@ async fn a_rotated_secret_file_behind_an_unchanged_document_is_applied() {
     // The checksum holds no secret value.
     assert!(!rotated.checksum.contains("rotated"));
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The Portal deletes a `managed-by: joinedcontext` group while its repository is still empty and
+/// makes it again from the manifest without its client roles (prod rehearsal gate 4): the next
+/// start re-applies the unchanged file and gives the group its roles back; a role added since
+/// leaves the fast path alone.
+#[tokio::test]
+async fn a_group_that_lost_its_roles_behind_an_unchanged_file_gets_them_back() {
+    let doc = json!({
+        "realm": "groups",
+        "clients": [{"clientId": "app-skoly", "publicClient": true}],
+        "groups": [{
+            "name": "skoly-viewer", "path": "/skoly-viewer",
+            "attributes": {"managed-by": ["joinedcontext"]},
+            "clientRoles": {"app-skoly": ["viewer"]},
+            "subGroups": [{"name": "inner", "path": "/skoly-viewer/inner", "realmRoles": ["reader"]}]
+        }],
+        "roles": {"realm": [{"name": "reader"}]}
+    });
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let files = [("realm.json".to_owned(), doc)];
+    let opts = ApplyOptions::default();
+    apply_realm_files(&store, &files, &opts)
+        .await
+        .expect("apply");
+    let group = || async {
+        store
+            .get_group_by_path("groups", None, "/skoly-viewer")
+            .await
+            .unwrap()
+            .expect("the group")
+    };
+    assert_eq!(group().await.client_roles["app-skoly"], ["viewer"]);
+
+    // The Portal's delete and re-create: same path, a new id, no roles.
+    let old = group().await;
+    store.delete_group("groups", None, &old.id).await.unwrap();
+    store
+        .upsert_group(GroupRepresentation {
+            realm_id: "groups".into(),
+            name: "skoly-viewer".into(),
+            path: "/skoly-viewer".into(),
+            managed_by: Some("joinedcontext".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(group().await.client_roles.is_empty());
+
+    let again = apply_realm_files(&store, &files, &opts)
+        .await
+        .expect("re-apply");
+    assert!(again.has_changes(), "the lost roles force a real apply");
+    assert_eq!(group().await.client_roles["app-skoly"], ["viewer"]);
+
+    // A client role the Portal added since: still the fast path.
+    let mut held = group().await;
+    held.client_roles
+        .get_mut("app-skoly")
+        .unwrap()
+        .push("steward".into());
+    store.upsert_group(held).await.unwrap();
+    let quiet = apply_realm_files(&store, &files, &opts)
+        .await
+        .expect("third apply");
+    assert!(!quiet.has_changes(), "nothing the file declares is missing");
 }

@@ -6,6 +6,8 @@ import base64
 import hashlib
 import http.server
 import json
+import subprocess
+import os
 import sys
 import threading
 from pathlib import Path
@@ -69,6 +71,26 @@ def test_the_holder_gets_the_published_roles_apps_groups_and_no_credential_value
     assert holders[0]["credentials"][0]["value"] == "$(file:/s/pw)"
     assert missing == ["gone"]
     assert {u["username"] for u in out["users"]} == {"rehearsal-tester", apps.PERSON}
+    assert "id" not in holders[0], "no id of its own unless one is named"
+
+
+def test_the_holder_takes_the_id_a_prod_read_policy_names_and_nothing_else_of_that_person(tmp_path):
+    realm = {"realm": "smartcity", "groups": [], "users": []}
+    pid = "fc3b55df-5fd4-4679-af5e-bb9dca22b0d7"
+    out, _ = apps.with_person(realm, [], Path("/s/pw"), pid)
+    holder = out["users"][0]
+    assert holder["id"] == pid and holder["username"] == apps.PERSON
+    assert holder["email"].endswith("@rehearsal.invalid") and holder["credentials"][0]["value"] == "$(file:/s/pw)"
+    with pytest.raises(SystemExit):
+        apps.with_person(realm, [], Path("/s/pw"), "demo.steward")
+    # apps.sh hands the id on only on a loopback rehearsal.
+    text = (Path(apps.__file__).parent / "apps.sh").read_text()
+    block = text[text.index('holder_id=()'):]
+    block = block[:block.index("\n    fi\n") + 7]
+    run = lambda bind: subprocess.run(["bash", "-c", f"bind={bind}; {block}\necho \"${{holder_id[@]}}\""],
+                                      env=dict(os.environ, REHEARSAL_APP_HOLDER_ID=pid), capture_output=True, text=True)
+    assert run("127.0.0.1").stdout.strip() == f"--id {pid}"
+    assert run("0.0.0.0").returncode == 1
 
 
 class Shako(http.server.BaseHTTPRequestHandler):

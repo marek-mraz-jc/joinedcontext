@@ -13,9 +13,13 @@ portal-reconciler client of --state, signed in by the browser flow, deleted at t
   bento      GET  /api/v1/projects/{p}/pipelines/{n}/bento       200 when the export has bento.yaml
   status     the item's status: no StreamDeployed=False condition (RunnerRefused, NoRunner, ...);
              a Pipeline naming secretRefs whose condition is about its secret is a skip naming it
+             a refused Pipeline prod's run log (--runlog, default <export>-runlog) holds no run of
+             is a same-on-prod skip; one prod ran stays a fail
   held       GET  /streams/streams/{p}.{n} (jc's ekiben, its admin token from --state ekiben-token)
              200 for a resident or always-running stream; a scheduled one is loaded only for its
              runs (skip)
+             a Pipeline with no clock and a source that ends holds no stream after its run on
+             prod either: without one, its target type counts at least prod's newest run's sent
   run        POST /api/v1/projects/{p}/pipelines/{n}/runs        202 (the first --runs runnable
              Pipelines; a resident source is a skip)
   history    GET  /api/v1/projects/{p}/pipelines/{n}/runs        the started run appears and ends;
@@ -61,7 +65,23 @@ def conditions(item: dict) -> list[dict]:
     return (status.get("conditions") or []) if isinstance(status, dict) else []
 
 
-def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline) -> dict:
+def prod_runs(path: Path) -> dict | None:
+    """prod's Portal run log beside the bundle (pipeline_runs.jsonl, rehearsal RUNLOG.md): per
+    project/pipeline its run count and newest run, or None when the file is not there."""
+    f = path / "pipeline_runs.jsonl"
+    if not f.is_file():
+        return None
+    out = {}
+    for line in f.read_text().splitlines():
+        row = json.loads(line)
+        k = f"{row['project']}/{row['pipeline']}"
+        had = out.get(k)
+        out[k] = {"runs": (had or {}).get("runs", 0) + 1,
+                  "last": row if not had or row["last_at"] > had["last"]["last_at"] else had["last"]}
+    return out
+
+
+def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline, prod: dict | None = None) -> dict:
     base = f"/api/v1/projects/{p.project}/pipelines/{p.name}"
     st, _, raw = http.call("GET", base)
     item = (as_json(raw) or {}) if st == 200 else {}
@@ -84,6 +104,10 @@ def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline) 
     elif bad and p.secret_refs and any(w.lower() in said.lower() for w in SECRET_WORDS):
         r.skip("status", p.key, f"GET {base} (status)", "no StreamDeployed=False",
                f"secretRefs {p.secret_refs}: {said[:200]}")
+    elif bad and prod is not None and p.key not in prod:
+        r.skip("status", p.key, f"GET {base} (status)", "no StreamDeployed=False",
+               f"same on prod: prod's Portal run log holds no run of it ({len(prod)} pipelines ran there "
+               f"from 2026-10-18 to the freeze); {said[:160]}")
     else:
         r.check("status", p.key, f"GET {base} (status)", "no StreamDeployed=False condition", actual,
                 st == 200 and not bad)
@@ -95,8 +119,20 @@ def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline) 
         r.skip("held", p.key, f"GET /streams/streams/{sid}", "200", "no --state: no ekiben token")
     else:
         st2, _, raw2 = http.call("GET", f"/streams/streams/{sid}", ekiben_tok)
-        r.check("held", p.key, f"GET /streams/streams/{sid}", "200 the stream the Portal deployed",
-                f"{st2} {short(raw2, 100)}", st2 == 200)
+        last = ((prod or {}).get(p.key) or {}).get("last") or {}
+        if st2 != 200 and not p.scheduled and not p.resident and last.get("sent") and p.slug and p.out_type:
+            # No clock and a source that ends: prod's Portal ran it and let the stream go too, so
+            # compare with what prod's newest run left, its target type holding that run's sent.
+            q = f"/api/endpoint/{p.slug}/ngsi-ld/v1/entities?type={urllib.parse.quote(p.out_type)}&count=true&limit=0"
+            st3, h3, _ = http.call("GET", q)
+            n = h3.get("ngsild-results-count")
+            r.check("held", p.key, f"GET /streams/streams/{sid}; GET {q}",
+                    f"200, or as on prod (no stream after its run {last['run']}, sent {last['sent']}): "
+                    f"count >= {last['sent']}", f"{st2} {short(raw2, 60)}; {st3} count={n}",
+                    st3 == 200 and n is not None and int(n) >= int(last["sent"]))
+        else:
+            r.check("held", p.key, f"GET /streams/streams/{sid}", "200 the stream the Portal deployed",
+                    f"{st2} {short(raw2, 100)}", st2 == 200)
     return item
 
 
@@ -246,6 +282,7 @@ def main(argv):
     ap.add_argument("--person-token-file", help="unused by this suite")
     ap.add_argument("--runs", type=int, default=10, help="how many Pipelines to run once")
     ap.add_argument("--only", action="append", default=[])
+    ap.add_argument("--runlog", help="prod's Portal run log dir (default: <export>-runlog when it exists)")
     ap.add_argument("--wait", type=float, default=300, help="seconds a run may take")
     a = ap.parse_args(argv)
     loopback_only(a.base_url)
@@ -255,6 +292,7 @@ def main(argv):
     if a.only:
         pipelines = [p for p in pipelines if p.key in set(a.only)]
     ekiben_tok = ekiben_token(Path(a.state)) if a.state else None
+    prod = prod_runs(Path(a.runlog or a.export.rstrip("/") + "-runlog"))
     st, h, raw = http.call("GET", "/streams/streams", ekiben_tok)
     listed = runner_list(h, raw)
     r.check("runner", "ekiben", "GET /streams/streams", "200 the runner's JSON stream list",
@@ -270,7 +308,7 @@ def main(argv):
             admin.sign_in()
             ran = 0
             for p in pipelines:
-                check_pipeline(r, admin.browser, ekiben_tok, p)
+                check_pipeline(r, admin.browser, ekiben_tok, p, prod)
                 if p.resident:
                     r.skip("run", p.key, "", "", f"resident {p.source_type} source: runs continuously, no one-shot run")
                 elif ran < a.runs:
@@ -278,7 +316,7 @@ def main(argv):
                     run_pipeline(r, admin.browser, http, p, a.wait, sorted({q.project for q in pipelines}))
         finally:
             admin.close()
-    meta = {"export": a.export, "pipelines": len(pipelines),
+    meta = {"export": a.export, "prod run log": None if prod is None else f"{len(prod)} pipelines", "pipelines": len(pipelines),
             "secretRef pipelines": sum(1 for p in pipelines if p.secret_refs),
             "resident": sum(1 for p in pipelines if p.resident), "runs asked": min(a.runs, len(pipelines))}
     r.write(Path(a.out), meta)

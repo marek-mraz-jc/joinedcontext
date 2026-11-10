@@ -803,6 +803,10 @@ impl WorkloadClientSync {
                 kept.push(account);
                 continue;
             }
+            // Nothing goes before the source has loaded once (Mirror::hold_removal).
+            if mirror.hold_removal("workload client", account) {
+                continue;
+            }
             let mut outcome = ClientOutcome::of(account);
             let uuid = client.get("id").and_then(Value::as_str);
             if let Some(uuid) = uuid {

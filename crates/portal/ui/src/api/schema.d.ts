@@ -12919,6 +12919,11 @@ export interface components {
          *     repository URL, or branch name.
          */
         SyncStatus: {
+            /**
+             * @description The managed realm objects (`Kind name`) the last leader run did not remove because its
+             *     source had not loaded once: a revocation waiting for that load is shown, never silent.
+             */
+            heldRemovals?: string[];
             lastError?: string | null;
             /** Format: int64 */
             lastSync?: number | null;
