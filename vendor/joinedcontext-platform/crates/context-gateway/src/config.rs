@@ -89,6 +89,10 @@ pub struct Config {
     pub oidc_issuer: Option<String>,
     /// The realm's JWKS, fetched in the background (`JC_OIDC_JWKS_URL`).
     pub oidc_jwks_url: Option<String>,
+    /// Where the JWKS URL's host is dialed instead of through DNS (`JC_OIDC_JWKS_REACH`, a
+    /// loopback address and port): `jc` in host mode serves its realm on its own listener by the
+    /// host the request names.
+    pub oidc_jwks_reach: Option<std::net::SocketAddr>,
     /// Where the gateway asks for its own token (`JC_OIDC_TOKEN_URL`), for the same reason
     /// `JC_OIDC_JWKS_URL` exists: the issuer is the address a *browser* uses, and a pod that dials
     /// its own cluster's public hostname leaves through the ingress or not at all. The realm's
@@ -234,6 +238,18 @@ impl Config {
         }
 
         let non_empty = |name| var(name).ok().filter(|v: &String| !v.trim().is_empty());
+        let oidc_jwks_reach = match non_empty("JC_OIDC_JWKS_REACH") {
+            None => None,
+            Some(raw) => match raw.trim().parse::<std::net::SocketAddr>() {
+                Ok(addr) if addr.ip().is_loopback() => Some(addr),
+                _ => {
+                    return Err(ConfigError::Invalid {
+                        name: "JC_OIDC_JWKS_REACH",
+                        reason: "a loopback address and port, e.g. 127.0.0.1:8080".to_owned(),
+                    })
+                }
+            },
+        };
         let credential = match (
             non_empty("JC_OIDC_CLIENT_SECRET"),
             non_empty("JC_OIDC_CLIENT_ASSERTION_FILE"),
@@ -397,6 +413,7 @@ impl Config {
             org_domain,
             oidc_issuer,
             oidc_jwks_url,
+            oidc_jwks_reach,
             oidc_token_url: var("JC_OIDC_TOKEN_URL")
                 .ok()
                 .filter(|url| !url.trim().is_empty()),
@@ -582,6 +599,7 @@ mod tests {
             oidc_jwks_url: Some(
                 "http://keycloak/realms/dev/protocol/openid-connect/certs".to_owned(),
             ),
+            oidc_jwks_reach: None,
             oidc_token_url: None,
             oidc_client: Some((
                 "context-gateway".to_owned(),

@@ -120,11 +120,16 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
     let gateway = match (&config.oidc_issuer, &config.oidc_jwks_url) {
         (Some(issuer), Some(jwks_url)) => {
             let verifier = Arc::new(Verifier::new(issuer.clone()));
-            if let Err(error) = jwks::refresh(&verifier, jwks_url).await {
+            let reach = config.oidc_jwks_reach;
+            if let Err(error) = jwks::refresh_at(&verifier, jwks_url, reach).await {
                 tracing::error!(%error, "cannot load the realm signing keys");
                 return Err(format!("cannot load the realm signing keys: {error}"));
             }
-            tokio::spawn(jwks::keep_current(Arc::clone(&verifier), jwks_url.clone()));
+            tokio::spawn(jwks::keep_current_at(
+                Arc::clone(&verifier),
+                jwks_url.clone(),
+                reach,
+            ));
             gateway.authenticate(verifier, accounts, config.public_url.clone())
         }
         _ => {

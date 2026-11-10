@@ -36,12 +36,23 @@ const REFRESH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Fetches the JWKS at `url` and installs its keys, returning how many were usable.
 pub async fn refresh(verifier: &Verifier, url: &str) -> Result<usize, JwksError> {
-    refresh_within(verifier, url, REFRESH_TIMEOUT).await
+    refresh_at(verifier, url, None).await
+}
+
+/// [`refresh`], dialing `url`'s host at `reach` instead of through DNS (a hosting process's
+/// loopback listener that routes by the host the request names).
+pub async fn refresh_at(
+    verifier: &Verifier,
+    url: &str,
+    reach: Option<std::net::SocketAddr>,
+) -> Result<usize, JwksError> {
+    refresh_within(verifier, url, reach, REFRESH_TIMEOUT).await
 }
 
 async fn refresh_within(
     verifier: &Verifier,
     url: &str,
+    reach: Option<std::net::SocketAddr>,
     timeout: std::time::Duration,
 ) -> Result<usize, JwksError> {
     if url.starts_with("https://") {
@@ -57,7 +68,7 @@ async fn refresh_within(
     }
 
     let uri = url.parse().map_err(|e| JwksError::Url(format!("{e}")))?;
-    let bytes = tokio::time::timeout(timeout, fetch(uri))
+    let bytes = tokio::time::timeout(timeout, fetch(uri, reach))
         .await
         .map_err(|_| {
             JwksError::Unreachable(format!("the realm did not answer within {timeout:?}"))
@@ -69,12 +80,31 @@ async fn refresh_within(
 }
 
 /// The JWKS document's bytes, at most 1 MiB.
-async fn fetch(uri: axum::http::Uri) -> Result<axum::body::Bytes, JwksError> {
+async fn fetch(
+    uri: axum::http::Uri,
+    reach: Option<std::net::SocketAddr>,
+) -> Result<axum::body::Bytes, JwksError> {
     let client: hyper_util::client::legacy::Client<_, Body> =
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
             .build_http();
+    let mut request = axum::http::Request::get(&uri);
+    let uri = match (reach, uri.authority()) {
+        // The request names the URL's host; the connection goes to `reach`.
+        (Some(addr), Some(authority)) => {
+            request = request.header(axum::http::header::HOST, authority.as_str());
+            let path = uri.path_and_query().map_or("/", |p| p.as_str());
+            format!("http://{addr}{path}")
+                .parse()
+                .map_err(|e| JwksError::Url(format!("{e}")))?
+        }
+        _ => uri,
+    };
+    let request = request
+        .uri(uri)
+        .body(Body::empty())
+        .map_err(|e| JwksError::Url(e.to_string()))?;
     let response = client
-        .get(uri)
+        .request(request)
         .await
         .map_err(|e| JwksError::Unreachable(e.to_string()))?;
 
@@ -94,8 +124,17 @@ async fn fetch(uri: axum::http::Uri) -> Result<axum::body::Bytes, JwksError> {
 /// A failed refresh keeps the keys the verifier already has: a realm that is briefly
 /// unreachable must not take every authenticated caller down with it.
 pub async fn keep_current(verifier: Arc<Verifier>, url: String) {
+    keep_current_at(verifier, url, None).await;
+}
+
+/// [`keep_current`] with [`refresh_at`]'s `reach`.
+pub async fn keep_current_at(
+    verifier: Arc<Verifier>,
+    url: String,
+    reach: Option<std::net::SocketAddr>,
+) {
     loop {
-        match refresh(&verifier, &url).await {
+        match refresh_at(&verifier, &url, reach).await {
             Ok(count) => tracing::info!(count, "realm signing keys loaded"),
             Err(error) => {
                 tracing::error!(%error, url = %url, "cannot refresh the realm signing keys")
@@ -108,6 +147,43 @@ pub async fn keep_current(verifier: Arc<Verifier>, url: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A reached JWKS URL is fetched on `reach` and names its own host, so a listener routing
+    /// by host (jc in host mode) answers it, never DNS.
+    #[tokio::test]
+    async fn a_reached_url_dials_the_reach_and_names_its_host() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a listener");
+        let address = listener.local_addr().expect("an address");
+        let served = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("a connection");
+            let mut head = vec![0; 4096];
+            let n = socket.read(&mut head).await.expect("a request");
+            let body = r#"{"keys":[]}"#;
+            let answer = format!(
+                "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(answer.as_bytes()).await.expect("an answer");
+            String::from_utf8_lossy(&head[..n]).to_ascii_lowercase()
+        });
+        let verifier = Verifier::new("https://idm.city.invalid/realms/r");
+        refresh_at(
+            &verifier,
+            "http://idm.city.invalid/realms/r/protocol/openid-connect/certs",
+            Some(address),
+        )
+        .await
+        .expect("the keys from the reach");
+        let head = served.await.expect("the request");
+        assert!(
+            head.starts_with("get /realms/r/protocol/openid-connect/certs http/1.1"),
+            "{head}"
+        );
+        assert!(head.contains("\r\nhost: idm.city.invalid\r\n"), "{head}");
+    }
 
     /// F-PLT2-024: a realm that accepts the connection and never answers fails the refresh
     /// within its timeout instead of holding the caller for ever.
@@ -126,6 +202,7 @@ mod tests {
         let outcome = refresh_within(
             &verifier,
             &format!("http://{address}/certs"),
+            None,
             std::time::Duration::from_millis(300),
         )
         .await;
