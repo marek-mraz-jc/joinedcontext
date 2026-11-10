@@ -8,7 +8,7 @@
 # bins/jc/docs/od-datasets.json, which is release 23a43801 charts/ckan/files/od-datasets.json
 # byte for byte), with its Endpoint's doors and model files as distributions. No `gateway`: the
 # Endpoints are read on this instance's own gateway, as prod's CronJobs read prod's. A source
-# that no run has completed runs at start and each hour until one does.
+# runs once when jc starts, then on its schedule.
 
 # The city's datasets in the national catalogue (NKOD SPARQL), T-4151.
 [[dataroom.harvest]]

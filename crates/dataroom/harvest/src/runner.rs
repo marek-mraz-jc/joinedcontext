@@ -505,8 +505,11 @@ impl HarvestEngine {
             HarvestSourceKind::ArcGisHub => {
                 let mut features = Vec::new();
                 let hub = source.url.trim_end_matches('/');
+                // Sorted: unsorted, the Hub's pages overlap at random (opendata.bbsk.sk
+                // 2026-11-10: 3 of 4 reads held 115 items, 100 of them distinct), and the
+                // items a repeat stands in for go missing from the read.
                 let mut next_url = Some(format!(
-                    "{hub}/api/search/v1/collections/dataset/items?limit=100"
+                    "{hub}/api/search/v1/collections/dataset/items?limit=100&sortBy=properties.created"
                 ));
                 let mut expected_total = None;
 
@@ -545,6 +548,18 @@ impl HarvestEngine {
                 if next_url.is_some() {
                     return Err(incomplete(format!(
                         "the Hub still pages after {MAX_PAGES} pages"
+                    )));
+                }
+                // An item read twice hides one never read: the read is not complete.
+                let distinct = features
+                    .iter()
+                    .filter_map(|f| f.pointer("/properties/id").and_then(Value::as_str))
+                    .collect::<BTreeSet<_>>()
+                    .len();
+                if distinct != features.len() {
+                    return Err(incomplete(format!(
+                        "the Hub listed {} items, {distinct} of them distinct",
+                        features.len()
                     )));
                 }
                 match expected_total {
@@ -1279,7 +1294,7 @@ mod tests {
             .unwrap();
 
         let fetcher = MapFetcher::new();
-        let hub_url = "https://hub.bbsk.sk/api/search/v1/collections/dataset/items?limit=100";
+        let hub_url = "https://hub.bbsk.sk/api/search/v1/collections/dataset/items?limit=100&sortBy=properties.created";
 
         // Run 1: 2 valid open datasets + 1 closed-licence item (skipped)
         fetcher.insert(
