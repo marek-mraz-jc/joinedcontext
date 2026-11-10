@@ -149,6 +149,8 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
         .await
         .expect("start");
     running.portal_ready().await;
+    // Slug mode calls every sibling on the one listener already: no in-pod listener.
+    assert_eq!(running.in_pod_addr, None);
     let addr = running.addr;
     for &module in cfg
         .roles
@@ -313,6 +315,30 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
     )
     .await;
     assert!(body.contains("http://id.city.test/realms/jc"), "{body}");
+
+    // T-6705: the modules the edge never routes to answer their siblings on the in-pod listener,
+    // loopback only, at their slug and whatever the Host; nothing else answers there.
+    let in_pod = running
+        .in_pod_addr
+        .expect("an in-pod listener in host mode");
+    assert!(in_pod.ip().is_loopback(), "{in_pod}");
+    for module in jc::siblings::IN_POD {
+        let (path, needle) = probe(module);
+        let at = format!("/{}{path}", module.slug());
+        let (status, body) = get(in_pod, &in_pod.to_string(), &at).await;
+        assert_eq!(status, StatusCode::OK, "{module} in pod {at}: {body}");
+        assert!(body.contains(needle), "{module} in pod {at}: {body}");
+    }
+    for module in [
+        Module::Portal,
+        Module::Kaisatsu,
+        Module::Daiya,
+        Module::Dataroom,
+    ] {
+        let (path, _) = probe(module);
+        let (status, _) = get(in_pod, "localhost", &format!("/{}{path}", module.slug())).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{module} in pod");
+    }
 
     for host in [
         "nope.city.test",
