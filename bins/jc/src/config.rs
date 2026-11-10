@@ -66,6 +66,14 @@ pub struct Cli {
         value_delimiter = ','
     )]
     pub trusted_proxies: Vec<IpNet>,
+    /// The edge's mesh identity (`l5d-client-id`); once named, a trusted proxy's `X-Forwarded-*`
+    /// count only on requests carrying it. Repeat or comma-separate.
+    #[arg(
+        long = "trusted-proxy-identity",
+        env = "JCBIN_TRUSTED_PROXY_IDENTITIES",
+        value_delimiter = ','
+    )]
+    pub trusted_proxy_identities: Vec<String>,
     /// Log format: `json` or `text`.
     #[arg(long, env = "JCBIN_LOG_FORMAT")]
     pub log_format: Option<LogFormat>,
@@ -615,6 +623,8 @@ pub struct FileConfig {
     pub admin_token_file: Option<PathBuf>,
     #[serde(default)]
     pub trusted_proxies: Vec<IpNet>,
+    #[serde(default)]
+    pub trusted_proxy_identities: Vec<String>,
     pub log_format: Option<LogFormat>,
     pub profile: Option<Profile>,
     pub state_dir: Option<PathBuf>,
@@ -704,6 +714,7 @@ pub struct Config {
     pub admin_listen: Option<SocketAddr>,
     pub admin_token_file: Option<PathBuf>,
     pub trusted_proxies: Vec<IpNet>,
+    pub trusted_proxy_identities: Vec<String>,
     pub log_format: LogFormat,
     pub profile: Profile,
     pub state_dir: PathBuf,
@@ -801,6 +812,8 @@ impl Config {
         }
         let mut trusted_proxies = file.trusted_proxies;
         trusted_proxies.extend(cli.trusted_proxies);
+        let mut trusted_proxy_identities = file.trusted_proxy_identities;
+        trusted_proxy_identities.extend(cli.trusted_proxy_identities);
         let kaisatsu = KaisatsuSection {
             kek_file: cli.kaisatsu_kek_file.or(file.kaisatsu.kek_file),
             import_dir: cli.kaisatsu_import_dir.or(file.kaisatsu.import_dir),
@@ -921,6 +934,7 @@ impl Config {
             admin_listen,
             admin_token_file,
             trusted_proxies,
+            trusted_proxy_identities,
             log_format: cli.log_format.or(file.log_format).unwrap_or_default(),
             profile: cli.profile.or(file.profile).unwrap_or_default(),
             state_dir: cli
@@ -1419,6 +1433,7 @@ scheme = "http"
 admin_listen = "127.0.0.1:2"
 admin_token_file = "/run/jc/admin-token"
 trusted_proxies = ["10.0.0.0/8"]
+trusted_proxy_identities = ["apisix.jc-prod.serviceaccount.identity.linkerd.cluster.local"]
 log_format = "text"
 
 [mounts.daiya]
@@ -1474,6 +1489,10 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         assert_eq!(merged.scheme, "https");
         assert_eq!(merged.log_format, LogFormat::Json);
         assert_eq!(merged.trusted_proxies.len(), 3);
+        assert_eq!(
+            merged.trusted_proxy_identities,
+            vec!["apisix.jc-prod.serviceaccount.identity.linkerd.cluster.local".to_owned()]
+        );
     }
 
     #[test]
