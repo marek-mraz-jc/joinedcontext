@@ -803,10 +803,12 @@ mod tests {
         assert_eq!(total.load(Ordering::SeqCst), 6, "a second round recounted");
         assert_eq!(held.lock().unwrap().counts.get("slug1"), Some(&14));
         // Stale and refused: asked again, the last good total stands.
-        let (refusing, _, refused) =
-            gateway(StatusCode::TOO_MANY_REQUESTS, Duration::ZERO).await;
+        let (refusing, _, refused) = gateway(StatusCode::TOO_MANY_REQUESTS, Duration::ZERO).await;
         count_due(&held, &http, &refusing, &pages, Duration::ZERO).await;
-        assert!(refused.load(Ordering::SeqCst) > 0, "a stale total was not asked again");
+        assert!(
+            refused.load(Ordering::SeqCst) > 0,
+            "a stale total was not asked again"
+        );
         assert_eq!(held.lock().unwrap().counts.get("slug1"), Some(&14));
         // An Endpoint no longer read is forgotten.
         count_due(&held, &http, &url, &pages[..1], COUNT_FRESH).await;

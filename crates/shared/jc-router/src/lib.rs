@@ -670,7 +670,10 @@ mod tests {
                 .unwrap();
             let resp = router.dispatch(req, Some(peer.parse().unwrap())).await;
             let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-            assert_eq!(String::from_utf8(bytes.to_vec()).unwrap(), format!("{peer} "));
+            assert_eq!(
+                String::from_utf8(bytes.to_vec()).unwrap(),
+                format!("{peer} ")
+            );
         }
     }
 

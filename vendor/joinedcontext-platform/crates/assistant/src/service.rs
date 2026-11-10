@@ -389,7 +389,10 @@ mod tests {
     /// The reach is loopback only, as `reach.rs` holds the Portal's: anything else is refused.
     #[test]
     fn a_reach_is_a_loopback_address_and_port() {
-        assert_eq!(reach("127.0.0.1:8080"), Ok("127.0.0.1:8080".parse().unwrap()));
+        assert_eq!(
+            reach("127.0.0.1:8080"),
+            Ok("127.0.0.1:8080".parse().unwrap())
+        );
         assert_eq!(reach("[::1]:8080"), Ok("[::1]:8080".parse().unwrap()));
         for bad in [
             "10.0.0.1:8080",
@@ -447,7 +450,10 @@ mod tests {
             .unwrap();
         assert_eq!(answer.status(), reqwest::StatusCode::NO_CONTENT);
         let head = served.await.unwrap();
-        assert!(head.starts_with("get /api/endpoint/x/ngsi-ld/v1/entities http/1.1"), "{head}");
+        assert!(
+            head.starts_with("get /api/endpoint/x/ngsi-ld/v1/entities http/1.1"),
+            "{head}"
+        );
         assert!(head.contains("\r\nhost: api.reach.invalid\r\n"), "{head}");
     }
 }

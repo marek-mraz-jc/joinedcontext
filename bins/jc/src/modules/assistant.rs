@@ -605,7 +605,12 @@ mod tests {
         let siblings = Siblings::new(&crate::siblings::tests::host_mode_plans(), at);
         let dir = tempfile::tempdir().unwrap();
         let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
-        let filled = vars(&siblings, &setup, Some("127.0.0.1:4100".parse().unwrap()), None);
+        let filled = vars(
+            &siblings,
+            &setup,
+            Some("127.0.0.1:4100".parse().unwrap()),
+            None,
+        );
         assert_eq!(filled["JC_ASSISTANT_REACH"], siblings.listener.to_string());
         assert!(
             filled["JC_ASSISTANT_GATEWAY_URL"].starts_with("https://api.smartcity.test"),
@@ -618,8 +623,7 @@ mod tests {
             jc_core::ClientCredential::Secret(jc_core::Secret::new("not-a-secret".to_owned())),
         )
         .unwrap();
-        let (http, base) =
-            assistant::service::counter(&config, &reqwest::Client::new()).unwrap();
+        let (http, base) = assistant::service::counter(&config, &reqwest::Client::new()).unwrap();
         let served = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut head = vec![0; 4096];
@@ -650,7 +654,11 @@ mod tests {
         let counts = assistant::catalogue::counts(&http, &base.unwrap(), &page)
             .await
             .unwrap();
-        assert_eq!(counts.get("Thing"), Some(&3), "the count never reached jc's listener");
+        assert_eq!(
+            counts.get("Thing"),
+            Some(&3),
+            "the count never reached jc's listener"
+        );
         let head = served.await.unwrap();
         assert!(
             head.starts_with(
