@@ -1651,6 +1651,55 @@ def _psql(host, port, user, db, password_file, sql: str) -> str:
     return r.stdout
 
 
+# The prod Portal's run log, cut from the final dump beside the frozen bundle (<bundle>-runlog):
+# every logged run, and the lines of each pipeline's newest run. Loaded before jc restarts on its
+# default policy, the run queue reads it and keeps each pipeline's clock instead of running the
+# whole backlog at once (run_queue.rs: "until the log has been read").
+RUNLOG_FILES = {"pipeline_runs": "pipeline_runs.jsonl", "pipeline_log": "pipeline_log.newest-run.jsonl.gz"}
+RUNLOG_COLUMNS = {
+    "pipeline_runs": "project, pipeline, run, first_at, last_at, sent, rejected, failed, created, updated, unchanged, stream_hash",
+    "pipeline_log": "project, pipeline, run, at, record_id, step, outcome, message",
+}
+
+
+def runlog_sql(table: str, lines) -> str:
+    """One transaction loading `lines` (JSON objects, one per line) into `table`: a row already
+    held (same run, same line) is skipped, so a second load adds nothing. CSV with control-byte
+    quote and delimiter carries the JSON text untouched (JSON escapes every control byte)."""
+    cols = RUNLOG_COLUMNS[table]
+    dedupe = ("ON CONFLICT DO NOTHING" if table == "pipeline_runs" else
+              "WHERE NOT EXISTS (SELECT 1 FROM public.pipeline_log l WHERE (l.project, l.pipeline, l.run, l.at, l.record_id, l.message)"
+              " = (r.project, r.pipeline, r.run, r.at, r.record_id, r.message))")
+    body = "".join(line if line.endswith("\n") else line + "\n" for line in lines if line.strip())
+    if "\x01" in body or "\x02" in body:
+        raise SystemExit(f"{table}: a control byte in the run log; refusing to load it")
+    return (f"BEGIN;\nCREATE TEMP TABLE runlog_in (j jsonb) ON COMMIT DROP;\n"
+            f"COPY runlog_in FROM STDIN WITH (FORMAT csv, QUOTE E'\\x01', DELIMITER E'\\x02');\n{body}\\.\n"
+            f"INSERT INTO public.{table} ({cols}) SELECT {cols} FROM runlog_in, "
+            f"jsonb_populate_record(NULL::public.{table}, j) r {dedupe};\n"
+            f"SELECT '{table} ' || count(*) FROM runlog_in;\nCOMMIT;\n")
+
+
+def import_runlog(host, port, user, db, password_file, runlog: Path) -> dict:
+    import gzip
+
+    out = {}
+    for table, name in RUNLOG_FILES.items():
+        f = runlog / name
+        opener = gzip.open if name.endswith(".gz") else open
+        with opener(f, "rt", encoding="utf-8") as fh:
+            sql = runlog_sql(table, fh)
+        before = int(_psql(host, port, user, db, password_file, f"SELECT count(*) FROM public.{table}").strip())
+        _psql(host, port, user, db, password_file, sql)
+        after = int(_psql(host, port, user, db, password_file, f"SELECT count(*) FROM public.{table}").strip())
+        out[table] = {"file": sum(1 for _ in opener(f, "rt", encoding="utf-8")), "added": after - before}
+    return out
+
+
+def cmd_import_runlog(a):
+    print(json.dumps(import_runlog(a.host, a.port, a.user, a.db, a.password_file, Path(a.runlog))))
+
+
 def old_history(host, port, user, db, password_file, cutoff: dt.datetime) -> int:
     """History rows older than `cutoff` in the rehearsal's Antares database."""
     out = _psql(host, port, user, db, password_file, old_history_sql(cutoff))
@@ -2190,6 +2239,10 @@ def main(argv=None):
     s.add_argument("--user", default="antares"); s.add_argument("--db", default="antares")
     s.add_argument("--password-file", required=True); s.add_argument("--now")
     s.add_argument("--every", type=int, default=0, help="repeat every N seconds (0: once)")
+    s = sub.add_parser("import-runlog"); s.add_argument("--runlog", required=True)
+    s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", required=True)
+    s.add_argument("--user", default="portal"); s.add_argument("--db", default="portal")
+    s.add_argument("--password-file", required=True)
     s = sub.add_parser("smoke"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     s.add_argument("--export", required=True); s.add_argument("--report", required=True); s.add_argument("--realms")
     s.add_argument("--pg-port"); s.add_argument("--antares-password-file")
@@ -2204,7 +2257,7 @@ def main(argv=None):
     s = sub.add_parser("policy-check"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     a = p.parse_args(argv)
     return {"provisioning": cmd_provisioning, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import, "aliases": cmd_aliases, "hub-sources": cmd_hub_sources,
-            "retain": cmd_retain, "smoke": cmd_smoke}[a.cmd](a) or 0
+            "retain": cmd_retain, "smoke": cmd_smoke, "import-runlog": cmd_import_runlog}[a.cmd](a) or 0
 
 
 if __name__ == "__main__":

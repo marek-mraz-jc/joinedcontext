@@ -3,7 +3,8 @@
 #   1. up.sh with the broker on allow-all, jc on a loopback bind only (up.sh refuses any other);
 #   2. rehearsal.py import (subject-less writes with the broker's admin bearer token); a short or
 #      refused import stops jc and fails the script;
-#   3. up.sh again on jc's default policy;
+#   3. the prod run log beside the bundle into the Portal's tables (when <export>-runlog exists);
+#      up.sh again on jc's default policy;
 #   4. rehearsal.py policy-check: an anonymous write must answer 401 and the engine must be
 #      joinedcontext, or jc is stopped and the script fails.
 set -euo pipefail
@@ -21,6 +22,13 @@ if ! python3 -I "$here/rehearsal.py" import --export "$export_dir" --base "http:
   kill "$(cat "$home/jc.pid")" 2>/dev/null || true
   echo "$env_name: import FAILED ($home/import-report.json); jc on allow-all stopped" >&2
   exit 1
+fi
+# The prod Portal's run log beside the bundle (<export>-runlog, or REHEARSAL_RUNLOG), loaded before
+# jc restarts so the run queue keeps each pipeline's clock instead of running the backlog at once.
+runlog=${REHEARSAL_RUNLOG:-${export_dir%/}-runlog}
+if [ -d "$runlog" ]; then
+  python3 -I "$here/rehearsal.py" import-runlog --runlog "$runlog" --port "$pg_port" \
+    --password-file "$home/secrets/portal-pw" > "$home/runlog-report.json"
 fi
 "$here/up.sh" "$env_name" "$port" "$pg_port"
 # Wait until the broker answers at all (no credential needed for that).

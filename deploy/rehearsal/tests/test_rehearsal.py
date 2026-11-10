@@ -601,6 +601,53 @@ def test_retain_keeps_a_kpis_whole_history_in_real_postgres(tmp_path):
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 
+@pytest.mark.skipif(subprocess.run(["docker", "image", "inspect", PG_IMAGE], capture_output=True).returncode != 0,
+                    reason=f"no docker or no {PG_IMAGE} on this host")
+def test_the_prod_run_log_loads_into_the_portals_own_tables_once(tmp_path):
+    """import-runlog against the Portal's migrations in a real PostgreSQL: every run and line goes
+    in, a JSON text with quotes, backslashes and a newline arrives unchanged, a second load adds
+    nothing, and a control byte refuses the file."""
+    import gzip
+    name, port = "rh-pg-runlog-test", 55448
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+    subprocess.run(["docker", "run", "-d", "--name", name, "-p", f"127.0.0.1:{port}:5432",
+                    "-e", "POSTGRES_PASSWORD=runlog-test", "-e", "POSTGRES_USER=antares", PG_IMAGE],
+                   check=True, capture_output=True)
+    pw = tmp_path / "pw"
+    pw.write_text("runlog-test")
+    migrations = HERE.parent.parent / "crates" / "portal" / "migrations"
+    try:
+        for _ in range(60):
+            if rh_psql(port, pw, "SELECT 1").returncode == 0:
+                break
+            time.sleep(1)
+        for m in ("0020_pipeline_outcomes.sql", "0029_run_changes.sql", "0050_run_stream_hash.sql"):
+            assert rh_psql(port, pw, (migrations / m).read_text()).returncode == 0, m
+        runlog = tmp_path / "runlog"
+        runlog.mkdir()
+        runs = [{"project": "helsinki", "pipeline": "vision-counts", "run": f"2026-10-28T10:2{i}Z",
+                 "first_at": "2026-10-28T10:24:23Z", "last_at": f"2026-10-28T10:2{i}:52Z", "sent": 1024,
+                 "rejected": 0, "failed": 0, "created": None, "updated": None, "unchanged": None,
+                 "stream_hash": None} for i in range(3)]
+        (runlog / "pipeline_runs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in runs))
+        tricky = 'a "quoted" \\ path\nsecond line'
+        lines = [{"id": 7, "project": "helsinki", "pipeline": "vision-counts", "run": "2026-10-28T10:22Z",
+                  "at": "2026-10-28T10:24:52Z", "record_id": "urn:ngsi-ld:X:1", "step": None,
+                  "outcome": "sent", "message": tricky}]
+        with gzip.open(runlog / "pipeline_log.newest-run.jsonl.gz", "wt") as fh:
+            fh.write("".join(json.dumps(r) + "\n" for r in lines))
+        load = lambda: rh.import_runlog("127.0.0.1", port, "antares", "antares", str(pw), runlog)  # noqa: E731
+        assert load() == {"pipeline_runs": {"file": 3, "added": 3}, "pipeline_log": {"file": 1, "added": 1}}
+        assert load() == {"pipeline_runs": {"file": 3, "added": 0}, "pipeline_log": {"file": 1, "added": 0}}
+        got = rh_psql(port, pw, "SELECT message FROM pipeline_log").stdout
+        assert got.rstrip("\n") == tricky
+        assert rh_psql(port, pw, "SELECT max(sent) FROM pipeline_runs").stdout.strip() == "1024"
+        with pytest.raises(SystemExit):
+            rh.runlog_sql("pipeline_runs", ['{"a": "x"}\x01'])
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+
 def rh_psql(port, pw, sql):
     env = dict(os.environ, PGPASSWORD=pw.read_text())
     return subprocess.run(["psql", "-AXt", "-v", "ON_ERROR_STOP=1", "-h", "127.0.0.1", "-p", str(port), "-U", "antares",
