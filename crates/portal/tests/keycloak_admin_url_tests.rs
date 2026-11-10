@@ -75,8 +75,13 @@ async fn asked(server: &MockServer) -> Vec<String> {
         .collect()
 }
 
+/// `AppState::from_config` installs the process-wide reach table (`JC_PORTAL_REACH`), so a test
+/// that starts a Portal holds this while it runs: another test's start would empty the table.
+static ONE_PORTAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Reads one person through the Portal's admin client, as the People page does.
 async fn read_one_person(config: Config) {
+    let _one = ONE_PORTAL.lock().await;
     let state = AppState::from_config(config).await.expect("discovery");
     let people = state.people.as_ref().expect("an admin client");
     let user = people
@@ -190,6 +195,7 @@ async fn the_portal_clients_own_token_requests_go_to_the_back_channel_through_re
         _ => None,
     })
     .expect("config");
+    let _one = ONE_PORTAL.lock().await;
     // The Portal's OAuth parser wants a token type, which `realm()`'s answer leaves out.
     Mock::given(method("POST"))
         .and(path(format!("{REALM}/protocol/openid-connect/token")))
