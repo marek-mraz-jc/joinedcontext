@@ -81,14 +81,17 @@ pub(crate) fn files_of(raw: Option<&str>) -> usize {
         .unwrap_or(2)
 }
 
-/// The bytes one file may hold unless `ANTARES_EXPORT_FILE_BYTES` names another: the largest
-/// collection file of the frozen prod export, times 1.5, rounded up (jc-ogc-stream). A file is
-/// sent as it is written, so this bounds the download, not memory; the answer ceiling
-/// (`MAX_ANSWER_BYTES`) stays the bound of every other answer.
-pub(crate) const FILE_BYTES: usize = 1 << 30;
+/// The bytes one file may hold unless `ANTARES_EXPORT_FILE_BYTES` names another (jc-ogc-stream):
+/// the largest collection of the frozen prod export (praha-mesto Garden, 255,283 rows, at most
+/// 192 MiB of CSV) as a ZIP counting its CSV and its Parquet unpacked (about 290 MiB), times 1.5,
+/// rounded up to 512 MiB. A file is sent as it is written, so this bounds the download, not
+/// memory; the answer ceiling (`MAX_ANSWER_BYTES`) stays the bound of every other answer.
+pub(crate) const FILE_BYTES: usize = 512 << 20;
 
-/// The seconds one file may take to write unless `ANTARES_EXPORT_FILE_SECONDS` names another.
-pub(crate) const FILE_SECONDS: u64 = 300;
+/// The seconds one file may take to write unless `ANTARES_EXPORT_FILE_SECONDS` names another:
+/// that ZIP reads Garden twice at about 88 ms per 1,000 rows (jc-ogc-keyset), about 45 s, times
+/// 1.5 with room for a loaded host.
+pub(crate) const FILE_SECONDS: u64 = 120;
 
 /// The bytes a file may hold: `raw` when it is 1 MiB to 4 GiB less one byte (a ZIP member
 /// past 4 GiB needs ZIP64), else [`FILE_BYTES`].

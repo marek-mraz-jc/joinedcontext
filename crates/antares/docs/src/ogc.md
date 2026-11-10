@@ -206,17 +206,29 @@ is `400`; without it every collection but the `{type}-history` ones of
 section 7, which join only when named), `bbox` and `datetime`, applied to
 every collection; any other
 parameter is `400`. The provenance names the view, the collections, the
-query, the row count, the time of export and the broker version. The
-answer ceiling holds for the whole file: past it, `413`. Every GeoJSON
+query, the row count, the time of export and the broker version. Every GeoJSON
 page of `/items` carries an `alternate` link per file type the build
 writes; `/q/health` lists them under `encodings` and the `/collections`
 downloads under `bundles`.
 
-A file is held whole in memory until it is sent, so the surface writes at
-most `ANTARES_EXPORT_FILES` files at once (default 2,
-[Configuration](configuration.md)), Parquet, CSV and ZIP together.
+A file is sent as it is written: each page of up to 1,000 Features is
+read through the view (its Tenant and Policy narrowing every page),
+written and sent before the next is read, so the first bytes leave after
+the first page and the broker holds one page, never the file. A Parquet
+writes a row group per page and its footer last; a ZIP writes each member
+with a data descriptor, and reads a collection once for its CSV and once
+for its Parquet. A file may hold `ANTARES_EXPORT_FILE_BYTES` (default
+512 MiB) and take `ANTARES_EXPORT_FILE_SECONDS` (default 120): past either
+it is `413` or `503` before its first byte, and cut after it, its transfer
+ended broken (a CSV ends with a `#` row naming why), never sent as a
+whole file. The answer ceiling bounds each page it reads.
+
+The surface writes at most `ANTARES_EXPORT_FILES` files at once (default
+2, [Configuration](configuration.md)), Parquet, CSV and ZIP together; a
+file holds its place until its last byte is sent or its client leaves.
 One more is `503` with `Retry-After: 6`, never queued; `/q/health` shows
-the cap as `limits.exportFiles`.
+the caps as `limits.exportFiles`, `limits.fileBytes` and
+`limits.fileSeconds`.
 
 ## 3. Schemas and references
 
