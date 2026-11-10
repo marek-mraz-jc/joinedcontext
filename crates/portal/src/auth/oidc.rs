@@ -163,6 +163,10 @@ pub struct OidcClient {
     client: PortalClient,
     http: reqwest::Client,
     token_url: Url,
+    /// The issuer's `host[:port]`, sent as `Host` when the back channel names another one (slug
+    /// mode: `127.0.0.1:{port}/id` for `localhost:{port}/id`): kaisatsu stamps `iss` from the
+    /// request's host, and the ID token is checked against the public issuer.
+    token_host: Option<String>,
     client_id: String,
     redirect_uri: String,
     auth: ClientAuth,
@@ -218,6 +222,15 @@ fn http_client(
         .map_err(|e| OidcError::HttpClient(e.to_string()))
 }
 
+/// `host[:port]` of `url`, the port only when it is not the scheme's default.
+fn authority(url: &Url) -> String {
+    let host = url.host_str().unwrap_or_default();
+    match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    }
+}
+
 /// `endpoint` on the back channel (`OidcConfig::backchannel`, `JC_KEYCLOAK_ADMIN_URL`) when it
 /// lives under the issuer, as Keycloak's and kaisatsu's do; any other endpoint as published.
 /// On jc-prod the public token endpoint went through public DNS and the edge, and about 4 of
@@ -259,6 +272,8 @@ impl OidcClient {
                 OidcError::Discovery("the realm publishes no token endpoint".into())
             })??;
 
+        let token_host = Some(authority(&config.issuer)).filter(|a| *a != authority(&token_url));
+
         let redirect = RedirectUrl::new(redirect_uri.to_string())
             .map_err(|e| OidcError::Url(e.to_string()))?;
         // No secret: the ID token verifier then accepts the realm's signing keys alone, never an
@@ -274,6 +289,7 @@ impl OidcClient {
             client,
             http,
             token_url,
+            token_host,
             client_id: config.client_id.clone(),
             redirect_uri: redirect_uri.to_string(),
             auth: config.auth.clone(),
@@ -319,9 +335,11 @@ impl OidcClient {
         grant: &[(&'static str, &str)],
     ) -> Result<openidconnect::core::CoreTokenResponse, TokenRefusal> {
         let form = self.auth.form(&self.client_id, grant).await?;
-        let response = self
-            .http
-            .post(self.token_url.clone())
+        let mut request = self.http.post(self.token_url.clone());
+        if let Some(host) = &self.token_host {
+            request = request.header(reqwest::header::HOST, host);
+        }
+        let response = request
             .header(reqwest::header::ACCEPT, "application/json")
             .form(&form)
             .send()

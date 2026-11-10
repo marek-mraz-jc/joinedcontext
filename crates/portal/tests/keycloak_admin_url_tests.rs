@@ -180,6 +180,7 @@ async fn the_portal_clients_own_token_requests_go_to_the_back_channel_through_re
     let public = realm().await;
     let service = realm().await;
     let issuer = format!("{}{REALM}", public.uri());
+    let public_authority = public.address().to_string();
     let port = service.address().port();
     let reached = "kaisatsu.reach.invalid";
     let admin = format!("http://{reached}:{port}");
@@ -219,10 +220,13 @@ async fn the_portal_clients_own_token_requests_go_to_the_back_channel_through_re
         service[0].url.path(),
         "/realms/hel/protocol/openid-connect/token"
     );
+    // kaisatsu stamps `iss` from the request's host, and the ID token is checked against the
+    // public issuer: a back channel on another host still names the issuer's (slug mode,
+    // `127.0.0.1:{port}/id` for `localhost:{port}/id`; in host mode the two are the same).
     assert_eq!(
         service[0].headers.get("host").and_then(|h| h.to_str().ok()),
-        Some(format!("{reached}:{port}").as_str()),
-        "the request names kaisatsu's host, as jc's router dispatches on it"
+        Some(public_authority.as_str()),
+        "the request names the issuer's host"
     );
     assert_eq!(token.expect("a token"), "t");
 }
