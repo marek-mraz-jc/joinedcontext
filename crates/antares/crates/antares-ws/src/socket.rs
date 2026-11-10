@@ -648,7 +648,9 @@ fn linger(hub: Arc<Hub>, conn: Arc<Conn>, generation: u64) {
         return;
     }
     let grace = hub.limits.resume_grace;
-    tokio::spawn(async move {
+    // In the session's span, as its other lines: the deletes carry the upgrade request's id (a
+    // host's quiet span, its health probe's, stays quiet).
+    tokio::spawn(tracing::Instrument::in_current_span(async move {
         tokio::time::sleep(grace).await;
         // a resume in the meantime attached a later generation and took it
         if !conn.detached_since(generation) {
@@ -658,7 +660,7 @@ fn linger(hub: Arc<Hub>, conn: Arc<Conn>, generation: u64) {
             let _deleted = unsubscribe(&conn, &sub).await;
         }
         hub.close(&conn.id);
-    });
+    }));
 }
 
 #[cfg(test)]
