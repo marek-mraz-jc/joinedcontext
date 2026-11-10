@@ -17,7 +17,7 @@ pub mod unit_test;
 
 pub use api::{build_router, Caller, ServerAuthConfig, ServerState};
 pub use cron::CronSchedule;
-pub use manager::{ResourceError, StreamEntryStatus, StreamManager, StreamPersistence};
+pub use manager::{Admission, ResourceError, StreamEntryStatus, StreamManager, StreamPersistence};
 pub use metrics_config::load_metrics_config;
 pub use oidc::OidcAuth;
 pub use org_vars::OrgVarsDir;

@@ -1980,6 +1980,26 @@ async fn a_pipeline_approved_in_the_portal_writes_through_ekiben_inside_jc() {
         "{}",
         jc.tail()
     );
+
+    // ekiben names the stream's calls to jc's listener, and the broker's line for a write
+    // carries that id (the logs suite's rid.flow.ekiben-antares). The stream's report sinks to
+    // the Portal name theirs too, so any of the named ids will do.
+    eventually("the broker logs a stream's id", &jc, 60, || async {
+        let log = jc.log.lock().unwrap();
+        let ids: Vec<&str> = log
+            .iter()
+            .filter(|l| l.contains("http_client: jc's listener answered"))
+            .filter_map(|l| l.split("request_id=").nth(1)?.split_whitespace().next())
+            .collect();
+        ids.iter()
+            .any(|id| {
+                let span = format!("request{{module=\"antares\" request_id={id}}}");
+                log.iter().any(|l| l.contains(&span))
+            })
+            .then_some(())
+            .ok_or(format!("named ids {ids:?}, none on a broker line"))
+    })
+    .await;
 }
 
 /// A redirect only the deployment's export holds: jc's own realm file never writes it, so it

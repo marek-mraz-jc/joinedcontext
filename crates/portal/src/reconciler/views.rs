@@ -1805,12 +1805,14 @@ impl ViewSync {
         let base = self
             .address(&broker)
             .ok_or_else(|| format!("the space's broker '{broker}' has no address"))?;
-        let request = self
-            .http
-            .post(format!("{base}/q/views/{id}/preview?{query}"))
-            .bearer_auth(token)
-            .json(view)
-            .headers(headers.clone());
+        // The person's request id: the broker's line for the preview (a refusal too) carries it.
+        let request = crate::request_id::forward(
+            self.http
+                .post(format!("{base}/q/views/{id}/preview?{query}")),
+        )
+        .bearer_auth(token)
+        .json(view)
+        .headers(headers.clone());
         let answer = request
             .send()
             .await
@@ -2997,8 +2999,8 @@ mod tests {
         assert_eq!(refused.beyond(&before).refused.len(), 1);
     }
 
-    /// T-3813: the page is asked with the admin token, the candidate view as the body and the
-    /// subject headers as given; no admin token, no question.
+    /// T-3813: the page is asked with the admin token, the candidate view as the body, the
+    /// subject headers as given and the person's request id; no admin token, no question.
     #[tokio::test]
     async fn a_preview_asks_the_broker_with_the_view_and_the_subject() {
         let broker = MockServer::start().await;
@@ -3008,6 +3010,7 @@ mod tests {
             .and(wiremock::matchers::query_param("type", "Car"))
             .and(header("authorization", format!("Bearer {TOKEN}")))
             .and(header("x-jc-subject", "jana%40hel.fi"))
+            .and(header("x-request-id", "ui-preview-0001"))
             .and(body_json(&view))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(json!({"count": 1, "entities": []})),
@@ -3016,10 +3019,14 @@ mod tests {
             .mount(&broker)
             .await;
         let sync = ViewSync::new(broker.uri(), token_file());
-        let headers = [("x-jc-subject", "jana%40hel.fi".to_owned())];
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("x-jc-subject", "jana%40hel.fi".parse().expect("a header value"));
         assert_eq!(
-            sync.preview(SLUG, &view, "type=Car&limit=50&offset=0", &headers)
-                .await,
+            crate::request_id::answering(
+                "ui-preview-0001",
+                sync.preview(SLUG, &view, "type=Car&limit=50&offset=0", &headers)
+            )
+            .await,
             Ok((200, json!({"count": 1, "entities": []})))
         );
         let tokenless = ViewSync::new(broker.uri(), "/nonexistent/token");

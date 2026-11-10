@@ -42,6 +42,12 @@ pub fn forward(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     }
 }
 
+/// Runs `f` as if it answered the request `id` (a test's stand-in for [`middleware`]).
+#[cfg(test)]
+pub async fn answering<F: std::future::Future>(id: &str, f: F) -> F::Output {
+    CURRENT.scope(id.to_owned(), f).await
+}
+
 pub async fn middleware(request: Request, next: Next) -> Response {
     let id = request
         .headers()
