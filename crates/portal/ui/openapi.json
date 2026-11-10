@@ -20451,7 +20451,7 @@
     },
     "/api/v1/projects/{project}/ops/jc_data_write": {
       "post": {
-        "description": "Creates, upserts, merges or deletes up to 100 entities through one Endpoint of the project, as you; its Policy decides each",
+        "description": "Creates, upserts, merges or deletes up to 100 entities through one Endpoint, as you; its Policy decides each",
         "operationId": "jc_data_write",
         "parameters": [
           {
@@ -20475,7 +20475,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "action": {
-                    "description": "create: new entities; upsert: create or replace attributes; merge: patch existing ones; delete: ids",
+                    "description": "create: new entities; upsert: create or replace attributes; merge: patch existing ones",
                     "enum": [
                       "create",
                       "upsert",
@@ -20485,12 +20485,12 @@
                     "type": "string"
                   },
                   "endpoint": {
-                    "description": "Endpoint name of the project, e.g. bike-stations",
+                    "description": "Endpoint name, e.g. bike-stations",
                     "maxLength": 253,
                     "type": "string"
                   },
                   "entities": {
-                    "description": "create, upsert, merge: NGSI-LD entities with id and type, e.g. {id: urn:ngsi-ld:BikeHireDockingStation:s1, type: BikeHireDockingStation, name: {type: Property, value: Main}}",
+                    "description": "create, upsert, merge: NGSI-LD entities, e.g. {id: urn:ngsi-ld:Bike:s1, type: Bike, name: {type: Property, value: Main}}",
                     "items": {
                       "maxProperties": 512,
                       "type": "object"
@@ -20506,6 +20506,11 @@
                     },
                     "maxItems": 100,
                     "type": "array"
+                  },
+                  "reason": {
+                    "description": "delete: why, in the person's words",
+                    "maxLength": 1000,
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -20525,14 +20530,14 @@
                 "schema": {
                   "properties": {
                     "errors": {
-                      "description": "Entities the Endpoint refused, each with its id and why",
+                      "description": "Refused entities, each with its id and why",
                       "items": {
                         "type": "object"
                       },
                       "type": "array"
                     },
                     "written": {
-                      "description": "Ids the Endpoint took",
+                      "description": "Ids written",
                       "items": {
                         "type": "string"
                       },

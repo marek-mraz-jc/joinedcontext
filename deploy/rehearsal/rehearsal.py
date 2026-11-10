@@ -61,6 +61,9 @@ STATE_CLIENT_SECRETS = {"portal-api": "portal-client-secret", PORTAL_ADMIN_CLIEN
 # join it; an imported realm without it gets it, as it gets rehearsal-tester.
 ADMIN_GROUP = "platform-admins"
 IMPORT_WORKERS = 4  # parallel batch writes into the local broker
+# One batch write may wait this long: on a host at load 50+ a 500-entity upsert took over the
+# client's 60 s (gate 2026-11-10T170300Z-gc, call 600 of 3,757), and one timeout ends the import.
+IMPORT_TIMEOUT = 300
 MAX_REPORTED = 200  # refused calls kept in the report; the rest are only counted
 
 
@@ -151,8 +154,8 @@ class Http:
                 self._store(e.headers)
             return e.code, dict(e.headers or {}), e.read() or b""
 
-    def json(self, method, path, body=None, headers=None, form=None):
-        status, hdrs, raw = self.call(method, path, body, headers, form)
+    def json(self, method, path, body=None, headers=None, form=None, timeout=60):
+        status, hdrs, raw = self.call(method, path, body, headers, form, timeout)
         try:
             value = json.loads(raw) if raw else None
         except ValueError:
@@ -454,17 +457,31 @@ def state_client_secrets(realm: dict) -> list[tuple[str, str]]:
     return sorted(out)
 
 
+def pipeline_own_client(c: dict) -> bool:
+    """Whether `c` is a Pipeline's own client `<project>-pl-<pipeline>` as the Portal made it on
+    the cluster (PL-19, T-1508): its account attribute `<project>/pl-<pipeline>` names it."""
+    project, _, name = str((c.get("attributes") or {}).get("joinedcontext.serviceaccount", "")).partition("/")
+    return name.startswith("pl-") and c.get("clientId") == f"{project}-{name}"
+
+
 def jc_clients_by_secret(realm: dict) -> tuple[dict, list[str]]:
-    """The realm with each client of STATE_CLIENT_SECRETS signing in by its secret: prod and dev
-    give them `federated-jwt` (Keycloak trusts the Kubernetes service account token of the pod),
-    and jc, one process with no Kubernetes issuer, signs in as them with the secret of its state
-    file. Every other client keeps its authenticator. Answers the realm and the clients changed."""
+    """The realm with each client of STATE_CLIENT_SECRETS, and each Pipeline's own client
+    (`pipeline_own_client`), signing in by its secret: prod and dev give them `federated-jwt`
+    (Keycloak trusts the Kubernetes service account token of the pod), and jc, one process with
+    no Kubernetes issuer, signs in as them with the secret of its state file or, for a pipeline,
+    of its file in ekiben's client secrets dir (`pipeline_clients`). Name and audience mappers
+    stay: a stream's token opens the Endpoints its pipeline wrote on prod and no other. A
+    pipeline's client without a secret variable gets `$(env:KC_<CLIENT>_SECRET)`. Every other
+    client keeps its authenticator. Answers the realm and the clients changed."""
     out, changed = dict(realm), []
     clients = []
     for c in realm.get("clients", []):
-        if c.get("clientId") in STATE_CLIENT_SECRETS and c.get("clientAuthenticatorType") == "federated-jwt":
+        own = pipeline_own_client(c)
+        if (c.get("clientId") in STATE_CLIENT_SECRETS or own) and c.get("clientAuthenticatorType") == "federated-jwt":
             attrs = {k: v for k, v in (c.get("attributes") or {}).items() if not k.startswith("jwt.credential.")}
             c = {**c, "clientAuthenticatorType": "client-secret", "attributes": attrs}
+            if own and not SECRET_VAR.fullmatch(str(c.get("secret", "")).strip()):
+                c["secret"] = f"$(env:KC_{re.sub(r'[^A-Z0-9]', '_', c['clientId'].upper())}_SECRET)"
             changed.append(c["clientId"])
         clients.append(c)
     if "clients" in realm:
@@ -537,6 +554,8 @@ def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
     https://portal.smartcity.joinedcontext.com) or its domain's (https://smartcity.joinedcontext.com,
     where the Apps live) gets a twin on the rehearsal's `base` beside it, in redirectUris, webOrigins
     and post.logout.redirect.uris: the rehearsal answers on loopback, and the source URL stays.
+    An App host `https://<app>.apps.<domain>` gets `<app>.apps.<base host>` on the base's scheme and
+    port, under localhost when the base is an IP literal (jc mounts `*.apps.localhost:<port>` there).
     Answers the realm and how many URLs were added."""
     root = next((c.get("rootUrl") for c in realm.get("clients", []) if c.get("clientId") == "portal-api"), None)
     if not root:
@@ -546,13 +565,29 @@ def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
     if u.netloc.startswith("portal."):
         origins.add(f"{u.scheme}://{u.netloc[len('portal.'):]}")
     base = base.rstrip("/")
+    b = urllib.parse.urlsplit(base)
+    try:
+        ipaddress.ip_address(b.hostname or "")
+        app_parent = "localhost"
+    except ValueError:
+        app_parent = b.hostname
+    app_parent += f":{b.port}" if b.port else ""
+    domain = u.netloc.removeprefix("portal.")
+    app_host = re.compile(rf"{re.escape(u.scheme)}://([a-z0-9-]+)\.apps\.{re.escape(domain)}(?=/|$)")
+
+    def twin(v):
+        o = next((o for o in origins if v == o or v.startswith(o + "/")), None)
+        if o:
+            return base + v[len(o):]
+        m = app_host.match(v)
+        return f"{b.scheme}://{m[1]}.apps.{app_parent}{v[m.end():]}" if m else None
 
     def twins(values):
         out = list(values)
         for v in values:
-            o = next((o for o in origins if v == o or v.startswith(o + "/")), None)
-            if o and base + v[len(o):] not in out:
-                out.append(base + v[len(o):])
+            t = twin(v)
+            if t and t not in out:
+                out.append(t)
         return out
 
     added, clients = 0, []
@@ -592,13 +627,16 @@ def to_file_refs(realm: dict) -> dict:
 
 
 def pipeline_clients(realm: dict) -> list[tuple[str, str]]:
-    """(clientId, NAME) of each `<project>-pipelines` client whose secret is `$(env:NAME)`: jc's
+    """(clientId, NAME) of each `<project>-pipelines` client, and each Pipeline's own client
+    `<project>-pl-<pipeline>` (`pipeline_own_client`), whose secret is `$(env:NAME)`: jc's
     `[ekiben] client_secrets_dir` reads `<project>-pipelines` files for the runner's
-    `JC_CLIENT_SECRET_<PROJECT>`, as dev's runner Deployment takes them from the realm's Secret."""
+    `JC_CLIENT_SECRET_<PROJECT>`, as dev's runner Deployment takes them from the realm's Secret,
+    and `<project>-pl-<pipeline>` files for `JC_PIPELINE_SECRET_<CLIENT>`, the secret a stream
+    rendered with `JC_PORTAL_PIPELINE_IDENTITY=pipeline-secret` signs in with."""
     out = []
     for c in realm.get("clients", []):
         cid, m = c.get("clientId", ""), SECRET_VAR.fullmatch(str(c.get("secret", "")).strip())
-        if cid.endswith("-pipelines") and m:
+        if (cid.endswith("-pipelines") or pipeline_own_client(c)) and m:
             out.append((cid, m[1]))
     return sorted(out)
 
@@ -1312,7 +1350,7 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, adm
     def upsert(job):
         tenant, batch = job
         st, body = h.json("POST", f"{base}/entityOperations/upsert?options=update", body=batch,
-                          headers={"NGSILD-Tenant": tenant, **auth})
+                          headers={"NGSILD-Tenant": tenant, **auth}, timeout=IMPORT_TIMEOUT)
         ok = len(batch) if st in (200, 201, 204) else \
             len(body.get("success", [])) if st == 207 and isinstance(body, dict) else 0
         with lock:
@@ -1326,7 +1364,8 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, adm
 
     def temporal(job):
         (tenant, eid), ent = job
-        st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant, **auth})
+        st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant, **auth},
+                          timeout=IMPORT_TIMEOUT)
         if st in (200, 201, 204):
             with lock:
                 out["temporal"] += sum(len(v) for k, v in ent.items() if k not in ("id", "type"))

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createClient, isEndpointPath, ProblemError, ServiceRefusedError } from "../src/sdk/client";
 import type { JcConfig } from "../src/sdk/config";
 import type { JcRequest, JcResponse, Transport } from "../src/sdk/transport";
@@ -193,15 +193,36 @@ describe("DataClient entity operations", () => {
     await expect(client.entities.languages("urn:ngsi-ld:T:1", "name")).rejects.toBeInstanceOf(ProblemError);
   });
 
-  it("remove sends DELETE to entity path", async () => {
+  it("remove sends DELETE to entity path with the person's reason", async () => {
     let deletedPath = "";
+    let reason: string | undefined;
     const transport: Transport = async (req) => {
       deletedPath = req.path;
+      reason = req.reason;
       return { status: 204, body: null };
     };
     const client = createClient(CONFIG, transport);
-    await client.entities.remove("urn:1");
+    await client.entities.remove("urn:1", "  duplicate of urn:2\r\n");
     expect(deletedPath).toBe("/api/endpoint/demo/ngsi-ld/v1/entities/urn%3A1");
+    expect(reason).toBe("duplicate of urn:2");
+  });
+
+  // DM-113: a delete names why in the person's words; the SDK refuses it before any request
+  // rather than let the gateway answer 400, and never cuts a long reason to fit.
+  it("remove throws before the request without a reason, or with a blank or too long one", async () => {
+    const transport = vi.fn<Transport>(async () => ({ status: 204, body: null }));
+    const client = createClient(CONFIG, transport);
+    for (const bad of [undefined, "", "  \n ", "x".repeat(501)]) {
+      const thrown = await client.entities.remove("urn:1", bad as unknown as string).catch((e: unknown) => e);
+      expect(thrown).toBeInstanceOf(ProblemError);
+      expect((thrown as ProblemError).status).toBe(0);
+      expect((thrown as ProblemError).detail).toMatch(/\(reason\)/);
+    }
+    // An old caller passing options second is refused too, not sent without a reason.
+    await expect(client.entities.remove("urn:1", { endpoint: "demo" } as unknown as string)).rejects.toThrow(ProblemError);
+    // 500 characters counted as the gateway counts them, code points once trimmed.
+    await client.entities.remove("urn:1", ` ${"ž".repeat(500)} `);
+    expect(transport).toHaveBeenCalledTimes(1);
   });
 });
 

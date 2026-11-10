@@ -163,6 +163,10 @@ pub struct OidcClient {
     client: PortalClient,
     http: reqwest::Client,
     token_url: Url,
+    /// The issuer's `host[:port]`, sent as `Host` when the back channel names another one (slug
+    /// mode: `127.0.0.1:{port}/id` for `localhost:{port}/id`): kaisatsu stamps `iss` from the
+    /// request's host, and the ID token is checked against the public issuer.
+    token_host: Option<String>,
     client_id: String,
     redirect_uri: String,
     auth: ClientAuth,
@@ -185,39 +189,74 @@ fn source_chain(error: &dyn std::error::Error) -> String {
     parts.join(": ")
 }
 
+/// The realm's http client on `builder`. No redirects: an authorization server must never bounce
+/// a token request elsewhere.
+fn http_client(
+    builder: reqwest::ClientBuilder,
+    config: &OidcConfig,
+) -> Result<reqwest::Client, OidcError> {
+    let mut builder = builder
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10));
+    // The binary trusts `webpki-roots` and nothing else, so an issuer served by a private
+    // CA needs its root handed over explicitly (JC_OIDC_CA_FILE). Added, never swapped in:
+    // the public roots stay, and certificate verification is untouched.
+    if let Some(pem) = &config.extra_ca_pem {
+        // Whole bundle, not `from_pem`: a private CA is usually a chain and the first block
+        // alone would not verify. Empty is an error rather than "carry on with the public
+        // roots" — rustls drops roots it cannot parse without a word, so a wrong mount would
+        // otherwise fail later as a plain handshake error with nothing pointing at the file.
+        let roots = reqwest::Certificate::from_pem_bundle(pem)
+            .map_err(|e| OidcError::HttpClient(format!("JC_OIDC_CA_FILE: {e}")))?;
+        if roots.is_empty() {
+            return Err(OidcError::HttpClient(
+                "JC_OIDC_CA_FILE: no PEM certificate in the file".to_string(),
+            ));
+        }
+        for root in roots {
+            builder = builder.add_root_certificate(root);
+        }
+    }
+    builder
+        .build()
+        .map_err(|e| OidcError::HttpClient(e.to_string()))
+}
+
+/// `host[:port]` of `url`, the port only when it is not the scheme's default.
+fn authority(url: &Url) -> String {
+    let host = url.host_str().unwrap_or_default();
+    match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    }
+}
+
+/// `endpoint` on the back channel (`OidcConfig::backchannel`, `JC_KEYCLOAK_ADMIN_URL`) when it
+/// lives under the issuer, as Keycloak's and kaisatsu's do; any other endpoint as published.
+/// On jc-prod the public token endpoint went through public DNS and the edge, and about 4 of
+/// 10 first sign-ins ended in "the authorization code could not be exchanged".
+fn backchannel_url(config: &OidcConfig, endpoint: &Url) -> Result<Url, OidcError> {
+    let issuer = config.issuer.as_str().trim_end_matches('/');
+    match endpoint.as_str().strip_prefix(issuer) {
+        Some(rest) if rest.starts_with('/') => {
+            Url::parse(&format!("{}{rest}", config.backchannel()))
+                .map_err(|e| OidcError::Url(e.to_string()))
+        }
+        _ => Ok(endpoint.clone()),
+    }
+}
+
 impl OidcClient {
     pub async fn discover(config: &OidcConfig, redirect_uri: &str) -> Result<Self, OidcError> {
-        // No redirects: an authorization server must never bounce a token request elsewhere.
-        let mut builder = reqwest::ClientBuilder::new()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(10));
-        // The binary trusts `webpki-roots` and nothing else, so an issuer served by a private
-        // CA needs its root handed over explicitly (JC_OIDC_CA_FILE). Added, never swapped in:
-        // the public roots stay, and certificate verification is untouched.
-        if let Some(pem) = &config.extra_ca_pem {
-            // Whole bundle, not `from_pem`: a private CA is usually a chain and the first block
-            // alone would not verify. Empty is an error rather than "carry on with the public
-            // roots" — rustls drops roots it cannot parse without a word, so a wrong mount would
-            // otherwise fail later as a plain handshake error with nothing pointing at the file.
-            let roots = reqwest::Certificate::from_pem_bundle(pem)
-                .map_err(|e| OidcError::HttpClient(format!("JC_OIDC_CA_FILE: {e}")))?;
-            if roots.is_empty() {
-                return Err(OidcError::HttpClient(
-                    "JC_OIDC_CA_FILE: no PEM certificate in the file".to_string(),
-                ));
-            }
-            for root in roots {
-                builder = builder.add_root_certificate(root);
-            }
-        }
-        let http = builder
-            .build()
-            .map_err(|e| OidcError::HttpClient(e.to_string()))?;
+        // Discovery reads the public issuer, as a browser and every token check see it; the
+        // Portal's own token requests use the back channel and its reached hosts.
+        let discovery = http_client(reqwest::ClientBuilder::new(), config)?;
+        let http = http_client(crate::reach::builder(), config)?;
 
         // A trailing slash makes the discovered `issuer` claim mismatch; Keycloak publishes none.
         let issuer = IssuerUrl::new(config.issuer.as_str().trim_end_matches('/').to_string())
             .map_err(|e| OidcError::Url(e.to_string()))?;
-        let metadata = PortalProviderMetadata::discover_async(issuer, &http)
+        let metadata = PortalProviderMetadata::discover_async(issuer, &discovery)
             .await
             .map_err(|e| OidcError::Discovery(source_chain(&e)))?;
         let end_session_endpoint = metadata
@@ -228,8 +267,12 @@ impl OidcClient {
         let authorization_endpoint = metadata.authorization_endpoint().url().clone();
         let token_url = metadata
             .token_endpoint()
-            .map(|endpoint| endpoint.url().clone())
-            .ok_or_else(|| OidcError::Discovery("the realm publishes no token endpoint".into()))?;
+            .map(|endpoint| backchannel_url(config, endpoint.url()))
+            .ok_or_else(|| {
+                OidcError::Discovery("the realm publishes no token endpoint".into())
+            })??;
+
+        let token_host = Some(authority(&config.issuer)).filter(|a| *a != authority(&token_url));
 
         let redirect = RedirectUrl::new(redirect_uri.to_string())
             .map_err(|e| OidcError::Url(e.to_string()))?;
@@ -246,6 +289,7 @@ impl OidcClient {
             client,
             http,
             token_url,
+            token_host,
             client_id: config.client_id.clone(),
             redirect_uri: redirect_uri.to_string(),
             auth: config.auth.clone(),
@@ -291,9 +335,11 @@ impl OidcClient {
         grant: &[(&'static str, &str)],
     ) -> Result<openidconnect::core::CoreTokenResponse, TokenRefusal> {
         let form = self.auth.form(&self.client_id, grant).await?;
-        let response = self
-            .http
-            .post(self.token_url.clone())
+        let mut request = self.http.post(self.token_url.clone());
+        if let Some(host) = &self.token_host {
+            request = request.header(reqwest::header::HOST, host);
+        }
+        let response = request
             .header(reqwest::header::ACCEPT, "application/json")
             .form(&form)
             .send()
@@ -794,7 +840,9 @@ pub async fn callback(
         ])
         .await
         .map_err(|error| {
-            tracing::warn!(%error, "code exchange failed");
+            // The realm's text ("Code already used", "PKCE verification failed") names which
+            // check refused the code and holds no secret.
+            tracing::warn!(%error, reason = %error.description, "code exchange failed");
             ApiError::BadRequest("the authorization code could not be exchanged".into())
         })?;
 

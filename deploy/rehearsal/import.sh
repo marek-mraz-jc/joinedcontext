@@ -7,6 +7,8 @@
 #      up.sh again on jc's default policy;
 #   4. rehearsal.py policy-check: an anonymous write must answer 401 and the engine must be
 #      joinedcontext, or jc is stopped and the script fails.
+# REHEARSAL_HOLD_PIPELINES=1 holds the pipelines from jc's first start on (up.sh jc_role): the rows
+# then are the export's alone until a plain up.sh starts them.
 set -euo pipefail
 env_name=${1:?env}; port=${2:?port}; pg_port=${3:?postgres port}; export_dir=${4:?export dir}
 here=$(cd "$(dirname "$0")" && pwd)

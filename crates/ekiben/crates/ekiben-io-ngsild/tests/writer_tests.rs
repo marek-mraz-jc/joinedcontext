@@ -348,6 +348,47 @@ async fn the_token_is_refreshed_before_it_expires() {
     assert_eq!(out[0].meta_get_str("jc_refused_write_0"), "[]");
 }
 
+/// On jc-prod a project's pipelines asked the realm again at once after each 429 (1,262 token
+/// requests in 5 min), which kept the edge's shared bucket empty for the Portal's sign-ins. A
+/// 429 is asked once (no second, form-style request) and not again until the backoff is over.
+#[tokio::test]
+async fn a_refused_token_request_is_not_repeated_until_its_backoff_is_over() {
+    let fake = FakeBroker::start().await;
+    fake.with(|s| {
+        s.require_token = true;
+        s.token_status = Some(429);
+    });
+    let (_s, pctx, _stop) = ctx("org-token-429", true);
+    let p = processor(
+        conf(&fake.base(), json!({"oauth2": oauth(&fake), "retries": 0})),
+        &pctx,
+    );
+    for _ in 0..5 {
+        let out = p.process_batch(&pctx, vec![part(entity("urn:a"))]).await;
+        assert!(
+            out.as_ref()
+                .map_or(true, |b| b[0].iter().all(Part::is_errored)),
+            "no write without a token"
+        );
+    }
+    assert_eq!(
+        fake.with(|s| s.token_requests),
+        1,
+        "one request for five writes"
+    );
+    assert!(fake.posts().is_empty());
+
+    fake.with(|s| s.token_status = None);
+    tokio::time::sleep(ekiben_core::TokenBackoff::FIRST + Duration::from_millis(100)).await;
+    let out = run(&p, &pctx, vec![part(entity("urn:a"))]).await;
+    assert_eq!(out[0].meta_get_str("jc_refused_write_0"), "[]");
+    assert_eq!(
+        fake.with(|s| s.token_requests),
+        2,
+        "asked again after the wait"
+    );
+}
+
 #[tokio::test]
 async fn a_401_refreshes_the_token_once() {
     let fake = FakeBroker::start().await;

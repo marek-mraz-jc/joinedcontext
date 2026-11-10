@@ -1253,7 +1253,12 @@ pub async fn launch(
         &report,
     );
     if state.config.pipeline_identity {
-        crate::reconciler::streams::with_pipeline_identity(&mut config, project, pipeline);
+        crate::reconciler::streams::as_pipeline(
+            &mut config,
+            project,
+            pipeline,
+            state.config.pipeline_credential,
+        );
     }
     let stream = delete_stream(&runner, project, pipeline);
     let http = crate::api::pipelines::runner_http(&state.config);
@@ -1289,7 +1294,7 @@ fn reason(cause: Cause, pipeline: &str, run: &str) -> String {
 }
 
 /// The most characters of a reason the gateway takes (DM-113).
-const MAX_REASON: usize = 500;
+pub(crate) const MAX_REASON: usize = 500;
 
 /// `JC-Reason` as the gateway reads it: percent-encoded UTF-8, cut to [`MAX_REASON`] characters,
 /// so a long pipeline or project name never turns the delete into `400 reason-required`.

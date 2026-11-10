@@ -454,7 +454,7 @@ def main(argv=None) -> int:
             if app.kind == "wasm":
                 # On the App's own host, without the Portal's cookies (another origin).
                 bare = Session(a.base_url, a.timeout)
-                host = {"Host": f"{app.name}.apps.{urllib.parse.urlparse(a.base_url).netloc}"}
+                host = {"Host": urllib.parse.urlparse(shots_app_host(a.base_url, app.name)).netloc}
                 call = f"GET {host['Host']}/api/me"
                 if token:
                     st, _, _ = bare.call("GET", "/api/me", headers=host)

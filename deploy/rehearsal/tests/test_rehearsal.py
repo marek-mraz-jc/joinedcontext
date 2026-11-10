@@ -1149,6 +1149,28 @@ def test_a_service_token_jc_holds_in_memory_is_read_from_the_kit_secrets(tmp_pat
     assert rh.read_secret(tmp_path / "state", "antares-admin-token") == "on-disk"
 
 
+def test_held_pipelines_start_every_module_but_ekiben():
+    """The count suites read the import alone (supervisor 2026-11-10): with REHEARSAL_HOLD_PIPELINES=1
+    jc starts without ekiben, so no Portal queue and no restored stream writes a row during or
+    after the import (gate 2026-11-10T131506Z-g6: 108 endpoints rows above the export)."""
+    fn = subprocess.run(["sed", "-n", "/^jc_role()/,/^}/p", str(HERE / "up.sh")], capture_output=True, text=True, check=True).stdout
+    assert fn
+
+    def role(**env):
+        return subprocess.run(["bash", "-c", fn + "jc_role"], env={"PATH": os.environ["PATH"], **env},
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    src = (HERE / "../../bins/jc/src/module.rs").read_text()
+    every = re.search(r"pub const ALL: \[Module; \d+\] = \[(.*?)\];", src, re.DOTALL)[1]
+    names = {"ModelTools": "model-tools"}
+    modules = [names.get(m, m.lower()) for m in re.findall(r"Module::(\w+)", every)]
+    assert role() == "all"
+    assert role(REHEARSAL_HOLD_PIPELINES="1").split(",") == [m for m in modules if m != "ekiben"]
+    assert role(REHEARSAL_HOLD_PIPELINES="0") == "all"
+    assert role(REHEARSAL_HOLD_PIPELINES="1", REHEARSAL_ROLE="kaisatsu,portal") == "kaisatsu,portal"
+    assert 'nohup "$jc_bin" --role "$role"' in (HERE / "up.sh").read_text()
+
+
 def test_every_secret_up_sh_makes_is_long_enough_for_a_jc_token(tmp_path):
     # dataroom refuses a Portal publisher token under 32 printable characters; up.sh's secret()
     # makes every token, so each one it makes has 64.
@@ -1275,6 +1297,37 @@ def test_the_assistants_client_may_ask_the_shared_embedders_scope_and_nothing_el
     assert rh.add_embedder_scope({"clients": [{"clientId": "portal-api"}]})[1] is False
 
 
+def test_each_pipelines_own_client_trades_federated_jwt_for_its_secret_and_keeps_its_audience():
+    k8s = {"jwt.credential.sub": "system:serviceaccount:smartcity-pipeline-identities:pl-bb-park",
+           "jwt.credential.issuer": "kubernetes"}
+    aud = [{"protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "slugA"}}]
+    realm = {"clients": [
+        {"clientId": "bb-pl-park", "clientAuthenticatorType": "federated-jwt", "secret": "$(env:KC_BB_PL_PARK_SECRET)",
+         "attributes": {**k8s, "joinedcontext.serviceaccount": "bb/pl-park"}, "protocolMappers": aud},
+        {"clientId": "bb-pl-nosecret", "clientAuthenticatorType": "federated-jwt",
+         "attributes": {**k8s, "joinedcontext.serviceaccount": "bb/pl-nosecret"}},
+        # A workload client that is no Pipeline's keeps the cluster's token.
+        {"clientId": "bb-cams", "clientAuthenticatorType": "federated-jwt",
+         "attributes": {**k8s, "joinedcontext.serviceaccount": "bb/cams"}},
+        # An account attribute naming another client is not this client's pipeline.
+        {"clientId": "bb-pl-other", "clientAuthenticatorType": "federated-jwt",
+         "attributes": {**k8s, "joinedcontext.serviceaccount": "bb/pl-park"}},
+        {"clientId": "bb-pipelines", "clientAuthenticatorType": "client-secret", "secret": "$(env:KC_BB_PIPELINES_SECRET)"},
+    ]}
+    out, changed = rh.jc_clients_by_secret(realm)
+    by = {c["clientId"]: c for c in out["clients"]}
+    assert changed == ["bb-pl-nosecret", "bb-pl-park"]
+    park = by["bb-pl-park"]
+    assert park["clientAuthenticatorType"] == "client-secret"
+    assert park["attributes"] == {"joinedcontext.serviceaccount": "bb/pl-park"}
+    assert park["protocolMappers"] == aud and park["secret"] == "$(env:KC_BB_PL_PARK_SECRET)"
+    assert by["bb-pl-nosecret"]["secret"] == "$(env:KC_BB_PL_NOSECRET_SECRET)"
+    assert by["bb-cams"] == realm["clients"][2] and by["bb-pl-other"] == realm["clients"][3]
+    assert rh.pipeline_clients(out) == [("bb-pipelines", "KC_BB_PIPELINES_SECRET"),
+                                        ("bb-pl-nosecret", "KC_BB_PL_NOSECRET_SECRET"),
+                                        ("bb-pl-park", "KC_BB_PL_PARK_SECRET")]
+
+
 def test_an_export_without_service_accounts_gets_the_portals_from_jcs_shipped_realm():
     shipped = json.loads(rh.SHIPPED_REALM.read_text())
     realm = {"clients": [{"clientId": "portal-api"}, {"clientId": "portal-reconciler"}],
@@ -1305,6 +1358,26 @@ def test_client_urls_of_the_source_host_get_a_twin_on_the_rehearsal_and_keep_the
     assert by["other"] == realm["clients"][2]
     assert n == 5
     assert rh.add_rehearsal_origin({"clients": [{"clientId": "x"}]}, "http://localhost:1") == ({"clients": [{"clientId": "x"}]}, 0)
+
+
+def test_an_app_client_gets_its_loopback_app_host_twin():
+    """The role-gated App pages sign in on `http://<app>.apps.localhost:<port>/callback` (gate
+    2026-11-10T120138Z-apps-redirect: 22 app.page rows, 400 invalid redirect_uri); prod's App client
+    holds only `https://<app>.apps.<domain>/*`. An IP-literal base mounts App hosts under localhost."""
+    a = "https://air-quality.apps.smartcity.joinedcontext.com"
+    realm = {"clients": [
+        {"clientId": "portal-api", "rootUrl": "https://portal.smartcity.joinedcontext.com"},
+        {"clientId": "app-air-quality", "redirectUris": [f"{a}/*"], "webOrigins": [a]},
+        {"clientId": "other", "redirectUris": ["https://x.apps.smartcity.joinedcontext.com.evil.example/*",
+                                               "https://a.b.apps.smartcity.joinedcontext.com/*"]},
+    ]}
+    for base, host in (("http://127.0.0.1:42102", "localhost:42102"), ("http://localhost:42102/", "localhost:42102")):
+        out, n = rh.add_rehearsal_origin(realm, base)
+        by = {c["clientId"]: c for c in out["clients"]}
+        assert by["app-air-quality"]["redirectUris"] == [f"{a}/*", f"http://air-quality.apps.{host}/*"]
+        assert by["app-air-quality"]["webOrigins"] == [a, f"http://air-quality.apps.{host}"]
+        assert by["other"] == realm["clients"][2]
+        assert n == 2
 
 
 def test_every_kit_secret_is_long_enough_for_the_strictest_reader(tmp_path):
@@ -1469,3 +1542,14 @@ def test_the_kit_names_its_own_origin_by_the_literal_loopback_address():
         code = [line for line in (HERE / name).read_text().splitlines() if not line.lstrip().startswith("#")]
         own = [line for line in code if re.search(r"http://localhost[:/]|\"localhost:\$port\"", line)]
         assert not own, f"{name} names the rehearsal's origin as localhost: {own}"
+
+
+def test_the_kit_runs_under_the_old_deployments_org_domain():
+    """Pipelines mint urn:ngsi-ld:{Type}:{orgDomain}:{space}:{id}. Without JC_PORTAL_ORG_DOMAIN jc
+    takes jc.invalid on a loopback host (provision.rs domain), so the rehearsal's pipeline runs
+    wrote 5218 praha-mesto PointOfInterest beside the 19547 imported under hel.fi and an App's map
+    read passed Antares' 10000-row ceiling. Portal, gateway and assistant read one domain."""
+    up = (HERE / "up.sh").read_text()
+    assert re.search(r'^org_domain=\$\{REHEARSAL_ORG_DOMAIN:-hel\.fi\}$', up, re.M), "up.sh sets no org domain"
+    for key in ("JC_PORTAL_ORG_DOMAIN", "JC_GATEWAY_ORG_DOMAIN", "JC_ASSISTANT_ORG_DOMAIN"):
+        assert f'{key}="$org_domain"' in up, f"up.sh exports no {key}"

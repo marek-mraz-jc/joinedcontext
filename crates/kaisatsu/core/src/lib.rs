@@ -6,9 +6,11 @@ pub mod authz;
 pub mod branding;
 pub mod claims;
 pub mod error;
+pub mod i18n;
 pub mod model;
 pub mod odata_defs;
 pub mod ops;
+pub mod page;
 pub mod store;
 
 pub use authz::{

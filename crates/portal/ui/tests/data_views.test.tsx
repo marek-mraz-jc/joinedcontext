@@ -62,17 +62,30 @@ describe("delete and the trash (T-3107)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const remove = vi.fn(() => Promise.resolve());
-    await deleteRow("helsinki", "bikes", { query: vi.fn(), get: vi.fn(), remove }, station(1));
+    await deleteRow("helsinki", "bikes", { query: vi.fn(), get: vi.fn(), remove }, station(1), "a duplicate");
     const kept = sentTo(fetchMock, "/spaces/bikes/trash");
     expect(kept.map((call) => call.method)).toEqual(["POST"]);
     expect(((await kept[0].json()) as { entity: { id: string } }).entity.id).toBe(station(1).id);
-    expect(remove).toHaveBeenCalledWith(station(1).id);
+    expect(remove).toHaveBeenCalledWith(station(1).id, "a duplicate");
 
     const refused = vi.fn(() => Promise.reject(new SourceError(403, "no delete granted")));
-    await expect(deleteRow("helsinki", "bikes", { query: vi.fn(), get: vi.fn(), remove: refused }, station(2))).rejects.toThrow(
+    await expect(deleteRow("helsinki", "bikes", { query: vi.fn(), get: vi.fn(), remove: refused }, station(2), "a duplicate")).rejects.toThrow(
       "no delete granted",
     );
     expect(sentTo(fetchMock, "/spaces/bikes/trash/9").map((call) => call.method)).toEqual(["DELETE"]);
+    vi.unstubAllGlobals();
+  });
+
+  // DM-113: no reason, no copy and no delete: the gateway would refuse it, so nothing is sent.
+  it("refuses a delete without a reason before it keeps a copy", async () => {
+    const fetchMock = vi.fn(() => json(null, 204));
+    vi.stubGlobal("fetch", fetchMock);
+    const remove = vi.fn(() => Promise.resolve());
+    for (const bad of ["", "  ", "x".repeat(501)]) {
+      await expect(deleteRow("helsinki", "bikes", { query: vi.fn(), get: vi.fn(), remove }, station(1), bad)).rejects.toThrow("1 to 500");
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 
@@ -83,7 +96,7 @@ describe("delete and the trash (T-3107)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const refused = vi.fn(() => Promise.reject(new SourceError(403, "no delete granted")));
-    await expect(deleteRow("helsinki", "bikes", { query: vi.fn(), get: vi.fn(), remove: refused }, station(2))).rejects.toThrow(
+    await expect(deleteRow("helsinki", "bikes", { query: vi.fn(), get: vi.fn(), remove: refused }, station(2), "a duplicate")).rejects.toThrow(
       "no delete granted. Its copy also stays among your deleted entities.",
     );
     vi.unstubAllGlobals();

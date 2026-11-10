@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Starts one rehearsal environment: PostgreSQL 17 in docker and `jc --role all` on it
-# (REHEARSAL_ROLE: another role list, e.g. one module left out for a red smoke run).
+# (REHEARSAL_ROLE: another role list, e.g. one module left out for a red smoke run;
+# REHEARSAL_HOLD_PIPELINES=1: every module but ekiben, see jc_role).
 #
 #   deploy/rehearsal/up.sh <env> <public port> <postgres port>
 #
@@ -182,6 +183,19 @@ export ANTARES_HISTORY_BACKFILL=on
 # jc is one process: the local notification bus cannot double-fire.
 export ANTARES_ALLOW_SHARED_LOCAL=1
 export JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false JC_PORTAL_SYNC_INTERVAL=10
+# An imported realm with each Pipeline's own client <project>-pl-<pipeline> (prod's, PL-19): every
+# stream signs in as its pipeline's client by that client's secret, whose audience is the Endpoints
+# that pipeline writes, never as the project's <project>-pipelines (jc-pipeline-audience).
+if grep -q -- '-pl-' "$home/state/realm-pipeline-clients.txt" 2>/dev/null; then
+  export JC_PORTAL_PIPELINE_IDENTITY=pipeline-secret
+else
+  unset JC_PORTAL_PIPELINE_IDENTITY
+fi
+# The old deployment's global.orgDomain (smartcity: hel.fi). Pipelines mint
+# urn:ngsi-ld:{Type}:{orgDomain}:{space}:{id}; without it jc falls back to jc.invalid on a loopback
+# host and every pipeline run writes a second copy of each imported entity under other ids.
+org_domain=${REHEARSAL_ORG_DOMAIN:-hel.fi}
+export JC_PORTAL_ORG_DOMAIN="$org_domain" JC_GATEWAY_ORG_DOMAIN="$org_domain" JC_ASSISTANT_ORG_DOMAIN="$org_domain"
 # The catalogue over plain http, for this one-machine rehearsal only (jc and the Portal warn).
 export JC_PORTAL_CKAN_ALLOW_HTTP=true
 # Every imported CkanInstance names this catalogue (rehearsal.py fence_writes); the Portal calls it
@@ -289,14 +303,36 @@ cat "$here/../../bins/jc/docs/catalogue-hidden.toml" >> "$home/jc.toml"
 # converted, from od-datasets.json, which the toml names relative to jc.toml.
 cat "$here/../../bins/jc/docs/harvest-sources.toml" >> "$home/jc.toml"
 install -m 644 "$here/../../bins/jc/docs/od-datasets.json" "$home/od-datasets.json"
+# prod's publisher badges and words ([dataroom.publishers], the CKAN chart's `organizations`).
+cat "$here/../../bins/jc/docs/dataroom-publishers.toml" >> "$home/jc.toml"
+# The installation's logo ([dataroom.branding], prod's global branding logo, favicon and logoSvg):
+# the footer mark and the favicon, from the deployment clone's branding/logo.svg.
+logo_svg="$deployment/.ci/example-deployments/environments/smartcity/branding/logo.svg"
+if [ -f "$logo_svg" ]; then
+  { printf '\n[dataroom.branding]\nlogo = "logo.svg"\nfavicon = "logo.svg"\nlogo_svg = \x27\x27\x27\n'
+    cat "$logo_svg"; printf '\x27\x27\x27\n'; } >> "$home/jc.toml"
+fi
 # REHEARSAL_JC_TOML_EXTRA: a file appended to jc.toml as is, e.g. the [[organizations]] of a
 # host-mode multiorg run (each Organization on its own *.localhost hosts).
 if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then
   cat "$REHEARSAL_JC_TOML_EXTRA" >> "$home/jc.toml"
 fi
+# REHEARSAL_HOLD_PIPELINES=1 (import.sh passes it to both its starts; the gate keeps it through the
+# endpoints and mcp count suites): jc starts without ekiben. The Portal then has no pipeline runner
+# (bins/jc/src/siblings.rs), so its run queue never starts (crates/portal/src/state.rs
+# wire_streams), and ekiben restores no saved stream from Postgres: no pipeline writes a row, and
+# the counts read the import alone. A later up.sh without it starts the pipelines again.
+jc_role() {
+  if [ -n "${REHEARSAL_ROLE:-}" ]; then echo "$REHEARSAL_ROLE"
+  elif [ "${REHEARSAL_HOLD_PIPELINES:-0}" = 1 ]; then
+    echo kaisatsu,dataroom,daiya,antares,gateway,portal,shako,model-tools,assistant,viz
+  else echo all; fi
+}
+role=$(jc_role)
+[ "$role" = all ] || echo "$env_name: jc on roles $role"
 # shellcheck source=deploy/rehearsal/apps.sh
 . "$here/apps.sh"  # the Apps: image bundles, apps cache, prod builds, roles person (jc-apps-export)
-nohup "$jc_bin" --role "${REHEARSAL_ROLE:-all}" --scheme http --log-format text --config "$home/jc.toml" \
+nohup "$jc_bin" --role "$role" --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "${origin#http://}" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" \
   --kaisatsu-import-secrets-dir "$home/secrets/realm" \

@@ -12,6 +12,8 @@ use axum::routing::get;
 use axum::{Extension, Form, Router};
 use chrono::{Duration, Utc};
 use jc_router::Mount;
+use kaisatsu_core::i18n::{Bundle, negotiate_for_realm};
+use kaisatsu_core::page;
 use kaisatsu_core::*;
 use kaisatsu_crypto::{
     constant_time_str_eq, random_handle_256, sha256_hex, verify_and_maybe_rehash,
@@ -393,15 +395,18 @@ async fn broker_endpoint_get(
         pending.pending_existing_user_id = Some(existing.id.clone());
         auth_session.broker_state_json = Some(serde_json::to_string(&pending).unwrap_or_default());
         state.store.put_auth_session(auth_session.clone()).await?;
-        return Ok(render_broker_link_confirm_page(
+        return render_broker_link_confirm_page(
+            &state,
             &mount,
             &realm,
+            &headers,
             &idp.alias,
             &auth_session,
             &existing.username,
             needs_password,
-            "",
-        ));
+            false,
+        )
+        .await;
     }
 
     // 3. Create new person and link record when no existing account matches.
@@ -499,15 +504,18 @@ async fn broker_endpoint_confirm_post(
         let submitted = form.password.as_deref().unwrap_or_default();
         let outcome = verify_and_maybe_rehash(submitted, pw_cred)?;
         if !outcome.valid {
-            return Ok(render_broker_link_confirm_page(
+            return render_broker_link_confirm_page(
+                &state,
                 &mount,
                 &realm,
+                &headers,
                 &alias,
                 &auth_session,
                 &existing.username,
                 true,
-                "Invalid password for account linking.",
-            ));
+                true,
+            )
+            .await;
         }
     }
 
@@ -535,67 +543,94 @@ async fn broker_endpoint_confirm_post(
     issue_broker_session_and_code(&state, &mount, &realm, auth_session, &existing, &client_ip).await
 }
 
-fn render_broker_link_confirm_page(
+/// keycloak.v2's login-idp-link-confirm with the local password when the account has one: the
+/// realm's language and branding, the session's CSRF token and code.
+#[allow(clippy::too_many_arguments)]
+async fn render_broker_link_confirm_page(
+    state: &OidcState,
     mount: &Mount,
     realm: &RealmConfig,
+    headers: &HeaderMap,
     alias: &str,
     auth_session: &AuthSession,
     account_name: &str,
     needs_password: bool,
-    alert: &str,
-) -> Response {
+    wrong_password: bool,
+) -> Result<Response> {
+    let accept = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok());
+    let bundle = Bundle::for_locale(negotiate_for_realm(
+        realm,
+        auth_session.ui_locales.as_deref(),
+        None,
+        accept,
+    ));
+    let branding = state
+        .store
+        .get_branding(&realm.id, auth_session.org_id.as_deref())
+        .await?
+        .unwrap_or_default()
+        .sanitised();
+    let shell = page::Shell {
+        bundle: &bundle,
+        realm,
+        branding: &branding,
+        path_prefix: &mount.path_prefix,
+        app: "",
+        locale_base_url: "",
+    };
     let nonce = random_handle_256()[..16].to_owned();
-    let action = format!(
-        "{}/realms/{}/broker/{}/endpoint",
-        mount.path_prefix, realm.realm, alias
+    let mut tpl = shell.page(
+        "broker-link-confirm",
+        bundle.get("confirmLinkIdpTitle"),
+        &nonce,
     );
-    let pw_input = if needs_password {
-        r#"<div class="kc-form-group"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password"/></div>"#
-    } else {
-        ""
-    };
-    let alert_html = if alert.is_empty() {
-        String::new()
-    } else {
-        format!(r#"<div class="kc-alert" role="alert">{alert}</div>"#)
-    };
-    let html = format!(
-        "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Confirm account link</title>\
-         <style nonce=\"{nonce}\">body {{ font-family: system-ui, sans-serif; padding: 2rem; }}</style></head>\
-         <body data-page-id=\"login-broker-link-confirm\">\
-         <h1>Confirm account link</h1>\
-         {alert_html}\
-         <p id=\"instruction1\">Link your {alias} identity to account <strong>{account}</strong>?</p>\
-         <form id=\"kc-broker-link-form\" action=\"{action}\" method=\"post\">\
-         <input type=\"hidden\" name=\"csrf_token\" value=\"{csrf}\"/>\
-         <input type=\"hidden\" name=\"session_code\" value=\"{session}\"/>\
-         {pw_input}\
-         <button id=\"kc-login\" type=\"submit\">Confirm link</button>\
-         </form></body></html>",
-        nonce = nonce,
-        alert_html = alert_html,
-        alias = crate::handlers::html_escape(alias),
-        account = crate::handlers::html_escape(account_name),
-        action = crate::handlers::html_escape(&action),
-        csrf = auth_session.csrf_token,
-        session = auth_session.id,
-        pw_input = pw_input,
-    );
-    let csp = format!(
-        "default-src 'self'; script-src 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
-    );
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8".to_owned()),
-            (header::CONTENT_SECURITY_POLICY, csp),
-            (header::X_FRAME_OPTIONS, "DENY".to_owned()),
-            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
-            (header::CACHE_CONTROL, "no-store".to_owned()),
+    tpl.instructions.push(bundle.format(
+        "federatedIdentityConfirmLinkMessage",
+        &[bundle.get("username"), account_name],
+    ));
+    let mut fields = Vec::new();
+    if needs_password {
+        fields.push(page::Field {
+            name: "password".into(),
+            label: bundle.get("password").to_owned(),
+            input_type: "password".into(),
+            autocomplete: "current-password".into(),
+            autofocus: true,
+            required: true,
+            error: if wrong_password {
+                bundle.get("invalidPasswordMessage").to_owned()
+            } else {
+                String::new()
+            },
+            ..page::Field::default()
+        });
+    }
+    tpl.form = Some(page::Form {
+        id: "kc-broker-link-form".into(),
+        action: format!(
+            "{}/realms/{}/broker/{}/endpoint",
+            mount.path_prefix, realm.realm, alias
+        ),
+        hidden: vec![
+            ("csrf_token".into(), auth_session.csrf_token.clone()),
+            ("session_code".into(), auth_session.id.clone()),
         ],
-        html,
+        fields,
+        submit_id: "kc-login".into(),
+        submit_label: bundle.get("confirmLinkIdpContinue").to_owned(),
+        ..page::Form::default()
+    });
+    if wrong_password {
+        tpl.alert = Some(page::Alert::danger(bundle.get("invalidPasswordMessage")));
+    }
+    Ok((
+        StatusCode::OK,
+        page::security_headers(&tpl.nonce, "'self'"),
+        tpl.html(),
     )
-        .into_response()
+        .into_response())
 }
 
 async fn issue_broker_session_and_code(

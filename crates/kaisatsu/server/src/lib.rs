@@ -243,6 +243,51 @@ pub fn group_files_by_realm(
     groups.into_iter().map(|(_, list)| list).collect()
 }
 
+/// The largest logo file [`apply_branding_file`] reads.
+const MAX_LOGO_BYTES: u64 = 512 * 1024;
+
+/// Applies the installation's branding file (the Portal's `JC_BRANDING_FILE`: the deployment's
+/// `global.branding` block as YAML, its `logo` an SVG file beside it, or `logoSvg` inline) as
+/// every realm's own branding block, so the login pages carry the city's name, colours and
+/// logo. Run at start after the realm import; organizations keep their own blocks. Returns the
+/// number of realms branded.
+pub async fn apply_branding_file(store: &Arc<dyn Store>, path: &std::path::Path) -> Result<usize> {
+    use kaisatsu_core::{BrandingBlock, KaisatsuError};
+    let bad = |what: String| {
+        KaisatsuError::BadRequest(format!("branding file {}: {what}", path.display()))
+    };
+    let text = std::fs::read_to_string(path).map_err(|e| bad(e.to_string()))?;
+    let mut block = serde_norway::from_str::<BrandingBlock>(&text)
+        .map_err(|e| bad(e.to_string()))?
+        .sanitised();
+    if block.logo_svg.is_empty() && block.logo.ends_with(".svg") {
+        let logo = path.with_file_name(&block.logo);
+        let len = std::fs::metadata(&logo)
+            .map_err(|e| bad(e.to_string()))?
+            .len();
+        if len > MAX_LOGO_BYTES {
+            return Err(bad(format!("logo is over {MAX_LOGO_BYTES} bytes")));
+        }
+        block.logo_svg = std::fs::read_to_string(&logo).map_err(|e| bad(e.to_string()))?;
+        block = block.sanitised();
+        if block.logo_svg.is_empty() {
+            tracing::warn!(logo = %logo.display(), "branding logo is not a safe SVG; the pages show none");
+        }
+    }
+    let realms = store.list_realms().await?;
+    for realm in &realms {
+        store
+            .upsert_branding(BrandingBlock {
+                id: format!("{}:installation", realm.id),
+                realm_id: realm.id.clone(),
+                org_id: None,
+                ..block.clone()
+            })
+            .await?;
+    }
+    Ok(realms.len())
+}
+
 /// Runs one poll step of `--import-dir` watch (K17): if the directory's SHA-256 changed since
 /// `last_digest`, builds a plan with `ApplyMode::NoDelete` (`--prune` never implied) and executes
 /// `apply_plan` (refusing stale plans). On any error, logs a warning and preserves `last_digest`

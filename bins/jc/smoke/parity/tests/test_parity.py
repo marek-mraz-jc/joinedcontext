@@ -34,6 +34,27 @@ def test_missing_feature_fails_absent_on_both_skips_and_a_missing_page_fails(tmp
     assert "t/a@1440/grid" in (tmp_path / "REPORT.md").read_text()
 
 
+def test_a_required_feature_fails_on_the_new_page_whatever_the_old_capture_shows(tmp_path, monkeypatch):
+    # The brand marks, the footer logo and the badges: old captures predate these checks.
+    monkeypatch.setitem(P.PAIRS, "t", {"title": "t", "pages": [{"id": "a", "old": "/a", "new": "/a"}]})
+    for w in (1440, 400):
+        put(tmp_path, "old", "a", w, {"status": 200, "features": [{"feature": "chips", "present": True}]})
+        put(tmp_path, "new", "a", w, {"status": 200, "features": [
+            {"feature": "chips", "present": True, "count": 1},
+            {"feature": "marks", "present": False, "count": 0, "must": True},
+            {"feature": "logo", "present": True, "count": 1, "must": True}]})
+    rows = {r["id"]: r for r in parity.report(tmp_path, ["t"])}
+    assert rows["t/a@1440/marks"]["result"] == "fail"
+    assert rows["t/a@1440/logo"]["result"] == "pass"
+    assert rows["t/a@1440/chips"]["result"] == "pass"
+
+
+def test_the_badge_check_reads_every_publisher_of_the_config():
+    assert P.BADGES["praha"] == ["PHA", "#b4232a"] and len(P.BADGES) == 8
+    assert all(f["must"] for f in (P.BADGE, P.LAYOUT[-1], P.LAYOUT[-2]))
+    assert P.BADGE in P.CKAN_DATASET
+
+
 def test_the_old_side_guard_lets_only_reads_and_the_sign_in_post_through():
     calls = []
 

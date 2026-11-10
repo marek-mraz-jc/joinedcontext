@@ -127,6 +127,10 @@ pub struct Config {
     /// sidecar (`JC_PORTAL_PIPELINE_IDENTITY=pipeline`) rather than its project's `pipelines`
     /// account (`project`, the default), PL-19. Set once the federated mechanism is seen working.
     pub pipeline_identity: bool,
+    /// How such a stream proves its pipeline's client: the runner's token sidecar
+    /// (`pipeline`), or the client's own secret (`pipeline-secret`, jc: one process, no
+    /// Kubernetes identity; the clients come with the imported realm).
+    pub pipeline_credential: crate::reconciler::streams::PipelineCredential,
     /// How many batch-lane and short-lane pipeline runs the runner holds at once
     /// (`JC_PORTAL_PIPELINES_BATCH_CONCURRENCY`, `JC_PORTAL_PIPELINES_SHORT_CONCURRENCY`, default 1
     /// each, PL-78).
@@ -440,6 +444,7 @@ impl std::fmt::Debug for Config {
             )
             .field("mail_from", &self.mail_from)
             .field("pipeline_identity", &self.pipeline_identity)
+            .field("pipeline_credential", &self.pipeline_credential)
             .field("pipelines_concurrency", &self.pipelines_concurrency)
             .field("pipeline_namespace", &self.pipeline_namespace)
             .field("app_identity_namespace", &self.app_identity_namespace)
@@ -1939,16 +1944,20 @@ impl Config {
             .map(std::path::PathBuf::from);
 
         // PL-19: a value nobody meant is refused at start-up, not read as either identity.
-        let pipeline_identity = match lookup("JC_PORTAL_PIPELINE_IDENTITY")
+        use crate::reconciler::streams::PipelineCredential;
+        let (pipeline_identity, pipeline_credential) = match lookup("JC_PORTAL_PIPELINE_IDENTITY")
             .as_deref()
             .map(str::trim)
         {
-            None | Some("") | Some("project") => false,
-            Some("pipeline") => true,
+            None | Some("") | Some("project") => (false, PipelineCredential::Sidecar),
+            Some("pipeline") => (true, PipelineCredential::Sidecar),
+            Some("pipeline-secret") => (true, PipelineCredential::Secret),
             Some(other) => {
                 return Err(ConfigError::Invalid {
                     var: "JC_PORTAL_PIPELINE_IDENTITY",
-                    reason: format!("`{other}` is neither `project` nor `pipeline`"),
+                    reason: format!(
+                        "`{other}` is none of `project`, `pipeline` and `pipeline-secret`"
+                    ),
                 })
             }
         };
@@ -1974,7 +1983,11 @@ impl Config {
         let app_identity_namespace = dns_label(&lookup, "JC_PORTAL_APP_IDENTITY_NAMESPACE")?;
         let mqtt_namespace = dns_label(&lookup, "JC_PORTAL_MQTT_NAMESPACE")?;
         let gateway_namespace = dns_label(&lookup, "JC_PORTAL_GATEWAY_NAMESPACE")?;
-        if pipeline_identity && pipeline_namespace.is_none() {
+        // The secret's clients are the realm's own (an import keeps them), not made per namespace.
+        if pipeline_credential == PipelineCredential::Sidecar
+            && pipeline_identity
+            && pipeline_namespace.is_none()
+        {
             return Err(ConfigError::Invalid {
                 var: "JC_PORTAL_PIPELINE_IDENTITY",
                 reason: "`pipeline` needs JC_PORTAL_PIPELINE_NAMESPACE, where the pipelines' \
@@ -2112,6 +2125,7 @@ impl Config {
             pipeline_runner_url,
             pipeline_runner_token,
             pipeline_identity,
+            pipeline_credential,
             pipelines_concurrency,
             pipeline_namespace,
             app_identity_namespace,
@@ -2200,6 +2214,7 @@ impl Config {
             pipeline_runner_url: None,
             pipeline_runner_token: None,
             pipeline_identity: false,
+            pipeline_credential: crate::reconciler::streams::PipelineCredential::Sidecar,
             pipelines_concurrency: (1, 1),
             pipeline_namespace: None,
             app_identity_namespace: None,
@@ -2932,6 +2947,12 @@ mod tests {
         assert!(!with(None).expect("default").pipeline_identity);
         assert!(!with(Some("project")).expect("project").pipeline_identity);
         assert!(with(Some("pipeline")).expect("pipeline").pipeline_identity);
+        let secret = with(Some("pipeline-secret")).expect("pipeline-secret");
+        assert!(secret.pipeline_identity);
+        assert_eq!(
+            secret.pipeline_credential,
+            crate::reconciler::streams::PipelineCredential::Secret
+        );
         let err = with(Some("pipelines"))
             .expect_err("a typo is refused")
             .to_string();
@@ -2983,6 +3004,8 @@ mod tests {
             .expect_err("no namespace")
             .to_string();
         assert!(err.contains("JC_PORTAL_PIPELINE_NAMESPACE"), "{err}");
+        // jc's runner signs in with each client's secret: no account is made, no namespace.
+        assert!(with("pipeline-secret", None).expect("jc").pipeline_identity);
         let err = with("project", Some("Not_A_Label"))
             .expect_err("bad namespace")
             .to_string();

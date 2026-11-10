@@ -79,6 +79,62 @@ async fn one_pass_visits_every_realm() {
     );
 }
 
+/// The mails say what old prod's Keycloak e-mail theme said (shot from the old image): its
+/// subject, the realm's display name and the link's lifetime in words, per language.
+#[tokio::test]
+async fn mails_carry_keycloaks_words_and_the_realms_display_name() {
+    let kek = Kek::generate_for_tests();
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek.clone()));
+    realm(&store, &kek, "smartcity", None).await;
+    let mut r = store.get_realm("smartcity").await.unwrap().unwrap();
+    r.display_name = "joinedcontext demo".into();
+    store.upsert_realm(r).await.unwrap();
+    let mail = |id: &str, kind: &str, locale: &str, secs: i64| EmailOutboxRecord {
+        template_kind: kind.into(),
+        locale: locale.into(),
+        lifespan_secs: secs,
+        ..row("smartcity", id)
+    };
+    for m in [
+        mail("ob-reset", "RESET_CREDENTIALS", "en", 300),
+        mail("ob-verify", "VERIFY_EMAIL", "en", 300),
+        mail("ob-actions", "EXECUTE_ACTIONS", "sk", 43_200),
+    ] {
+        store.enqueue_outbox(m).await.unwrap();
+    }
+    let sink = RecordingSender::new();
+    let d = OutboxDispatcher::new(store.clone(), kek, Arc::new(sink.clone()));
+    assert_eq!(d.dispatch_all_realms(&mount()).await.unwrap(), 3);
+    let sent = sink.drain();
+    let by = |subject: &str| {
+        let m = sent
+            .iter()
+            .find(|m| m.subject == subject)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no mail `{subject}` in {:?}",
+                    sent.iter().map(|m| &m.subject).collect::<Vec<_>>()
+                )
+            });
+        m.body.replace(&m.action_link, "<link>")
+    };
+    assert_eq!(
+        by("Reset password"),
+        "Someone just requested to change your joinedcontext demo account's credentials. If this was you, click on the link below to reset them.\n\n<link>\n\nThis link and code will expire within 5 minutes.\n\nIf you don't want to reset your credentials, just ignore this message and nothing will be changed."
+    );
+    assert_eq!(
+        by("Verify email"),
+        "Someone has created a joinedcontext demo account with this email address. If this was you, click the link below to verify your email address\n\n<link>\n\nThis link will expire within 5 minutes.\n\nIf you didn't create this account, just ignore this message."
+    );
+    let sk = by("Aktualizujte svoj účet");
+    assert!(
+        sk.contains("joinedcontext demo")
+            && sk.contains("Aktualizovať heslo")
+            && sk.contains("12 hodín"),
+        "{sk}"
+    );
+}
+
 #[tokio::test]
 async fn realm_smtp_sender_refuses_without_settings_and_keeps_the_row_for_retry() {
     let kek = Kek::generate_for_tests();
