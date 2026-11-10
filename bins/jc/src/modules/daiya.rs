@@ -16,7 +16,7 @@ use daiya_server::config::{
     MigrateConfig, StoreConfig, declare_organizations, open_store, provision,
     provisioning_vars_from,
 };
-use daiya_server::{DaiyaState, OwnReach, router};
+use daiya_server::{DaiyaState, OperatorReach, OwnReach, router};
 
 use jc_router::Mount;
 
@@ -68,8 +68,9 @@ pub fn gateway_reach(siblings: &Siblings) -> Option<OwnReach> {
 
 /// daiya's router. With `[daiya] provisioning_dir` the files are loaded. Every NGSI-LD and OData
 /// datasource, file-made or not, may read the gateway's Endpoints on `jc`'s own listener
-/// ([`gateway_reach`]) and nothing else there; the rest keeps the default outbound policy (no
-/// loopback, no private address, no http).
+/// ([`gateway_reach`]) and nothing else there; organization 1's Prometheus datasources may reach
+/// `[daiya] prometheus_reach` alone; the rest keeps the default outbound policy (no loopback, no
+/// private address, no http).
 pub async fn build(
     cfg: &DaiyaSection,
     setup: &Setup,
@@ -79,6 +80,10 @@ pub async fn build(
     let mut state = state(cfg, setup).await?;
     declare_organizations(&state, &cfg.organizations).map_err(|e| e.to_string())?;
     state.own_reach = gateway_reach(siblings).into_iter().collect();
+    if let Some(raw) = &cfg.prometheus_reach {
+        let reach = OperatorReach::parse(raw).map_err(|e| e.to_string())?;
+        state.outbound_policy.prometheus_reach = Some((OrgId::from_u128(1), reach));
+    }
     if let Some(dir) = &cfg.provisioning_dir {
         let vars = provisioning_vars_from(crate::config::process_env());
         let report = provision(&state, dir, &vars)
