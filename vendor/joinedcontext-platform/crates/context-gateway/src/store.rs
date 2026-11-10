@@ -700,12 +700,11 @@ pub fn load_with_previews(
 /// The client `app-{name}` when Endpoint `endpoint` of `project` is the one the Portal generates
 /// for the App `{name}` declared in that project (ADR-N-030, AP-97).
 fn app_of(repo: &Repository, project: &str, endpoint: &str) -> Option<String> {
-    let app = endpoint.strip_prefix("app-")?;
-    repo.iter()
-        .any(|(id, _)| {
+    crate::resolver::app_client(endpoint, |app| {
+        repo.iter().any(|(id, _)| {
             id.kind == "App" && id.name == app && id.namespace.as_deref() == Some(project)
         })
-        .then(|| endpoint.to_owned())
+    })
 }
 
 /// The open data portal page of each Endpoint the repository publishes, by (project, name): its

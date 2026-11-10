@@ -4,7 +4,7 @@
 use crate::app::Gateway;
 use crate::auth::dataspace_token::{self};
 use crate::auth::token::{self, Claims};
-use crate::resolver::{Endpoint, Space};
+use crate::resolver::{Endpoint, EndpointRoles, Space};
 use crate::{middleware::tenancy, query};
 use axum::body::Body;
 use axum::http::header::AUTHORIZATION;
@@ -234,12 +234,6 @@ pub(crate) fn subject_from(
             return Err(Box::new(ProblemDetails::unauthorized()));
         }
     }
-    let client_roles = endpoint
-        .roles
-        .app_client
-        .as_deref()
-        .map(|client| claims.client_roles(client))
-        .unwrap_or_default();
     let mut subject = match gateway.preview(&endpoint.slug) {
         Some(preview) => preview_reader(gateway, endpoint, claims, &preview)?,
         None => subject_of(claims, endpoint, gateway)?,
@@ -247,7 +241,7 @@ pub(crate) fn subject_from(
     // A participant holds what its agreement's compiled Policies grant and no Endpoint role on
     // top (DS-02, DS-03, F-SEC1-006).
     if subject.agreement.is_none() {
-        with_endpoint_roles(&mut subject, endpoint, &client_roles);
+        with_endpoint_roles(&mut subject, &endpoint.roles, Some(claims));
     }
     Ok(subject)
 }
@@ -302,29 +296,63 @@ fn preview_reader(
     })
 }
 
-/// The roles an Endpoint gives exist on requests through it alone (AP-97). One that a token or
-/// an account asserts is dropped whatever its source, so no realm role, no ServiceAccount
-/// template and no other endpoint can carry an application's grant; then this endpoint's own
-/// are added for the caller it admitted: on an App's Endpoint, from `client_roles`, the roles
-/// the token of that App's own client carries (ADR-N-030).
 /// The anonymous caller on `endpoint`, with the roles the Endpoint hands everyone (GW22,
 /// AP-96). Only an Endpoint that admits nobody in particular admits it.
 pub(crate) fn anonymous_on(endpoint: &Endpoint) -> Subject {
+    anonymous_with(&endpoint.roles)
+}
+
+/// The anonymous caller on an Endpoint known by its roles alone: what the Portal's preview of a
+/// public Endpoint reads as (EP-16).
+pub fn anonymous_with(roles: &EndpointRoles) -> Subject {
     let mut subject = Subject::anonymous();
-    with_endpoint_roles(&mut subject, endpoint, &[]);
+    with_endpoint_roles(&mut subject, roles, None);
     subject
 }
 
-fn with_endpoint_roles(subject: &mut Subject, endpoint: &Endpoint, client_roles: &[String]) {
+/// The roles an Endpoint gives exist on requests through it alone (AP-97). One that a token or
+/// an account asserts is dropped whatever its source, so no realm role, no ServiceAccount
+/// template and no other endpoint can carry an application's grant; then this endpoint's own
+/// are added for the caller it admitted: on an App's Endpoint, the client roles of `claims` when
+/// that App's own client obtained the token (ADR-N-030).
+pub fn with_endpoint_roles(subject: &mut Subject, roles: &EndpointRoles, claims: Option<&Claims>) {
+    let client_roles = roles
+        .app_client
+        .as_deref()
+        .zip(claims)
+        .map(|(client, claims)| claims.client_roles(client))
+        .unwrap_or_default();
     subject
         .roles
         .retain(|role| !role.starts_with(jc_core::kinds::ENDPOINT_ROLE_PREFIX));
-    let held: Vec<String> = endpoint
-        .roles
-        .held_by(subject.user_principal(), &subject.groups, client_roles)
+    let held: Vec<String> = roles
+        .held_by(subject.user_principal(), &subject.groups, &client_roles)
         .map(str::to_owned)
         .collect();
     subject.roles.extend(held);
+}
+
+/// The person verified `claims` name, on an Endpoint of `audience` whose project belongs to
+/// `organization` (ADR-N-067 2.3), before its endpoint roles ([`with_endpoint_roles`]): no
+/// admission, no delegation, no provenance Organization. `None` for a token naming no person, or
+/// a `service-account-…` username another client's token carries (T-5358).
+pub fn person(claims: &Claims, audience: Audience, organization: Option<&str>) -> Option<Subject> {
+    let user = claims.preferred_username.clone()?;
+    if !owns_its_name(&user, claims.azp.as_deref()) {
+        return None;
+    }
+    let (member_of_organization, organization_groups) = standing(claims, organization);
+    Some(Subject {
+        user: Some(user),
+        id: Some(claims.sub.clone()),
+        roles: roles_on(audience, claims.roles().iter().cloned()),
+        groups: claims.group_names().map(str::to_owned).collect(),
+        member_of_organization,
+        organization_groups,
+        client: claims.azp.clone(),
+        read_only: claims.read_only(),
+        ..Subject::default()
+    })
 }
 
 /// The audience of a person signed in at the edge (ADR-N-019): the gateway's own name, accepted
@@ -497,36 +525,27 @@ pub(crate) fn subject_of(
         return Err(Box::new(ProblemDetails::forbidden()));
     }
     let project = project_of(gateway, endpoint, &groups);
-    let (member_of_organization, organization_groups) = in_organization(gateway, endpoint, claims);
+    let Some(mut subject) = person(
+        claims,
+        endpoint.audience,
+        gateway.organization_of(&endpoint.project).as_deref(),
+    ) else {
+        return Err(Box::new(ProblemDetails::forbidden()));
+    };
     // An `organization` audience admits a member of the Endpoint's Organization by the verified
     // `jc_org`, no project group needed (ADR-N-067 2.3); what they read is the Policies' to say.
-    let member = endpoint.audience == Audience::Organization && member_of_organization;
+    let member = endpoint.audience == Audience::Organization && subject.member_of_organization;
     if !member {
         refuse_outside(gateway, endpoint, claims, &user, &project)?;
     }
     // A member admitted without a project group writes under the Endpoint's own Organization.
-    let organization = if project.is_empty() {
+    subject.organization = if project.is_empty() {
         gateway.organization_of(&endpoint.project)
     } else {
         gateway.organization_of(&project)
     };
-
-    Ok(Subject {
-        user: Some(user),
-        id: Some(claims.sub.clone()),
-        service_account: None,
-        service_account_project: None,
-        roles: roles_on(endpoint.audience, claims.roles().iter().cloned()),
-        groups,
-        member_of_organization,
-        organization_groups,
-        did: None,
-        agreement: None,
-        via,
-        client: claims.azp.clone(),
-        organization,
-        read_only: claims.read_only(),
-    })
+    subject.via = via;
+    Ok(subject)
 }
 
 /// Refuses a person whose `project` is of another Organization than `endpoint`'s (404, PF-32)
@@ -822,6 +841,58 @@ mod tests {
             "user:jana via serviceAccount:agent-proxy"
         );
         assert_eq!(principal_of(&workload), "serviceAccount:agent-proxy");
+    }
+
+    /// One copy of the rules (jc-preview-subject): a person is named by Keycloak id with the
+    /// groups of the Endpoint's Organization, an App's role is theirs only from the App client's
+    /// own token, and a `service-account-…` name from another client is nobody.
+    #[test]
+    fn a_person_on_an_endpoint_is_their_id_their_organization_and_their_client_roles() {
+        let claims = |azp: &str, user: &str| -> Claims {
+            serde_json::from_value(serde_json::json!({
+                "sub": "2f0c", "iss": "realm", "exp": 1, "azp": azp,
+                "preferred_username": user, "groups": ["/city"],
+                "jc_org": ["hel"], "jc_groups": ["/hel/team", "/esp/team"],
+                "resource_access": {"app-map": {"roles": ["viewer"]}}
+            }))
+            .expect("claims")
+        };
+        let ui = claims("portal-ui", "jana");
+        let jana = person(&ui, Audience::Organization, Some("hel")).expect("a person");
+        assert_eq!(jana.user_principal(), Some("2f0c"));
+        assert!(jana.member_of_organization);
+        assert_eq!(jana.grant_groups(), &BTreeSet::from(["team".to_owned()]));
+        assert!(!person(&ui, Audience::Organization, Some("esp"))
+            .is_some_and(|s| s.member_of_organization));
+        assert!(person(
+            &claims("portal-ui", "service-account-app-map"),
+            Audience::Organization,
+            None
+        )
+        .is_none());
+
+        let spec: jc_core::kinds::EndpointSpec = serde_json::from_value(serde_json::json!({
+            "contextSpaceRef": "air", "slug": "w3nq7pzk2mtv6hx5brj4gcdsfa", "audience": "public",
+            "enabledRepresentations": ["ngsi-ld"], "callerRole": true,
+            "roles": [{"name": "viewer", "subjects": [{"user": "2f0c"}]}]
+        }))
+        .expect("an Endpoint spec");
+        let app = EndpointRoles::of_app("city", "app-map", &spec, "app-map".to_owned());
+        let roles = |claims: &Claims| {
+            let mut subject = person(claims, Audience::Public, None).expect("a person");
+            with_endpoint_roles(&mut subject, &app, Some(claims));
+            subject.roles
+        };
+        assert!(roles(&claims("app-map", "jana")).contains("endpoint:city/app-map/viewer"));
+        assert!(
+            !roles(&ui).iter().any(|r| r.ends_with("/viewer")),
+            "{:?}",
+            roles(&ui)
+        );
+        assert_eq!(
+            anonymous_with(&app).roles,
+            BTreeSet::from(["public".to_owned(), "endpoint:city/app-map".to_owned()])
+        );
     }
 
     /// T-5358: a `service-account-<client>` username names that client, so only its token

@@ -91,6 +91,16 @@ impl EndpointRoles {
     }
 }
 
+/// The Keycloak client whose roles an Endpoint gives ([`EndpointRoles::of_app`]): the Endpoint
+/// `app-{app}` an App generates is its client's when `has_app(app)` says its project declares
+/// that App, and no other Endpoint is a client's.
+pub fn app_client(endpoint: &str, has_app: impl FnOnce(&str) -> bool) -> Option<String> {
+    endpoint
+        .strip_prefix("app-")
+        .filter(|app| has_app(app))
+        .map(|_| endpoint.to_owned())
+}
+
 /// Everything the gateway needs about one endpoint, resolved in a single lookup.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Endpoint {
