@@ -36,10 +36,21 @@ const HOOKS: &[&str] = &[
 ];
 
 fn template_classes() -> BTreeSet<String> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let mut dirs = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")];
+    let mut files = Vec::new();
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(dir).expect("templates") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                dirs.push(path); // templates/jc: the inlined brand marks
+            } else {
+                files.push(path);
+            }
+        }
+    }
     let mut out = BTreeSet::new();
-    for entry in std::fs::read_dir(dir).expect("templates") {
-        let text = std::fs::read_to_string(entry.expect("entry").path()).expect("template");
+    for path in files {
+        let text = std::fs::read_to_string(path).expect("template");
         for chunk in text.split("class=\"").skip(1) {
             let value = chunk.split('"').next().unwrap_or_default();
             if value.contains('{') {
