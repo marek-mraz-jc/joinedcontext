@@ -113,8 +113,9 @@ jobs:
   # and cargo --timings record; a target with no recorded time still lands in exactly one).
   # Building every test binary in every job took 2-4 min of the 5-8 (215 uncacheable rustc
   # calls, run 42812938101); the same targets with --workspace compile the same units with the
-  # same features (cargo --unit-graph). assistant::chat_tests (600-800 s of CPU-bound tests) is
-  # built in every job and its tests split by name (test-part.py --pieces). The first job also runs the
+  # same features (cargo --unit-graph). The heaviest binaries (assistant::chat_tests, 600-800 s
+  # of CPU-bound tests, in every job) are built in two or more jobs and their tests split by name
+  # (test-part.py --pieces). The first job also runs the
   # doc tests, which the split counts. The partition job names are listed in changes.sh (covered).
   root-test:
     name: root-test-${{ matrix.part }}

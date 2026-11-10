@@ -68,10 +68,12 @@ ROOT_BLOCK = 160.0
 ROOT_PACKAGE = {"jc": 120.0}
 CORES = 4
 THREADS = 4
-# a target whose tests take more than this share of a partition's test time is split by test:
-# assistant::chat_tests (600-800 s, its embedding model CPU-bound) in every partition, because
-# a binary takes up to 2.4x its time beside it (runs 42823061257, 42825042294)
-SPLIT = 0.4
+# a target whose tests take more than this share of a partition's test time is split by test
+# (built in each partition holding a piece): the tests are CPU-bound (the assistant's embedding
+# model), so one binary takes up to 2.4x its time beside a heavy one (runs 42823061257 to
+# 42826478346), and spreading the heaviest (chat_tests over all four, admin_tests, routes,
+# gateway_endpoints over two) evens that out
+SPLIT = 0.15
 # a test with at least this many seconds keeps its own time in the file; the rest of a binary's
 # tests are recorded as their mean (keeps the file small)
 OWN_TIME = 2.0
