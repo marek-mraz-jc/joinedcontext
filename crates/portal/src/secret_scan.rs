@@ -212,7 +212,10 @@ mod tests {
         for text in [
             format!("rotated {token} after the leak"),
             format!("the old key \"{key}\"."),
-            "see https://example.org/feed?api_key=abc123def456 for it".to_owned(),
+            format!(
+                "see https://example.org/feed?api_key={} for it",
+                "abc123".repeat(2)
+            ),
             "pushed with https://bot:hunter2@git.example.org/repo".to_owned(),
         ] {
             assert!(secret_text(&text), "{text}");
