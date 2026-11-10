@@ -13,7 +13,8 @@ Dashboards (the export's grafana/dashboards and every --dashboards dir, once per
   Whether a panel should have rows comes from the export: entities of its type in the
   Endpoint's tenant, or for a temporal query an instance observed inside the window.
 Apps (every App manifest of the export's repositories, every joinedcontext-apps repository):
-  the Portal reads the App, shako holds its repository, /apps/{name}/ serves it (the image's
+  the Portal reads the App, shako holds its repository, /apps/{name}/ answers prod's 308 to the
+  App's own host {name}.apps.{host}/ and that host (the base URL with its Host header) serves it (the image's
   bundles, and the prod builds deploy/rehearsal/apps.sh publishes into shako) and its main page
   reads data. A public App is opened anonymously; any other on a token of the App's own client
   (app-{name}, the code flow the edge runs on prod) as rehearsal-app-roles, and refused to
@@ -51,6 +52,7 @@ from common import FAIL, PASS, SKIP, Results, loopback_only, read_token, realm_o
 
 import inventory as inv
 from session import HOLDER, TESTER, Realm, Session, admin_token, app_token, make_person, sign_in
+from shots import app_host as shots_app_host
 
 APPS_OWNER = "joinedcontext-apps"
 # Rows the rehearsal cannot prove, each named with its reason (CUTOVER.md keeps these components
@@ -81,6 +83,38 @@ def server_judge(status: int, headers: dict, raw: bytes, signed_in: bool) -> tup
     except ValueError:
         return actual, False
     return actual, (isinstance(body, dict) and bool(body.get("id"))) if signed_in else body is None
+
+
+def moved_to(base: str, name: str, status: int, headers: dict) -> tuple[str | None, str]:
+    """Prod's answer to `/apps/{name}/` on the main host: a 308 to the App's own origin
+    `{name}.apps.{host}/` (T-2476, AP-133: the Portal's static_host `to_app_origin` under
+    JC_PORTAL_APPS_URL, and APISIX's `app-{name}-moved` route jcctl rendered). (that Location, "")
+    when the answer is exactly that; else (None, what came): a Location anywhere else is never
+    followed, and a page served on the main host is not what prod answered."""
+    want = shots_app_host(base, name) + "/"
+    loc = headers.get("location")
+    if status == 308 and loc == want:
+        return loc, ""
+    if status == 308:
+        return None, f"308 to {loc!r}, not the App's own origin {want}: not followed"
+    actual = f"{status} {headers.get('content-type')}"
+    if status == 200:
+        actual += f": served on the main host, where prod answered 308 to {want}: is jc's App host layer on (REHEARSAL_APP_HOSTS=on)?"
+    return None, actual
+
+
+def open_app(s, bare, base: str, name: str, hdr: dict) -> tuple[int | None, dict, str]:
+    """GET /apps/{name}/ on the main host, then the 308's Location on the App's host: the base URL
+    with that Host header, as app.server calls it (loopback only, no DNS), on `bare`, a session
+    without the Portal's cookies (another origin). (the App host's status, its headers, what the
+    row shows); status None when prod's 308 did not come, so no row passes on the main host."""
+    st, hdrs, _ = s.call("GET", f"/apps/{urllib.parse.quote(name)}/", headers=hdr)
+    loc, why = moved_to(base, name, st, hdrs)
+    if not loc:
+        return None, hdrs, why
+    u = urllib.parse.urlsplit(loc)
+    st, hdrs, _ = bare.call("GET", u.path + (f"?{u.query}" if u.query else ""), headers={**hdr, "Host": u.netloc})
+    return st, hdrs, f"308 {loc}, there {st} {hdrs.get('content-type')}"
 
 
 def no_shard_judge(status: int, headers: dict, raw: bytes, name: str) -> tuple[str, bool]:
@@ -395,7 +429,7 @@ def main(argv=None) -> int:
             # Who opens it: anyone for a public App; else a person on a token of the App's own
             # client, which the edge holds on prod: rehearsal-app-roles (the roles Apps' groups)
             # gets in, rehearsal-tester (no group) is refused: 403 for a roles App, 404 otherwise.
-            token = None
+            token, moved = None, shots_app_host(a.base_url, app.name) + "/"
             if app.visibility != "public":
                 try:
                     refused = app_token(a.base_url, app_realm, f"app-{app.name}", TESTER, a.timeout)
@@ -404,14 +438,16 @@ def main(argv=None) -> int:
                     res.check("app.served", tgt, call, "a person's token of the App's client", str(e)[:200], False)
                     continue
                 want = 403 if app.visibility == "roles" else 404
-                st, _, _ = s.call("GET", f"/apps/{urllib.parse.quote(app.name)}/",
-                                  headers={"Authorization": f"Bearer {refused}"})
-                res.check("app.refused", tgt, f"{call} as {TESTER} (no group)", f"{want}", f"{st}", st == want)
+                st, _, actual = open_app(s, Session(a.base_url, a.timeout), a.base_url, app.name,
+                                         {"Authorization": f"Bearer {refused}"})
+                res.check("app.refused", tgt, f"{call} as {TESTER} (no group), then on the App's host",
+                          f"308 to {moved}, there {want}", actual, st == want)
             hdr = {"Authorization": f"Bearer {token}"} if token else {}
-            st, hdrs, _ = s.call("GET", f"/apps/{urllib.parse.quote(app.name)}/", headers=hdr)
+            st, hdrs, actual = open_app(s, Session(a.base_url, a.timeout), a.base_url, app.name, hdr)
             served = st == 200 and "html" in hdrs.get("content-type", "")
             who = f" as {HOLDER}" if token else " anonymously"
-            res.check("app.served", tgt, call + who, "200 text/html", f"{st} {hdrs.get('content-type')}", served)
+            res.check("app.served", tgt, call + who + ", then on the App's host", f"308 to {moved}, there 200 text/html",
+                      actual, served)
             if not served:
                 res.skip("app.page", tgt, f"browser /apps/{app.name}/", "main page reads data", "not served (app.served failed)")
                 continue
