@@ -171,7 +171,7 @@ jobs:
       # job 1 compiles and runs the doc tests beside it instead of after it (1-2 min when a crate
       # every lib links changed, run 42617984832).
       - run: |
-          cargo nextest list --workspace --locked --profile ci --timings --list-type binaries-only --message-format json > "$RUNNER_TEMP/binaries.json"
+          cargo nextest list --workspace --locked --profile ci --list-type binaries-only --message-format json > "$RUNNER_TEMP/binaries.json"
           cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
           doc=
           if [ "${{ matrix.part }}" = 1 ]; then
@@ -197,9 +197,6 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: "junit-root-${{ matrix.part }}", path: target/nextest/ci/junit.xml, if-no-files-found: ignore, retention-days: 7 }
-      - if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with: { name: "timings-${{ github.job }}-${{ strategy.job-index }}", path: "**/target/cargo-timings/cargo-timing.html", if-no-files-found: ignore, retention-days: 7 }
   # The platform crates vendored under vendor/joinedcontext-platform (context-gateway, jc-core,
   # jcctl and the rest the Portal links): path dependencies of the root build, not members, so
   # root-test runs none of their tests. Their own workspace, whose Cargo.lock repeats the root
@@ -275,10 +272,10 @@ jobs:
         with: { tool: cargo-nextest }
       # --test: only pg_explain's binary is built (--workspace keeps the workspace's features)
       - if: matrix.part == 1
-        run: cargo nextest run --workspace --locked --profile ci --timings --no-fail-fast --test pg_explain -E 'binary(pg_explain)'
+        run: cargo nextest run --workspace --locked --profile ci --no-fail-fast --test pg_explain -E 'binary(pg_explain)'
       - if: matrix.part != 1
         run: |
-          cargo nextest list --workspace --locked --profile ci --timings --list-type binaries-only --message-format json > "$RUNNER_TEMP/binaries.json"
+          cargo nextest list --workspace --locked --profile ci --list-type binaries-only --message-format json > "$RUNNER_TEMP/binaries.json"
           cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
           python3 ../../.github/scripts/test-part.py --nextest antares $(( ${{ matrix.part }} - 1 )) $(( ${{ strategy.job-total }} - 1 )) \
             --filter 'not binary(pg_explain)' --reuse "$RUNNER_TEMP/binaries.json" "$RUNNER_TEMP/cargo-metadata.json" > "$RUNNER_TEMP/part.txt"
@@ -295,9 +292,6 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: "junit-antares-${{ matrix.part }}", path: crates/antares/target/nextest/ci/junit.xml, if-no-files-found: ignore, retention-days: 7 }
-      - if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with: { name: "timings-${{ github.job }}-${{ strategy.job-index }}", path: "**/target/cargo-timings/cargo-timing.html", if-no-files-found: ignore, retention-days: 7 }
   ekiben:
     needs: changes
     if: needs.changes.outputs.ekiben == 'true'
@@ -374,15 +368,12 @@ jobs:
           # CARGO_BUILD_JOBS, which is part of the rust-cache key
           targets=$(python3 ../../.github/scripts/test-part.py ${{ matrix.part }} ${{ strategy.job-total }} --doc 2)
           # shellcheck disable=SC2086
-          cargo test --workspace --locked --no-fail-fast -j 4 --timings $targets
+          cargo test --workspace --locked --no-fail-fast -j 4 $targets
       # in the second job: the first runs the lib tests and compiles the lib's test build
       - if: matrix.part == 2
         run: cargo test --workspace --locked --no-fail-fast --doc
       - if: always()
         run: du -sh target/debug/deps
-      - if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with: { name: "timings-${{ github.job }}-${{ strategy.job-index }}", path: "**/target/cargo-timings/cargo-timing.html", if-no-files-found: ignore, retention-days: 7 }
   # The bundles the jc image embeds: a UI that does not build ships the placeholder page.
   ui:
     needs: changes
