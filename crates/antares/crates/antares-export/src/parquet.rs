@@ -553,7 +553,10 @@ mod tests {
         let mut file = Vec::new();
         writer.page(all.get(..3).ok_or("three")?)?;
         let first = writer.drain()?;
-        assert!(first.starts_with(b"PAR1"), "the magic and the first row group");
+        assert!(
+            first.starts_with(b"PAR1"),
+            "the magic and the first row group"
+        );
         file.extend(first);
         writer.page(all.get(3..).ok_or("two")?)?;
         file.extend(writer.drain()?);
@@ -574,7 +577,9 @@ mod tests {
         assert!(drained > 0 && drained < 3000, "{drained}");
         let mut past = Ok(());
         for _ in 0..50 {
-            past = writer.page(&features(20)).and_then(|()| writer.drain().map(drop));
+            past = writer
+                .page(&features(20))
+                .and_then(|()| writer.drain().map(drop));
             if past.is_err() {
                 break;
             }

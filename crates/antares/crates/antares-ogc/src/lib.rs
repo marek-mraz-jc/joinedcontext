@@ -54,8 +54,20 @@ pub const PREFIX: &str = "/x/views";
 /// default 2; past it a file is `503` with `Retry-After` (T-4465 review).
 pub const EXPORT_FILES_ENV: &str = "ANTARES_EXPORT_FILES";
 
+/// The bytes one file may hold, 1 MiB to 4 GiB less one byte; past it the file is `413`
+/// before its first byte and cut after it (jc-ogc-stream).
+pub const EXPORT_FILE_BYTES_ENV: &str = "ANTARES_EXPORT_FILE_BYTES";
+
+/// The seconds one file may take to write, 1 to 3600; past them the file is `503` before its
+/// first byte and cut after it (jc-ogc-stream).
+pub const EXPORT_FILE_SECONDS_ENV: &str = "ANTARES_EXPORT_FILE_SECONDS";
+
 /// The variables this surface reads.
-pub const ENV_KEYS: &[&str] = &[EXPORT_FILES_ENV];
+pub const ENV_KEYS: &[&str] = &[
+    EXPORT_FILES_ENV,
+    EXPORT_FILE_BYTES_ENV,
+    EXPORT_FILE_SECONDS_ENV,
+];
 
 /// The bounds a Tenant's schema is read under (threat LK7), as the `OData` surface reads it.
 pub const SCHEMA_LIMITS: linkml_model::Limits = linkml_model::Limits {
@@ -175,7 +187,11 @@ impl Surface for Ogc {
             "conformsTo": CONFORMANCE,
             "encodings": encodings,
             "bundles": bundles,
-            "limits": {"exportFiles": export::files_of(std::env::var(EXPORT_FILES_ENV).ok().as_deref())},
+            "limits": {
+                "exportFiles": export::files_of(std::env::var(EXPORT_FILES_ENV).ok().as_deref()),
+                "fileBytes": export::bytes_of(std::env::var(EXPORT_FILE_BYTES_ENV).ok().as_deref()),
+                "fileSeconds": export::seconds_of(std::env::var(EXPORT_FILE_SECONDS_ENV).ok().as_deref()),
+            },
         })
     }
 
@@ -721,7 +737,7 @@ impl<'a> Here<'a> {
         collections: &'a BTreeMap<String, Collection>,
         (ops, parts): (&Ops, &Parts),
     ) -> Self {
-        // read only by the export budget
+        // read by no field: the export budget comes from the request's gate
         let _ = ops;
         Self {
             view,
@@ -731,7 +747,7 @@ impl<'a> Here<'a> {
             caller,
             collections,
             #[cfg(any(feature = "parquet", feature = "tabular"))]
-            budget: export::Budget::of(ops, parts),
+            budget: export::Budget::of(parts),
         }
     }
 }

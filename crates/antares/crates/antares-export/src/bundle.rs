@@ -162,7 +162,10 @@ mod tests {
         bundle.start("Car.csv")?;
         bundle.write(b"id\r\n")?;
         bytes.extend(bundle.drain());
-        assert!(bytes.starts_with(b"PK\x03\x04"), "the local header leaves first");
+        assert!(
+            bytes.starts_with(b"PK\x03\x04"),
+            "the local header leaves first"
+        );
         for i in 0..200 {
             bundle.write(format!("urn:ngsi-ld:Car:{i}\r\n").as_bytes())?;
             bytes.extend(bundle.drain());
@@ -181,7 +184,11 @@ mod tests {
         let mut tight = Bundle::new(crate::PART_OVERHEAD + 4);
         tight.start("a.csv")?;
         tight.write(b"1234")?;
-        assert_eq!(tight.write(b"5"), Err(Error::TooLarge), "a part counts as added");
+        assert_eq!(
+            tight.write(b"5"),
+            Err(Error::TooLarge),
+            "a part counts as added"
+        );
         Ok(())
     }
 }

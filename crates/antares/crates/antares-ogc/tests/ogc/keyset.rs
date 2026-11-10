@@ -249,3 +249,112 @@ async fn a_file_dropped_while_written_frees_its_place() -> Result<(), String> {
     assert_eq!(status, StatusCode::OK, "both places were freed");
     Ok(())
 }
+
+/// Narrows every query to `speed<50` when it comes through the view `city`, as a Policy bound
+/// to the view does, and refuses any query that names no view.
+#[cfg(feature = "tabular")]
+struct ThroughCity(antares_ops::policy::Filter);
+
+#[cfg(feature = "tabular")]
+impl PolicyEngine for ThroughCity {
+    fn name(&self) -> &'static str {
+        "through-city"
+    }
+
+    fn decide<'a>(&'a self, subject: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
+        let city = subject
+            .headers
+            .iter()
+            .any(|(k, v)| k == "@view" && v == "city");
+        Box::pin(std::future::ready(match op.clause.starts_with("5.7.") {
+            false => Decision::Allow,
+            true if city => Decision::Filter(Arc::new(self.0.clone())),
+            true => Decision::Deny("no view".into()),
+        }))
+    }
+
+    fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
+        NotifyDecision::Deliver
+    }
+}
+
+/// A file is sent as it is read (jc-ogc-stream): its body is read here on a task of its own,
+/// after the handler returned and outside every scope it ran in, and each of its pages of two
+/// still goes through the view, its Tenant and the Policy. A page read outside the view is
+/// refused, which cuts the file.
+#[cfg(feature = "tabular")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_streamed_file_reads_every_page_through_its_view() -> Result<(), String> {
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let f = keyset_fixture(Arc::new(ThroughCity(q_filter("speed<50")?))).await?;
+    for n in 10..30 {
+        write_car(&f, &n.to_string(), n).await?;
+    }
+    write_car(&f, "99", 99).await?;
+    let req = axum::http::Request::builder()
+        .uri(format!("{CARS}?f=csv"))
+        .body(axum::body::Body::empty())
+        .map_err(|e| e.to_string())?;
+    let Ok(resp) = f.app.clone().oneshot(req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        axum::body::HttpBody::size_hint(resp.body())
+            .exact()
+            .is_none(),
+        "a file is streamed, of no length known before"
+    );
+    let body = tokio::spawn(async move { resp.into_body().collect().await })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?
+        .to_bytes();
+    let csv = String::from_utf8(body.to_vec()).map_err(|e| e.to_string())?;
+    let rows: Vec<&str> = csv
+        .split("\r\n")
+        .skip(1)
+        .filter(|l| !l.is_empty())
+        .filter_map(|l| l.split(',').next())
+        .collect();
+    let mut want: Vec<String> = ["1", "3", "5", "7", "8", "9"].map(car).to_vec();
+    want.extend((10..30).map(|n| car(&n.to_string())));
+    want.sort();
+    assert_eq!(
+        rows, want,
+        "every slow Car once, in id order, over 13 pages"
+    );
+    Ok(())
+}
+
+/// `HEAD` of a file states no length (the file is streamed, its size unknown before it is
+/// written) and writes none: its read stops with the body it never sends, so files asked by
+/// `HEAD` leave every place free.
+#[cfg(feature = "tabular")]
+#[tokio::test(flavor = "multi_thread")]
+async fn head_of_a_file_states_no_length_and_frees_its_place() -> Result<(), String> {
+    use tower::ServiceExt;
+    let f = keyset_fixture(Arc::new(SlowOnly(q_filter("speed<50")?))).await?;
+    for _ in 0..3 {
+        let req = axum::http::Request::builder()
+            .method("HEAD")
+            .uri(format!("{CARS}?f=csv"))
+            .body(axum::body::Body::empty())
+            .map_err(|e| e.to_string())?;
+        let Ok(resp) = f.app.clone().oneshot(req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get("content-length"), None);
+        assert!(resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|t| t.starts_with("text/csv")));
+    }
+    let (status, _, bytes) = raw(&f, &format!("{CARS}?f=csv")).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    Ok(())
+}
