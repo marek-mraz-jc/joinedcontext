@@ -262,3 +262,51 @@ def test_a_run_queued_behind_the_queue_is_waited_for_as_long_as_the_runs_ahead_t
     assert row["result"] == "fail" and "none within 300 s" in row["actual"] and took < 320
     row, took = history(monkeypatch, 500, None)
     assert row["result"] == "fail" and "none within 900 s" in row["actual"] and took < 920
+
+
+def test_expectations_from_prods_run_log(tmp_path):
+    """praha/golemio-garages never ran on prod (run log 2026-10-18..11-09): its refusal is a
+    same-on-prod skip; helsinki/vision-counts last ran on prod 2026-10-28 with 1024 sent and holds
+    no stream after a run: the held row compares the Endpoint's count with that run."""
+    import suite
+    (tmp_path / "pipeline_runs.jsonl").write_text("\n".join(json.dumps(r) for r in [
+        {"project": "helsinki", "pipeline": "vision-counts", "run": "a", "last_at": "2026-10-27T10:00Z", "sent": 9},
+        {"project": "helsinki", "pipeline": "vision-counts", "run": "2026-10-28T10:24:23Z",
+         "last_at": "2026-10-28T10:24:52Z", "sent": 1024},
+    ]) + "\n")
+    prod = suite.prod_runs(tmp_path)
+    assert prod["helsinki/vision-counts"]["runs"] == 2 and prod["helsinki/vision-counts"]["last"]["sent"] == 1024
+    assert suite.prod_runs(tmp_path / "none") is None
+
+    class H:
+        count = "1024"
+
+        def call(self, method, path, *a, **k):
+            if path.endswith("/bento"):
+                return 404, {}, b""
+            if path.startswith("/streams/"):
+                return 404, {}, b"Stream not found"
+            if "count=true" in path:
+                return 200, {"ngsild-results-count": self.count}, b"[]"
+            return 200, {}, json.dumps({"metadata": {"name": path.rsplit("/", 1)[1]}, "status": {
+                "phase": "Error", "conditions": [{"type": "StreamDeployed", "status": "False", "reason": "RunnerRefused",
+                                                  "message": "variable DS_X is not set"}]}}).encode()
+
+    def rows(project, name, prod, h=None):
+        r = suite.Results("pipelines", "http://x")
+        p = manifests.Pipeline(project, name, "p.yaml", {}, False, source_type="http", slug="s" * 26, out_type="T")
+        suite.check_pipeline(r, h or H(), "tok", p, prod)
+        return {c["id"]: c for c in r.rows}
+
+    garages = rows("praha", "golemio-garages", prod)["status"]
+    assert garages["result"] == "skip" and garages["reason"].startswith("same on prod: prod's Portal run log holds no run")
+    # A refusal of a pipeline prod ran stays a fail, and so does any without the run log.
+    assert rows("helsinki", "vision-counts", prod)["status"]["result"] == "fail"
+    assert rows("praha", "golemio-garages", None)["status"]["result"] == "fail"
+    held = rows("helsinki", "vision-counts", prod)["held"]
+    assert held["result"] == "pass" and "sent 1024" in held["expected"]
+    short = H()
+    short.count = "1000"
+    assert rows("helsinki", "vision-counts", prod, short)["held"]["result"] == "fail"
+    # Without prod's run the held row still wants the stream.
+    assert rows("praha", "golemio-garages", prod)["held"]["result"] == "fail"
