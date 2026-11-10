@@ -61,6 +61,10 @@ pub enum Scanned {
         /// An upstream page said its join walk stopped at the lookup budget (an `NGSILD-Warning`
         /// naming `truncated`, TS 104 175 4.5.23.1): some Linked Entity is missing.
         truncated: bool,
+        /// The store's keyset cursor of the read at `next` (T-4907), when its last read named
+        /// one: opaque, for [`ViewOps::scan_from`] of the page at `next` with the same `size`.
+        /// A residual scan names none.
+        cursor: Option<String>,
     },
     /// The store's own answer to the pushdown when it was no success (a broken `q`: 400), for
     /// the surface to render as it renders [`ViewOps::run`]'s.
@@ -94,13 +98,31 @@ impl ViewOps {
         page: Page,
     ) -> Result<Scanned, Refusal> {
         match residual {
-            None => self.direct(caller, pushdown, page).await,
+            None => self.direct(caller, pushdown, page, None).await,
             Some(program) => {
                 let mut budget = RESIDUAL_SCAN;
                 self.scan_within(caller, pushdown, program, page, &mut budget)
                     .await
             }
         }
+    }
+
+    /// [`ViewOps::scan`] without a residual from the `cursor` the page before named
+    /// ([`Scanned::Page::cursor`]): the store seeks past that page's last id instead of
+    /// skipping `page.start` rows, so a deep page costs what the first one does. A cursor
+    /// made for another read size is not sent (the read goes by offset); one the store does
+    /// not take for this view, Tenant and query is its 400.
+    ///
+    /// # Errors
+    /// As [`ViewOps::scan`].
+    pub async fn scan_from(
+        &self,
+        caller: &Caller,
+        pushdown: &Pushdown,
+        page: Page,
+        cursor: Option<&str>,
+    ) -> Result<Scanned, Refusal> {
+        self.direct(caller, pushdown, page, cursor).await
     }
 
     /// [`ViewOps::scan`] with a residual and at most `budget` upstream Entities read, less
@@ -134,11 +156,15 @@ impl ViewOps {
 
     /// The pushdown alone: [`ViewOps::run`] in upstream pages of the broker's `max_limit`
     /// until the page holds `page.size` or the answer ends; only the first asks for the count.
+    /// Each read after the first follows the keyset cursor of the one before when the store
+    /// named one and the read size is the same (the cursor binds `limit`), and the first
+    /// follows `cursor` when it was made for its size.
     async fn direct(
         &self,
         caller: &Caller,
         pushdown: &Pushdown,
         page: Page,
+        cursor: Option<&str>,
     ) -> Result<Scanned, Refusal> {
         let local = unpicked(pushdown, &[]);
         let fixed = format!(
@@ -149,6 +175,8 @@ impl ViewOps {
         let upstream = self.inner.state.max_limit.max(1);
         let (mut entities, mut count, mut truncated) = (Vec::new(), None, false);
         let mut first = true;
+        // the cursor of the read before and the limit it was made for
+        let mut after = cursor.and_then(Keyset::parse);
         loop {
             let want = page.size.saturating_sub(entities.len());
             let limit = want.min(upstream);
@@ -158,12 +186,19 @@ impl ViewOps {
                 ""
             };
             let offset = page.start.saturating_add(entities.len());
-            let query = format!("{fixed}&limit={limit}&offset={offset}{counted}");
-            let (mut batch, total, cut) =
+            let keyset = match after.take() {
+                Some(k) if k.limit == limit && counted.is_empty() => {
+                    format!("&cursor={}", k.cursor)
+                }
+                _ => String::new(),
+            };
+            let query = format!("{fixed}&limit={limit}&offset={offset}{counted}{keyset}");
+            let (mut batch, total, cut, link) =
                 match read(self, self.query(caller, pushdown, &query).await?).await? {
                     Ok(read) => read,
                     Err(answer) => return Ok(Scanned::Answer(answer)),
                 };
+            after = link.map(|cursor| Keyset { limit, cursor });
             if first {
                 count = total.filter(|_| page.whole);
                 first = false;
@@ -179,6 +214,7 @@ impl ViewOps {
                     .then(|| page.start.saturating_add(entities.len()));
                 return Ok(Scanned::Page {
                     entities,
+                    cursor: after.filter(|_| next.is_some()).map(|k| k.to_string()),
                     next,
                     count,
                     truncated,
@@ -221,7 +257,7 @@ impl ViewOps {
         if page.whole {
             let counted = format!("{fixed}&limit=0&count=true");
             match read(self, self.query(caller, pushdown, &counted).await?).await? {
-                Ok((_, total, _)) => {
+                Ok((_, total, _, _)) => {
                     // no count is no promise the answer fits
                     cap = total.unwrap_or(usize::MAX);
                     if cap > budget {
@@ -248,7 +284,7 @@ impl ViewOps {
             }
             let query = format!("{fixed}&limit={limit}&offset={offset}");
             let batch = match read(self, self.query(caller, pushdown, &query).await?).await? {
-                Ok((batch, _, cut)) => {
+                Ok((batch, _, cut, _)) => {
                     truncated |= cut;
                     batch
                 }
@@ -306,9 +342,68 @@ fn served(
             next,
             count,
             truncated,
+            // ponytail: a residual page reads by offset (its budget cuts reads short of a
+            // full upstream page); a keyset here when a residual scan measures deep pages.
+            cursor: None,
         },
         read,
     )
+}
+
+/// A store keyset cursor and the read size (`limit`) it was made for; as text
+/// `{limit}-{cursor}`, the store's cursor holding hex digits and a `.` alone.
+#[derive(Debug, PartialEq, Eq)]
+struct Keyset {
+    limit: usize,
+    cursor: String,
+}
+
+impl Keyset {
+    fn parse(text: &str) -> Option<Self> {
+        let (limit, cursor) = text.split_once('-')?;
+        Some(Self {
+            limit: limit.parse().ok()?,
+            cursor: Some(cursor).filter(|c| keyset_text(c))?.to_owned(),
+        })
+    }
+}
+
+impl std::fmt::Display for Keyset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}-{}", self.limit, self.cursor)
+    }
+}
+
+/// Whether `text` is a cursor as [`Scanned::Page::cursor`] writes it, for a surface that
+/// carries one in its own page token.
+#[must_use]
+pub fn is_cursor(text: &str) -> bool {
+    Keyset::parse(text).is_some()
+}
+
+/// Whether `text` is in the characters a store cursor is written in, within its length bound.
+fn keyset_text(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= 1024
+        && text.bytes().all(|b| b.is_ascii_hexdigit() || b == b'.')
+}
+
+/// The `cursor` of an answer's rel="next" Link (T-4907), when it holds one.
+fn next_cursor(answer: &Response) -> Option<String> {
+    answer
+        .headers()
+        .get_all(axum::http::header::LINK)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find_map(|v| {
+            let (target, _) = v.split_once(">; rel=\"next\"")?;
+            let query = target.rsplit_once('<')?.1.split_once('?')?.1;
+            query
+                .split('&')
+                .find_map(|kv| kv.strip_prefix("cursor="))
+                .filter(|c| keyset_text(c))
+                .map(str::to_owned)
+        })
 }
 
 /// `orderBy`, `pick` and `options` of a pushdown, each `&`-prefixed. `pick` keeps the
@@ -396,17 +491,19 @@ async fn read(view: &ViewOps, answer: Response) -> Result<Result<Upstream, Respo
         .get("NGSILD-Results-Count")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse().ok());
+    let cursor = next_cursor(&answer);
     let bytes = view.read_answer(answer.into_body(), "scan").await?;
     match serde_json::from_slice(&bytes).ok() {
-        Some(Value::Array(entities)) => Ok(Ok((entities, total, truncated))),
+        Some(Value::Array(entities)) => Ok(Ok((entities, total, truncated, cursor))),
         _ => Err(Refusal::Malformed(
             "the store's answer is no list of Entities",
         )),
     }
 }
 
-/// One upstream page: its Entities, its count and whether its join walk was truncated.
-type Upstream = (Vec<Value>, Option<usize>, bool);
+/// One upstream page: its Entities, its count, whether its join walk was truncated and the
+/// keyset cursor of its next Link.
+type Upstream = (Vec<Value>, Option<usize>, bool, Option<String>);
 
 /// The members of an Attribute that hold its value, never an Attribute of their own.
 const VALUES: [&str; 7] = [
@@ -453,6 +550,58 @@ fn unsystem(members: &mut serde_json::Map<String, Value>) {
                 .filter_map(Value::as_object_mut)
                 .for_each(unsystem),
             _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{next_cursor, Keyset};
+    use axum::http::header::LINK;
+    use axum::response::{IntoResponse, Response};
+
+    fn linked(links: &[&str]) -> Response {
+        let mut answer = ().into_response();
+        for l in links {
+            if let Ok(v) = l.parse() {
+                answer.headers_mut().append(LINK, v);
+            }
+        }
+        answer
+    }
+
+    /// The cursor comes from the next Link alone, and only in a store cursor's characters.
+    #[test]
+    fn the_cursor_is_read_from_the_next_link() {
+        let next = r#"</ngsi-ld/v1/entities?limit=2&offset=2&type=T&cursor=75726e.0a1b>; rel="next";type="application/json""#;
+        let prev =
+            r#"</ngsi-ld/v1/entities?cursor=ff.00&offset=0>; rel="prev";type="application/json""#;
+        assert_eq!(
+            next_cursor(&linked(&[prev, next])).as_deref(),
+            Some("75726e.0a1b")
+        );
+        assert_eq!(next_cursor(&linked(&[prev])), None);
+        let forged = r#"</e?cursor=75%26limit=9>; rel="next""#;
+        assert_eq!(next_cursor(&linked(&[forged])), None);
+    }
+
+    /// The text a scan hands a surface reads back as the cursor and the size it was made for.
+    #[test]
+    fn a_keyset_reads_back_as_written() {
+        let k = Keyset {
+            limit: 1000,
+            cursor: "75726e.0a1b".into(),
+        };
+        assert_eq!(Keyset::parse(&k.to_string()), Some(k));
+        for bad in [
+            "",
+            "1000",
+            "x-75.0a",
+            "1000-",
+            "1000-75&count=true",
+            "-1-75",
+        ] {
+            assert_eq!(Keyset::parse(bad), None, "{bad}");
         }
     }
 }

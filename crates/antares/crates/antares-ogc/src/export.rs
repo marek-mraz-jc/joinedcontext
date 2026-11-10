@@ -314,6 +314,9 @@ mod file {
             write: &mut (dyn FnMut(&[Value]) -> Result<(), Error> + Send),
         ) -> Result<usize, Problem> {
             p.limit = EXPORT_PAGE;
+            // no page asks the store for a count: an uncounted read carries the store's keyset
+            // cursor, so each page seeks past the one before instead of re-reading it (T-4907)
+            p.uncounted = true;
             let digest = items::digest(self.id, &c.id, pairs);
             let mut rows = 0usize;
             loop {
