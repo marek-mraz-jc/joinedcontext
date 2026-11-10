@@ -1325,11 +1325,25 @@ fn the_gap_holds_on_the_public_route_and_not_on_the_in_cluster_or_loopback_one()
     public_api
         .action("package_patch", &json!({}))
         .expect("call");
+    let (first, reserved) = (turn_of(&last, gap), *last.lock().expect("gate"));
+    // The loopback call neither waits nor takes a turn, even behind a gate held 10 s out.
+    let far = Duration::from_secs(10);
+    let gate = Some(Instant::now() + far);
+    *last.lock().expect("gate") = gate;
+    let before = Instant::now();
     loopback.show("package_show", "x").expect("call");
+    assert!(before.elapsed() < far, "the loopback call waited");
+    assert_eq!(
+        *last.lock().expect("gate"),
+        gate,
+        "the loopback call took a turn"
+    );
+    *last.lock().expect("gate") = reserved;
     public_api.show("package_show", "y").expect("call");
+    let next = turn_of(&last, gap);
+    assert!(next - first >= gap, "{:?}", next - first);
     let at = calls.lock().expect("calls").clone();
-    assert!(at[1] - at[0] < gap, "the loopback call waited");
-    assert!(at[2] - at[0] >= gap, "{:?}", at[2] - at[0]);
+    assert!(at[0] >= first && at[2] >= next);
 
     // Gateway reads on a public data host keep the gap even when the catalogue is in-cluster.
     let reads = Paced::new(Clocked(calls.clone()), last, Duration::ZERO).with_read_gap(gap);
