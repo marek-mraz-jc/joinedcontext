@@ -667,7 +667,9 @@ impl HttpClient {
                     let body_bytes = read_capped_body(resp, self.max_response_bytes).await?;
 
                     if succeeded {
-                        if let Some(id) = request_id.filter(|_| !self.named.swap(true, Ordering::Relaxed)) {
+                        if let Some(id) =
+                            request_id.filter(|_| !self.named.swap(true, Ordering::Relaxed))
+                        {
                             tracing::info!(request_id = %id, url = %redacted_url, status = code, "http_client: jc's listener answered; each call of this stream is X-Request-Id {}-<n>", self.run);
                         }
                         return Ok(self.response_to_batch(code, &headers, body_bytes));

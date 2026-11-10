@@ -357,22 +357,49 @@ async fn a_stream_names_its_calls_to_the_hosts_listener_and_no_other() {
     };
     let (reg, pctx) = host_target_contexts(Some(target));
     let url = format!("http://{addr}/broker/ngsi-ld/v1/entityOperations/upsert");
-    get_n(&reg, &pctx, serde_json::json!({"http": {"url": url, "verb": "GET"}}), 2).await;
+    get_n(
+        &reg,
+        &pctx,
+        serde_json::json!({"http": {"url": url, "verb": "GET"}}),
+        2,
+    )
+    .await;
     let ids = seen.lock().unwrap().clone();
     assert_eq!(ids.len(), 2, "{ids:?}");
-    let run = ids[0].strip_suffix("-1").expect("the first call is <run>-1");
-    assert!(run.len() == 32 && run.bytes().all(|b| b.is_ascii_hexdigit()), "{ids:?}");
+    let run = ids[0]
+        .strip_suffix("-1")
+        .expect("the first call is <run>-1");
+    assert!(
+        run.len() == 32 && run.bytes().all(|b| b.is_ascii_hexdigit()),
+        "{ids:?}"
+    );
     assert_eq!(ids[1], format!("{run}-2"));
 
     seen.lock().unwrap().clear();
     let headers = serde_json::json!({"X-Request-Id": "set-by-the-pipeline"});
-    get_n(&reg, &pctx, serde_json::json!({"http": {"url": url, "verb": "GET", "headers": headers}}), 1).await;
+    get_n(
+        &reg,
+        &pctx,
+        serde_json::json!({"http": {"url": url, "verb": "GET", "headers": headers}}),
+        1,
+    )
+    .await;
     assert_eq!(*seen.lock().unwrap(), vec!["set-by-the-pipeline"]);
 
     seen.lock().unwrap().clear();
     let (reg, pctx, _) = setup_contexts(true);
-    get_n(&reg, &pctx, serde_json::json!({"http": {"url": url, "verb": "GET"}}), 1).await;
-    assert_eq!(*seen.lock().unwrap(), vec![""], "no id to a listener that is not the host's");
+    get_n(
+        &reg,
+        &pctx,
+        serde_json::json!({"http": {"url": url, "verb": "GET"}}),
+        1,
+    )
+    .await;
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![""],
+        "no id to a listener that is not the host's"
+    );
 }
 
 /// jc's Portal binds its internal listener after ekiben is built: a stream's report sinks reach
