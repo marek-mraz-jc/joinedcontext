@@ -10,7 +10,7 @@ use chrono::{DateTime, Datelike, Duration, Utc};
 use dataroom_core::branding::{origin_of, Address};
 use dataroom_core::vocab::find_licence;
 use dataroom_core::{
-    localized_text, resolve_publisher_branding, BrandingBlock, Catalogue, Dataset, Distribution,
+    localized_text, publisher_badge_svg_data_uri, resolve_publisher_branding, BrandingBlock, Catalogue, Dataset, Distribution,
     Publisher, PublisherBranding, RecordState, ResourceView, Visibility,
 };
 use serde::{Deserialize, Serialize};
@@ -2512,15 +2512,23 @@ pub fn jc_robots_txt(cat: &Catalogue, branding: &BrandingBlock) -> String {
     )
 }
 
-/// Resolves publisher display card info (`jc_org` in `plugin.py`).
+/// Resolves publisher display card info (`jc_org` in `plugin.py`): the title, the image and the
+/// description. The image is CKAN's own picture (`image_url`), else the badge `configured` gives
+/// (`jc.toml [dataroom.publishers.<name>]`, prod's chart `organizations`), else a stored badge,
+/// else the name's first letters on the default colour. The description is CKAN's own, else the
+/// configured words in the page's language, then English (`jc_org`: not the catalogue default).
 pub fn publisher_card_info(
     p: &Publisher,
+    configured: Option<&PublisherBranding>,
     lang: &str,
     default_lang: &str,
 ) -> (String, String, Option<String>) {
     let title = localized_text(&p.title, lang, default_lang)
         .unwrap_or(&p.name)
         .to_owned();
+    let configured_badge = configured.and_then(|c| {
+        publisher_badge_svg_data_uri(c.initials.as_deref()?, c.colour.as_deref()?)
+    });
     let fb = PublisherBranding {
         initials: p.badge_initials.clone().or_else(|| {
             let init: String = p
@@ -2533,8 +2541,12 @@ pub fn publisher_card_info(
             (!init.is_empty()).then_some(init)
         }),
         colour: p.badge_colour.clone().or_else(|| Some("#00579c".into())),
-        logo_url: p.logo_url.clone(),
-        description: p.description.clone(),
+        logo_url: configured_badge,
+        description: configured
+            .and_then(|c| c.description.get(lang).or_else(|| c.description.get("en")))
+            .filter(|d| !d.trim().is_empty())
+            .map(|d| BTreeMap::from([(lang.to_owned(), d.clone())]))
+            .unwrap_or_default(),
         homepage: p.homepage.clone(),
     };
     let (img, desc) = resolve_publisher_branding(

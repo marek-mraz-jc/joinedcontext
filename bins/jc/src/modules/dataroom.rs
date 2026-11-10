@@ -15,7 +15,7 @@ use crate::setup::{Secret, Setup};
 use crate::siblings::Siblings;
 use axum::Router;
 use dataroom_api::DataroomState;
-use dataroom_core::branding::{BrandingAddresses, BrandingBlock};
+use dataroom_core::branding::{BrandingAddresses, BrandingBlock, PublisherBranding};
 use dataroom_core::{
     CatalogueId, DataroomError, HarvestSource, HarvestSourceKind, OrgId, PolicyAuthorizer,
     Publisher, RecordState, RequestCtx, Store, Subject,
@@ -71,11 +71,13 @@ pub fn assistant_widget(siblings: &Siblings, deployment: &str) -> Option<String>
         .map(|a| format!("{}/d/{deployment}/widget", a.public))
 }
 
-/// The installation branding `jc` hands dataroom: only the live parts' addresses (G1), named in
+/// The installation branding `jc` hands dataroom: the host's own logo and publisher badges
+/// (`own`, from [`configured_branding`]), the live parts' addresses (G1), named in
 /// `[dataroom.addresses]` or taken from the mounted modules, and the assistant widget of jc's own
 /// assistant module. A catalogue's own branding still wins per catalogue; one that nobody serves
 /// stays empty, so no page points at it.
 fn installation_branding(
+    own: &BrandingBlock,
     live: &crate::siblings::LiveAddresses,
     assistant_widget: Option<String>,
 ) -> BrandingBlock {
@@ -88,8 +90,61 @@ fn installation_branding(
             portal: live.portal.clone(),
         },
         assistant_widget,
-        ..BrandingBlock::default()
+        ..own.clone()
     }
+}
+
+/// `[dataroom.branding]` and `[dataroom.publishers]` as a branding block, the way prod's CKAN
+/// chart read its `branding` and `organizations` values. Refused at start: a publisher whose
+/// initials are empty or whose colour is no hex value (the badge would not draw), a logo name
+/// no route serves, a logo SVG the logo upload would refuse.
+fn configured_branding(cfg: &DataroomSection) -> Result<BrandingBlock, String> {
+    let mut block = BrandingBlock::default();
+    for (name, seed) in &cfg.publishers {
+        let initials = seed.initials.trim();
+        if initials.is_empty() || initials.chars().count() > 4 {
+            return Err(format!(
+                "[dataroom.publishers.{name}] initials: one to four letters, e.g. \"PHA\""
+            ));
+        }
+        if !dataroom_core::branding::is_valid_hex_colour(&seed.colour) {
+            return Err(format!(
+                "[dataroom.publishers.{name}] colour: #rrggbb, e.g. \"#b4232a\""
+            ));
+        }
+        block.publishers.insert(
+            name.clone(),
+            PublisherBranding {
+                initials: Some(initials.to_owned()),
+                colour: Some(seed.colour.clone()),
+                description: seed.description.clone(),
+                ..PublisherBranding::default()
+            },
+        );
+    }
+    let own = &cfg.branding;
+    if let Some(svg) = &own.logo_svg {
+        if !dataroom_core::branding::is_safe_logo_svg(svg) {
+            return Err("[dataroom.branding] logo_svg: an SVG without script, event handlers or external references".into());
+        }
+        block.logo_svg = Some(svg.clone());
+    }
+    for (key, value, slot) in [
+        ("logo", &own.logo, &mut block.logo),
+        ("favicon", &own.favicon, &mut block.favicon),
+    ] {
+        match value.as_deref() {
+            None => {}
+            Some("jc-logo.svg") => *slot = "jc-logo.svg".into(),
+            Some("logo.svg") if own.logo_svg.is_some() => *slot = "logo.svg".into(),
+            Some(other) => {
+                return Err(format!(
+                    "[dataroom.branding] {key} = {other:?}: \"logo.svg\" (with logo_svg) or \"jc-logo.svg\""
+                ))
+            }
+        }
+    }
+    Ok(block)
 }
 
 pub async fn build(
@@ -123,6 +178,7 @@ pub async fn build(
             (vec![grant], vec![binding])
         }
     };
+    let own = configured_branding(cfg).map_err(|e| err(&e))?;
     let live = crate::siblings::live_addresses(&cfg.addresses, siblings);
     let mut by_catalogue = BTreeMap::new();
     for org in organizations {
@@ -158,7 +214,7 @@ pub async fn build(
         }
         by_catalogue.insert(
             id,
-            organization_branding(&live, org, &mount.scheme, assistant_widget.clone()),
+            organization_branding(&own, &live, org, &mount.scheme, assistant_widget.clone()),
         );
     }
     let mut catalogues = vec![(org_id, catalogue_id)];
@@ -216,7 +272,7 @@ pub async fn build(
     .spawn();
     let state = DataroomState::new(store, authorizer, org_id, catalogue_id)
         .with_tokens(bindings)
-        .with_installation_branding(installation_branding(&live, assistant_widget))
+        .with_installation_branding(installation_branding(&own, &live, assistant_widget))
         .with_catalogue_branding(by_catalogue)
         // Several catalogues by host: a loopback name names none of them.
         .with_loopback_default(organizations.is_empty())
@@ -303,12 +359,13 @@ fn bare_host(host: &str) -> &str {
 /// An Organization's catalogue frames its own Portal and API: the installation's other live
 /// parts stay as they are.
 fn organization_branding(
+    own: &BrandingBlock,
     live: &crate::siblings::LiveAddresses,
     org: &OrganizationSection,
     scheme: &str,
     assistant_widget: Option<String>,
 ) -> BrandingBlock {
-    let mut block = installation_branding(live, assistant_widget);
+    let mut block = installation_branding(own, live, assistant_widget);
     block.addresses.api = format!("{scheme}://{}", org.hosts.api);
     block.addresses.portal = format!("{scheme}://{}", org.hosts.portal);
     block
@@ -880,6 +937,75 @@ mod tests {
                 .map(|(n, _)| n.as_str())
                 .collect::<BTreeSet<_>>()
         );
+    }
+
+    /// prod's publisher badges and words, as jc.toml carries them (`[dataroom.publishers]`).
+    fn prod_publishers() -> DataroomSection {
+        #[derive(serde::Deserialize)]
+        struct File {
+            dataroom: DataroomSection,
+        }
+        let raw = include_str!("../../docs/dataroom-publishers.toml");
+        toml::from_str::<File>(raw)
+            .expect("the block parses")
+            .dataroom
+    }
+
+    #[test]
+    fn prods_publisher_block_reaches_every_catalogue_as_badges_and_words() {
+        let cfg = prod_publishers();
+        let own = configured_branding(&cfg).expect("prod's block is accepted");
+        assert_eq!(own.publishers.len(), 8);
+        let praha = &own.publishers["praha"];
+        assert_eq!(praha.initials.as_deref(), Some("PHA"));
+        assert_eq!(praha.colour.as_deref(), Some("#b4232a"));
+        assert!(praha.description["sk"].starts_with("Otvorené údaje hlavného mesta Prahy"));
+        // Old prod gave no words for banskabystrica and bbsk: six publishers have them.
+        let worded = own
+            .publishers
+            .values()
+            .filter(|p| !p.description.is_empty())
+            .count();
+        assert_eq!(worded, 6);
+        let live = crate::siblings::LiveAddresses::default();
+        assert_eq!(installation_branding(&own, &live, None).publishers, own.publishers);
+    }
+
+    #[test]
+    fn a_publisher_or_logo_entry_that_would_not_draw_is_refused_at_start() {
+        let seed = |initials: &str, colour: &str| {
+            let mut cfg = DataroomSection::default();
+            cfg.publishers.insert(
+                "praha".into(),
+                crate::config::PublisherSeed {
+                    initials: initials.into(),
+                    colour: colour.into(),
+                    description: BTreeMap::new(),
+                },
+            );
+            configured_branding(&cfg)
+        };
+        assert!(seed("PHA", "#b4232a").is_ok());
+        for (initials, colour) in [("", "#b4232a"), ("PRAHA", "#b4232a"), ("PHA", "red"), ("PHA", "#b4232a\"/>")] {
+            let e = seed(initials, colour).expect_err(initials);
+            assert!(e.starts_with("[dataroom.publishers.praha]"), "{e}");
+        }
+        let logo = |logo: Option<&str>, svg: Option<&str>| {
+            let mut cfg = DataroomSection::default();
+            cfg.branding.logo = logo.map(str::to_owned);
+            cfg.branding.favicon = logo.map(str::to_owned);
+            cfg.branding.logo_svg = svg.map(str::to_owned);
+            configured_branding(&cfg)
+        };
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0 0h1v1z"/></svg>"#;
+        let ok = logo(Some("logo.svg"), Some(svg)).expect("logo.svg with its SVG");
+        assert_eq!((ok.logo.as_str(), ok.favicon.as_str()), ("logo.svg", "logo.svg"));
+        assert_eq!(ok.logo_svg.as_deref(), Some(svg));
+        assert!(logo(Some("jc-logo.svg"), None).is_ok());
+        assert!(logo(Some("logo.svg"), None).is_err(), "no file serves logo.svg");
+        assert!(logo(Some("other.png"), Some(svg)).is_err(), "no route serves other.png");
+        let e = logo(None, Some(r#"<svg onload="alert(1)"></svg>"#)).unwrap_err();
+        assert!(e.contains("logo_svg"), "{e}");
     }
 
     /// prod's publish-gate hidden list, as jc.toml carries it (`[dataroom.hidden]`).

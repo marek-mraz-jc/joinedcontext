@@ -545,7 +545,7 @@ pub fn router(state: DataroomState) -> Router {
         .route("/jc-theme.css", get(handle_jc_theme_css))
         .route("/jc-enums.json", get(handle_jc_enums_json))
         .route("/jc-logo.svg", get(handle_jc_logo_svg))
-        .route("/logo.svg", get(handle_jc_logo_svg))
+        .route("/logo.svg", get(handle_logo_svg))
         // Portal-compatible catalogue endpoints
         .route("/api/v1/catalogue", get(handle_portal_catalogue))
         .route(
@@ -1197,6 +1197,25 @@ async fn handle_sitemap_xml(State(state): State<DataroomState>, headers: HeaderM
         StatusCode::OK,
         [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
         xml,
+    )
+        .into_response()
+}
+
+/// The installation's own logo (`logo: logo.svg`, `logoSvg` of its branding, as old prod's chart
+/// wrote it into the theme's public directory): the favicon and the footer mark. Only an SVG the
+/// logo upload accepts is served on this origin; otherwise, or for no catalogue, the lockup.
+async fn handle_logo_svg(State(state): State<DataroomState>, headers: HeaderMap) -> Response {
+    let own = match state.resolve_context(&headers).await {
+        Ok((_ctx, cat)) => cat.effective_branding(Some(state.branding_of(&cat))).logo_svg,
+        Err(_) => None,
+    };
+    let body = own
+        .filter(|svg| dataroom_core::branding::is_safe_logo_svg(svg))
+        .unwrap_or_else(|| JC_LOGO_SVG.to_owned());
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
+        body,
     )
         .into_response()
 }

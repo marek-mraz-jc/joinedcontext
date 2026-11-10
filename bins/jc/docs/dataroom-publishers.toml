@@ -1,0 +1,49 @@
+# prod's publisher badges and words (owner 2026-10-12: "Pridaj obrázky"): joinedcontext-deployment
+# release 23a43801, components/ckan/values/catalogue/development-values.yaml.gotmpl `organizations`,
+# read by jc_theme's jc_org/_badge. A plain badge with initials, no coat of arms: the instance is a
+# demo, not affiliated with any of them; the words stand where a publisher set none in CKAN.
+# jc.toml `[dataroom.publishers]` gives dataroom the same block (deployment
+# components/jc/values/server, jc.server.dataroomPublishers). Copied, never typed.
+[dataroom.publishers.hel-fi]
+initials = "HEL"
+colour = "#0000bf"
+description.en = "Open data of the Helsinki region, live from HSL public transport, Fintraffic parking and the city's own services, through joinedcontext endpoints."
+description.sk = "Otvorené údaje regiónu Helsinki, naživo z verejnej dopravy HSL, parkovísk Fintraffic a mestských služieb, cez endpointy joinedcontext."
+
+[dataroom.publishers.praha]
+initials = "PHA"
+colour = "#b4232a"
+description.en = "Open data of the City of Prague, published through joinedcontext endpoints."
+description.sk = "Otvorené údaje hlavného mesta Prahy, publikované cez endpointy joinedcontext."
+
+[dataroom.publishers.zilina]
+initials = "ZA"
+colour = "#1f6f43"
+description.en = "Open data of the City of Žilina and the University of Žilina, published through joinedcontext endpoints."
+description.sk = "Otvorené údaje mesta Žilina a Žilinskej univerzity, publikované cez endpointy joinedcontext."
+
+[dataroom.publishers.barcelona]
+initials = "BCN"
+colour = "#c8102e"
+description.en = "Open data of Barcelona City Council (Open Data BCN, CC BY 4.0), published through joinedcontext endpoints."
+description.sk = "Otvorené údaje mesta Barcelona (Open Data BCN, CC BY 4.0), publikované cez endpointy joinedcontext."
+
+[dataroom.publishers.bratislava]
+initials = "BA"
+colour = "#e30613"
+description.en = "Open data of the City of Bratislava (data.bratislava.sk, CC BY 4.0), published through joinedcontext endpoints."
+description.sk = "Otvorené údaje hlavného mesta SR Bratislavy (data.bratislava.sk, CC BY 4.0), publikované cez endpointy joinedcontext."
+
+[dataroom.publishers.banskabystrica]
+initials = "BB"
+colour = "#00579c"
+
+[dataroom.publishers.bbsk]
+initials = "BBSK"
+colour = "#7a1f5c"
+
+[dataroom.publishers.slovensko]
+initials = "SK"
+colour = "#0b4ea2"
+description.en = "Open data about the whole of Slovakia, collected by the joinedcontext platform."
+description.sk = "Otvorené údaje za celé Slovensko, ktoré zbiera platforma joinedcontext."
