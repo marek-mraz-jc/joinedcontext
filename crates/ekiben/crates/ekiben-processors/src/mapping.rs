@@ -48,76 +48,58 @@ impl Processor for MappingProcessor {
         self.type_name
     }
 
+    fn may_fail_batch(&self) -> bool {
+        false
+    }
+
     async fn process_batch(
         &self,
         ctx: &ProcContext,
         mut batch: Batch,
     ) -> Result<Vec<Batch>, CoreError> {
-        // Ensure raw bytes are materialized if any mapping queries `content()` while preserving structured cache
-        for p in &mut batch {
-            let _ = p.as_bytes();
-        }
-
         let mut new_batch = Vec::with_capacity(batch.len());
-
-        if !self.is_mutation {
-            // `mapping` / `bloblang`: input document is read-only across the batch (`PartsView(&batch)`),
-            // and `root` starts empty (`None`).
-            let view = PartsView(&batch);
-            for (i, orig_part) in batch.iter().enumerate() {
-                let mut new_part = orig_part.shallow_copy();
-                let res = {
-                    let mut meta_adapter = PartMetaAdapter(&mut new_part);
-                    self.exec.map_part(i, &view, &mut meta_adapter, None)
-                };
-                match res {
-                    Ok(None) => {
-                        // `root = deleted()` -> filter out this message part
-                    }
-                    Ok(Some(Value::Nothing)) => {
-                        // `root` was never assigned -> keep original payload with updated metadata
-                        new_batch.push(new_part);
-                    }
-                    Ok(Some(val)) => {
-                        new_part.apply_mapped_value(val);
-                        new_batch.push(new_part);
-                    }
-                    Err(err) => {
-                        // On mapping failure (including `throw()`), Bento keeps the original message
-                        // content unchanged and attaches the error flag!
-                        let mut failed_part = orig_part.shallow_copy();
-                        ctx.on_error(&mut failed_part, err.to_string());
-                        new_batch.push(failed_part);
-                    }
-                }
-            }
-        } else {
-            // `mutation`: maps directly onto each existing message part (`MapOnto`)
-            for i in 0..batch.len() {
-                let initial_val = batch[i].as_structured_ref().unwrap_or(Value::Nothing);
-                let mut mutated_part = batch[i].shallow_copy();
-                let res = {
-                    let view = PartsView(&batch);
-                    let mut meta_adapter = PartMetaAdapter(&mut mutated_part);
+        // Each input part is released once its output exists, unless the mapping reads other
+        // parts (`from`, `from_all`): an earlier part's output may share nothing with its input,
+        // and holding the whole input batch beside the whole output doubled a large run's peak.
+        let release = !self.exec.reads_other_parts();
+        for i in 0..batch.len() {
+            let mut new_part = batch[i].shallow_copy();
+            let res = {
+                let view = PartsView(&batch);
+                let mut meta_adapter = PartMetaAdapter(&mut new_part);
+                if self.is_mutation {
+                    // `mutation`: maps directly onto each existing message part (`MapOnto`).
+                    let initial_val = batch[i].as_structured_ref().unwrap_or(Value::Nothing);
                     self.exec
                         .mutate_part(i, &view, &mut meta_adapter, Some(initial_val))
-                };
-                match res {
-                    Ok(None) => {
-                        // `root = deleted()` -> filter out
-                    }
-                    Ok(Some(Value::Nothing)) => {
-                        new_batch.push(mutated_part);
-                    }
-                    Ok(Some(val)) => {
-                        mutated_part.apply_mapped_value(val);
-                        new_batch.push(mutated_part);
-                    }
-                    Err(err) => {
-                        let mut failed_part = batch[i].shallow_copy();
-                        ctx.on_error(&mut failed_part, err.to_string());
-                        new_batch.push(failed_part);
-                    }
+                } else {
+                    // `mapping` / `bloblang`: the input batch is read-only and `root` starts empty.
+                    self.exec.map_part(i, &view, &mut meta_adapter, None)
+                }
+            };
+            let orig_part = if release {
+                std::mem::take(&mut batch[i])
+            } else {
+                batch[i].shallow_copy()
+            };
+            match res {
+                Ok(None) => {
+                    // `root = deleted()` -> filter out this message part
+                }
+                Ok(Some(Value::Nothing)) => {
+                    // `root` was never assigned -> keep original payload with updated metadata
+                    new_batch.push(new_part);
+                }
+                Ok(Some(val)) => {
+                    new_part.apply_mapped_value(val);
+                    new_batch.push(new_part);
+                }
+                Err(err) => {
+                    // On mapping failure (including `throw()`), Bento keeps the original message
+                    // content unchanged and attaches the error flag!
+                    let mut failed_part = orig_part;
+                    ctx.on_error(&mut failed_part, err.to_string());
+                    new_batch.push(failed_part);
                 }
             }
         }

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
@@ -28,7 +29,8 @@ pub trait MessageBatch {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    fn part_bytes(&self, index: usize) -> &[u8];
+    /// The part's bytes; a part holding only a structured value serialises it into an owned copy.
+    fn part_bytes(&self, index: usize) -> Cow<'_, [u8]>;
     fn part_structured(&self, index: usize) -> Result<Value, String>;
     fn part_meta_get(&self, index: usize, key: &str) -> Option<Value>;
     fn part_meta_all(&self, index: usize) -> BTreeMap<String, Value>;
@@ -51,8 +53,8 @@ impl MessageBatch for EmptyBatch {
     fn len(&self) -> usize {
         0
     }
-    fn part_bytes(&self, _index: usize) -> &[u8] {
-        &[]
+    fn part_bytes(&self, _index: usize) -> Cow<'_, [u8]> {
+        Cow::Borrowed(&[])
     }
     fn part_structured(&self, _index: usize) -> Result<Value, String> {
         Err("message is empty".to_string())
@@ -119,8 +121,8 @@ impl<const N: usize> MessageBatch for [SimplePartView; N] {
     fn len(&self) -> usize {
         <[SimplePartView]>::len(self)
     }
-    fn part_bytes(&self, index: usize) -> &[u8] {
-        self.get(index).map(|p| p.raw.as_slice()).unwrap_or(&[])
+    fn part_bytes(&self, index: usize) -> Cow<'_, [u8]> {
+        Cow::Borrowed(self.get(index).map(|p| p.raw.as_slice()).unwrap_or(&[]))
     }
     fn part_structured(&self, index: usize) -> Result<Value, String> {
         let Some(p) = self.get(index) else {
@@ -160,6 +162,7 @@ pub struct Executor {
     named_counters: Arc<Mutex<HashMap<String, i64>>>,
     stateful_counters: Arc<Mutex<HashMap<usize, i64>>>,
     rng_counter: Arc<AtomicU64>,
+    reads_other_parts: bool,
 }
 
 impl Executor {
@@ -169,15 +172,27 @@ impl Executor {
         statements: Vec<Statement>,
         env: Environment,
     ) -> Self {
+        // `from`/`from_all` are the only reads of a part other than the one mapped; read from the
+        // parsed tree's Debug text (a method's name prints as `name: "from"`, never a literal).
+        let tree = format!("{statements:?}{maps:?}");
+        let reads_other_parts =
+            tree.contains("name: \"from\"") || tree.contains("name: \"from_all\"");
         Self {
             annotation,
             maps,
             statements: Arc::new(statements),
+            reads_other_parts,
             env,
             named_counters: Arc::new(Mutex::new(HashMap::new())),
             stateful_counters: Arc::new(Mutex::new(HashMap::new())),
             rng_counter: Arc::new(AtomicU64::new(1)),
         }
+    }
+
+    /// Whether the mapping may read a batch part other than the one it maps (`from`,
+    /// `from_all`), so the caller must keep the whole input batch until every part is mapped.
+    pub fn reads_other_parts(&self) -> bool {
+        self.reads_other_parts
     }
 
     pub fn annotation(&self) -> &str {

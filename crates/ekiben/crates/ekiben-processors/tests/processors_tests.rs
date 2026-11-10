@@ -96,6 +96,33 @@ async fn trap_throw_keeps_message_content_and_sets_detailed_error() {
 }
 
 #[tokio::test]
+async fn a_mapping_reading_other_parts_still_sees_mapped_inputs() {
+    // A mapping frees each input part once mapped, unless it reads other parts: `from` and
+    // `from_all` read the input batch, an earlier part included, as Bento's do.
+    let (reg, ctx) = make_ctx("org1");
+    let procs = parse_procs(
+        r#"
+- mapping: |
+    root.first = this.x.from(0)
+    root.all = this.x.from_all()
+- mutation: |
+    root.last = this.first.from(1)
+"#,
+        &reg,
+        &ctx,
+    );
+    let batch = vec![Part::from_str(r#"{"x":1}"#), Part::from_str(r#"{"x":2}"#)];
+    let res = execute_all(&ctx, &procs, vec![batch]).await.unwrap();
+    for part in &res[0] {
+        assert!(!part.is_errored(), "{:?}", part.error_get());
+        let v = part.as_structured_ref().unwrap().to_json_value();
+        assert_eq!(v["first"], 1);
+        assert_eq!(v["all"], serde_json::json!([1, 2]));
+        assert_eq!(v["last"], 1);
+    }
+}
+
+#[tokio::test]
 async fn trap_catch_after_branch_swallows_earlier_throw_vs_try() {
     // Grounded in PART B trap:
     // "Bento runs later processors on an errored message (a `catch` after a branch swallows an earlier throw: use `try:`)"

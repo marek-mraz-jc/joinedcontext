@@ -1466,7 +1466,7 @@ fn collapsed_counts_errors_and_the_batch_view() {
     s.set_error_msg("boom");
     let batch = vec![s.clone()];
     let view = PartsView(&batch);
-    assert_eq!(view.part_bytes(0), br#"{"a":1}"#);
+    assert_eq!(&*view.part_bytes(0), br#"{"a":1}"#);
     assert_eq!(view.part_meta_get(0, "none"), None);
     assert_eq!(view.part_error(0).unwrap().message, "boom");
     assert!(view.part_error(5).is_none());

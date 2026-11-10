@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -371,22 +372,15 @@ impl<'a> MessageBatch for PartsView<'a> {
         self.0.len()
     }
 
-    fn part_bytes(&self, index: usize) -> &[u8] {
-        // If raw_bytes is populated, return it directly; otherwise empty slice
-        if let Some(part) = self.0.get(index) {
-            if let Some(ref b) = part.raw_bytes {
-                if !b.is_empty() || part.structured.is_none() {
-                    return b.as_ref();
-                }
-            }
-            if let Some(ref s) = part.structured {
-                // Leak-free cached fallback is handled by Part::as_bytes before calling if needed,
-                // or return serialized slice for structured-only parts:
-                let encoded = encode_structured_to_bytes(s);
-                return Box::leak(encoded.into_boxed_slice());
-            }
+    fn part_bytes(&self, index: usize) -> Cow<'_, [u8]> {
+        let Some(part) = self.0.get(index) else {
+            return Cow::Borrowed(&[]);
+        };
+        match (&part.raw_bytes, &part.structured) {
+            (Some(b), s) if !b.is_empty() || s.is_none() => Cow::Borrowed(b.as_ref()),
+            (_, Some(s)) => Cow::Owned(encode_structured_to_bytes(s)),
+            _ => Cow::Borrowed(&[]),
         }
-        &[]
     }
 
     fn part_structured(&self, index: usize) -> Result<Value, String> {

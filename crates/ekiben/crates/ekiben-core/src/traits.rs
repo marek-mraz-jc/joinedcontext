@@ -147,6 +147,12 @@ pub trait Processor: Send + Sync {
     }
     async fn process_batch(&self, ctx: &ProcContext, batch: Batch)
         -> Result<Vec<Batch>, CoreError>;
+    /// Whether `process_batch` can fail the whole batch (an `Err` other than a quota or a
+    /// close), so its caller keeps a copy of the input to flag. `false` hands the batch over
+    /// whole, which lets the processor free each input part once its output exists.
+    fn may_fail_batch(&self) -> bool {
+        true
+    }
     async fn close(&self) -> Result<(), CoreError> {
         Ok(())
     }

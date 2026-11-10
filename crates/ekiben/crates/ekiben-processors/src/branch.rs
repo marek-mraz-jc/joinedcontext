@@ -223,13 +223,10 @@ impl BranchProcessor {
         };
 
         // Build a reference batch of result parts (with empty part placeholders for skipped slots)
-        let mut results_batch: Batch = results
+        let results_batch: Batch = results
             .iter()
             .map(|opt| opt.clone().unwrap_or_default())
             .collect();
-        for p in &mut results_batch {
-            let _ = p.as_bytes();
-        }
         let results_view = PartsView(&results_batch);
 
         for (i, res_opt) in results.iter().enumerate() {
@@ -313,10 +310,6 @@ impl Processor for BranchProcessor {
         ctx: &ProcContext,
         mut batch: Batch,
     ) -> Result<Vec<Batch>, CoreError> {
-        for p in &mut batch {
-            let _ = p.as_bytes();
-        }
-
         // Prepare branch parts with errors cleared (`p.ErrorSet(nil)`)
         let branch_parts: Vec<Option<Part>> = batch
             .iter()
