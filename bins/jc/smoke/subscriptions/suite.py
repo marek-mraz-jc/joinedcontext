@@ -554,6 +554,13 @@ class Suite:
                         "no role's ServiceAccount token in --mqtt-token-dir")
 
     def run(self):
+        if getattr(self.a, "transports_only", False):
+            self.transports()
+            for part, call in (("deliver", "WS + probe write"), ("refusals", "anonymous WebSocket upgrades"),
+                               ("mqtt", "MQTT CONNECT/PUBLISH")):
+                self.r.skip(part, "parts 2-4", call, "as on the rehearsal",
+                            "--transports-only: sockets and probe writes, rehearsal only")
+            return
         try:
             self.transports()
             self.delivery()
@@ -572,6 +579,8 @@ def main(argv=None):
     p.add_argument("--realm-secrets-dir", help="the rehearsal's realm secrets ($REHEARSAL_HOME/<env>/secrets/realm): "
                    "the project ServiceAccount's client secret that writes the probe")
     p.add_argument("--state", help="unused (accepted for the common runner)")
+    p.add_argument("--transports-only", action="store_true",
+                   help="part 1 alone (anonymous GETs); parts 2-4 open sockets and write: skipped by name")
     p.add_argument("--per-class", type=int, default=1, help="Endpoints per project x audience for delivery")
     p.add_argument("--wait", type=float, default=15, help="seconds a delivery may take (N)")
     p.add_argument("--silence", type=float, default=5, help="seconds a socket must stay silent")

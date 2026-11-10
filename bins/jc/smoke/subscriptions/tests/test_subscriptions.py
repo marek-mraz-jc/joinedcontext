@@ -350,6 +350,22 @@ def test_a_jc_that_delivers_nothing_fails_delivery_and_proves_no_silence(world):
     assert r["outside.hel-open.other-endpoint"]["result"] == FAIL
 
 
+def test_transports_only_reads_part_one_and_names_the_other_parts_skipped(world):
+    """Live mode's flag: anonymous GETs of part 1; no socket, no probe write."""
+    tmp, root, by_slug, eps = world
+    jc = Jc(by_slug)
+    try:
+        s = suite.Suite(args(jc.base, tmp, transports_only=True), eps, index_of(eps), [], suite.load_clients(root))
+        s.run()
+    finally:
+        jc.close()
+    r = rows(s)
+    assert {k for k, x in r.items() if x["result"] != SKIP} == {"control.unknown-slug"} | {
+        f"transport.{e.slug}" for e in eps}
+    assert all(r[k]["result"] == SKIP and "--transports-only" in r[k]["reason"] for k in ("deliver", "refusals", "mqtt"))
+    assert not s.probes
+
+
 def test_without_the_realm_secrets_delivery_is_a_named_skip(world):
     tmp, _, _, eps = world
     s = suite.Suite(args("http://127.0.0.1:9", tmp, realm_secrets_dir=None), eps, {}, [])
