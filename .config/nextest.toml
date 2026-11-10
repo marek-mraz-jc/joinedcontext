@@ -17,7 +17,8 @@ fail-fast = false
 failure-output = "immediate-final"
 status-level = "fail"
 final-status-level = "slow"
-# The runner has two cores and most tests wait on Postgres or a socket.
+# The runner has four cores (ci.yml root-test prints nproc) and most tests wait on Postgres or a
+# socket.
 test-threads = 4
 
 [profile.ci.junit]
