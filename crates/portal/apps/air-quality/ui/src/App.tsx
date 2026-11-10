@@ -213,7 +213,13 @@ function StationCard({
   );
 }
 
-/** Removes a station a steward added, after a second click; a pipeline's station says why not. */
+/** The most characters of a reason the gateway takes (DM-113), counted once trimmed. */
+const MAX_REASON = 500;
+
+/**
+ * Removes a station a steward added once the steward says why (DM-113), as the Portal's own row
+ * delete asks; a pipeline's station says why not.
+ */
 function RemoveButton({
   station,
   title,
@@ -224,6 +230,9 @@ function RemoveButton({
   onSaved: () => Promise<void>;
 }): JSX.Element {
   const [asked, setAsked] = useState(false);
+  const [why, setWhy] = useState("");
+  const [tried, setTried] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reason = useId();
   if (!station.own) {
@@ -238,27 +247,67 @@ function RemoveButton({
       </>
     );
   }
-  return (
-    <>
+  if (!asked) {
+    return (
       <button
         type="button"
         onClick={() => {
-          if (!asked) {
-            setAsked(true);
-            return;
-          }
-          deleteStation(station.id)
-            .then(onSaved)
-            .catch((cause: unknown) => {
-              setAsked(false);
-              setError(problem(cause));
-            });
+          setWhy("");
+          setTried(false);
+          setError(null);
+          setAsked(true);
         }}
       >
-        {asked ? `Confirm removal of ${title}` : `Remove ${title}`}
+        Remove {title}
       </button>
+    );
+  }
+  const length = [...why.trim()].length;
+  const whyError = !tried ? null : length === 0 ? "Enter why you remove it, for example: Duplicate of the Kallio station." : length > MAX_REASON ? `Use at most ${MAX_REASON} characters.` : null;
+  return (
+    <section className="note" aria-label={`Remove ${title}`}>
+      <label htmlFor={`${reason}-why`}>Reason</label>
+      <input
+        id={`${reason}-why`}
+        required
+        maxLength={MAX_REASON}
+        autoComplete="off"
+        aria-describedby={`${reason}-hint${whyError ? ` ${reason}-error` : ""}`}
+        aria-invalid={whyError !== null}
+        value={why}
+        onChange={(event) => setWhy(event.target.value)}
+      />
+      <p id={`${reason}-hint`} className="identity">
+        Why you remove it, recorded with the removal, for example: Sensor moved to the Kallio station.
+      </p>
+      {whyError && (
+        <p id={`${reason}-error`} role="alert">
+          {whyError}
+        </p>
+      )}
+      <div className="note-actions">
+        <button
+          type="button"
+          disabled={removing}
+          onClick={() => {
+            setTried(true);
+            if (length === 0 || length > MAX_REASON) return;
+            setRemoving(true);
+            setError(null);
+            deleteStation(station.id, why.trim())
+              .then(onSaved)
+              .catch((cause: unknown) => setError(problem(cause)))
+              .finally(() => setRemoving(false));
+          }}
+        >
+          Confirm removal of {title}
+        </button>
+        <button type="button" disabled={removing} onClick={() => setAsked(false)}>
+          Cancel
+        </button>
+      </div>
       {error && <p role="alert">{error}</p>}
-    </>
+    </section>
   );
 }
 

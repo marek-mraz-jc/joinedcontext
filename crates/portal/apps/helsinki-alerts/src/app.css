@@ -13,3 +13,19 @@
   align-items: center;
   gap: var(--jc-space-2, 0.5rem);
 }
+
+/* The delete's confirm step: its own full-width row of the actions, the reason above its buttons. */
+.app-confirm {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jc-space-2, 0.5rem);
+}
+
+.app-confirm > p,
+.app-confirm > label,
+.app-confirm > input {
+  flex-basis: 100%;
+  margin: 0;
+}

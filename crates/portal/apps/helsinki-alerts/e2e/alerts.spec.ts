@@ -62,6 +62,8 @@ test("a steward adds an alert and deletes it, and cannot delete Fintraffic's", a
 
   await alerts.getByRole("table").getByText("Senaatintori, Helsinki").click();
   await alerts.getByRole("button", { name: "Delete" }).click();
+  await alerts.getByLabel("Reason").fill("Duplicate of the Senaatintori closure");
+  await alerts.getByRole("button", { name: "Confirm delete" }).click();
   await expect(alerts.getByRole("table").getByText("Senaatintori, Helsinki")).toHaveCount(0);
 
   expect(writes.map((write) => write.method)).toEqual(["POST", "DELETE"]);
