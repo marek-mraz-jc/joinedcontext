@@ -301,6 +301,8 @@ describe("the catalogue (EP-81, EP-82)", () => {
 
     // The resources grid loads with its first drawing (LazyAdminGrid, T-6752).
     const resources = await screen.findByRole("table", { name: "Resources" });
+    // A few resources draw without a search box over them (T-6752, the page at 400 px).
+    expect(screen.queryByRole("searchbox", { name: en.dataGrid.searchRows })).toBeNull();
     // CKAN holds no rows (T-5060): a resource is a download, never a preview of a copy.
     expect(within(resources).queryByRole("link", { name: /Preview/ })).toBeNull();
     // A resource URL the catalogue holds is checked before it becomes a link.

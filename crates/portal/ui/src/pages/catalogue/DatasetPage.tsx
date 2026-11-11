@@ -265,6 +265,8 @@ function Resources({ detail }: { detail: DatasetDetail }): JSX.Element {
           rows={detail.resources}
           rowKey={(resource) => `${resource.format}-${resource.url}`}
           storageKey="catalogue.dataset.resources"
+          // A dataset has a handful of resources: a search box over them only pushes them down a phone.
+          noSearch={detail.resources.length <= 5}
           empty={t("catalogue.dataset.noResources")}
           stack
           columns={[
