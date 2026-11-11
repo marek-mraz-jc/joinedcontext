@@ -11,7 +11,8 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-/// A schema: `id`, `name`, `version`, `prefixes`, `default_prefix`, and its
+/// A schema: `id`, `name`, `version`, `title`, `description`, `license`,
+/// `prefixes`, `default_prefix`, and its
 /// classes, slots and enums keyed by name. The two declarations the subset
 /// implies, [`IMPORTS`] and [`DEFAULT_RANGE`], are read when they are
 /// exactly those and refused otherwise (LK4); the writer declares them, so
@@ -35,6 +36,15 @@ pub struct Schema {
     /// The schema version.
     #[serde(default)]
     pub version: Option<String>,
+    /// The human-readable title.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// What the schema describes.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// The licence IRI or text.
+    #[serde(default)]
+    pub license: Option<String>,
     /// CURIE prefixes, keyed by prefix.
     #[serde(default)]
     pub prefixes: BTreeMap<String, Prefix>,
@@ -70,6 +80,15 @@ struct RawSchema {
     /// The schema version.
     #[serde(default)]
     pub version: Option<String>,
+    /// The human-readable title.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// What the schema describes.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// The licence IRI or text.
+    #[serde(default)]
+    pub license: Option<String>,
     /// CURIE prefixes, keyed by prefix.
     #[serde(default)]
     pub prefixes: BTreeMap<String, Prefix>,
@@ -114,6 +133,9 @@ impl TryFrom<RawSchema> for Schema {
             id: raw.id,
             name: raw.name,
             version: raw.version,
+            title: raw.title,
+            description: raw.description,
+            license: raw.license,
             prefixes: raw.prefixes,
             default_prefix: raw.default_prefix,
             classes: raw.classes,
@@ -156,6 +178,11 @@ pub struct Class {
     /// The class IRI or CURIE.
     #[serde(default)]
     pub class_uri: Option<String>,
+    /// The IRIs or CURIEs of the same class in other vocabularies. A load drops
+    /// the source's (they are [`NON_SEMANTIC`]); a view sets them to the IRI the
+    /// model's author gave a class it names by the stored IRI (T-6747).
+    #[serde(default)]
+    pub exact_mappings: Vec<String>,
     /// The parent class.
     #[serde(default)]
     pub is_a: Option<String>,
@@ -190,6 +217,9 @@ pub struct Slot {
     /// The slot IRI or CURIE.
     #[serde(default)]
     pub slot_uri: Option<String>,
+    /// As [`Class::exact_mappings`], for a slot.
+    #[serde(default)]
+    pub exact_mappings: Vec<String>,
     /// A class, an enum or a built-in type; `string` when absent.
     #[serde(default)]
     pub range: Option<String>,
@@ -374,9 +404,11 @@ const MERGED_TYPES: [(&str, &str); 19] = [
 /// (T-5207): drops [`NON_SEMANTIC`] metaslots where the element does not read
 /// them, the merged `linkml:types` copy, a class's `attributes` when each one
 /// repeats a slot the class or an ancestor lists (the generator's induced
-/// copy), and writes a
+/// copy), writes a
 /// scalar annotation (`odata_computed: true`, or the YAML shorthand) as a
-/// `{tag, value}` string. Anything else stays, so a meaning-changing metaslot
+/// `{tag, value}` string, an annotation value that is a map or a list (a
+/// language map of labels) as its JSON text, and a prefix in the short
+/// `prefix: IRI` form as `{prefix_prefix, prefix_reference}`. Anything else stays, so a meaning-changing metaslot
 /// (`any_of`, `mixins`, an own type) is still refused by name.
 ///
 /// ```
@@ -390,7 +422,12 @@ pub fn normalize(schema: &mut Value) {
     let Some(top) = schema.as_object_mut() else {
         return;
     };
-    strip(top, &[]);
+    strip(top, &["title"]);
+    for (key, p) in members_or_scalars(top, "prefixes") {
+        if let Value::String(reference) = p {
+            *p = serde_json::json!({"prefix_prefix": key, "prefix_reference": reference});
+        }
+    }
     if top.get("types").is_some_and(merged_types) {
         top.remove("types");
     }
@@ -466,6 +503,16 @@ fn members<'a>(
         .filter_map(|(k, v)| v.as_object_mut().map(|v| (k, v)))
 }
 
+fn members_or_scalars<'a>(
+    m: &'a mut Map<String, Value>,
+    key: &str,
+) -> impl Iterator<Item = (&'a String, &'a mut Value)> {
+    m.get_mut(key)
+        .and_then(Value::as_object_mut)
+        .into_iter()
+        .flat_map(|o| o.iter_mut())
+}
+
 fn strip(m: &mut Map<String, Value>, reads: &[&str]) {
     m.retain(|k, _| !NON_SEMANTIC.contains(&k.as_str()) || reads.contains(&k.as_str()));
 }
@@ -495,7 +542,9 @@ fn annotations(m: &mut Map<String, Value>) {
             ]),
         };
         o.remove("@type");
-        if let Some(v @ (Value::Bool(_) | Value::Number(_))) = o.get("value").cloned() {
+        if let Some(v @ (Value::Bool(_) | Value::Number(_) | Value::Object(_) | Value::Array(_))) =
+            o.get("value").cloned()
+        {
             o.insert("value".to_owned(), Value::String(v.to_string()));
         }
         *a = Value::Object(o);

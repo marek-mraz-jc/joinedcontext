@@ -187,9 +187,12 @@ async fn linkml_prefixes_and_context_hold_only_visible_terms() {
     let (s, h, yaml) = get(&app, "schema/v2/model.linkml.yaml").await;
     assert_eq!(s, StatusCode::OK, "{yaml}");
     assert_eq!(h[header::CONTENT_TYPE], "text/yaml");
-    assert!(yaml.contains("\"https://e.org/city/views/cars\""), "{yaml}");
     assert!(
-        yaml.contains("\"speed\":") && yaml.contains("\"Fuel\":"),
+        yaml.contains("id: https://e.org/city/views/cars\n"),
+        "{yaml}"
+    );
+    assert!(
+        yaml.contains("\n  speed:\n") && yaml.contains("\n  Fuel:\n"),
         "{yaml}"
     );
     assert_no_hidden_name("the YAML", &yaml);
@@ -360,11 +363,11 @@ async fn linkml_schema_is_cached_per_view_and_subject_and_never_served_across_th
         .await
         .expect("a broker");
     let (_, wide_tag, wide) = get(&app, "schema/v2/model.linkml.yaml").await;
-    assert!(wide.contains("\"speed\":"));
+    assert!(wide.contains("\n  speed:\n"));
     engine.0.store(true, Ordering::SeqCst);
     let (_, narrow_tag, narrow) = get(&app, "schema/v2/model.linkml.yaml").await;
     assert!(
-        !narrow.contains("\"speed\""),
+        !narrow.contains("speed"),
         "the engine's narrowing holds: {narrow}"
     );
     assert_ne!(wide_tag[header::ETAG], narrow_tag[header::ETAG]);
@@ -485,7 +488,7 @@ async fn linkml_a_relationship_to_a_hidden_class_is_uriorcurie() {
         (Some("uriorcurie"), Some("Relationship"))
     );
     let (_, _, yaml) = get(&app, "schema/v2/model.linkml.yaml").await;
-    assert!(yaml.contains("\"range\": \"uriorcurie\""), "{yaml}");
+    assert!(yaml.contains("range: uriorcurie\n"), "{yaml}");
     assert_no_hidden_name("the YAML", &yaml);
 }
 

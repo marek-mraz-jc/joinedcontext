@@ -17,7 +17,7 @@
 //! }"#;
 //! let limits = Limits { max_bytes: 1 << 20, max_depth: 32, max_elements: 10_000 };
 //! let model = Model::read(json, &limits).unwrap();
-//! assert!(linkml_model::yaml(&model).contains("\"temperature\":"));
+//! assert!(linkml_model::yaml(&model).contains("\n  temperature:\n"));
 //! ```
 #![forbid(unsafe_code)]
 

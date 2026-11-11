@@ -1144,7 +1144,7 @@
   box-shadow: inset 3px 0 0 var(--jc-color-accent, #0066cc);
 }
 
-/* The edge a pointer drags to resize; Narrower and Wider in the menu do the same by keyboard. */
+/* The edge a pointer drags to resize; focused, the arrow keys do the same (T-6738). */
 .jc-grid-resize {
   position: absolute;
   top: 0;
@@ -1157,6 +1157,11 @@
 
 .jc-grid-resize:hover {
   background: var(--jc-color-line, #e0e0e0);
+}
+
+.jc-grid-resize:focus-visible {
+  outline: none;
+  background: var(--jc-color-accent, #0066cc);
 }
 
 .jc-grid-col-menu {
@@ -1172,12 +1177,6 @@
   font-weight: normal;
 }
 
-.jc-grid-col-menu-row {
-  display: flex;
-  gap: var(--jc-space-1, 4px);
-  flex-wrap: wrap;
-}
-
 .jc-grid-col-menu button.jc-grid-meta-item {
   background: none;
   border: 1px solid transparent;
@@ -1189,7 +1188,7 @@
 }
 
 .jc-grid-col-menu button.jc-grid-meta-item:hover:not(:disabled),
-.jc-grid-col-menu button.jc-grid-meta-item[aria-pressed="true"] {
+.jc-grid-col-menu button.jc-grid-meta-item[aria-checked="true"] {
   border-color: var(--jc-color-line, #e0e0e0);
   background: var(--jc-color-surface, #fff);
 }
@@ -1197,21 +1196,6 @@
 .jc-grid-col-menu button.jc-grid-meta-item:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-.jc-grid-col-menu-field {
-  font-size: var(--jc-font-size-sm, 12px);
-  color: var(--jc-color-muted, #666);
-}
-
-.jc-grid-col-menu-input {
-  font: inherit;
-  padding: 2px 4px;
-}
-
-.jc-grid-col-menu-details summary {
-  cursor: pointer;
-  font-size: var(--jc-font-size-sm, 12px);
 }
 
 /* A relationship's target as a chip (T-4827). */
@@ -1341,13 +1325,6 @@ a.jc-cell--link {
 a.jc-cell--link:focus-visible {
   outline: 2px solid var(--jc-color-accent, #0066cc);
   outline-offset: 1px;
-}
-
-.jc-grid-col-menu-input {
-  border: 1px solid var(--jc-color-line, #e0e0e0);
-  border-radius: var(--jc-radius-sm, 2px);
-  background: var(--jc-color-surface, #fff);
-  color: inherit;
 }
 
 /* The row number, its checkbox and the expand button (T-4883): frozen at the left edge, and the
@@ -2144,6 +2121,7 @@ a.jc-cell--link:focus-visible {
   display: inline-flex;
   justify-content: center;
   width: 1.25rem;
+  font-size: 1rem;
   color: var(--jc-color-muted, #666);
 }
 
@@ -2154,36 +2132,286 @@ a.jc-cell--link:focus-visible {
   width: 100%;
 }
 
+/* One type size and one row height for every item; a ring only where the keyboard put the focus (T-6738). */
 .jc-grid-col-menu button.jc-grid-meta-item {
+  min-height: 2.25rem;
   padding: 6px 8px;
+  gap: var(--jc-space-2, 8px);
   font-size: var(--jc-font-size-md, 14px);
+  line-height: 1.25;
+}
+.jc-grid-col-menu button.jc-grid-meta-item:focus {
+  outline: none;
+}
+.jc-grid-col-menu button.jc-grid-meta-item:focus-visible {
+  outline: 2px solid var(--jc-color-accent, #0066cc);
+  outline-offset: -2px;
+}
+.jc-grid-col-menu button.jc-grid-meta-item[aria-checked="true"] {
+  font-weight: 600;
+}
+/* The active sort carries a visible check at the row's end, not only aria-checked. */
+.jc-grid-menu-text {
+  flex: 1 1 auto;
+}
+.jc-grid-menu-check {
+  color: var(--jc-color-accent, #0066cc);
+  font-weight: 700;
+}
+@media (pointer: coarse), (width <= 640px) {
+  .jc-grid-col-menu button.jc-grid-meta-item { min-height: 2.75rem; }
 }
 
-.jc-grid-col-menu-details[open] {
+/* The toolbar: the host's tools, then Arrange columns at the end (T-6738). */
+.jc-grid-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jc-space-2, 8px);
+}
+.jc-grid-toolbar .jc-grid-hidden {
+  padding: 0;
+}
+.jc-grid-toolbar-host {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.jc-grid-arrange {
+  position: relative;
+  margin-inline-start: auto;
+}
+.jc-grid-arrange-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--jc-space-2, 8px);
+  min-height: 2.75rem;
+  padding: var(--jc-space-1, 4px) var(--jc-space-3, 12px);
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-sm, 4px);
+  background: var(--jc-color-card, #f5f5f5);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.jc-grid-arrange-btn:focus-visible,
+.jc-grid-arrange-panel :is(button, input, select):focus-visible {
+  outline: 2px solid var(--jc-color-accent, #0066cc);
+  outline-offset: 1px;
+}
+.jc-grid-arrange-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  width: min(26rem, calc(100vw - 32px));
+  max-height: min(80vh, 44rem);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-3, 12px);
+  padding: var(--jc-space-3, 12px);
+  background: var(--jc-color-surface, #fff);
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-md, 8px);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
+  font-size: var(--jc-font-size-md, 14px);
+  text-align: left;
+}
+/* The panel scrolls as one; its parts keep their own height instead of shrinking to fit the
+   max-height (they did, and Extra details came out a clipped sliver). */
+.jc-grid-arrange-panel > * {
+  flex-shrink: 0;
+}
+/* The columns, then Extra details; side by side where the screen is wide enough, so the whole
+   panel shows without scrolling at a desktop width. */
+.jc-grid-arrange-body,
+.jc-grid-arrange-cols {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-3, 12px);
+}
+@media (width >= 900px) {
+  .jc-grid-arrange-panel {
+    width: min(48rem, calc(100vw - 32px));
+  }
+  .jc-grid-arrange-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--jc-space-4, 16px);
+    align-items: start;
+  }
+  .jc-grid-arrange-body .jc-grid-arrange-meta {
+    padding: 0 0 0 var(--jc-space-4, 16px);
+    border-top: 0;
+    border-left: 1px solid var(--jc-color-line, #e0e0e0);
+  }
+}
+/* Done stays at the top and Reset at the bottom while the list scrolls between them. */
+.jc-grid-arrange-head,
+.jc-grid-arrange-foot {
+  position: sticky;
+  z-index: 1;
+  background: var(--jc-color-surface, #fff);
+}
+.jc-grid-arrange-head {
+  top: calc(-1 * var(--jc-space-3, 12px));
+  margin-top: calc(-1 * var(--jc-space-3, 12px));
+  padding-top: var(--jc-space-3, 12px);
+}
+.jc-grid-arrange-foot {
+  bottom: calc(-1 * var(--jc-space-3, 12px));
+  margin-bottom: calc(-1 * var(--jc-space-3, 12px));
+  padding-bottom: var(--jc-space-3, 12px);
+}
+.jc-grid-arrange-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--jc-space-2, 8px);
+}
+.jc-grid-arrange-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.jc-grid-arrange-head h2:focus {
+  outline: none;
+}
+.jc-grid-arrange-hint {
+  margin: 0;
+  color: var(--jc-color-muted, #666);
+  font-size: 0.8125rem;
+}
+.jc-grid-arrange-list {
   display: flex;
   flex-direction: column;
   gap: var(--jc-space-1, 4px);
-}
-
-.jc-grid-col-menu-details summary {
-  padding: 6px 8px;
-  font-size: var(--jc-font-size-md, 14px);
-  /* One icon, the gear, as the other items have; the fold shows as a chevron at the end. */
+  margin: 0;
+  padding: 0;
   list-style: none;
-  display: flex;
+}
+.jc-grid-arrange-list li {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
   align-items: center;
+  gap: var(--jc-space-1, 4px);
 }
-.jc-grid-col-menu-details summary::-webkit-details-marker {
-  display: none;
+.jc-grid-arrange-list li[data-hidden] .jc-grid-arrange-input {
+  color: var(--jc-color-muted, #666);
 }
-.jc-grid-col-menu-details summary::after {
-  content: "›";
-  margin-inline-start: auto;
-  padding-inline-start: 8px;
-  transition: transform 0.15s;
+.jc-grid-arrange-show {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
 }
-.jc-grid-col-menu-details[open] summary::after {
-  transform: rotate(90deg);
+.jc-grid-arrange-show input,
+.jc-grid-arrange-check input {
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+}
+.jc-grid-arrange-input,
+.jc-grid-arrange-for select {
+  min-width: 0;
+  min-height: 2.25rem;
+  padding: 4px 8px;
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-sm, 4px);
+  background: var(--jc-color-surface, #fff);
+  color: inherit;
+  font: inherit;
+}
+.jc-grid-arrange-move,
+.jc-grid-arrange-done {
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-sm, 4px);
+  background: var(--jc-color-card, #f5f5f5);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.jc-grid-arrange-done {
+  padding: 0 var(--jc-space-3, 12px);
+}
+.jc-grid-arrange-move:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.jc-grid-arrange-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-2, 8px);
+  margin: 0;
+  padding: var(--jc-space-3, 12px) 0 0;
+  border: 0;
+  border-top: 1px solid var(--jc-color-line, #e0e0e0);
+}
+.jc-grid-arrange-meta legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  font-weight: 600;
+}
+.jc-grid-arrange-for {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.jc-grid-arrange-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--jc-space-2, 8px);
+  min-height: 2.25rem;
+  cursor: pointer;
+}
+.jc-grid-arrange-check input {
+  margin-top: 2px;
+}
+.jc-grid-arrange-check > span {
+  display: flex;
+  flex-direction: column;
+}
+.jc-grid-arrange-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--jc-space-3, 12px);
+  padding-top: var(--jc-space-3, 12px);
+  border-top: 1px solid var(--jc-color-line, #e0e0e0);
+}
+.jc-grid-arrange-foot .jc-grid-arrange-hint {
+  flex: 1 1 12rem;
+}
+/* A phone: the panel is a sheet from the bottom, every target 44 px (T-6738). */
+@media (width <= 640px) {
+  .jc-grid-arrange-panel {
+    position: fixed;
+    inset: auto 0 0 0;
+    width: auto;
+    max-height: 85vh;
+    padding-bottom: calc(var(--jc-space-3, 12px) + env(safe-area-inset-bottom, 0px));
+    border-radius: 12px 12px 0 0;
+    border-bottom: 0;
+    /* A scrim over the page behind the sheet; a tap on it closes the sheet (ArrangeColumns). */
+    box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.5);
+  }
+  /* Reset scrolls in at the end of the sheet instead of covering a hint mid-line; Done stays on top. */
+  .jc-grid-arrange-foot {
+    position: static;
+    margin-bottom: 0;
+    padding-bottom: 0;
+  }
+  .jc-grid-arrange-show { width: 2.75rem; height: 2.75rem; }
+  .jc-grid-arrange-input,
+  .jc-grid-arrange-for select,
+  .jc-grid-arrange-move,
+  .jc-grid-arrange-done,
+  .jc-grid-arrange-check { min-height: 2.75rem; }
+  .jc-grid-arrange-move { min-width: 2.75rem; }
 }
 
 /* The popup sits inside its header cell, whose label does not wrap: its own text does. */

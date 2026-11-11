@@ -105,18 +105,19 @@ describe("EntityGrid", () => {
     expect(screen.getByRole("columnheader", { name: /PM10 \(µg\/m³\)/ })).toBeInTheDocument();
   });
 
-  it("toggles observedAt column via header menu", async () => {
+  it("toggles the observedAt column from the Arrange columns panel", async () => {
     render(<EntityGrid config={config} source={fixtureSource(bikeEntities)} />);
     await waitFor(() => {
       expect(screen.getByText("Kamppi")).toBeInTheDocument();
     });
 
-    // Click the menu button for availableBikeNumber
-    const menuBtn = screen.getByLabelText("Column options: Bikes");
-    fireEvent.click(menuBtn);
-
-    // Check the observedAt checkbox
-    const observedCheckbox = screen.getByLabelText("Observed");
+    // Metadata lives in the toolbar's panel, never in the header menu (T-6738).
+    fireEvent.click(screen.getByLabelText("Column options: Bikes"));
+    expect(screen.queryByLabelText("Observed")).toBeNull();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Arrange columns" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Details for" }), { target: { value: "availableBikeNumber" } });
+    const observedCheckbox = screen.getByRole("checkbox", { name: /^Observed/ });
     expect(observedCheckbox).not.toBeChecked();
     fireEvent.click(observedCheckbox);
 
@@ -686,14 +687,31 @@ describe("EntityGrid", () => {
       sortDesc: "Zoradiť zostupne",
       filterColumn: "Filtrovať",
       hideColumn: "Skryť pole",
+      sortAscDate: "Najskôr najstaršie",
+      sortDescDate: "Najskôr najnovšie",
+      sortAscNumber: "Od najmenšieho",
+      sortDescNumber: "Od najväčšieho",
+      sortAscBoolean: "Najskôr Nie",
+      sortDescBoolean: "Najskôr Áno",
+      arrangeColumns: "Usporiadať stĺpce",
+      arrangeHint: "Zaškrtnite stĺpce, ktoré chcete vidieť, zoraďte ich a premenujte.",
+      arrangeDone: "Hotovo",
+      alwaysShown: "Vždy zobrazený",
+      renameHint: "Prepíšte názov, napr. Začiatok.",
+      moveUp: "Posunúť vyššie",
+      moveDown: "Posunúť nižšie",
+      metaHeading: "Ďalšie údaje",
+      metaHint: "Pridá stĺpec vedľa zvoleného.",
+      metaFor: "Údaje pre",
+      observedAtHint: "Ukáže, kedy bola hodnota nameraná",
+      unitHint: "Ukáže jednotku hodnoty",
+      datasetIdHint: "Ukáže, z ktorého zdroja hodnota pochádza",
+      createdAtHint: "Ukáže, kedy bola hodnota prvýkrát uložená",
+      modifiedAtHint: "Ukáže, kedy sa hodnota naposledy zmenila",
+      resetColumns: "Obnoviť stĺpce",
+      resetHint: "Vráti poradie, názvy a šírky z modelu.",
       renameColumn: "Názov v tomto pohľade",
-      renameReset: "Názov z modelu",
       columnWidth: "Šírka",
-      narrower: "Užší",
-      wider: "Širší",
-      moveLeft: "Posunúť doľava",
-      moveRight: "Posunúť doprava",
-      details: "Podrobnosti",
       close: "Zavrieť",
       history: "História",
     };
@@ -708,6 +726,7 @@ describe("EntityGrid", () => {
       expect(screen.getByText("Kamppi")).toBeInTheDocument();
     });
     fireEvent.click(screen.getByLabelText("Možnosti stĺpca: Bikes"));
+    fireEvent.click(screen.getByRole("button", { name: "Usporiadať stĺpce" }));
     // Every visible string is the host's: none of the English defaults that differ from Slovak shows.
     // The query hint's example is data (an attribute name such as availableBikeNumber), not a label.
     const page = document.body.cloneNode(true) as HTMLElement;

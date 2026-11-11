@@ -238,19 +238,19 @@ async function walkGrid(page: Page, who: string): Promise<void> {
 
   await step(page, who, "column-menu", async () => {
     await page.getByRole("button", { name: "Column options: source" }).click();
-    return (await page.getByRole("dialog", { name: "Column options: source" }).innerText()).replace(/\s+/g, " ");
+    return (await page.getByRole("menu", { name: "Column options: source" }).innerText()).replace(/\s+/g, " ");
   });
   await step(page, who, "column-hidden", async () => {
-    await page.getByRole("dialog", { name: "Column options: source" }).getByRole("button", { name: "Hide field" }).click();
+    await page.getByRole("menu", { name: "Column options: source" }).getByRole("menuitem", { name: "Hide column" }).click();
     const restore = await page.getByRole("button", { name: /hidden|Show|field/i }).allInnerTexts();
     return `restore controls: ${restore.join(" / ") || "none found"}`;
   });
   // The way back (T-5620): the count names the hidden field, its list brings it back by keyboard.
   await step(page, who, "column-restore", async () => {
-    const toggle = page.getByRole("button", { name: "Hidden fields (1)" });
+    const toggle = page.getByRole("button", { name: "Hidden columns (1)" });
     await toggle.focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("list", { name: "Hidden fields" })).toBeVisible();
+    await expect(page.getByRole("list", { name: "Hidden columns" })).toBeVisible();
     await snap(page, "column-restore-list", who);
     await page.getByRole("button", { name: "Show field: source" }).focus();
     await page.keyboard.press("Enter");
