@@ -5,6 +5,5 @@
 # assistant/*: no line. The assistant is a kept component on dev beside jc (tasks/GOAL-jc-dev.md scope
 # decision); its rehearsal rows are named skips "kept component: assistant" (gate.sh --kept-component).
 
-^endpoints/anon\.temporal\.last-\d+h$  # the synthetic bundle's DataService rows carry no history in the window (bundle, jc-smoke-gate)
 ^mcp/hub\.search$  # search over an empty catalogue (jc-smoke-mcp, dataroom gap 2)
 ^pipelines/(status|history|held)$  # the runner refuses the helsinki streams: cache resource 'helsinki__gtfs' not found, and lstat <rehearsal>/gate/files/proto: no such file (smoke 42952387007; brief 122 jc-gate-rerun owns the pipelines suite)
