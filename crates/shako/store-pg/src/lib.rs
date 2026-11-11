@@ -245,7 +245,7 @@ impl PgStore {
         let storage = |e: sqlx::Error| ShakoError::Storage(format!("hydrate failed: {e}"));
         let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
         let instance = sqlx::query(
-            "SELECT host, path_prefix, max_repos, max_storage_bytes, max_push_bytes, secret_scan_enabled, created_at, updated_at
+            "SELECT host, path_prefix, max_repos, max_storage_bytes, max_push_bytes, created_at, updated_at
              FROM shako.instance WHERE instance_id = $1 AND org_id = $2",
         )
         .bind(instance_id.as_uuid())
@@ -275,7 +275,6 @@ impl PgStore {
                     max_repos: unsigned(r.get("max_repos")),
                     max_storage_bytes: unsigned(r.get("max_storage_bytes")),
                     max_push_bytes: unsigned(r.get("max_push_bytes")),
-                    secret_scan_enabled: r.get("secret_scan_enabled"),
                     created_at: r.get("created_at"),
                     updated_at: r.get("updated_at"),
                 })
@@ -449,15 +448,14 @@ impl Store for PgStore {
                 .begin_tenant_tx(instance.instance_id, instance.org_id)
                 .await?;
             sqlx::query(
-                "INSERT INTO shako.instance (instance_id, org_id, host, path_prefix, max_repos, max_storage_bytes, max_push_bytes, secret_scan_enabled)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                "INSERT INTO shako.instance (instance_id, org_id, host, path_prefix, max_repos, max_storage_bytes, max_push_bytes)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                  ON CONFLICT (instance_id, org_id) DO UPDATE SET
                     host = EXCLUDED.host,
                     path_prefix = EXCLUDED.path_prefix,
                     max_repos = EXCLUDED.max_repos,
                     max_storage_bytes = EXCLUDED.max_storage_bytes,
                     max_push_bytes = EXCLUDED.max_push_bytes,
-                    secret_scan_enabled = EXCLUDED.secret_scan_enabled,
                     updated_at = now()",
             )
             .bind(instance.instance_id.as_uuid())
@@ -467,7 +465,6 @@ impl Store for PgStore {
             .bind(instance.max_repos as i64)
             .bind(instance.max_storage_bytes as i64)
             .bind(instance.max_push_bytes as i64)
-            .bind(instance.secret_scan_enabled)
             .execute(&mut *tx)
             .await
             .map_err(|e| ShakoError::Storage(e.to_string()))?;

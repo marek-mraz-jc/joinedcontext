@@ -590,6 +590,22 @@ pub struct PortalSection {
     /// Portal holds its removals for a confirmed destructive Change (T-6708); the Portal's
     /// default 25 when unset. `JC_PORTAL_REMOVAL_HOLD_PERCENT` in the environment wins.
     pub removal_hold_percent: Option<u8>,
+    /// `[portal.limits]`: the deployment's ceiling on each limit, keyed by the catalog path an
+    /// Organization or Project sets it at, e.g. `"spec.projects.quota.apps" = { max = 50 }`
+    /// (LIM-01, T-6716). Left out, an entry keeps the built-in ceiling; an Organization's or a
+    /// Project's value only narrows it. The Portal checks the paths and ranges at start.
+    #[serde(default)]
+    pub limits: BTreeMap<String, LimitBound>,
+}
+
+/// One entry of `[portal.limits]`: the smallest and largest value a manifest may set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LimitBound {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<u32>,
 }
 
 /// `[assistant]` section: the knowledge assistant beside its siblings. Its other settings are
@@ -978,6 +994,7 @@ impl Config {
         }
         let portal = PortalSection {
             age_key_file: cli.portal_age_key_file.or(file.portal.age_key_file),
+            limits: file.portal.limits,
             removal_hold_percent: file.portal.removal_hold_percent,
         };
         let realm = match cli.identity_realm.or(file.identity.realm) {

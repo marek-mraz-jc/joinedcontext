@@ -588,7 +588,7 @@ async fn a_head_with_a_refused_manifest_removes_what_was_created() {
         ("spaces/hluk/space.yaml", "spec is not a valid ContextSpace"),
         (
             "spaces/heslo/space.yaml",
-            "literal secret in field 'password'",
+            "password' (a credential's field name)",
         ),
     ] {
         assert!(

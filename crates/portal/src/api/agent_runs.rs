@@ -1580,7 +1580,10 @@ const FUNCTION_TIMEOUT: Duration = Duration::from_secs(20);
 /// starts one: an application run and an assistant conversation (T-1403). The store answers
 /// newest first, so the newest `max` runs are enough to know whether today is full.
 pub(crate) async fn within_runs_per_day(state: &AppState, project: &str) -> Result<(), ApiError> {
-    let Some(max) = crate::quotas::effective(&state.mirror, project).agent_runs_per_day else {
+    let Some(max) =
+        crate::quotas::effective(&state.mirror, project, &state.config.organization_bounds)
+            .agent_runs_per_day
+    else {
         return Ok(());
     };
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();

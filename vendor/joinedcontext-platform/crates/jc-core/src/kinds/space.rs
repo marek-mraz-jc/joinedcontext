@@ -180,7 +180,9 @@ fn validate_git_ref(git_ref: &str) -> Result<()> {
 
 /// Structural resource quotas per project (PF-17).
 ///
-/// An absent field indicates unlimited quota for that resource.
+/// An absent field leaves the dimension to the organization's default, and both stay under the
+/// deployment's ceiling ([`crate::kinds::OrganizationBounds::quota_ceiling`]): no project is
+/// unlimited (LIM-01, T-6716).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Quotas {
@@ -265,6 +267,34 @@ impl Quotas {
                 _ => None,
             })
             .collect()
+    }
+
+    /// The quota with every PF-73 dimension held at `ceiling`: a value above it comes down to it
+    /// and one left open takes it, so what the deployment allows is the most any project gets
+    /// (LIM-01, T-6716). A dimension `ceiling` leaves open keeps the quota's own value.
+    #[must_use]
+    pub fn capped(mut self, ceiling: &Quotas) -> Quotas {
+        let limits = ceiling.dimensions();
+        for (value, (_, limit)) in self.dimensions_mut().into_iter().zip(limits) {
+            if let Some(limit) = limit {
+                *value = Some(value.map_or(limit, |own| own.min(limit)));
+            }
+        }
+        self
+    }
+
+    /// The PF-73 dimensions in [`Self::dimensions`]' order, to write.
+    fn dimensions_mut(&mut self) -> [&mut Option<u32>; 8] {
+        [
+            &mut self.context_spaces,
+            &mut self.resident_pipelines,
+            &mut self.public_endpoints,
+            &mut self.ingest_events_per_second,
+            &mut self.apps,
+            &mut self.agent_runs_per_day,
+            &mut self.entities_per_space,
+            &mut self.requests_per_minute,
+        ]
     }
 
     /// Whether the quota sets any of the PF-73 dimensions; one that sets only `mqtt` leaves them

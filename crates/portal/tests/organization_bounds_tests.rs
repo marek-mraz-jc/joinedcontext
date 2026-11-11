@@ -78,7 +78,7 @@ async fn a_quota_over_the_operators_bound_is_refused_before_a_change_exists() {
     for part in [
         "spec.projects.quota.contextSpaces",
         "50",
-        "0 … 20",
+        "1 … 20",
         "portal.organizationBounds",
     ] {
         assert!(answer.text.contains(part), "{part}: {}", answer.text);
@@ -94,8 +94,26 @@ async fn a_quota_inside_the_bound_is_proposed() {
 }
 
 #[tokio::test]
-async fn without_an_operator_bound_a_quota_has_no_ceiling() {
+async fn without_an_operator_bound_a_quota_stops_at_the_built_in_ceiling() {
     let (state, _forge) = state(json!({})).await;
+    let answer = propose(&state, 500).await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
+    for part in [
+        "spec.projects.quota.contextSpaces",
+        "500",
+        "1 … 100",
+        "portal.organizationBounds",
+    ] {
+        assert!(answer.text.contains(part), "{part}: {}", answer.text);
+    }
+    let answer = propose(&state, 100).await;
+    assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
+}
+
+#[tokio::test]
+async fn the_operator_raises_the_built_in_ceiling() {
+    let (state, _forge) =
+        state(json!({ "spec.projects.quota.contextSpaces": { "max": 600 } })).await;
     let answer = propose(&state, 500).await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
 }

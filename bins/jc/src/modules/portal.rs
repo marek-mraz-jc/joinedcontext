@@ -208,6 +208,18 @@ pub(crate) fn apps_vars(cfg: &crate::config::Config) -> BTreeMap<String, String>
         .collect()
 }
 
+/// `JC_PORTAL_ORGANIZATION_BOUNDS`, the deployment's limit ceilings of `[portal.limits]` as JSON
+/// (LIM-01, T-6716); empty without the section, so the Portal keeps its built-in ceilings. An
+/// environment value still wins, and the Portal refuses to start when the bounds file is set too.
+pub(crate) fn limits_vars(cfg: &crate::config::Config) -> BTreeMap<String, String> {
+    if cfg.portal.limits.is_empty() {
+        return BTreeMap::new();
+    }
+    // A map of strings to two optional integers always serializes.
+    let json = serde_json::to_string(&cfg.portal.limits).unwrap_or_default();
+    BTreeMap::from([("JC_PORTAL_ORGANIZATION_BOUNDS".to_owned(), json)])
+}
+
 /// The Portal's router behind the host jc placed the request on (`Mount`, a trusted proxy's
 /// `X-Forwarded-Host` applied), which pins an Organization's host (`organization_host`).
 pub(crate) fn with_request_host(router: Router) -> Router {

@@ -975,7 +975,10 @@ mod tests {
                 &json!({}),
                 "DataSource",
                 "feed",
-                &DraftError::Secret("spec.auth.password".into()),
+                &DraftError::Secret(crate::api::mutate::LiteralSecret {
+                    path: "spec.auth.password".into(),
+                    rule: "a credential's field name",
+                }),
             )
             .await
             .expect("the run goes on");

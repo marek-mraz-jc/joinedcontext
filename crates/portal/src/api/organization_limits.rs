@@ -229,7 +229,11 @@ pub async fn get_limits(
                     .ok()
                 })
                 .is_some_and(|quotas| quotas.sets_dimensions());
-            let quotas = crate::quotas::effective(&state.mirror, &project);
+            let quotas = crate::quotas::effective(
+                &state.mirror,
+                &project,
+                &state.config.organization_bounds,
+            );
             let used = crate::quotas::usage(&state.mirror, &project);
             let mut quota: BTreeMap<String, QuotaUse> = quotas
                 .dimensions()
