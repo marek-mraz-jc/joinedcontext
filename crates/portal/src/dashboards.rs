@@ -23,6 +23,21 @@ pub fn layer_names(spec: &Value) -> Vec<String> {
         .collect()
 }
 
+/// The Endpoints a dashboard's widgets read, each with the widget's JSON pointer (T-6786).
+pub fn widget_endpoints(spec: &Value) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let pages = spec.get("pages").and_then(Value::as_array);
+    for (p, page) in pages.into_iter().flatten().enumerate() {
+        let widgets = page.get("widgets").and_then(Value::as_array);
+        for (w, widget) in widgets.into_iter().flatten().enumerate() {
+            if let Some(endpoint) = widget.get("endpointRef").and_then(Value::as_str) {
+                out.push((format!("/spec/pages/{p}/widgets/{w}"), endpoint.to_owned()));
+            }
+        }
+    }
+    out
+}
+
 fn endpoint_of(layer: &Value) -> Option<&str> {
     layer.get("sourceEndpointRef").and_then(Value::as_str)
 }
@@ -59,6 +74,17 @@ pub fn check(
                     ));
                 }
             }
+            for (widget, endpoint) in widget_endpoints(spec) {
+                let audience = mirror
+                    .get(project, "Endpoint", &endpoint)
+                    .and_then(|e| audience_of(&e.spec).map(str::to_owned));
+                if audience.as_deref() != Some("public") {
+                    return refuse(format!(
+                        "a public dashboard may only read public endpoints: widget {widget} reads {endpoint} whose audience is {}",
+                        audience.as_deref().unwrap_or("unknown")
+                    ));
+                }
+            }
             Ok(())
         }
         "Layer" => {
@@ -77,6 +103,19 @@ pub fn check(
             }
         }
         "Endpoint" if audience_of(spec) != Some("public") => {
+            for dashboard in mirror
+                .list(project, "Dashboard", &ListOptions::default())
+                .items
+                .into_iter()
+                .filter(|d| is_public_dashboard(&d.spec))
+            {
+                if let Some((widget, _)) = widget_endpoints(&dashboard.spec).into_iter().find(|(_, e)| e == name) {
+                    return refuse(format!(
+                        "endpoint {name} is read by widget {widget} of the public dashboard {}, so its audience stays public",
+                        dashboard.metadata.name
+                    ));
+                }
+            }
             for (dashboard, layers) in public_dashboards(mirror, project) {
                 for layer_name in layers {
                     let reads_it = mirror

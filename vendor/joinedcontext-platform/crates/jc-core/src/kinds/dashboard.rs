@@ -850,11 +850,15 @@ mod tests {
         }
 
         let mut no_data = bars(serde_json::json!({}));
-        no_data.as_object_mut().map(|w| w.remove("data"));
+        if let Some(w) = no_data.as_object_mut() {
+            w.remove("data");
+        }
         assert_eq!(field(vega_lite(no_data)).0, format!("{at}/data"));
 
         let mut no_endpoint = bars(serde_json::json!({}));
-        no_endpoint.as_object_mut().map(|w| w.remove("endpointRef"));
+        if let Some(w) = no_endpoint.as_object_mut() {
+            w.remove("endpointRef");
+        }
         assert_eq!(field(vega_lite(no_endpoint)).0, format!("{at}/endpointRef"));
 
         let mut long = bars(serde_json::json!({}));
