@@ -1021,14 +1021,15 @@ describe("the space's own data", () => {
     window.localStorage.clear();
     const fetchMock = renderInside({ status: 200, count: 1 }, { status: 200, rows: KPI_ROWS }, { source: KPI_MODEL });
     await screen.findByRole("columnheader", { name: /Particulates/ });
-    await userEvent.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: Status` }));
-    const field = screen.getByLabelText(en.entityGrid.renameColumn);
+    // Rename and order in the toolbar's Arrange columns panel, hide from the header menu (T-6738).
+    await userEvent.click(screen.getByRole("button", { name: en.entityGrid.arrangeColumns }));
+    const field = screen.getByRole("textbox", { name: new RegExp(`^${en.entityGrid.renameColumn}: Status`) });
     await userEvent.clear(field);
     await userEvent.type(field, "State{Enter}");
+    await userEvent.click(screen.getByRole("button", { name: `${en.entityGrid.moveDown}: Ref station` }));
+    await userEvent.click(screen.getByRole("button", { name: en.entityGrid.arrangeDone }));
     await userEvent.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: State` }));
-    await userEvent.click(screen.getByRole("button", { name: en.entityGrid.hideColumn }));
-    await userEvent.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: Ref station` }));
-    await userEvent.click(screen.getByRole("button", { name: en.entityGrid.moveRight }));
+    await userEvent.click(screen.getByRole("menuitem", { name: en.entityGrid.hideColumn }));
     await waitFor(() => expect(headerNames().slice(0, 5)).toEqual(["ID", "Type", "Name", "Calculation period", "Ref station"]));
     expect(screen.queryByRole("columnheader", { name: /State/ })).toBeNull();
 
