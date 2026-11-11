@@ -80,13 +80,21 @@ const FEED: Surface = Surface {
     name: "feed",
 };
 
+/// The facet read of the view (EP-178): an NGSI-LD read through the Endpoint's Policy, so it is
+/// admitted where `ngsi-ld` is.
+const FACETS: Surface = Surface {
+    representation: Representation::NgsiLd,
+    path: "facets",
+    name: "facets",
+};
+
 /// Every OGC API - Features request of one endpoint (EP-29, EP-39, EP-40).
 pub(crate) async fn ogc_features(
     State(gateway): State<Arc<Gateway>>,
     Path(params): Path<HashMap<String, String>>,
     request: Request,
 ) -> Response<Body> {
-    read_surface(&gateway, &params, request, &OGC).await
+    read_surface(&gateway, &params, request, &OGC, None).await
 }
 
 /// Every SensorThings API request of one endpoint (EP-12, EP-13).
@@ -95,7 +103,7 @@ pub(crate) async fn sensorthings(
     Path(params): Path<HashMap<String, String>>,
     request: Request,
 ) -> Response<Body> {
-    read_surface(&gateway, &params, request, &STA).await
+    read_surface(&gateway, &params, request, &STA, None).await
 }
 
 /// Every OData v4 request of one endpoint (EP-104): a read as OGC's, a write after the
@@ -106,7 +114,7 @@ pub(crate) async fn odata(
     request: Request,
 ) -> Response<Body> {
     let answer = if [Method::GET, Method::HEAD].contains(request.method()) {
-        read_surface(&gateway, &params, request, &ODATA).await
+        read_surface(&gateway, &params, request, &ODATA, None).await
     } else {
         odata_write(&gateway, &params, request).await
     };
@@ -157,7 +165,7 @@ pub(crate) async fn ical(
     Path(params): Path<HashMap<String, String>>,
     request: Request,
 ) -> Response<Body> {
-    read_surface(&gateway, &params, request, &ICAL).await
+    read_surface(&gateway, &params, request, &ICAL, None).await
 }
 
 /// The Atom, RSS 2.0 and JSON Feed documents of the Endpoint's feed outputs (EP-150): read-only,
@@ -167,7 +175,172 @@ pub(crate) async fn feed(
     Path(params): Path<HashMap<String, String>>,
     request: Request,
 ) -> Response<Body> {
-    read_surface(&gateway, &params, request, &FEED).await
+    read_surface(&gateway, &params, request, &FEED, None).await
+}
+
+/// A stored output of the Endpoint by the link a person copies, ending in its format (API/02
+/// §4a, EP-177): `feeds/{output}.{ext}` and `feeds/{filter}/{output}.{ext}`, `ext` one of `ics`,
+/// `rss`, `atom` and `json`. `{filter}` is a Query Entities query string as one raw path segment
+/// and reads exactly as `feeds/{output}.{ext}?{filter}`: the broker's own allow-list, Policy and
+/// caps, AND-ed with the output's filter, so a link narrows its output and never widens it.
+pub(crate) async fn feeds(
+    State(gateway): State<Arc<Gateway>>,
+    Path(params): Path<HashMap<String, String>>,
+    request: Request,
+) -> Response<Body> {
+    // The raw path, split on `/` before any percent-decoding: `/api/endpoint/{slug}/feeds/…`.
+    let rest = request
+        .uri()
+        .path()
+        .splitn(5, '/')
+        .nth(4)
+        .and_then(|rest| rest.strip_prefix("feeds/"))
+        .unwrap_or_default()
+        .to_owned();
+    if rest.ends_with(".csv") {
+        let slug = params.get("slug").cloned().unwrap_or_default();
+        return super::feeds_csv::preset_csv(gateway, &slug, &rest, request).await;
+    }
+    let Some((surface, forward)) = preset_link(&rest, request.uri().query()) else {
+        return ProblemDetails::not_found().into_response();
+    };
+    read_surface(&gateway, &params, request, surface, Some(forward)).await
+}
+
+/// `facets?attr=…` (EP-178): the distinct values of one of the Endpoint's `spec.facets` with
+/// their counts, or without `attr` the list itself; the broker checks every parameter.
+pub(crate) async fn facets(
+    State(gateway): State<Arc<Gateway>>,
+    Path(params): Path<HashMap<String, String>>,
+    request: Request,
+) -> Response<Body> {
+    let forward = request
+        .uri()
+        .query()
+        .filter(|q| !q.is_empty())
+        .map_or_else(String::new, |q| format!("?{q}"));
+    read_surface(&gateway, &params, request, &FACETS, Some(Ok(forward))).await
+}
+
+/// `entities.{ics,rss,atom,json}?{query}` (API/02 §4a, EP-174): the Endpoint's first calendar
+/// output (`events`, else the first) or its first feed output over the caller's query, the
+/// query read by that output as on `ical/v1` and `feed/v1`; no feed output is a 404.
+pub(crate) async fn entities(
+    State(gateway): State<Arc<Gateway>>,
+    Path(params): Path<HashMap<String, String>>,
+    request: Request,
+) -> Response<Body> {
+    let path = request.uri().path();
+    let (surface, file) = match path.rsplit_once('.').map(|(_, ext)| ext) {
+        Some("rss") => (&FEED, "rss.xml"),
+        Some("atom") => (&FEED, "atom.xml"),
+        Some("json") => (&FEED, "feed.json"),
+        _ => (&ICAL, "events.ics"),
+    };
+    let below = if surface.representation == Representation::Ical {
+        Ok(format!("/{file}"))
+    } else {
+        let slug = params.get("slug").map(String::as_str).unwrap_or_default();
+        gateway
+            .resolver
+            .resolve(slug)
+            .and_then(|endpoint| {
+                endpoint
+                    .feeds
+                    .first()
+                    .map(|o| format!("/{}/{file}", o.name))
+            })
+            .ok_or_else(|| Box::new(ProblemDetails::not_found()))
+    };
+    let forward = below.map(
+        |below| match request.uri().query().filter(|q| !q.is_empty()) {
+            Some(query) => format!("{below}?{query}"),
+            None => below,
+        },
+    );
+    read_surface(&gateway, &params, request, surface, Some(forward)).await
+}
+
+/// The longest `{filter}` segment a feeds link carries.
+pub const MAX_FILTER: usize = 2048;
+
+/// The surface of a feeds link and its path and query below that surface's root; `None` when
+/// the link names no output in a format this path serves (the 404 of any unknown child).
+fn preset_link(
+    rest: &str,
+    query: Option<&str>,
+) -> Option<(&'static Surface, Result<String, Box<ProblemDetails>>)> {
+    let (filter, file) = match rest.split('/').collect::<Vec<_>>()[..] {
+        [file] => (None, file),
+        [filter, file] => (Some(filter), file),
+        _ => return None,
+    };
+    let (output, ext) = file.rsplit_once('.')?;
+    if !output_name(output) {
+        return None;
+    }
+    let (surface, below) = match ext {
+        "ics" => (&ICAL, format!("/{output}.ics")),
+        "rss" => (&FEED, format!("/{output}/rss.xml")),
+        "atom" => (&FEED, format!("/{output}/atom.xml")),
+        "json" => (&FEED, format!("/{output}/feed.json")),
+        _ => return None,
+    };
+    let query = query.filter(|q| !q.is_empty());
+    let forward = match (filter, query) {
+        (None, None) => Ok(below),
+        (None, Some(query)) => Ok(format!("{below}?{query}")),
+        (Some(filter), query) => {
+            filter_query(filter, query.is_some(), file).map(|filter| format!("{below}?{filter}"))
+        }
+    };
+    Some((surface, forward))
+}
+
+/// Whether `output` can name an output in a feeds link: `[A-Za-z0-9_-]{1,63}`.
+pub(super) fn output_name(output: &str) -> bool {
+    !output.is_empty()
+        && output.len() <= 63
+        && output
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// The `{filter}` segment as the query string it stands for, unchanged; `400` naming the `?`
+/// form when it is empty, too long, not `name=value` pairs, or comes with a query string too.
+pub(super) fn filter_query(
+    filter: &str,
+    with_query: bool,
+    file: &str,
+) -> Result<String, Box<ProblemDetails>> {
+    let refused = |why: &str| {
+        Err(Box::new(
+            ProblemDetails::new(400, "bad-request", "Bad Request").with_detail(format!(
+                "{why}; a feeds link holds its whole query in one path segment, \
+             feeds/{{filter}}/{file}, or as the query string of feeds/{file}?{{filter}}"
+            )),
+        ))
+    };
+    if with_query {
+        return refused("this link carries a filter in its path and a query string");
+    }
+    if filter.is_empty() {
+        return refused("the filter segment is empty");
+    }
+    if filter.len() > MAX_FILTER {
+        return refused(&format!(
+            "the filter segment is longer than {MAX_FILTER} characters"
+        ));
+    }
+    let pairs = filter.split('&').all(|pair| {
+        pair.split_once('=').is_some_and(|(name, _)| {
+            !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric())
+        })
+    });
+    if !pairs {
+        return refused("the filter segment is not a query string of name=value pairs");
+    }
+    Ok(filter.to_owned())
 }
 
 /// The caller admitted to the Endpoint for `surface`, with the client's own platform headers
@@ -200,15 +373,24 @@ fn rest_of<'r>(request: &'r Request, prefix: &str) -> &'r str {
         .unwrap_or_default()
 }
 
+/// One read of `surface` through the broker's view: the caller's path below the surface's root
+/// and query as sent, or `forward` (the path and query below the root) when a link names them
+/// another way; a `forward` that does not hold is refused after the admit gate, so an unknown or
+/// closed Endpoint answers as it always does.
 async fn read_surface(
     gateway: &Gateway,
     params: &HashMap<String, String>,
     mut request: Request,
     surface: &Surface,
+    forward: Option<Result<String, Box<ProblemDetails>>>,
 ) -> Response<Body> {
     let (endpoint, subject) = match admitted(gateway, params, &mut request, surface) {
         Ok(admitted) => admitted,
         Err(problem) => return *problem,
+    };
+    let forward = match forward.transpose() {
+        Ok(forward) => forward,
+        Err(problem) => return (*problem).into_response(),
     };
     // EP-39: this representation has no write half. `OPTIONS` is answered rather than refused,
     // because that is how a client discovers the fact.
@@ -225,8 +407,13 @@ async fn read_surface(
     if endpoint.view_mapping.is_some() || !has_view(&view) {
         return no_view(surface);
     }
-    let prefix = format!("{}/{}", endpoint.base_path, surface.path);
-    let target = target(&request, &prefix, &view, surface);
+    let target = match forward {
+        Some(forward) => format!("/x/views/{view}/{}{forward}", surface.path),
+        None => {
+            let prefix = format!("{}/{}", endpoint.base_path, surface.path);
+            target(&request, &prefix, &view, surface)
+        }
+    };
     if let Err(problem) = tenancy::pin_caller(&mut request, &endpoint.space, &subject) {
         tracing::error!(space = %endpoint.space, %problem, "endpoint names an unusable space");
         return ProblemDetails::internal().into_response();
@@ -420,6 +607,8 @@ async fn answered(
     let mut text = text.replace(&from, &to).replace(&view_from, &view_to);
     if surface.representation == Representation::Feed {
         text = public_feed_host(&text, authority(gateway.broker.base()), &gateway.base_url());
+        let feeds = format!("{}{}/feeds", gateway.base_url(), endpoint.base_path);
+        text = feeds_links(&text, &to, &feeds);
     }
     proxy::with_body(parts, text.into_bytes())
 }
@@ -795,6 +984,44 @@ fn public_feed_host(text: &str, broker: &str, public: &str) -> String {
         )
 }
 
+/// A feed's own links (self, first, previous, next) as the `feeds/{output}.{ext}` link a person
+/// copies (API/02 §4a, T-6771): `{feed}/{output}/rss.xml?{query}` becomes
+/// `{feeds}/{output}.rss?{query}`, the same read. Any other text stays as it is.
+fn feeds_links(text: &str, feed: &str, feeds: &str) -> String {
+    const FILES: [(&str, &str); 3] = [
+        ("rss.xml", "rss"),
+        ("atom.xml", "atom"),
+        ("feed.json", "json"),
+    ];
+    let from = format!("{feed}/");
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(&from) {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + from.len()..];
+        let link = after.split_once('/').and_then(|(output, tail)| {
+            let (file, ext) = FILES.into_iter().find(|(file, _)| {
+                tail.strip_prefix(file).is_some_and(|end| {
+                    !end.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '.')
+                })
+            })?;
+            output_name(output).then_some((output, file, ext))
+        });
+        match link {
+            Some((output, file, ext)) => {
+                out.push_str(&format!("{feeds}/{output}.{ext}"));
+                rest = &after[output.len() + 1 + file.len()..];
+            }
+            None => {
+                out.push_str(&from);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The `host[:port]` of an upstream URL.
 fn authority(base: &str) -> &str {
     let rest = base.split_once("://").map_or(base, |(_, rest)| rest);
@@ -852,6 +1079,21 @@ pub(crate) fn routes() -> Router<Arc<Gateway>> {
         .route("/api/endpoint/{slug}/ical/v1/{*rest}", any(ical))
         // The feed outputs of the view (EP-150, T-5203), `{name}/{atom.xml|rss.xml|feed.json}`.
         .route("/api/endpoint/{slug}/feed/v1/{*rest}", any(feed))
+        // A stored output by a link that ends in its format, optionally narrowed by a filter
+        // segment (API/02 §4a, EP-177).
+        .route("/api/endpoint/{slug}/feeds/{*rest}", any(feeds))
+        // The distinct values of a facet attribute with their counts (EP-178).
+        .route("/api/endpoint/{slug}/facets", any(facets))
+        // One NGSI-LD query, then a format (API/02 §4a, EP-174).
+        .route("/api/endpoint/{slug}/entities.ics", any(entities))
+        .route("/api/endpoint/{slug}/entities.rss", any(entities))
+        .route("/api/endpoint/{slug}/entities.atom", any(entities))
+        .route("/api/endpoint/{slug}/entities.json", any(entities))
+        // `entities.csv` is file.csv's table by the name of the format aliases.
+        .route(
+            "/api/endpoint/{slug}/entities.csv",
+            axum::routing::get(crate::handlers::files::file_csv),
+        )
 }
 
 #[cfg(test)]
@@ -883,6 +1125,27 @@ mod tests {
             r#"{"authors":[{"name":"data.example.sk"}],"items":[{"id":"tag:data.example.sk,2026:v/urn:a"}]}"#
         );
         assert_eq!(public_feed_host(atom, "antares.broker", ""), atom);
+    }
+
+    #[test]
+    fn a_feeds_own_links_are_its_feeds_link() {
+        let feed = "https://data.example.sk/api/endpoint/s/feed/v1";
+        let feeds = "https://data.example.sk/api/endpoint/s/feeds";
+        let atom = format!(
+            "<link rel=\"self\" href=\"{feed}/kultura/atom.xml?q=a&amp;offset=50\"/><link rel=\"first\" href=\"{feed}/kultura/atom.xml\"/><link href=\"{feed}/kultura/atom.xmlx\"/><link href=\"{feed}/a/b/rss.xml\"/>{feed}/"
+        );
+        assert_eq!(
+            feeds_links(&atom, feed, feeds),
+            format!(
+                "<link rel=\"self\" href=\"{feeds}/kultura.atom?q=a&amp;offset=50\"/><link rel=\"first\" href=\"{feeds}/kultura.atom\"/><link href=\"{feed}/kultura/atom.xmlx\"/><link href=\"{feed}/a/b/rss.xml\"/>{feed}/"
+            )
+        );
+        let json =
+            format!(r#"{{"feed_url":"{feed}/k_1/feed.json","next_url":"{feed}/k_1/rss.xml"}}"#);
+        assert_eq!(
+            feeds_links(&json, feed, feeds),
+            format!(r#"{{"feed_url":"{feeds}/k_1.json","next_url":"{feeds}/k_1.rss"}}"#)
+        );
     }
 
     #[test]

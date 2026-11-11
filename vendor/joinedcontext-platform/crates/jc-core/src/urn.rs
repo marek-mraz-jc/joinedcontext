@@ -103,6 +103,16 @@ impl Urn {
         self.prefixed.as_ref().map(|p| p.org_domain.as_str())
     }
 
+    /// The owner segment, `{orgId}` of `urn:ngsi-ld:{Type}:{orgId}:{rest}` (ADR-N-068): the text
+    /// before the first `:` of the id part, when a non-empty rest follows. Text only: it is
+    /// checked against the space's Organization on write and grants nothing (TEN-02).
+    pub fn owner(&self) -> Option<&str> {
+        self.id
+            .split_once(':')
+            .filter(|(owner, rest)| !owner.is_empty() && !rest.is_empty())
+            .map(|(owner, _)| owner)
+    }
+
     /// The space segment of a prefixed URN. Text only: an entity's space is its address's
     /// (PF-42), never this.
     pub fn space(&self) -> Option<&str> {

@@ -1112,9 +1112,9 @@ change_resource that ContextSpace; a patch replaces the whole list, so keep its 
                  of {sources}>\"}}}}, \"targetEndpoint\": \"<one of {targets}>\", \"compute\": \
                  {{\"kind\": \"bloblang\", \"bloblang\": \"<the mapping>\"}}}}`. The mapping turns \
                  one record of the source into one NGSI-LD entity whose id is \
-                 `urn:ngsi-ld:{{Type}}:{{orgDomain}}:{{space}}:{{localId}}`, as \
+                 `urn:ngsi-ld:{{Type}}:{{orgId}}:{{space}}:{{localId}}`, as \
                  `root = {{\"id\": \"urn:ngsi-ld:%v:%v:%v:%v\".format(\"AirQualityObserved\", \
-                 env(\"JC_ORG_DOMAIN\"), env(\"JC_SPACE\"), this.station), \"type\": \
+                 env(\"JC_ORG_ID\"), env(\"JC_SPACE\"), this.station), \"type\": \
                  \"AirQualityObserved\", \"dateObserved\": {{\"type\": \"Property\", \"value\": \
                  this.ts}}}}`. The platform runs the mapping on a page of the source before the \
                  form opens, and a run that is not green comes back to you with what it saw.\n",

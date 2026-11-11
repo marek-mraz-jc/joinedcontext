@@ -1259,6 +1259,7 @@ pub const URL_VARIABLES: &[&str] = &[
     "JC_GATEWAY_URL",
     "JC_TOKEN_URL",
     "JC_ORG_DOMAIN",
+    "JC_ORG_ID",
 ];
 
 /// Why a typed URL reads the runner's environment, if it does (T-3162, PL-16).

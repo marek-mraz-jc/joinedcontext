@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 /// Names the Portal writes into a workload rather than reads: a builder run's workspace and a
 /// generated application. They are documented where they are written, and listed separately in
 /// the reference, because they are a contract with an application rather than a setting.
-const INJECTED: &[&str] = &["JC_ORG_DOMAIN", "JC_SOURCE_SPACE", "JC_SPACE"];
+const INJECTED: &[&str] = &["JC_ORG_DOMAIN", "JC_ORG_ID", "JC_SOURCE_SPACE", "JC_SPACE"];
 
 fn source_root() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

@@ -577,10 +577,15 @@ pub fn publisher_domain(state: &AppState, project: &str) -> String {
 
 /// `urn:ngsi-ld:Policy:{orgDomain}:{segment}:`, what a policyRef to a Policy of `space` starts
 /// with (EP-117): the share and the assistant name the grants they draft with it (P-18).
+/// The domain is the project's own (its Project's or its Organization's, T-6759), else the
+/// organization's, as the reference check binds it.
 pub(crate) fn policy_urn_prefix(state: &AppState, project: &str, space: &str) -> String {
+    let own = crate::permissions::project_domains(&state.mirror, project);
     format!(
         "urn:ngsi-ld:Policy:{}:{}:",
-        org_domain(state, project),
+        own.first()
+            .cloned()
+            .unwrap_or_else(|| org_domain(state, project)),
         crate::spaces::segment(&state.mirror, project, space)
     )
 }

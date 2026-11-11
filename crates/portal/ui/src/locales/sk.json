@@ -2133,8 +2133,8 @@
         "bad": "Použite 1 až 40 malých písmen, číslic alebo -, na začiatku písmeno alebo číslicu."
       },
       "filterField": {
-        "label": "Len entity, ktoré vyhovujú (nepovinné)",
-        "hint": "Dotaz NGSI-LD, ktorý tento výstup zúži a nikdy nerozšíri, napríklad eventCategory==\"šport\"."
+        "label": "Dotaz predvoľby (nepovinné)",
+        "hint": "q, scopeQ a geodotaz ako jeden reťazec dotazu; predvoľbu zúži, nikdy nerozšíri. Napríklad q=category==\"šport\"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]. V hodnote píšte & ako %26 a % ako %25."
       },
       "sourceAdd": {
         "label": "Pridať ďalší typ",
@@ -5175,7 +5175,8 @@
       "noOthers": "Túto rolu nemá žiadna iná skupina.",
       "give": "Prideliť rolu skupine",
       "groupsUnreadable": "Vaša rola nezobrazuje skupiny organizácie.",
-      "personHint": "Hľadajte podľa mena alebo e-mailu, napr. Jana Nováková. Skupina si zapíše identifikátor osoby, nie adresu."
+      "personHint": "Hľadajte podľa mena alebo e-mailu, napr. Jana Nováková. Skupina si zapíše identifikátor osoby, nie adresu.",
+      "groupHint": "Jedna zo skupín organizácie. Udelenie roly navrhne schvaľovateľovi zmenu aplikácie."
     },
     "check": {
       "green": "Funguje",

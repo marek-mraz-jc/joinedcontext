@@ -1,9 +1,9 @@
 //! The feed outputs of an Endpoint are the broker's `antares-feed` surface of its view (EP-150,
 //! EP-151, T-5203): `/api/endpoint/{slug}/feed/v1/{name}/{atom.xml|rss.xml|feed.json}` goes to
 //! `/x/views/{slug}/feed/v1/{name}/...` with the query as sent and the tenant and caller pinned.
-//! These tests hold what the gateway adds: the route per format, the links and the `tag:` ids
-//! on the public host, read-only, and no feed at all on an Endpoint without an output. The
-//! 401/403 of a non-public Endpoint is the route sweep's row (route_authz_sweep_tests.rs).
+//! These tests hold what the gateway adds: the route per format, the links as `feeds/` links and
+//! the feed's `tag:` id on the public host, read-only, and no feed at all on an Endpoint without
+//! an output. The 401/403 of a non-public Endpoint is the route sweep's row (route_authz_sweep_tests.rs).
 
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
@@ -25,7 +25,7 @@ const PUBLIC: &str = "https://data.example.sk";
 type Hops = Arc<Mutex<Vec<(String, Option<String>, HeaderMap)>>>;
 
 /// A broker answering each feed file with its media type, naming itself by its `Host` in the
-/// links, the `tag:` ids and the author, as Antares does.
+/// links, the feed's `tag:` id and the author, each entry by its Entity's URN, as Antares does.
 async fn broker() -> (String, Hops) {
     let hops: Hops = Arc::default();
     let recorder = Arc::clone(&hops);
@@ -41,17 +41,26 @@ async fn broker() -> (String, Hops) {
                 request.headers().clone(),
             ));
             let this = format!("http://{authority}{path}");
-            let (media, body) = if path.ends_with("/rss.xml") {
+            if request.uri().query().is_some_and(|q| q.contains("bogus=")) {
+                let problem = r#"{"type":"about:blank","title":"\"bogus\" is not a parameter of this feed","status":400}"#;
+                return (StatusCode::BAD_REQUEST, [("content-type", "application/problem+json")], problem).into_response();
+            }
+            let (media, body) = if path.ends_with(".ics") {
+                ("text/calendar; charset=utf-8", format!(
+                    "BEGIN:VCALENDAR\r\nX-QUERY:{}\r\nEND:VCALENDAR\r\n",
+                    request.uri().query().unwrap_or_default()
+                ))
+            } else if path.ends_with("/rss.xml") {
                 ("application/rss+xml; charset=utf-8", format!(
-                    "<rss version=\"2.0\"><channel><link>{this}</link><item><guid isPermaLink=\"false\">tag:{host},2026:{SLUG}/urn:ngsi-ld:Event:1</guid></item></channel></rss>"
+                    "<rss version=\"2.0\"><channel><link>{this}</link><item><guid isPermaLink=\"false\">urn:ngsi-ld:Event:1</guid></item></channel></rss>"
                 ))
             } else if path.ends_with("/feed.json") {
                 ("application/feed+json; charset=utf-8", format!(
-                    r#"{{"version":"https://jsonfeed.org/version/1.1","feed_url":"{this}","authors":[{{"name":"{host}"}}],"items":[{{"id":"tag:{host},2026:{SLUG}/urn:ngsi-ld:Event:1"}}]}}"#
+                    r#"{{"version":"https://jsonfeed.org/version/1.1","feed_url":"{this}","authors":[{{"name":"{host}"}}],"items":[{{"id":"urn:ngsi-ld:Event:1"}}]}}"#
                 ))
             } else {
                 ("application/atom+xml; charset=utf-8", format!(
-                    "<feed xmlns=\"http://www.w3.org/2005/Atom\"><id>tag:{host},2026:{SLUG}/feed/kultura</id><author><name>{host}</name></author><generator>Antares</generator><link rel=\"self\" href=\"{this}\"/><link rel=\"next\" href=\"{this}?offset=50\"/></feed>"
+                    "<feed xmlns=\"http://www.w3.org/2005/Atom\"><id>tag:{host},2026:{SLUG}/feed/kultura</id><author><name>{host}</name></author><generator>Antares</generator><link rel=\"self\" href=\"{this}\"/><link rel=\"next\" href=\"{this}?offset=50\"/><entry><id>urn:ngsi-ld:Event:1</id></entry></feed>"
                 ))
             };
             ([("content-type", media)], body).into_response()
@@ -109,6 +118,13 @@ fn endpoint(feeds: Vec<FeedOutput>) -> Endpoint {
     }
 }
 
+/// The Endpoint of `endpoint(feeds)` that also serves its view's calendar outputs.
+fn calendar(feeds: Vec<FeedOutput>) -> Endpoint {
+    let mut endpoint = endpoint(feeds);
+    endpoint.representations.push(Representation::Ical);
+    endpoint
+}
+
 fn kultura() -> Vec<FeedOutput> {
     vec![serde_norway::from_str(
         "name: kultura\ntitle: { sk: Kultúra }\nsources: [{ type: Event, preset: event }]\n",
@@ -122,14 +138,27 @@ async fn call(
     method: Method,
     uri: &str,
 ) -> (StatusCode, HeaderMap, String) {
+    call_on(upstream, endpoint, method, uri, PUBLIC, "gateway.internal").await
+}
+
+/// [`call`] on a gateway configured with `public`, the request carrying `host` as its `Host`.
+async fn call_on(
+    upstream: &str,
+    endpoint: Endpoint,
+    method: Method,
+    uri: &str,
+    public: &str,
+    host: &str,
+) -> (StatusCode, HeaderMap, String) {
     let mut gateway =
         Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), DOMAIN).serve([endpoint]);
-    gateway.public_url = Some(PUBLIC.to_owned());
+    gateway.public_url = Some(public.to_owned());
     let response = router(Arc::new(gateway))
         .oneshot(
             Request::builder()
                 .method(method)
                 .uri(uri)
+                .header("host", host)
                 .body(Body::empty())
                 .expect("a request"),
         )
@@ -157,10 +186,10 @@ async fn each_format_is_the_views_feed_on_the_public_host() {
         .next()
         .unwrap_or_default()
         .to_owned();
-    for (file, media) in [
-        ("atom.xml", "application/atom+xml"),
-        ("rss.xml", "application/rss+xml"),
-        ("feed.json", "application/feed+json"),
+    for (file, media, ext) in [
+        ("atom.xml", "application/atom+xml", "atom"),
+        ("rss.xml", "application/rss+xml", "rss"),
+        ("feed.json", "application/feed+json", "json"),
     ] {
         let uri = format!("/api/endpoint/{SLUG}/feed/v1/kultura/{file}?lang=sk&limit=5");
         let (status, headers, body) = call(&upstream, endpoint(kultura()), Method::GET, &uri).await;
@@ -173,12 +202,11 @@ async fn each_format_is_the_views_feed_on_the_public_host() {
             "{file}: {headers:?}"
         );
         assert!(
-            body.contains(&format!(
-                "{PUBLIC}/api/endpoint/{SLUG}/feed/v1/kultura/{file}"
-            )),
+            body.contains(&format!("{PUBLIC}/api/endpoint/{SLUG}/feeds/kultura.{ext}")),
             "{file}: {body}"
         );
-        assert!(body.contains("tag:data.example.sk,2026:"), "{file}: {body}");
+        assert!(!body.contains("/feed/v1/"), "{file}: {body}");
+        assert!(body.contains("urn:ngsi-ld:Event:1"), "{file}: {body}");
         assert!(
             !body.contains(&broker_host),
             "{file} names the broker: {body}"
@@ -196,6 +224,266 @@ async fn each_format_is_the_views_feed_on_the_public_host() {
     );
     assert_eq!(hops[0].1.as_deref(), Some("lang=sk&limit=5"));
     assert_eq!(hops[0].2["ngsild-tenant"], SPACE);
+}
+
+/// T-6758 (EP-178): `facets` reaches the broker's view facet read with the query as sent and the
+/// Endpoint's space as tenant, and without a query the list read; a POST is refused before it.
+#[tokio::test]
+async fn facets_forward_to_the_view_as_sent() {
+    let (upstream, hops) = broker().await;
+    let query = "attr=address.addressLocality&limit=20&q=category==%22music%22";
+    for uri in [
+        format!("/api/endpoint/{SLUG}/facets?{query}"),
+        format!("/api/endpoint/{SLUG}/facets"),
+    ] {
+        let (status, _, body) = call(&upstream, endpoint(Vec::new()), Method::GET, &uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    }
+    let (status, _, _) = call(
+        &upstream,
+        endpoint(Vec::new()),
+        Method::POST,
+        &format!("/api/endpoint/{SLUG}/facets?{query}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    let hops = hops.lock().expect("the hop log").clone();
+    let path = format!("/x/views/{SLUG}/facets");
+    assert_eq!(hops.len(), 2);
+    assert_eq!(
+        (hops[0].0.as_str(), hops[0].1.as_deref()),
+        (path.as_str(), Some(query))
+    );
+    assert_eq!(hops[0].2["ngsild-tenant"], SPACE);
+    assert_eq!(
+        (hops[1].0.as_str(), hops[1].1.as_deref()),
+        (path.as_str(), None)
+    );
+}
+
+/// A feed read on two configured public addresses lists the same entry ids, the Entity URNs,
+/// and its links name the configured address in the `feeds/` form; the request's `Host` is
+/// never written into the body (T-6771, RTE-06).
+#[tokio::test]
+async fn a_feed_under_two_addresses_keeps_its_entry_ids_and_never_echoes_the_host() {
+    let (upstream, _) = broker().await;
+    let uri = format!("/api/endpoint/{SLUG}/feeds/kultura.atom?limit=5");
+    let mut ids = Vec::new();
+    for (public, host) in [
+        (PUBLIC, "attacker.example"),
+        ("https://opendata.example.org/sk_bbsk", "evil.example:8443"),
+    ] {
+        let (status, _, body) = call_on(
+            &upstream,
+            endpoint(kultura()),
+            Method::GET,
+            &uri,
+            public,
+            host,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let host_name = host.split(':').next().unwrap_or(host);
+        assert!(!body.contains(host_name), "{host} in the body: {body}");
+        for rel in ["self", "next"] {
+            assert!(
+                body.contains(&format!(
+                    "rel=\"{rel}\" href=\"{public}/api/endpoint/{SLUG}/feeds/kultura.atom"
+                )),
+                "{rel} on {public}: {body}"
+            );
+        }
+        ids.push(
+            body.split("<entry><id>")
+                .skip(1)
+                .map(|e| e.split('<').next().unwrap_or_default().to_owned())
+                .collect::<Vec<_>>(),
+        );
+    }
+    assert_eq!(ids[0], ["urn:ngsi-ld:Event:1"]);
+    assert_eq!(ids[0], ids[1]);
+}
+
+/// The owner's test link (T-6755): `feeds/{filter}/events.ics` is `ical/v1/events.ics?{filter}`
+/// at the broker, the raw segment passed unchanged, so `%2F`, `%5B`, `%22` and `%23` stay one
+/// value, and the `?` form of the same query reaches the broker the same way.
+#[tokio::test]
+async fn a_filter_segment_is_the_query_string_of_the_output() {
+    let (upstream, hops) = broker().await;
+    let filter = "q=category==%22music%22;name~=%22a%2Fb%23c%22&georel=near;maxDistance==5000&geometry=Point&coordinates=%5B19.15,48.73%5D";
+    let path = format!("/api/endpoint/{SLUG}/feeds/{filter}/events.ics");
+    let query = format!("/api/endpoint/{SLUG}/feeds/events.ics?{filter}");
+    let (status, headers, by_path) =
+        call(&upstream, calendar(Vec::new()), Method::GET, &path).await;
+    assert_eq!(status, StatusCode::OK, "{by_path}");
+    assert!(headers["content-type"]
+        .to_str()
+        .unwrap_or_default()
+        .starts_with("text/calendar"));
+    let (status, _, by_query) = call(&upstream, calendar(Vec::new()), Method::GET, &query).await;
+    assert_eq!(status, StatusCode::OK, "{by_query}");
+    assert_eq!(by_path, by_query);
+    let (status, _, plain) = call(
+        &upstream,
+        calendar(Vec::new()),
+        Method::GET,
+        &format!("/api/endpoint/{SLUG}/feeds/events.ics"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{plain}");
+    let hops = hops.lock().expect("the hop log").clone();
+    let ics = format!("/x/views/{SLUG}/ical/v1/events.ics");
+    assert_eq!(hops.len(), 3);
+    for hop in &hops[..2] {
+        assert_eq!(
+            (hop.0.as_str(), hop.1.as_deref()),
+            (ics.as_str(), Some(filter))
+        );
+        assert_eq!(hop.2["ngsild-tenant"], SPACE);
+    }
+    assert_eq!(
+        (hops[2].0.as_str(), hops[2].1.as_deref()),
+        (ics.as_str(), None)
+    );
+}
+
+/// `entities.{ext}?{query}` is the first calendar output (`events.ics`) or the first feed output
+/// over the query as sent; an Endpoint without a feed output has no `entities.rss`.
+#[tokio::test]
+async fn an_entities_alias_is_the_first_output_over_the_query() {
+    let (upstream, hops) = broker().await;
+    let query = "type=Event&q=category==%22music%22&georel=near;maxDistance==5000&geometry=Point&coordinates=%5B19.15,48.73%5D";
+    for (ext, below) in [
+        ("ics", "ical/v1/events.ics"),
+        ("rss", "feed/v1/kultura/rss.xml"),
+        ("atom", "feed/v1/kultura/atom.xml"),
+        ("json", "feed/v1/kultura/feed.json"),
+    ] {
+        let uri = format!("/api/endpoint/{SLUG}/entities.{ext}?{query}");
+        let (status, _, body) = call(&upstream, calendar(kultura()), Method::GET, &uri).await;
+        assert_eq!(status, StatusCode::OK, "{ext}: {body}");
+        let hop = hops.lock().expect("the hop log").pop().expect("a hop");
+        assert_eq!(hop.0, format!("/x/views/{SLUG}/{below}"));
+        assert_eq!(hop.1.as_deref(), Some(query));
+    }
+    let (status, _, body) = call(
+        &upstream,
+        calendar(Vec::new()),
+        Method::GET,
+        &format!("/api/endpoint/{SLUG}/entities.rss"),
+    )
+    .await;
+    assert!(status.is_client_error(), "{body}");
+    assert!(hops.lock().expect("the hop log").is_empty());
+}
+
+/// Each feed extension of a feeds link is that output's file on the feed surface.
+#[tokio::test]
+async fn a_feeds_link_names_the_feed_file_by_its_extension() {
+    let (upstream, hops) = broker().await;
+    for (ext, file) in [
+        ("rss", "rss.xml"),
+        ("atom", "atom.xml"),
+        ("json", "feed.json"),
+    ] {
+        let uri = format!("/api/endpoint/{SLUG}/feeds/q=category==%22music%22/kultura.{ext}");
+        let (status, _, body) = call(&upstream, endpoint(kultura()), Method::GET, &uri).await;
+        assert_eq!(status, StatusCode::OK, "{ext}: {body}");
+        let hop = hops.lock().expect("the hop log").pop().expect("a hop");
+        assert_eq!(hop.0, format!("/x/views/{SLUG}/feed/v1/kultura/{file}"));
+        assert_eq!(hop.1.as_deref(), Some("q=category==%22music%22"));
+    }
+}
+
+/// A filter segment that does not hold is 400 naming the `?` form, and the broker is not asked;
+/// a parameter the output does not read is the broker's own 400, as in the `?` form.
+#[tokio::test]
+async fn a_filter_segment_that_does_not_hold_is_400() {
+    let (upstream, hops) = broker().await;
+    let long = format!("q=name==%22{}%22", "a".repeat(2049 - 14));
+    assert_eq!(long.len(), 2049);
+    for (uri, why) in [
+        (
+            format!("/api/endpoint/{SLUG}/feeds/q=a==1/events.ics?q=b==2"),
+            "a query string",
+        ),
+        (
+            format!("/api/endpoint/{SLUG}/feeds//events.ics"),
+            "is empty",
+        ),
+        (
+            format!("/api/endpoint/{SLUG}/feeds/{long}/events.ics"),
+            "longer than 2048",
+        ),
+        (
+            format!("/api/endpoint/{SLUG}/feeds/music/events.ics"),
+            "name=value",
+        ),
+        (
+            format!("/api/endpoint/{SLUG}/feeds/q%3Da==1/events.ics"),
+            "name=value",
+        ),
+    ] {
+        let (status, _, body) = call(&upstream, calendar(Vec::new()), Method::GET, &uri).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
+        assert!(
+            body.contains(why) && body.contains("feeds/events.ics?{filter}"),
+            "{uri}: {body}"
+        );
+    }
+    assert!(hops.lock().expect("the hop log").is_empty());
+    let fits = format!("q=name==%22{}%22", "a".repeat(2048 - 14));
+    let (status, _, body) = call(
+        &upstream,
+        calendar(Vec::new()),
+        Method::GET,
+        &format!("/api/endpoint/{SLUG}/feeds/{fits}/events.ics"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, body) = call(
+        &upstream,
+        calendar(Vec::new()),
+        Method::GET,
+        &format!("/api/endpoint/{SLUG}/feeds/bogus=1/events.ics"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("bogus"), "{body}");
+}
+
+/// A feeds link of a format the Endpoint does not serve gets the admit gate's answer to that surface; one naming no
+/// output in a served format (another extension, a deeper path, a strange name) is 404.
+#[tokio::test]
+async fn a_feeds_link_outside_the_endpoints_formats_is_refused() {
+    let (upstream, hops) = broker().await;
+    let refused = call(
+        &upstream,
+        endpoint(kultura()),
+        Method::GET,
+        &format!("/api/endpoint/{SLUG}/feeds/q=a==1/events.ics"),
+    )
+    .await;
+    let surface = call(
+        &upstream,
+        endpoint(kultura()),
+        Method::GET,
+        &format!("/api/endpoint/{SLUG}/ical/v1/events.ics"),
+    )
+    .await;
+    assert!(refused.0.is_client_error(), "{}", refused.2);
+    assert_eq!((refused.0, refused.2), (surface.0, surface.2));
+    for rest in [
+        "events.pdf",
+        "a=1/b=2/events.ics",
+        "ev%2Fents.ics",
+        "events",
+    ] {
+        let uri = format!("/api/endpoint/{SLUG}/feeds/{rest}");
+        let (status, _, body) = call(&upstream, calendar(kultura()), Method::GET, &uri).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{rest}: {body}");
+    }
+    assert!(hops.lock().expect("the hop log").is_empty());
 }
 
 /// EP-150: an Endpoint without a feed output has no feed route to it: the gateway answers 404

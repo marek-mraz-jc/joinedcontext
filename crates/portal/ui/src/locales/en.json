@@ -2133,8 +2133,8 @@
         "bad": "Use 1 to 40 lowercase letters, digits or -, starting with a letter or digit."
       },
       "filterField": {
-        "label": "Only entities matching (optional)",
-        "hint": "An NGSI-LD query that narrows this output and never widens it, for example eventCategory==\"sport\"."
+        "label": "Preset query (optional)",
+        "hint": "q, scopeQ and a geo-query as one query string; it narrows this preset, never widens it. For example q=category==\"sport\"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]. Inside a value write & as %26 and % as %25."
       },
       "sourceAdd": {
         "label": "Add another type",
@@ -5175,7 +5175,8 @@
       "noOthers": "No other group holds this role.",
       "give": "Give this role to a group",
       "groupsUnreadable": "Your role does not list the organization's groups.",
-      "personHint": "Search by name or e-mail, e.g. Jana Nováková. The group records the person's id, not the address."
+      "personHint": "Search by name or e-mail, e.g. Jana Nováková. The group records the person's id, not the address.",
+      "groupHint": "One of the organization's groups. Giving it the role proposes a change to the application for an approver."
     },
     "check": {
       "green": "Working",

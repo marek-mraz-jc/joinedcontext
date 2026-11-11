@@ -103,6 +103,7 @@ fn outputs() -> Value {
          "sources": [{"type": "Event", "preset": "event", "mapping": {"updated": "dateModified"}}],
          "filter": {"q": "category==\"šport\""}},
         {"name": "tajne", "sources": [{"type": "Secret", "preset": "generic"}]},
+        {"name": "news", "title": {"sk": "Správy"}, "sources": [{"type": "Article", "preset": "article"}]},
         {"name": "blizko", "sources": [{"type": "Event", "preset": "event"}],
          "filter": {"georel": "near;maxDistance==1000", "geometry": "Point", "coordinates": "[19.14,48.73]"}}
     ])
@@ -181,8 +182,7 @@ fn ids(file: &str, body: &str) -> Vec<String> {
 #[tokio::test]
 async fn three_formats_list_the_same_entries_newest_first_without_what_the_view_hides() {
     let app = fixture().await;
-    let want = ["Event:e2", "Event:e1", "Article:a1"]
-        .map(|id| format!("tag:localhost,2026:city/urn:ngsi-ld:{id}"));
+    let want = ["Event:e2", "Event:e1", "Article:a1"].map(|id| format!("urn:ngsi-ld:{id}"));
     let media = [
         "application/atom+xml; charset=utf-8",
         "application/rss+xml; charset=utf-8",
@@ -243,6 +243,33 @@ async fn three_formats_list_the_same_entries_newest_first_without_what_the_view_
     );
 }
 
+/// An entry's id is its Entity's URN (RSS guid, Atom id, JSON Feed id), so a feed read under
+/// another host, an `/{org}/` prefix or an own domain lists the same ids and no reader shows
+/// its entries again (T-6771).
+#[tokio::test]
+async fn an_entry_id_is_the_entity_urn_under_any_host() {
+    let app = fixture().await;
+    for file in FILES {
+        let uri = format!("{ALL}/{file}");
+        let (_, _, one) = call(&app, "GET", &uri, "", &[("Host", "data.example.sk")]).await;
+        let (_, _, two) = call(
+            &app,
+            "GET",
+            &uri,
+            "",
+            &[("Host", "opendata.example.org:8443")],
+        )
+        .await;
+        assert_eq!(ids(file, &one), ids(file, &two), "{file}");
+        assert!(
+            ids(file, &one)
+                .iter()
+                .all(|id| id.starts_with("urn:ngsi-ld:")),
+            "{file}: {one}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn only_a_listed_output_of_a_readable_view_has_a_feed() {
     let app = fixture().await;
@@ -266,10 +293,7 @@ async fn a_filter_only_narrows_and_a_request_cannot_widen_it() {
     let sport = "/x/views/city/feed/v1/sport/feed.json";
     let (status, body) = send(&app, "GET", sport, "").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        ids("feed.json", &body),
-        ["tag:localhost,2026:city/urn:ngsi-ld:Event:e2"]
-    );
+    assert_eq!(ids("feed.json", &body), ["urn:ngsi-ld:Event:e2"]);
     let widen = format!("{sport}?q=name==%22x%22)%7C(category==%22kult%C3%BAra%22");
     let (status, body) = send(&app, "GET", &widen, "").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -282,8 +306,7 @@ async fn a_filter_only_narrows_and_a_request_cannot_widen_it() {
     let every = "/x/views/every/feed/v1/vsetky/feed.json";
     let (status, body) = send(&app, "GET", every, "").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let all = ["Event:e2", "Event:e1", "Article:a1"]
-        .map(|id| format!("tag:localhost,2026:every/urn:ngsi-ld:{id}"));
+    let all = ["Event:e2", "Event:e1", "Article:a1"].map(|id| format!("urn:ngsi-ld:{id}"));
     assert_eq!(
         ids("feed.json", &body),
         all,
@@ -314,10 +337,7 @@ async fn a_filter_only_narrows_and_a_request_cannot_widen_it() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let (status, body) = send(&app, "GET", &format!("{ALL}/feed.json?type=Article"), "").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        ids("feed.json", &body),
-        ["tag:localhost,2026:city/urn:ngsi-ld:Article:a1"]
-    );
+    assert_eq!(ids("feed.json", &body), ["urn:ngsi-ld:Article:a1"]);
 }
 
 #[tokio::test]
@@ -338,10 +358,7 @@ async fn pages_link_each_other_and_bad_parameters_are_400() {
         "",
     )
     .await;
-    assert_eq!(
-        ids("feed.json", &second),
-        ["tag:localhost,2026:city/urn:ngsi-ld:Article:a1"]
-    );
+    assert_eq!(ids("feed.json", &second), ["urn:ngsi-ld:Article:a1"]);
     let feed: Value = serde_json::from_str(&second).expect("json");
     assert!(feed.get("next_url").is_none(), "{second}");
     for query in [
@@ -372,6 +389,42 @@ async fn pages_link_each_other_and_bad_parameters_are_400() {
         body.contains("<updated>1970-01-01T00:00:00Z</updated>") && !body.contains("<entry>"),
         "{body}"
     );
+}
+
+/// T-6756: an Endpoint with Article gets the base preset `news`; its RSS 2.0 document is a
+/// channel of the articles alone, with an `ETag` a conditional GET answers 304 to.
+#[tokio::test]
+async fn the_news_preset_is_an_rss_channel_of_articles_with_an_etag() {
+    let app = fixture().await;
+    let uri = "/x/views/city/feed/v1/news/rss.xml";
+    let (status, headers, body) = call(&app, "GET", uri, "", &[]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        headers["content-type"],
+        "application/rss+xml; charset=utf-8"
+    );
+    let rss = body
+        .split_once("<rss")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    assert!(rss.starts_with(" version=\"2.0\""), "{body}");
+    let channel = rss
+        .split_once("<channel>")
+        .and_then(|(_, rest)| rest.split_once("</channel>"))
+        .map(|(inner, _)| inner)
+        .unwrap_or_default();
+    for element in ["<title>Správy</title>", "<link>", "<description>"] {
+        assert!(channel.contains(element), "{element}: {body}");
+    }
+    assert_eq!(
+        channel.matches("<item>").count(),
+        channel.matches("</item>").count()
+    );
+    assert_eq!(ids("rss.xml", &body), ["urn:ngsi-ld:Article:a1"]);
+    assert!(body.trim_end().ends_with("</rss>"), "{body}");
+    let etag = headers["etag"].to_str().expect("etag").to_owned();
+    let (status, _, body) = call(&app, "GET", uri, "", &[("If-None-Match", etag.as_str())]).await;
+    assert_eq!((status, body.as_str()), (StatusCode::NOT_MODIFIED, ""));
 }
 
 #[tokio::test]

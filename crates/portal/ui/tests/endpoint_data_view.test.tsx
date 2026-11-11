@@ -316,6 +316,36 @@ describe("the data section of an endpoint", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("lays a phone out as one toolbar row over the readable columns (T-6748)", async () => {
+    const stubbed = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ matches: query.startsWith("(max-width"), addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
+    try {
+      const user = userEvent.setup();
+      const onApi = vi.fn();
+      show({ csv: true, actions: <button type="button" onClick={onApi}>Data API</button> });
+      await waitFor(() => expect(screen.getByRole("grid")).toBeInTheDocument());
+      // The toolbar row holds the one Tools menu and the search, nothing else.
+      const toolbar = screen.getByTestId("grid-toolbar");
+      expect([...toolbar.children].map((each) => each.tagName)).toEqual(["DETAILS", "INPUT"]);
+      // The id and the one type left the columns; the type and its choice sit on the line above.
+      expect(columns().some((name) => /^ID|^Type/.test(name))).toBe(false);
+      expect(screen.getByRole("combobox", { name: en.endpoints.data.type })).toHaveValue("AirQualityObserved");
+      // The page's own action and the full window are in the menu, labelled by their state.
+      const menu = toolbar.querySelector("details")!;
+      await user.click(menu.querySelector("summary")!);
+      await user.click(screen.getByRole("button", { name: "Data API" }));
+      expect(onApi).toHaveBeenCalledOnce();
+      // The full window closes the menu as it opens, so the rows are what the person sees.
+      await user.click(screen.getByRole("button", { name: en.endpoints.data.full }));
+      expect(menu.open).toBe(false);
+      expect(screen.getByRole("dialog", { name: en.endpoints.data.title })).toBeInTheDocument();
+      await user.click(menu.querySelector("summary")!);
+      expect(screen.getByRole("button", { name: en.endpoints.data.fullLeave })).toHaveAttribute("aria-pressed", "true");
+    } finally {
+      window.matchMedia = stubbed;
+    }
+  });
+
   it("reads another origin without a cookie or token when the catalogue hosts it (T-5082)", async () => {
     const asked: Request[] = [];
     show({ origin: "https://api.example.test", csv: true }, (url, request) => {

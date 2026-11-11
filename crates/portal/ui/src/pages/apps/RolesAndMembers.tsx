@@ -309,7 +309,7 @@ function RoleRow({
             }
           }}
         >
-          <Field id={`${ids}-group`} label={t("apps.roles.group")}>
+          <Field id={`${ids}-group`} label={t("apps.roles.group")} description={t("apps.roles.groupHint")}>
             <Select id={`${ids}-group`} value={picked} onChange={(event) => setPicked(event.target.value)}>
               <option value="">{t("apps.roles.pickGroup")}</option>
               {offered.map((name) => (

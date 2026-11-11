@@ -931,7 +931,7 @@ fn source_space(index: usize) -> String {
 pub fn bloblang(step: &KpiStep, expr: &Expr, inputs: &[Input], target: &Target<'_>) -> String {
     let var = |name: &str| format!("$in_{}", name.replace('-', "_"));
     let mut out = String::from(
-        "let domain = env(\"JC_ORG_DOMAIN\")\nlet now = now()\nlet pages = this.or([])\n",
+        "let domain = env(\"JC_ORG_DOMAIN\")\nlet owner = env(\"JC_ORG_ID\")\nlet now = now()\nlet pages = this.or([])\n",
     );
     let reads = earlier_reads(expr);
     let names: Vec<String> = inputs
@@ -1005,7 +1005,7 @@ pub fn bloblang(step: &KpiStep, expr: &Expr, inputs: &[Input], target: &Target<'
         .collect();
     let entity = |name: &str, rows: &dyn Fn(&str) -> String| -> String {
         format!(
-            "{{\n  \"id\": \"urn:ngsi-ld:KeyPerformanceIndicator:\" + $domain + \":\" + env(\"JC_SPACE\") + \":\" + {name},\n  \
+            "{{\n  \"id\": \"urn:ngsi-ld:KeyPerformanceIndicator:\" + $owner + \":\" + env(\"JC_SPACE\") + \":\" + {name},\n  \
              \"type\": \"KeyPerformanceIndicator\",\n  \
              \"name\": {{ \"type\": \"Property\", \"value\": {name} }},\n  \
              \"calculationFormula\": {{ \"type\": \"Property\", \"value\": {formula} }},\n  \
@@ -1661,6 +1661,11 @@ mod tests {
         };
         let mapping = bloblang(&s, &expr, &inputs(), &target);
         assert!(mapping.contains("env(\"JC_ORG_DOMAIN\")"));
+        // T-6769: the indicator's id names its owner by the Organization's id (ADR-N-068).
+        assert!(
+            mapping.contains("KeyPerformanceIndicator:\" + $owner + \":\""),
+            "{mapping}"
+        );
         let reads: BTreeSet<&str> = mapping
             .match_indices("env(\"")
             .map(|(at, _)| mapping[at + 5..].split('"').next().unwrap_or(""))
@@ -1669,6 +1674,7 @@ mod tests {
             reads,
             BTreeSet::from([
                 "JC_ORG_DOMAIN",
+                "JC_ORG_ID",
                 "JC_SPACE",
                 "JC_SOURCE_SPACE",
                 "JC_SOURCE_SPACE_2"

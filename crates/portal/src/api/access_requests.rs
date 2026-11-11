@@ -944,7 +944,9 @@ pub(crate) fn served_types(
 }
 
 /// The policyRefs `endpoint` lists once `request`'s grant lands (P-18, T-6740): the ones it names,
-/// or, naming none, every Policy of its space it binds today, and the new grant's.
+/// or, naming none, every Policy of its space it binds today, and the new grant's, on the domain
+/// the reference check binds ([`crate::api::mutate::policy_urn_beside`]). With no domain known a
+/// ref-less Endpoint stays ref-less (empty list), since it binds the grant as it is.
 fn served_with(
     state: &AppState,
     project: &str,
@@ -953,18 +955,32 @@ fn served_with(
 ) -> Vec<String> {
     let ground = crate::judge::Ground::of(state);
     let spec = &endpoint["spec"];
-    let named: Vec<String> = match (&spec["policyRef"], &spec["policyRefs"]) {
-        (Value::String(one), _) => vec![one.clone()],
-        (_, Value::Array(list)) => list
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect(),
-        _ => crate::api::mutate::bound_today(&ground, project, &request.space),
+    let named: Option<Vec<String>> = match (&spec["policyRef"], &spec["policyRefs"]) {
+        (Value::String(one), _) => Some(vec![one.clone()]),
+        (_, Value::Array(list)) => Some(
+            list.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+        ),
+        _ => None,
     };
-    let grant =
-        crate::api::mutate::policy_urn(&ground, project, &request.space, &request.policy_name());
-    let mut refs = named;
+    let grant = crate::api::mutate::policy_urn_beside(
+        &ground,
+        project,
+        &request.space,
+        &request.policy_name(),
+        named.as_deref().unwrap_or_default(),
+    );
+    let (mut refs, grant) = match (named, grant) {
+        (Some(named), Some(grant)) => (named, grant),
+        (None, Some(grant)) => (
+            crate::api::mutate::bound_today(&ground, project, &request.space),
+            grant,
+        ),
+        (Some(named), None) => return named,
+        (None, None) => return Vec::new(),
+    };
     if !refs.contains(&grant) {
         refs.push(grant);
     }

@@ -546,7 +546,7 @@ fn a_git_set_stays_under_the_repository_root() -> Result<(), String> {
     };
     assert!(GitTable::open(info()?, &repo, &sha, "things/*/*", small).is_err());
     let table = GitTable::open(info()?, &repo, &sha, "things/*/*", GitLimits::strict()).must()?;
-    assert_eq!(table.etag(), Some(sha.as_str()));
+    assert_eq!(table.etag(), Some(sha.clone()));
     Ok(())
 }
 

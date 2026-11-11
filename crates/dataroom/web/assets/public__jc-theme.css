@@ -772,12 +772,18 @@ or the legend; the legend now sits under the chart (render.js). */
 body.jc-corner-compact .jc-corner { margin-inline-end: 0; }
 body.jc-corner-compact .jc-assistant:not([open]) > summary { margin-inline: 0; transform: none; border-start-end-radius: 0; border-end-end-radius: 0; opacity: .92; }
 body.jc-corner-compact .jc-assistant:not([open]) > summary > .jc-assistant-icon { transform: none; }
+/* T-6748: over a frame it steps aside, so no row or pager of the table sits under it; a keyboard still reaches it. */
+body.jc-corner-aside .jc-corner { pointer-events: none; }
+body.jc-corner-aside .jc-corner .jc-assistants-link { display: none; }
+body.jc-corner-aside .jc-assistant:not([open]) > summary:not(:focus-visible) { opacity: 0; }
+body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer-events: auto; }
 }
 .jc-about-sources > summary { cursor: pointer; color: var(--jc-primary); min-block-size: 2.75rem; display: flex; align-items: center; }
 .jc-about-sources > summary:focus-visible { outline: 3px solid var(--jc-accent); outline-offset: 2px; }
 .jc-about-sources ul { margin: .25rem 0 0; padding-inline-start: 1.25rem; columns: 2 16rem; }
 .jc-about-sources li { min-block-size: 2rem; break-inside: avoid; }
-/* "Odoberať" on a dataset page (T-5203): a menu under its button, inside the page at 400 px. */
+/* "Odoberať" on a dataset page (T-5203): a menu under its button, inside the page at 400 px. No height cap (T-6758):
+   the page scrolls to the builder's link and preview, which a capped inner scroll hid without a cue. */
 /* The dataset's title row: the h1 and its actions (Subscribe) on one line, the actions under it when narrow. */
 .jc-dataset-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: .5rem 1rem; margin-bottom: .75rem; }
 .jc-dataset-head > h1 { flex: 1 1 20rem; min-width: 0; margin: 0; }
@@ -788,7 +794,7 @@ body.jc-corner-compact .jc-assistant:not([open]) > summary > .jc-assistant-icon 
 .jc-subscribe > summary::after { content: ""; width: .45em; height: .45em; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-.15em) rotate(45deg); }
 .jc-subscribe[open] > summary { background: rgba(var(--jc-primary-rgb), .08); border-color: var(--jc-primary); }
 .jc-subscribe[open] > summary::after { transform: translateY(.1em) rotate(-135deg); }
-.jc-subscribe-menu { position: absolute; right: 0; top: calc(100% + .375rem); z-index: 20; width: min(42rem, calc(100vw - 2rem)); max-height: min(44rem, calc(100vh - 8rem)); overflow-y: auto; overscroll-behavior: contain; padding: 1rem 1.25rem; border: 1px solid var(--jc-n300); border-radius: var(--jc-radius-lg); background: var(--jc-surface); box-shadow: 0 .75rem 2rem rgba(15, 23, 42, .18); }
+.jc-subscribe-menu { position: absolute; right: 0; top: calc(100% + .375rem); z-index: 20; width: min(42rem, calc(100vw - 2rem)); padding: 1rem 1.25rem; border: 1px solid var(--jc-n300); border-radius: var(--jc-radius-lg); background: var(--jc-surface); box-shadow: 0 .75rem 2rem rgba(15, 23, 42, .18); }
 .jc-subscribe-menu ul { list-style: none; margin: 0 0 .75rem; padding: 0; }
 .jc-subscribe-menu ul:last-child { margin-bottom: 0; }
 .jc-subscribe-feed { padding: .5rem 0; }
@@ -803,21 +809,24 @@ body.jc-corner-compact .jc-assistant:not([open]) > summary > .jc-assistant-icon 
 .jc-subscribe-group { margin: .25rem 0 0; font-size: .8125rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--jc-ink); }
 .jc-subscribe-lead { margin: 0 0 .75rem; font-size: .9375rem; color: var(--jc-ink); }
 .jc-subscribe-query { margin: 0 0 1rem; padding: .75rem 1rem 1rem; border: 1px solid var(--jc-border); border-radius: var(--jc-radius); background: var(--jc-n50); }
-.jc-subscribe-query > label { display: block; font-weight: 600; margin: .5rem 0 .25rem; }
-.jc-subscribe-query > .form-control { font-family: var(--bs-font-monospace, monospace); font-size: .8125rem; min-height: 2.75rem; }
+.jc-subscribe-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .5rem 1rem; margin-top: .5rem; }
+.jc-subscribe-fields label { display: block; font-weight: 600; margin: 0 0 .25rem; }
+.jc-subscribe-fields .form-control { min-height: 2.75rem; }
+.jc-subscribe-fields input[aria-invalid="true"] { border-color: #b42318; box-shadow: 0 0 0 1px #b42318; }
+.jc-subscribe-note.jc-subscribe-error { color: #b42318; font-weight: 600; }
+#jc-subscribe-no-facets { margin-top: .5rem; padding: .5rem .75rem; border-left: 3px solid var(--jc-primary); background: rgba(var(--jc-primary-rgb), .06); color: var(--jc-ink); }
 .jc-subscribe-query .jc-subscribe-copy { margin-top: .5rem; }
 .jc-subscribe-note { margin: .25rem 0 0; font-size: .875rem; color: var(--jc-muted); }
 .jc-subscribe-preview { margin-top: .75rem; }
 .jc-subscribe-preview ol { margin: .25rem 0 0; padding-left: 1.25rem; }
 .jc-subscribe-preview li { padding: .125rem 0; font-size: .875rem; overflow-wrap: anywhere; }
 .jc-subscribe-query[data-jc-refused] > .jc-subscribe-copy, .jc-subscribe-query[data-jc-refused] > .jc-subscribe-links, .jc-subscribe-query[data-jc-refused] #jc-subscribe-preview-title { display: none; }
-.jc-subscribe-query[data-jc-refused] > .form-control { border-color: #b42318; box-shadow: 0 0 0 1px #b42318; }
 .jc-subscribe-query[data-jc-refused] #jc-subscribe-preview-status { color: #b42318; font-weight: 600; }
 .jc-subscribe-preview time { font-weight: 600; font-variant-numeric: tabular-nums; }
 @media (max-width: 40rem) {
   .jc-dataset-actions, .jc-subscribe, .jc-subscribe > summary { width: 100%; }
   .jc-subscribe > summary { justify-content: center; }
-  .jc-subscribe-menu { position: static; width: 100%; max-height: none; overflow: visible; margin-top: .5rem; padding: .5rem 0 4.5rem; border: 0; border-radius: 0; box-shadow: none; }
+  .jc-subscribe-menu { position: static; width: 100%; margin-top: .5rem; padding: .5rem 0 4.5rem; border: 0; border-radius: 0; box-shadow: none; }
   .jc-subscribe-query { padding: .75rem; }
   .jc-subscribe-copy { flex-direction: column; align-items: stretch; }
   .jc-subscribe-links { flex-wrap: wrap; gap: 0 1.25rem; }
