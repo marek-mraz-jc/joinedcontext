@@ -77,6 +77,34 @@ def test_a_closed_endpoints_panel_without_a_person_passes_only_on_the_gateways_r
     assert suite.judge_closed(200, [], "")[0] == suite.FAIL
 
 
+def test_a_closed_panel_read_as_the_granted_reader_passes_only_on_rows():
+    frames = [{"fields": [{"name": "name", "values": ["a", "b"]}]}]
+    assert suite.judge_reader(200, frames, "") == (suite.PASS, "200, 1 frames, 2 rows", "")
+    assert suite.judge_reader(200, [], "")[0] == suite.FAIL  # 200 with zero rows
+    assert suite.judge_reader(200, [{"fields": []}], "")[0] == suite.FAIL  # a frame without rows
+    assert suite.judge_reader(500, frames, "")[0] == suite.FAIL
+    assert suite.judge_reader(200, [], "outbound datasource error: upstream status 403: no policy")[0] == suite.FAIL
+    r, _, why = suite.judge_reader(200, [], "this panel is read with your own access token, which this session "
+                                            "does not carry")
+    assert r == suite.FAIL and "JC_TRUST_EDGE_TOKEN" in why
+    assert suite.panel_answer(200, {"frames": frames}) == (frames, "")
+    assert suite.panel_answer(200, {"accessDenied": "You cannot read"}) == ([], "You cannot read")
+    assert suite.panel_answer(500, {"detail": "boom"}) == ([], "boom")
+
+
+def test_a_closed_panel_read_by_a_person_no_policy_names_passes_only_on_the_gateways_refusal():
+    frames = [{"fields": [{"name": "name", "values": ["a"]}]}]
+    for status in (403, 404):
+        refused = f"outbound datasource error: upstream status {status}: refused"
+        assert suite.judge_refused(200, [], refused)[0] == suite.PASS
+    r, _, why = suite.judge_refused(200, frames, "")
+    assert r == suite.FAIL and "LEAK" in why  # any row is a leak
+    assert suite.judge_refused(200, [{"fields": []}], "upstream status 403")[0] == suite.FAIL  # a frame too
+    assert suite.judge_refused(200, [], "")[0] == suite.FAIL  # silence is no refusal
+    assert suite.judge_refused(500, [], "upstream status 403")[0] == suite.FAIL
+    assert suite.judge_refused(200, [], "upstream status 500: boom")[0] == suite.FAIL
+
+
 def test_apps_from_manifests(tmp_path):
     d = tmp_path / "joinedcontext" / "helsinki" / "apps" / "air"
     d.mkdir(parents=True)
