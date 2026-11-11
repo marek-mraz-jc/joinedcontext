@@ -406,7 +406,7 @@ async fn create_invalid_manifest_bodies_return_400() {
         .detail
         .as_deref()
         .expect("detail")
-        .contains("literal secret in field 'token' is forbidden"));
+        .contains("token' (a credential's field name) is forbidden"));
 }
 
 /// T-0412, MF-37: the kind's own invariants run at write time. An inline Bloblang mapping on a
@@ -2241,7 +2241,7 @@ async fn a_step_names_its_own_secret_as_a_variable_and_nothing_else() {
     let (status, detail) = answer(&config, post("hunter2")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{detail}");
     assert!(
-        detail.contains("literal secret in field 'password'") && !detail.contains("hunter2"),
+        detail.contains("password' (a credential's field name)") && !detail.contains("hunter2"),
         "{detail}"
     );
 }

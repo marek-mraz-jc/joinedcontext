@@ -140,14 +140,93 @@ static SECRET_SCAN_PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::ne
     ]
 });
 
-/// Scans blob bytes for leaked secrets when pre-receive secret scanning is enabled (Threat T9).
+/// The field names a manifest writes a credential under: the Portal's `SECRET_KEYS`
+/// (`crates/portal/src/api/mutate.rs`, MF-24), which refuses the same names at every Portal door.
+const SECRET_FIELDS: &[&str] = &[
+    "password",
+    "token",
+    "secret",
+    "clientSecret",
+    "apiKey",
+    "client_secret",
+    "api_key",
+    "apiToken",
+    "api_token",
+    "access_token",
+    "accessToken",
+    "access_token_secret",
+    "accessTokenSecret",
+    "consumer_secret",
+    "consumerSecret",
+    "auth_secret",
+    "authSecret",
+    "account_key",
+    "accountKey",
+    "bot_token",
+    "botToken",
+    "private_key",
+    "privateKey",
+    "private_key_pass",
+    "privateKeyPass",
+    "passphrase",
+    "user_jwt",
+    "userJwt",
+    "user_nkey_seed",
+    "userNkeySeed",
+];
+
+static YAML_FIELD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"^\s*(?:-\s+)?["']?([A-Za-z_]+)["']?\s*:\s*(.*)$"#).expect("static regex")
+});
+
+/// The secret field a YAML manifest line writes out as a literal (`password: hunter2`), or
+/// `None`: an empty value, `null`, a nested map or list, and a whole `${VAR}` hold none.
+fn literal_secret_field(line: &str) -> Option<&str> {
+    let caps = YAML_FIELD.captures(line)?;
+    let field = caps.get(1)?.as_str();
+    if !SECRET_FIELDS.contains(&field) {
+        return None;
+    }
+    let value = caps.get(2)?.as_str();
+    let value = value.split(" #").next().unwrap_or_default().trim();
+    let value = value.trim_matches(|c| c == '"' || c == '\'');
+    let reference = value
+        .strip_prefix("${")
+        .and_then(|rest| rest.strip_suffix('}'))
+        .is_some_and(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    let open = value.is_empty()
+        || value == "~"
+        || value.eq_ignore_ascii_case("null")
+        || value.starts_with('{')
+        || value.starts_with('[')
+        || value.starts_with('&')
+        || value.starts_with('*')
+        || reference;
+    (!open).then_some(field)
+}
+
+/// Scans blob bytes for leaked secrets before a push lands (Threat T9, SEC-06): the credential
+/// shapes of [`SECRET_SCAN_PATTERNS`] in any file, and a literal under a secret field in a YAML
+/// manifest. The refusal names the path, the line and the rule, never the value.
 pub fn scan_blob_for_secrets(path: &str, bytes: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(bytes);
     for (rule_name, regex) in SECRET_SCAN_PATTERNS.iter() {
-        if regex.is_match(&text) {
+        if let Some(found) = regex.find(&text) {
+            let line = text[..found.start()].matches('\n').count() + 1;
             return Some(format!(
-                "pre-receive secret scan blocked {rule_name} in '{path}'"
+                "pre-receive secret scan blocked {rule_name} in '{path}' line {line}"
             ));
+        }
+    }
+    if path.ends_with(".yaml") || path.ends_with(".yml") {
+        for (n, line) in text.lines().enumerate() {
+            if let Some(field) = literal_secret_field(line) {
+                return Some(format!(
+                    "pre-receive secret scan blocked literal-secret-field in '{path}' line {} \
+                     (field '{field}'; name the credential with secretRef)",
+                    n + 1
+                ));
+            }
         }
     }
     None
@@ -160,7 +239,6 @@ pub struct PushGuard<'a> {
     pub owner: &'a str,
     pub repo_name: &'a str,
     pub policy: &'a RefPolicy,
-    pub secret_scan_enabled: bool,
 }
 
 /// Processes a `POST {repo}.git/git-receive-pack` request (S4, S5, T5, T7, T9).
@@ -481,7 +559,6 @@ fn evaluate_single_command(
         owner,
         repo_name,
         policy,
-        secret_scan_enabled,
     } = *guard;
     if cmd.refname == "HEAD"
         || !(cmd.refname.starts_with("refs/heads/") || cmd.refname.starts_with("refs/tags/"))
@@ -509,13 +586,8 @@ fn evaluate_single_command(
 
     if !cmd.is_delete() {
         // Connectivity and tree/blob verification of `cmd.new_oid`
-        verify_tip_connectivity_and_tree(
-            repo,
-            current_oid,
-            cmd.new_oid,
-            secret_scan_enabled,
-            &mut changed_paths,
-        )?;
+        verify_tip_connectivity_and_tree(repo, current_oid, cmd.new_oid, &mut changed_paths)?;
+        scan_new_commits(repo, cmd.new_oid)?;
         if let Some(old) = current_oid {
             is_ff = is_ancestor(repo, old, cmd.new_oid);
         }
@@ -541,13 +613,11 @@ fn evaluate_single_command(
 }
 
 /// Verifies that `new_oid` exists, peels to a valid commit and tree whose every referenced
-/// subtree and blob exists in the object database, validates every path (T1), and runs
-/// pre-receive secret scanning on new/modified blobs (T9).
+/// subtree and blob exists in the object database and validates every path (T1).
 fn verify_tip_connectivity_and_tree(
     repo: &gix::Repository,
     old_oid: Option<ObjectId>,
     new_oid: ObjectId,
-    secret_scan_enabled: bool,
     changed_paths: &mut Vec<String>,
 ) -> Result<(), String> {
     let obj = repo
@@ -585,14 +655,68 @@ fn verify_tip_connectivity_and_tree(
         let old_entry = old_blobs.get(path);
         if old_entry.map(|(_, o)| o) != Some(blob_oid) {
             changed_paths.push(path.clone());
-            if secret_scan_enabled && let Some(msg) = scan_blob_for_secrets(path, &blob.data) {
-                return Err(msg);
-            }
         }
     }
     for old_path in old_blobs.keys() {
         if !new_blobs.contains_key(old_path) {
             changed_paths.push(old_path.clone());
+        }
+    }
+    Ok(())
+}
+
+/// Runs the pre-receive secret scan (T9, SEC-06) on every blob a commit of this push brings in,
+/// not only the tip's: a credential added in one commit and removed in the next would otherwise
+/// stay in history. Commits any branch already holds are hidden from the walk. The scan always
+/// runs; no instance or repository setting turns it off (T-6713).
+fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), String> {
+    let missing = |_| "missing necessary objects".to_owned();
+    let tip = repo
+        .find_object(new_oid)
+        .map_err(missing)?
+        .peel_to_kind(gix_object::Kind::Commit)
+        .map_err(missing)?
+        .id;
+    let held: Vec<ObjectId> = repo
+        .references()
+        .map_err(|e| e.to_string())?
+        .local_branches()
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .filter_map(|r| r.try_id().map(|id| id.detach()))
+        .collect();
+    let walk = repo
+        .rev_walk([tip])
+        .with_hidden(held)
+        .all()
+        .map_err(|e| e.to_string())?;
+    let mut scanned = BTreeSet::new();
+    for info in walk {
+        let commit = info.map_err(missing)?.object().map_err(missing)?;
+        let mut blobs = BTreeMap::new();
+        let tree = commit.tree().map_err(missing)?;
+        collect_tree_blobs(repo, &tree, "", &mut blobs).map_err(|e| e.to_string())?;
+        let mut parents = Vec::new();
+        for parent in commit.parent_ids() {
+            let mut held = BTreeMap::new();
+            if let Ok(parent) = parent.object().map(gix::Object::into_commit)
+                && let Ok(tree) = parent.tree()
+            {
+                collect_tree_blobs(repo, &tree, "", &mut held).map_err(|e| e.to_string())?;
+            }
+            parents.push(held);
+        }
+        for (path, (_, blob_oid)) in &blobs {
+            let inherited = parents
+                .iter()
+                .any(|held| held.get(path).map(|(_, o)| o) == Some(blob_oid));
+            if inherited || !scanned.insert(*blob_oid) {
+                continue;
+            }
+            let blob = repo.find_blob(*blob_oid).map_err(missing)?;
+            if let Some(msg) = scan_blob_for_secrets(path, &blob.data) {
+                return Err(msg);
+            }
         }
     }
     Ok(())

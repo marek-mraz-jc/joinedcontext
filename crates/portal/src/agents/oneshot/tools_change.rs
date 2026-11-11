@@ -1502,7 +1502,7 @@ impl Driver {
         tracing::warn!(run = %self.run_id, kind, name, error = %err, "draft not kept");
         let reason = match err {
             DraftError::Secret(field) => format!(
-                "the {kind} '{name}' holds a literal secret in '{field}'; name it by secretRef"
+                "the {kind} '{name}' holds a literal secret in {field}; name it by secretRef"
             ),
             DraftError::Conflict { .. } => {
                 format!("the draft of {kind} '{name}' changed meanwhile; open it again")

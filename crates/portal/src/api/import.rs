@@ -695,7 +695,8 @@ fn refusals(envelope: &ResourceEnvelope, raw: &Value) -> Vec<String> {
     }
     if let Some(key) = find_literal_secret(&envelope.spec) {
         refusals.push(format!(
-            "{name}: literal secret in field '{key}'; use secretRef instead (MF-24)"
+            "{name}: literal secret in field 'spec.{}' ({}); use secretRef instead (MF-24)",
+            key.path, key.rule
         ));
     }
     for key in crate::apps::converge::BUILT_ANNOTATIONS {

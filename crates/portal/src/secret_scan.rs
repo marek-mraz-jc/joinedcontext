@@ -68,6 +68,30 @@ pub fn secret_text(text: &str) -> bool {
     (credential_shaped(text) && !public_pem) || secret_in_query(text)
 }
 
+/// The rule a manifest's string value breaks when it holds a credential under a name that does
+/// not say so (`url: https://user:pw@host`, `query: ghp_…`), or `None`. Unlike [`secret_text`] a
+/// `Basic …`/`Bearer …` value counts only as one word after the scheme: a manifest's description
+/// may open with "Basic" and holds prose.
+pub fn manifest_value_rule(text: &str) -> Option<&'static str> {
+    if text.is_empty() || is_variable_reference(text) {
+        return None;
+    }
+    if secret_in_query(text) {
+        return Some("a credential in a URL query");
+    }
+    let trimmed = text.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if let Some(rest) = lower
+        .strip_prefix("bearer ")
+        .or_else(|| lower.strip_prefix("basic "))
+    {
+        let rest = rest.trim();
+        return (rest.len() >= 8 && !rest.contains(char::is_whitespace) && !rest.contains("${"))
+            .then_some("a credential-shaped value");
+    }
+    secret_text(trimmed).then_some("a credential-shaped value")
+}
+
 /// Whether a sentence quotes a credential (a delete's reason naming the token it rotates): each
 /// word is judged alone, its quotes and trailing punctuation aside. Only free-text fields use it,
 /// so a manifest's own check still names the key a secret was typed under.

@@ -125,8 +125,8 @@ pub struct DraftEvent {
 pub enum DraftError {
     #[error("draft conflict: current version is {current}")]
     Conflict { current: i64 },
-    #[error("literal secret in field '{0}' is forbidden; use secretRef instead (MF-24)")]
-    Secret(String),
+    #[error("literal secret in field {0} is forbidden; use secretRef instead (MF-24)")]
+    Secret(crate::api::mutate::LiteralSecret),
     #[error("database error: {0}")]
     Db(String),
     #[error("draft '{kind}/{name}' not found in project '{project}'")]
@@ -852,7 +852,7 @@ pub(crate) fn draft_error(err: DraftError) -> OpError {
             "current": current,
         })),
         DraftError::Secret(path) => OpError::Api(ApiError::BadRequest(format!(
-            "literal secret in field '{path}' is forbidden; use secretRef instead (MF-24)"
+            "literal secret in field {path} is forbidden; use secretRef instead (MF-24)"
         ))),
         DraftError::NotFound {
             project,
@@ -1267,6 +1267,24 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(secret_err, DraftError::Secret(_)));
+        // SEC-06 (T-6713): a credential under a name that does not say so, by its shape; the
+        // refusal names the path and rule and the draft is never stored.
+        let token = format!("ghp_{}", "a1B2c3D4".repeat(5));
+        let shaped = json!({ "kind": "DataSource", "spec": { "input": { "query": token } } });
+        let shaped_err = store
+            .put("helsinki", "DataSource", "feed-shaped", shaped, None, "steward", "person")
+            .await
+            .unwrap_err();
+        let said = shaped_err.to_string();
+        assert!(
+            said.contains("'spec.input.query' (a credential-shaped value)") && !said.contains(&token),
+            "{said}"
+        );
+        assert!(store
+            .get("helsinki", "DataSource", "feed-shaped")
+            .await
+            .expect("read")
+            .is_none());
 
         // 5. Set verdict attaches verdict without bumping version
         let verdict = Verdict::green(&manifest, None);

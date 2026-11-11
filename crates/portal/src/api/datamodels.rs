@@ -836,7 +836,7 @@ pub(crate) async fn check_source(
     // The source is committed as typed, so a pasted credential would land in Git (MF-24).
     if let Some(key) = crate::api::mutate::find_literal_secret(&next_val) {
         return Err(ApiError::BadRequest(format!(
-            "literal secret in field '{key}' is forbidden; use secretRef instead (MF-24)"
+            "literal secret in field {key} is forbidden; use secretRef instead (MF-24)"
         )));
     }
 
