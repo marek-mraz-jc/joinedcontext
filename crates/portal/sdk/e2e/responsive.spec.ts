@@ -334,6 +334,18 @@ test.describe("the type page's grid", () => {
       }
       await panel.scrollIntoViewIfNeeded();
       await page.screenshot({ path: join(SHOTS, `panel-open-${width}.png`) });
+      // Extra details scrolls into view whole: the select and the last toggle's hint sit above the sticky foot.
+      const details = panel.getByRole("group", { name: "Extra details" });
+      await details.getByRole("combobox").scrollIntoViewIfNeeded();
+      await expect(details.getByRole("combobox")).toBeInViewport({ ratio: 1 });
+      const last = details.locator(".jc-grid-arrange-check").last();
+      await last.scrollIntoViewIfNeeded();
+      await panel.evaluate((el) => el.scrollTo(0, el.scrollHeight));
+      const foot = (await panel.locator(".jc-grid-arrange-foot").boundingBox())!;
+      const lastBox = (await last.boundingBox())!;
+      expect(lastBox.height).toBeGreaterThan(30);
+      expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(foot.y + 1);
+      await page.screenshot({ path: join(SHOTS, `panel-details-${width}.png`) });
       const field = panel.getByRole("textbox", { name: "Label in this view: Station name" });
       await field.fill("Station");
       await field.press("Enter");

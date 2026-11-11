@@ -2101,6 +2101,14 @@ a.jc-cell--link:focus-visible {
 .jc-grid-col-menu button.jc-grid-meta-item[aria-checked="true"] {
   font-weight: 600;
 }
+/* The active sort carries a visible check at the row's end, not only aria-checked. */
+.jc-grid-menu-text {
+  flex: 1 1 auto;
+}
+.jc-grid-menu-check {
+  color: var(--jc-color-accent, #0066cc);
+  font-weight: 700;
+}
 @media (pointer: coarse) {
   .jc-grid-col-menu button.jc-grid-meta-item { min-height: 2.75rem; }
 }
@@ -2159,6 +2167,11 @@ a.jc-cell--link:focus-visible {
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
   font-size: var(--jc-font-size-md, 14px);
   text-align: left;
+}
+/* The panel scrolls as one; its parts keep their own height instead of shrinking to fit the
+   max-height (they did, and Extra details came out a clipped sliver). */
+.jc-grid-arrange-panel > * {
+  flex-shrink: 0;
 }
 /* Done stays at the top and Reset at the bottom while the list scrolls between them. */
 .jc-grid-arrange-head,
