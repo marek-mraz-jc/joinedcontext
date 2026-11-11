@@ -234,6 +234,7 @@ test.describe("the KPI editor over several sources", () => {
     await expect(editor.getByRole("rowheader", { name: "Kallio", exact: true })).toBeVisible();
     await expect(editor.getByText("parking: 48 rows · stops: 31 rows")).toBeVisible();
     await shot(page, "filled");
+    await fullShot(page, "filled");
 
     await page.getByRole("button", { name: "Propose change" }).click();
     await expect.poll(() => stub.proposed.length).toBe(2);

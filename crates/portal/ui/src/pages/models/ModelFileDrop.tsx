@@ -425,7 +425,6 @@ export function ModelFileDrop({
               rows={rows}
               rowKey={(row) => `${row.klass}/${row.name}`}
               columns={[
-                { key: "class", label: t("models.infer.class"), text: (row) => row.klass, cell: (row) => <span className="font-mono">{row.klass}</span> },
                 {
                   key: "column",
                   label: t("models.infer.column"),
@@ -445,8 +444,10 @@ export function ModelFileDrop({
                   key: "match",
                   label: t("models.infer.match"),
                   text: (row) => draft.answer.matches[row.name]?.model ?? "",
-                  cell: (row) => <span className="break-all font-mono">{draft.answer.matches[row.name]?.model ?? ""}</span>,
+                  cell: (row) => <span className="font-mono [overflow-wrap:anywhere]">{draft.answer.matches[row.name]?.model ?? ""}</span>,
                 },
+                // One class per sheet, so the column repeats one name; Arrange columns shows it.
+                { key: "class", label: t("models.infer.class"), hidden: true, text: (row) => row.klass, cell: (row) => <span className="font-mono">{row.klass}</span> },
               ]}
               empty={<p className="text-body text-fg-muted">{t("models.infer.noColumns")}</p>}
             />

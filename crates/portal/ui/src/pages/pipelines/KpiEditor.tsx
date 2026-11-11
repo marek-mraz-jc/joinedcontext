@@ -460,7 +460,6 @@ function PreviewPanel({ disabled, running, answer, failed, hint, onRun }: Previe
         <AdminGrid<components["schemas"]["KpiPreview"]["values"][number]>
           caption={t("pipelines.kpiEditor.preview")}
           storageKey="pipelines:kpi-preview"
-          stack
           rows={preview.values}
           rowKey={(one) => `${one.key ?? ""}/${one.name}`}
           columns={[

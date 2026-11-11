@@ -293,7 +293,6 @@ export function LinkmlPreviewPanel({
               <AdminGrid<LinkmlSlot>
                 caption={t("models.tab.options")}
                 storageKey="models:options"
-                stack
                 rows={model.slots}
                 rowKey={(slot) => slot.name}
                 columns={[

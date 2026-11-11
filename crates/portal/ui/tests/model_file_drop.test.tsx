@@ -135,7 +135,7 @@ describe("a model from a dropped file", () => {
     await userEvent.upload(screen.getByLabelText(en.models.infer.chooseFile), csv());
     const dialog = await screen.findByRole("dialog");
     const table = within(dialog).getByRole("table", { name: en.models.infer.title });
-    const slots = () => within(table).getAllByRole("row").slice(1).map((row) => row.querySelectorAll("td, th")[2]?.textContent);
+    const slots = () => within(table).getAllByRole("row").slice(1).map((row) => row.querySelectorAll("td, th")[1]?.textContent);
     expect(slots()).toEqual(["b_Temp_b", "plate", "parent", "note"]);
     await userEvent.type(within(dialog).getByRole("searchbox", { name: en.dataGrid.searchRows }), "string");
     expect(slots()).toEqual(["plate", "note"]);
