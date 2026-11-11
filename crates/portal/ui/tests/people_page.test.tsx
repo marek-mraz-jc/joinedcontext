@@ -160,6 +160,45 @@ describe("Organization → People", () => {
     await expectNoViolations(screen.getByRole("table", { name: P.caption }).closest("section") as HTMLElement);
   });
 
+  it("sorts, filters and arranges the page on the shared grid, ticks everyone from the header, and keeps one pager", async () => {
+    const user = userEvent.setup();
+    renderPage(<People />, { path: "/organization/people", answer: answer([], { next: 50 }) });
+    await screen.findByRole("link", { name: "Jana Nováková" });
+    const names = () =>
+      [...document.querySelectorAll(".jc-data-grid tbody tr")].map((tr) => tr.querySelector("a")?.textContent ?? "");
+
+    await user.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: ${P.name}` }));
+    await user.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortDesc }));
+    expect(names()).toEqual(["Jana Nováková", "Eva Kováčová"]);
+
+    await user.click(screen.getByRole("button", { name: en.entityGrid.arrangeColumns }));
+    const panel = screen.getByRole("dialog", { name: en.entityGrid.arrangeColumns });
+    await user.click(within(panel).getByRole("checkbox", { name: `${en.entityGrid.showColumn}: ${P.email}` }));
+    expect(screen.queryByRole("columnheader", { name: new RegExp(P.email) })).toBeNull();
+
+    await user.click(screen.getByRole("checkbox", { name: P.bulk.selectAll }));
+    expect(screen.getByRole("checkbox", { name: P.bulk.select.replace("{name}", "Eva Kováčová") })).toBeChecked();
+    // The server pages the realm: its Next is the only one, the grid adds no second pager.
+    expect(screen.getAllByRole("button", { name: P.next })).toHaveLength(1);
+  });
+
+  it("shows the API's reason with a retry when the people read fails", async () => {
+    renderPage(<People />, {
+      path: "/organization/people",
+      answer: async (url) => {
+        if (url.pathname.endsWith("/permissions/me")) {
+          return reply(200, { project: "org", bootstrap: false, grants: [{ rule: { kinds: ["Person"], verbs: ["read"] } }] });
+        }
+        if (url.pathname === "/api/v1/organization/people") {
+          return reply(503, { title: "Unavailable", status: 503, detail: "Keycloak did not answer." });
+        }
+        return undefined;
+      },
+    });
+    expect(await screen.findByText(/Keycloak did not answer/)).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: P.caption })).toBeNull();
+  });
+
   it("fetches nobody for a caller whose role does not read people, and says who can", async () => {
     const sent: Sent[] = [];
     renderPage(<People />, { path: "/organization/people", answer: answer(sent, { verbs: ["update"] }) });
