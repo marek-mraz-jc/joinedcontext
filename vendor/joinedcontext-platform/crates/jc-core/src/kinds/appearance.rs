@@ -55,6 +55,11 @@ pub struct OrganizationAppearance {
     /// projects, e.g. `doprava/prehlad`; a viewer sees only those they may read (T-6779).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub home_widgets: Vec<String>,
+    /// Dashboards the Organization's open data portal shows on its catalogue home, each
+    /// `project/name` of one of its projects with `visibility: public`, e.g. `doprava/prehlad`;
+    /// anonymous readers see them (T-6780).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub opendata_widgets: Vec<String>,
 }
 
 /// `spec.appearance.colours`: each one a hex colour, `#rgb` or `#rrggbb`.
@@ -159,27 +164,34 @@ impl OrganizationAppearance {
                 safe_svg(field, svg)?;
             }
         }
-        for (at, widget) in self.home_widgets.iter().enumerate() {
-            let field = format!("spec.appearance.homeWidgets[{at}]");
-            let named = widget.split_once('/').is_some_and(|(project, name)| {
-                crate::names::validate_dns1123_label(project).is_ok()
-                    && crate::names::validate_dns1123_label(name).is_ok()
-            });
-            if !named {
-                return Err(invalid(
-                    &field,
-                    "a Dashboard as project/name, e.g. doprava/prehlad",
-                ));
-            }
-            if at >= MAX_HOME_WIDGETS {
-                return Err(invalid(&field, "one of at most 6 Dashboards"));
-            }
-            if self.home_widgets[..at].contains(widget) {
-                return Err(invalid(&field, "a Dashboard not named twice"));
-            }
-        }
+        dashboards("spec.appearance.homeWidgets", &self.home_widgets)?;
+        dashboards("spec.appearance.opendataWidgets", &self.opendata_widgets)?;
         Ok(())
     }
+}
+
+/// Each of `widgets` names a Dashboard as `project/name`, once, at most [`MAX_HOME_WIDGETS`].
+fn dashboards(member: &str, widgets: &[String]) -> Result<()> {
+    for (at, widget) in widgets.iter().enumerate() {
+        let field = format!("{member}[{at}]");
+        let named = widget.split_once('/').is_some_and(|(project, name)| {
+            crate::names::validate_dns1123_label(project).is_ok()
+                && crate::names::validate_dns1123_label(name).is_ok()
+        });
+        if !named {
+            return Err(invalid(
+                &field,
+                "a Dashboard as project/name, e.g. doprava/prehlad",
+            ));
+        }
+        if at >= MAX_HOME_WIDGETS {
+            return Err(invalid(&field, "one of at most 6 Dashboards"));
+        }
+        if widgets[..at].contains(widget) {
+            return Err(invalid(&field, "a Dashboard not named twice"));
+        }
+    }
+    Ok(())
 }
 
 fn invalid(field: &str, reason: &str) -> Error {
@@ -300,6 +312,7 @@ mod tests {
             "licenseDefault": "CC-BY-4.0",
             "contactEmail": "opendata@banskabystrica.sk",
             "homeWidgets": ["doprava/prehlad", "ovzdusie/mapa"],
+            "opendataWidgets": ["doprava/prehlad"],
             "logoSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\"><use href=\"#a\"/><rect fill=\"url(#g)\" width=\"1\"/></svg>",
         });
         assert!(checked(fine.clone()).is_ok(), "{:?}", checked(fine));
@@ -370,6 +383,14 @@ mod tests {
             (
                 json!({ "homeWidgets": ["a/a", "a/b", "a/c", "a/d", "a/e", "a/f", "a/g"] }),
                 "spec.appearance.homeWidgets[6]",
+            ),
+            (
+                json!({ "opendataWidgets": ["doprava/prehlad", "doprava/prehlad"] }),
+                "spec.appearance.opendataWidgets[1]",
+            ),
+            (
+                json!({ "opendataWidgets": ["prehlad"] }),
+                "spec.appearance.opendataWidgets[0]",
             ),
             (
                 json!({ "faviconSvg": format!("<svg>{}</svg>", "a".repeat(MAX_APPEARANCE_SVG)) }),

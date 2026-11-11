@@ -10352,6 +10352,8 @@ export interface components {
             /** @description How many pages it has. */
             pages: number;
             project: string;
+            /** @description Whether it carries `visibility: public`, so the open data portal may show it (T-6780). */
+            public: boolean;
             /** @description `project/name`, as `spec.appearance.homeWidgets` writes it. */
             reference: string;
             /** @description The Dashboard's title: one string, or one per locale. */

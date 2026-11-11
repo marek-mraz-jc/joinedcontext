@@ -151,6 +151,13 @@ pub fn portal_publisher_from_file(
 /// Optional host-supplied subject resolver when mounted in-process inside the Portal (G1).
 pub type SubjectResolver = Arc<dyn Fn(&HeaderMap) -> Option<Subject> + Send + Sync>;
 
+/// The public Dashboards a catalogue's home shows, in the page's language (UIX-16, T-6780):
+/// asked on every render, so the host re-checks each one's visibility and Organization.
+pub use dataroom_web::DashboardCard;
+
+pub type DashboardResolver =
+    Arc<dyn Fn(&CatalogueId, &str) -> Vec<DashboardCard> + Send + Sync>;
+
 /// Shared application state for the Axum router.
 #[derive(Clone)]
 pub struct DataroomState {
@@ -167,6 +174,7 @@ pub struct DataroomState {
     /// knows it: its links follow it instead of `https://{host}`.
     pub public_base: Option<String>,
     pub subject_resolver: Option<SubjectResolver>,
+    pub dashboard_resolver: Option<DashboardResolver>,
     pub assets: Arc<RwLock<BTreeMap<String, SanitisedAsset>>>,
     /// Whether a request on a loopback name (or with no host) reads the default catalogue. Off
     /// when the host serves several catalogues by host: then every host must name one.
@@ -241,6 +249,7 @@ impl DataroomState {
             mount_prefix: String::new(),
             public_base: None,
             subject_resolver: None,
+            dashboard_resolver: None,
             assets: Arc::new(RwLock::new(BTreeMap::new())),
             loopback_default: true,
             catalogue_branding: Arc::default(),
@@ -310,6 +319,15 @@ impl DataroomState {
         F: Fn(&HeaderMap) -> Option<Subject> + Send + Sync + 'static,
     {
         self.subject_resolver = Some(Arc::new(resolver));
+        self
+    }
+
+    /// The public Dashboards each catalogue's home shows (T-6780).
+    pub fn with_dashboard_resolver<F>(mut self, resolver: F) -> Self
+    where
+        F: Fn(&CatalogueId, &str) -> Vec<DashboardCard> + Send + Sync + 'static,
+    {
+        self.dashboard_resolver = Some(Arc::new(resolver));
         self
     }
 
@@ -1464,11 +1482,17 @@ async fn dispatch_ui_route(
             let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
             let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
             let q = q_params.get("q").map(String::as_str).unwrap_or("");
+            let dashboards = state
+                .dashboard_resolver
+                .as_ref()
+                .map(|resolve| resolve(&cat.id, &lang))
+                .unwrap_or_default();
             let html = render_home_page_mounted(
                 &cat,
                 Some(&state.branding_of(&cat)),
                 &datasets,
                 &publishers,
+                &dashboards,
                 q,
                 &lang,
                 had_url_prefix,

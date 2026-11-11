@@ -6,6 +6,10 @@
 //! `spec.appearance.homeWidgets[i]`). When a page asks for them, each one is read again under
 //! the viewer's own rights and the Organization the request is pinned to: a Dashboard the viewer
 //! may not read, or one of another Organization, is left out and never named.
+//!
+//! `spec.appearance.opendataWidgets` (T-6780) names Dashboards the Organization's open data
+//! portal shows to anonymous readers: each must also carry `visibility: public`, so it reads only
+//! public Endpoints (UI-19). The catalogue home asks [`public_dashboards`] on every render.
 
 use axum::extract::{Query, State};
 use axum::routing::get;
@@ -19,7 +23,7 @@ use crate::error::ApiError;
 use crate::permissions::{self, ORG_NAMESPACE};
 use crate::resource::ResourceEnvelope;
 use crate::state::AppState;
-use crate::store::ListOptions;
+use crate::store::{ListOptions, Mirror};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -40,6 +44,8 @@ pub struct HomeWidget {
     pub title: Value,
     /// How many pages it has.
     pub pages: usize,
+    /// Whether it carries `visibility: public`, so the open data portal may show it (T-6780).
+    pub public: bool,
 }
 
 /// The widgets of the request's Organization this viewer may read, in the manifest's order.
@@ -93,11 +99,48 @@ fn widget(project: &str, dashboard: &ResourceEnvelope) -> HomeWidget {
             .get("pages")
             .and_then(Value::as_array)
             .map_or(0, Vec::len),
+        public: crate::dashboards::is_public_dashboard(&dashboard.spec),
     }
 }
 
+/// The Dashboard `reference` names when it is one of `organization`'s projects and carries
+/// `visibility: public`: what an anonymous reader of its open data portal may see.
+fn public_dashboard(
+    mirror: &Mirror,
+    organization: &str,
+    reference: &str,
+) -> Option<(String, ResourceEnvelope)> {
+    let (project, name) = reference.split_once('/')?;
+    mirror.get(ORG_NAMESPACE, "Project", project)?;
+    if permissions::organization_of(mirror, project).as_deref() != Some(organization) {
+        return None;
+    }
+    let dashboard = mirror.get(project, "Dashboard", name)?;
+    crate::dashboards::is_public_dashboard(&dashboard.spec).then(|| (project.to_owned(), dashboard))
+}
+
+/// The Dashboards `organization`'s `spec.appearance.opendataWidgets` names that are still its own
+/// and public, in the manifest's order, each with its project: read on every render of its open
+/// data portal's home, so a Dashboard made private or moved away disappears at once (T-6780).
+pub fn public_dashboards(mirror: &Mirror, organization: &str) -> Vec<(String, ResourceEnvelope)> {
+    mirror
+        .get(ORG_NAMESPACE, "Organization", organization)
+        .and_then(|org| {
+            org.spec
+                .pointer("/appearance/opendataWidgets")
+                .and_then(Value::as_array)
+                .cloned()
+        })
+        .unwrap_or_default()
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(|reference| public_dashboard(mirror, organization, reference))
+        .collect()
+}
+
 /// Refuses an Organization manifest whose `spec.appearance.homeWidgets` names a Dashboard the
-/// proposer may not read in that Organization (T-6779). Any other kind passes.
+/// proposer may not read in that Organization (T-6779), or whose `opendataWidgets` names one that
+/// is also not public (T-6780). Any other kind passes.
 pub fn check(
     state: &AppState,
     identity: &Identity,
@@ -106,24 +149,29 @@ pub fn check(
     if envelope.kind != "Organization" {
         return Ok(());
     }
-    let widgets = envelope
-        .spec
-        .pointer("/appearance/homeWidgets")
-        .and_then(Value::as_array);
-    for (at, reference) in widgets.into_iter().flatten().enumerate() {
-        let shown = reference
-            .as_str()
-            .and_then(|reference| readable(state, identity, &envelope.metadata.name, reference));
-        if shown.is_none() {
-            let named = reference.as_str().unwrap_or_default();
-            let line = format!(
-                "spec.appearance.homeWidgets[{at}]: {named} is not a Dashboard of this \
-                 Organization's projects that you may read; choose one the list offers"
-            );
-            return Err(ApiError::Unprocessable {
-                detail: line.clone(),
-                errors: vec![line],
-            });
+    let organization = &envelope.metadata.name;
+    for (member, public) in [("homeWidgets", false), ("opendataWidgets", true)] {
+        let widgets = envelope
+            .spec
+            .pointer(&format!("/appearance/{member}"))
+            .and_then(Value::as_array);
+        for (at, reference) in widgets.into_iter().flatten().enumerate() {
+            let shown = reference
+                .as_str()
+                .and_then(|reference| readable(state, identity, organization, reference))
+                .filter(|widget| widget.public || !public);
+            if shown.is_none() {
+                let named = reference.as_str().unwrap_or_default();
+                let kind = if public { "public Dashboard" } else { "Dashboard" };
+                let line = format!(
+                    "spec.appearance.{member}[{at}]: {named} is not a {kind} of this \
+                     Organization's projects that you may read; choose one the list offers"
+                );
+                return Err(ApiError::Unprocessable {
+                    detail: line.clone(),
+                    errors: vec![line],
+                });
+            }
         }
     }
     Ok(())

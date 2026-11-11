@@ -384,6 +384,62 @@ async fn a_home_widget_the_editor_may_not_read_is_refused_naming_the_field() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// T-6780: an open data widget must also be public; the catalogue home reads only those still
+/// public and of its own Organization, on every render.
+#[tokio::test]
+async fn an_opendata_widget_is_a_public_dashboard_of_its_own_organization() {
+    use joinedcontext_portal::api::organization_widgets::public_dashboards;
+    let (state, dir) = widgets_world("widgets_opendata");
+    let public = |title: &str| json!({ "title": title, "visibility": "public", "pages": [{ "layers": [] }] });
+    let m = &state.mirror;
+    m.upsert(envelope("Dashboard", "verejny", "doprava", public("Doprava verejne")));
+    m.upsert(envelope("Dashboard", "mapa", "mhd", public("MHD mapa")));
+    let uri = format!("/api/v1/projects/{ORG_NAMESPACE}/organizations/bbsk");
+    for widgets in [json!(["doprava/prehlad"]), json!(["mhd/mapa"]), json!(["doprava/gone"])] {
+        let mut spec = bbsk_spec();
+        spec["appearance"]["opendataWidgets"] = widgets.clone();
+        let proposed = http(&state, admin("bbadmin"), "PUT", &uri, Some(organization("bbsk", spec))).await;
+        assert_eq!(proposed.status, StatusCode::UNPROCESSABLE_ENTITY, "{widgets}: {}", proposed.body);
+        assert!(
+            proposed.text().contains("spec.appearance.opendataWidgets[0]"),
+            "{widgets}: {}",
+            proposed.body
+        );
+    }
+    let mut spec = bbsk_spec();
+    spec["appearance"]["opendataWidgets"] = json!(["doprava/verejny"]);
+    let checked = http(
+        &state,
+        admin("bbadmin"),
+        "PUT",
+        &format!("{uri}?dryRun=All"),
+        Some(organization("bbsk", spec.clone())),
+    )
+    .await;
+    assert_eq!(checked.body["valid"], json!(true), "{}", checked.body);
+
+    // Another door could land references the propose check refuses: the render leaves them out.
+    spec["appearance"]["opendataWidgets"] =
+        json!(["doprava/verejny", "doprava/prehlad", "mhd/mapa", "doprava/gone"]);
+    m.upsert(envelope("Organization", "bbsk", ORG_NAMESPACE, spec));
+    let shown = |org: &str| {
+        public_dashboards(m, org)
+            .into_iter()
+            .map(|(project, board)| format!("{project}/{}", board.metadata.name))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(shown("bbsk"), ["doprava/verejny"]);
+    assert!(shown("praha").is_empty(), "praha names none and never sees bbsk's");
+    m.upsert(envelope(
+        "Dashboard",
+        "verejny",
+        "doprava",
+        json!({ "title": "Doprava", "visibility": "organization", "pages": [{ "layers": [] }] }),
+    ));
+    assert!(shown("bbsk").is_empty(), "a Dashboard made private leaves the page at once");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `bbsk`'s administrator proposes no appearance for `praha`, over HTTP or MCP.
 #[tokio::test]
 async fn an_administrator_edits_no_other_organizations_appearance() {

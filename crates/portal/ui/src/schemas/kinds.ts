@@ -2977,6 +2977,8 @@ export const APP_SERVICES_UI = { "ui:widget": "checkboxes" } as const;
 export interface WidgetOption {
   reference: string;
   label: string;
+  /** `visibility: public`: the open data portal may show it (T-6780). */
+  public?: boolean;
 }
 
 export function organizationSchema(
@@ -3135,6 +3137,20 @@ const APPEARANCE_COLOURS = ["primary", "secondary", "accent", "background", "tex
  * `spec.appearance` (UIX-16, T-6772): what the Organization's Portal, open data portal and login
  * page show of it; every field left empty shows the installation's.
  */
+/** Up to 6 Dashboards, one box per offered one; with none offered, a `project/name` pattern. */
+function dashboardList(title: string, widgets: readonly WidgetOption[]): JsonSchema {
+  return {
+    type: "array",
+    title,
+    maxItems: 6,
+    uniqueItems: true,
+    items:
+      widgets.length > 0
+        ? { type: "string", oneOf: widgets.map((widget) => ({ const: widget.reference, title: widget.label })) }
+        : { type: "string", pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+  };
+}
+
 function appearanceProperty(t: (key: string) => string, widgets: readonly WidgetOption[]): JsonSchema {
   const line = (key: string): JsonSchema => ({
     type: "string",
@@ -3181,16 +3197,12 @@ function appearanceProperty(t: (key: string) => string, widgets: readonly Widget
       logoSvg: svg("logoSvg"),
       faviconSvg: svg("faviconSvg"),
       // The Dashboards the server offers this person; the propose door checks each one again (T-6779).
-      homeWidgets: {
-        type: "array",
-        title: t("organization.field.appearance.homeWidgets"),
-        maxItems: 6,
-        uniqueItems: true,
-        items:
-          widgets.length > 0
-            ? { type: "string", oneOf: widgets.map((widget) => ({ const: widget.reference, title: widget.label })) }
-            : { type: "string", pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
-      },
+      homeWidgets: dashboardList(t("organization.field.appearance.homeWidgets"), widgets),
+      // Only public Dashboards: anonymous readers of the open data portal see them (T-6780).
+      opendataWidgets: dashboardList(
+        t("organization.field.appearance.opendataWidgets"),
+        widgets.filter((widget) => widget.public === true),
+      ),
     },
   } as JsonSchema;
 }

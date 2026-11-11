@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::error::ApiError;
 use crate::store::{ListOptions, Mirror};
 
-fn is_public_dashboard(spec: &Value) -> bool {
+pub(crate) fn is_public_dashboard(spec: &Value) -> bool {
     spec.get("visibility").and_then(Value::as_str) == Some("public")
 }
 

@@ -8,6 +8,8 @@
 
 use jc_core::kinds::OrganizationAppearance;
 use joinedcontext_portal::store::Mirror;
+#[cfg(feature = "dataroom")]
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::{Arc, OnceLock};
@@ -86,6 +88,66 @@ pub(crate) fn short_name(look: &OrganizationAppearance) -> Option<&String> {
     look.short_name.as_ref().or(look.instance_name.as_ref())
 }
 
+/// The public Dashboards `organization`'s open data portal shows, as its catalogue home draws
+/// them in `lang` (T-6780): each one's title, its pages' titles and the Endpoints it reads.
+/// The Portal re-checks the Organization and `visibility: public` on each call.
+#[cfg(feature = "dataroom")]
+pub(crate) fn dashboard_cards(
+    mirror: &Mirror,
+    organization: &str,
+    lang: &str,
+) -> Vec<dataroom_api::DashboardCard> {
+    joinedcontext_portal::api::organization_widgets::public_dashboards(mirror, organization)
+        .into_iter()
+        .map(|(project, dashboard)| {
+            let spec = &dashboard.spec;
+            let pages = spec.get("pages").and_then(Value::as_array);
+            let pages = pages.map(Vec::as_slice).unwrap_or_default();
+            let mut sources: Vec<String> = Vec::new();
+            for page in pages {
+                let layers = page.get("layers").and_then(Value::as_array);
+                let from_layers = layers.into_iter().flatten().filter_map(|layer| {
+                    let layer = mirror.get(&project, "Layer", layer.as_str()?)?;
+                    Some(layer.spec.get("sourceEndpointRef")?.as_str()?.to_owned())
+                });
+                let widgets = page.get("widgets").and_then(Value::as_array);
+                let from_widgets = widgets.into_iter().flatten().filter_map(|widget| {
+                    Some(widget.get("endpointRef")?.as_str()?.to_owned())
+                });
+                for source in from_layers.chain(from_widgets) {
+                    if !sources.contains(&source) {
+                        sources.push(source);
+                    }
+                }
+            }
+            dataroom_api::DashboardCard {
+                title: in_language(spec.get("title"), lang)
+                    .unwrap_or_else(|| dashboard.metadata.name.clone()),
+                pages: pages
+                    .iter()
+                    .filter_map(|page| page.get("title")?.as_str().map(str::to_owned))
+                    .collect(),
+                sources,
+            }
+        })
+        .collect()
+}
+
+/// A title as one string, or the one of `lang` in a map per locale, else English, else any.
+#[cfg(feature = "dataroom")]
+fn in_language(text: Option<&Value>, lang: &str) -> Option<String> {
+    match text? {
+        Value::String(one) => Some(one.clone()),
+        Value::Object(by) => [lang, "en"]
+            .iter()
+            .find_map(|l| by.get(*l))
+            .or_else(|| by.values().next())
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +203,71 @@ mod tests {
             None,
             "an empty appearance is jc's config"
         );
+    }
+
+    /// T-6780: a catalogue home draws only its own Organization's public Dashboards, with the
+    /// title in the page's language and the Endpoints its layers and widgets read.
+    #[cfg(feature = "dataroom")]
+    #[test]
+    fn a_catalogue_home_draws_only_its_own_organizations_public_dashboards() {
+        use joinedcontext_portal::permissions::ORG_NAMESPACE;
+        use joinedcontext_portal::resource::ResourceEnvelope;
+        let envelope = |kind: &str, name: &str, namespace: &str, spec: serde_json::Value| {
+            ResourceEnvelope {
+                api_version: jc_core::API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: jc_core::ObjectMeta::new(name, namespace),
+                spec,
+                status: None,
+            }
+        };
+        let mirror = Mirror::new();
+        mirror.upsert(envelope(
+            "Organization",
+            "bbsk",
+            ORG_NAMESPACE,
+            serde_json::json!({ "domain": "bbsk.sk",
+                "appearance": { "opendataWidgets": ["doprava/verejny", "doprava/interny"] } }),
+        ));
+        mirror.upsert(envelope(
+            "Project",
+            "doprava",
+            ORG_NAMESPACE,
+            serde_json::json!({ "organizationRef": "bbsk" }),
+        ));
+        mirror.upsert(envelope(
+            "Layer",
+            "zastavky",
+            "doprava",
+            serde_json::json!({ "sourceEndpointRef": "mhd-public" }),
+        ));
+        mirror.upsert(envelope(
+            "Dashboard",
+            "verejny",
+            "doprava",
+            serde_json::json!({ "title": { "en": "Transport", "sk": "Doprava" },
+                "visibility": "public",
+                "pages": [
+                    { "title": "Mapa", "layers": ["zastavky"] },
+                    { "widgets": [{ "type": "bar-chart", "endpointRef": "nehody-public" },
+                                  { "type": "grid", "endpointRef": "mhd-public" }] },
+                ] }),
+        ));
+        mirror.upsert(envelope(
+            "Dashboard",
+            "interny",
+            "doprava",
+            serde_json::json!({ "title": "Interný", "visibility": "organization", "pages": [] }),
+        ));
+        assert_eq!(
+            dashboard_cards(&mirror, "bbsk", "sk"),
+            [dataroom_api::DashboardCard {
+                title: "Doprava".into(),
+                pages: vec!["Mapa".into()],
+                sources: vec!["mhd-public".into(), "nehody-public".into()],
+            }]
+        );
+        assert_eq!(dashboard_cards(&mirror, "bbsk", "hu")[0].title, "Transport");
+        assert!(dashboard_cards(&mirror, "praha", "sk").is_empty());
     }
 }

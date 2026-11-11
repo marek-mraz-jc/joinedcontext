@@ -176,6 +176,12 @@ spec:
         sk: "Najviac 6 násteniek z projektov tejto organizácie pre domovskú stránku jej Portálu, napríklad doprava/prehlad; každý vidí tie, ktoré smie otvoriť."
         cs: "Nejvýše 6 nástěnek z projektů této organizace pro domovskou stránku jejího Portálu, například doprava/prehlad; každý vidí ty, které smí otevřít."
         de: "Bis zu 6 Dashboards aus den Projekten dieser Organisation für die Startseite ihres Portals, zum Beispiel doprava/prehlad; jede Person sieht die, die sie öffnen darf."
+    appearance.opendataWidgets:
+      help:
+        en: "Up to 6 public dashboards of this organization's projects for its open data portal home, for example doprava/prehlad; anyone sees them without signing in."
+        sk: "Najviac 6 verejných násteniek z projektov tejto organizácie pre domovskú stránku jej portálu otvorených údajov, napríklad doprava/prehlad; vidí ich každý aj bez prihlásenia."
+        cs: "Nejvýše 6 veřejných nástěnek z projektů této organizace pro domovskou stránku jejího portálu otevřených dat, například doprava/prehlad; vidí je kdokoli i bez přihlášení."
+        de: "Bis zu 6 öffentliche Dashboards aus den Projekten dieser Organisation für die Startseite ihres Open-Data-Portals, zum Beispiel doprava/prehlad; jede Person sieht sie ohne Anmeldung."
     policies.apps.services:
       help:
         en: The platform services an app may call beyond identity and data; a project or an app may only narrow the list.

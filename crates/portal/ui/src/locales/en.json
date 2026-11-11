@@ -7603,7 +7603,9 @@
           "text": "Text"
         },
         "homeWidgets": "Home page dashboards",
-        "homeWidgetsNone": "No dashboard to offer yet: make one in a project of this organization first."
+        "homeWidgetsNone": "No dashboard to offer yet: make one in a project of this organization first.",
+        "opendataWidgets": "Open data portal dashboards",
+        "opendataWidgetsNone": "No public dashboard to offer yet: set a dashboard of this organization's projects to public first."
       }
     },
     "contactRole": {

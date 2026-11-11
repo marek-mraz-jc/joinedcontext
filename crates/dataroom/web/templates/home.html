@@ -102,6 +102,25 @@
           </ul>
         </section>
       {% endif %}
+      {% if !dashboards.is_empty() %}
+        <section aria-labelledby="jc-dashboards-title">
+          <h2 id="jc-dashboards-title">{{ labels.dashboards }}</h2>
+          <ul class="jc-cards">
+            {% for board in dashboards %}
+              <li class="jc-card">
+                <h3>{{ board.title }}</h3>
+                {% if !board.pages.is_empty() %}<p class="jc-card-text">{{ board.pages.join(" · ") }}</p>{% endif %}
+                {% if !board.sources.is_empty() %}
+                <div class="jc-card-foot">
+                  <span>{{ labels.dashboard_sources }}</span>
+                  {% for source in board.sources %}<span class="jc-chip">{{ source }}</span>{% endfor %}
+                </div>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endif %}
       <section aria-labelledby="jc-recent-title">
         <div class="jc-home-head">
           <h2 id="jc-recent-title">{{ labels.recent }}</h2>

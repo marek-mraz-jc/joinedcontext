@@ -7603,7 +7603,9 @@
           "text": "Text"
         },
         "homeWidgets": "Nástenky na domovskej stránke",
-        "homeWidgetsNone": "Zatiaľ niet nástenky na výber: najprv vytvorte nástenku v projekte tejto organizácie."
+        "homeWidgetsNone": "Zatiaľ niet nástenky na výber: najprv vytvorte nástenku v projekte tejto organizácie.",
+        "opendataWidgets": "Nástenky na portáli otvorených údajov",
+        "opendataWidgetsNone": "Zatiaľ niet verejnej nástenky na výber: najprv nastavte nástenku v projekte tejto organizácie ako verejnú."
       }
     },
     "contactRole": {

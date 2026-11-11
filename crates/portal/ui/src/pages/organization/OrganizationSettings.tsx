@@ -189,6 +189,7 @@ export function OrganizationSettings(): JSX.Element {
   });
   const widgets = (widgetOptions.data?.options ?? []).map((option) => ({
     reference: option.reference,
+    public: option.public,
     label: `${localized(option.title as string | Record<string, string> | null, i18n.language, option.name)} (${option.reference})`,
   }));
   const form: EditableForm = {
@@ -202,6 +203,9 @@ export function OrganizationSettings(): JSX.Element {
           widgets.length > 0
             ? { "ui:widget": "checkboxes" }
             : { "ui:help": t("organization.field.appearance.homeWidgetsNone"), "ui:options": { addable: false } },
+        opendataWidgets: widgets.some((widget) => widget.public === true)
+          ? { "ui:widget": "checkboxes" }
+          : { "ui:help": t("organization.field.appearance.opendataWidgetsNone"), "ui:options": { addable: false } },
       },
     },
     fromManifest: fromOrganization,

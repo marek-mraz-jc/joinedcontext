@@ -7603,7 +7603,9 @@
           "text": "Text"
         },
         "homeWidgets": "Dashboards auf der Startseite",
-        "homeWidgetsNone": "Noch kein Dashboard zur Auswahl: Legen Sie zuerst eines in einem Projekt dieser Organisation an."
+        "homeWidgetsNone": "Noch kein Dashboard zur Auswahl: Legen Sie zuerst eines in einem Projekt dieser Organisation an.",
+        "opendataWidgets": "Dashboards im Open-Data-Portal",
+        "opendataWidgetsNone": "Noch kein öffentliches Dashboard zur Auswahl: Stellen Sie zuerst ein Dashboard eines Projekts dieser Organisation auf öffentlich."
       }
     },
     "contactRole": {

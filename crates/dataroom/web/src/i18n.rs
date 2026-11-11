@@ -1125,6 +1125,22 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "kiadó",
     );
     add(
+        "dashboards",
+        "Dashboards",
+        "Nástenky",
+        "Nástěnky",
+        "Dashboards",
+        "Irányítópultok",
+    );
+    add(
+        "dashboard_sources",
+        "Data from",
+        "Údaje z",
+        "Data z",
+        "Daten aus",
+        "Adatforrás",
+    );
+    add(
         "recent",
         "Recently updated",
         "Nedávno aktualizované",

@@ -282,6 +282,8 @@ pub async fn build(
         .with_public_base(mount.public_base())
         .with_mount_prefix(mount.path_prefix);
     #[cfg(feature = "portal")]
+    let state = with_dashboards(organizations, state).map_err(|e| err(&e))?;
+    #[cfg(feature = "portal")]
     follow_appearances(organizations, configured, &state, shutdown, tasks).map_err(|e| err(&e))?;
     #[cfg(not(feature = "portal"))]
     let _ = (shutdown, tasks);
@@ -402,6 +404,27 @@ fn follow_appearances(
         },
     );
     Ok(())
+}
+
+/// Each Organization's catalogue home shows the public Dashboards its
+/// `spec.appearance.opendataWidgets` names, read from the Portal's mirror on every render
+/// (UIX-16, T-6780): a catalogue without an Organization shows none.
+#[cfg(feature = "portal")]
+fn with_dashboards(
+    organizations: &[OrganizationSection],
+    state: DataroomState,
+) -> Result<DataroomState, String> {
+    let mut organization = BTreeMap::new();
+    for org in organizations {
+        let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| e.to_string())?;
+        organization.insert(id, org.name.clone());
+    }
+    Ok(state.with_dashboard_resolver(move |catalogue, lang| {
+        match (organization.get(catalogue), super::appearance::PORTAL_MIRROR.get()) {
+            (Some(name), Some(mirror)) => super::appearance::dashboard_cards(mirror, name, lang),
+            _ => Vec::new(),
+        }
+    }))
 }
 
 /// `block` with an Organization's appearance over it, member by member; a logo that fails the
