@@ -242,7 +242,7 @@
     "needsRole": "Zum Genehmigen braucht es eine Rollenzuweisung mit `approve` in diesem Projekt.",
     "needsPublisher": "Einen Endpunkt für die Öffentlichkeit freizugeben braucht die Rolle `publisher`; ein Steward allein kann es nicht.",
     "ownProposal": "Sie können Ihren eigenen Vorschlag nicht freigeben oder ablehnen.",
-    "ownAccessChange": "Zugriffsänderungen brauchen eine zweite Person: Ihre eigene Änderung an Rollen, Gruppen oder Dienstkonten genehmigt eine andere Administratorin oder ein anderer Administrator.",
+    "ownAccessChange": "Zugriffsänderungen brauchen eine zweite Person: Ihre eigene Änderung an Rollen, Gruppen, Dienstkonten oder Richtlinien genehmigt eine andere Administratorin oder ein anderer Administrator.",
     "ownModelChange": "Eine Änderung am Datenmodell braucht eine zweite Person: Ihre eigene Änderung an einem Modell genehmigt eine andere Administratorin oder ein anderer Administrator.",
     "confirmPrompt": "Zur Bestätigung diesen Namen eingeben:",
     "confirmLabel": "Zur Bestätigung den Namen eingeben",

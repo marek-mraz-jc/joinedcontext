@@ -242,7 +242,7 @@
     "needsRole": "Approving needs a role binding with `approve` in this project.",
     "needsPublisher": "Letting an endpoint out to the public needs the `publisher` role; a steward alone cannot.",
     "ownProposal": "You cannot approve or reject your own proposal.",
-    "ownAccessChange": "Access changes need a second person: another administrator approves your own change to roles, groups or service accounts.",
+    "ownAccessChange": "Access changes need a second person: another administrator approves your own change to roles, groups, service accounts or policies.",
     "ownModelChange": "A data model change needs a second person: another administrator approves your own change to a model.",
     "confirmPrompt": "To confirm, type this name:",
     "confirmLabel": "Type the name to confirm",

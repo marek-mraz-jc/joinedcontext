@@ -145,7 +145,7 @@ fn accept_rendered(
     }
     if let Some(key) = find_literal_secret(&body) {
         return Err(ApiError::BadRequest(format!(
-            "template `{template}` rendered a literal secret in field '{key}'; use secretRef (MF-24)"
+            "template `{template}` rendered a literal secret in field {key}; use secretRef (MF-24)"
         )));
     }
 
