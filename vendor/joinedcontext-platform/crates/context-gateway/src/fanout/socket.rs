@@ -644,7 +644,11 @@ async fn read_view(
                 limit = (limit / 4).max(SMALLEST_PAGE);
                 continue;
             }
-            tracing::warn!(slug, limit, "a fan-out snapshot page is larger than the body cap");
+            tracing::warn!(
+                slug,
+                limit,
+                "a fan-out snapshot page is larger than the body cap"
+            );
             return false;
         };
         let Ok(Value::Array(page)) = serde_json::from_slice::<Value>(&bytes) else {
@@ -1049,7 +1053,11 @@ mod tests {
     fn hub_with_closed(sent: &[u64]) -> (Hub, u64) {
         let hub = Hub::new("s", 10);
         let endpoint = crate::fanout::hub::tests_support::endpoint();
-        let (old, _) = hub.open(Arc::clone(&endpoint), "anonymous".into(), Subject::default());
+        let (old, _) = hub.open(
+            Arc::clone(&endpoint),
+            "anonymous".into(),
+            Subject::default(),
+        );
         let held: VecDeque<(u64, String)> = sent.iter().map(|n| (*n, format!("n{n}"))).collect();
         hub.close(old, "name", "token", held);
         let (new, _) = hub.open(endpoint, "anonymous".into(), Subject::default());
@@ -1132,7 +1140,11 @@ mod tests {
         let endpoint = crate::fanout::hub::tests_support::endpoint();
         let busy = |slug: &str| {
             let hub = Arc::new(Hub::new(slug, 10));
-            hub.open(Arc::clone(&endpoint), "anonymous".into(), Subject::default());
+            hub.open(
+                Arc::clone(&endpoint),
+                "anonymous".into(),
+                Subject::default(),
+            );
             hub
         };
         let mut hubs: HashMap<String, (String, Arc<Hub>)> = HashMap::new();

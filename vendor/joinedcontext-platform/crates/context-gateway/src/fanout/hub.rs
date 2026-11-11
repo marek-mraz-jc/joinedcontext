@@ -794,10 +794,7 @@ impl State {
                 continue;
             };
             for filter in filters {
-                if !self
-                    .index
-                    .decides(filter, &full, (&delta, created), core())
-                {
+                if !self.index.decides(filter, &full, (&delta, created), core()) {
                     continue;
                 }
                 let Some(sub) = conn.subs.values().find(|s| s.filter == filter) else {
@@ -1122,7 +1119,9 @@ mod tests {
         let mut quiet = (*endpoint()).clone();
         quiet.representations.clear();
         let (off, off_queue) = open(&hub);
-        assert!(hub.recheck(Some(&Arc::new(quiet)), same, reads).contains(&off));
+        assert!(hub
+            .recheck(Some(&Arc::new(quiet)), same, reads)
+            .contains(&off));
         assert_eq!(off_queue.take().0, [Out::Closing("view-removed")]);
     }
 
@@ -1149,14 +1148,22 @@ mod tests {
     fn a_narrowed_scope_keeps_the_connection() {
         let (hub, conn, queue, _) = seeded(&[bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")]);
         let reads = |_: &Subject, _: &Endpoint| true;
-        assert!(hub.recheck(Some(&hiding("secret")), |_| true, reads).is_empty());
+        assert!(hub
+            .recheck(Some(&hiding("secret")), |_| true, reads)
+            .is_empty());
         assert!(queue.take().0.is_empty());
         assert_eq!(hub.subscriptions(conn), 1);
         assert!(hub.rescope_now(), "the first read is owed");
         assert!(!hub.rescope_now(), "one read at a time");
-        hub.rescope(vec![bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")], chrono::Utc::now());
+        hub.rescope(
+            vec![bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")],
+            chrono::Utc::now(),
+        );
         assert!(hub.rescope_now(), "and one more a tick later");
-        hub.rescope(vec![bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")], chrono::Utc::now());
+        hub.rescope(
+            vec![bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")],
+            chrono::Utc::now(),
+        );
         assert!(!hub.rescope_now());
         assert!(queue.take().0.is_empty(), "an unchanged read sends nothing");
     }
@@ -1179,7 +1186,10 @@ mod tests {
         assert!(hub.rescope_now());
         hub.rescope(vec![one], chrono::Utc::now());
         let state = hub.state();
-        assert_eq!(state.table.keys().collect::<Vec<_>>(), ["urn:ngsi-ld:Vehicle:1"]);
+        assert_eq!(
+            state.table.keys().collect::<Vec<_>>(),
+            ["urn:ngsi-ld:Vehicle:1"]
+        );
     }
 
     /// T-6776 (c): an entity the new scope no longer holds sends one `x-out-of-scope` per
@@ -1236,7 +1246,7 @@ mod tests {
     #[test]
     fn a_widening_sends_the_new_entity() {
         let one = bus("urn:ngsi-ld:Vehicle:1", 1.0, "x");
-        let (hub, _, queue, _) = seeded(&[one.clone()]);
+        let (hub, _, queue, _) = seeded(std::slice::from_ref(&one));
         hub.recheck(Some(&hiding("other")), |_| true, |_, _| true);
         assert!(hub.rescope_now());
         hub.rescope(
