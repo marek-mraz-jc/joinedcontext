@@ -849,8 +849,17 @@ fn d3_dataset_page_builds_a_calendar_from_choices_on_its_own_endpoints_output() 
         "jc-subscribe-to",
         "jc-subscribe-mine-csv",
         "jc-subscribe-mine-google",
+        "jc-subscribe-near-place",
+        "jc-subscribe-near-km",
     ] {
         assert!(section.contains(&format!("id=\"{id}\"")), "{id}");
+    }
+    // "Near a place" stays hidden until jc-viz.js has the town list; its hint and refusal come
+    // from the labels, and 5 km is the radius a person starts from.
+    assert!(section.contains("<div id=\"jc-subscribe-near\" class=\"jc-subscribe-fields\" hidden>"));
+    assert!(section.contains("<option value=\"5\" selected>5 km</option>"));
+    for key in ["subscribe_near", "subscribe_radius", "subscribe_near_hint", "subscribe_near_unknown"] {
+        assert!(section.contains(&esc_t(key, "sk")), "{key}");
     }
     assert!(section.contains("aria-describedby=\"jc-subscribe-dates-hint\""));
     assert!(section.contains(&esc_t("subscribe_dates_hint", "sk")));
