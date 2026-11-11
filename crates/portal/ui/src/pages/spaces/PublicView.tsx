@@ -213,7 +213,6 @@ export function PublicViewPage({ slug }: { slug: string }): JSX.Element {
             rowKey={(row) => String(row.id)}
             storageKey={`public-view.${slug}.${type}`}
             empty={t("spaces.share.count", { count: 0 })}
-            stack
             columns={[
               {
                 key: "id",

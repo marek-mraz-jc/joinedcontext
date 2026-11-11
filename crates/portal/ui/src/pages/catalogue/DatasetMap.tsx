@@ -168,7 +168,6 @@ export function DatasetMap({ name }: { name: string }): JSX.Element | null {
             storageKey="catalogue.dataset.map"
             // A dataset without a feature draws no map section at all (above).
             empty={null}
-            stack
             columns={fields.map((field) => ({
               key: field.slot === "" ? "id" : `field:${field.slot}`,
               label: field.label,
