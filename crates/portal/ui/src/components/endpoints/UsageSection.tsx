@@ -252,7 +252,7 @@ export function ProjectUsageSection({ project }: { project: string }): JSX.Eleme
               text: () => "",
               cell: (endpoint) =>
                 endpoint.total > 0 ? (
-                  <span className="block w-40">
+                  <span className="block w-full min-w-40 max-w-sm">
                     <Bars small daily={endpoint.daily} label={t("endpointUsage.chart", { calls: number(endpoint.total), days })} />
                   </span>
                 ) : (

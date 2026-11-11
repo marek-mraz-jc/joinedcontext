@@ -20,10 +20,10 @@ const event = (time: string, kind: string, source: string, severity: string, sum
   details: object ? { object } : {},
 });
 const ACTIVITY = [
-  event(at(9, 42), "pipeline.failed", "reconciler", "error", "Pipeline hsl-vehicles failed: the source answered 503 three times.", "pipelines/hsl-vehicles"),
+  event(at(9, 42), "pipeline.error", "reconciler", "error", "Pipeline hsl-vehicles failed: the source answered 503 three times.", "pipelines/hsl-vehicles"),
   event(at(9, 30), "access.denied", "gateway", "warning", "An anonymous caller was refused a write to public-air.", "endpoints/public-air"),
   event(at(9, 12), "change.merged", "portal", "info", "Change chg-5e6f7a8b went live: bus-stops gained 2 attributes.", "endpoints/bus-stops"),
-  event(at(8, 55), "pipeline.succeeded", "reconciler", "info", "Pipeline air-quality wrote 412 entities.", "pipelines/air-quality"),
+  event(at(8, 55), "pipeline.run", "reconciler", "info", "Pipeline air-quality wrote 412 entities.", "pipelines/air-quality"),
 ];
 
 const pipeline = (name: string) => ({
@@ -55,7 +55,7 @@ async function stub(page: Page, mode: Mode): Promise<void> {
     const url = new URL(route.request().url());
     const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
     const failed = () =>
-      route.fulfill({ status: 503, contentType: "application/problem+json", body: JSON.stringify({ type: "about:blank", title: "Unavailable", status: 503, detail: "The activity store did not answer. Try again in a minute." }) });
+      route.fulfill({ status: 503, contentType: "application/problem+json", body: JSON.stringify({ type: "about:blank", title: "Unavailable", status: 503, detail: "The Portal store did not answer. Try again in a minute." }) });
     if (url.pathname.endsWith("/auth/me")) return json(IDENTITY);
     if (url.pathname === "/api/v1/projects") return json(PROJECTS);
     if (url.pathname.endsWith("/activity/stream")) return route.fulfill({ status: 204, body: "" });
@@ -63,7 +63,8 @@ async function stub(page: Page, mode: Mode): Promise<void> {
     if (url.pathname.endsWith("/helsinki/pipelines")) return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: HEALTH.map((h) => pipeline(h.pipeline)) });
     if (url.pathname.endsWith("/helsinki/pipeline-health")) return mode === "error" ? failed() : json({ items: mode === "empty" ? [] : HEALTH });
     if (url.pathname.endsWith("/helsinki/health-checks")) return json({ items: [] });
-    if (url.pathname.endsWith("/helsinki/usage/endpoints")) return json(mode === "empty" ? { ...USAGE, endpoints: [] } : USAGE);
+    if (url.pathname.endsWith("/helsinki/usage/endpoints"))
+      return mode === "error" ? failed() : json(mode === "empty" ? { ...USAGE, endpoints: [] } : USAGE);
     return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: [] });
   });
 }
@@ -103,7 +104,7 @@ for (const width of [1440, 400]) {
       await page.getByRole("searchbox", { name: "Search this list" }).first().fill("no-row-says-this");
       await shot("nomatch");
 
-      if (target.slug !== "usage") {
+      {
         await page.unrouteAll({ behavior: "ignoreErrors" });
         await stub(page, "empty");
         await open();
@@ -112,7 +113,7 @@ for (const width of [1440, 400]) {
         await page.unrouteAll({ behavior: "ignoreErrors" });
         await stub(page, "error");
         await open();
-        await expect(page.getByText(/did not answer/).first()).toBeVisible();
+        await expect(page.getByText(/did not answer|could not be read/).first()).toBeVisible();
         await shot("error");
       }
     });
