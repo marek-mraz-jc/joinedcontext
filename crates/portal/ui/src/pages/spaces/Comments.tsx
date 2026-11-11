@@ -20,7 +20,7 @@ type Notifications = components["schemas"]["Notifications"];
 
 type NotificationItem = Notifications["items"][number];
 
-/** What one notification says: a mention, or a connector event (T-5979) by its kind. */
+/** What one notification says: a mention, a connector event (T-5979) or a refused change (T-6709) by its kind. */
 export function notificationText(item: NotificationItem, t: (key: string, values?: Record<string, string>) => string): string {
   switch (item.kind) {
     case "change.opened":
@@ -29,6 +29,8 @@ export function notificationText(item: NotificationItem, t: (key: string, values
       return t("notifications.connectorPending", { name: item.authorName, connector: item.excerpt });
     case "connector.expiring":
       return t("notifications.connectorExpiring", { connector: item.excerpt });
+    case "config.refused":
+      return t("notifications.configRefused", { project: item.project, change: item.urn.slice(0, 7) });
     default:
       return t("notifications.mentioned", { name: item.authorName, space: item.space });
   }
@@ -276,8 +278,9 @@ export function NotificationsMenu({ project, waiting = 0 }: { project: string; w
             }}
           >
             <span className={item.read ? "text-fg-muted" : "font-semibold"}>{notificationText(item, t)}</span>
-            {item.kind === "mention" ? (
-              <span className="line-clamp-2 text-caption text-fg-muted [overflow-wrap:anywhere]">{item.excerpt}</span>
+            {/* A mention's words, a refused change's file and reason (T-6709), in body weight. */}
+            {item.kind === "mention" || item.kind === "config.refused" ? (
+              <span className={`${item.kind === "mention" ? "line-clamp-2 " : ""}text-caption text-fg-muted [overflow-wrap:anywhere]`}>{item.excerpt}</span>
             ) : null}
             <span className="text-caption text-fg-subtle">{when(item.createdAt, i18n.language)}</span>
           </MenuItem>

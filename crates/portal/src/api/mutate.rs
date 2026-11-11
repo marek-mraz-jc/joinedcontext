@@ -1606,160 +1606,53 @@ async fn check_content(
     operation: Operation,
     envelope: &ResourceEnvelope,
 ) -> Result<(), ApiError> {
-    // 4a'. A kind jc-core does not define is a kind no loader can read: `jcctl`, the Portal's
-    //       own sync and the gateway's store all refuse an unknown kind and refuse the whole
-    //       repository with it, so one such file stops configuration reaching every endpoint.
-    //       What is left of that gap is the seed entity: a plain `.json` NGSI-LD entity (CC-72),
-    //       never a `kind: Entity` manifest. `Subscription` closed it with jc-core-v0.7.30 and
-    //       is written like any other kind now (T-0833, T-0913).
-    if jc_core::registry::by_kind(kind).is_none() {
-        return Err(ApiError::BadRequest(format!(
-            "kind '{}' is declared but not defined by the platform yet, and a repository holding \
-             one stops loading for every component; it cannot be written (CC-72, T-0833)",
-            kind
-        )));
-    }
-
-    // 4a. An Endpoint's representation outputs, member by member (API/11 EP-159): a 422 that
-    //     names the output and the member, which the form shows beside the field.
-    if kind == "Endpoint" && operation != Operation::Delete {
-        check_representation_shape(&envelope.spec)?;
-    }
-
-    // 4b. The kind's own parse and invariants (T-0412, CC-08, MF-24). `jcctl apply` would
-    //     refuse this manifest on `main`, after an approval; refusing it here turns a broken
-    //     repository into a form error that names the field. Kinds without a jc-core type
-    //     (PORTAL_ONLY_KINDS) have nothing to check against and pass as before.
-    if let Some(checked) = jc_core::registry::validate_yaml(
-        kind,
-        &serde_json::to_string(&envelope).map_err(|e| ApiError::Internal(e.to_string()))?,
-    ) {
-        checked.map_err(|e| ApiError::BadRequest(format!("spec is not a valid {}: {e}", kind)))?;
-    }
-
-    // 4e. An Organization's limits stay inside the operator's bounds (PF-97): refused here,
-    //     before a Change exists, and again at approval, since the bounds may tighten between.
-    if operation != Operation::Delete {
-        organization_within_bounds(state, kind, &envelope.spec, ApiError::BadRequest)?;
-        // 4f. The organization's public-app policy (PF-103), held again at approval.
-        public_app_allowed(state, project, envelope, ApiError::BadRequest)?;
-        // 4g. An App's hostnames lie in the organization's verified domain and are no other
-        //     App's (AP-172); the reconciler routes only the names that still pass.
-        if kind == "App" {
-            let apex = state.config.app_settings.as_ref().map(|s| s.apex.as_str());
-            crate::apps::hostnames::check(
-                &state.mirror,
-                project,
-                &envelope.metadata.name,
-                &envelope.spec,
-                apex,
-            )
-            .map_err(ApiError::BadRequest)?;
-        }
-    }
-
-    // 4d. A projection names only what its model version has (MP-01, T-2558): the same check
-    //     `jcctl validate` runs, so the two cannot disagree about what is stale, and every stale
-    //     name is listed at once. The model is looked up in this project only, so a model of
-    //     another project is absent and nothing of it is named (R20).
-    if kind == "ModelProjection" && operation != Operation::Delete {
-        check_projection(state, project, &envelope.spec).await?;
-    }
-
-    // 4c. A ServiceAccount's Keycloak client id is derived, `{project}-{name}`, and the hyphen
-    //     is a character of both, so another project's account may derive the same id. The
-    //     gateway resolves such an id to nobody (T-1454); refusing it here keeps a proposal from
-    //     switching off the other project's account. The other account is not named: it may live
-    //     in a project the author cannot read (PF-59).
-    if kind == "ServiceAccount" {
-        if let Some(id) = service_account_id_taken(&state.mirror, project, &envelope.metadata.name)
-        {
-            return Err(ApiError::BadRequest(format!(
-                "metadata.name '{}' gives the Keycloak client id '{id}', which another \
-                 ServiceAccount already derives; choose another name (T-1456)",
-                envelope.metadata.name
-            )));
-        }
-    }
-
-    // 4b''. An agent profile names only operations this Portal registers (MF-40): jc-core checks
-    //       the shape of an operation name, the registry is the Portal's to know.
-    if kind == "AgentProfile" {
-        if let Some(name) = unknown_operation(&envelope.spec) {
-            return Err(ApiError::BadRequest(format!(
-                "spec.access.operations names '{name}', which is not a registered operation (MF-40)"
-            )));
-        }
-    }
-
-    // 4b-surfaces. A domain-standard representation (`ical`) needs its type and that type's
-    //       mandatory attributes in the space's model (EP-125): the rule `jcctl validate` runs,
-    //       in the same words, so the reconciler is never handed an Endpoint it would refuse.
-    if kind == "Endpoint" && operation != Operation::Delete {
-        check_surfaces(state, project, &envelope.metadata.name, &envelope.spec).await?;
-        check_policy_refs(state, project, envelope)?;
-    }
-
-    // 4b'''. A Pipeline in replace drops what another Pipeline writes onto the same ids in its
-    //        space (PL-79, T-4409): the rule `jcctl validate` runs, over the project's Pipelines
-    //        with this proposal in place of its own.
-    if kind == "Pipeline" && operation != Operation::Delete {
-        check_replace(state, project, &envelope.metadata.name, &envelope.spec)?;
-    }
-
-    // 4b-model. A space has one data model, whose classes are its types (DM-61, T-6394): a
-    //       second model of the space would plan and merge, then every Pipeline and Endpoint
-    //       of its classes is refused. The rule `jcctl validate` runs, said before the merge.
-    if kind == "DataModel" && operation != Operation::Delete {
-        check_one_model(state, project, &envelope.metadata.name, &envelope.spec)?;
-    }
-
-    // 4b-writes. A write nobody can make (PL-111, ADR-N-057 decision 5): a write Policy no
-    //       Endpoint binds, a Pipeline output whose targetEndpoint does not bind its write. The
-    //       rule `jcctl validate` runs, over the project with this change in place.
-    check_unmade_writes(state, project, operation, envelope)?;
-
-    // 4b'. A public dashboard reads only through public Endpoints (UI-19, T-0528): the one
-    //      rule that spans three manifests, so it is checked against the mirror here.
-    crate::dashboards::check(
-        &state.mirror,
-        project,
-        kind,
-        &envelope.metadata.name,
-        &envelope.spec,
-    )?;
-
-    // 4b-quota. What the project may hold (PF-73, PF-74): the count the repository would have
-    //       after this write, against the quota in force. Refused here, before a Change exists,
-    //       so every door - the route, an operation, the assistant, an import - refuses it.
-    if operation != Operation::Delete {
-        crate::quotas::check(
+    // 4a-4b-catalogue. Everything a manifest is judged on without its proposer: the one judge
+    //     approval, the reconciler's load and `validate --as-portal` run too (P-2, CHG-03), so
+    //     a file that reaches `main` by another door meets the same refusal.
+    let ground = crate::judge::Ground::of(state);
+    if operation == Operation::Delete {
+        // A deletion is judged on what it leaves: the kind still loads, a write stays made
+        // (PL-111) and a public dashboard keeps public Endpoints (UI-19).
+        crate::judge::kind(&ground, project, envelope)?;
+        crate::judge::spec(&ground, project, envelope)?;
+        check_unmade_writes(&ground, project, operation, envelope)?;
+        return crate::dashboards::check(
             &state.mirror,
             project,
             kind,
             &envelope.metadata.name,
             &envelope.spec,
-        )?;
+        );
+    }
+    crate::judge::manifest(&ground, project, envelope)?;
+
+    // 4d. A projection names only what its model version has (MP-01, T-2558): the same check
+    //     `jcctl validate` runs, so the two cannot disagree about what is stale, and every stale
+    //     name is listed at once. The model is looked up in this project only, so a model of
+    //     another project is absent and nothing of it is named (R20).
+    if kind == "ModelProjection" {
+        check_projection(state, project, &envelope.spec).await?;
     }
 
-    // 4b-mqtt. A broker inside what the project's MQTT allowance leaves, and a project's own
-    //       allowance written only by an org admin (PF-117, PF-118, ADR-N-048 §2.9).
-    if operation != Operation::Delete {
-        crate::mqtt_allowance::check_manifest(state, identity, project, envelope)?;
+    // 4b-surfaces. A domain-standard representation (`ical`) needs its type and that type's
+    //       mandatory attributes in the space's model (EP-125): the rule `jcctl validate` runs,
+    //       in the same words, so the reconciler is never handed an Endpoint it would refuse.
+    if kind == "Endpoint" {
+        check_surfaces(state, project, &envelope.metadata.name, &envelope.spec).await?;
     }
+
+    // 4b-mqtt. A project's own allowance written only by an org admin, and roles naming only
+    //       accounts the proposer reads (PF-117, PF-118, ADR-N-048 §2.9, T-5590).
+    crate::mqtt_allowance::check_manifest(state, identity, project, envelope)?;
 
     // 4b-contact. A catalogue record publishes its contact point to everyone, so a person's own
     //       address is refused at every door (EP-80, T-2789).
-    if operation != Operation::Delete {
-        crate::catalog::check_contact(&state.mirror, identity, kind, &envelope.spec)?;
-        crate::catalog::check_publication(kind, &envelope.spec)?;
-    }
-    Ok(())
+    crate::catalog::check_contact(&state.mirror, identity, kind, &envelope.spec)
 }
 
 /// The Keycloak client id `{project}-{name}` derives, when another project's ServiceAccount
 /// already derives it.
-fn service_account_id_taken(
+pub(crate) fn service_account_id_taken(
     mirror: &crate::store::Mirror,
     project: &str,
     name: &str,
@@ -1784,7 +1677,7 @@ fn service_account_id_taken(
 }
 
 /// The first of `spec.access.operations` this Portal does not register (MF-40).
-fn unknown_operation(spec: &Value) -> Option<&str> {
+pub(crate) fn unknown_operation(spec: &Value) -> Option<&str> {
     spec.pointer("/access/operations")
         .and_then(Value::as_array)
         .into_iter()
@@ -2159,7 +2052,7 @@ const MAX_SIDECAR_BYTES: usize = 256 * 1024;
 /// entry, the value, the bound and who moves the bound (PF-97, ADR-N-035). Any other kind passes.
 /// `refusal` is the answer's kind: a form error on a door, a conflict at approval.
 pub(crate) fn organization_within_bounds(
-    state: &AppState,
+    bounds: &jc_core::kinds::OrganizationBounds,
     kind: &str,
     spec: &Value,
     refusal: fn(String) -> ApiError,
@@ -2171,20 +2064,18 @@ pub(crate) fn organization_within_bounds(
     let Ok(spec) = serde_json::from_value::<jc_core::kinds::OrganizationSpec>(spec.clone()) else {
         return Ok(());
     };
-    spec.check_limits(&state.config.organization_bounds)
-        .map_err(|e| {
-            refusal(format!(
-                "{e}; an organization sets a value inside the bound, and the operator moves the \
+    spec.check_limits(bounds).map_err(|e| {
+        refusal(format!(
+            "{e}; an organization sets a value inside the bound, and the operator moves the \
                  bound in the deployment (portal.organizationBounds), never the Portal (PF-97)"
-            ))
-        })
+        ))
+    })
 }
 
 /// Whether the Organization refuses public Apps (`spec.policies.apps.public`, PF-103).
-pub(crate) fn public_apps_refused(state: &AppState) -> bool {
+pub(crate) fn public_apps_refused(mirror: &crate::store::Mirror) -> bool {
     use jc_core::kinds::{OrganizationPolicies, PublicApps};
-    state
-        .mirror
+    mirror
         .list(
             crate::permissions::ORG_NAMESPACE,
             "Organization",
@@ -2202,24 +2093,24 @@ pub(crate) fn public_apps_refused(state: &AppState) -> bool {
 /// PF-100, PF-103). An App that is public already stays as it is: the policy stops new public
 /// Apps, it takes nothing offline, so an edit that keeps it public passes.
 pub(crate) fn public_app_allowed(
-    state: &AppState,
+    ground: &crate::judge::Ground<'_>,
     project: &str,
     envelope: &ResourceEnvelope,
     refusal: fn(String) -> ApiError,
 ) -> Result<(), ApiError> {
+    let mirror = ground.mirror;
     let public = |spec: &Value| spec.get("visibility").and_then(Value::as_str) == Some("public");
     if envelope.kind != "App" || !public(&envelope.spec) {
         return Ok(());
     }
     let name = &envelope.metadata.name;
-    if state
-        .mirror
+    if mirror
         .get(project, "App", name)
         .is_some_and(|stored| public(&stored.spec))
     {
         return Ok(());
     }
-    if public_apps_refused(state) {
+    if public_apps_refused(mirror) {
         return Err(refusal(format!(
             "App '{name}' may not be public: the organization refuses public Apps \
              (spec.policies.apps.public). Keep it visible to the project or the organization, or \
@@ -2232,27 +2123,26 @@ pub(crate) fn public_app_allowed(
 /// Refuses a Pipeline proposal that, with the project's other Pipelines, makes a replace output
 /// meet another Pipeline's writes of the same ids in its space (PL-79), whichever side it is on. A
 /// spec or an Endpoint that does not parse is judged elsewhere.
-fn check_replace(
-    state: &AppState,
+pub(crate) fn check_replace(
+    ground: &crate::judge::Ground<'_>,
     project: &str,
     name: &str,
     spec: &Value,
 ) -> Result<(), ApiError> {
+    let mirror = ground.mirror;
     use jc_core::kinds::{replace_conflicts, EndpointSpec, PipelineSpec};
     let Ok(proposed) = serde_json::from_value::<PipelineSpec>(spec.clone()) else {
         return Ok(());
     };
     let options = crate::store::ListOptions::default();
-    let others: Vec<(String, PipelineSpec)> = state
-        .mirror
+    let others: Vec<(String, PipelineSpec)> = mirror
         .list(project, "Pipeline", &options)
         .items
         .into_iter()
         .filter(|p| p.metadata.name != name)
         .filter_map(|p| Some((p.metadata.name, serde_json::from_value(p.spec).ok()?)))
         .collect();
-    let spaces: std::collections::BTreeMap<String, String> = state
-        .mirror
+    let spaces: std::collections::BTreeMap<String, String> = mirror
         .list(project, "Endpoint", &options)
         .items
         .into_iter()
@@ -2295,19 +2185,19 @@ fn bundled_bindings(project: &str) -> Vec<ResourceEnvelope> {
 /// segment), or one naming no Policy of the space in the mirror or the same Change. Such an
 /// Endpoint plans, merges and goes Live granting nothing. Each line names the URN to write. A
 /// reference the Endpoint already holds passes, so an unrelated edit can still land.
-fn check_policy_refs(
-    state: &AppState,
+pub(crate) fn check_policy_refs(
+    ground: &crate::judge::Ground<'_>,
     project: &str,
     envelope: &ResourceEnvelope,
 ) -> Result<(), ApiError> {
+    let mirror = ground.mirror;
     use jc_core::kinds::EndpointSpec;
     let parsed = |spec: Value| serde_json::from_value::<EndpointSpec>(spec).ok();
     let Some(spec) = parsed(envelope.spec.clone()) else {
         return Ok(());
     };
     let name = &envelope.metadata.name;
-    let held = state
-        .mirror
+    let held = mirror
         .get(project, "Endpoint", name)
         .and_then(|endpoint| parsed(endpoint.spec));
     let held = held.as_ref().and_then(EndpointSpec::policy_refs);
@@ -2326,12 +2216,10 @@ fn check_policy_refs(
         .iter()
         .find(|e| e.kind == "ContextSpace" && e.metadata.name == space)
         .map_or_else(
-            || crate::spaces::segment(&state.mirror, project, space),
+            || crate::spaces::segment(mirror, project, space),
             crate::spaces::segment_of,
         );
-    let mirrored = state
-        .mirror
-        .list(project, "Policy", &crate::store::ListOptions::default());
+    let mirrored = mirror.list(project, "Policy", &crate::store::ListOptions::default());
     let policies: std::collections::BTreeSet<String> = mirrored
         .items
         .into_iter()
@@ -2343,11 +2231,11 @@ fn check_policy_refs(
         .collect();
     // With Organizations and none the installation's, no domain is known to be the binder's: the
     // reference keeps its own, and only its segment and name are judged.
-    let unclaimed = crate::permissions::installation_organization(&state.mirror).is_none()
-        && !crate::permissions::organizations(&state.mirror).is_empty();
+    let unclaimed = crate::permissions::installation_organization(mirror).is_none()
+        && !crate::permissions::organizations(mirror).is_empty();
     let domain = match unclaimed {
         true => String::new(),
-        false => crate::api::assistant::org_domain(state, ""),
+        false => ground.org_domain(),
     };
     let field = match spec.policy_ref {
         Some(_) => "spec.policyRef",
@@ -2389,12 +2277,13 @@ fn check_policy_refs(
 /// decision 5), with `jcctl validate`'s sentences. Only the findings this change brings count, so a
 /// project that already holds one can still be repaired one manifest at a time. Each line starts
 /// with the field to change when the finding is on the proposed manifest or it is an Endpoint.
-fn check_unmade_writes(
-    state: &AppState,
+pub(crate) fn check_unmade_writes(
+    ground: &crate::judge::Ground<'_>,
     project: &str,
     operation: Operation,
     envelope: &ResourceEnvelope,
 ) -> Result<(), ApiError> {
+    let mirror = ground.mirror;
     if !WRITE_BINDING_KINDS.contains(&envelope.kind.as_str()) {
         return Ok(());
     }
@@ -2407,7 +2296,7 @@ fn check_unmade_writes(
     };
     let current: Vec<ResourceEnvelope> = WRITE_BINDING_KINDS
         .iter()
-        .flat_map(|kind| state.mirror.list(project, kind, &options).items)
+        .flat_map(|kind| mirror.list(project, kind, &options).items)
         .collect();
     let same =
         |e: &ResourceEnvelope| e.kind == envelope.kind && e.metadata.name == envelope.metadata.name;
@@ -2423,7 +2312,7 @@ fn check_unmade_writes(
         mine.status = None;
         proposed.push(mine);
     }
-    let domain = crate::api::assistant::org_domain(state, "");
+    let domain = ground.org_domain();
     let domain = Some(domain.as_str()).filter(|d| !d.is_empty());
     let before = unmade_writes(&current, domain);
     let field = |unmade: &jcctl::commands::validate::UnmadeWrite| {
@@ -2454,12 +2343,13 @@ fn check_unmade_writes(
 /// Refuses a DataModel that would be a second own model of its space (DM-61): the space's types
 /// are the classes of the one model it holds, so the classes of this one would never be. The
 /// drafts of the same Change count beside the mirror; a mirrored peer copy (DM-48) is none.
-fn check_one_model(
-    state: &AppState,
+pub(crate) fn check_one_model(
+    ground: &crate::judge::Ground<'_>,
     project: &str,
     name: &str,
     spec: &Value,
 ) -> Result<(), ApiError> {
+    let mirror = ground.mirror;
     use crate::api::assistant::ref_name;
     let own = |spec: &Value| spec["lifecycle"] != "mirrored";
     let Some(space) = ref_name(&spec["contextSpaceRef"]).filter(|_| own(spec)) else {
@@ -2474,7 +2364,7 @@ fn check_one_model(
     let in_project = |m: &ResourceEnvelope| m.metadata.namespace.as_deref() == Some(project);
     // A model the space already counts adds no second one: a repository that holds two from
     // before this check can still change either.
-    let counted = state.mirror.find(|m| {
+    let counted = mirror.find(|m| {
         in_project(m)
             && m.kind == "DataModel"
             && m.metadata.name == name
@@ -2484,8 +2374,7 @@ fn check_one_model(
     if counted.is_some() {
         return Ok(());
     }
-    let held = state
-        .mirror
+    let held = mirror
         .find(|m| in_project(m) && of_space(&m.kind, &m.metadata.name, &m.spec))
         .map(|m| m.metadata.name)
         .or_else(|| {
@@ -2582,7 +2471,7 @@ fn unprocessable(lines: Vec<String>) -> ApiError {
 /// The shape of `spec.representations` alone, before the kind's own parse: an unknown member, a
 /// duplicate or malformed output name, a 21st output, a filter the broker would refuse. Each is
 /// a 422 naming the member's path (API/11 EP-157, EP-159); the model check is `check_surfaces`.
-fn check_representation_shape(spec: &Value) -> Result<(), ApiError> {
+pub(crate) fn check_representation_shape(spec: &Value) -> Result<(), ApiError> {
     use jc_core::kinds::{feed_gaps, outputs_gaps, widget_gaps, Representations};
     let Some(block) = spec.get("representations") else {
         return Ok(());
@@ -3393,9 +3282,13 @@ mod tests {
                 "projects": { "quota": { "contextSpaces": spaces } }
             })
         };
-        let refused =
-            organization_within_bounds(&state, "Organization", &spec(50), ApiError::Conflict)
-                .expect_err("50 is over the operator's 20");
+        let refused = organization_within_bounds(
+            &state.config.organization_bounds,
+            "Organization",
+            &spec(50),
+            ApiError::Conflict,
+        )
+        .expect_err("50 is over the operator's 20");
         let ApiError::Conflict(message) = refused else {
             panic!("a conflict at approval: {refused:?}");
         };
@@ -3407,18 +3300,24 @@ mod tests {
         ] {
             assert!(message.contains(part), "{part}: {message}");
         }
-        assert!(
-            organization_within_bounds(&state, "Organization", &spec(20), ApiError::Conflict)
-                .is_ok()
-        );
-        assert!(
-            organization_within_bounds(&state, "ContextSpace", &spec(50), ApiError::Conflict)
-                .is_ok()
-        );
+        assert!(organization_within_bounds(
+            &state.config.organization_bounds,
+            "Organization",
+            &spec(20),
+            ApiError::Conflict
+        )
+        .is_ok());
+        assert!(organization_within_bounds(
+            &state.config.organization_bounds,
+            "ContextSpace",
+            &spec(50),
+            ApiError::Conflict
+        )
+        .is_ok());
         // Without an operator file a quota has no ceiling (ADR-N-035: the operator sets one).
         let open = AppState::new(Config::for_tests(), None);
         assert!(organization_within_bounds(
-            &open,
+            &open.config.organization_bounds,
             "Organization",
             &spec(500),
             ApiError::BadRequest
@@ -3455,7 +3354,12 @@ mod tests {
             )
         };
         let check = |envelope: &ResourceEnvelope| {
-            public_app_allowed(&state, "helsinki", envelope, ApiError::BadRequest)
+            public_app_allowed(
+                &crate::judge::Ground::of(&state),
+                "helsinki",
+                envelope,
+                ApiError::BadRequest,
+            )
         };
 
         // No Organization, or one that says nothing: public Apps are allowed (the default).
@@ -3477,7 +3381,7 @@ mod tests {
         }
         assert!(matches!(
             public_app_allowed(
-                &state,
+                &crate::judge::Ground::of(&state),
                 "helsinki",
                 &app("bikes", "public"),
                 ApiError::Conflict
@@ -4291,7 +4195,7 @@ mod tests {
         ));
         let check = |reference: &str| {
             let endpoint = manifest("Endpoint", "public-air", public_air(Some(reference)));
-            check_policy_refs(&state, "ovzdusie", &endpoint)
+            check_policy_refs(&crate::judge::Ground::of(&state), "ovzdusie", &endpoint)
         };
 
         check("urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:public-read")
@@ -4333,7 +4237,7 @@ mod tests {
         ));
         let check = |reference: &str| {
             let endpoint = manifest("Endpoint", "public-air", public_air(Some(reference)));
-            check_policy_refs(&state, "ovzdusie", &endpoint)
+            check_policy_refs(&crate::judge::Ground::of(&state), "ovzdusie", &endpoint)
         };
 
         check(RIGHT).expect("the rendered segment binds");
@@ -4362,7 +4266,11 @@ mod tests {
             .expect("object")
             .extend(listed.as_object().expect("object").clone());
         let endpoint = manifest("Endpoint", "public-air", spec);
-        let errors = refusal(check_policy_refs(&state, "ovzdusie", &endpoint));
+        let errors = refusal(check_policy_refs(
+            &crate::judge::Ground::of(&state),
+            "ovzdusie",
+            &endpoint,
+        ));
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(errors[0].starts_with("spec.policyRefs: "), "{errors:?}");
 
@@ -4423,7 +4331,12 @@ mod tests {
         ];
         let result = crate::references::BUNDLE
             .scope(drafts, async {
-                check_unmade_writes(&state, "ovzdusie", Operation::Create, &writer)
+                check_unmade_writes(
+                    &crate::judge::Ground::of(&state),
+                    "ovzdusie",
+                    Operation::Create,
+                    &writer,
+                )
             })
             .await;
         assert!(refusal(result)[0].contains("sensors-write"));
@@ -4439,7 +4352,9 @@ mod tests {
             json!({ "contextSpaceRef": space, "linkml": "./m.linkml.yaml", "version": "0.1.0",
                     "lifecycle": lifecycle })
         };
-        let check = |name: &str, spec: Value| check_one_model(&state, "ovzdusie", name, &spec);
+        let check = |name: &str, spec: Value| {
+            check_one_model(&crate::judge::Ground::of(&state), "ovzdusie", name, &spec)
+        };
         check("walk", model("walk", "draft")).expect("the space's first model");
         state
             .mirror
@@ -4474,7 +4389,12 @@ mod tests {
     fn a_write_nobody_can_make_is_refused_naming_what_to_change() {
         let state = narrowed_space();
         let check = |operation, envelope: ResourceEnvelope| {
-            check_unmade_writes(&state, "ovzdusie", operation, &envelope)
+            check_unmade_writes(
+                &crate::judge::Ground::of(&state),
+                "ovzdusie",
+                operation,
+                &envelope,
+            )
         };
         let writer = || {
             manifest(
@@ -4566,7 +4486,12 @@ mod tests {
             ),
         ));
         let check = |envelope: ResourceEnvelope| {
-            check_unmade_writes(&state, "ovzdusie", Operation::Create, &envelope)
+            check_unmade_writes(
+                &crate::judge::Ground::of(&state),
+                "ovzdusie",
+                Operation::Create,
+                &envelope,
+            )
         };
         assert!(check(manifest(
             "Policy",
@@ -4656,7 +4581,9 @@ mod tests {
                 }),
             ));
         }
-        let check = |name: &str, spec: Value| check_replace(&state, "ovzdusie", name, &spec);
+        let check = |name: &str, spec: Value| {
+            check_replace(&crate::judge::Ground::of(&state), "ovzdusie", name, &spec)
+        };
 
         assert!(
             check("stations", pipeline("public-air", "replace")).is_ok(),

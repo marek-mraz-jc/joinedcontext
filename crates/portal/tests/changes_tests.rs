@@ -2205,7 +2205,7 @@ async fn an_approver_of_bindings_still_may_not_approve_one_that_grants_more_than
 
 #[tokio::test]
 async fn a_red_lane_manifest_inside_a_yellow_bundle_needs_the_confirmation() {
-    let policy = "apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: open\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: mobility\n";
+    let policy = "apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: open\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: mobility\n  assigner: did:web:banskabystrica.sk\n  assignee: { kind: role, id: public }\n  operations: [retrieveOps]\n";
     let rules = json!([{ "kinds": ["Pipeline", "Policy"], "verbs": ["approve"] }]);
     let extra = [(
         "projects/ovzdusie/spaces/mobility/policies/open.yaml",
@@ -2663,7 +2663,9 @@ fn app_yaml(visibility: Option<&str>) -> String {
     let visibility = visibility.map_or(String::new(), |v| format!("  visibility: {v}\n"));
     format!(
         "apiVersion: joinedcontext.com/v1alpha1\nkind: App\nmetadata:\n  name: air-desk\n  \
-         namespace: ovzdusie\nspec:\n  kind: static\n  source:\n    path: ./src\n  build: {{}}\n{visibility}"
+         namespace: ovzdusie\nspec:\n  kind: static\n  source:\n    path: ./src\n  build: {{}}\n  \
+         dataNeeds:\n    - contextSpaceRef: {{ kind: ContextSpace, name: ovzdusie }}\n      \
+         types: [AirQualityObserved]\n      operations: [queryEntity]\n{visibility}"
     )
 }
 
@@ -3240,7 +3242,7 @@ async fn a_space_steward_approves_a_deletion_in_its_own_space_and_no_other() {
 #[tokio::test]
 async fn a_name_constrained_role_approves_removing_a_data_model_with_its_linkml_file() {
     let dir = "projects/ovzdusie/spaces/t4668-space-0636/datamodels";
-    let model = "apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: t4668-model-0636\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: t4668-space-0636\n  linkml: ./t4668-model-0636.linkml.yaml\n  version: 1.0.0\n";
+    let model = "apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: t4668-model-0636\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: t4668-space-0636\n  linkml: ./t4668-model-0636.linkml.yaml\n  version: 1.0.0\n  lifecycle: draft\n";
     let linkml = "id: https://example.org/t4668\nname: t4668\nclasses: {}\n";
     let janitor = json!([
         { "kinds": ["Pipeline"], "verbs": ["approve", "delete"] },
@@ -3404,7 +3406,7 @@ async fn reject_66_as(
 
 const MODEL_BRANCH: &str = "portal/create-datamodel-air-00000042";
 const MODEL_PATH: &str = "projects/ovzdusie/spaces/ovzdusie/datamodels/air.yaml";
-const MODEL_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: air\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  linkml: ./air.linkml.yaml\n  version: 1.0.1\n";
+const MODEL_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: air\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  linkml: ./air.linkml.yaml\n  version: 1.0.1\n  lifecycle: draft\n";
 
 /// T-6535: the proposer withdraws their own DataModel change without `approve` (closed, never
 /// merged); a person who did not propose it still needs `approve`, and the proposer still never
