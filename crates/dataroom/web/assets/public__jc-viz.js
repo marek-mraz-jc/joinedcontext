@@ -104,6 +104,10 @@ if (typeof IntersectionObserver === "function") {
     ics.href = url;
     clearTimeout(timer);
     if (menu && !menu.open) return;
+    // Say "loading" at once, so the heading never stands over nothing while the debounce runs.
+    asked++;
+    list.textContent = "";
+    status.textContent = box.getAttribute("data-jc-loading");
     timer = setTimeout(function () { preview(url); }, 400);
   }
   // One calendar line as its value: the line unfolded, its text escapes read (RFC 5545 3.3.11).
