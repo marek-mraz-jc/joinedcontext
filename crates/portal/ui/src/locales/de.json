@@ -7577,6 +7577,25 @@
         "agentRunsPerDay": "Assistentenläufe pro Tag",
         "entitiesPerSpace": "Entitäten pro Raum",
         "requestsPerMinute": "Anfragen pro Minute je Endpunkt"
+      },
+      "appearance": {
+        "title": "Erscheinungsbild",
+        "instanceName": "Name",
+        "shortName": "Kurzname",
+        "city": "Stadt oder Region",
+        "publisher": "Herausgeber",
+        "contactEmail": "Kontakt-E-Mail",
+        "licenseDefault": "Standardlizenz",
+        "colours": "Farben",
+        "logoSvg": "Logo (SVG)",
+        "faviconSvg": "Favicon (SVG)",
+        "colour": {
+          "primary": "Primär",
+          "secondary": "Sekundär",
+          "accent": "Akzent",
+          "background": "Hintergrund",
+          "text": "Text"
+        }
       }
     },
     "contactRole": {
@@ -7629,7 +7648,9 @@
       "creationGroup": "Die Mitglieder der Gruppe {group} eröffnen Projekte.",
       "creationAdmin": "Nur die Organisationsverwaltung eröffnet Projekte.",
       "cooldown": "{days} Tage",
-      "noQuota": "Für ein neues Projekt ist keine Grenze gesetzt."
+      "noQuota": "Für ein neues Projekt ist keine Grenze gesetzt.",
+      "appearanceInstallation": "Name, Farben und Logo der Installation",
+      "appearanceLogo": "mit eigenem Logo"
     },
     "members": {
       "title": "Mitglieder",

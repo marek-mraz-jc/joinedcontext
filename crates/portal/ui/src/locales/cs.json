@@ -7577,6 +7577,25 @@
         "agentRunsPerDay": "Běhy asistenta za den",
         "entitiesPerSpace": "Entity v prostoru",
         "requestsPerMinute": "Požadavky za minutu na koncový bod"
+      },
+      "appearance": {
+        "title": "Vzhled",
+        "instanceName": "Název",
+        "shortName": "Krátký název",
+        "city": "Město nebo region",
+        "publisher": "Vydavatel",
+        "contactEmail": "Kontaktní e-mail",
+        "licenseDefault": "Výchozí licence",
+        "colours": "Barvy",
+        "logoSvg": "Logo (SVG)",
+        "faviconSvg": "Ikona stránky (SVG)",
+        "colour": {
+          "primary": "Hlavní",
+          "secondary": "Doplňková",
+          "accent": "Zvýraznění",
+          "background": "Pozadí",
+          "text": "Text"
+        }
       }
     },
     "contactRole": {
@@ -7629,7 +7648,9 @@
       "creationGroup": "Projekty otevírají členové skupiny {group}.",
       "creationAdmin": "Projekty otevírá jen administrátor organizace.",
       "cooldown": "{days} dní",
-      "noQuota": "Pro nový projekt není stanoven žádný limit."
+      "noQuota": "Pro nový projekt není stanoven žádný limit.",
+      "appearanceInstallation": "Název, barvy a logo instalace",
+      "appearanceLogo": "s vlastním logem"
     },
     "members": {
       "title": "Členové",

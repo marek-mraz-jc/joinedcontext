@@ -7577,6 +7577,25 @@
         "agentRunsPerDay": "Assistant runs per day",
         "entitiesPerSpace": "Entities per space",
         "requestsPerMinute": "Requests per minute per endpoint"
+      },
+      "appearance": {
+        "title": "Appearance",
+        "instanceName": "Name",
+        "shortName": "Short name",
+        "city": "City or region",
+        "publisher": "Publisher",
+        "contactEmail": "Contact e-mail",
+        "licenseDefault": "Default licence",
+        "colours": "Colours",
+        "logoSvg": "Logo (SVG)",
+        "faviconSvg": "Favicon (SVG)",
+        "colour": {
+          "primary": "Primary",
+          "secondary": "Secondary",
+          "accent": "Accent",
+          "background": "Background",
+          "text": "Text"
+        }
       }
     },
     "contactRole": {
@@ -7629,7 +7648,9 @@
       "creationGroup": "The members of the group {group} open projects.",
       "creationAdmin": "Only an organization administrator opens projects.",
       "cooldown": "{days} days",
-      "noQuota": "No limit is set for a new project."
+      "noQuota": "No limit is set for a new project.",
+      "appearanceInstallation": "The installation's name, colours and logo",
+      "appearanceLogo": "with its own logo"
     },
     "members": {
       "title": "Members",

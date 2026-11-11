@@ -11033,6 +11033,9 @@ export interface components {
             displayName?: string | null;
             /** @description The slug: the `{project}` segment of every path of it (PF-67). */
             name: string;
+            /** @description The Organization the project belongs to, e.g. `bbsk`: needed only when the caller may open
+             *     a project in several; the caller must hold that right there (T-6766). */
+            organization?: string | null;
         };
         /** @description What opening a workspace asks for (API/01 §22). */
         OpenRequest: {

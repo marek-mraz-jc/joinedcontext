@@ -260,7 +260,7 @@ pub async fn import(
     bytes: &[u8],
     input: GitImport,
 ) -> Result<(StatusCode, Value), ApiError> {
-    crate::api::projects::may_open(state, identity)?;
+    let organization = crate::api::projects::opening_organization(state, identity, None)?;
     if input.name.is_some() {
         return Err(ApiError::BadRequest(
             "a project import takes its name from the path; 'name' belongs to format=app".into(),
@@ -284,14 +284,15 @@ pub async fn import(
     // The registry entry this deployment runs the project with, and its values checked against
     // what the project declares before anything is created (CC-88).
     let mut entry_files = crate::api::projects::open_project_files(
-        state,
         identity,
         &crate::api::projects::OpenProject {
             name: project.to_owned(),
             display_name: input.display_name.clone(),
             description: None,
+            organization: None,
         },
         project,
+        &organization,
     )?;
     crate::api::projects::into_registry_entry(
         &mut entry_files,

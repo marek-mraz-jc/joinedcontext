@@ -53,6 +53,9 @@ pub struct CreateProjectInput {
     pub display_name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// The Organization it belongs to, when the caller may open a project in several (T-6766).
+    #[serde(default)]
+    pub organization: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -130,7 +133,8 @@ fn create_project_input_schema() -> Value {
         "properties": {
             "name": text("The project slug, a DNS-1123 label", 63),
             "displayName": text("What people call it; the slug when absent", TITLE),
-            "description": text("One line about what the project is for", TITLE)
+            "description": text("One line about what the project is for", TITLE),
+            "organization": text("The Organization it belongs to, e.g. bbsk; needed only when you may open a project in several", 63)
         },
         "required": ["name"],
         "additionalProperties": false
@@ -255,6 +259,7 @@ pub fn operations() -> Vec<Operation> {
                             name: input.name,
                             display_name: input.display_name,
                             description: input.description,
+                            organization: input.organization,
                         }),
                     )
                     .await?;

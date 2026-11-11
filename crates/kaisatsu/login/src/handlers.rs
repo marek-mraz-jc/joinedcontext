@@ -84,17 +84,24 @@ async fn stylesheet_get(Path(version): Path<String>) -> Response {
         .into_response()
 }
 
+/// `?org=`: the organization (or app host) whose own block's logo the page shows.
+#[derive(Deserialize)]
+struct LogoQuery {
+    org: Option<String>,
+}
+
 /// `GET /realms/{realm}/login-resources/logo.svg`: the realm's logo from its branding block
 /// (sanitised: no script, no foreign object, no handler), served as an image the browser never
 /// runs: its own CSP forbids every script and fetch.
 async fn logo_get(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
+    Query(query): Query<LogoQuery>,
 ) -> Result<Response> {
     let Some(realm) = state.store.get_realm(&realm_name).await? else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
-    let branding = load_branding(&state, &realm, None).await?;
+    let branding = branding_for(&state, &realm, [query.org.as_deref()]).await?;
     if branding.logo_svg.is_empty() {
         return Ok(StatusCode::NOT_FOUND.into_response());
     }
@@ -113,21 +120,46 @@ async fn logo_get(
         .into_response())
 }
 
-/// The realm's (or the session's organization's) branding block, sanitised; the platform's
-/// defaults when none is stored.
+/// The branding block of a sign-in, sanitised: the session's organization's own block, else the
+/// block of the app host it returns to, else the realm's; the platform's defaults when none is
+/// stored.
 pub(crate) async fn load_branding(
     state: &OidcState,
     realm: &RealmConfig,
-    org_id: Option<&str>,
+    session: Option<&AuthSession>,
 ) -> Result<BrandingBlock> {
-    let stored = match org_id {
-        Some(org) => match state.store.get_branding(&realm.id, Some(org)).await? {
-            Some(b) => Some(b),
-            None => state.store.get_branding(&realm.id, None).await?,
-        },
-        None => state.store.get_branding(&realm.id, None).await?,
-    };
+    let org = session.and_then(|s| s.org_id.as_deref());
+    let app = session.and_then(|s| app_host(&s.redirect_uri));
+    branding_for(state, realm, [org, app.as_deref()]).await
+}
+
+/// The first of `keys` with a block of its own in `realm`, else the realm's block.
+async fn branding_for<'a>(
+    state: &OidcState,
+    realm: &RealmConfig,
+    keys: impl IntoIterator<Item = Option<&'a str>>,
+) -> Result<BrandingBlock> {
+    for key in keys.into_iter().flatten() {
+        if let Some(own) = state.store.get_branding(&realm.id, Some(key)).await?
+            && own.org_id.as_deref() == Some(key)
+        {
+            return Ok(own.sanitised());
+        }
+    }
+    let stored = state.store.get_branding(&realm.id, None).await?;
     Ok(stored.unwrap_or_default().sanitised())
+}
+
+/// The host (with its port) of the app a sign-in returns to. The authorize step checked the
+/// redirect URI against the client's registered ones, so it names the Portal host, and with it
+/// the Organization, the person came from (UIX-16): one Portal client serves every host.
+fn app_host(redirect_uri: &str) -> Option<String> {
+    let url = url::Url::parse(redirect_uri).ok()?;
+    let host = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    })
 }
 
 /// The app a session signs in to, as the page names it: the client's name translated
@@ -417,7 +449,7 @@ async fn render_state_page_with(
         auth_session.ui_locales.as_deref(),
         headers,
     ));
-    let branding = load_branding(state, realm, auth_session.org_id.as_deref()).await?;
+    let branding = load_branding(state, realm, Some(auth_session)).await?;
     let app = app_name(state, realm, &auth_session.client_id, &bundle).await?;
     let base = format!(
         "{}/realms/{}/login-actions/authenticate?session_code={}&client_id={}",
@@ -961,8 +993,7 @@ pub(crate) async fn render_expired_session_page(
         auth_session.and_then(|s| s.ui_locales.as_deref()),
         headers,
     ));
-    let branding =
-        load_branding(state, realm, auth_session.and_then(|s| s.org_id.as_deref())).await?;
+    let branding = load_branding(state, realm, auth_session).await?;
     let app = match auth_session {
         Some(s) => app_name(state, realm, &s.client_id, &bundle).await?,
         None => String::new(),
@@ -2305,12 +2336,7 @@ async fn reset_credentials_get(
         .and_then(|s| s.ui_locales.clone())
         .or_else(|| picked_locale(&realm, &query.kc_locale).map(str::to_owned));
     let bundle = Bundle::for_locale(page_locale(&realm, ui.as_deref(), &headers));
-    let branding = load_branding(
-        &state,
-        &realm,
-        session.as_ref().and_then(|s| s.org_id.as_deref()),
-    )
-    .await?;
+    let branding = load_branding(&state, &realm, session.as_ref()).await?;
     let app = match &session {
         Some(s) => app_name(&state, &realm, &s.client_id, &bundle).await?,
         None => String::new(),
@@ -2945,7 +2971,7 @@ async fn render_action_form(
         auth_session.ui_locales.as_deref(),
         headers,
     ));
-    let branding = load_branding(state, realm, auth_session.org_id.as_deref()).await?;
+    let branding = load_branding(state, realm, Some(auth_session)).await?;
     let app = app_name(state, realm, &auth_session.client_id, &bundle).await?;
     let shell = page::Shell {
         bundle: &bundle,

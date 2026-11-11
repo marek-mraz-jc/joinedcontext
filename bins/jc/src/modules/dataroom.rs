@@ -9,9 +9,9 @@
 //! (`dataroom_api::portal_publisher`).
 
 use crate::app::StartError;
-use crate::config::{DataroomSection, Given, HarvestSeed, OrganizationSection};
+use crate::config::{DataroomSection, HarvestSeed, OrganizationSection};
 use crate::module::Module;
-use crate::setup::{Secret, Setup};
+use crate::setup::Secret;
 use crate::siblings::Siblings;
 use axum::Router;
 use dataroom_api::DataroomState;
@@ -150,12 +150,13 @@ fn configured_branding(cfg: &DataroomSection) -> Result<BrandingBlock, String> {
 pub async fn build(
     cfg: &DataroomSection,
     organizations: &[OrganizationSection],
-    tokens: &BTreeMap<String, Given>,
-    setup: &Setup,
-    siblings: &Siblings,
+    ctx: super::BuildCtx<'_>,
     mount: Mount,
     assistant_widget: Option<String>,
+    shutdown: &tokio_util::sync::CancellationToken,
+    tasks: &tokio_util::task::TaskTracker,
 ) -> Result<Router, StartError> {
+    let (tokens, setup, siblings) = (&ctx.secrets.organization_tokens, ctx.setup, ctx.siblings);
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Dataroom, e);
     dataroom_api::check_aliases(&cfg.aliases)
         .map_err(|e| err(&format!("[dataroom.aliases] {e}")))?;
@@ -270,6 +271,8 @@ pub async fn build(
         catalogues,
     )
     .spawn();
+    #[cfg(feature = "portal")]
+    let configured = by_catalogue.clone();
     let state = DataroomState::new(store, authorizer, org_id, catalogue_id)
         .with_tokens(bindings)
         .with_installation_branding(installation_branding(&own, &live, assistant_widget))
@@ -278,6 +281,10 @@ pub async fn build(
         .with_loopback_default(organizations.is_empty())
         .with_public_base(mount.public_base())
         .with_mount_prefix(mount.path_prefix);
+    #[cfg(feature = "portal")]
+    follow_appearances(organizations, configured, &state, shutdown, tasks).map_err(|e| err(&e))?;
+    #[cfg(not(feature = "portal"))]
+    let _ = (shutdown, tasks);
     Ok(dataroom_api::with_dataset_aliases(
         dataroom_api::router(state),
         cfg.aliases.clone(),
@@ -356,6 +363,82 @@ fn bare_host(host: &str) -> &str {
         Some(end) if host.starts_with('[') => &host[..=end],
         _ => host.split(':').next().unwrap_or(host),
     }
+}
+
+/// Keeps each Organization's catalogue branding its `Organization.spec.appearance` over jc's
+/// config (UIX-16, T-6777): a member the Organization leaves out, or a removed appearance,
+/// shows `configured` again.
+#[cfg(feature = "portal")]
+fn follow_appearances(
+    organizations: &[OrganizationSection],
+    configured: BTreeMap<CatalogueId, BrandingBlock>,
+    state: &DataroomState,
+    shutdown: &tokio_util::sync::CancellationToken,
+    tasks: &tokio_util::task::TaskTracker,
+) -> Result<(), String> {
+    let mut catalogue = BTreeMap::new();
+    for org in organizations {
+        let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| e.to_string())?;
+        catalogue.insert(org.name.clone(), id);
+    }
+    let shared = state.catalogue_branding.clone();
+    super::appearance::follow(
+        catalogue.keys().cloned().collect(),
+        shutdown,
+        tasks,
+        move |name, look| {
+            let block = catalogue
+                .get(&name)
+                .and_then(|id| Some((*id, configured.get(id)?.clone())));
+            if let Some((id, block)) = block {
+                let block = with_appearance(block, look.as_ref());
+                shared
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(id, block);
+                tracing::info!(organization = %name, appearance = look.is_some(), "dataroom: catalogue branding follows the Organization");
+            }
+            std::future::ready(())
+        },
+    );
+    Ok(())
+}
+
+/// `block` with an Organization's appearance over it, member by member; a logo that fails the
+/// logo upload's SVG check keeps jc's.
+#[cfg(feature = "portal")]
+fn with_appearance(
+    mut block: BrandingBlock,
+    look: Option<&jc_core::kinds::OrganizationAppearance>,
+) -> BrandingBlock {
+    let Some(look) = look else {
+        return block;
+    };
+    let mut over = serde_json::json!({
+        "instanceName": look.instance_name,
+        "shortName": super::appearance::short_name(look),
+        "city": look.city,
+        "organisation": look.publisher,
+        "contactEmail": look.contact_email,
+        "licenseDefault": look.license_default,
+        "colours": {
+            "primary": look.colours.primary,
+            "secondary": look.colours.secondary,
+            "accent": look.colours.accent,
+            "background": look.colours.background,
+            "text": look.colours.text,
+        },
+    });
+    if let Some(svg) = look
+        .logo_svg
+        .as_deref()
+        .filter(|svg| dataroom_core::branding::is_safe_logo_svg(svg))
+    {
+        over["logoSvg"] = svg.into();
+        over["logo"] = "logo.svg".into();
+    }
+    block.apply_override_json(&over);
+    block
 }
 
 /// An Organization's catalogue frames its own Portal and API: the installation's other live
@@ -1036,6 +1119,53 @@ mod tests {
     }
 
     /// prod's publish-gate hidden list, as jc.toml carries it (`[dataroom.hidden]`).
+    /// An Organization's catalogue (UIX-16, T-6777): its appearance over jc's config member by
+    /// member; without one, or with a logo the upload would refuse, jc's config shows.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn an_organizations_catalogue_shows_its_appearance_over_jcs_config() {
+        let cfg = prod_publishers();
+        let configured = configured_branding(&cfg).expect("prod's block is accepted");
+        assert_eq!(with_appearance(configured.clone(), None), configured);
+        let logo = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>"##;
+        let look: jc_core::kinds::OrganizationAppearance =
+            serde_json::from_value(serde_json::json!({
+                "instanceName": "Banskobystrický kraj",
+                "publisher": "BBSK",
+                "colours": { "primary": "#0b5394" },
+                "logoSvg": logo,
+            }))
+            .expect("an appearance");
+        let shown = with_appearance(configured.clone(), Some(&look));
+        assert_eq!(shown.instance_name, "Banskobystrický kraj");
+        assert_eq!(
+            shown.short_name, "Banskobystrický kraj",
+            "the full name stands in"
+        );
+        assert_eq!(shown.organisation, "BBSK");
+        assert_eq!(shown.colours.primary, "#0b5394");
+        assert_eq!(
+            shown.primary_rgb, "11, 83, 148",
+            "derived values follow the colour"
+        );
+        assert_eq!(
+            shown.colours.secondary, configured.colours.secondary,
+            "left out: jc's"
+        );
+        assert_eq!(shown.city, configured.city);
+        assert_eq!(shown.logo_svg.as_deref(), Some(logo));
+        assert_eq!(shown.logo, "logo.svg");
+        let scripted = jc_core::kinds::OrganizationAppearance {
+            logo_svg: Some("<svg><script>alert(1)</script></svg>".into()),
+            ..look
+        };
+        assert_eq!(
+            with_appearance(configured.clone(), Some(&scripted)).logo_svg,
+            configured.logo_svg,
+            "a logo the upload refuses keeps jc's"
+        );
+    }
+
     fn prod_hidden() -> BTreeMap<String, String> {
         #[derive(serde::Deserialize)]
         struct File {

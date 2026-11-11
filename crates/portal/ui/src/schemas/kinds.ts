@@ -3097,7 +3097,9 @@ export function organizationSchema(t: (key: string) => string, entries: readonly
                 type: "array",
                 title: t("organization.policy.models"),
                 description: t("organization.policy.modelsHint"),
-                minItems: 1,
+                // No `minItems`: RJSF fills a required first item into an Organization that names
+                // no models, and that empty item refused every edit of the form (T-6772). An
+                // empty list goes out as no list (`toOrganization`), which allows every model.
                 uniqueItems: true,
                 items: { type: "string", minLength: 1, maxLength: 200 },
               },
@@ -3105,10 +3107,71 @@ export function organizationSchema(t: (key: string) => string, entries: readonly
           },
         },
       },
+      appearance: appearanceProperty(t),
     },
   } as JsonSchema;
   // Every numeric policy and limit, held to the operator's bound (PF-97, PF-102).
   return withCatalog(schema, entries, t);
+}
+
+/** `#rrggbb`, within what jc-core takes (UIX-16); the same pattern as `knowledge.HEX_COLOR`, so a
+ * refusal reads "a colour as # and six hexadecimal digits". */
+const HEX_COLOUR = "^#[0-9a-fA-F]{6}$";
+/** One line without `<` or `>`, as jc-core checks a name (UIX-16). */
+const PLAIN_LINE = "^[^<>\\u0000-\\u001f]+$";
+const APPEARANCE_COLOURS = ["primary", "secondary", "accent", "background", "text"] as const;
+
+/**
+ * `spec.appearance` (UIX-16, T-6772): what the Organization's Portal, open data portal and login
+ * page show of it; every field left empty shows the installation's.
+ */
+function appearanceProperty(t: (key: string) => string): JsonSchema {
+  const line = (key: string): JsonSchema => ({
+    type: "string",
+    title: t(`organization.field.appearance.${key}`),
+    minLength: 1,
+    maxLength: 120,
+    pattern: PLAIN_LINE,
+  });
+  const svg = (key: string): JsonSchema => ({
+    type: "string",
+    title: t(`organization.field.appearance.${key}`),
+    maxLength: 65536,
+    pattern: "^\\s*<",
+  });
+  return {
+    type: "object",
+    title: t("organization.field.appearance.title"),
+    properties: {
+      instanceName: line("instanceName"),
+      shortName: line("shortName"),
+      city: line("city"),
+      publisher: line("publisher"),
+      contactEmail: {
+        type: "string",
+        title: t("organization.field.appearance.contactEmail"),
+        pattern: "^[^@\\s<>\"']+@[^@\\s<>\"']+\\.[^@\\s<>\"']+$",
+        maxLength: 254,
+      },
+      licenseDefault: {
+        type: "string",
+        title: t("organization.field.appearance.licenseDefault"),
+        pattern: "^[A-Za-z0-9.+-]{1,64}$",
+      },
+      colours: {
+        type: "object",
+        title: t("organization.field.appearance.colours"),
+        properties: Object.fromEntries(
+          APPEARANCE_COLOURS.map((colour) => [
+            colour,
+            { type: "string", title: t(`organization.field.appearance.colour.${colour}`), pattern: HEX_COLOUR },
+          ]),
+        ),
+      },
+      logoSvg: svg("logoSvg"),
+      faviconSvg: svg("faviconSvg"),
+    },
+  } as JsonSchema;
 }
 
 /** The languages a publisher's name is given in, as the UI speaks them. */
