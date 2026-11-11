@@ -10,7 +10,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::routing::post;
 use axum::{Json, Router};
-use jc_core::kinds::{ProjectedClass, ProjectionFilter};
+use jc_core::kinds::{IcalOutput, ProjectedClass, ProjectionFilter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -116,28 +116,7 @@ pub async fn preview_endpoint(
     Path((project, name)): Path<(String, String)>,
     body: Result<Json<PreviewRequest>, JsonRejection>,
 ) -> Result<Json<Previewed>, ApiError> {
-    let identity = &user.0.identity;
-    let unknown = || ApiError::NotFound(format!("no Endpoint {name} in project {project}"));
-    let endpoint = state
-        .mirror
-        .get(&project, "Endpoint", &name)
-        .filter(|_| is_dns1123(&project))
-        .ok_or_else(unknown)?;
-    let space = crate::permissions::space_ref(&serde_json::json!({ "spec": endpoint.spec }))
-        .ok_or_else(unknown)?;
-    let effective = crate::permissions::for_request(&state, identity, &project);
-    // A draft can name what the saved projection does not publish yet: a member's view (SP-06,
-    // SP-11), and nobody else learns the Endpoint is there.
-    if !(effective.may_read_project() && effective.may_read_in("ContextSpace", Some(&space))) {
-        return Err(unknown());
-    }
-    // Decided (worker-1, owner may override): the preview is a person's editor; a workload's
-    // reading is its ServiceAccount's grants, which this route does not resolve.
-    if identity.client.is_some() {
-        return Err(ApiError::Denied(
-            "the filter preview is for a person, not a workload token".into(),
-        ));
-    }
+    admitted(&state, &user, &project, &name)?;
     let Json(request) = body.map_err(|e| ApiError::BadRequest(e.body_text()))?;
     let query = query_of(&request).map_err(ApiError::BadRequest)?;
     let views = state.views.as_ref().ok_or_else(|| {
@@ -181,6 +160,177 @@ pub async fn preview_endpoint(
         403 => Err(ApiError::Denied(detail())),
         _ => {
             tracing::warn!(status, "the broker refused a preview");
+            Err(ApiError::Unavailable(format!(
+                "the broker refused the preview ({status})"
+            )))
+        }
+    }
+}
+
+/// Whether `user` may preview Endpoint `name`: a person who reads its Context Space; anyone
+/// else learns nothing of the Endpoint (404), a workload token is refused (403).
+fn admitted(
+    state: &AppState,
+    user: &CurrentUser,
+    project: &str,
+    name: &str,
+) -> Result<(), ApiError> {
+    let identity = &user.0.identity;
+    let unknown = || ApiError::NotFound(format!("no Endpoint {name} in project {project}"));
+    let endpoint = state
+        .mirror
+        .get(project, "Endpoint", name)
+        .filter(|_| is_dns1123(project))
+        .ok_or_else(unknown)?;
+    let space = crate::permissions::space_ref(&serde_json::json!({ "spec": endpoint.spec }))
+        .ok_or_else(unknown)?;
+    let effective = crate::permissions::for_request(state, identity, project);
+    // A draft can name what the saved projection does not publish yet: a member's view (SP-06,
+    // SP-11), and nobody else learns the Endpoint is there.
+    if !(effective.may_read_project() && effective.may_read_in("ContextSpace", Some(&space))) {
+        return Err(unknown());
+    }
+    // Decided (worker-1, owner may override): the preview is a person's editor; a workload's
+    // reading is its ServiceAccount's grants, which this route does not resolve.
+    if identity.client.is_some() {
+        return Err(ApiError::Denied(
+            "the preview is for a person, not a workload token".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The body of `POST …/endpoints/{name}/ical-preview`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct IcalPreviewRequest {
+    /// The candidate calendar output (preset), as `spec.representations.ical[]`.
+    #[schema(value_type = std::collections::HashMap<String, serde_json::Value>)]
+    pub output: IcalOutput,
+    /// How many Entities to read, 1 to 50 (the default).
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// What a candidate calendar renders over the first Entities.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct IcalPreviewed {
+    /// Entities read.
+    pub read: u64,
+    /// Entities that render a calendar entry.
+    pub valid: u64,
+    /// Entities outside the calendar's window.
+    pub outside: u64,
+    /// Entities left out, per reason (`missing-summary` ...).
+    pub skipped: std::collections::BTreeMap<String, u64>,
+    /// The first entries in the calendar's order, as `VEVENT` text.
+    pub events: Vec<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project}/endpoints/{name}/ical-preview",
+    summary = "Preview A Calendar Preset",
+    description = "The first calendar entries a candidate iCal output (a stored preset with its query, sort, limit and timezone) renders through the Endpoint's saved view, read as the person. Members of the Endpoint's Context Space only (API/02 §4a). Changes no data.",
+    tag = "spaces",
+    params(
+        ("project" = String, Path, description = "Project name"),
+        ("name" = String, Path, description = "Endpoint name"),
+    ),
+    request_body(
+        content = IcalPreviewRequest,
+        description = "The candidate output.",
+        content_type = "application/json",
+        example = json!({
+            "output": {
+                "name": "kultura",
+                "query": "q=eventCategory==%22koncert%22",
+                "sort": "start",
+                "limit": 100,
+                "timezone": "Europe/Bratislava",
+                "sources": [{ "type": "Event", "preset": "sdm-event" }]
+            }
+        })
+    ),
+    responses(
+        (status = 200, description = "Counts and the first entries", body = IcalPreviewed),
+        (status = 400, description = "A body that does not read", body = crate::error::ProblemDetails),
+        (status = 401, description = "Not signed in", body = crate::error::ProblemDetails),
+        (status = 403, description = "A workload token, or the broker refused the reading", body = crate::error::ProblemDetails),
+        (status = 404, description = "No such Endpoint in a space the caller may read", body = crate::error::ProblemDetails),
+        (status = 422, description = "The output has gaps, each naming its member", body = crate::error::ProblemDetails),
+        (status = 503, description = "No broker, or the Endpoint's view is not compiled yet", body = crate::error::ProblemDetails),
+    )
+)]
+pub async fn preview_ical(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path((project, name)): Path<(String, String)>,
+    body: Result<Json<IcalPreviewRequest>, JsonRejection>,
+) -> Result<Json<IcalPreviewed>, ApiError> {
+    admitted(&state, &user, &project, &name)?;
+    let Json(request) = body.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    if request.limit.is_some_and(|n| !(1..=50).contains(&n)) {
+        return Err(ApiError::Unprocessable {
+            detail: "`limit` is 1 to 50".into(),
+            errors: vec!["limit: 1 to 50".into()],
+        });
+    }
+    let gaps = request.output.shape_gaps();
+    if !gaps.is_empty() {
+        return Err(ApiError::Unprocessable {
+            detail: gaps.join("; "),
+            errors: gaps,
+        });
+    }
+    let views = state.views.as_ref().ok_or_else(|| {
+        ApiError::Unavailable("this Portal has no broker address or admin token".into())
+    })?;
+    let (id, _) = views
+        .saved_view(&project, &name)
+        .map_err(ApiError::BadRequest)?
+        .ok_or_else(|| {
+            ApiError::Unavailable(
+                "the Endpoint's view is not compiled yet; try again shortly".into(),
+            )
+        })?;
+    let headers = subject(&state, views, &user.0, &project, &name)?;
+    // the broker reads the preset's `query` as the `filter` it stands for, as the view hands it
+    let output = IcalOutput {
+        filter: request.output.effective_filter(),
+        query: None,
+        ..request.output
+    };
+    let body = serde_json::json!({ "output": output, "limit": request.limit });
+    let (status, answer) = views
+        .ical_preview(&id, &body, &headers)
+        .await
+        .map_err(|reason| {
+            tracing::warn!(%reason, "the broker did not preview a calendar");
+            ApiError::Unavailable("the broker did not answer; try again shortly".into())
+        })?;
+    let detail = || {
+        answer
+            .get("detail")
+            .or_else(|| answer.get("title"))
+            .and_then(Value::as_str)
+            .unwrap_or("no reason given")
+            .to_owned()
+    };
+    match status {
+        200 => serde_json::from_value(answer.clone())
+            .map(Json)
+            .map_err(|err| {
+                tracing::warn!(%err, "the broker's calendar preview did not read");
+                ApiError::Unavailable("the broker answered a preview the Portal cannot read".into())
+            }),
+        400 => Err(ApiError::BadRequest(detail())),
+        403 => Err(ApiError::Denied(detail())),
+        404 => Err(ApiError::Unavailable(
+            "the Endpoint does not serve `ical` yet: add it to the served formats and save".into(),
+        )),
+        _ => {
+            tracing::warn!(status, "the broker refused a calendar preview");
             Err(ApiError::Unavailable(format!(
                 "the broker refused the preview ({status})"
             )))
@@ -326,10 +476,15 @@ pub(crate) fn encode(value: &str) -> String {
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new().route(
-        "/projects/{project}/endpoints/{name}/preview",
-        post(preview_endpoint),
-    )
+    Router::new()
+        .route(
+            "/projects/{project}/endpoints/{name}/preview",
+            post(preview_endpoint),
+        )
+        .route(
+            "/projects/{project}/endpoints/{name}/ical-preview",
+            post(preview_ical),
+        )
 }
 
 #[cfg(test)]

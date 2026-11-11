@@ -298,6 +298,53 @@ async fn the_preview_answers_the_admin_token_alone_and_renders_a_candidate() {
     assert!(feed.contains("SUMMARY:Podujatie zv1"), "{feed}");
 }
 
+/// T-6762 (API/02 §4a): the Endpoint form previews a whole preset: its filter narrows the read,
+/// its `sort` and `limit` keep the Events the served calendar keeps.
+#[tokio::test]
+async fn the_preview_renders_a_whole_preset_with_its_filter_sort_and_limit() {
+    let (_broker, app) = fixture(false).await;
+    let preset = |extra: Value| {
+        let mut output = json!({"name": "zvolen",
+            "filter": {"q": "address[addressLocality]==\"Zvolen\""},
+            "sources": [{"preset": "sdm-event", "mapping": {"SUMMARY": "title"}}]});
+        if let (Some(o), Some(extra)) = (output.as_object_mut(), extra.as_object()) {
+            o.extend(extra.clone());
+        }
+        json!({ "output": output }).to_string()
+    };
+    let (status, answer) = send(&app, "POST", PREVIEW, &preset(json!({})), true).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let answer: Value = serde_json::from_str(&answer).expect("json");
+    assert_eq!(
+        (answer["read"].clone(), answer["valid"].clone()),
+        (json!(2), json!(2))
+    );
+    let kept = json!({"sort": "-start", "limit": 1, "timezone": "Europe/Prague"});
+    let (status, answer) = send(&app, "POST", PREVIEW, &preset(kept), true).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let answer: Value = serde_json::from_str(&answer).expect("json");
+    assert_eq!(answer["valid"], 2, "valid counts what the read rendered");
+    assert_eq!(
+        answer["events"].as_array().map(Vec::len),
+        Some(1),
+        "limit 1 keeps one"
+    );
+    for (body, why) in [
+        (preset(json!({"limit": 0})), "limit"),
+        (preset(json!({"timezone": "Mars/Base"})), "timezone"),
+        (preset(json!({"sort": "title"})), "sort"),
+        (
+            json!({"mapping": {}, "output": {"name": "x", "sources": [{}]}}).to_string(),
+            "one of them",
+        ),
+        (json!({}).to_string(), "one of them"),
+    ] {
+        let (status, answer) = send(&app, "POST", PREVIEW, &body, true).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {answer}");
+        assert!(answer.contains(why), "{body}: {answer}");
+    }
+}
+
 #[tokio::test]
 async fn a_preview_over_its_bounds_or_with_a_bad_mapping_is_refused() {
     let (_broker, app) = fixture(false).await;
