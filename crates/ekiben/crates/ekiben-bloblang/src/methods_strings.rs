@@ -1066,25 +1066,29 @@ fn strip_html_tags(input: &str, preserve: &[String]) -> String {
 /// pattern once at parse, so a `re_match` inside a `filter` must not compile per element.
 /// A shared handle: cloning a `Regex` starts a fresh match cache, which a pattern with counted
 /// repeats rebuilds per call (helsinki/traffic-volumes spent 190 µs a line).
-fn go_regex(pattern: &str) -> Result<std::rc::Rc<Regex>, String> {
-    thread_local! {
-        static CACHE: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<Regex>>> =
-            std::cell::RefCell::new(std::collections::HashMap::new());
-    }
+fn go_regex(pattern: &str) -> Result<std::sync::Arc<Regex>, String> {
+    // One cache for the process, not one per thread: a `Regex` is shared across threads (it pools
+    // its own scratch space), and per-thread copies of every pattern held 109 MiB of compiled
+    // programs in jc's runner on the prod rehearsal (jc-memory-peak).
+    static CACHE: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Regex>>>,
+    > = std::sync::LazyLock::new(Default::default);
     // ponytail: the cache empties when full; an LRU only pays off for mappings with > 256 patterns.
     const MAX_CACHED: usize = 256;
-    if let Some(re) = CACHE.with(|c| c.borrow().get(pattern).cloned()) {
+    let cache = || {
+        CACHE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    };
+    if let Some(re) = cache().get(pattern).cloned() {
         return Ok(re);
     }
-    let re = std::rc::Rc::new(Regex::new(&go_regex_syntax(pattern)).map_err(|e| e.to_string())?);
-    CACHE.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.len() >= MAX_CACHED {
-            c.clear();
-        }
-        c.insert(pattern.to_string(), re.clone());
-    });
-    Ok(re)
+    let re = std::sync::Arc::new(Regex::new(&go_regex_syntax(pattern)).map_err(|e| e.to_string())?);
+    let mut c = cache();
+    if c.len() >= MAX_CACHED {
+        c.clear();
+    }
+    Ok(c.entry(pattern.to_string()).or_insert(re).clone())
 }
 
 /// Go's `\d`, `\s`, `\w` and `\b` are ASCII (`\s` is `[\t\n\f\r ]`); the regex crate's are Unicode,
@@ -1631,5 +1635,19 @@ fn fold_diacritic(c: char) -> &'static str {
         'ž' | 'ź' | 'ż' | 'Ž' | 'Ź' | 'Ż' => "z",
         'ß' => "ss",
         _ => "",
+    }
+}
+
+#[cfg(test)]
+mod go_regex_tests {
+    #[test]
+    fn every_thread_shares_one_compiled_pattern() {
+        let pattern = r"go-regex-shared-\d+";
+        let here = super::go_regex(pattern).expect("compiles");
+        let there = std::thread::spawn(move || super::go_regex(pattern).expect("compiles"))
+            .join()
+            .expect("the thread ends");
+        assert!(std::sync::Arc::ptr_eq(&here, &there));
+        assert!(there.is_match("go-regex-shared-42"));
     }
 }
