@@ -5725,6 +5725,9 @@
     "page": "Page",
     "showMetadata": "Show metadata for",
     "error": "Not loaded, try again",
+    "retry": "Try again",
+    "busy": "the data source is busy right now",
+    "timedOut": "the data source took too long to answer",
     "filter": "Filter",
     "noFilter": "Any",
     "ops": {
@@ -5756,6 +5759,7 @@
     "sortAll": "Sort all rows by",
     "sortedLoaded": "Sorted within the {count} loaded rows: this view also reads other brokers, which do not sort.",
     "notReadable": "{count} more fields are not shown: your access does not include them.",
+    "notReadableOne": "1 more field is not shown: your access does not include it.",
     "queryRefused": "The broker refused this query",
     "errorDetail": "What the broker said",
     "matching": "matching",

@@ -41,7 +41,7 @@ export function GridNotices({ view }: { view: GridView }): React.JSX.Element {
         </button>
       )}
       {!asText && <FilterChips columns={columns} filterable={filterable} filters={state.filters} labels={labels} locale={where} onRemove={(keys) => setFilter(keys, undefined)} />}
-      {unreadable.length > 0 && <p className="jc-grid-sort-note jc-grid-not-readable">{labels.notReadable.replace("{count}", String(unreadable.length))}</p>}
+      {unreadable.length > 0 && <p className="jc-grid-sort-note jc-grid-not-readable">{unreadable.length === 1 ? labels.notReadableOne : labels.notReadable.replace("{count}", String(unreadable.length))}</p>}
       {grid.sortedLoadedOnly && rows.length > 0 && (
         <p className="jc-grid-sort-note" role="status">{labels.sortedLoaded.replace("{count}", String(rows.length))}</p>
       )}
@@ -73,6 +73,9 @@ export function GridStatus({ view }: { view: GridView }): React.JSX.Element {
       {error && (
         <div className="jc-grid-error">
           {labels.error}: {error}
+          <button type="button" onClick={grid.reload}>
+            {labels.retry}
+          </button>
           {grid.errorDetail && (
             <details className="jc-grid-error-detail">
               <summary>{labels.errorDetail}</summary>

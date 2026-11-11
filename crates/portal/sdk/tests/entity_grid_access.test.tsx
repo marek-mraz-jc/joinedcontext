@@ -141,7 +141,18 @@ describe("the permission-aware grid", () => {
     const { source } = recorded();
     render(<EntityGrid config={configOf()} source={source} access={ACCESS} />);
     await screen.findByDisplayValue("Kamppi");
-    expect(screen.getByText(DEFAULT_LABELS.notReadable.replace("{count}", "1"))).toBeTruthy();
+    // One field reads in the singular (T-6781), and the notice still names none.
+    const notice = screen.getByText("1 more field is not shown: your access does not include it.");
+    expect(notice.textContent).not.toContain("operatorNote");
+  });
+
+  it("says how many in the plural when two fields are left out (T-6781)", async () => {
+    const { source } = recorded();
+    const two = ACCESS.map((each) => (each.name === "capacity" ? { ...each, read: false } : each));
+    render(<EntityGrid config={configOf()} source={source} access={two} />);
+    await screen.findByDisplayValue("Kamppi");
+    expect(screen.getByText(DEFAULT_LABELS.notReadable.replace("{count}", "2"))).toBeTruthy();
+    expect(screen.getByText("2 more fields are not shown: your access does not include them.")).toBeTruthy();
   });
 
   it("says nothing about missing fields when the person reads them all", async () => {

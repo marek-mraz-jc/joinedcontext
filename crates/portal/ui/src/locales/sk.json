@@ -5725,6 +5725,9 @@
     "page": "Strana",
     "showMetadata": "Zobraziť metadáta pre",
     "error": "Nenačítané, skúste znova",
+    "retry": "Skúsiť znova",
+    "busy": "zdroj údajov je práve zaneprázdnený",
+    "timedOut": "zdroj údajov neodpovedal včas",
     "filter": "Filter",
     "noFilter": "Ľubovoľné",
     "ops": {
@@ -5756,6 +5759,7 @@
     "sortAll": "Zoradiť všetky riadky podľa",
     "sortedLoaded": "Zoradené v rámci {count} načítaných riadkov: tento pohľad číta aj ďalšie brokery, ktoré nezoraďujú.",
     "notReadable": "Ďalšie polia ({count}) sa nezobrazujú: váš prístup ich nezahŕňa.",
+    "notReadableOne": "Ďalšie pole (1) sa nezobrazuje: váš prístup ho nezahŕňa.",
     "queryRefused": "Broker tento dopyt odmietol",
     "errorDetail": "Čo broker odpovedal",
     "matching": "Vyhovuje: {n}",

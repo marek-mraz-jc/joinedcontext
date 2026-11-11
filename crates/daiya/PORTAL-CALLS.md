@@ -89,5 +89,9 @@ Until both halves land, the password path stays: gap G-1 below.
 - **G-4** The page is server-rendered tables, not Grafana's charts; NGSI-LD panels of closed
   Endpoints need the caller's token forwarded (`DenyTokenExchanger` refuses until the host supplies
   an exchanger, STATUS R3).
-- **G-5** A person reaches the page only through the host's `SubjectResolver` (kaisatsu session);
-  without it a browser is anonymous and gets 404, not a sign-in redirect.
+- **G-5** A browser carries no credential, so a person reaches the page through the host: its
+  `SubjectResolver`, or its `PageReader` (`DaiyaState::with_page_reader`), which names the person
+  its own session signed in when they may read the organization. In `jc` the reader asks the Portal
+  beside daiya (`bins/jc/src/modules/daiya.rs` `page_reader`: the Portal cookie, then project
+  membership as the dashboard routes judge it); the reader opens that page read-only and nothing
+  else of the API. Without either a browser is anonymous and gets 404, not a sign-in redirect.
