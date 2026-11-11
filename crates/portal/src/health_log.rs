@@ -987,7 +987,11 @@ mod tests {
             "{}",
             runs.fix.text
         );
-        assert!(runs.fix.text.contains("policyRef"), "{}", runs.fix.text);
+        assert!(
+            runs.fix.text.contains("targetEndpoint") && runs.fix.text.contains("prohibition"),
+            "{}",
+            runs.fix.text
+        );
         assert_eq!(runs.fix.code, "policyWrite");
         assert_eq!(
             runs.fix.args.get("name").map(String::as_str),
