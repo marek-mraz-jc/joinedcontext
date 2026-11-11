@@ -1360,6 +1360,53 @@ def test_client_urls_of_the_source_host_get_a_twin_on_the_rehearsal_and_keep_the
     assert rh.add_rehearsal_origin({"clients": [{"clientId": "x"}]}, "http://localhost:1") == ({"clients": [{"clientId": "x"}]}, 0)
 
 
+def test_portal_api_gets_one_port_less_loopback_callback_and_nothing_else():
+    """The restore suite's copy runs on its own port from the restored realm file (gate
+    2026-11-10T203500Z-gc: names `session` "GET /api/v1/auth/login -> 400", 814 rows). kaisatsu
+    admits any loopback port for a port-less http://127.0.0.1/<exact path> (oidc redirect.rs), so
+    portal-api gets that one URL: exact path, no wildcard, no web origin, no other client, no
+    non-loopback host, and the realm import without --public-base (the cluster import) adds none."""
+    p = "https://portal.smartcity.joinedcontext.com"
+    realm = {"clients": [
+        {"clientId": "portal-api", "rootUrl": p, "redirectUris": [f"{p}/api/v1/auth/callback"], "webOrigins": [p],
+         "attributes": {"post.logout.redirect.uris": f"{p}/"}},
+        {"clientId": "edge", "redirectUris": [f"{p}/*"], "webOrigins": [p]},
+        {"clientId": "app-x", "redirectUris": ["https://x.apps.smartcity.joinedcontext.com/*"]},
+    ]}
+    twinned, _ = rh.add_rehearsal_origin(realm, "http://127.0.0.1:42330")
+    out, url = rh.add_loopback_callback(twinned, "http://127.0.0.1:42330")
+    assert url == "http://127.0.0.1/api/v1/auth/callback"
+    before, after = {c["clientId"]: c for c in twinned["clients"]}, {c["clientId"]: c for c in out["clients"]}
+    assert after["portal-api"]["redirectUris"] == before["portal-api"]["redirectUris"] + [url]
+    assert {k: v for k, v in after["portal-api"].items() if k != "redirectUris"} == \
+        {k: v for k, v in before["portal-api"].items() if k != "redirectUris"}
+    assert {k: v for k, v in after.items() if k != "portal-api"} == {k: v for k, v in before.items() if k != "portal-api"}
+    added = [u for c in out["clients"] for k in ("redirectUris", "webOrigins") for u in c.get(k) or []
+             if "127.0.0.1/" in u or u.endswith("127.0.0.1")]
+    assert added == [url] and "*" not in url
+    # idempotent, and a second call on another port adds nothing more
+    assert rh.add_loopback_callback(out, "http://127.0.0.1:47173") == (out, None)
+    # localhost base: the same twin under localhost; never on a non-loopback or https base
+    assert rh.add_loopback_callback(realm, "http://localhost:42102/")[1] == "http://localhost/api/v1/auth/callback"
+    for base in ("https://127.0.0.1:42330", "http://10.0.0.5:42330", "http://portal.smartcity.joinedcontext.com",
+                 "http://127.0.0.1.evil.example:1"):
+        assert rh.add_loopback_callback(realm, base) == (realm, None)
+    # a realm whose portal-api registers no callback (or has no portal-api) gets none
+    assert rh.add_loopback_callback({"clients": [{"clientId": "portal-api"}]}, "http://127.0.0.1:1")[1] is None
+
+
+def test_the_port_less_callback_comes_only_with_the_rehearsal_base():
+    """`realms` adds the twin only beside --public-base, which up.sh alone passes (the cluster
+    import of CLUSTER-IMPORT.md and the prod export never do)."""
+    text = (HERE / "rehearsal.py").read_text()
+    body = text[text.index("def cmd_realms"):]
+    body = body[:body.index("\ndef ")]
+    guard = body.index("if a.public_base:")
+    assert guard < body.index("add_loopback_callback(") < body.index("add_service_accounts(")
+    assert text.count("add_loopback_callback(") == 2  # the def and this one call
+    assert "--public-base" not in (HERE / "CLUSTER-IMPORT.md").read_text()
+
+
 def test_an_app_client_gets_its_loopback_app_host_twin():
     """The role-gated App pages sign in on `http://<app>.apps.localhost:<port>/callback` (gate
     2026-11-10T120138Z-apps-redirect: 22 app.page rows, 400 invalid redirect_uri); prod's App client

@@ -609,6 +609,29 @@ def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
     return {**realm, "clients": clients}, added
 
 
+PORTAL_CALLBACK = "/api/v1/auth/callback"
+
+
+def add_loopback_callback(realm: dict, base: str) -> tuple[dict, str | None]:
+    """`portal-api` gets the port-less loopback twin `http://<base host>/api/v1/auth/callback` of
+    its one exact callback, when the base is http on 127.0.0.1 or localhost: kaisatsu admits any
+    port on a registered port-less loopback URL of that exact path (RFC 8252 7.3,
+    crates/kaisatsu/oidc/src/redirect.rs), so a restored copy of this realm on its own port signs
+    the Portal in (restore suite, names `session`). No wildcard, no web origin, no other client,
+    never a non-loopback host. Answers the realm and the URL added (None when none was)."""
+    b = urllib.parse.urlsplit(base)
+    if b.scheme != "http" or b.hostname not in ("127.0.0.1", "localhost"):
+        return realm, None
+    url = f"http://{b.hostname}{PORTAL_CALLBACK}"
+    added, clients = None, []
+    for c in realm.get("clients", []):
+        uris = c.get("redirectUris") or []
+        if c.get("clientId") == "portal-api" and uris and url not in uris:
+            c, added = dict(c, redirectUris=[*uris, url]), url
+        clients.append(c)
+    return {**realm, "clients": clients}, added
+
+
 def realm_of(state: Path) -> str:
     """The deployment's realm the rehearsal's jc runs on (`realms` writes it), else jc's default."""
     p = state / "realm-name.txt"
@@ -826,6 +849,9 @@ def cmd_realms(a):
         if a.public_base:
             clean, twins = add_rehearsal_origin(clean, a.public_base)
             print(f"realm {name}: {twins} client URLs of the source host got a twin on {a.public_base}")
+            clean, callback = add_loopback_callback(clean, a.public_base)
+            if callback:
+                print(f"realm {name}: portal-api signs in on any loopback port ({callback})")
         clean, accounts = add_service_accounts(clean, json.loads(SHIPPED_REALM.read_text()))
         if accounts:
             print(f"realm {name}: service accounts of {accounts} taken from jc's shipped realm (the export has none)")

@@ -10,16 +10,20 @@ Steps, each timed (the dev move's rollback is exactly this): `before` runs the c
 against the source; `dump` takes pg_dumpall --roles-only and a pg_dump -Fc of every database of the
 environment's PostgreSQL (container rh-pg-<env>) in one exported snapshot per database, with each
 table's row count read in that snapshot; `files` archives the state dir (shako's Git data, the
-gateway checkout, realms), secrets, repos, files and dashboards; `fresh` starts an empty PostgreSQL
+gateway checkout, realms), secrets, repos, files, dashboards and the runner's resources and
+gtfs-realtime.proto; `fresh` starts an empty PostgreSQL
 of the same image for <restore env>; `restore` loads roles and databases; `start` runs up.sh on the
-copy (no export: the realms come from the restored state dir); `converge` waits for a reconciler
+copy (no export: the realms come from the restored state dir) on the source jc's --role; `converge` waits for a reconciler
 pass; `after` reruns the suites on the copy.
 
 Pass: every check id of the compared suites has the same pass/fail/skip on the copy as before the
 dump (not an absolute pass), and the controls hold: the fresh PostgreSQL held none of the
 databases, each restored table has the row count of the snapshot, every compared suite passed at
-least one check before, an unknown Endpoint slug is refused on both, and the copy is another jc
-process on its own port.
+least one check before, an unknown Endpoint slug is refused on both, the copy is another jc
+process on its own port on the source's role, and the runner's files are the source's. A row
+`control.held` is a skip when either side runs ekiben (pipelines write during the compare, so the
+run is no count proof); run the suite on a source started with REHEARSAL_HOLD_PIPELINES=1 for one.
+The suite never stops, restarts or re-roles the source.
 
 The dumps hold realm and client secrets: the backup dir must lie under $REHEARSAL_HOME (default
 <home>/..), never under an evidence/ dir, and is made 0700 with 0600 files. The copy is torn down at
@@ -28,6 +32,7 @@ the end (--keep leaves it running); the backup stays (sizes in results.json)."""
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -46,8 +51,14 @@ REPO = SMOKE.parent.parent.parent
 sys.path.insert(0, str(SMOKE))
 from common import FAIL, PASS, Http, Results, loopback_only
 
-# What the backup holds beside the databases (dirs of <home>; dashboards may be a link).
-HOME_PARTS = ("state", "secrets", "repos", "files", "dashboards")
+# What the backup holds beside the databases (dirs of <home>; dashboards may be a link), and the
+# runner's two files up.sh reads from <home> (its resources file and gtfs-realtime.proto).
+HOME_FILES = ("ekiben-resources.yaml", "gtfs-realtime.proto")
+HOME_PARTS = ("state", "secrets", "repos", "files", "dashboards", *HOME_FILES)
+# The source's realm lines are rendered over an export; the copy has none, and up.sh refuses them
+# without one (up.sh "REHEARSAL_REALM_LINES_* given but ... holds no keycloak/").
+COPY_ENV_DROPPED = ("REHEARSAL_REALM_LINES_FROM", "REHEARSAL_REALM_LINES_TO", "REHEARSAL_HOLD_PIPELINES",
+                    "REHEARSAL_IMPORT_POLICY")
 # No --person-token-file: a token carries the source's issuer (localhost:<port>), which the copy on
 # its own port refuses, so every closed-Endpoint check would differ for a reason outside the backup.
 PATH_FLAGS = ("--export", "--state", "--log-file", "--admin-token-file")
@@ -140,6 +151,28 @@ def port_free(p: int) -> bool:
             return True
         except OSError:
             return False
+
+
+def role_of(pid) -> str:
+    """The --role a running jc was started with ('' when the process or the flag is not there)."""
+    try:
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return ""
+    for i, x in enumerate(argv):
+        if x == b"--role" and i + 1 < len(argv):
+            return argv[i + 1].decode()
+        if x.startswith(b"--role="):
+            return x[len(b"--role="):].decode()
+    return ""
+
+
+def runs_ekiben(role: str) -> bool:
+    return role == "all" or "ekiben" in role.split(",")
+
+
+def sha256_of(p: Path) -> str:
+    return hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else ""
 
 
 def pg_port_of(home: Path) -> int:
@@ -419,14 +452,18 @@ class Ops:
         self.dst.restore(db, self.backup / f"{db}.dump")
         return self.dst.counts(db)
 
-    def start(self) -> int:
-        env = {**os.environ, "REHEARSAL_HOME": str(self.rhome.parent), "JC_BIN": self.a.jc_bin,
-               # no export: up.sh keeps the realms of the restored state dir
-               "REHEARSAL_EXPORT": str(self.rhome / "no-export"),
-               "REHEARSAL_PEOPLE": str(self.rhome / "no-people"),
-               "REHEARSAL_DEMO_USERS": str(self.rhome / "no-demo-users.yaml")}
-        env.pop("REHEARSAL_ROLE", None)
-        env.pop("REHEARSAL_IMPORT_POLICY", None)
+    def start(self, role: str) -> int:
+        """up.sh on the copy, on the source's role (a held source gives a held copy)."""
+        env = {k: v for k, v in os.environ.items() if k not in COPY_ENV_DROPPED}
+        env.update({"REHEARSAL_HOME": str(self.rhome.parent), "JC_BIN": self.a.jc_bin,
+                    # no export: up.sh keeps the realms of the restored state dir
+                    "REHEARSAL_EXPORT": str(self.rhome / "no-export"),
+                    "REHEARSAL_PEOPLE": str(self.rhome / "no-people"),
+                    "REHEARSAL_DEMO_USERS": str(self.rhome / "no-demo-users.yaml")})
+        if role:
+            env["REHEARSAL_ROLE"] = role
+        else:
+            env.pop("REHEARSAL_ROLE", None)
         try:
             run([str(REPO / "deploy" / "rehearsal" / "up.sh"), self.rhome.name, str(self.a.restore_port),
                  str(self.dst.port)], env=env, timeout=900)
@@ -436,6 +473,9 @@ class Ops:
                       if " ERROR " in ln or "panicked" in ln]
             raise RuntimeError(" / ".join(errors[-3:])[-600:] or str(e)) from e
         return int((self.rhome / "jc.pid").read_text().strip())
+
+    def role(self, pid) -> str:
+        return role_of(pid)
 
     def converge(self, timeout: float) -> int:
         log = self.rhome / "jc.log"
@@ -454,7 +494,9 @@ class Ops:
             if pid.exists():
                 subprocess.run([str(REPO / "deploy" / "rehearsal" / "stop-jc.sh"), pid.read_text().strip()],
                                capture_output=True, check=False)
-        subprocess.run(["docker", "rm", "-f", self.dst.container], capture_output=True, check=False)
+        # the copy's jc-functions container (apps.sh, named by the copy's public port)
+        for name in (self.dst.container, f"rh-functions-{self.a.restore_port}"):
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
         # pgdata belongs to the container's postgres user: emptied from inside a container
         if (self.rhome / "pgdata").exists():
             subprocess.run(["docker", "run", "--rm", "-v", f"{self.rhome}:/h", "--entrypoint", "rm", self.src.image(),
@@ -535,6 +577,16 @@ def pipeline(a, res: Results, ops: Ops, out: Path) -> dict:
         res.check("control.relocatable", "restore", f"files of the copy naming {ops.home}",
                   "none (a backup restores at any path)", f"{len(moved)} rewritten" if moved else "none",
                   not moved, "; ".join(moved[:6])[:600])
+        held_files = [f for f in HOME_FILES if (ops.home / f).is_file()]
+        if held_files:
+            differ = [f for f in held_files if sha256_of(ops.home / f) != sha256_of(ops.rhome / f)]
+            res.check("control.home-files", "restore", f"{', '.join(held_files)} of the copy",
+                      "the source's (sha256)", f"{len(differ)} differ: {', '.join(differ)}" if differ else "equal",
+                      not differ)
+        else:
+            res.skip("control.home-files", "restore", f"{', '.join(HOME_FILES)} of the copy", "the source's (sha256)",
+                     f"the source home has none of {', '.join(HOME_FILES)}: streams naming the runner's resources "
+                     "are refused on both")
         steps.run("restore.roles", "psql < roles.sql", ops.restore_roles)
         for db in dbs:
             got = steps.run(f"restore.{db}", f"pg_restore --create {db}", ops.restore, db)
@@ -542,11 +594,25 @@ def pipeline(a, res: Results, ops: Ops, out: Path) -> dict:
             res.check(f"control.data.{db}", "restore", f"row count of each table of {db}",
                       f"{len(got)} tables, {sum(ops.counts.get(db, {}).values())} rows as in the dump's snapshot",
                       "equal" if not diff else f"{len(diff)} tables differ", not diff, "; ".join(diff[:5]))
-        pid = steps.run("start", "up.sh on the copy (no export)", ops.start)
         src_pid = (ops.home / "jc.pid").read_text().strip() if (ops.home / "jc.pid").exists() else "?"
+        src_role = ops.role(src_pid)
+        pid = steps.run("start", f"up.sh on the copy (no export, role {src_role or 'unknown'})", ops.start, src_role)
         res.check("control.own-process", "restore", "jc pid and port of the copy",
                   f"another process than {src_pid}, port {a.restore_port}", f"pid {pid}",
                   str(pid) != src_pid and a.restore_port != a.src_port)
+        copy_role = ops.role(pid)
+        res.check("control.role", "restore", "jc --role of the source and the copy",
+                  f"the source's ({src_role or 'unknown'})", copy_role or "unknown",
+                  bool(src_role) and copy_role == src_role)
+        live = [side for side, r in (("source", src_role), ("copy", copy_role)) if runs_ekiben(r)]
+        if live:
+            res.skip("control.held", "restore", "pipelines held on both sides during the compare",
+                     "no ekiben on either side",
+                     f"ekiben runs on the {' and the '.join(live)}: pipelines write while the suites run, so an "
+                     "equal row is no count proof and a flipped one may be a stream's write")
+        else:
+            res.check("control.held", "restore", "pipelines held on both sides during the compare",
+                      "no ekiben on either side", "held on both", True)
         n = steps.run("converge", "a reconciler pass on the copy", ops.converge, a.converge)
         res.check("converge", "restore", "sync run finished leader=true in the copy's log", ">= 1", str(n), n >= 1)
         rbase = re.sub(rf":{a.src_port}(?=/|$)", f":{a.restore_port}", a.base_url.rstrip("/"))
@@ -623,7 +689,7 @@ def execute(a, res: Results, out: Path, ops_class) -> dict:
     try:
         a.src_port = int(re.search(r":(\d+)", a.base_url.split("//", 1)[1]).group(1))
         a.src_pg_port = pg_port_of(home)
-        a.restore_port = a.restore_port or free_ports()
+        a.restore_port = a.restore_port or free_ports((1,))  # apps.sh: jc-functions on port + 1
         a.restore_pg_port = a.restore_pg_port or free_ports((100, 200))
     except (Refused, AttributeError) as e:
         res.skip("run", "restore", "back up and restore", "done", str(e) or "no port in --base-url")
