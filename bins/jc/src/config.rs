@@ -167,7 +167,8 @@ pub struct Cli {
     #[arg(long, env = "JCBIN_MODEL_KEY_FILE")]
     pub model_key_file: Option<PathBuf>,
     /// `production` warns about every secret given as an environment value (it shows in
-    /// `docker inspect` and the pod spec); `development` (default) does not.
+    /// `docker inspect` and the pod spec); `development` does not. Required: jc refuses to start
+    /// when neither this, `JCBIN_PROFILE` nor jc.toml's `profile` names it (P-29).
     #[arg(long, env = "JCBIN_PROFILE", value_enum)]
     pub profile: Option<Profile>,
 }
@@ -720,6 +721,11 @@ pub enum ConfigError {
     },
     #[error("config file {path}: {message}")]
     Parse { path: PathBuf, message: String },
+    #[error(
+        "no profile: set `profile = \"production\"` (or \"development\") at the top of {0}, or \
+         pass --profile / JCBIN_PROFILE; jc does not guess whether this install is production"
+    )]
+    NoProfile(String),
     #[error(transparent)]
     Role(#[from] RoleError),
     #[error("[mounts.{0}] names no module of this jc build")]
@@ -836,6 +842,13 @@ impl Config {
             Some(path) => Self::read_file(path)?,
             None => FileConfig::default(),
         };
+        if cli.profile.or(file.profile).is_none() {
+            let place = cli.config.as_deref().map_or_else(
+                || "jc.toml (no --config given)".to_owned(),
+                |path| path.display().to_string(),
+            );
+            return Err(ConfigError::NoProfile(place));
+        }
         Self::merge(cli, file)
     }
 
@@ -1489,6 +1502,32 @@ mod tests {
         let mut all = vec!["jc"];
         all.extend_from_slice(args);
         Cli::try_parse_from(all).expect("cli parses")
+    }
+
+    /// P-29: a jc.toml that names no profile is refused at boot, naming the key and the file;
+    /// the file's key, the flag or `JCBIN_PROFILE` each let it start.
+    #[test]
+    fn a_jc_toml_without_a_profile_is_refused_at_boot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jc.toml");
+        let with = |text: &str, profile: Option<Profile>| {
+            std::fs::write(&path, text).unwrap();
+            Config::resolve(Cli {
+                config: Some(path.clone()),
+                profile,
+                ..Cli::default()
+            })
+        };
+        let err = with("role = \"all\"\n", None).expect_err("no profile refuses the start");
+        assert!(matches!(err, ConfigError::NoProfile(_)), "{err}");
+        let text = err.to_string();
+        assert!(text.contains("profile = ") && text.contains("jc.toml"), "{text}");
+        let err = Config::resolve(Cli::default()).expect_err("no file and no flag refuses too");
+        assert!(matches!(err, ConfigError::NoProfile(_)), "{err}");
+        let cfg = with("profile = \"production\"\nrole = \"all\"\n", None).expect("named");
+        assert_eq!(cfg.profile, Profile::Production);
+        let cfg = with("role = \"all\"\n", Some(Profile::Development)).expect("flag");
+        assert_eq!(cfg.profile, Profile::Development);
     }
 
     #[test]
