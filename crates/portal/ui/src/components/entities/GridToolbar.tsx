@@ -60,6 +60,7 @@ export function ToolbarPopover({
   outlined,
   tall,
   anchored,
+  spread,
   inPlace,
   closeLabel,
   icon,
@@ -77,6 +78,11 @@ export function ToolbarPopover({
   inPlace?: boolean;
   /** Under its button on a phone too, for a row's first control: no bottom sheet over the toolbar. */
   anchored?: boolean;
+  /**
+   * Under the toolbar at its full width on a phone (T-6748): the toolbar is the positioned box, so a
+   * menu of tools reads as a sheet without the window's bottom, which a frame as tall as its rows hides.
+   */
+  spread?: boolean;
   /** Drawn as a button even with nothing set: outside a toolbar row a ghost summary reads as text. */
   outlined?: boolean;
   /** How many settings the panel holds, shown beside the label so a set filter is visible. */
@@ -103,7 +109,7 @@ export function ToolbarPopover({
     <details
       ref={ref}
       name={inPlace ? "toolbar-tool" : undefined}
-      className="group/tool relative"
+      className={spread ? "group/tool max-sm:static sm:relative" : "group/tool relative"}
       onKeyDown={(event) => {
         if (event.key === "Escape" && ref.current?.open) {
           event.stopPropagation();
@@ -136,7 +142,11 @@ export function ToolbarPopover({
             : clsx(
                 "z-30 overflow-auto rounded-lg border border-border bg-surface-raised p-3 text-body shadow-2",
                 tall ? "max-h-sheet sm:max-h-none" : "max-h-96",
-                anchored ? "absolute left-0 mt-1 max-sm:w-max max-sm:max-w-xs" : "max-sm:fixed max-sm:inset-x-4 max-sm:bottom-4",
+                spread
+                  ? "max-sm:absolute max-sm:inset-x-0 max-sm:top-full max-sm:mt-1"
+                  : anchored
+                    ? "absolute left-0 mt-1 max-sm:w-max max-sm:max-w-xs"
+                    : "max-sm:fixed max-sm:inset-x-4 max-sm:bottom-4",
                 end ? "sm:absolute sm:right-0 sm:mt-1" : "sm:absolute sm:left-0 sm:mt-1",
                 wide ? "sm:w-max sm:max-w-2xl" : "sm:w-72",
               )

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { RichRow, RichCell } from "./model";
 import type { ColumnLayout, GridLabels, GridRefusal, UseEntityGridOptions, VisibleColumn } from "./useEntityGrid";
-import { DEFAULT_LABELS } from "./useEntityGrid";
+import { DEFAULT_LABELS, readableName } from "./useEntityGrid";
 import { targetName } from "./cells";
 import type { FilterColumn } from "./filters";
 import type { GridMapLabels } from "./GridMap";
@@ -11,6 +11,7 @@ import type { AccessAction, AccessExplanation } from "./CellInspector";
 import type { AttributeAccess } from "./source";
 import type { RowDetailTab } from "./RowDetail";
 import type { ValueRule } from "./rules";
+import { TypeChoiceCell } from "./GridFilterRow";
 import type { TypeChoice } from "./GridFilterRow";
 import { GridCellPanels, GridDetail } from "./GridDetail";
 import { GridMapPanel } from "./GridMapPanel";
@@ -135,6 +136,11 @@ export interface EntityGridProps extends UseEntityGridOptions {
   rowNumbers?: { selectRow: string; selectAll: string };
   /** The entity type the grid reads, picked in the Type column's filter cell; the host reads the new type (owner 2026-11-01). */
   typeChoice?: TypeChoice;
+  /**
+   * A phone's layout (T-6748): the row's label column leads and opens the row, the id leaves the
+   * table, and a Type every row shares (one type asked) shows on a line above it with `typeChoice`.
+   */
+  compact?: boolean;
   /** Rows per page offered in the pager (with `paged`); the host sets `config.pageSize` from the pick. */
   pageSizes?: readonly number[];
   onPageSize?: (size: number) => void;
@@ -263,7 +269,7 @@ export function GridFrame({ view, children }: { view: GridView; children: React.
   const rootClass = `jc-grid${className ? ` ${className}` : ""}${classNames?.root ? ` ${classNames.root}` : ""}${mapAttr ? ` jc-grid--map-${mapPosition}` : ""}${virtual ? " jc-grid--virtual" : ""}`;
   return (
     // `data-jc-sdk`: the grid's own controls are the SDK suite's to test, not each App's (T-3373).
-    <div className={rootClass} data-density={options.config.density} data-row-size={rowSize} data-row-numbers={rowNumbers ? "" : undefined} data-jc-sdk="grid" data-filters={filtersOpen ? "open" : undefined}>
+    <div className={rootClass} data-density={options.config.density} data-row-size={rowSize} data-row-numbers={rowNumbers ? "" : undefined} data-compact={props.compact ? "" : undefined} data-jc-sdk="grid" data-filters={filtersOpen ? "open" : undefined}>
       {children}
     </div>
   );
@@ -284,6 +290,7 @@ function GridBody(props: EntityGridProps & { onDrill?: (urn: string, type: strin
         <ArrangeColumns view={view} />
       </div>
       <GridNotices view={view} />
+      <GridTypeLine view={view} />
       <GridTable view={view} />
       <GridMapPanel view={view} />
       <GridStatus view={view} />
@@ -293,6 +300,34 @@ function GridBody(props: EntityGridProps & { onDrill?: (urn: string, type: strin
       <GridQueryBox view={view} />
       <GridPager view={view} />
     </GridFrame>
+  );
+}
+
+/**
+ * What every row shares, out of a compact grid's columns (T-6748): the type, or the choice of
+ * another, then each value every loaded row holds, by its column's label.
+ */
+function GridTypeLine({ view }: { view: GridView }): React.JSX.Element | null {
+  const { props, labels, options, shared } = view;
+  const type = options.config.type;
+  const oneType = !type.includes(",");
+  if (!props.compact || (!oneType && !shared.some((each) => each.value !== ""))) return null;
+  const labelOf = (attr: string) => options.layout?.labels?.[attr] ?? options.config.columns.find((column) => column.attr === attr)?.label ?? readableName(attr);
+  return (
+    <div className="jc-grid-typeline">
+      {oneType ? (
+        <span className="jc-grid-typeline__part">
+          <span className="jc-grid-typeline__label">{labels.type}</span>
+          {props.typeChoice ? <TypeChoiceCell choice={props.typeChoice} /> : <span>{type}</span>}
+        </span>
+      ) : null}
+      {shared.filter((each) => each.value !== "").map((each) => (
+        <span key={each.attr} className="jc-grid-typeline__part">
+          <span className="jc-grid-typeline__label">{labelOf(each.attr)}</span>
+          <span>{each.value}</span>
+        </span>
+      ))}
+    </div>
   );
 }
 

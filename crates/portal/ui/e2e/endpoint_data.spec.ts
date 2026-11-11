@@ -130,7 +130,9 @@ for (const width of [1440, 400]) {
     await expect.poll(() => asked.at(-1)?.searchParams.get("orderBy")).toBe("pm10;desc");
     await expect(section.getByRole("columnheader", { name: /Sort all rows by PM10/ }).first()).toHaveAttribute("aria-sort", "descending");
 
-    const csv = section.getByRole("link", { name: "Download these rows as CSV" });
+    // A phone holds the actions at the end of its one Tools menu (T-6748): open it to measure them.
+    if (width < 640) await section.getByTestId("grid-toolbar").locator(":scope > details > summary").click();
+    const csv = section.getByRole("link", { name: "Download these rows as CSV", includeHidden: true });
     expect(await csv.getAttribute("href")).toBe(`/api/endpoint/${SLUG}/file.csv?type=AirQualityObserved&orderBy=pm10%3Bdesc`);
     // The owner (2026-11-11): the actions are one group in one look: one height and one top on a
     // wide screen, and nothing past the section's edge on a phone.
