@@ -123,7 +123,7 @@ mod tests {
                 "Source",
             )
             .expect("init source");
-            let commit = |message: &str, operation, content: Option<&str>| {
+            let commit = |message: &str, operation, content: Option<&str>, sha: Option<String>| {
                 commit_file_changes(
                     &source,
                     "main",
@@ -134,13 +134,15 @@ mod tests {
                         operation,
                         path: path.into(),
                         content: content.map(|c| c.as_bytes().to_vec()),
-                        sha: None,
+                        sha,
                     }],
                 )
                 .expect("commit")
             };
-            commit("add the feed", FileOpKind::Create, Some(&content));
-            let tip = commit("take it out again", FileOpKind::Delete, None);
+            commit("add the feed", FileOpKind::Create, Some(&content), None);
+            let (_, entries) = list_tree_entries(&source, "main", true).expect("tree");
+            let blob = entries.into_iter().find(|e| e.path == path).expect("the file").sha;
+            let tip = commit("take it out again", FileOpKind::Delete, None, Some(blob));
             let said = push_main(tmp.path(), &source, &tip);
             assert!(said.contains("ng refs/heads/main"), "{said}");
             assert!(said.contains(rule), "{said}");
