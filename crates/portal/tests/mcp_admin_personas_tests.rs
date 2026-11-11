@@ -581,6 +581,35 @@ async fn data_path(who: &Identity, state: &AppState, project: &str, domain: &str
     proposed(status, &body, "space");
     approved(state, &space);
 
+    // The Policy the Endpoint serves (P-18, T-6740): an Endpoint names it by URN.
+    let policy = manifest(
+        "Policy",
+        "air-read",
+        project,
+        json!({
+            "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+            "assigner": format!("did:web:{domain}"),
+            "assignee": { "kind": "role", "id": "public" },
+            "operations": ["queryEntity", "retrieveEntity"],
+            "information": [{ "entities": [{ "type": "AirQualityObserved" }] }]
+        }),
+    );
+    let (status, body) = step(
+        who,
+        state,
+        project,
+        "jc_resource_propose",
+        json!({ "manifest": policy }),
+    )
+    .await;
+    proposed(status, &body, "policy");
+    approved(state, &policy);
+    let policy_ref = format!(
+        "urn:ngsi-ld:Policy:{}:{}:air-read",
+        joinedcontext_portal::api::assistant::org_domain(state, project),
+        joinedcontext_portal::spaces::segment(&state.mirror, project, "air"),
+    );
+
     let endpoint = manifest(
         "Endpoint",
         "air-public",
@@ -588,7 +617,8 @@ async fn data_path(who: &Identity, state: &AppState, project: &str, domain: &str
         json!({
             "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
             "audience": "public",
-            "enabledRepresentations": ["ngsi-ld"]
+            "enabledRepresentations": ["ngsi-ld"],
+            "policyRefs": [policy_ref]
         }),
     );
     let (status, body) = step(

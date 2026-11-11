@@ -2242,19 +2242,22 @@ fn bundled_bindings(project: &str) -> Vec<ResourceEnvelope> {
 }
 
 /// The Policies of one space as a policyRef names them: the space's rendered URN segment, every
-/// Policy of the space in the mirror or the same Change, and the organization domain a reference
-/// binds on (empty when Organizations exist and none is the installation's).
+/// Policy of the space in the mirror or the same Change, the organization domain a reference
+/// binds on (empty when Organizations exist and none is the installation's), and the domain a
+/// URN the Portal writes carries (never empty while any Organization names one).
 struct SpacePolicies {
     segment: String,
     names: std::collections::BTreeSet<String>,
     domain: String,
+    writes: String,
 }
 
 impl SpacePolicies {
+    /// The URN the Portal writes for `policy`: an empty domain is no URN the Endpoint parses.
     fn urn(&self, policy: &str) -> String {
         format!(
             "urn:ngsi-ld:Policy:{}:{}:{policy}",
-            self.domain, self.segment
+            self.writes, self.segment
         )
     }
 }
@@ -2283,14 +2286,16 @@ fn space_policies(ground: &crate::judge::Ground<'_>, project: &str, space: &str)
     // reference keeps its own, and only its segment and name are judged.
     let unclaimed = crate::permissions::installation_organization(mirror).is_none()
         && !crate::permissions::organizations(mirror).is_empty();
+    let writes = ground.org_domain();
     let domain = match unclaimed {
         true => String::new(),
-        false => ground.org_domain(),
+        false => writes.clone(),
     };
     SpacePolicies {
         segment,
         names,
         domain,
+        writes,
     }
 }
 
@@ -2426,6 +2431,7 @@ pub(crate) fn check_policy_refs(
         segment,
         names: policies,
         domain,
+        ..
     } = space_policies(ground, project, space);
     let field = match spec.policy_ref {
         Some(_) => "spec.policyRef",
@@ -4671,6 +4677,32 @@ mod tests {
 
     /// CHG-11 lite: a Policy's dry run names each Endpoint of its space it decides: B naming no
     /// Policy, C listing it; not D listing another, not an App's own, not another space's.
+    #[test]
+    fn a_written_policy_urn_carries_a_domain_when_no_organization_is_the_installations() {
+        let state = AppState::new(Config::for_tests(), None);
+        state
+            .mirror
+            .upsert(organization("city", json!({ "domain": "hel.fi" })));
+        state.mirror.upsert(manifest(
+            "Policy",
+            "public-read",
+            space_policy(
+                "{ \"kind\": \"role\", \"id\": \"public\" }",
+                &["retrieveOps"],
+            ),
+        ));
+        let ground = crate::judge::Ground::of(&state);
+        let urn = policy_urn(&ground, "ovzdusie", "ovzdusie", "grant");
+        assert_eq!(urn, "urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:grant");
+        assert_eq!(
+            bound_today(&ground, "ovzdusie", "ovzdusie"),
+            ["urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:public-read"]
+        );
+        let mut spec = public_air(None);
+        spec["policyRefs"] = json!([urn]);
+        serde_json::from_value::<jc_core::kinds::EndpointSpec>(spec).expect("the Endpoint parses");
+    }
+
     #[test]
     fn a_policys_dry_run_names_the_endpoints_it_binds() {
         let state = AppState::new(Config::for_tests(), None);

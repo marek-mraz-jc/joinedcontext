@@ -208,7 +208,7 @@ function toSpec(
   projectionRefName?: string,
   storedCatalog?: CatalogManifest,
   language = "en",
-  stored: { enabledRepresentations?: unknown; mcp?: unknown } = {},
+  stored: { enabledRepresentations?: unknown; mcp?: unknown; policyRef?: unknown } = {},
 ) {
   const {
     allowedProjects,
@@ -235,7 +235,7 @@ function toSpec(
     ...(form.audience === "project-list" && allowedProjects && allowedProjects.length > 0
       ? { allowedProjects }
       : {}),
-    ...(policyRefs && policyRefs.length > 0 ? { policyRefs } : {}),
+    ...policyRefSpec(policyRefs, stored.policyRef),
     ...(typeof rateLimits?.requestsPerMinute === "number"
       ? {
           rateLimits: {
@@ -252,6 +252,12 @@ function toSpec(
       ? { projectionRef: { kind: "ModelProjection", name: projectionRefName } }
       : {}),
   };
+}
+
+/** The form's Policies as the spec writes them: a lone `policyRef` the person kept stays one. */
+function policyRefSpec(refs: string[] | undefined, held: unknown) {
+  if (!refs || refs.length === 0) return {};
+  return refs.length === 1 && refs[0] === held ? { policyRef: held } : { policyRefs: refs };
 }
 
 /** The spec keys the form writes; the rest of an edited manifest travels as it is (T-0885). */
@@ -286,6 +292,7 @@ export function toEnvelope(
     catalog?: CatalogManifest;
     enabledRepresentations?: unknown;
     mcp?: unknown;
+    policyRef?: unknown;
   };
   const spec = toSpec(
     form,
