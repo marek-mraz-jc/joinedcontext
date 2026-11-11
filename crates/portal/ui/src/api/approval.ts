@@ -10,9 +10,12 @@ export function isAccessKind(kind: string): boolean {
   return ACCESS_KINDS.has(kind);
 }
 
-/** Kinds a second person approves: access, and a data model every space validates against (T-4830). */
+/** Kinds that open data to whoever they name: a second person approves them too (P-10, T-6714). */
+const POLICY_KINDS = new Set(["Policy", "DelegationPolicy"]);
+
+/** Kinds a second person approves: access, a Policy, and a data model every space validates against (T-4830). */
 export function needsSecondPerson(kind: string): boolean {
-  return isAccessKind(kind) || kind === "DataModel";
+  return isAccessKind(kind) || POLICY_KINDS.has(kind) || kind === "DataModel";
 }
 
 /** One field the change alters, as the plan lists it. */
@@ -134,7 +137,7 @@ export function approvalStanding(
   // Every file counts, as the API judges every file: a new space carries its DataModel (PF-58).
   const second = [kind, ...(change.files ?? []).map((file) => file.kind)].filter(needsSecondPerson);
   if (second.length > 0) {
-    return { block: second.some(isAccessKind) ? "ownAccessChange" : "ownModelChange", ownAsAdministrator: false };
+    return { block: second.some((one) => one !== "DataModel") ? "ownAccessChange" : "ownModelChange", ownAsAdministrator: false };
   }
   // The bootstrap group is not a binding, so it does not administer a kind (PF-58).
   const administers =

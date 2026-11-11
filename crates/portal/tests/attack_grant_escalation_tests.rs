@@ -517,14 +517,27 @@ async fn an_administrator_cannot_approve_their_own_self_grant() {
     waits_for_another_person(POLICY_PATH, &yaml, author).await;
 }
 
-/// A Policy for someone else is not a self-grant: its administrator still approves their own.
+/// A Policy for someone else is still access: its administrator author waits for a second
+/// person like any other access change, and a peer's approval merges (P-10, T-6714).
 #[tokio::test]
-async fn a_policy_for_someone_else_is_approved_by_its_administrator_author() {
+async fn a_policy_for_someone_else_waits_for_a_second_person() {
     let yaml =
         policy("  assignee:\n    kind: user\n    id: someone@hel.fi\n  operations: [read]\n");
     let (shako, state) = self_grant(POLICY_PATH, &yaml).await;
-    approve(&state, common::person("steward"))
+    let err = approve(&state, common::person("steward"))
         .await
-        .unwrap_or_else(|err| panic!("{err:?}"));
-    assert!(merged(&shako).await);
+        .expect_err("approved by its author");
+    assert!(matches!(err, ApiError::SelfApproval(_)), "{err:?}");
+    assert!(
+        err.to_string()
+            .contains("a change to Policy is approved by a second administrator"),
+        "{err}"
+    );
+    assert!(!merged(&shako).await, "merged by its author");
+
+    let (shako, state) = self_grant(POLICY_PATH, &yaml).await;
+    approve(&state, common::person("peer"))
+        .await
+        .unwrap_or_else(|err| panic!("a peer approves: {err:?}"));
+    assert!(merged(&shako).await, "a peer's approval did not merge");
 }
