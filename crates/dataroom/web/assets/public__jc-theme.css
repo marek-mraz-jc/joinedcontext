@@ -91,7 +91,7 @@ color: var(--jc-muted); font-weight: 550; padding: .5rem .875rem; border-radius:
 .masthead .main-navbar .site-search button { margin-left: 0; }
 .masthead .site-search .btn { position: absolute; right: .5rem; top: 50%; transform: translateY(-50%); color: var(--jc-muted); background: transparent; border: 0; }
 .masthead .navbar-toggler { border-color: var(--jc-border); }
-.masthead .navbar-toggler .fa-bars { color: var(--jc-ink) !important; }
+
 @media (max-width: 991.98px) {
 .masthead .main-navbar { padding-top: .75rem; }
 .masthead .site-search { margin: .5rem 0 0; }

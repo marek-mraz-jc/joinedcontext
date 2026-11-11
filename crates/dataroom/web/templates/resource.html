@@ -57,7 +57,7 @@
         <form class="d-flex site-search" action="{{ chrome.lang_prefix }}/dataset/" method="get">
           <label class="d-none" for="field-sitewide-search">{{ labels.search_datasets_placeholder }}</label>
           <input id="field-sitewide-search" class="form-control me-2" type="text" name="q" placeholder="{{ labels.search_button }}" aria-label="{{ labels.search_datasets_placeholder }}"/>
-          <button class="btn" type="submit" aria-label="Submit"><i class="fa fa-search"></i></button>
+          <button class="btn" type="submit" aria-label="Submit">{% include "jc/icons/search.svg" %}</button>
         </form>
       </div>
     </nav>
@@ -67,7 +67,7 @@
     <div id="content" class="container">
       <div class="toolbar" role="navigation" aria-label="Breadcrumb">
         <ol class="breadcrumb">
-          <li class="home"><a href="{{ chrome.lang_prefix }}/" aria-label="{{ labels.home }}"><i class="fa fa-home"></i><span> {{ labels.home }}</span></a></li>
+          <li class="home"><a href="{{ chrome.lang_prefix }}/" aria-label="{{ labels.home }}">{% include "jc/icons/home.svg" %}<span> {{ labels.home }}</span></a></li>
           <li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li>
           <li><a href="{{ chrome.lang_prefix }}/organization/{{ publisher_slug }}">{{ publisher_title }}</a></li>
           <li><a href="{{ chrome.lang_prefix }}/dataset/{{ dataset_name }}">{{ dataset_title }}</a></li>
@@ -158,7 +158,7 @@
 
         <aside class="secondary col-md-3">
           <section class="module module-narrow resources">
-            <h2 class="module-heading"><i class="fa fa-bars" aria-hidden="true"></i> {{ resources_heading }}</h2>
+            <h2 class="module-heading">{% include "jc/icons/bars.svg" %} {{ resources_heading }}</h2>
             {% for sec in resource_sections %}
             <h3 class="jc-nav-group" id="jc-nav-{{ sec.key }}">{{ sec.title }}</h3>
             <ul class="list-unstyled nav nav-simple jc-resource-nav" aria-labelledby="jc-nav-{{ sec.key }}">

@@ -56,6 +56,23 @@ fn assert_safe_page(name: &str, html: &str, lang: &str) {
         !html.contains("<script>alert"),
         "{name}: publisher script rendered"
     );
+    assert_icons(name, html, lang);
+}
+
+/// Font Awesome is not served: an `fa` class renders a blob or nothing (T-6745). Every icon is an
+/// inline outline svg hidden from screen readers; the breadcrumb's home link keeps its name.
+fn assert_icons(name: &str, html: &str, lang: &str) {
+    assert!(!html.contains("class=\"fa "), "{name}: Font Awesome class left");
+    for (i, _) in html.match_indices("<svg class=\"jc-icon\"") {
+        let tag = &html[i..i + html[i..].find('>').expect("svg tag end")];
+        assert!(tag.contains("aria-hidden=\"true\""), "{name}: icon not hidden: {tag}");
+    }
+    if let Some(i) = html.find("<li class=\"home\">") {
+        let item = &html[i..i + html[i..].find("</li>").expect("home item end")];
+        let label = format!("aria-label=\"{}\"", esc_t("home", lang));
+        assert!(item.contains(&label), "{name}: home link without {label}: {item}");
+        assert!(item.contains("<svg class=\"jc-icon\""), "{name}: home link without its icon: {item}");
+    }
 }
 
 /// The attribute names of one opening tag, quoted values skipped.

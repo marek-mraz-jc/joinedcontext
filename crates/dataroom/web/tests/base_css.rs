@@ -77,7 +77,7 @@ fn every_layout_class_the_templates_use_has_a_rule() {
     let css = dataroom_web::JC_THEME_CSS;
     let missing: Vec<_> = template_classes()
         .into_iter()
-        .filter(|c| !c.starts_with("jc-") && !c.starts_with("fa") && !HOOKS.contains(&c.as_str()))
+        .filter(|c| !c.starts_with("jc-") && !HOOKS.contains(&c.as_str()))
         .filter(|c| !styled(css, c))
         .collect();
     assert!(
