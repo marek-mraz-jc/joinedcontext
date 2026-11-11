@@ -385,7 +385,8 @@ export function ModelFileDrop({
         }}
         title={t("models.infer.preview", { name: draft?.name ?? "" })}
         description={t("models.infer.previewLead", { rows: draft?.answer.rows ?? 0, classes })}
-        size="lg"
+        // A six-column grid: xl keeps its words whole (T-6753).
+        size="xl"
         closeLabel={t("models.infer.close")}
         footer={
           <>
