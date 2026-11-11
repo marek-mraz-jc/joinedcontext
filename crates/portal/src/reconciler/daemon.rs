@@ -72,6 +72,32 @@ pub struct SyncStatus {
     pub held_removals: Vec<String>,
 }
 
+/// A manifest on the default branch that its kind's validation refuses (CHG-05).
+struct Refusal {
+    /// The manifest as `main` holds it.
+    resource: jcctl::loader::LoadedResource,
+    /// What the kind's validation said.
+    reason: String,
+    /// Whether the last good revision of the object serves in its place (CHG-04).
+    serving: bool,
+}
+
+type Refusals = BTreeMap<jcctl::ResourceId, Refusal>;
+
+/// The `Accepted=False` condition of a manifest refused at `revision`.
+fn refused_condition(revision: &str, reason: &str, served: &str) -> crate::resource::Condition {
+    let short = revision.get(..12).unwrap_or(revision);
+    crate::resource::Condition {
+        r#type: "Accepted".to_owned(),
+        status: "False".to_owned(),
+        reason: Some("Refused".to_owned()),
+        message: Some(format!(
+            "revision {short} fails this kind's validation, {served}: {reason}"
+        )),
+        last_transition_time: Some(chrono::Utc::now()),
+    }
+}
+
 /// Errors returned during repository synchronization.
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
@@ -216,6 +242,10 @@ pub struct Syncer {
     /// appears, and a line says when some cleared ([`super::warned`]).
     warned_misplaced: super::warned::Warned,
     warned_invalid: super::warned::Warned,
+    /// The repository the last whole run served, refused manifests already replaced by their
+    /// last good revision or left out: where the next run finds the last good revision of an
+    /// object whose new one its kind refuses (CHG-04). Per process; empty after a restart.
+    accepted: std::sync::Mutex<Option<Arc<Repository>>>,
     warned_members: super::warned::Warned,
     warned_unstaged: super::warned::Warned,
     warned_unbuilt: super::warned::Warned,
@@ -340,6 +370,7 @@ impl Syncer {
             mqtt_warned: Default::default(),
             warned_misplaced: Default::default(),
             warned_invalid: Default::default(),
+            accepted: Default::default(),
             warned_members: Default::default(),
             warned_unstaged: Default::default(),
             warned_unbuilt: Default::default(),
@@ -788,8 +819,9 @@ impl Syncer {
         let Some((scratch, repository)) = self.staged_apart(&revision).await? else {
             return Ok(());
         };
+        let (repository, refusals) = self.refuse_invalid(Arc::new(repository));
         let (fresh_mirror, _) =
-            self.load_mirror(&scratch, &repository, &revision, &default_branch)?;
+            self.load_mirror(&scratch, &repository, &refusals, &revision, &default_branch)?;
         if fresh_mirror.repositories() != self.mirror.repositories() {
             return Ok(());
         }
@@ -1146,6 +1178,10 @@ impl Syncer {
         //       with every registered project mounted at `projects/{slug}/` (CC-86).
         // 4. Load and validate the whole repository the way `jcctl plan` does (CC-08, MF-05).
         let (scratch, repository) = self.stage_and_load(&revision).await?;
+        // 4a. A manifest its kind refuses is never served (CHG-05): its last good revision
+        //     serves in its place, or nothing does (CHG-04).
+        let (repository, refusals) = self.refuse_invalid(repository);
+        *self.accepted.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(&repository));
         steps.mark("stage");
 
         // 4b. The author's mapping beside a Pipeline manifest (PL-03): the loader leaves
@@ -1157,7 +1193,7 @@ impl Syncer {
         // The conditions this run starts from, so one that says the same again keeps its time.
         let transitions = super::transitions::Transitions::of(&self.mirror);
         let (fresh_mirror, loaded) =
-            self.load_mirror(&scratch, &repository, &revision, &default_branch)?;
+            self.load_mirror(&scratch, &repository, &refusals, &revision, &default_branch)?;
         let past_seed = source_loaded(&fresh_mirror, &scratch.unstaged);
         let loaded_once = self
             .source_loaded
@@ -1505,13 +1541,67 @@ impl Syncer {
         Ok((scratch, repository))
     }
 
+    /// `repository` with every manifest its kind's validation refuses (the check `jcctl
+    /// validate` runs, T-0412) taken out: the last good revision the previous whole run served
+    /// stands in its place, or nothing does (CHG-04, CHG-05). A manifest that reached `main`
+    /// without the Portal's write-time checks is shown with its reason and never converged.
+    fn refuse_invalid(&self, repository: Arc<Repository>) -> (Arc<Repository>, Refusals) {
+        let mut refusals = Refusals::new();
+        for (id, resource) in repository.iter() {
+            let Ok(yaml) = serde_json::to_string(&resource.manifest) else {
+                continue;
+            };
+            if let Some(Err(err)) = jc_core::registry::validate_yaml(&resource.manifest.kind, &yaml)
+            {
+                refusals.insert(
+                    id.clone(),
+                    Refusal {
+                        resource: resource.clone(),
+                        reason: err.to_string(),
+                        serving: false,
+                    },
+                );
+            }
+        }
+        let change = self.warned_invalid.cycle(
+            refusals
+                .values()
+                .map(|refusal| format!("{}: {}", refusal.resource.path.display(), refusal.reason)),
+        );
+        for warning in &change.new {
+            tracing::warn!(%warning, standing = change.standing, "manifest fails its kind's validation and is refused");
+        }
+        cleared("manifests failing their kind's validation", &change);
+        if refusals.is_empty() {
+            return (repository, refusals);
+        }
+        let accepted = self
+            .accepted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let mut served = (*repository).clone();
+        for (id, refusal) in refusals.iter_mut() {
+            let last_good = accepted
+                .as_deref()
+                .and_then(|accepted| accepted.get(id))
+                .cloned();
+            refusal.serving = last_good.is_some();
+            served.refuse(id, last_good);
+        }
+        (Arc::new(served), refusals)
+    }
+
     /// The mirror this run builds: every resource the repository loaded, with the status the
     /// repository owns and the one this run computes. A repository with no resource of a known
-    /// kind is an error rather than an empty Portal.
+    /// kind is an error rather than an empty Portal. `repository` is the one
+    /// [`Self::refuse_invalid`] left: an object served at its last good revision carries an
+    /// `Accepted=False` condition with the reason, and one with none is listed apart.
     fn load_mirror(
         &self,
         scratch: &Render,
         repository: &Repository,
+        refusals: &Refusals,
         revision: &str,
         default_branch: &str,
     ) -> Result<(Mirror, usize), SyncError> {
@@ -1525,73 +1615,51 @@ impl Syncer {
                 .collect(),
         );
         let mut loaded = 0usize;
-        let mut invalid = Vec::new();
-        for (_, resource) in repository.iter() {
-            let path = resource.path.to_string_lossy().to_string();
-            // The kind's own invariants, the check `jcctl validate` runs (T-0412). A manifest
-            // that reached `main` before the Portal refused them at write time is still shown,
-            // with the reason in the log, so an operator can fix it rather than lose it.
-            if let Ok(yaml) = serde_json::to_string(&resource.manifest) {
-                if let Some(Err(err)) =
-                    jc_core::registry::validate_yaml(&resource.manifest.kind, &yaml)
-                {
-                    invalid.push(format!("{path}: {err}"));
-                }
-            }
-            let mut envelope: ResourceEnvelope = match serde_json::to_value(&resource.manifest)
-                .and_then(serde_json::from_value)
-            {
-                Ok(envelope) => envelope,
-                Err(err) => {
-                    // The loader accepted the envelope, so this is a metadata member the
-                    // Portal's own view does not know. Skipping one resource is right
-                    // here: the manifest is valid, the Portal simply cannot show it.
-                    tracing::warn!(path = %path, error = %err, "manifest does not fit the Portal's resource view");
-                    continue;
-                }
+        for (id, resource) in repository.iter() {
+            let Some(mut envelope) = self.envelope_of(scratch, resource, revision, default_branch)
+            else {
+                continue;
             };
-
-            if envelope
-                .metadata
-                .namespace
-                .as_deref()
-                .unwrap_or("")
-                .is_empty()
-            {
-                envelope.metadata.namespace = Some(namespace_of(&path));
+            if let Some(refusal) = refusals.get(id) {
+                // The last good revision serves: the revision it was observed at stays, and
+                // the condition says why `main`'s newer one is not served.
+                let served_at = self
+                    .mirror
+                    .get(
+                        envelope.metadata.namespace.as_deref().unwrap_or(""),
+                        &envelope.kind,
+                        &envelope.metadata.name,
+                    )
+                    .and_then(|live| live.status)
+                    .and_then(|status| status.observed_revision);
+                if let Some(status) = envelope.status.as_mut() {
+                    status.observed_revision = served_at;
+                    status.conditions = vec![refused_condition(
+                        revision,
+                        &refusal.reason,
+                        "the last good revision keeps serving",
+                    )];
+                }
             }
-
-            // The one part of `status` the repository owns: what the build lane wrote back
-            // when it published the artifact (AP-13a). The rest is computed here (MF-04).
-            let build = envelope
-                .status
-                .as_ref()
-                .and_then(|status| status.build.clone());
-            // And the shard a wasm App's publish recorded beside it (AP-149).
-            let shard = envelope.status.as_ref().and_then(|status| status.shard);
-            envelope.strip_status();
-            envelope.status = Some(crate::resource::Status {
-                phase: crate::resource::Phase::Live,
-                observed_revision: Some(revision.to_string()),
-                // The branch, not the revision: a Source link should keep working after the
-                // next commit, and the observed revision is right there beside it.
-                source_url: Some(scratch.browse_url(&self.shako, &path, default_branch)),
-                conditions: Vec::new(),
-                build,
-                shard,
-                domain_verification: None,
-                jobs: Vec::new(),
-                notifications: None,
-            });
-
             fresh_mirror.upsert(envelope);
             loaded += 1;
         }
-        let change = self.warned_invalid.cycle(invalid);
-        for warning in &change.new {
-            tracing::warn!(%warning, standing = change.standing, "manifest fails its kind's validation");
+        for refusal in refusals.values().filter(|refusal| !refusal.serving) {
+            let Some(mut envelope) =
+                self.envelope_of(scratch, &refusal.resource, revision, default_branch)
+            else {
+                continue;
+            };
+            if let Some(status) = envelope.status.as_mut() {
+                status.phase = crate::resource::Phase::Error;
+                status.conditions = vec![refused_condition(
+                    revision,
+                    &refusal.reason,
+                    "nothing is served for it",
+                )];
+            }
+            fresh_mirror.refuse(envelope);
         }
-        cleared("manifests failing their kind's validation", &change);
 
         if loaded == 0 {
             return Err(SyncError::Empty(
@@ -1599,6 +1667,64 @@ impl Syncer {
             ));
         }
         Ok((fresh_mirror, loaded))
+    }
+
+    /// The Portal's view of `resource` as `main` holds it at `revision`, `Live`; `None` for a
+    /// manifest the view cannot hold.
+    fn envelope_of(
+        &self,
+        scratch: &Render,
+        resource: &jcctl::loader::LoadedResource,
+        revision: &str,
+        default_branch: &str,
+    ) -> Option<ResourceEnvelope> {
+        let path = resource.path.to_string_lossy().to_string();
+        let mut envelope: ResourceEnvelope = match serde_json::to_value(&resource.manifest)
+            .and_then(serde_json::from_value)
+        {
+            Ok(envelope) => envelope,
+            Err(err) => {
+                // The loader accepted the envelope, so this is a metadata member the
+                // Portal's own view does not know. Skipping one resource is right
+                // here: the manifest is valid, the Portal simply cannot show it.
+                tracing::warn!(path = %path, error = %err, "manifest does not fit the Portal's resource view");
+                return None;
+            }
+        };
+
+        if envelope
+            .metadata
+            .namespace
+            .as_deref()
+            .unwrap_or("")
+            .is_empty()
+        {
+            envelope.metadata.namespace = Some(namespace_of(&path));
+        }
+
+        // The one part of `status` the repository owns: what the build lane wrote back
+        // when it published the artifact (AP-13a). The rest is computed here (MF-04).
+        let build = envelope
+            .status
+            .as_ref()
+            .and_then(|status| status.build.clone());
+        // And the shard a wasm App's publish recorded beside it (AP-149).
+        let shard = envelope.status.as_ref().and_then(|status| status.shard);
+        envelope.strip_status();
+        envelope.status = Some(crate::resource::Status {
+            phase: crate::resource::Phase::Live,
+            observed_revision: Some(revision.to_string()),
+            // The branch, not the revision: a Source link should keep working after the
+            // next commit, and the observed revision is right there beside it.
+            source_url: Some(scratch.browse_url(&self.shako, &path, default_branch)),
+            conditions: Vec::new(),
+            build,
+            shard,
+            domain_verification: None,
+            jobs: Vec::new(),
+            notifications: None,
+        });
+        Some(envelope)
     }
 
     /// A follower's run: what the runner accepted, what the cluster runs and what the forge
@@ -5721,7 +5847,13 @@ output_error{stream="kpi"} 6
         );
         let repository = Repository::load(dir.path()).expect("the repository loads");
         let (mirror, loaded) = syncer
-            .load_mirror(&render(dir.path()), &repository, "abc123", "main")
+            .load_mirror(
+                &render(dir.path()),
+                &repository,
+                &Refusals::new(),
+                "abc123",
+                "main",
+            )
             .expect("one resource loads");
         assert_eq!(loaded, 1);
         let status = mirror
@@ -5740,9 +5872,134 @@ output_error{stream="kpi"} 6
         write_tree(empty.path(), &[("README.md", "nothing here\n")]);
         let repository = Repository::load(empty.path()).expect("an empty repository loads");
         assert!(matches!(
-            syncer.load_mirror(&render(empty.path()), &repository, "abc123", "main"),
+            syncer.load_mirror(
+                &render(empty.path()),
+                &repository,
+                &Refusals::new(),
+                "abc123",
+                "main"
+            ),
             Err(SyncError::Empty(_))
         ));
+    }
+
+    /// CHG-04, CHG-05: a manifest its kind refuses is never what a converge step reads. The
+    /// last good revision serves in its place with the reason beside it; a new one is listed
+    /// apart and served nowhere; a valid fix clears both.
+    #[test]
+    fn a_refused_manifest_keeps_its_last_good_revision_and_a_new_one_is_never_served() {
+        let render = |root: &Path| Render {
+            layout: 1,
+            root: root.to_path_buf(),
+            _staged: Vec::new(),
+            projects: BTreeMap::new(),
+            unstaged: Vec::new(),
+            listings: BTreeMap::new(),
+        };
+        let invalid = |name: &str| format!("{}  notAField: 1\n", PIPELINE.replace("NAME", name));
+        let syncer = bare_syncer();
+        let run = |files: &[(&str, &str)], revision: &str| {
+            let dir = Scratch::new("t6707").expect("a scratch directory");
+            write_tree(dir.path(), files);
+            let loaded = Repository::load(dir.path()).expect("the repository loads");
+            let (served, refusals) = syncer.refuse_invalid(Arc::new(loaded));
+            *syncer.accepted.lock().expect("lock") = Some(Arc::clone(&served));
+            let (fresh, _) = syncer
+                .load_mirror(&render(dir.path()), &served, &refusals, revision, "main")
+                .expect("the mirror loads");
+            syncer.mirror.replace_all(&fresh);
+            (served, refusals)
+        };
+        let spec_of = |repository: &Repository, name: &str| {
+            repository
+                .iter()
+                .find(|(id, _)| id.name == name)
+                .map(|(_, loaded)| loaded.manifest.spec.clone())
+        };
+
+        let good = PIPELINE.replace("NAME", "aq");
+        let (_, refusals) = run(
+            &[("projects/ovzdusie/pipelines/aq/aq.yaml", &good)],
+            "aaaa1111",
+        );
+        assert!(refusals.is_empty());
+
+        let bad_aq = invalid("aq");
+        let bad_new = invalid("new");
+        let (served, refusals) = run(
+            &[
+                ("projects/ovzdusie/pipelines/aq/aq.yaml", &bad_aq),
+                ("projects/ovzdusie/pipelines/new/new.yaml", &bad_new),
+            ],
+            "bbbb2222",
+        );
+        assert_eq!(refusals.len(), 2, "both manifests are refused");
+        assert!(refusals.values().all(|r| r.reason.contains("notAField")));
+        let last_good = spec_of(&served, "aq").expect("aq serves");
+        assert!(
+            last_good.get("notAField").is_none(),
+            "the last good revision: {last_good}"
+        );
+        assert!(
+            spec_of(&served, "new").is_none(),
+            "nothing converges the new one"
+        );
+
+        let aq = syncer
+            .mirror
+            .get("ovzdusie", "Pipeline", "aq")
+            .expect("aq is shown");
+        assert!(aq.spec.get("notAField").is_none());
+        let status = aq.status.expect("a status");
+        assert_eq!(status.phase, crate::resource::Phase::Live);
+        assert_eq!(status.observed_revision.as_deref(), Some("aaaa1111"));
+        let accepted = &status.conditions[0];
+        assert_eq!(
+            (accepted.r#type.as_str(), accepted.status.as_str()),
+            ("Accepted", "False")
+        );
+        assert_eq!(accepted.reason.as_deref(), Some("Refused"));
+        let message = accepted.message.as_deref().unwrap_or("");
+        assert!(
+            message.contains("bbbb2222") && message.contains("notAField"),
+            "{message}"
+        );
+
+        assert!(syncer.mirror.get("ovzdusie", "Pipeline", "new").is_none());
+        assert!(syncer
+            .mirror
+            .matching(|env| env.metadata.name == "new")
+            .is_empty());
+        let new = syncer
+            .mirror
+            .refused("ovzdusie", "Pipeline", "new")
+            .expect("the refused one is listed");
+        let status = new.status.expect("a status");
+        assert_eq!(status.phase, crate::resource::Phase::Error);
+        assert_eq!(status.conditions[0].reason.as_deref(), Some("Refused"));
+        assert_eq!(syncer.mirror.refused_of("ovzdusie", "Pipeline").len(), 1);
+
+        let (served, refusals) = run(
+            &[
+                ("projects/ovzdusie/pipelines/aq/aq.yaml", &good),
+                (
+                    "projects/ovzdusie/pipelines/new/new.yaml",
+                    &PIPELINE.replace("NAME", "new"),
+                ),
+            ],
+            "cccc3333",
+        );
+        assert!(refusals.is_empty());
+        assert!(spec_of(&served, "new").is_some());
+        let aq = syncer.mirror.get("ovzdusie", "Pipeline", "aq").expect("aq");
+        let status = aq.status.expect("a status");
+        assert_eq!(status.observed_revision.as_deref(), Some("cccc3333"));
+        assert!(status.conditions.is_empty());
+        assert!(syncer
+            .mirror
+            .refused("ovzdusie", "Pipeline", "new")
+            .is_none());
+        assert!(syncer.mirror.get("ovzdusie", "Pipeline", "new").is_some());
     }
 
     #[tokio::test]
