@@ -12,6 +12,11 @@
 //! disagree on what they accept. A [`Scope`] is the caller's row restriction (organization,
 //! project, Policy); each source applies it before `$filter`, so a filter can only narrow it.
 //!
+//! [`write()`] updates or deletes the rows the same filter matches inside the same scope (T-6659):
+//! each matched row is checked against what the caller may change ([`Scope::changes`]) before
+//! anything changes, one row outside refuses the whole write, a dry run answers the rows and
+//! changes nothing, and the source applies the [`Batch`] all or nothing.
+//!
 //! The supported subset: `$filter` with `eq ne gt ge lt le and or not in`, `contains`,
 //! `startswith`, `endswith`, null comparisons and nested complex property paths; `$orderby` on
 //! primitive paths (nulls first ascending, last descending, the key breaking ties); `$select` of
@@ -57,6 +62,7 @@ mod memory;
 #[cfg(feature = "postgres")]
 mod pg;
 mod plan;
+mod write;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -74,9 +80,13 @@ pub use odata_url::QueryOptions;
 pub use pg::PgTable;
 pub use plan::{plan, Cond, Plan, SortKey, TextOp};
 pub use serde_json::Value;
+pub use write::{may_change, write, Batch, Change, Written};
 
 /// A future a [`Table`] answers, boxed so `dyn Table` serves several sets from one router.
 pub type Fetching<'a> = Pin<Box<dyn Future<Output = Result<Fetched, TableError>> + Send + 'a>>;
+
+/// A future a [`Table`] applies a [`Batch`] with.
+pub type Applying<'a> = Pin<Box<dyn Future<Output = Result<(), TableError>> + Send + 'a>>;
 
 /// What every source knows of its entity set: the model, the set, its entity type and key.
 #[derive(Debug, Clone)]
@@ -151,13 +161,17 @@ pub enum Permissions {
 }
 
 /// What a caller may read and do: the row restriction, applied by the source before `$filter`
-/// (a row is visible when it meets every [`Restriction`]), and the permissions it holds. A
-/// request without a scope is refused by the router (deny by default); [`Scope::all`] is the
-/// explicit grant of every row and every permission, and the default scope holds no permission.
+/// (a row is visible when it meets every [`Restriction`]), the narrower set of rows it may
+/// change, and the permissions it holds. A request without a scope is refused by the router
+/// (deny by default); [`Scope::all`] is the explicit grant of every row and every permission,
+/// and the default scope holds no permission.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Scope {
     /// Every condition a visible row meets.
     pub restrictions: Vec<Restriction>,
+    /// Every condition a visible row meets as well before the caller may change or delete it;
+    /// none: every visible row (the write permission still decides).
+    pub changes: Vec<Restriction>,
     /// The permissions held.
     pub permissions: Permissions,
 }
@@ -168,6 +182,7 @@ impl Scope {
     pub fn all() -> Self {
         Self {
             restrictions: Vec::new(),
+            changes: Vec::new(),
             permissions: Permissions::All,
         }
     }
@@ -199,25 +214,47 @@ impl Scope {
         self
     }
 
+    /// Rows whose value at `path` is one of `any_of` are the only visible rows this caller may
+    /// change, on top of this scope.
+    #[must_use]
+    pub fn changing(mut self, path: &[&str], any_of: Vec<Value>) -> Self {
+        self.changes.push(Restriction {
+            path: path.iter().map(|s| (*s).to_owned()).collect(),
+            any_of,
+        });
+        self
+    }
+
     /// The scope as a [`Cond`], for a source to apply ahead of the plan's filter.
     #[must_use]
     pub fn cond(&self) -> Cond {
-        self.restrictions
-            .iter()
-            .map(|r| {
-                r.any_of
-                    .iter()
-                    .map(|v| Cond::Compare {
-                        path: r.path.clone(),
-                        op: odata_url::CompareOp::Eq,
-                        value: v.clone(),
-                    })
-                    .reduce(|a, b| Cond::Or(Box::new(a), Box::new(b)))
-                    .unwrap_or(Cond::Const(false))
-            })
-            .reduce(|a, b| Cond::And(Box::new(a), Box::new(b)))
-            .unwrap_or(Cond::Const(true))
+        restricted(&self.restrictions)
     }
+
+    /// The rows the caller may change, of those it reads, as a [`Cond`].
+    #[must_use]
+    pub fn change_cond(&self) -> Cond {
+        restricted(&self.changes)
+    }
+}
+
+/// Every restriction met, as one [`Cond`]; none: every row.
+fn restricted(restrictions: &[Restriction]) -> Cond {
+    restrictions
+        .iter()
+        .map(|r| {
+            r.any_of
+                .iter()
+                .map(|v| Cond::Compare {
+                    path: r.path.clone(),
+                    op: odata_url::CompareOp::Eq,
+                    value: v.clone(),
+                })
+                .reduce(|a, b| Cond::Or(Box::new(a), Box::new(b)))
+                .unwrap_or(Cond::Const(false))
+        })
+        .reduce(|a, b| Cond::And(Box::new(a), Box::new(b)))
+        .unwrap_or(Cond::Const(true))
 }
 
 /// What a source fetched for a plan: at most [`Plan::fetch`] rows from [`Plan::offset`], in
@@ -255,6 +292,10 @@ pub enum TableError {
     UnknownProperty(String),
     /// A request this service refuses (400), saying why.
     BadRequest(String),
+    /// The caller may not run this (403), saying why in words it acts on.
+    Forbidden(String),
+    /// The rows changed between reading and writing them (409), saying what to do.
+    Conflict(String),
     /// The source failed (500). The text is for the operator's log, never the response.
     Source(String),
 }
@@ -264,7 +305,7 @@ impl std::fmt::Display for TableError {
         match self {
             Self::NotImplemented(what) => write!(f, "{what} is not supported by this service"),
             Self::UnknownProperty(path) => write!(f, "the entity type has no property {path}"),
-            Self::BadRequest(why) => f.write_str(why),
+            Self::BadRequest(why) | Self::Forbidden(why) | Self::Conflict(why) => f.write_str(why),
             Self::Source(why) => write!(f, "the source failed: {why}"),
         }
     }
@@ -283,8 +324,24 @@ pub trait Table: Send + Sync {
     fn fetch<'a>(&'a self, plan: &'a Plan, scope: &'a Scope) -> Fetching<'a>;
 
     /// The entity tag of the data the set reads (a Git commit), when the source has one.
-    fn etag(&self) -> Option<&str> {
+    fn etag(&self) -> Option<String> {
         None
+    }
+
+    /// Whether the source can apply a [`Batch`]; read-only sources answer `false`.
+    fn writable(&self) -> bool {
+        false
+    }
+
+    /// Applies `batch` all or nothing: each key's row must still be there and meet
+    /// [`Batch::guard`] when the change is made, else nothing changes and the answer is
+    /// [`TableError::Conflict`]. [`write()`] builds the batch; a source never decides access.
+    fn apply<'a>(&'a self, batch: &'a Batch) -> Applying<'a> {
+        let set = self.info().set.clone();
+        let _ = batch;
+        Box::pin(std::future::ready(Err(TableError::Forbidden(format!(
+            "{set} is served read only"
+        )))))
     }
 }
 
