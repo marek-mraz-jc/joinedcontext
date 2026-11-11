@@ -138,6 +138,13 @@ describe("DataGrid", () => {
     expect(bodyNames()).toEqual(["p25", "p26", "p27", "p28", "p29"]);
   });
 
+  it("leaves the pager out for one fixed page size and one page, the host paging the list itself", () => {
+    grid({ rows, pageSizes: [50] });
+    expect(bodyNames()).toHaveLength(3);
+    expect(screen.queryByText("3 rows")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Next/ })).toBeNull();
+  });
+
   it("in server mode shows the host's rows as given and reports the query", () => {
     const onQueryChange = vi.fn();
     grid({ query: EMPTY_QUERY, onQueryChange, total: 99 });

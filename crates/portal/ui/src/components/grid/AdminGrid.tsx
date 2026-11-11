@@ -25,6 +25,7 @@ export function AdminGrid<T>({
   storageKey,
   stack,
   noSearch,
+  pageSizes,
 }: {
   /** The list's read: the skeleton while it runs, the API's reason and a retry when it fails. */
   query: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
@@ -39,6 +40,8 @@ export function AdminGrid<T>({
   stack?: boolean;
   /** The page searches the list itself, with its own words. */
   noSearch?: boolean;
+  /** Rows per page; a list the server pages gives its own page size, so one server page is one grid page. */
+  pageSizes?: number[];
 }): JSX.Element {
   const { t } = useTranslation();
   const labels = useMemo<DataGridLabels>(
@@ -73,6 +76,7 @@ export function AdminGrid<T>({
       storageKey={`portal:${storageKey}`}
       stack={stack}
       noSearch={noSearch}
+      pageSizes={pageSizes}
       // A click on a plain cell opens the row's record link, as on every list (T-2875).
       rowProps={() => recordCard}
     />

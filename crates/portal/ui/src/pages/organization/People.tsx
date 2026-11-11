@@ -24,16 +24,10 @@ import {
   Input,
   PageHeader,
   Select,
-  Table,
-  TableBody,
-  TableCell,
-  TableEmpty,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableSkeleton,
 } from "../../components/ui";
-import { ResourcePageFailed, PageFailed } from "../../components/ui/PageState";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
+import { ResourcePageFailed } from "../../components/ui/PageState";
 import { AskAdmins } from "./AskAdmins";
 import { DeniedNote, PermissionGuard } from "../../components/ui/PermissionGuard";
 import { asUser } from "../apps/members";
@@ -392,6 +386,67 @@ export function People(): JSX.Element {
       ),
   });
 
+  const items = people.data?.items ?? [];
+  const columns: DataColumn<Person>[] = [
+    {
+      key: "name",
+      label: t("organization.people.name"),
+      heading: (
+        <span className="inline-flex items-center gap-2">
+          <SelectAll items={items} selected={selected} onChange={setSelected} />
+          {t("organization.people.name")}
+        </span>
+      ),
+      text: fullName,
+      cell: (person) => (
+        <span className="inline-flex items-center gap-2">
+          <Checkbox
+            label={<span className="sr-only">{t("organization.people.bulk.select", { name: fullName(person) })}</span>}
+            checked={selected.some((one) => one.id === person.id)}
+            onChange={(event) =>
+              setSelected((now) => (event.target.checked ? [...now, person] : now.filter((one) => one.id !== person.id)))
+            }
+          />
+          <Link
+            data-row-link=""
+            to="/organization/$tab/$"
+            params={{ tab: "people", _splat: encodeURIComponent(person.id) }}
+            className="underline"
+          >
+            {fullName(person)}
+          </Link>
+        </span>
+      ),
+    },
+    {
+      key: "email",
+      label: t("organization.people.email"),
+      text: (person) => person.email,
+      cell: (person) => <span className="font-mono text-caption">{person.email}</span>,
+    },
+    {
+      key: "state",
+      label: t("organization.people.state"),
+      text: (person) =>
+        [
+          person.enabled ? t("organization.people.enabled") : t("organization.people.disabled"),
+          person.emailVerified ? t("organization.people.verified") : t("organization.people.unverified"),
+          person.pendingDeletion ? t("organization.people.removalPending") : "",
+        ]
+          .filter(Boolean)
+          .join(", "),
+      cell: (person) => <PersonState person={person} />,
+    },
+    {
+      key: "lastSeen",
+      label: t("organization.people.lastSeen"),
+      kind: "date",
+      text: (person) => person.lastSeen ?? "",
+      cell: (person) =>
+        when(person.lastSeen, locale) ?? <span className="text-fg-subtle">{t("organization.people.noSession")}</span>,
+    },
+  ];
+
   if (permissions.isLoading) {
     return (
       <p role="status" className="text-body text-fg-muted">
@@ -444,81 +499,28 @@ export function People(): JSX.Element {
             </Button>
           </form>
 
-          <PendingInvitations people={people.data?.items ?? []} locale={locale} />
+          <PendingInvitations people={items} locale={locale} />
 
           <BulkActions selected={selected} onDone={() => setSelected([])} />
 
-          {people.error ? (
-            <PageFailed error={people.error} onRetry={() => void people.refetch()} />
-          ) : (
-            <Table
-              data-records=""
-              caption={t("organization.people.caption")}
-              status={people.isPending ? t("app.loading") : undefined}
-            >
-              <TableHead>
-                <TableHeaderCell>
-                  <SelectAll items={people.data?.items ?? []} selected={selected} onChange={setSelected} />
-                </TableHeaderCell>
-                <TableHeaderCell>{t("organization.people.name")}</TableHeaderCell>
-                <TableHeaderCell>{t("organization.people.email")}</TableHeaderCell>
-                <TableHeaderCell>{t("organization.people.state")}</TableHeaderCell>
-                <TableHeaderCell>{t("organization.people.lastSeen")}</TableHeaderCell>
-              </TableHead>
-              {people.isPending ? (
-                <TableSkeleton columns={5} />
-              ) : (
-                <TableBody>
-                  {(people.data?.items ?? []).length === 0 ? (
-                    <TableEmpty columns={5}>
-                      <EmptyState
-                        bare
-                        title={search ? t("organization.people.noMatch", { search }) : t("organization.people.empty")}
-                        description={search ? undefined : t("organization.people.emptyHint")}
-                      />
-                    </TableEmpty>
-                  ) : (
-                    (people.data?.items ?? []).map((person) => (
-                      <TableRow key={person.id}>
-                        <TableCell>
-                          <Checkbox
-                            label={<span className="sr-only">{t("organization.people.bulk.select", { name: fullName(person) })}</span>}
-                            checked={selected.some((one) => one.id === person.id)}
-                            onChange={(event) =>
-                              setSelected((now) =>
-                                event.target.checked ? [...now, person] : now.filter((one) => one.id !== person.id),
-                              )
-                            }
-                          />
-                        </TableCell>
-                        <TableCell primary>
-                          <Link
-                            data-row-link=""
-                            to="/organization/$tab/$"
-                            params={{ tab: "people", _splat: encodeURIComponent(person.id) }}
-                            className="underline"
-                          >
-                            {fullName(person)}
-                          </Link>
-                        </TableCell>
-                        <TableCell>
-                          <span className="font-mono text-caption">{person.email}</span>
-                        </TableCell>
-                        <TableCell>
-                          <PersonState person={person} />
-                        </TableCell>
-                        <TableCell>
-                          {when(person.lastSeen, locale) ?? (
-                            <span className="text-fg-subtle">{t("organization.people.noSession")}</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              )}
-            </Table>
-          )}
+          {/* The server searches and pages the realm; the grid sorts, filters and arranges this page. */}
+          <AdminGrid<Person>
+            query={people}
+            caption={t("organization.people.caption")}
+            storageKey="organization:people"
+            rows={items}
+            rowKey={(person) => person.id}
+            columns={columns}
+            noSearch
+            pageSizes={[PAGE]}
+            empty={
+              <EmptyState
+                bare
+                title={search ? t("organization.people.noMatch", { search }) : t("organization.people.empty")}
+                description={search ? undefined : t("organization.people.emptyHint")}
+              />
+            }
+          />
 
           {first > 0 || people.data?.next != null ? (
             <nav aria-label={t("organization.people.pages")} className="flex gap-2">
