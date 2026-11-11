@@ -1127,7 +1127,7 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     add(
         "dashboards",
         "Dashboards",
-        "Nástenky",
+        "Dashboardy",
         "Nástěnky",
         "Dashboards",
         "Irányítópultok",

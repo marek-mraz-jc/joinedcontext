@@ -1475,7 +1475,7 @@ fn the_home_draws_the_public_dashboards_it_is_given() {
     let html = render_home_page_mounted(&c, None, &[], &[], &boards, "", "sk", false, "", NONCE);
     assert_safe_page("home-dashboards", &html, "sk");
     assert!(
-        html.contains("id=\"jc-dashboards-title\">Nástenky</h2>"),
+        html.contains("id=\"jc-dashboards-title\">Dashboardy</h2>"),
         "{html}"
     );
     assert!(

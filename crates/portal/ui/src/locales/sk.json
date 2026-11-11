@@ -7603,11 +7603,11 @@
           "background": "Pozadie",
           "text": "Text"
         },
-        "homeWidgets": "Nástenky na domovskej stránke",
-        "homeWidgetsNone": "Zatiaľ niet nástenky na výber. Otvorte projekt tejto organizácie, prejdite na Nástenky a vytvorte ju; nabudúce sa ponúkne tu.",
+        "homeWidgets": "Dashboardy na domovskej stránke",
+        "homeWidgetsNone": "Zatiaľ niet dashboardu na výber. Otvorte projekt tejto organizácie, prejdite na Dashboardy a vytvorte ho; nabudúce sa ponúkne tu.",
         "homeWidgetsProjects": "Otvoriť projekty organizácie",
-        "opendataWidgets": "Nástenky na portáli otvorených údajov",
-        "opendataWidgetsNone": "Zatiaľ niet verejnej nástenky na výber: najprv nastavte nástenku v projekte tejto organizácie ako verejnú."
+        "opendataWidgets": "Dashboardy na portáli otvorených údajov",
+        "opendataWidgetsNone": "Zatiaľ niet verejného dashboardu na výber: najprv nastavte dashboard v projekte tejto organizácie ako verejný."
       }
     },
     "contactRole": {
@@ -10000,7 +10000,7 @@
       "newTab": "(otvorí sa na novej karte)"
     },
     "widgets": {
-      "title": "Nástenky na domovskej stránke",
+      "title": "Dashboardy na domovskej stránke",
       "lead": "Vybrala ich vaša organizácia; vidíte tie, ktoré smiete otvoriť.",
       "open": "Otvoriť",
       "pages": "{count, plural, one {# strana} few {# strany} other {# strán}}"
