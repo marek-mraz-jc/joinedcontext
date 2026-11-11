@@ -29,6 +29,29 @@ const WRITER: &str = "w3nq7pzk2mtv6hx5brj4gcdsfa";
 const TOKEN: &str = "an-admin-token-of-at-least-32-bytes!";
 const ROUTE: &str = "/api/v1/projects/city/kpis/check";
 
+/// The Policies an Endpoint of `space` names: the space's own (an Endpoint naming none binds
+/// none, T-6742); the space `secret` holds none.
+fn refs(space: &str) -> Vec<String> {
+    let names: &[&str] = match space {
+        "mobility" => &["read", "pl-kpi-stops"],
+        "city-kpi" => &["write"],
+        _ => &[],
+    };
+    names
+        .iter()
+        .map(|name| format!("urn:ngsi-ld:Policy:city.example:city-{space}:{name}"))
+        .collect()
+}
+
+/// [`refs`] as the `policyRefs` line of an Endpoint file, none when the space holds no Policy.
+fn refs_yaml(space: &str) -> String {
+    let refs = refs(space);
+    match refs.is_empty() {
+        true => String::new(),
+        false => format!("  policyRefs: ['{}']\n", refs.join("', '")),
+    }
+}
+
 /// `name`, in the group of the project `city`: the gateway's door admits them on its
 /// `organization` Endpoints (EP-14), and so does the preview that reads as they would.
 fn member(name: &str) -> Identity {
@@ -62,7 +85,7 @@ fn repository(dir: &Path) -> jcctl::loader::Repository {
     ] {
         write(
             &format!("projects/city/spaces/{space}/endpoints/{name}.yaml"),
-            format!("{}  contextSpaceRef: {space}\n  slug: {slug}\n  audience: organization\n  enabledRepresentations: [ngsi-ld]\n", head("Endpoint", name)),
+            format!("{}  contextSpaceRef: {space}\n  slug: {slug}\n  audience: organization\n  enabledRepresentations: [ngsi-ld]\n{}", head("Endpoint", name), refs_yaml(space)),
         );
     }
     write(
@@ -160,7 +183,8 @@ async fn rig_on(config: Config) -> Rig {
             "Endpoint",
             name,
             "city",
-            json!({ "contextSpaceRef": space, "slug": slug, "audience": "organization" }),
+            json!({ "contextSpaceRef": space, "slug": slug, "audience": "organization",
+                    "policyRefs": refs(space) }),
         ));
     }
     state.mirror.upsert(envelope(
@@ -580,7 +604,8 @@ async fn rig_with_history(rows: Value) -> (Rig, MockServer) {
         "Endpoint",
         "parking",
         "city",
-        json!({ "contextSpaceRef": "mobility", "slug": PARKING, "audience": "public" }),
+        json!({ "contextSpaceRef": "mobility", "slug": PARKING, "audience": "public",
+                "policyRefs": refs("mobility") }),
     ));
     (rig, gateway)
 }
@@ -667,7 +692,8 @@ async fn a_refused_history_read_gives_no_value() {
         "Endpoint",
         "parking",
         "city",
-        json!({ "contextSpaceRef": "mobility", "slug": PARKING, "audience": "public" }),
+        json!({ "contextSpaceRef": "mobility", "slug": PARKING, "audience": "public",
+                "policyRefs": refs("mobility") }),
     ));
     let answer = checked(
         &rig,

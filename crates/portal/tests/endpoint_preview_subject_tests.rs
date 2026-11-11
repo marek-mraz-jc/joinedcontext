@@ -39,6 +39,12 @@ const TOKEN: &str = "an-admin-token-of-at-least-32-bytes!";
 /// Keycloak id, a public one, an App's public one with its caller role, and an App's organization
 /// one whose `editor` only the App's own client can carry.
 fn endpoints() -> Vec<(&'static str, Value)> {
+    // A non-App Endpoint binds only what it names (T-6742): every Policy of the space here.
+    const SPACE_POLICIES: [&str; 3] = [
+        "urn:ngsi-ld:Policy:city.example:city-air:cars",
+        "urn:ngsi-ld:Policy:city.example:city-air:app-map",
+        "urn:ngsi-ld:Policy:city.example:city-air:app-tool",
+    ];
     let spec = |slug: &str, audience: &str, extra: Value| {
         let mut spec = json!({ "contextSpaceRef": "air", "slug": slug, "audience": audience,
                                "enabledRepresentations": ["ngsi-ld"] });
@@ -53,12 +59,13 @@ fn endpoints() -> Vec<(&'static str, Value)> {
             spec(
                 "w3nq7pzk2mtv6hx5brj4gcdsfa",
                 "organization",
-                json!({"roles": [{"name": "analyst", "subjects": [{"user": "sub-jana"}]}]}),
+                json!({"roles": [{"name": "analyst", "subjects": [{"user": "sub-jana"}]}],
+                       "policyRefs": SPACE_POLICIES}),
             ),
         ),
         (
             "air-public",
-            spec("k4y7pq2mzt6vhx3nbwrs5cjdaf", "public", json!({})),
+            spec("k4y7pq2mzt6vhx3nbwrs5cjdaf", "public", json!({ "policyRefs": SPACE_POLICIES })),
         ),
         (
             "app-map",

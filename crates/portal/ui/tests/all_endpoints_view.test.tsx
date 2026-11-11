@@ -127,8 +127,9 @@ describe("all endpoints view", () => {
     );
     expect(within(bb).getByText("Public")).toBeInTheDocument();
     // One line a row (T-4989): the surfaces as one summary and the row opening the endpoint's
-    // page, where each surface link and the catalogue entry are.
-    expect(within(bb).getByText("NGSI-LD, MCP, CSV")).toBeInTheDocument();
+    // page, where each surface link and the catalogue entry are. A public Endpoint serves MCP
+    // only when it opts in (T-6761), and this one does not.
+    expect(within(bb).getByText("NGSI-LD, CSV")).toBeInTheDocument();
     expect(within(bb).queryByRole("link", { name: "csv" })).not.toBeInTheDocument();
     expect(within(bb).queryByRole("link", { name: "catalogue" })).not.toBeInTheDocument();
     expect(bb.querySelector("a[data-row-link]")).toHaveAttribute("href", "/projects/banskabystrica/endpoints/public-air");

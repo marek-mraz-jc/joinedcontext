@@ -464,15 +464,24 @@ async fn start_on(
 
 const HEADER: &str = "apiVersion: joinedcontext.com/v1alpha1";
 
+/// The URN of the Policy `name` of `space` in the project, on the default Organization's domain.
+fn policy_urn(space: &str, name: &str) -> String {
+    format!("urn:ngsi-ld:Policy:jc.invalid:{PROJECT}-{space}:{name}")
+}
+
 /// The project's manifests at their layout 1 paths in the organization repository.
 fn manifests() -> Vec<(String, String)> {
     let at = |rel: &str| format!("projects/{PROJECT}/{rel}");
     let space = |rel: &str| at(&format!("spaces/{SPACE}/{rel}"));
+    // An Endpoint binds only the Policies it names (P-18, T-6742): every Policy of the space.
+    let refs = ["public-read", "readers", "writers"]
+        .map(|name| format!("'{}'", policy_urn(SPACE, name)))
+        .join(", ");
     let endpoint = |name: &str, slug: &str, audience: &str, extra: &str| {
         format!(
             "{HEADER}\nkind: Endpoint\nmetadata:\n  name: {name}\n  namespace: {PROJECT}\nspec:\n  \
              contextSpaceRef: {SPACE}\n  slug: {slug}\n  audience: {audience}\n  \
-             enabledRepresentations: [ngsi-ld, mcp]\n{extra}"
+             enabledRepresentations: [ngsi-ld, mcp]\n  policyRefs: [{refs}]\n{extra}"
         )
     };
     let policy = |name: &str, assignee: &str, operations: &str, types: &str| {
@@ -1577,7 +1586,8 @@ slots:
             format!(
                 "{HEADER}\nkind: Endpoint\nmetadata:\n  name: modelled\n  namespace: {PROJECT}\n\
                  spec:\n  contextSpaceRef: {MODELLED}\n  slug: {MODELLED_SLUG}\n  audience: public\n  \
-                 enabledRepresentations: [ngsi-ld, ogc-features, odata]\n"
+                 enabledRepresentations: [ngsi-ld, ogc-features, odata]\n  policyRefs: ['{}']\n",
+                policy_urn(MODELLED, "public-read")
             ),
         ),
         (
@@ -1690,6 +1700,11 @@ fn pipeline_manifests() -> Vec<(String, String)> {
             if path.ends_with(&format!("{SPACE}/space.yaml")) {
                 let text = format!("{text}  dataModelRef: {{ kind: DataModel, name: things }}\n");
                 (path, text)
+            } else if path.contains("/endpoints/") {
+                // The Endpoints bind the account's write Policy too, as they did naming none.
+                let writers = format!("'{}'", policy_urn(SPACE, "writers"));
+                let both = format!("{writers}, '{}'", policy_urn(SPACE, "pipelines-write"));
+                (path, text.replace(&writers, &both))
             } else {
                 (path, text)
             }

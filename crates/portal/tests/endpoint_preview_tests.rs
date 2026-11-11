@@ -21,6 +21,8 @@ use joinedcontext_portal::state::AppState;
 const STAFF: &str = "w3nq7pzk2mtv6hx5brj4gcdsfa";
 const PUBLIC: &str = "k4y7pq2mzt6vhx3nbwrs5cjdaf";
 const TOKEN: &str = "an-admin-token-of-at-least-32-bytes!";
+/// The one Policy of the space, which both Endpoints name (an Endpoint naming none binds none, T-6742).
+const CARS: &str = "urn:ngsi-ld:Policy:city.example:city-air:cars";
 
 /// The repository: the space `air` of `city`, Cars readable with `speed` and `owner`, and two
 /// Endpoints on it, one for the organization and one public.
@@ -43,7 +45,7 @@ fn repository(dir: &Path) -> jcctl::loader::Repository {
     ] {
         write(
             &format!("projects/city/spaces/air/endpoints/{name}.yaml"),
-            format!("{}  contextSpaceRef: air\n  slug: {slug}\n  audience: {audience}\n  enabledRepresentations: [ngsi-ld]\n", head("Endpoint", name)),
+            format!("{}  contextSpaceRef: air\n  slug: {slug}\n  audience: {audience}\n  enabledRepresentations: [ngsi-ld]\n  policyRefs: ['{CARS}']\n", head("Endpoint", name)),
         );
     }
     write(
@@ -99,7 +101,7 @@ async fn rig(converged: bool) -> Rig {
             "Endpoint",
             name,
             "city",
-            json!({ "contextSpaceRef": "air", "slug": slug, "audience": audience }),
+            json!({ "contextSpaceRef": "air", "slug": slug, "audience": audience, "policyRefs": [CARS] }),
         ));
     }
     state.mirror.upsert(envelope(

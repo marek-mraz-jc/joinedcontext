@@ -24,6 +24,7 @@ const ENDPOINTS = list([
       slug: "scsd2eehkx42n53z2zyd6vshfh7s7irf",
       audience: "public",
       enabledRepresentations: ["ngsi-ld"],
+      policyRefs: ["urn:ngsi-ld:Policy:hel.fi:helsinki-helsinki:public-read"],
     },
   },
 ]);

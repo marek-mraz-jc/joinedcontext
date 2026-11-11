@@ -166,7 +166,7 @@ fn a_slug_that_is_not_opaque_names_no_scope() {
             "ovzdusie",
             name,
             json!({ "contextSpaceRef": "ovzdusie", "slug": slug, "audience": "public",
-                    "enabledRepresentations": ["ngsi-ld"] }),
+                    "enabledRepresentations": ["ngsi-ld"], "mcp": true }),
         ));
     }
     assert!(serving(&mirror).is_empty());
@@ -375,7 +375,7 @@ async fn ten_thousand_converged_scopes_take_one_quick_wave_and_no_write() {
             "p",
             &name,
             json!({ "contextSpaceRef": "p", "slug": slug, "audience": "public",
-                    "enabledRepresentations": ["ngsi-ld"] }),
+                    "enabledRepresentations": ["ngsi-ld"], "mcp": true }),
         ));
         let one = HubEndpoint {
             project: "p".to_owned(),

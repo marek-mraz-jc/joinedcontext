@@ -269,7 +269,8 @@ async fn the_examples_are_built_from_one_real_entity_and_each_answered() {
     assert_eq!(answer["base"], base);
     assert_eq!(
         answer["served"],
-        json!(["ngsi-ld", "ogc-features", "odata", "sta", "csv", "mcp"])
+        // A public Endpoint serves MCP only when it opts in (EP-24, T-6761).
+        json!(["ngsi-ld", "ogc-features", "odata", "sta", "csv"])
     );
     assert_eq!(
         answer["licence"],

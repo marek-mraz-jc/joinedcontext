@@ -97,15 +97,14 @@ describe("the Endpoints overlay", () => {
     expect([...(served.get("Operator") ?? [])]).toEqual(["id", "name"]);
   });
 
-  it("serves every Policy of its own space when it names none, and nothing when its reference binds none", () => {
-    const all = servedBy(ENDPOINTS[2], "helsinki", POLICIES, SPACES, graph.nodes);
-    expect([...all.keys()].sort()).toEqual(["BikeHireDockingStation", "Operator"]);
+  it("serves nothing when it names no Policy (T-6742) or its reference binds none", () => {
+    expect(servedBy(ENDPOINTS[2], "helsinki", POLICIES, SPACES, graph.nodes).size).toBe(0);
     expect(servedBy(ENDPOINTS[3], "helsinki", POLICIES, SPACES, graph.nodes).size).toBe(0);
   });
 
   it("counts the Endpoints per class and lists the Pipelines that write one", () => {
     const counts = servingCounts(ENDPOINTS.map((endpoint) => servedBy(endpoint, "helsinki", POLICIES, SPACES, graph.nodes)));
-    expect(Object.fromEntries(counts)).toEqual({ BikeHireDockingStation: 2, Operator: 2 });
+    expect(Object.fromEntries(counts)).toEqual({ BikeHireDockingStation: 1, Operator: 1 });
     expect(Object.fromEntries(writtenBy(PIPELINES, graph.nodes))).toEqual({ BikeHireDockingStation: ["gbfs"] });
   });
 });
@@ -177,7 +176,7 @@ describe("the canvas page", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Diagram of bikes" })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: /main/i })).toBeNull();
     await screen.findByTestId("diagram-badge-BikeHireDockingStation");
-    expect(screen.getByTestId("diagram-badge-BikeHireDockingStation")).toHaveTextContent("2");
+    expect(screen.getByTestId("diagram-badge-BikeHireDockingStation")).toHaveTextContent("1");
     expect(screen.queryByTestId("diagram-badge-Rider")).toBeNull();
 
     await userEvent.selectOptions(screen.getByLabelText(en.models.canvas.overlay), "endpoint:helsinki-bikes");
@@ -236,7 +235,7 @@ describe("the canvas as a part", () => {
       answer: (url) =>
         url.pathname.endsWith("/permissions/me") ? jsonResponse({ project: "helsinki", bootstrap: false, grants: [] }) : answer(url.pathname),
     });
-    expect(await screen.findByTestId("diagram-badge-Operator")).toHaveTextContent("2");
+    expect(await screen.findByTestId("diagram-badge-Operator")).toHaveTextContent("1");
     expect(screen.getByText(en.models.canvas.pickHint)).toBeInTheDocument();
     expect(screen.getByLabelText(en.models.canvas.overlay)).toHaveAccessibleDescription(en.models.canvas.overlayHint);
   });

@@ -69,7 +69,7 @@ const ENDPOINTS = list([
     apiVersion: "joinedcontext.com/v1alpha1",
     kind: "Endpoint",
     metadata: { name: "public-air", namespace: "banskabystrica" },
-    spec: { contextSpaceRef: "ovzdusie", slug: "k7m2qz4tv6xh3n5jb2ryd3wcfa", audience: "public" },
+    spec: { contextSpaceRef: "ovzdusie", slug: "k7m2qz4tv6xh3n5jb2ryd3wcfa", audience: "public", policyRefs: ["urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-ovzdusie:public-read"] },
   },
 ]);
 const ROWS = [

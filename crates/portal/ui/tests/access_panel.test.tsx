@@ -48,7 +48,7 @@ const ENDPOINTS = list([
     apiVersion: "joinedcontext.com/v1alpha1",
     kind: "Endpoint",
     metadata: { name: "helsinki-bikes", namespace: "helsinki" },
-    spec: { contextSpaceRef: "mobility", slug: "scsd2eehkx42n53z2zyd6vshfh7s7irf", audience: "public" },
+    spec: { contextSpaceRef: "mobility", slug: "scsd2eehkx42n53z2zyd6vshfh7s7irf", audience: "public", policyRefs: ["urn:ngsi-ld:Policy:hel.fi:helsinki-mobility:public-read"] },
   },
 ]);
 /** The public grant on the bikes endpoint: reads only, two attributes, never the location. */
