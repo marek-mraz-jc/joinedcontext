@@ -13,7 +13,7 @@ use odata_csdl::{
 };
 use serde_json::{json, Map, Value};
 
-use crate::{key_options, query, Scope, Table, TableError, TableInfo};
+use crate::{key_options, may_change, query, Scope, Table, TableError, TableInfo};
 
 /// The value type of one field.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -264,6 +264,15 @@ impl Service {
         }, "required": ["allowed", "reason", "permission"]}),
         );
         schemas.insert(
+            "Written".into(),
+            json!({"type": "object", "properties": {
+            "dryRun": {"type": "boolean", "description": "Whether nothing was changed because the call asked for a dry run"},
+            "changed": {"type": "integer", "description": "How many rows changed, or would change"},
+            "keys": {"type": "array", "description": "Each changed row's key"},
+            "value": {"type": "array", "items": {"type": "object"}, "description": "Each changed row, after an update or before a delete"}
+        }, "required": ["dryRun", "changed", "keys", "value"]}),
+        );
+        schemas.insert(
             "Error".into(),
             json!({"type": "object", "properties": {"error": {"type": "object", "properties": {
             "code": {"type": "string"}, "message": {"type": "string"}
@@ -285,14 +294,15 @@ impl Service {
                     "top": param("top", json!({"type": "integer", "minimum": 0}), "Rows at most, e.g. 50"),
                     "skip": param("skip", json!({"type": "integer", "minimum": 0}), "Rows to skip, e.g. 100"),
                     "count": param("count", json!({"type": "boolean"}), "Answer the number of matching rows too"),
-                    "skiptoken": param("skiptoken", json!({"type": "string"}), "The next page, as the previous nextLink names it")
+                    "skiptoken": param("skiptoken", json!({"type": "string"}), "The next page, as the previous nextLink names it"),
+                    "dryRun": {"name": "dryRun", "in": "query", "required": false, "schema": {"type": "boolean"}, "description": "List what the write would change and change nothing, e.g. true"}
                 }
             }
         })
     }
 }
 
-/// The five paths `table_router` serves for `set`.
+/// The five paths `table_router` serves for `set`, with the writes its rules offer.
 fn set_paths(set: &EntityDef, paths: &mut Map<String, Value>) {
     let s = &set.set;
     let entity = json!({"$ref": format!("#/components/schemas/{}", set.type_name)});
@@ -326,20 +336,25 @@ fn set_paths(set: &EntityDef, paths: &mut Map<String, Value>) {
             "required": ["value"]
         }}}}),
     );
-    paths.insert(format!("/{s}"), json!({"get": {
+    let mut collection = Map::new();
+    collection.insert("get".into(), json!({
         "operationId": format!("{s}.list"), "summary": format!("Query {s}"), "description": set.description,
         "parameters": query(&["filter", "select", "orderby", "top", "skip", "count", "skiptoken"]),
         "responses": list
-    }}));
+    }));
     let one = responses(
         json!({"description": format!("One of {s}"), "content": {"application/json": {"schema": entity}}}),
     );
     let key = json!({"name": "key", "in": "path", "required": true, "schema": key_schema});
-    paths.insert(format!("/{s}({{key}})"), json!({"get": {
+    let mut single = Map::new();
+    single.insert("get".into(), json!({
         "operationId": format!("{s}.get"), "summary": format!("Read one of {s} by its {}", set.key),
-        "parameters": [key, json!({"$ref": "#/components/parameters/select"})],
+        "parameters": [key.clone(), json!({"$ref": "#/components/parameters/select"})],
         "responses": one
-    }}));
+    }));
+    write_paths(set, &key, &mut collection, &mut single);
+    paths.insert(format!("/{s}"), Value::Object(collection));
+    paths.insert(format!("/{s}({{key}})"), Value::Object(single));
     let count = responses(
         json!({"description": "The number of matching rows", "content": {"text/plain": {"schema": {"type": "integer"}}}}),
     );
@@ -372,6 +387,55 @@ fn set_paths(set: &EntityDef, paths: &mut Map<String, Value>) {
         ],
         "responses": allowed
     }}));
+}
+
+/// The `PATCH` and `DELETE` operations the rules of `set` offer, on the collection (by
+/// `$filter`) and on one entity (`key`, the path parameter).
+fn write_paths(
+    set: &EntityDef,
+    key: &Value,
+    collection: &mut Map<String, Value>,
+    single: &mut Map<String, Value>,
+) {
+    let s = &set.set;
+    let offers = |op: Operation| set.rules.iter().any(|r| r.operation == op);
+    let e = json!({"$ref": "#/components/responses/Error"});
+    // a write answers 409 when a matched row changed before the change was made
+    let written = json!({
+        "200": {"description": format!("The rows of {s} changed, or that would change on a dry run"), "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Written"}}}},
+        "400": e, "403": e, "404": e, "409": e, "501": e
+    });
+    let body = json!({"required": true, "content": {"application/json": {"schema": {
+        "type": "object", "description": format!("The properties to set on each matched row of {s}, e.g. {{\"name\": \"x\"}}; the key cannot change")
+    }}}});
+    let filter = json!([{"$ref": "#/components/parameters/filter"}, {"$ref": "#/components/parameters/dryRun"}]);
+    let one = json!([key, {"$ref": "#/components/parameters/dryRun"}]);
+    if offers(Operation::Update) {
+        collection.insert("patch".into(), json!({
+            "operationId": format!("{s}.updateWhere"), "summary": format!("Change every row of {s} the filter matches, all or none"),
+            "parameters": filter, "requestBody": body, "responses": written
+        }));
+        single.insert(
+            "patch".into(),
+            json!({
+                "operationId": format!("{s}.update"), "summary": format!("Change one of {s}"),
+                "parameters": one, "requestBody": body, "responses": written
+            }),
+        );
+    }
+    if offers(Operation::Delete) {
+        collection.insert("delete".into(), json!({
+            "operationId": format!("{s}.deleteWhere"), "summary": format!("Delete every row of {s} the filter matches, all or none"),
+            "parameters": filter, "responses": written
+        }));
+        single.insert(
+            "delete".into(),
+            json!({
+                "operationId": format!("{s}.delete"), "summary": format!("Delete one of {s}"),
+                "parameters": one, "responses": written
+            }),
+        );
+    }
 }
 
 fn object_schema(fields: &[Field], description: &str, key: Option<&str>) -> Value {
@@ -479,7 +543,14 @@ pub async fn allowed<T: Table + ?Sized>(
             ));
         }
     }
-    if operation.writes() {
+    if operation == Operation::Create {
+        return Ok(refuse(
+            format!("{} takes no create through this service", info.set),
+            permission,
+            false,
+        ));
+    }
+    if operation.writes() && !table.writable() {
         return Ok(refuse(
             format!("{} is served read only", info.set),
             permission,
@@ -489,11 +560,18 @@ pub async fn allowed<T: Table + ?Sized>(
     if let Some(key) = key {
         let options = key_options(info, key, None)?;
         let found = query(table, &options, scope, 1).await?;
-        if found.rows.is_empty() {
+        let Some(row) = found.rows.first() else {
             return Ok(refuse(
                 format!("{} has no such entity", info.set),
                 permission,
                 true,
+            ));
+        };
+        if operation.writes() && !may_change(scope, row) {
+            return Ok(refuse(
+                format!("this entity of {} is outside what you may change", info.set),
+                permission,
+                false,
             ));
         }
     }

@@ -15,7 +15,9 @@ use sqlx::types::Json;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use crate::plan::{Cond, SortKey, TextOp};
-use crate::{Fetched, Fetching, Plan, Scope, Table, TableError, TableInfo};
+use crate::{
+    Applying, Batch, Change, Fetched, Fetching, Plan, Scope, Table, TableError, TableInfo,
+};
 
 /// An entity set over one PostgreSQL relation: one column per top-level property of the entity
 /// type, named as the property; a complex property is a `jsonb` column.
@@ -273,6 +275,55 @@ impl PgTable {
     }
 }
 
+impl PgTable {
+    /// Applies `batch` in one transaction: one `UPDATE` or `DELETE` over the batch's keys that
+    /// meet its guard, rolled back unless it changed exactly the batch's rows. The new values
+    /// reach the statement as one bound `jsonb`, cast to each column by
+    /// `jsonb_populate_record`.
+    async fn write(&self, batch: &Batch) -> Result<(), TableError> {
+        let failed = |e: sqlx::Error| TableError::Source(e.to_string());
+        let mut qb = match &batch.change {
+            Change::Delete => {
+                let mut qb = QueryBuilder::<Postgres>::new("DELETE FROM ");
+                qb.push(&self.relation).push(" t WHERE ");
+                qb
+            }
+            Change::Update(patch) => {
+                let mut qb = QueryBuilder::<Postgres>::new("UPDATE ");
+                qb.push(&self.relation).push(" t SET ");
+                for (i, name) in patch.keys().enumerate() {
+                    if i > 0 {
+                        qb.push(", ");
+                    }
+                    let column = self.column(name)?;
+                    qb.push(&column).push(" = r.").push(&column);
+                }
+                qb.push(" FROM jsonb_populate_record(NULL::")
+                    .push(&self.relation)
+                    .push(", ")
+                    .push_bind(Json(Value::Object(patch.clone())))
+                    .push("::jsonb) r WHERE ");
+                qb
+            }
+        };
+        qb.push("(")
+            .push_bind(Json(Value::Array(batch.keys.clone())))
+            .push("::jsonb @> jsonb_build_array(to_jsonb(t.")
+            .push(self.column(&self.info.key)?)
+            .push("))) AND ");
+        self.cond(&mut qb, &batch.guard)?;
+        let mut tx = self.pool.begin().await.map_err(failed)?;
+        let done = qb.build().execute(&mut *tx).await.map_err(failed)?;
+        if usize::try_from(done.rows_affected()).ok() != Some(batch.keys.len()) {
+            tx.rollback().await.map_err(failed)?;
+            return Err(TableError::Conflict(
+                "a matched row changed since the filter matched it; nothing was changed, read the rows again and retry".into(),
+            ));
+        }
+        tx.commit().await.map_err(failed)
+    }
+}
+
 /// `needle` with the `LIKE` wildcards and the escape character escaped.
 fn like_escaped(needle: &str) -> String {
     let mut out = String::with_capacity(needle.len());
@@ -292,5 +343,13 @@ impl Table for PgTable {
 
     fn fetch<'a>(&'a self, plan: &'a Plan, scope: &'a Scope) -> Fetching<'a> {
         Box::pin(self.run(plan, scope))
+    }
+
+    fn writable(&self) -> bool {
+        true
+    }
+
+    fn apply<'a>(&'a self, batch: &'a Batch) -> Applying<'a> {
+        Box::pin(self.write(batch))
     }
 }

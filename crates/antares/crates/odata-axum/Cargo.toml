@@ -18,12 +18,13 @@ odata-csdl = { path = "../odata-csdl" }
 odata-json = { path = "../odata-json" }
 odata-table = { path = "../odata-table" }
 odata-url = { path = "../odata-url", features = ["edm"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 # examples/tables.rs: a listener for the conformance suites, and a GitTable to serve.
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
-odata-table = { path = "../odata-table", features = ["git"] }
-serde_json = { version = "1", default-features = false, features = ["std"] }
+odata-table = { path = "../odata-table", features = ["git", "postgres"] }
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "json", "runtime-tokio"] }
 http-body-util = { version = "0.1", default-features = false }
 tokio = { version = "1", default-features = false, features = ["macros", "rt", "net"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
