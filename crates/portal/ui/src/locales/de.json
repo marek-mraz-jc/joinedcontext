@@ -9536,6 +9536,7 @@
       "liveData": "Live-Daten",
       "sourceNumber": "Quelle {n}",
       "data": "Gelesene Daten der Antwort",
+      "noRows": "Die Abfrage lieferte keine Zeilen. Fragen Sie mit einer weiter gefassten Frage erneut.",
       "dataset": "Datensatz öffnen",
       "download": "Daten herunterladen",
       "again": "Erneut versuchen",

@@ -9536,6 +9536,7 @@
       "liveData": "Živé dáta",
       "sourceNumber": "Zdroj {n}",
       "data": "Údaje, ktoré odpoveď prečítala",
+      "noRows": "Čítanie nevrátilo žiadne riadky. Opýtajte sa znova širšou otázkou.",
       "dataset": "Otvoriť dataset",
       "download": "Stiahnuť údaje",
       "again": "Skúsiť znova",

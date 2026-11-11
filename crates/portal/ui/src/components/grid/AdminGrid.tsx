@@ -15,19 +15,10 @@ import { recordCard } from "../ui";
 
 export type { DataColumn };
 
-export function AdminGrid<T>({
-  query,
-  caption,
-  rows,
-  columns,
-  rowKey,
-  empty,
-  storageKey,
-  stack,
-  noSearch,
-}: {
-  /** The list's read: the skeleton while it runs, the API's reason and a retry when it fails. */
-  query: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
+export interface AdminGridProps<T> {
+  /** The list's read: the skeleton while it runs, the API's reason and a retry when it fails;
+   * absent for rows the page already holds (a sample, a result the assistant returned). */
+  query?: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
   caption: string;
   rows: readonly T[];
   columns: readonly DataColumn<T>[];
@@ -39,7 +30,19 @@ export function AdminGrid<T>({
   stack?: boolean;
   /** The page searches the list itself, with its own words. */
   noSearch?: boolean;
-}): JSX.Element {
+}
+
+export function AdminGrid<T>({
+  query,
+  caption,
+  rows,
+  columns,
+  rowKey,
+  empty,
+  storageKey,
+  stack,
+  noSearch,
+}: AdminGridProps<T>): JSX.Element {
   const { t } = useTranslation();
   const labels = useMemo<DataGridLabels>(
     () => ({
@@ -57,9 +60,9 @@ export function AdminGrid<T>({
       rows={rows}
       columns={columns}
       rowKey={rowKey}
-      loading={query.isPending}
+      loading={query?.isPending ?? false}
       error={
-        query.isError ? (
+        query?.isError ? (
           <PageFailed
             error={query.error}
             onRetry={() => {

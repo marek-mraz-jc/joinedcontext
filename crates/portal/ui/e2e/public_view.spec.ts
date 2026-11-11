@@ -70,6 +70,21 @@ test.describe("a published data view", () => {
     expect(await axeViolations(page)).toEqual([]);
     expect(asked.filter((path) => path.startsWith("/api/v1/projects"))).toEqual([]);
     await shoot(page, "filled");
+
+    // T-6752: the rows are on the shared grid: its search narrows them, Arrange columns hides one.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const search = page.getByRole("searchbox", { name: "Search this list" });
+    await search.fill("Töölö");
+    await expect(table.getByText("Kamppi")).toHaveCount(0);
+    await expect(table.getByText("Töölöntori")).toBeVisible();
+    await shoot(page, "search");
+    await search.fill("Pasila");
+    await expect(page.getByText("No rows match the search or the filters.")).toBeVisible();
+    await shoot(page, "nomatch");
+    await search.fill("");
+    await page.getByRole("button", { name: "Arrange columns" }).click();
+    await expect(page.getByRole("dialog", { name: "Arrange columns" })).toBeVisible();
+    await shoot(page, "arrange");
   });
 
   const states: Array<[string, (route: Route) => Promise<void>, string | RegExp]> = [
