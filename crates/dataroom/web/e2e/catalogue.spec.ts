@@ -1,11 +1,15 @@
 import { test, expect } from "@playwright/test";
 
+// Seeded names: prod's by default; another catalogue names its own (CATALOGUE_DATASET, CATALOGUE_ORG).
+const DATASET = process.env.CATALOGUE_DATASET ?? "air-quality";
+const ORG = process.env.CATALOGUE_ORG ?? "banskabystrica";
+
 const PAGES = [
   { name: "home", path: "/" },
   { name: "dataset-list", path: "/dataset/" },
-  { name: "dataset-air-quality", path: "/dataset/air-quality" },
+  { name: `dataset-${DATASET}`, path: `/dataset/${DATASET}` },
   { name: "organization-list", path: "/organization/" },
-  { name: "organization-banskabystrica", path: "/organization/banskabystrica" },
+  { name: `organization-${ORG}`, path: `/organization/${ORG}` },
   { name: "assistants", path: "/assistants" },
   { name: "assistants-claude", path: "/assistants/claude" },
   { name: "about", path: "/about" },
@@ -43,7 +47,6 @@ for (const lang of LANGUAGES) {
 // The footer (jc-footer, 2026-11-11): the language switch sends itself with script on, so its Go
 // button shows only without script; the assistant corner stops above the footer, so at 400 px no
 // footer control lies under it at any scroll position.
-const DATASET = process.env.CATALOGUE_DATASET ?? "air-quality";
 const FOOTER_PAGES = ["/", "/dataset/", `/dataset/${DATASET}`, "/assistants/chatgpt"];
 const LANG_GO = "form.lang-select button[type=submit]";
 
