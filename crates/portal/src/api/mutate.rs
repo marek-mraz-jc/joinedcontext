@@ -2049,7 +2049,8 @@ const MAX_SIDECAR_BYTES: usize = 256 * 1024;
 
 /// A `ModelProjection` against the LinkML of the DataModel version it references (MP-01).
 /// Refuses an Organization spec that sets a limit outside the operator's bounds, naming the
-/// entry, the value, the bound and who moves the bound (PF-97, ADR-N-035). Any other kind passes.
+/// entry, the value, the bound and who moves the bound (PF-97, ADR-N-035), and a Project quota
+/// above the deployment's ceiling (LIM-01, T-6716). Any other kind passes.
 /// `refusal` is the answer's kind: a form error on a door, a conflict at approval.
 pub(crate) fn organization_within_bounds(
     bounds: &jc_core::kinds::OrganizationBounds,
@@ -2057,6 +2058,21 @@ pub(crate) fn organization_within_bounds(
     spec: &Value,
     refusal: fn(String) -> ApiError,
 ) -> Result<(), ApiError> {
+    // A Project's own quota narrows the deployment's ceiling, never widens it (LIM-01, T-6716).
+    if kind == "Project" {
+        let Some(Ok(quotas)) = spec
+            .get("quotas")
+            .map(|q| serde_json::from_value::<jc_core::kinds::Quotas>(q.clone()))
+        else {
+            return Ok(());
+        };
+        return bounds.check_quotas(&quotas, "spec.quotas").map_err(|e| {
+            refusal(format!(
+                "{e}; the operator moves the ceiling in the deployment (portal.organizationBounds \
+                 or jc.toml [portal.limits]), never the Portal"
+            ))
+        });
+    }
     if kind != "Organization" {
         return Ok(());
     }
@@ -3025,42 +3041,11 @@ pub async fn patch(
     .await
 }
 
-/// A Pipeline sent in the first shape, rewritten as the second (PL-54, ADR-N-023):
-/// `source` → `sources: [source]`, `compute` → `steps: [compute]`, `targetEndpoint` with its
-/// `output` → `outputs: [{ targetEndpoint, type, mode }]`, and `apiVersion` v1alpha2. Anything
-/// already in the second shape, mixed, or with no `source` (its input lives in `bento.yaml`,
-/// which v1alpha2 has no place for) is left as it came, for validation to judge.
+/// A Pipeline sent in the first shape, rewritten as the second (PL-54, ADR-N-023): jc-core's
+/// conversion to the newest version of the kind (CFM-07), which leaves every other kind, and a
+/// Pipeline it cannot rewrite, for validation to judge.
 pub(crate) fn pipeline_second_shape(body: &mut Value) {
-    if body.get("kind").and_then(Value::as_str) != Some("Pipeline") {
-        return;
-    }
-    let Some(spec) = body.get_mut("spec").and_then(Value::as_object_mut) else {
-        return;
-    };
-    let second = ["sources", "steps", "outputs"]
-        .iter()
-        .any(|key| spec.contains_key(*key));
-    if second || !spec.contains_key("source") || !spec.contains_key("targetEndpoint") {
-        return;
-    }
-    if let Some(source) = spec.remove("source") {
-        spec.insert("sources".to_owned(), Value::Array(vec![source]));
-    }
-    if let Some(compute) = spec.remove("compute") {
-        spec.insert("steps".to_owned(), Value::Array(vec![compute]));
-    }
-    let mut output = serde_json::Map::new();
-    if let Some(target) = spec.remove("targetEndpoint") {
-        output.insert("targetEndpoint".to_owned(), target);
-    }
-    if let Some(Value::Object(written)) = spec.remove("output") {
-        output.extend(written);
-    }
-    spec.insert(
-        "outputs".to_owned(),
-        Value::Array(vec![Value::Object(output)]),
-    );
-    body["apiVersion"] = Value::String(jc_core::API_VERSION_V1ALPHA2.to_owned());
+    jc_core::conversions::to_latest(body);
 }
 
 /// `sent` over `stored` (UI-50, T-2764): a plain string over a legacy language map goes into the
@@ -3295,7 +3280,7 @@ mod tests {
         for part in [
             "spec.projects.quota.contextSpaces",
             "50",
-            "0 … 20",
+            "1 … 20",
             "portal.organizationBounds",
         ] {
             assert!(message.contains(part), "{part}: {message}");
@@ -3314,12 +3299,62 @@ mod tests {
             ApiError::Conflict
         )
         .is_ok());
-        // Without an operator file a quota has no ceiling (ADR-N-035: the operator sets one).
+        // Without an operator file the built-in ceiling holds: what deployments ran with, never
+        // unlimited (LIM-01, T-6716).
         let open = AppState::new(Config::for_tests(), None);
+        let bounds = &open.config.organization_bounds;
         assert!(organization_within_bounds(
-            &open.config.organization_bounds,
+            bounds,
             "Organization",
             &spec(500),
+            ApiError::BadRequest
+        )
+        .is_err());
+        assert!(organization_within_bounds(
+            bounds,
+            "Organization",
+            &spec(100),
+            ApiError::BadRequest
+        )
+        .is_ok());
+    }
+
+    /// LIM-01, T-6716: a Project's own quota narrows the deployment's ceiling and never widens
+    /// it; the refusal names the field and the ceiling, and a project without quotas passes.
+    #[test]
+    fn a_project_quota_above_the_deployments_ceiling_is_refused() {
+        let bounds = jc_core::kinds::OrganizationBounds::default();
+        let project =
+            |quotas: Value| json!({ "organizationRef": { "name": "hel" }, "quotas": quotas });
+        let refused = organization_within_bounds(
+            &bounds,
+            "Project",
+            &project(json!({ "apps": 101 })),
+            ApiError::BadRequest,
+        )
+        .expect_err("101 is over the built-in ceiling of 100");
+        let ApiError::BadRequest(message) = refused else {
+            panic!("a form error: {refused:?}");
+        };
+        for part in ["spec.quotas.apps", "101", "100", "jc.toml [portal.limits]"] {
+            assert!(message.contains(part), "{part}: {message}");
+        }
+        for fine in [
+            json!({ "apps": 5 }),
+            json!({ "mqtt": { "enabled": false } }),
+        ] {
+            assert!(organization_within_bounds(
+                &bounds,
+                "Project",
+                &project(fine),
+                ApiError::BadRequest
+            )
+            .is_ok());
+        }
+        assert!(organization_within_bounds(
+            &bounds,
+            "Project",
+            &json!({ "organizationRef": { "name": "hel" } }),
             ApiError::BadRequest
         )
         .is_ok());

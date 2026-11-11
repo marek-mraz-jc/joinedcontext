@@ -303,71 +303,73 @@ const fn entry(
 pub const EDGE_BODY: &str = "spec.limits.edge.maxRequestBodyMegabytes";
 
 /// Every numeric entry of ADR-N-035 §3.7 with its default and built-in bound, in the catalog's
-/// order. The quota dimensions of `spec.projects.quota` have no default and no built-in ceiling;
-/// the operator's bounds file sets one per dimension (PF-73, PF-97).
+/// order. The quota dimensions of `spec.projects.quota` default to, and are capped at, what every
+/// deployment ran with when the ceiling moved to the deployment (the seed Organizations' quota,
+/// T-6716): a project is never unlimited. The operator's bounds file moves the ceiling (PF-73,
+/// PF-97, LIM-01).
 pub const CATALOG: &[Entry] = &[
     entry(
         "spec.projects.quota.contextSpaces",
         Section::Projects,
-        None,
-        0,
-        None,
+        Some(100),
+        1,
+        Some(100),
         BoundKind::Number,
     ),
     entry(
         "spec.projects.quota.residentPipelines",
         Section::Projects,
-        None,
-        0,
-        None,
+        Some(100),
+        1,
+        Some(100),
         BoundKind::Number,
     ),
     entry(
         "spec.projects.quota.publicEndpoints",
         Section::Projects,
-        None,
-        0,
-        None,
+        Some(100),
+        1,
+        Some(100),
         BoundKind::Number,
     ),
     entry(
         "spec.projects.quota.ingestEventsPerSecond",
         Section::Projects,
-        None,
-        0,
-        None,
+        Some(500),
+        1,
+        Some(500),
         BoundKind::Number,
     ),
     entry(
         "spec.projects.quota.apps",
         Section::Projects,
-        None,
-        0,
-        None,
+        Some(100),
+        1,
+        Some(100),
         BoundKind::Number,
     ),
     entry(
         "spec.projects.quota.agentRunsPerDay",
         Section::Projects,
-        None,
-        0,
-        None,
+        Some(2_000),
+        1,
+        Some(2_000),
         BoundKind::Number,
     ),
     entry(
         "spec.projects.quota.entitiesPerSpace",
         Section::Projects,
-        None,
-        0,
-        None,
+        Some(1_000_000),
+        1,
+        Some(1_000_000),
         BoundKind::Number,
     ),
     entry(
         "spec.projects.quota.requestsPerMinute",
         Section::Projects,
-        None,
-        0,
-        None,
+        Some(6_000),
+        1,
+        Some(6_000),
         BoundKind::Number,
     ),
     entry(
@@ -692,6 +694,44 @@ impl OrganizationBounds {
         Ok(())
     }
 
+    /// The deployment's ceiling on every PF-73 quota dimension: the operator's bound where the
+    /// file sets one, else the built-in one, which is what deployments ran with before the
+    /// ceiling moved here (LIM-01, T-6716). An Organization's or a Project's quota only narrows
+    /// it ([`crate::kinds::Quotas::capped`]).
+    pub fn quota_ceiling(&self) -> crate::kinds::Quotas {
+        let mut ceiling = crate::kinds::Quotas::default();
+        let at = |name: &str| {
+            entry_at(&format!("spec.projects.quota.{name}")).and_then(|entry| self.range(entry).1)
+        };
+        ceiling.context_spaces = at("contextSpaces");
+        ceiling.resident_pipelines = at("residentPipelines");
+        ceiling.public_endpoints = at("publicEndpoints");
+        ceiling.ingest_events_per_second = at("ingestEventsPerSecond");
+        ceiling.apps = at("apps");
+        ceiling.agent_runs_per_day = at("agentRunsPerDay");
+        ceiling.entities_per_space = at("entitiesPerSpace");
+        ceiling.requests_per_minute = at("requestsPerMinute");
+        ceiling
+    }
+
+    /// Refuses a Project's own quota above the deployment's ceiling, naming the field, the value
+    /// and the ceiling: a project narrows what the deployment allows, never widens it (LIM-01,
+    /// T-6716). `field` is where the quota sits, e.g. `spec.quotas`.
+    pub fn check_quotas(&self, quotas: &crate::kinds::Quotas, field: &str) -> Result<()> {
+        let ceiling = self.quota_ceiling();
+        match quotas.above(&ceiling).first() {
+            Some((name, value, limit)) => Err(Error::Invalid {
+                field: format!("{field}.{name}"),
+                reason: format!(
+                    "{value} is above the deployment's ceiling of {limit}; set {limit} or less, or \
+                     ask the operator to raise spec.projects.quota.{name} in the deployment's \
+                     limits (LIM-01)"
+                ),
+            }),
+            None => Ok(()),
+        }
+    }
+
     /// The range an organization may set `entry` in: the operator's bound where it sets one, else
     /// the built-in one.
     pub fn range(&self, entry: &Entry) -> (u32, Option<u32>) {
@@ -855,4 +895,63 @@ impl OrganizationSpec {
 
 fn quota_mqtt(spec: &OrganizationSpec) -> Option<&crate::kinds::MqttAllowance> {
     spec.projects.quota.as_ref()?.mqtt.as_ref()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kinds::Quotas;
+
+    /// LIM-01, T-6716: no ceiling set is what deployments ran with, never unlimited; an
+    /// Organization's or a Project's quota only narrows the deployment's ceiling.
+    #[test]
+    fn the_quota_ceiling_is_todays_values_and_a_project_only_narrows_it() {
+        let ceiling = OrganizationBounds::default().quota_ceiling();
+        let today = [100, 100, 100, 500, 100, 2_000, 1_000_000, 6_000];
+        for ((name, limit), expected) in ceiling.dimensions().into_iter().zip(today) {
+            assert_eq!(limit, Some(expected), "{name}");
+        }
+
+        let open = Quotas::default().capped(&ceiling);
+        assert_eq!(
+            open, ceiling,
+            "an open quota takes the ceiling, not unlimited"
+        );
+        let narrowed = Quotas {
+            apps: Some(3),
+            context_spaces: Some(900),
+            ..Quotas::default()
+        }
+        .capped(&ceiling);
+        assert_eq!(narrowed.apps, Some(3));
+        assert_eq!(narrowed.context_spaces, Some(100), "held at the ceiling");
+
+        let raised = OrganizationBounds(
+            [(
+                "spec.projects.quota.apps".to_owned(),
+                Bound {
+                    min: None,
+                    max: Some(250),
+                },
+            )]
+            .into(),
+        );
+        assert_eq!(raised.quota_ceiling().apps, Some(250));
+
+        let own = Quotas {
+            apps: Some(120),
+            ..Quotas::default()
+        };
+        let err = OrganizationBounds::default()
+            .check_quotas(&own, "spec.quotas")
+            .expect_err("a project above the ceiling");
+        let err = err.to_string();
+        assert!(
+            err.contains("spec.quotas.apps") && err.contains("120") && err.contains("100"),
+            "{err}"
+        );
+        raised
+            .check_quotas(&own, "spec.quotas")
+            .expect("under the raised ceiling");
+    }
 }

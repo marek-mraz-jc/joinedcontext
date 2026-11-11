@@ -146,6 +146,9 @@ pub struct StreamDeployer {
     /// Whether each stream presents its own pipeline's identity through the runner's token
     /// sidecar rather than its project's `pipelines` account (PL-19, Architecture/12 §3).
     pipeline_identity: bool,
+    /// The deployment's ceiling on each project's quota (LIM-01, T-6716): no more resident
+    /// pipelines are scheduled than it and the project's own quota allow.
+    quota_bounds: jc_core::kinds::OrganizationBounds,
     /// How such a stream proves its pipeline's client: the sidecar, or the client's secret (jc).
     pipeline_credential: PipelineCredential,
     /// [`REPLACE_TIMEOUT`], shorter in tests.
@@ -369,6 +372,7 @@ impl StreamDeployer {
             validation: None,
             unqualified_retired: Mutex::new(HashSet::new()),
             pipeline_identity: false,
+            quota_bounds: jc_core::kinds::OrganizationBounds::default(),
             pipeline_credential: PipelineCredential::Sidecar,
             replace_timeout: REPLACE_TIMEOUT,
             queue: Mutex::new(RunQueue::new(1, 1)),
@@ -474,6 +478,12 @@ impl StreamDeployer {
     /// the token sidecar and the federated mechanism is seen working.
     pub fn with_pipeline_identity(mut self, on: bool) -> Self {
         self.pipeline_identity = on;
+        self
+    }
+
+    /// The deployment's quota ceiling the resident pipelines are counted against (LIM-01).
+    pub fn with_quota_bounds(mut self, bounds: jc_core::kinds::OrganizationBounds) -> Self {
+        self.quota_bounds = bounds;
         self
     }
 
@@ -664,7 +674,8 @@ impl StreamDeployer {
         for ns in mirror.namespaces() {
             // What the project may keep resident (PF-74): the ones beyond its quota are not
             // scheduled at all, and the condition on each says why.
-            let beyond = crate::quotas::beyond(mirror, &ns, "residentPipelines");
+            let beyond =
+                crate::quotas::beyond(mirror, &ns, "residentPipelines", &self.quota_bounds);
             let page = mirror.list(&ns, "Pipeline", &crate::store::ListOptions::default());
             self.retire_unqualified(&ns, page.items.iter().map(|e| e.metadata.name.as_str()))
                 .await;

@@ -377,6 +377,7 @@ fn quota(ground: &Ground<'_>, project: &str, envelope: &ResourceEnvelope) -> Res
         &envelope.kind,
         &envelope.metadata.name,
         &envelope.spec,
+        ground.bounds,
     )
 }
 

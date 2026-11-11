@@ -2541,7 +2541,7 @@ impl Syncer {
                 .namespaces()
                 .into_iter()
                 .flat_map(|ns| {
-                    crate::quotas::beyond(&self.mirror, &ns, "apps")
+                    crate::quotas::beyond(&self.mirror, &ns, "apps", &self.judge_settings.0)
                         .into_iter()
                         .map(move |name| (ns.clone(), name))
                 })

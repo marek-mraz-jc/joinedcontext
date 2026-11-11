@@ -1602,17 +1602,40 @@ fn app_pods(
 }
 
 /// The basemap configuration block, or `None` when this Portal proxies no basemap (AP-67).
-/// The operator's bounds file (PF-97). Absent, every entry keeps its built-in bound. A file that
-/// cannot be read, is no map of catalog paths, holds a range upside down or loosens a security
-/// bound stops the start: a Portal holding organizations to bounds nobody meant is worse than one
-/// that says why it did not start.
+/// The operator's bounds (PF-97, LIM-01): the file the deployment renders
+/// `portal.organizationBounds` into, or `JC_PORTAL_ORGANIZATION_BOUNDS`, the same map inline,
+/// which `jc` fills from `jc.toml` `[portal.limits]` (T-6716). Absent, every entry keeps its
+/// built-in bound. Both set, a file that cannot be read, no map of catalog paths, a range upside
+/// down or a loosened security bound stops the start: a Portal holding organizations to bounds
+/// nobody meant is worse than one that says why it did not start.
 pub fn organization_bounds(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<jc_core::kinds::OrganizationBounds, ConfigError> {
     const VAR: &str = "JC_PORTAL_ORGANIZATION_BOUNDS_FILE";
+    const INLINE: &str = "JC_PORTAL_ORGANIZATION_BOUNDS";
+    let inline = lookup(INLINE).filter(|text| !text.trim().is_empty());
     let Some(path) = lookup(VAR).filter(|path| !path.trim().is_empty()) else {
-        return Ok(jc_core::kinds::OrganizationBounds::default());
+        let Some(text) = inline else {
+            return Ok(jc_core::kinds::OrganizationBounds::default());
+        };
+        let invalid = |reason: String| ConfigError::Invalid {
+            var: INLINE,
+            reason,
+        };
+        let bounds: jc_core::kinds::OrganizationBounds = serde_norway::from_str(&text)
+            .map_err(|e| invalid(format!("no map of catalog paths to {{min, max}}: {e}")))?;
+        bounds.validate().map_err(|e| invalid(e.to_string()))?;
+        return Ok(bounds);
     };
+    if inline.is_some() {
+        return Err(ConfigError::Invalid {
+            var: INLINE,
+            reason: format!(
+                "set beside {VAR}; keep the deployment's limits in one place (jc.toml \
+                 [portal.limits] or the bounds file)"
+            ),
+        });
+    }
     let invalid = |reason: String| ConfigError::Invalid { var: VAR, reason };
     let text = std::fs::read_to_string(&path)
         .map_err(|e| invalid(format!("cannot read '{path}': {e}")))?;
@@ -2760,7 +2783,7 @@ mod tests {
         .expect("a tighter security bound and a quota ceiling are the operator's to set");
         let quota = jc_core::kinds::org_settings::entry_at("spec.projects.quota.contextSpaces")
             .expect("a catalog entry");
-        assert_eq!(tight.range(quota), (0, Some(20)));
+        assert_eq!(tight.range(quota), (1, Some(20)));
 
         for (name, text) in [
             (
@@ -2783,6 +2806,40 @@ mod tests {
         let missing = dir.join("absent.yaml").to_string_lossy().into_owned();
         assert!(with(Some(missing)).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// LIM-01, T-6716: `jc` hands `jc.toml` `[portal.limits]` over inline; it is checked as the
+    /// file is, and set beside the file it stops the start rather than pick one.
+    #[test]
+    fn the_inline_limits_from_jc_toml_are_checked_and_never_sit_beside_the_file() {
+        let with = |inline: &'static str, file: Option<&'static str>| {
+            organization_bounds(&move |name: &str| match name {
+                "JC_PORTAL_ORGANIZATION_BOUNDS" => Some(inline.to_owned()),
+                "JC_PORTAL_ORGANIZATION_BOUNDS_FILE" => file.map(str::to_owned),
+                _ => None,
+            })
+        };
+        let raised = with(r#"{"spec.projects.quota.apps":{"max":250}}"#, None).expect("inline");
+        assert_eq!(raised.quota_ceiling().apps, Some(250));
+        assert_eq!(with("  ", None).expect("blank"), Default::default());
+        for bad in [
+            r#"{"spec.limits.nothing":{"max":1}}"#,
+            r#"{"spec.limits.signIn.sessionIdleMinutes":{"max":6000}}"#,
+            r#"{"spec.projects.quota.apps":{"min":5,"max":1}}"#,
+        ] {
+            let refused = with(bad, None).expect_err(bad).to_string();
+            assert!(
+                refused.contains("JC_PORTAL_ORGANIZATION_BOUNDS"),
+                "{refused}"
+            );
+        }
+        let both = with(
+            r#"{"spec.projects.quota.apps":{"max":5}}"#,
+            Some("/etc/bounds.yaml"),
+        )
+        .expect_err("both set")
+        .to_string();
+        assert!(both.contains("jc.toml [portal.limits]"), "{both}");
     }
 
     #[test]

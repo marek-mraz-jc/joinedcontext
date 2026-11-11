@@ -219,7 +219,8 @@ pub async fn get_project(
         return Err(not_found());
     }
 
-    let quotas = crate::quotas::effective(&state.mirror, &project);
+    let quotas =
+        crate::quotas::effective(&state.mirror, &project, &state.config.organization_bounds);
     let limits = crate::quotas::limits(&quotas);
     let usage = crate::quotas::usage(&state.mirror, &project)
         .into_iter()

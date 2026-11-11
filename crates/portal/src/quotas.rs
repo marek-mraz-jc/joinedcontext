@@ -11,6 +11,7 @@
 use std::collections::BTreeMap;
 
 use jc_core::kinds::space::Quotas;
+use jc_core::kinds::OrganizationBounds;
 use serde_json::Value;
 
 use crate::error::ApiError;
@@ -26,14 +27,16 @@ const COUNTED: [(&str, &str); 4] = [
 ];
 
 /// The quota in force for `project`: its own `spec.quotas` when it has one, else the
-/// organization's `spec.projects.quota`, else no limit at all (PF-73).
-pub fn effective(mirror: &Mirror, project: &str) -> Quotas {
+/// organization's `spec.projects.quota`, each dimension held at the deployment's ceiling and a
+/// dimension neither sets taking it, so no project is unlimited (PF-73, LIM-01, T-6716).
+pub fn effective(mirror: &Mirror, project: &str, bounds: &OrganizationBounds) -> Quotas {
     let own = mirror
         .get(ORG_NAMESPACE, "Project", project)
         .and_then(|env| serde_json::from_value::<Quotas>(env.spec.get("quotas")?.clone()).ok())
         // `spec.quotas` holding only `mqtt` leaves every PF-73 dimension to the organization.
         .filter(Quotas::sets_dimensions);
     own.unwrap_or_else(|| organization_default(mirror))
+        .capped(&bounds.quota_ceiling())
 }
 
 /// The default every project of the organization starts from (PF-73).
@@ -115,11 +118,19 @@ pub fn over(dimension: &str, after: u32, limit: u32, project: &str) -> ApiError 
 /// The manifests of `kind` that stand beyond the project's quota for `dimension`, by name: what
 /// the reconciler must not schedule (PF-74). Sorted by name, so the same ones keep running pass
 /// after pass rather than taking turns.
-pub fn beyond(mirror: &Mirror, project: &str, dimension: &str) -> Vec<String> {
+pub fn beyond(
+    mirror: &Mirror,
+    project: &str,
+    dimension: &str,
+    bounds: &OrganizationBounds,
+) -> Vec<String> {
     let Some((_, kind)) = COUNTED.into_iter().find(|(d, _)| *d == dimension) else {
         return Vec::new();
     };
-    let Some(limit) = limits(&effective(mirror, project)).get(dimension).copied() else {
+    let Some(limit) = limits(&effective(mirror, project, bounds))
+        .get(dimension)
+        .copied()
+    else {
         return Vec::new();
     };
     let mut counted: Vec<String> = mirror
@@ -142,8 +153,9 @@ pub fn check(
     kind: &str,
     name: &str,
     spec: &Value,
+    bounds: &OrganizationBounds,
 ) -> Result<(), ApiError> {
-    let quotas = effective(mirror, project);
+    let quotas = effective(mirror, project, bounds);
     for (dimension, counted_kind) in COUNTED {
         if counted_kind != kind || !counts(mirror, project, dimension, kind, spec) {
             continue;
@@ -258,6 +270,11 @@ fn check_clock(mirror: &Mirror, project: &str, spec: &Value) -> Result<(), ApiEr
 
 #[cfg(test)]
 mod tests {
+    /// No operator file: the built-in ceiling (LIM-01, T-6716).
+    fn bounds() -> OrganizationBounds {
+        OrganizationBounds::default()
+    }
+
     use super::*;
     use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
     use serde_json::json;
@@ -321,8 +338,14 @@ mod tests {
                 json!({ "organizationRef": { "name": "bb" }, "quotas": { "residentPipelines": 1 } }),
             ),
         ]);
-        assert_eq!(effective(&mirror, "ovzdusie").resident_pipelines, Some(1));
-        assert_eq!(effective(&mirror, "doprava").resident_pipelines, Some(3));
+        assert_eq!(
+            effective(&mirror, "ovzdusie", &bounds()).resident_pipelines,
+            Some(1)
+        );
+        assert_eq!(
+            effective(&mirror, "doprava", &bounds()).resident_pipelines,
+            Some(3)
+        );
         mirror.upsert(envelope(
             "Project",
             "mqtt-only",
@@ -330,7 +353,7 @@ mod tests {
             json!({ "organizationRef": { "name": "bb" }, "quotas": { "mqtt": { "enabled": true } } }),
         ));
         assert_eq!(
-            effective(&mirror, "mqtt-only").resident_pipelines,
+            effective(&mirror, "mqtt-only", &bounds()).resident_pipelines,
             Some(3),
             "an MQTT allowance alone lifts no other quota"
         );
@@ -359,6 +382,7 @@ mod tests {
             "Pipeline",
             "three",
             &resident("three").spec,
+            &bounds(),
         )
         .expect_err("the third resident pipeline");
         assert!(
@@ -373,6 +397,7 @@ mod tests {
             "Pipeline",
             "two",
             &resident("two").spec,
+            &bounds(),
         )
         .expect("an update of what is already counted");
     }
@@ -394,9 +419,9 @@ mod tests {
         ]);
         let published = json!({ "lifecycle": "published" });
         // Three held against a limit of two: the build lane writes status.build of one of them.
-        assert!(check(&mirror, "helsinki", "App", "events", &published).is_ok());
+        assert!(check(&mirror, "helsinki", "App", "events", &published, &bounds()).is_ok());
         // A fourth is still refused, and so is a new one under the limit's count.
-        let refused = check(&mirror, "helsinki", "App", "hsl", &published).unwrap_err();
+        let refused = check(&mirror, "helsinki", "App", "hsl", &published, &bounds()).unwrap_err();
         assert!(refused.to_string().contains("apps 4 of 2"), "{refused}");
     }
 
@@ -427,7 +452,7 @@ mod tests {
         ]);
         assert_eq!(usage(&mirror, "helsinki").get("apps"), Some(&2));
         assert!(
-            beyond(&mirror, "helsinki", "apps").is_empty(),
+            beyond(&mirror, "helsinki", "apps", &bounds()).is_empty(),
             "the two live ones fit; the retired and drafts hold no slot"
         );
 
@@ -438,6 +463,7 @@ mod tests {
                 "App",
                 "another",
                 &json!({ "lifecycle": lifecycle }),
+                &bounds(),
             )
             .unwrap_or_else(|err| panic!("a {lifecycle} App counts nothing: {err}"));
         }
@@ -447,6 +473,7 @@ mod tests {
             "App",
             "alerts",
             &json!({ "lifecycle": "retired" }),
+            &bounds(),
         )
         .expect("retiring a counted App frees its slot");
         for lifecycle in ["preview", "published"] {
@@ -456,6 +483,7 @@ mod tests {
                 "App",
                 "sketch",
                 &json!({ "kind": "static", "lifecycle": lifecycle }),
+                &bounds(),
             )
             .expect_err("a draft that goes live is counted, whatever its class");
             assert!(refused.to_string().contains("apps 3 of 2"), "{refused}");
@@ -473,7 +501,7 @@ mod tests {
             app("ccc", "static", Some("published")),
         ]);
         assert_eq!(
-            beyond(&crowded, "helsinki", "apps"),
+            beyond(&crowded, "helsinki", "apps", &bounds()),
             ["ccc"],
             "a retired App ahead by name takes no slot from a live one"
         );
@@ -493,8 +521,11 @@ mod tests {
             resident("gamma"),
         ]);
         // The same two keep running pass after pass rather than taking turns.
-        assert_eq!(beyond(&mirror, "ovzdusie", "residentPipelines"), ["gamma"]);
-        assert!(beyond(&mirror, "ovzdusie", "apps").is_empty());
+        assert_eq!(
+            beyond(&mirror, "ovzdusie", "residentPipelines", &bounds()),
+            ["gamma"]
+        );
+        assert!(beyond(&mirror, "ovzdusie", "apps", &bounds()).is_empty());
     }
 
     #[test]
@@ -536,13 +567,14 @@ mod tests {
             usage(&mirror, "ovzdusie").get("residentPipelines"),
             Some(&1)
         );
-        assert!(beyond(&mirror, "ovzdusie", "residentPipelines").is_empty());
+        assert!(beyond(&mirror, "ovzdusie", "residentPipelines", &bounds()).is_empty());
         check(
             &mirror,
             "ovzdusie",
             "Pipeline",
             "daily-c",
             &daily("daily-c").spec,
+            &bounds(),
         )
         .expect("a daily feed is not resident");
         // The cap still holds for what waits for pushes.
@@ -552,6 +584,7 @@ mod tests {
             "Pipeline",
             "beta",
             &resident("beta").spec,
+            &bounds(),
         )
         .expect_err("a second resident pipeline");
         assert!(
@@ -575,26 +608,57 @@ mod tests {
                 "rateLimits": { "requestsPerMinute": rate }
             })
         };
-        check(&mirror, "ovzdusie", "Endpoint", "air", &endpoint(120)).expect("at the ceiling");
-        let refused = check(&mirror, "ovzdusie", "Endpoint", "air", &endpoint(600))
-            .expect_err("above the ceiling");
+        check(
+            &mirror,
+            "ovzdusie",
+            "Endpoint",
+            "air",
+            &endpoint(120),
+            &bounds(),
+        )
+        .expect("at the ceiling");
+        let refused = check(
+            &mirror,
+            "ovzdusie",
+            "Endpoint",
+            "air",
+            &endpoint(600),
+            &bounds(),
+        )
+        .expect_err("above the ceiling");
         assert!(
             refused.to_string().contains("requestsPerMinute 600 of 120"),
             "{refused}"
         );
     }
 
+    /// LIM-01, T-6716: a dimension neither the project nor the organization limits takes the
+    /// deployment's ceiling, never "no limit"; the ceiling also holds a looser organization
+    /// value that was approved before the operator lowered it.
     #[test]
-    fn a_dimension_nobody_limited_never_refuses_anything() {
+    fn a_dimension_nobody_limited_takes_the_deployments_ceiling() {
         let mirror = mirror_with(vec![resident("one"), resident("two"), resident("three")]);
-        check(
-            &mirror,
-            "ovzdusie",
-            "Pipeline",
-            "four",
-            &resident("four").spec,
-        )
-        .expect("no quota, no limit");
+        let four = resident("four").spec;
+        check(&mirror, "ovzdusie", "Pipeline", "four", &four, &bounds())
+            .expect("4 is under the built-in 100");
+        let open = effective(&Mirror::new(), "ovzdusie", &bounds());
+        assert_eq!(open.apps, Some(100), "today's value, not unlimited");
+        assert_eq!(open.entities_per_space, Some(1_000_000));
+
+        let lowered: OrganizationBounds = serde_json::from_value(json!({
+            "spec.projects.quota.residentPipelines": { "max": 3 }
+        }))
+        .expect("bounds");
+        let refused = check(&mirror, "ovzdusie", "Pipeline", "four", &four, &lowered)
+            .expect_err("over the deployment's 3");
+        assert!(
+            refused.to_string().contains("residentPipelines 4 of 3"),
+            "{refused}"
+        );
+        assert_eq!(
+            beyond(&mirror, "ovzdusie", "residentPipelines", &lowered).len(),
+            0
+        );
     }
 
     #[test]
@@ -620,6 +684,7 @@ mod tests {
             "Endpoint",
             "traffic",
             &json!({ "contextSpaceRef": "ovzdusie", "audience": "organization" }),
+            &bounds(),
         )
         .expect("an internal endpoint");
 
@@ -629,6 +694,7 @@ mod tests {
             "Endpoint",
             "traffic",
             &json!({ "contextSpaceRef": "ovzdusie", "audience": "public" }),
+            &bounds(),
         )
         .expect_err("the second public endpoint");
         assert!(
@@ -660,7 +726,14 @@ mod tests {
             if let Some(cron) = schedule {
                 spec = json!({ "class": "scheduled", "schedule": cron, "source": { "dataSourceRef": { "kind": "DataSource", "name": "mqtt" } } });
             }
-            check(&mirror, "ovzdusie", "Pipeline", "counters", &spec)
+            check(
+                &mirror,
+                "ovzdusie",
+                "Pipeline",
+                "counters",
+                &spec,
+                &bounds(),
+            )
         };
         assert!(poll("15m", None).is_ok(), "on the floor passes");
         assert!(poll("1h", None).is_ok());
@@ -687,7 +760,8 @@ mod tests {
                 "doprava",
                 "Pipeline",
                 "x",
-                &json!({ "class": "auto", "period": "1m", "source": { "dataSourceRef": { "kind": "DataSource", "name": "mqtt" } } })
+                &json!({ "class": "auto", "period": "1m", "source": { "dataSourceRef": { "kind": "DataSource", "name": "mqtt" } } }),
+                &bounds()
             )
             .is_err(),
             "a project without its own floor keeps the organization's"

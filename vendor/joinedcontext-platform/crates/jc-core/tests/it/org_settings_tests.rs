@@ -170,18 +170,27 @@ fn the_operators_bound_replaces_the_built_in_one_and_the_refusal_names_it() {
     );
 
     let quota = "spec.projects.quota.contextSpaces";
-    let spaces =
-        org("  projects:\n    quota: { contextSpaces: 40 }\n").expect("no built-in ceiling");
-    spaces
+    let spaces = org("  projects:\n    quota: { contextSpaces: 400 }\n").expect("parses");
+    let err = spaces
         .spec
         .check_limits(&OrganizationBounds::default())
-        .expect("no ceiling");
+        .expect_err("over the deployment's built-in ceiling of 100 (LIM-01)");
+    assert!(
+        err.to_string()
+            .contains("400 is outside the bound, 1 … 100"),
+        "{err}"
+    );
+    spaces
+        .spec
+        .check_limits(&bounds(&[(quota, None, Some(500))]))
+        .expect("the operator raised the ceiling");
     assert!(spaces
         .spec
         .check_limits(&bounds(&[(quota, None, Some(20))]))
         .is_err());
 }
 
+#[test]
 #[test]
 fn an_operator_file_names_catalogued_entries_and_never_loosens_a_security_one() {
     bounds(&[("spec.limits.edge.requestsPerMinute.web", None, Some(6000))])
