@@ -270,11 +270,27 @@ def layout2(seed: dict[str, str], org: str, repo: str):
     return repos
 
 
+NUMERIC = {"float", "double", "decimal", "integer"}
+
+
+def synth_attr(model: dict, cls: str) -> str | None:
+    """The first numeric slot `cls` declares (a range, or an any_of naming one), the attribute its
+    synthetic history goes on: a view shows only the attributes its model declares, so history on
+    an undeclared one read as none (smoke run 42953787088, anon.temporal.last-24h)."""
+    slots = model.get("slots") or {}
+    for name in ((model.get("classes") or {}).get(cls) or {}).get("slots") or []:
+        slot = slots.get(name) or {}
+        if slot.get("range") in NUMERIC or any((a or {}).get("range") in NUMERIC for a in slot.get("any_of") or []):
+            return name
+    return None
+
+
 def synth_entities(repos, now: dt.datetime):
-    """A few entities per space, of the classes its data models name, with history inside the
-    window and one instance outside it (which the importer must refuse). The tenant is the space's
-    urnSegment (space.yaml), as the import names it: `<repo>-<space dir>` named no space for a dir
-    already carrying the project (zilina/zilina-verejne), and the bundle's slice dropped it."""
+    """A few entities per space, of the entity classes (`is_a: Entity`) its data models name, with
+    history on a numeric attribute the class declares, inside the window and one instance outside
+    it (which the importer must refuse); a class with no numeric slot holds its current state
+    only. The tenant is the space's urnSegment (space.yaml), as the import names it: `<repo>-<space
+    dir>` named no space for a dir already carrying the project (zilina/zilina-verejne)."""
     import yaml
 
     entities, temporal = [], []
@@ -285,19 +301,19 @@ def synth_entities(repos, now: dt.datetime):
                 continue
             space = yaml.safe_load(files.get(f"spaces/{m.group(1)}/space.yaml") or "{}") or {}
             tenant = (space.get("spec") or {}).get("urnSegment") or f"{name}-{m.group(1)}"
-            classes = re.findall(r"(?m)^  ([A-Z][A-Za-z0-9]+):\s*$", text.split("\nclasses:", 1)[-1])
+            model = yaml.safe_load(text) or {}
+            classes = [c for c, v in (model.get("classes") or {}).items() if (v or {}).get("is_a") == "Entity"]
             for cls in classes[:3]:
+                attr = synth_attr(model, cls)
                 for n in range(2):
                     eid = f"urn:ngsi-ld:{cls}:rehearsal-{n}"
-                    entities.append({"tenant": tenant, "entity": {
-                        "id": eid, "type": cls,
-                        "name": {"type": "Property", "value": f"{cls} {n}"},
-                        "observationCount": {"type": "Property", "value": 3,
-                                              "observedAt": iso(now - dt.timedelta(hours=1))},
-                    }})
-                    for hours in (1, 23, 25):
+                    entity = {"id": eid, "type": cls, "name": {"type": "Property", "value": f"{cls} {n}"}}
+                    if attr:
+                        entity[attr] = {"type": "Property", "value": 3, "observedAt": iso(now - dt.timedelta(hours=1))}
+                    entities.append({"tenant": tenant, "entity": entity})
+                    for hours in (1, 23, 25) if attr else ():
                         temporal.append({"tenant": tenant, "id": eid, "type": cls,
-                                         "attr": "observationCount", "instance": {
+                                         "attr": attr, "instance": {
                                              "type": "Property", "value": hours,
                                              "observedAt": iso(now - dt.timedelta(hours=hours))}})
     return entities, temporal

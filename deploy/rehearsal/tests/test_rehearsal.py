@@ -1605,13 +1605,34 @@ def test_the_kit_runs_under_the_old_deployments_org_domain():
 
 
 def test_synthetic_entities_land_in_the_tenant_the_space_pins():
-    model = "classes:\n  GtfsStop:\n    is_a: Thing\n"
+    model = "classes:\n  GtfsStop:\n    is_a: Entity\n"
     repos = {("joinedcontext", "zilina"): {
         "spaces/zilina-verejne/space.yaml": "kind: ContextSpace\nspec:\n  urnSegment: zilina-verejne\n",
         "spaces/zilina-verejne/datamodels/zilina-verejne.linkml.yaml": model,
         "spaces/catalog/space.yaml": "kind: ContextSpace\nspec:\n  urnSegment: zilina-catalog\n",
-        "spaces/catalog/datamodels/catalog.linkml.yaml": "classes:\n  Dataset:\n    is_a: Thing\n"}}
+        "spaces/catalog/datamodels/catalog.linkml.yaml": "classes:\n  Dataset:\n    is_a: Entity\n"}}
     entities, temporal = rh.synth_entities(repos, rh.utcnow())
     assert {(e["tenant"], e["entity"]["type"]) for e in entities} == {
         ("zilina-verejne", "GtfsStop"), ("zilina-catalog", "Dataset")}
-    assert {t["tenant"] for t in temporal} == {"zilina-verejne", "zilina-catalog"}
+    assert temporal == []  # neither class declares a numeric slot
+
+
+def test_synthetic_history_goes_on_a_numeric_slot_of_an_entity_class_only():
+    model = """slots:
+  name: {slot_uri: jc:name}
+  currentValue: {any_of: [{range: float}, {range: string}]}
+  start: {range: integer}
+classes:
+  KeyPerformanceIndicator:
+    is_a: Entity
+    slots: [name, currentValue]
+  CalculationPeriod:
+    slots: [start]
+  Any:
+    class_uri: linkml:Any
+"""
+    repos = {("joinedcontext", "helsinki"): {"spaces/helsinki-kpi/datamodels/kpi.linkml.yaml": model}}
+    entities, temporal = rh.synth_entities(repos, rh.utcnow())
+    assert {e["entity"]["type"] for e in entities} == {"KeyPerformanceIndicator"}
+    assert all(set(e["entity"]) == {"id", "type", "name", "currentValue"} for e in entities)
+    assert {t["attr"] for t in temporal} == {"currentValue"} and len(temporal) == 6
