@@ -253,8 +253,8 @@ describe("all endpoints", () => {
     renderAll({ rows: 25 });
     const table = await screen.findByRole("table", { name: en.allEndpoints.title });
     await waitFor(() => expect(table.querySelectorAll("tbody tr")).toHaveLength(ENDPOINTS_PER_PAGE));
-    expect(screen.getByText("Showing 10 of 25")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Show 10 more" }));
+    expect(screen.getByText("25 rows")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: `${en.entityGrid.page} 2` }));
     expect(within(table).getByText("Air quality 19")).toBeInTheDocument();
 
     // A search goes back to the first page of what it matches: air-2 and air-20..air-24.

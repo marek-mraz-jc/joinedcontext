@@ -91,6 +91,31 @@ describe("DataGrid", () => {
     expect(bodyNames()).toHaveLength(3);
   });
 
+  it("sorts from the header button ascending, descending, then in the list's order, and names the column alone", () => {
+    grid({ tableProps: { "data-records": "" } });
+    expect(screen.getByRole("table").hasAttribute("data-records")).toBe(true);
+    const header = screen.getByRole("columnheader", { name: "Grants" });
+    const sort = within(header).getByRole("button", { name: "Grants" });
+    fireEvent.click(sort);
+    expect(header.getAttribute("aria-sort")).toBe("ascending");
+    expect(bodyNames()).toEqual(["buses", "Readers", "Admins"]);
+    // The arrow is for the eye; aria-sort says it to a screen reader, so the button keeps its name.
+    fireEvent.click(within(header).getByRole("button", { name: "Grants" }));
+    expect(bodyNames()).toEqual(["Admins", "Readers", "buses"]);
+    fireEvent.click(within(header).getByRole("button", { name: "Grants" }));
+    expect(header.getAttribute("aria-sort")).toBeNull();
+    expect(bodyNames()).toEqual(["Readers", "Admins", "buses"]);
+  });
+
+  it("names a stored value in the person's words in the value filter", async () => {
+    const worded = columns.map((col) => (col.key === "space" ? { ...col, valueLabel: (value: string) => `Space ${value.toUpperCase()}` } : col));
+    grid({ columns: worded });
+    fireEvent.click(screen.getByRole("button", { name: "Column options: Space" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Filter…" }));
+    const dialog = screen.getByRole("dialog", { name: "Filter: Space" });
+    expect(await within(dialog).findByRole("button", { name: "Only: Space TRANSPORT" })).toBeTruthy();
+  });
+
   it("filters by ticked values from the header menu", async () => {
     grid();
     fireEvent.click(screen.getByRole("button", { name: "Column options: Space" }));

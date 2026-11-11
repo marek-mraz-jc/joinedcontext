@@ -19,6 +19,8 @@ export interface DataColumn<T> {
   text: (row: T) => string;
   /** What the cell draws; the text when absent. */
   cell?: (row: T) => ReactNode;
+  /** How a stored value reads to a person in the value filter (`project-list` -> "Selected projects"). */
+  valueLabel?: (value: string) => string;
   /** What the header draws instead of the label, such as a glossary term: its sort is then in the column menu. */
   heading?: ReactNode;
   kind?: DataKind;

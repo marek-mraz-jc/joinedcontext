@@ -147,7 +147,10 @@ describe("a kind with no page of its own", () => {
     expect(screen.getByText(i18n.t("grid.footer", { shown: 50, count: 120 }))).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: i18n.t("grid.showMore", { count: 50 }) }));
-    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(101));
+    // The next server page lands on the grid's next page (T-6750: the SDK DataGrid's pager).
+    await waitFor(() => expect(screen.getByText("100 rows")).toBeInTheDocument());
+    expect(within(table).getAllByRole("row")).toHaveLength(51);
+    expect(screen.getByRole("button", { name: `${en.entityGrid.page} 2` })).toHaveAttribute("aria-current", "page");
     expect(asked.at(-1)?.searchParams.get("cursor")).toBe("50");
 
     await userEvent.type(screen.getByRole("searchbox"), "bp-11");
@@ -159,7 +162,9 @@ describe("a kind with no page of its own", () => {
   it("every_row_action_is_reached_and_opened_from_the_keyboard", async () => {
     await renderRoute({ path: PATH, answer: answering([blueprint("alerting")]) });
     const table = await screen.findByRole("table");
-    const menu = await within(table).findByRole("button", { expanded: false });
+    // The row's own menu, not a column's header menu.
+    await within(table).findByText("alerting");
+    const menu = within(within(table).getAllByRole("row")[1]!).getByRole("button", { expanded: false });
 
     menu.focus();
     expect(menu).toHaveFocus();

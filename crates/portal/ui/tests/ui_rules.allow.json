@@ -136,7 +136,7 @@
     }
   },
   "data_table_is_the_grid": {
-    "_max": 77,
+    "_max": 76,
     "src/components/ActivityFeed.tsx": {
       "lines": 2,
       "group": "grid-ops"
@@ -168,10 +168,6 @@
     "src/components/forms/widgets/OutputSourceEditors.tsx": {
       "lines": 2,
       "group": "grid-editors"
-    },
-    "src/components/grid/ManifestGrid.tsx": {
-      "lines": 1,
-      "group": "grid-manifest"
     },
     "src/components/panels/TablePanel.tsx": {
       "lines": 1,

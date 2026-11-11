@@ -72,6 +72,8 @@ export interface DataGridProps<T> {
   total?: number;
   /** Hides the search box, for a list the page searches itself. */
   noSearch?: boolean;
+  /** Attributes of the table, such as the host's marker for a table whose rows open a record. */
+  tableProps?: React.TableHTMLAttributes<HTMLTableElement> & Record<`data-${string}`, string>;
   /** Attributes of a row, such as the host's click that opens the row's record. */
   rowProps?: (row: T) => React.HTMLAttributes<HTMLTableRowElement>;
 }
@@ -115,6 +117,7 @@ export function DataGrid<T>({
   onQueryChange,
   total: remoteTotal,
   noSearch,
+  tableProps,
   rowProps,
 }: DataGridProps<T>): React.JSX.Element {
   const labels = useMemo(() => ({ ...DEFAULT_DATA_LABELS, ...partial }), [partial]);
@@ -178,6 +181,8 @@ export function DataGrid<T>({
       <th
         key={col.key}
         scope="col"
+        // The column's name alone: its menu button would read "Column menu: ..." into every cell's header.
+        aria-label={label}
         className={`jc-grid-th${dragOver === col.key ? " jc-grid-th--drop" : ""}${complete(query.filters[col.key]) ? " jc-grid-th--filtered" : ""}`}
         style={col.align === "right" ? { textAlign: "right" } : undefined}
         aria-sort={sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : undefined}
@@ -201,10 +206,11 @@ export function DataGrid<T>({
           <button
             type="button"
             className="jc-grid-sort-btn"
-            onClick={() => setQuery({ ...query, sort: { key: col.key, dir: sorted === "asc" ? "desc" : "asc" }, offset: 0 })}
+            // Ascending, descending, then the list's own order again.
+            onClick={() => setQuery({ ...query, sort: sorted === "desc" ? null : { key: col.key, dir: sorted === "asc" ? "desc" : "asc" }, offset: 0 })}
           >
             {label}
-            {sorted ? (sorted === "asc" ? " ↑" : " ↓") : ""}
+            {sorted ? <span aria-hidden="true">{sorted === "asc" ? " ↑" : " ↓"}</span> : null}
           </button>
         ) : (
           <span>{label}</span>
@@ -243,7 +249,7 @@ export function DataGrid<T>({
                 labels={labels}
                 filter={query.filters[col.key]}
                 load={() => Promise.resolve(valuesOf(rows, col))}
-                formatValue={(value) => (value === "" ? labels.groupNoValue : value)}
+                formatValue={(value) => (value === "" ? labels.groupNoValue : (col.valueLabel?.(value) ?? value))}
                 onApply={(next) => {
                   const { [col.key]: _old, ...rest } = query.filters;
                   setQuery({ ...query, filters: next ? { ...rest, [col.key]: next } : rest, offset: 0 });
@@ -332,7 +338,7 @@ export function DataGrid<T>({
         />
       </div>
       <div className="jc-grid-scroll" role="group" aria-label={caption} tabIndex={0}>
-        <table className="jc-grid-table" aria-busy={loading ? true : undefined}>
+        <table {...tableProps} className="jc-grid-table" aria-busy={loading ? true : undefined}>
           <caption className="jc-grid-sr-only">{caption}</caption>
           <thead className="jc-grid-thead">
             <tr>{visible.map(header)}</tr>

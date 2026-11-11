@@ -122,7 +122,7 @@ describe("Organization → Brokers", () => {
     const table = screen.getByRole("table", { name: en.organization.brokers.caption });
     await narrowsAndOrders(table, {
       search: { label: "Search Context brokers", text: "parking", kept: ["edge"] },
-      sort: { column: en.organization.brokers.entities, ascending: ["canary", "edge", "main"] },
+      sort: { column: en.organization.brokers.entities, ascending: ["edge", "main", "canary"], descending: ["main", "edge", "canary"] },
       filter: { value: /^Up/, kept: ["main", "edge"] },
     });
   });

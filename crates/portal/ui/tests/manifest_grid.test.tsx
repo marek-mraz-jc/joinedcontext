@@ -4,7 +4,7 @@
  * narrow and order the rows, and a cell edit is a checked proposal the server decides: its 403
  * shows on the field it was for.
  */
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import "../src/i18n";
@@ -12,7 +12,7 @@ import en from "../src/locales/en.json";
 import type { Manifest } from "../src/api/manifest";
 import { ApiError } from "../src/api/client";
 import { fieldWidget, hintText, specValue, withSpecValue } from "../src/components/grid/fieldWidget";
-import { GridFooter, GridRow, GridToolbar, ManifestGrid, example, valueCounts, visibleRows } from "../src/components/grid/ManifestGrid";
+import { GridFooter, GridToolbar, ManifestGrid, example, valueCounts, visibleRows } from "../src/components/grid/ManifestGrid";
 import type { GridColumn } from "../src/components/grid/ManifestGrid";
 import endpointSchema from "./fixtures/kinds/Endpoint.json";
 import subscriptionSchema from "./fixtures/kinds/Subscription.json";
@@ -206,7 +206,7 @@ describe("ManifestGrid", () => {
     expect(screen.queryByRole("table")).toBeNull();
   });
 
-  it("hides a column until ticked under Columns, and the panel still shows it", async () => {
+  it("hides a column until shown under Arrange columns, and the panel still shows it", async () => {
     const { answer } = harness(() => json({}));
     renderPage(grid(), { answer });
     const table = await screen.findByRole("table", { name: "Endpoints" });
@@ -214,6 +214,43 @@ describe("ManifestGrid", () => {
     await openDetails("air-quality");
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("MCP tools")).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // T-6750: the table is the SDK DataGrid, so Arrange columns shows the hidden column and the
+    // row's name cannot be hidden.
+    fireEvent.click(screen.getByRole("button", { name: en.entityGrid.arrangeColumns }));
+    const panel = screen.getByRole("dialog", { name: en.entityGrid.arrangeColumns });
+    expect(within(panel).getByRole("checkbox", { name: `${en.entityGrid.showColumn}: Name` })).toBeDisabled();
+    fireEvent.click(within(panel).getByRole("checkbox", { name: `${en.entityGrid.showColumn}: MCP tools` }));
+    expect(within(table).getByRole("columnheader", { name: /MCP tools/ })).toBeInTheDocument();
+  });
+
+  it("sorts from the column menu and pages the rows on the shared grid", async () => {
+    const many = Array.from({ length: 60 }, (_, at) => ({ ...endpoint, metadata: { name: `ep-${String(at).padStart(2, "0")}`, namespace: "helsinki" } }) as Manifest);
+    const { answer } = harness(() => json({}));
+    renderPage(
+      <ManifestGrid<Manifest>
+        caption="Endpoints"
+        storageKey="test-many"
+        searchLabel="Search endpoints"
+        rows={many}
+        rowKey={(row) => row.metadata.name}
+        query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
+        name={{ id: "name", label: "Name", text: (row) => row.metadata.name }}
+        columns={[]}
+        empty={<p>Nothing yet</p>}
+      />,
+      { answer },
+    );
+    const table = await screen.findByRole("table", { name: "Endpoints" });
+    // 50 rows a page (the grid's default step), then the pager.
+    expect(within(table).getAllByRole("row")).toHaveLength(51);
+    expect(screen.getByText("60 rows")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: Name` }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortDesc }));
+    expect(within(within(table).getAllByRole("row")[1]).getByRole("rowheader")).toHaveTextContent("ep-59");
+    fireEvent.click(screen.getByRole("button", { name: `${en.entityGrid.page} 2` }));
+    expect(within(table).getAllByRole("row")).toHaveLength(11);
   });
 
   it("filters by a chip and clears it", async () => {
@@ -307,14 +344,19 @@ describe("the grid's parts", () => {
     ),
   };
 
-  it("GridRow keeps a cell of several parts as one value beside its label", async () => {
-    const onDetails = vi.fn();
+  it("keeps a cell of several parts as one value beside its label", async () => {
     renderPage(
-      <table>
-        <tbody>
-          <GridRow row={endpoint} name={name} columns={[types]} onDetails={onDetails} />
-        </tbody>
-      </table>,
+      <ManifestGrid<Manifest>
+        caption="Endpoints"
+        storageKey="test-parts"
+        searchLabel="Search endpoints"
+        rows={[endpoint]}
+        rowKey={(row) => row.metadata.name}
+        query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
+        name={name}
+        columns={[types]}
+        empty={<p>Nothing yet</p>}
+      />,
       { answer: () => undefined },
     );
     await screen.findByText("AirQualityObserved");
@@ -346,11 +388,6 @@ describe("the grid's parts", () => {
         ownSearch={{ value: "", set, label: "Search endpoints" }}
         filters={{ types: ["A, B"] }}
         setFilters={setFilters}
-        shown={["types"]}
-        choose={vi.fn()}
-        sort={null}
-        setSort={vi.fn()}
-        sortId="sort"
       />,
       { answer: () => undefined },
     );
