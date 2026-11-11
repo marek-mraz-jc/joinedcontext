@@ -174,6 +174,10 @@ window.jcFeedLink = (function () {
   }
   function update() {
     var picked = facets.map(function (f) { return [f.attr, chosen(f)]; });
+    // A value outside the list leaves no link to copy: the copy row and links hide until it reads.
+    var invalid = facets.some(function (f) { return f.input.getAttribute("aria-invalid") === "true"; });
+    box.toggleAttribute("data-jc-refused", invalid);
+    if (invalid) { clearTimeout(timer); asked++; list.textContent = ""; status.textContent = ""; return; }
     var l = jcFeedLink.links(base, output, jcFeedLink.filter(picked, from.value, to.value));
     if (copyLabel && copyLabel.hasAttribute("data-label")) { clearTimeout(copyLabel.jcTimer); copyLabel.textContent = copyLabel.getAttribute("data-label"); }
     out.value = l.ics;

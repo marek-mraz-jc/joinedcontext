@@ -1263,11 +1263,11 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add(
         "subscribe_query_hint",
-        "Type or pick from the list, for example {example}; leave it empty for all.",
-        "Napíšte alebo vyberte zo zoznamu, napríklad {example}; prázdne pre všetky.",
-        "Napište nebo vyberte ze seznamu, například {example}; prázdné pro všechny.",
-        "Tippen oder aus der Liste wählen, zum Beispiel {example}; leer für alle.",
-        "Írjon vagy válasszon a listából, például {example}; üresen az összes.",
+        "For example {example}; empty for all.",
+        "Napríklad {example}; prázdne pre všetky.",
+        "Například {example}; prázdné pro všechny.",
+        "Zum Beispiel {example}; leer für alle.",
+        "Például {example}; üresen az összes.",
     );
     add(
         "subscribe_google",

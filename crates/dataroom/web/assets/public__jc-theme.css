@@ -813,6 +813,7 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
 .jc-subscribe-fields .form-control { min-height: 2.75rem; }
 .jc-subscribe-fields input[aria-invalid="true"] { border-color: #b42318; box-shadow: 0 0 0 1px #b42318; }
 .jc-subscribe-note.jc-subscribe-error { color: #b42318; font-weight: 600; }
+#jc-subscribe-no-facets { margin-top: .5rem; padding: .5rem .75rem; border-left: 3px solid var(--jc-primary); background: rgba(var(--jc-primary-rgb), .06); color: var(--jc-ink); }
 .jc-subscribe-query .jc-subscribe-copy { margin-top: .5rem; }
 .jc-subscribe-note { margin: .25rem 0 0; font-size: .875rem; color: var(--jc-muted); }
 .jc-subscribe-preview { margin-top: .75rem; }
