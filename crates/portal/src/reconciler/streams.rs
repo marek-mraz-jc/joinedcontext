@@ -1015,6 +1015,13 @@ impl StreamDeployer {
                 .cloned()
                 .collect()
         };
+        // While removals are held (T-6708) a stream whose manifest is gone keeps running and
+        // stays deployed, so the run that releases the hold retires it; a disabled or refused
+        // one still stops.
+        let (to_retire, kept): (Vec<_>, Vec<_>) = to_retire.into_iter().partition(|(ns, name)| {
+            !mirror.removals_held() || mirror.get(ns, "Pipeline", name).is_some()
+        });
+        current_live.extend(kept);
         let mut by_project: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         for (ns, name) in to_retire {

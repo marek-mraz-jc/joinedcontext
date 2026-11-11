@@ -149,6 +149,14 @@ pub struct Syncer {
     /// not stage renders as the last assembly left it (CC-86). One per syncer; its syncs run
     /// one at a time behind `running`.
     assembly: PathBuf,
+    /// The objects the last applied run held, compared with each run's to hold a mass deletion
+    /// (T-6708, P-6); on the state directory when [`Self::with_state_dir`] names one.
+    applied: super::removal_hold::Applied,
+    /// The share of a project's objects one revision may remove unconfirmed (P-6).
+    removal_hold_percent: u8,
+    /// The mirror from before the removals were held: the subscription and registration syncs
+    /// delete what it declared and the released run does not (T-6708).
+    held_from: std::sync::Mutex<Option<Arc<Mirror>>>,
     /// `None` when the Portal has no database: a single replica needs no election.
     leadership: Option<Arc<Leadership>>,
     /// `None` when this Portal applies no app objects: outside a cluster, or without the
@@ -219,6 +227,7 @@ pub struct Syncer {
     warned_members: super::warned::Warned,
     warned_unstaged: super::warned::Warned,
     warned_unbuilt: super::warned::Warned,
+    warned_held: super::warned::Warned,
     /// Whether the source has loaded once in this process ([`source_loaded`]): until then the
     /// realm syncs remove nothing (Mirror::hold_removals).
     source_loaded: std::sync::atomic::AtomicBool,
@@ -306,6 +315,9 @@ impl Syncer {
                 let n = SYNCERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 std::env::temp_dir().join(format!("jc-portal-assembly-{}-{n}", std::process::id()))
             },
+            applied: super::removal_hold::Applied::new(None),
+            removal_hold_percent: super::removal_hold::DEFAULT_PERCENT,
+            held_from: Default::default(),
             leadership: None,
             converger: None,
             streams: None,
@@ -341,6 +353,7 @@ impl Syncer {
             warned_members: Default::default(),
             warned_unstaged: Default::default(),
             warned_unbuilt: Default::default(),
+            warned_held: Default::default(),
             source_loaded: Default::default(),
             roles_held: Default::default(),
             activity: None,
@@ -429,6 +442,28 @@ impl Syncer {
         namespace: impl Into<String>,
     ) -> Self {
         self.credentials = Some((kube, namespace.into()));
+        self
+    }
+
+    /// Keeps the assembly and the applied objects under `dir`, the replica's persistent volume,
+    /// so after a restart a project whose repository does not stage still renders as it last
+    /// did and a mass deletion is still compared with what was applied (T-6708, P-5, P-6).
+    /// `None` keeps both in this process alone.
+    pub fn with_state_dir(mut self, dir: Option<PathBuf>) -> Self {
+        if let Some(dir) = dir {
+            if let Err(error) = std::fs::create_dir_all(&dir) {
+                tracing::warn!(dir = %dir.display(), %error, "the reconciler's state directory was not created; its first sync says why it cannot assemble");
+            }
+            self.assembly = dir.join("assembly");
+            self.applied = super::removal_hold::Applied::new(Some(dir.join("applied.json")));
+        }
+        self
+    }
+
+    /// The share of a project's objects one revision may remove before the removals are held
+    /// for a confirm (P-6).
+    pub fn with_removal_hold_percent(mut self, percent: u8) -> Self {
+        self.removal_hold_percent = percent;
         self
     }
 
@@ -1058,6 +1093,7 @@ impl Syncer {
                     _staged: vec![org],
                     projects: BTreeMap::new(),
                     unstaged: Vec::new(),
+                    unloaded: Vec::new(),
                     listings,
                 },
                 repository,
@@ -1119,6 +1155,12 @@ impl Syncer {
         }
         staged.push(org);
         staged.extend(into);
+        let unloaded = assembly
+            .entries
+            .iter()
+            .filter(|entry| !entry.rendered && unstaged.contains(&entry.slug))
+            .map(|entry| entry.slug.clone())
+            .collect();
         Ok((
             Render {
                 layout: 2,
@@ -1126,6 +1168,7 @@ impl Syncer {
                 _staged: staged,
                 projects,
                 unstaged,
+                unloaded,
                 listings,
             },
             assembly.repository,
@@ -1160,7 +1203,10 @@ impl Syncer {
             .source_loaded
             .fetch_or(past_seed, std::sync::atomic::Ordering::Relaxed)
             || past_seed;
-        fresh_mirror.hold_removals(!loaded_once);
+        let shrinks = self
+            .held_shrinks(&fresh_mirror, &scratch, &revision)
+            .await;
+        fresh_mirror.hold_removals(!loaded_once || !scratch.unloaded.is_empty() || !shrinks.is_empty());
         steps.mark("mirror");
 
         // 5a. What the sync webhook route authorises a run against (MF-44, T-2297). Before the
@@ -1235,13 +1281,15 @@ impl Syncer {
         // 5b'. What every `Subscription` manifest declares, written into the space it names
         //      (T-0931, CC-72). The broker holds the effect, so the status of each manifest is
         //      where a person sees whether the declaration arrived.
-        self.converge_subscriptions(&fresh_mirror, &scratch).await;
+        let previous = self.removals_against(&fresh_mirror);
+        self.converge_subscriptions(&fresh_mirror, &scratch, &previous)
+            .await;
         steps.mark("subscriptions");
 
         // 5b''. Every `ContextSourceRegistration`, written into the tenant of the hub space it
         //       names (T-0345, PF-48). A hub is a configuration, so the manifest's status is
         //       where a person sees whether the member was actually registered.
-        self.converge_registrations(&fresh_mirror).await;
+        self.converge_registrations(&fresh_mirror, &previous).await;
         steps.mark("registrations");
 
         // 5b'''. Every Endpoint's and Context Space's view and every space's rule document,
@@ -1649,6 +1697,101 @@ impl Syncer {
         }
     }
 
+    /// The projects whose removals this run holds for a confirm (P-6): those that lost more than
+    /// the deployment's share of their applied objects, or a ContextSpace, and whose repository
+    /// head is no confirmed destructive Change. Each is marked `HeldRemoval`; the rest become
+    /// the applied set.
+    async fn held_shrinks(
+        &self,
+        fresh_mirror: &Mirror,
+        scratch: &Render,
+        revision: &str,
+    ) -> Vec<super::removal_hold::Shrink> {
+        use super::removal_hold::{mark, next_applied, objects, shrinks};
+        let current = objects(fresh_mirror);
+        let applied = self.applied.get();
+        let percent = self.removal_hold_percent;
+        let mut held = Vec::new();
+        for shrink in applied
+            .as_ref()
+            .map(|applied| shrinks(applied, &current, percent, &scratch.unloaded))
+            .unwrap_or_default()
+        {
+            if self
+                .removal_confirmed(scratch, revision, &shrink.project)
+                .await
+            {
+                tracing::info!(project = %shrink.project, removed = shrink.removed, total = shrink.total, spaces = ?shrink.spaces, "a confirmed destructive Change removes the project's objects");
+            } else {
+                held.push(shrink);
+            }
+        }
+        let change = self.warned_held.cycle(held.iter().map(|shrink| {
+            format!("{}: {}", shrink.project, shrink.message(percent))
+        }));
+        for warning in &change.new {
+            tracing::warn!(%warning, standing = change.standing, "removals held for a confirm (HeldRemoval)");
+        }
+        cleared("projects whose removals were held", &change);
+        mark(fresh_mirror, &held, percent);
+        let keep: Vec<String> = held
+            .iter()
+            .map(|shrink| shrink.project.clone())
+            .chain(scratch.unloaded.iter().cloned())
+            .collect();
+        self.applied
+            .set(next_applied(applied.as_ref(), &current, &keep));
+        held
+    }
+
+    /// Whether the organization's revision or `project`'s repository head is the merge of a
+    /// confirmed destructive Change. A head that cannot be read confirms nothing.
+    async fn removal_confirmed(&self, scratch: &Render, revision: &str, project: &str) -> bool {
+        use super::removal_hold::confirmed;
+        if matches!(self.shako.commit_message(revision).await, Ok(message) if confirmed(&message))
+        {
+            return true;
+        }
+        let Some((client, git_ref)) = scratch.projects.get(project) else {
+            return false;
+        };
+        let branch = match git_ref.as_str() {
+            "" => match client.default_branch().await {
+                Ok(branch) => branch,
+                Err(_) => return false,
+            },
+            branch => branch.to_owned(),
+        };
+        match client.branch_head(&branch).await {
+            Ok(sha) => matches!(client.commit_message(&sha).await, Ok(message) if confirmed(&message)),
+            Err(_) => false,
+        }
+    }
+
+    /// The mirror the subscription and registration syncs delete against: this run's own while
+    /// removals are held, so nothing goes, and the one from before the hold once it is released.
+    fn removals_against(&self, fresh_mirror: &Mirror) -> Arc<Mirror> {
+        let mut held_from = self
+            .held_from
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if fresh_mirror.removals_held() {
+            held_from.get_or_insert_with(|| {
+                let before = Mirror::new();
+                before.replace_all(&self.mirror);
+                Arc::new(before)
+            });
+            let now = Mirror::new();
+            now.replace_all(fresh_mirror);
+            return Arc::new(now);
+        }
+        held_from.take().unwrap_or_else(|| {
+            let before = Mirror::new();
+            before.replace_all(&self.mirror);
+            Arc::new(before)
+        })
+    }
+
     async fn forget_gone_pipelines(&self, fresh_mirror: &Mirror) {
         if let Some((rejected, log)) = self.pipeline_outcomes.as_ref() {
             let loaded = pipelines_by_project(fresh_mirror);
@@ -1661,12 +1804,12 @@ impl Syncer {
         }
     }
 
-    async fn converge_subscriptions(&self, fresh_mirror: &Mirror, scratch: &Render) {
+    async fn converge_subscriptions(&self, fresh_mirror: &Mirror, scratch: &Render, previous: &Mirror) {
         if let Some(subscriptions) = self.subscriptions.as_ref() {
             let outcomes = subscriptions
                 .converge(
                     fresh_mirror,
-                    &self.mirror,
+                    previous,
                     scratch.path(),
                     self.pipeline_secrets.as_ref(),
                 )
@@ -1675,16 +1818,22 @@ impl Syncer {
         }
     }
 
-    async fn converge_registrations(&self, fresh_mirror: &Mirror) {
+    async fn converge_registrations(&self, fresh_mirror: &Mirror, previous: &Mirror) {
         if let Some(registrations) = self.registrations.as_ref() {
-            let outcomes = registrations.converge(fresh_mirror, &self.mirror).await;
+            let outcomes = registrations.converge(fresh_mirror, previous).await;
             super::registrations::record(fresh_mirror, outcomes);
         }
     }
 
     async fn converge_views(&self, fresh_mirror: &Mirror, repository: &Repository) {
         if let Some(views) = self.views.as_ref() {
-            super::views::record(fresh_mirror, views.converge(repository).await);
+            // A held run writes what the repository asks and removes nothing (T-6708).
+            let outcomes = if fresh_mirror.removals_held() {
+                views.converge_merged(repository).await
+            } else {
+                views.converge(repository).await
+            };
+            super::views::record(fresh_mirror, outcomes);
         }
     }
 
@@ -2119,7 +2268,7 @@ impl Syncer {
                     }
                 }
             }
-            if scratch.unstaged.is_empty() {
+            if scratch.unstaged.is_empty() && !self.mirror.removals_held() {
                 hosts.retire(&published).await;
                 hosts.retire_hostnames(&hostnames).await;
             } else {
@@ -2197,7 +2346,10 @@ impl Syncer {
         if let Some(capture) = self.mqtt_capture.as_ref() {
             let brokers = super::mqtt_brokers::declared(&self.mirror);
             capture
-                .converge(&brokers, scratch.unstaged.is_empty())
+                .converge(
+                    &brokers,
+                    scratch.unstaged.is_empty() && !self.mirror.removals_held(),
+                )
                 .await;
         }
         if self.mqtt_brokers.is_some() || self.mqtt_clients.is_some() {
@@ -2212,7 +2364,7 @@ impl Syncer {
             // A custom hostname whose certificate is not issued yet (T-5874).
             let mut waiting = BTreeMap::new();
             if let Some(releases) = self.mqtt_brokers.as_ref() {
-                let retire = scratch.unstaged.is_empty();
+                let retire = scratch.unstaged.is_empty() && !self.mirror.removals_held();
                 for (broker, error) in releases.converge(&brokers, retire).await {
                     if broker == "*" {
                         tracing::warn!(%error, "the MQTT brokers did not converge");
@@ -3044,6 +3196,9 @@ struct Render {
     /// holds of them is the last render, or nothing on a replica's first run, so a step that
     /// removes what the mirror lacks waits for a run where this is empty.
     unstaged: Vec<String>,
+    /// The unstaged projects with no last render either: the mirror holds nothing of them, so
+    /// every removal waits for a run where this is empty (T-6708, P-5).
+    unloaded: Vec<String>,
     /// What each repository listed when this render staged it: the organization under `""`,
     /// each staged project under its slug.
     listings: BTreeMap<String, Listing>,
@@ -5663,6 +5818,7 @@ output_error{stream="kpi"} 6
             _staged: Vec::new(),
             projects: BTreeMap::new(),
             unstaged: Vec::new(),
+            unloaded: Vec::new(),
             listings: BTreeMap::new(),
         };
         let syncer = bare_syncer();
@@ -5723,7 +5879,7 @@ output_error{stream="kpi"} 6
         let transitions = super::super::transitions::Transitions::of(&syncer.mirror);
         syncer.archive_deleted_projects(&fresh).await;
         syncer.forget_gone_pipelines(&fresh).await;
-        syncer.converge_registrations(&fresh).await;
+        syncer.converge_registrations(&fresh, &fresh).await;
         syncer.converge_groups(&fresh, &BTreeMap::new()).await;
         syncer.converge_app_clients(&fresh).await;
         syncer
