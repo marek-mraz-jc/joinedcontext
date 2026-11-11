@@ -16,7 +16,12 @@ const ZILINA = {
   apiVersion: API,
   kind: "Organization",
   metadata: { name: "zilina", namespace: "org" },
-  spec: { domain: "zilina.sk", locales: ["sk", "en"], defaultLocale: "sk", appearance: { shortName: "Žilina", colours: { primary: "#0b5394" } } },
+  spec: { domain: "zilina.sk", locales: ["sk", "en"], defaultLocale: "sk", appearance: {
+      shortName: "Žilina",
+      colours: { primary: "#0b5394" },
+      logoSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" rx="2" fill="#0b5394"/></svg>',
+    },
+  },
 };
 const PERMISSIONS = {
   project: "org",
@@ -73,11 +78,12 @@ async function stubApi(page: Page, proposed: unknown[]): Promise<void> {
   });
 }
 
-async function shot(page: Page, name: string): Promise<void> {
+async function shot(page: Page, name: string, fullPage = true): Promise<void> {
   const dir = process.env.JC_EVIDENCE_DIR;
   if (!dir) return;
   mkdirSync(dir, { recursive: true });
-  await page.screenshot({ path: join(dir, `${name}.png`), fullPage: true });
+  // A border still fading from the refused red would read as an error in the picture.
+  await page.screenshot({ path: join(dir, `${name}.png`), fullPage, animations: "disabled" });
 }
 
 test.describe("an Organization's appearance", () => {
@@ -88,10 +94,14 @@ test.describe("an Organization's appearance", () => {
       await stubApi(page, proposed);
       await page.goto("/organization/settings?lang=en");
       await expect(page.getByText("zilina.sk").first()).toBeVisible();
+      // Settings reads the appearance member by member, the unset ones as the installation's.
+      await expect(page.getByText("#0b5394", { exact: true })).toBeVisible();
+      await expect(page.getByText("installation default", { exact: true })).toHaveCount(6);
+      await expect(page.getByRole("img", { name: "Logo (SVG)" })).toBeVisible();
       // The Portal on Žilina's host is drawn in Žilina's colour.
       const brand = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--portal-color-primary"));
       expect(brand.trim().toLowerCase()).toContain("#0b5394");
-      await shot(page, `appearance-portal-${width}`);
+      await shot(page, `appearance-portal-${width}`, false);
 
       await page.getByRole("button", { name: "Edit zilina.sk" }).click();
       await page.getByRole("group", { name: "How it looks" }).locator("summary").click();
@@ -101,10 +111,28 @@ test.describe("an Organization's appearance", () => {
       await page.getByRole("button", { name: "Propose change" }).click();
       await expect(page.getByText("A colour as # and six hexadecimal digits, such as #0b5394.").first()).toBeVisible();
       expect(proposed).toHaveLength(0);
-      await shot(page, `appearance-refused-${width}`);
+      // The footer names what is left to fix and leads to it, where it said every required field was filled.
+      await expect(page.getByRole("alert").filter({ hasText: "Fields to fix: 1. First: Primary, in How it looks." })).toBeVisible();
+      await expect(page.getByTestId("required-count")).toHaveCount(0);
+      const showFirst = page.getByRole("button", { name: "Show the first field to fix" });
+      await showFirst.scrollIntoViewIfNeeded();
+      await shot(page, `appearance-refused-summary-${width}`, false);
+      await showFirst.click();
+      await expect(primary).toBeFocused();
+      await expect(primary).toHaveAttribute("aria-invalid", "true");
+      await shot(page, `appearance-refused-${width}`, false);
 
       await primary.fill("#0b5394");
-      await shot(page, `appearance-form-${width}`);
+      await expect(primary).not.toHaveAttribute("aria-invalid", "true");
+      await expect(page.getByTestId("required-count")).toBeVisible();
+      // The pasted logo is previewed as an image, never as markup in the page.
+      await page.getByRole("textbox", { name: /^Logo/ }).fill('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="#0b5394"/></svg>');
+      const preview = page.getByRole("img", { name: /^Preview of Logo/ });
+      await expect(preview).toBeVisible();
+      expect(await preview.getAttribute("src")).toMatch(/^data:image\/svg\+xml/);
+      await primary.scrollIntoViewIfNeeded();
+      await primary.evaluate((element) => element.scrollIntoView({ block: "center" }));
+      await shot(page, `appearance-form-${width}`, false);
       await page.getByRole("button", { name: "Propose change" }).click();
       await expect.poll(() => proposed.length).toBe(1);
       const spec = (proposed[0] as { spec: { appearance?: { instanceName?: string; colours?: { primary?: string } } } }).spec;
@@ -112,7 +140,8 @@ test.describe("an Organization's appearance", () => {
       expect(spec.appearance?.colours?.primary).toBe("#0b5394");
       // The form never sends the empty models list it renders for an Organization naming none.
       expect((spec as { policies?: { agents?: { models?: unknown } } }).policies?.agents?.models).toBeUndefined();
-      await shot(page, `appearance-proposed-${width}`);
+      await page.getByText("chg-0b5394aa").first().evaluate((element) => element.scrollIntoView({ block: "center" }));
+      await shot(page, `appearance-proposed-${width}`, false);
     });
   }
 });

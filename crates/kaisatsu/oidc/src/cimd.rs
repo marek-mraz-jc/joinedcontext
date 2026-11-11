@@ -7,7 +7,7 @@
 //! - Redirect URIs must be exact (no `*`) and on `cimd_allowed_redirect_domains`
 //!   (`claude.ai`, `vscode.dev`, `code.visualstudio.com`, `localhost`, `127.0.0.1`).
 //! - Resulting client is public, `full_scope_allowed: false`, and gets only `default_optional_client_scopes`
-//!   (`connector`, `offline_access`).
+//!   (`connector`, `offline_access`) plus `cimd_optional_client_scopes` (`mcp:portal`, `offline_access`).
 
 use crate::guard::OutboundGuard;
 use kaisatsu_core::{ClientRepresentation, KaisatsuError, RealmConfig, Result};
@@ -168,13 +168,25 @@ pub fn validate_and_build_cimd_client(
             "profile".into(),
             "acr".into(),
         ],
-        optional_client_scopes: realm.default_optional_client_scopes.clone(),
+        optional_client_scopes: cimd_optional_scopes(realm),
         attributes,
         protocol_mappers: Vec::new(),
         secret: None,
         managed_by: Some("cimd".into()),
         is_cimd: true,
     })
+}
+
+/// The realm's default optional scopes, then the CIMD-only ones, each once. A stored CIMD client
+/// takes them from the realm at every resolve, so a change to either list reaches it at once.
+pub fn cimd_optional_scopes(realm: &RealmConfig) -> Vec<String> {
+    let mut scopes = realm.default_optional_client_scopes.clone();
+    for s in &realm.cimd_optional_client_scopes {
+        if !scopes.contains(s) {
+            scopes.push(s.clone());
+        }
+    }
+    scopes
 }
 
 /// Fetches and validates a CIMD document through `guard`.
@@ -220,8 +232,18 @@ mod tests {
         assert!(!client.full_scope_allowed);
         assert_eq!(
             client.optional_client_scopes,
-            vec!["connector", "offline_access"]
+            vec!["connector", "offline_access", "mcp:portal"]
         );
+
+        // A client_id host off `cimd_allowed_client_domains` is refused
+        let off_list = "https://evil.example/oauth/mcp-oauth-client-metadata";
+        let doc: CimdMetadata = serde_json::from_value(serde_json::json!({
+            "client_id": off_list,
+            "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"]
+        }))
+        .expect("parse cimd");
+        let err = validate_and_build_cimd_client(&realm, off_list, doc).expect_err("off list");
+        assert!(err.to_string().contains("not permitted"), "{err}");
 
         // Unknown field outside RFC 7591 + CIMD draft is refused
         let unknown_field = serde_json::json!({

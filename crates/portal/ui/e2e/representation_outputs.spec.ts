@@ -43,7 +43,7 @@ const ENDPOINT = {
   },
 };
 const REFUSAL =
-  "Endpoint bbsk/podujatia, space podujatia: spec.representations.feed: feed output `novinky`: `filter.q` is no NGSI-LD query: unexpected end of input";
+  "Endpoint bbsk/podujatia, space podujatia: spec.representations.feed: feed output `novinky`: `query` parameter `q` is no NGSI-LD query: unexpected end of input";
 
 const TABLE_REFUSAL =
   "Endpoint bbsk/podujatia, space podujatia: widget output `mapa`, Event: `table.filter` is not an NGSI-LD q of at most 1000 characters, such as `startDate>=today` or `category==\"concert\"` (EP-125)";
@@ -115,7 +115,7 @@ for (const width of [1440, 400]) {
       await section.getByRole("button", { name: "Add a news feed" }).click();
       const feed = section.locator("section").filter({ hasText: "News feeds" });
       await feed.getByLabel("Title in Slovak").fill("Novinky z kultúry");
-      await feed.getByLabel("Only entities matching (optional)").fill('eventCategory=="kultura"');
+      await feed.getByLabel("Preset query (optional)").fill('q=eventCategory=="kultura"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]');
       await expect(feed.getByLabel("Title", { exact: true }).locator("option")).toContainText(["name", "startDate"]);
       await feed.getByLabel("Title", { exact: true }).selectOption("name");
       await shot(page, "2-filled", section);
@@ -130,9 +130,10 @@ for (const width of [1440, 400]) {
       await feed.getByRole("button", { name: /^Remove output/ }).last().click();
 
       await page.getByRole("button", { name: "Check", exact: true }).click();
-      const refusal = page.getByRole("alert").filter({ hasText: "filter.q" });
+      const refusal = page.getByRole("alert").filter({ hasText: "`query` parameter `q`" });
       await expect(refusal).toBeVisible();
       expect(posted.at(-1)).toContain('"feed":[{"name":"novinky"');
+      expect(posted.at(-1)).toContain('"query":"q=eventCategory==\\"kultura\\"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]"');
       expect(posted.at(-1)).toContain('"ical":[{"name":"kalendar"');
       await shot(page, "4-refused", refusal.locator("xpath=.."));
     });

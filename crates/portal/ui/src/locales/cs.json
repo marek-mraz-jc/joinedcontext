@@ -194,6 +194,12 @@
     "dns1123": "Jen malá písmena, číslice a spojovníky, začíná písmenem nebo číslicí, nejvýše 63 znaků.",
     "entityType": "Typ NGSI-LD: velké písmeno, pak písmena a číslice, nejvýše 64 znaků.",
     "requiredCount": "{filled} z {total} povinných polí vyplněno",
+    "svgPreview": "Náhled: {label}",
+    "svgPreviewNote": "Vykresleno jako obrázek: nic v SVG se nespustí.",
+    "fixCount": "Pole k opravě: {count}.",
+    "fixFirst": "Ukázat první pole k opravě",
+    "fixFirstInGroup": "První: {field}, ve skupině {group}.",
+    "fixFirstNamed": "První: {field}.",
     "askAboutField": "Zeptat se na toto pole",
     "askAboutFieldQuestion": "Ve formuláři {kind}: co patří do „{label}“ a co se stane, když to zůstane prázdné?",
     "fillFromSentence": "Vyplnit z jedné věty",
@@ -2130,8 +2136,8 @@
         "bad": "Použijte 1 až 40 malých písmen, číslic nebo -, na začátku písmeno nebo číslici."
       },
       "filterField": {
-        "label": "Jen entity, které vyhovují (nepovinné)",
-        "hint": "Dotaz NGSI-LD, který tento výstup zúží a nikdy nerozšíří, například eventCategory==\"sport\"."
+        "label": "Dotaz předvolby (nepovinné)",
+        "hint": "q, scopeQ a geodotaz jako jeden řetězec dotazu; předvolbu zúží, nikdy nerozšíří. Například q=category==\"sport\"&georel=near;maxDistance==5000&geometry=Point&coordinates=[14.42,50.08]. V hodnotě pište & jako %26 a % jako %25."
       },
       "sourceAdd": {
         "label": "Přidat další typ",
@@ -7649,8 +7655,7 @@
       "creationAdmin": "Projekty otevírá jen administrátor organizace.",
       "cooldown": "{days} dní",
       "noQuota": "Pro nový projekt není stanoven žádný limit.",
-      "appearanceInstallation": "Název, barvy a logo instalace",
-      "appearanceLogo": "s vlastním logem"
+      "fromInstallation": "výchozí z instalace"
     },
     "members": {
       "title": "Členové",
