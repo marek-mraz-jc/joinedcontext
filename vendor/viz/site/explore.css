@@ -23,6 +23,16 @@ main { padding: 12px 16px 16px; }
   .page-head .actions { flex: 1 1 100%; flex-wrap: nowrap; gap: 8px; }
   .page-head .actions .page-button { flex: 1 1 0; min-width: 0; }
 }
+/* The owner (2026-11-11): Data API and Embed sit in the view's action group (explorer/explorer.js
+   draws them as its secondary sm buttons) beside Full window and the CSV. While the group shows
+   them, the page's own pair is gone; refused or not ready, the pair stays as the way to the API. */
+main:has(#data-api-tool) .page-head .actions { display: none; }
+.inline main:has(#data-api-tool) .page-head { display: none; }
+/* The page's own pair and Map settings in the view's secondary sm look; dialog buttons keep theirs.
+   44 px only for a finger, as the view's buttons. */
+.page-head .actions .page-button, #map-panel-open { min-height: 0; height: var(--portal-control, 2rem); padding: 0 10px; font-size: var(--portal-text-caption, 0.8125rem); font-weight: 500; border-radius: var(--portal-radius-md, 6px); border-color: var(--portal-border, var(--line)); background: var(--portal-surface, var(--bg)); color: var(--portal-fg, var(--fg)); box-shadow: var(--portal-shadow-1, none); }
+.page-head .actions .page-button:hover, #map-panel-open:hover { background: var(--portal-surface-subtle, var(--soft)); }
+@media (pointer: coarse) { .page-head .actions .page-button, #map-panel-open { height: auto; min-height: 44px; } }
 .inline #title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 #title { font-size: 1.15rem; margin: 0; }
 #map-title { font-size: 1rem; margin: 16px 0 6px; }

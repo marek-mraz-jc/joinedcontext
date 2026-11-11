@@ -6,8 +6,8 @@
  * endpoint may publish at all (EP-46, EP-61). An attribute the steward hides is left out of the
  * columns here too, so the effect of a tick in the form is visible as data and not only as a name.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { JSX } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import type { JSX, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { andQ, EntityCompare, enumsOf, originTransport, parseGridConfig, parseQ, relationsOf, sourceFor } from "@joinedcontext/sdk";
@@ -15,7 +15,7 @@ import type { ColumnFilter, FilterColumn, FilterGroup, FilterKind, GridColumn, G
 import { fetchJson, publishedTypes } from "../../pages/endpoints/SchemaProjectionPanel";
 import { classSlots, parseModel } from "../../pages/models/linkml";
 import type { ClassView, LinkmlModel, LinkmlSlot } from "../../pages/models/linkml";
-import { Button, EmptyState, PageFailed, safeHref } from "../ui";
+import { Button, buttonClass, EmptyState, PageFailed, safeHref } from "../ui";
 import { ApiError } from "../../api/client";
 import { useSignIn } from "../../auth/AuthProvider";
 import { DataToolbar, sortKeysOf, useDataToolbarState } from "./DataToolbar";
@@ -330,10 +330,13 @@ function csvHref(origin: string | undefined, slug: string, type: string, q: stri
 }
 
 /**
- * The view's actions: compare with the space (only when the endpoint serves one, T-1435), the full
- * window, and the CSV download of the current query.
+ * The view's actions: a host's own (the catalogue's Data API and Embed), compare with the space
+ * (only when the endpoint serves one, T-1435), the full window, and the CSV download of the current
+ * query. One group in one look (secondary sm): beside the tools on a wide screen, its own row of
+ * equal halves on a phone.
  */
 function DataActions({
+  actions,
   space,
   comparing,
   onCompare,
@@ -342,6 +345,7 @@ function DataActions({
   csv,
   csvRefused,
 }: {
+  actions?: ReactNode;
   space?: string;
   comparing: boolean;
   onCompare: () => void;
@@ -352,9 +356,11 @@ function DataActions({
   csvRefused?: string;
 }): JSX.Element {
   const { t } = useTranslation();
+  const csvHint = useId();
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center" data-testid="data-actions">
+        {actions}
         {space ? (
           <Button size="sm" variant="secondary" onClick={onCompare}>
             {comparing ? t("endpoints.data.compareClose") : t("endpoints.data.compare")}
@@ -368,12 +374,18 @@ function DataActions({
             {t("endpoints.data.csv")}
           </Button>
         ) : csv ? (
-          <a className="focus-ring touch-target rounded-sm text-caption text-primary-soft-fg underline hover:no-underline" href={safeHref(csv)} download>
-            {t("endpoints.data.csv")}
-          </a>
+          <>
+            <a className={buttonClass("secondary", "sm")} href={safeHref(csv)} download title={t("endpoints.data.csvHelp")} aria-describedby={csvHint}>
+              {t("endpoints.data.csv")}
+            </a>
+            {/* The hint as the link's description and tooltip, beside it so it stays out of the
+                name and adds no line under the row. */}
+            <span id={csvHint} className="sr-only">
+              {t("endpoints.data.csvHelp")}
+            </span>
+          </>
         ) : null}
       </div>
-      {csv && !csvRefused ? <p className="text-caption text-fg-muted">{t("endpoints.data.csvHelp")}</p> : null}
       {/* Seen as well as heard: the button already carries the reason as its description. */}
       {csvRefused ? (
         <p className="text-caption text-fg-muted" aria-hidden="true">
@@ -410,6 +422,8 @@ export interface EndpointDataViewProps {
    * (default), or the catalogue's `https://api.{domain}`, read without a cookie or token (T-5082).
    */
   origin?: string;
+  /** A host's own actions, shown first in the view's action group in the same look (the catalogue's Data API and Embed). */
+  actions?: ReactNode;
 }
 
 /** Where the grid opens: the kept or preset view, else the link's query and order; the order as text. */
@@ -766,6 +780,7 @@ export function EndpointDataView({
   onOpenRow,
   csv = false,
   origin,
+  actions,
 }: EndpointDataViewProps): JSX.Element {
   const { t, i18n } = useTranslation();
   const [chosen, setChosen] = useState<string>(link?.type ?? "");
@@ -880,8 +895,9 @@ export function EndpointDataView({
             out is marked on the space's side (T-1435). The CSV is the whole answer of this query as
             one table, built by the endpoint under its own limits and read with the person's own
             session, as the rows are (EP-08, EP-44). */}
-        <div className="ml-auto">
+        <div className="basis-full max-sm:order-last sm:ml-auto sm:basis-auto">
           <DataActions
+            actions={actions}
             space={space}
             comparing={comparing}
             onCompare={() => setComparing((each) => !each)}

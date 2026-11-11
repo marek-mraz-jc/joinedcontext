@@ -987,8 +987,9 @@
       if (moved) drawMap();
     }
 
-    // The query's API addresses: the same dialog, developers' content open.
-    $("data-api").addEventListener("click", function () {
+    // The query's API addresses: the same dialog, developers' content open. `from` is the button
+    // pressed, the page's own or the one in the view's action group, where focus returns.
+    function dataApi(from) {
       $("detail-type").hidden = true;
       $("detail-title").textContent = t.dataApi;
       $("detail-list").textContent = "";
@@ -998,8 +999,9 @@
       $("detail-dev").open = true;
       linkList(null);
       placeMap(null);
-      dialog($("data-api"));
-    });
+      dialog(from);
+    }
+    $("data-api").addEventListener("click", function () { dataApi($("data-api")); });
     // The source line of an embed: the dataset's title, publisher and licence from the catalogue,
     // shown only when that dataset names this very Endpoint; else the catalogue itself.
     function attribute() {
@@ -1055,11 +1057,13 @@
       }
     }
 
-    $("embed-open").addEventListener("click", function () {
+    function embedOpen(from) {
       $("embed-lang").value = lang;
       embedCode();
+      $("embed").returnFocus = from;
       $("embed").showModal();
-    });
+    }
+    $("embed-open").addEventListener("click", function () { embedOpen($("embed-open")); });
     $("embed-form").addEventListener("input", embedCode);
     $("embed-form").addEventListener("change", embedCode);
     $("embed-form").addEventListener("submit", function (e) { e.preventDefault(); });
@@ -1071,7 +1075,7 @@
       else select();
     });
     $("embed-close").addEventListener("click", function () { $("embed").close(); });
-    $("embed").addEventListener("close", function () { $("embed-open").focus(); });
+    $("embed").addEventListener("close", function () { var f = $("embed").returnFocus; if (f && f.focus) f.focus(); });
     if (embedded) attribute();
     $("detail-close").addEventListener("click", function () { $("detail").close(); });
     // A click on the backdrop (the dialog box itself, outside its content) closes it, as Esc does.
@@ -1117,7 +1121,11 @@
           if (card && card.type === state.type) drawMap();
         },
         onOpenRow: openRow,
-        csv: true
+        csv: true,
+        // Data API and Embed join the view's action group in its look (explore.css hides the page's
+        // own pair while the group shows them; refused or not ready, the page's pair stays).
+        actions: [{ id: "data-api-tool", label: t.dataApi, onClick: dataApi }].concat(
+          $("embed-open").hidden ? [] : [{ id: "embed-tool", label: t.embed, onClick: embedOpen, hasPopup: true }])
       });
     } catch (e) {
       // The text tells the administrators the cause is in the console: put it there.
