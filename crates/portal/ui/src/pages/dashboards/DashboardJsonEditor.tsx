@@ -91,6 +91,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
   const [inserted, setInserted] = useState(false);
   const phone = useIsPhone();
   const [view, setView] = useState<"edit" | "preview">("edit");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [pickedEndpoint, setPickedEndpoint] = useState("");
   const [pickedEntity, setPickedEntity] = useState("");
   const endpoint = pickedEndpoint || endpointNames[0] || "";
@@ -164,6 +165,69 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
     parsed.manifest ? (parsed.manifest as unknown as ResourceProposal) : null;
   const loading = dashboards.isPending || endpoints.isPending;
 
+  const picker = (
+    <>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Field id={ids.type} label={t("dashboards.json.widgetType")} help={t("dashboards.json.widgetTypeHint")}>
+          <Select id={ids.type} value={pickedType} onChange={(e) => setPickedType(e.target.value as PickedWidget)}>
+            {PICKED_WIDGETS.map((type) => (
+              <option key={type} value={type}>
+                {t(`dashboards.json.type.${type}`)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field id={ids.endpoint} label={t("dashboards.json.endpoint")} help={t("dashboards.json.endpointHint")}>
+          <Select id={ids.endpoint} value={endpoint} onChange={(e) => setPickedEndpoint(e.target.value)}>
+            {endpointNames.map((e) => (
+              <option key={e} value={e}>
+                {e}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field
+          id={ids.entity}
+          label={t("dashboards.json.entityType")}
+          help={entityTypes.length > 0 ? t("dashboards.json.entityTypeHint") : t("dashboards.json.noTypes")}
+        >
+          <Select id={ids.entity} value={entityType} disabled={entityTypes.length === 0} aria-describedby={`${ids.entity}__help`} onChange={(e) => setPickedEntity(e.target.value)}>
+            {entityTypes.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="secondary"
+          disabled={!canInsert}
+          aria-describedby={ids.why}
+          onClick={() => {
+            const next = insertWidget(text, widgetSnippet(pickedType, endpoint, entityType));
+            if (next) {
+              setTyped(next);
+              setInserted(true);
+              // On a phone the picker folds again, so the new widget shows in the editor.
+              setPickerOpen(false);
+            }
+          }}
+        >
+          {t("dashboards.json.insert")}
+        </Button>
+        {!parsed.manifest ? (
+          <span id={ids.why} className="text-caption text-fg-muted">{t("dashboards.json.fixFirst")}</span>
+        ) : inserted ? (
+          <span role="status" className="text-caption text-fg-muted">
+            {t("dashboards.json.inserted")}
+          </span>
+        ) : null}
+      </div>
+    </>
+  );
+
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
@@ -224,64 +288,19 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
             <h2 id={`${ids.editor}-title`} className={phone ? "sr-only" : "text-title"}>
               {t("dashboards.json.source")}
             </h2>
-            <Card padding="sm" className="flex flex-col gap-3">
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Field id={ids.type} label={t("dashboards.json.widgetType")} help={t("dashboards.json.widgetTypeHint")}>
-                  <Select id={ids.type} value={pickedType} onChange={(e) => setPickedType(e.target.value as PickedWidget)}>
-                    {PICKED_WIDGETS.map((type) => (
-                      <option key={type} value={type}>
-                        {t(`dashboards.json.type.${type}`)}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field id={ids.endpoint} label={t("dashboards.json.endpoint")} help={t("dashboards.json.endpointHint")}>
-                  <Select id={ids.endpoint} value={endpoint} onChange={(e) => setPickedEndpoint(e.target.value)}>
-                    {endpointNames.map((e) => (
-                      <option key={e} value={e}>
-                        {e}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field
-                  id={ids.entity}
-                  label={t("dashboards.json.entityType")}
-                  help={entityTypes.length > 0 ? t("dashboards.json.entityTypeHint") : t("dashboards.json.noTypes")}
-                >
-                  <Select id={ids.entity} value={entityType} disabled={entityTypes.length === 0} aria-describedby={`${ids.entity}__help`} onChange={(e) => setPickedEntity(e.target.value)}>
-                    {entityTypes.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  disabled={!canInsert}
-                  aria-describedby={ids.why}
-                  onClick={() => {
-                    const next = insertWidget(text, widgetSnippet(pickedType, endpoint, entityType));
-                    if (next) {
-                      setTyped(next);
-                      setInserted(true);
-                    }
-                  }}
-                >
-                  {t("dashboards.json.insert")}
-                </Button>
-                {!parsed.manifest ? (
-                  <span id={ids.why} className="text-caption text-fg-muted">{t("dashboards.json.fixFirst")}</span>
-                ) : inserted ? (
-                  <span role="status" className="text-caption text-fg-muted">
-                    {t("dashboards.json.inserted")}
-                  </span>
-                ) : null}
-              </div>
-            </Card>
+            {phone ? (
+              // On a phone the picker folds away, so the editor starts near the top.
+              <Card padding="sm">
+                <details open={pickerOpen} onToggle={(event) => setPickerOpen(event.currentTarget.open)}>
+                  <summary className="cursor-pointer text-body font-medium">{t("dashboards.json.picker")}</summary>
+                  <div className="mt-3 flex flex-col gap-3">{picker}</div>
+                </details>
+              </Card>
+            ) : (
+              <Card padding="sm" className="flex flex-col gap-3">
+                {picker}
+              </Card>
+            )}
             <p id={`${ids.editor}-hint`} className="text-caption text-fg-muted">
               {t("dashboards.json.editorHint")}
             </p>
@@ -303,7 +322,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
             {/* Right under the editor, where the person is typing. */}
             {parsed.error ? (
               <InlineError>
-                <strong>{t("dashboards.json.invalid")}</strong>{" "}
+                <strong>{t("dashboards.json.invalidLead")}</strong>{" "}
                 <span>
                   {parsed.error.line
                     ? t("dashboards.json.invalidAt", { line: parsed.error.line, column: parsed.error.column })

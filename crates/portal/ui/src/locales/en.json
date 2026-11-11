@@ -3764,7 +3764,6 @@
       "noTypes": "This endpoint's space has no data model with types yet: add one to its space first.",
       "insert": "Insert widget",
       "fixFirst": "Fix the JSON first: a widget is added to a valid manifest only.",
-      "invalid": "The JSON does not read",
       "invalidAt": "Line {line}, column {column}: the JSON stops reading here. Look for a missing or extra comma, quote or bracket.",
       "refused": "The server refused it",
       "checked": "The server accepts this dashboard",
@@ -3794,7 +3793,9 @@
       "toManifest": "Show the manifest",
       "step1": "Create an endpoint over a context space, for example bikes over mobility.",
       "step2": "Come back here and insert a chart or a grid of one of its entity types.",
-      "step3": "Check the manifest with the server, then propose it as a change."
+      "step3": "Check the manifest with the server, then propose it as a change.",
+      "picker": "Insert a widget",
+      "invalidLead": "The JSON does not read."
     }
   },
   "access": {

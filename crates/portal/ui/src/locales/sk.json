@@ -3764,7 +3764,6 @@
       "noTypes": "Priestor tohto endpointu ešte nemá dátový model s typmi: najprv ho pridajte.",
       "insert": "Vložiť widget",
       "fixFirst": "Najprv opravte JSON: widget sa pridá len do platného manifestu.",
-      "invalid": "JSON sa nedá prečítať",
       "invalidAt": "Riadok {line}, stĺpec {column}: tu sa JSON prestáva dať čítať. Hľadajte chýbajúcu alebo nadbytočnú čiarku, úvodzovku či zátvorku.",
       "refused": "Server ho odmietol",
       "checked": "Server tento dashboard prijíma",
@@ -3794,7 +3793,9 @@
       "toManifest": "Ukázať manifest",
       "step1": "Vytvorte endpoint nad kontextovým priestorom, napríklad bikes nad mobility.",
       "step2": "Vráťte sa sem a vložte graf alebo tabuľku jedného z jeho typov entít.",
-      "step3": "Skontrolujte manifest so serverom a navrhnite ho ako zmenu."
+      "step3": "Skontrolujte manifest so serverom a navrhnite ho ako zmenu.",
+      "picker": "Vložiť widget",
+      "invalidLead": "JSON sa nedá prečítať."
     }
   },
   "access": {

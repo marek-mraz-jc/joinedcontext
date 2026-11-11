@@ -3764,7 +3764,6 @@
       "noTypes": "Der Raum dieses Endpoints hat noch kein Datenmodell mit Typen: fügen Sie zuerst eines hinzu.",
       "insert": "Widget einfügen",
       "fixFirst": "Korrigieren Sie zuerst das JSON: ein Widget wird nur einem gültigen Manifest hinzugefügt.",
-      "invalid": "Das JSON lässt sich nicht lesen",
       "invalidAt": "Zeile {line}, Spalte {column}: hier lässt sich das JSON nicht mehr lesen. Suchen Sie ein fehlendes oder überzähliges Komma, Anführungszeichen oder eine Klammer.",
       "refused": "Der Server hat es abgelehnt",
       "checked": "Der Server nimmt dieses Dashboard an",
@@ -3794,7 +3793,9 @@
       "toManifest": "Manifest zeigen",
       "step1": "Legen Sie einen Endpoint über einem Kontextraum an, zum Beispiel bikes über mobility.",
       "step2": "Kommen Sie hierher zurück und fügen Sie ein Diagramm oder ein Raster eines seiner Entitätstypen ein.",
-      "step3": "Prüfen Sie das Manifest mit dem Server und schlagen Sie es dann als Änderung vor."
+      "step3": "Prüfen Sie das Manifest mit dem Server und schlagen Sie es dann als Änderung vor.",
+      "picker": "Widget einfügen",
+      "invalidLead": "Das JSON lässt sich nicht lesen."
     }
   },
   "access": {

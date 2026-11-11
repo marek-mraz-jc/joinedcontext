@@ -221,7 +221,7 @@ describe("the dashboard JSON editor page", () => {
     expect(JSON.stringify(diagnostics.at(-1))).toContain("\"enum\":[\"bikes\"]");
 
     fireEvent.change(editor, { target: { value: "{\n  \"kind\": \"Dashboard\",\n  oops\n}" } });
-    expect(await screen.findByText("The JSON does not read")).toBeInTheDocument();
+    expect(await screen.findByText("The JSON does not read.")).toBeInTheDocument();
     expect(screen.getByText(/^Line 3, column/)).toBeInTheDocument();
     expect(screen.getByText(/comes back as soon as the JSON reads/)).toBeInTheDocument();
 
