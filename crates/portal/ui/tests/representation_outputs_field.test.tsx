@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
 import type { FieldProps } from "@rjsf/utils";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { queryKeys } from "../src/api/client";
@@ -19,7 +19,7 @@ import { RepresentationOutputsField } from "../src/components/forms/widgets/Repr
 import { FormProjectContext } from "../src/components/forms/widgets/ModelWidgets";
 import { AttributeSelect } from "../src/components/forms/widgets/OutputSourceEditors";
 import { baseOf, unmappedRequired, withPreset, withSource } from "../src/components/forms/widgets/icalMapping";
-import { duplicateNames, freeName, isSlug, outputsOf, unmappedRoles, withMapRole, withPopup, written } from "../src/components/forms/widgets/representationOutputs";
+import { duplicateNames, entriesOf, freeName, isSlug, limitFits, outputsOf, timeZones, unmappedRoles, withMapRole, withPopup, written } from "../src/components/forms/widgets/representationOutputs";
 import { keptRepresentations, representationSpec } from "../src/routes/EndpointsPage";
 import { pageFindings } from "./pageChecks";
 
@@ -171,6 +171,115 @@ describe("the calendar and feed outputs", () => {
     expect(screen.getByDisplayValue("events")).toBeInTheDocument();
     expect(screen.getByText('join: ["address.streetAddress"], separator: ,')).toBeInTheDocument();
     expect(screen.getAllByText(c.requiredBadge)).toHaveLength(4);
+  });
+});
+
+describe("a preset's order, limit, zone and preview (T-6762)", () => {
+  const kultura = { name: "kultura", query: "q=eventCategory==%22koncert%22", sources: [{ type: "Event", preset: "sdm-event" }] };
+  const SAVED = { ...ON, name: "events-bb", slug: "w3nq7pzk2mtv6hx5brj4gcdsfa" };
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("writes the order a calendar keeps its events in, and drops it back to the default", async () => {
+    const seen = show({ ical: [kultura] });
+    const sort = screen.getByLabelText(o.sortField.label);
+    expect(screen.getByText(o.sortField.hint)).toBeInTheDocument();
+    expect(optionsOf(sort)).toEqual(["", "start", "-start"]);
+    await userEvent.selectOptions(sort, "-start");
+    expect(seen.at(-1)).toEqual({ ical: [{ ...kultura, sort: "-start" }] });
+    await userEvent.selectOptions(sort, "");
+    expect(seen.at(-1)).toEqual({ ical: [kultura] });
+  });
+
+  it("writes a calendar's limit as a number and names one out of 1 to 10000", async () => {
+    const seen = show({ ical: [kultura] });
+    const limit = screen.getByLabelText(o.limitField.label);
+    expect(screen.getByText(o.limitField.hint)).toBeInTheDocument();
+    await userEvent.type(limit, "100");
+    expect(seen.at(-1)).toEqual({ ical: [{ ...kultura, limit: 100 }] });
+    await userEvent.clear(limit);
+    expect(seen.at(-1)).toEqual({ ical: [kultura] });
+    await userEvent.type(limit, "20000");
+    expect(screen.getByText(o.limitField.bad.replace("{max}", "10000"))).toBeInTheDocument();
+  });
+
+  it("offers IANA zones with the default first and keeps the default unwritten", async () => {
+    const seen = show({ ical: [kultura] });
+    const zone = screen.getByLabelText(o.timezoneField.label);
+    expect(screen.getByText(o.timezoneField.hint)).toBeInTheDocument();
+    expect(optionsOf(zone).slice(0, 2)).toEqual(["Europe/Bratislava", "UTC"]);
+    await userEvent.selectOptions(zone, "UTC");
+    expect(seen.at(-1)).toEqual({ ical: [{ ...kultura, timezone: "UTC" }] });
+    await userEvent.selectOptions(zone, "Europe/Bratislava");
+    expect(seen.at(-1)).toEqual({ ical: [kultura] });
+  });
+
+  it("gives a feed a page size of 1 to 200 and no calendar order or zone", async () => {
+    const news = { name: "news", sources: [{ type: "Article", preset: "article" }] };
+    const seen = show({ feed: [news] });
+    expect(screen.queryByLabelText(o.sortField.label)).toBeNull();
+    expect(screen.queryByLabelText(o.timezoneField.label)).toBeNull();
+    expect(screen.getByText(o.limitField.feedHint)).toBeInTheDocument();
+    const limit = screen.getByLabelText(o.limitField.label);
+    await userEvent.type(limit, "50");
+    expect(seen.at(-1)).toEqual({ feed: [{ ...news, limit: 50 }] });
+    await userEvent.type(limit, "0");
+    expect(screen.getByText(o.limitField.bad.replace("{max}", "200"))).toBeInTheDocument();
+  });
+
+  it("asks to save once before a calendar can be previewed, and for a limit that fits", () => {
+    show({ ical: [kultura] });
+    expect(screen.getByRole("button", { name: o.preview.label })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getAllByText(o.preview.unsaved).length).toBeGreaterThan(0);
+  });
+
+  it("holds the preview while the limit is out of range", () => {
+    show({ ical: [{ ...kultura, limit: 0 }] }, SAVED);
+    expect(screen.getByRole("button", { name: o.preview.label })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("previews the preset through the saved Endpoint and lists its first entries", async () => {
+    const asked: { url: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (request: Request) => {
+        asked.push({ url: request.url, body: await request.clone().json() });
+        return new Response(
+          JSON.stringify({ read: 4, valid: 2, outside: 1, skipped: { "missing-summary": 1 },
+            events: ["BEGIN:VEVENT\r\nDTSTART;TZID=Europe/Bratislava:20261115T190000\r\nSUMMARY:Koncert v parku\r\nEND:VEVENT\r\n"] }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    show({ ical: [{ ...kultura, sort: "start", limit: 10 }] }, SAVED);
+    await userEvent.click(screen.getByRole("button", { name: o.preview.label }));
+    expect(await screen.findByText("Koncert v parku")).toBeInTheDocument();
+    expect(screen.getByText("2026-11-15 19:00 Europe/Bratislava")).toBeInTheDocument();
+    expect(screen.getByText(/4 records read, 2 become calendar entries\. 1 fall outside the time window\. Showing the first 1 of 2\./)).toBeInTheDocument();
+    expect(screen.getByText(o.preview.skipped.replace("{reasons}", `1 ${o.preview.reasons["missing-summary"]}`))).toBeInTheDocument();
+    expect(asked[0]?.url).toMatch(/\/api\/v1\/projects\/city\/endpoints\/events-bb\/ical-preview$/);
+    expect(asked[0]?.body).toEqual({ output: { ...kultura, sort: "start", limit: 10 } });
+  });
+
+  it("shows the server's refusal of a preview", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ status: 422, title: "Unprocessable Content", detail: "`ical` output `kultura`: `limit` must be 1 to 10000" }), {
+          status: 422,
+          headers: { "Content-Type": "application/problem+json" },
+        }),
+      ),
+    );
+    show({ ical: [kultura] }, SAVED);
+    await userEvent.click(screen.getByRole("button", { name: o.preview.label }));
+    expect(await screen.findByText(/`limit` must be 1 to 10000/)).toBeInTheDocument();
+  });
+
+  it("reads the helpers as jc-core does", () => {
+    expect([limitFits(undefined, 200), limitFits(1, 200), limitFits(200, 200), limitFits(0, 200), limitFits(1.5, 200), limitFits(201, 200)]).toEqual([true, true, true, false, false, false]);
+    expect(timeZones("Mars/Base")).toContain("Mars/Base");
+    expect(entriesOf(["SUMMARY:A\\, b\r\n long\r\nDTSTART;VALUE=DATE:20261201\r\n"])).toEqual([{ summary: "A, blong", start: "20261201" }]);
+    expect(entriesOf(["DTSTART;TZID=Europe/Prague:20261212T190000\r\n"])[0]?.zone).toBe("Europe/Prague");
   });
 });
 

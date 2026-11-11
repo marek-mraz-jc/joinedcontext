@@ -11511,6 +11511,134 @@
         }
       }
     },
+    "/api/v1/projects/{project}/endpoints/{name}/ical-preview": {
+      "post": {
+        "tags": [
+          "spaces"
+        ],
+        "summary": "Preview A Calendar Preset",
+        "description": "The first calendar entries a candidate iCal output (a stored preset with its query, sort, limit and timezone) renders through the Endpoint's saved view, read as the person. Members of the Endpoint's Context Space only (API/02 §4a). Changes no data.",
+        "operationId": "preview_ical",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Endpoint name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The candidate output.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IcalPreviewRequest"
+              },
+              "example": {
+                "output": {
+                  "limit": 100,
+                  "name": "kultura",
+                  "query": "q=eventCategory==%22koncert%22",
+                  "sort": "start",
+                  "sources": [
+                    {
+                      "preset": "sdm-event",
+                      "type": "Event"
+                    }
+                  ],
+                  "timezone": "Europe/Bratislava"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Counts and the first entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IcalPreviewed"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A body that does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A workload token, or the broker refused the reading",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such Endpoint in a space the caller may read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The output has gaps, each naming its member",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No broker, or the Endpoint's view is not compiled yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/endpoints/{name}/preview": {
       "post": {
         "tags": [
@@ -50915,6 +51043,83 @@
               "null"
             ],
             "description": "The Context Space an Endpoint writes into."
+          }
+        }
+      },
+      "IcalPreviewRequest": {
+        "type": "object",
+        "description": "The body of `POST …/endpoints/{name}/ical-preview`.",
+        "required": [
+          "output"
+        ],
+        "properties": {
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many Entities to read, 1 to 50 (the default).",
+            "minimum": 0
+          },
+          "output": {
+            "type": "object",
+            "description": "The candidate calendar output (preset), as `spec.representations.ical[]`.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "IcalPreviewed": {
+        "type": "object",
+        "description": "What a candidate calendar renders over the first Entities.",
+        "required": [
+          "read",
+          "valid",
+          "outside",
+          "skipped",
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The first entries in the calendar's order, as `VEVENT` text."
+          },
+          "outside": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entities outside the calendar's window.",
+            "minimum": 0
+          },
+          "read": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entities read.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "object",
+            "description": "Entities left out, per reason (`missing-summary` ...).",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "valid": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entities that render a calendar entry.",
+            "minimum": 0
           }
         }
       },

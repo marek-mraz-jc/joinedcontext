@@ -655,16 +655,22 @@ mod tests {
         assert_eq!(context["@context"]["name"], core("name"));
 
         let yaml = linkml_model::yaml(&m);
+        // YAML indentation built, so no literal carries a run of spaces (dev/spec.py)
+        let pad = |n: usize| " ".repeat(n);
         for line in [
-            "id: https://e.org/m/views/pois\n",
-            "title: Registers\n",
-            "license: https://e.org/licenses/cc-by-4.0\n",
-            "  sdm-poi: https://smartdatamodels.org/dataModel.PointOfInterest/\n",
-            "    exact_mappings:\n      - sdm-poi:PointOfInterest\n",
-            "    exact_mappings:\n      - schema:name\n",
-            "          sk: Názov\n",
+            "id: https://e.org/m/views/pois\n".to_owned(),
+            "title: Registers\n".to_owned(),
+            "license: https://e.org/licenses/cc-by-4.0\n".to_owned(),
+            "  sdm-poi: https://smartdatamodels.org/dataModel.PointOfInterest/\n".to_owned(),
+            format!(
+                "{}exact_mappings:\n{}- sdm-poi:PointOfInterest\n",
+                pad(4),
+                pad(6)
+            ),
+            format!("{}exact_mappings:\n{}- schema:name\n", pad(4), pad(6)),
+            format!("{}sk: Názov\n", pad(10)),
         ] {
-            assert!(yaml.contains(line), "{line:?} in {yaml}");
+            assert!(yaml.contains(&line), "{line:?} in {yaml}");
         }
         assert!(
             !yaml.lines().any(|l| l.trim_start().starts_with('"')),

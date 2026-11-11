@@ -25,8 +25,10 @@
 # the same change (CONTRIBUTING.md, "Before the push").
 set -uo pipefail
 self=$(cd "$(dirname "$0")" && pwd)/preflight.sh
-# the checkout the caller stands in (the self-test runs this file in a scratch worktree)
-cd "$(git rev-parse --show-toplevel)" || exit 2
+# the checkout the caller stands in (the self-test runs this file in a scratch worktree), at
+# Antares' place in it: the top of the Antares repo, crates/antares/ of the jc monorepo (T-6762)
+prefix=$(git -C "$(dirname "$self")/.." rev-parse --show-prefix) || exit 2
+cd "$(git rev-parse --show-toplevel)/$prefix" || exit 2
 root=$PWD
 
 base=origin/dev log="" selftest=0
@@ -55,13 +57,13 @@ self_test() {
   probe() { # <case> <expected red steps, | separated> <preflight flags> <break script>
     git -C "$wt" reset -q --hard "$head"
     if [[ -n $4 ]]; then
-      (cd "$wt" && bash -c "$4" && git add -A && git -c user.name=preflight -c user.email=preflight@localhost commit -qm "probe $1") || {
+      (cd "$wt/$prefix" && bash -c "$4" && git add -A && git -c user.name=preflight -c user.email=preflight@localhost commit -qm "probe $1") || {
         echo "self-test $1: the break did not apply"; bad=1; return; }
     fi
     local run got
     # shellcheck disable=SC2086 # $3 is a flag list
     # a hang is a red run, never a self-test that waits forever
-    run=$(cd "$wt" && timeout 3600 "$self" --base HEAD~"$([[ -n $4 ]] && echo 1 || echo 0)" $3 2>&1)
+    run=$(cd "$wt/$prefix" && timeout 3600 "$self" --base HEAD~"$([[ -n $4 ]] && echo 1 || echo 0)" $3 2>&1)
     got=$(sed -n 's/^FAIL \(.*\) [0-9]*s$/\1/p' <<< "$run" | paste -sd'|')
     if ! grep -q '^preflight: [0-9]* steps' <<< "$run"; then
       echo "FAIL $1: the run did not finish"; sed 's/^/    /' <<< "$run" | tail -n 20; bad=1
@@ -142,7 +144,8 @@ bg() {
 }
 
 mb=$(git merge-base "$base" HEAD) || { echo "preflight: no merge base with $base" >&2; exit 2; }
-changed=$({ git diff --name-only "$mb"; git ls-files --others --exclude-standard; } | sort -u)
+# paths below Antares' root, the way cargo metadata and the steps name them
+changed=$({ git diff --name-only --relative "$mb"; git ls-files --others --exclude-standard; } | sort -u)
 
 # touched workspace crates, longest manifest dir first; antares-api adds its
 # reverse dependent addon

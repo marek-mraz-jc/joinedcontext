@@ -254,6 +254,16 @@ impl IcalOutput {
         for source in &self.sources {
             gaps.extend(self.named(source.model_gaps(linkml)?));
         }
+        if let Some(text) = linkml {
+            let schema: Value = serde_norway::from_str(text).map_err(|err| err.to_string())?;
+            let filter = self.effective_filter();
+            gaps.extend(self.named(query_model_gaps(
+                &Model { schema: &schema },
+                filter.as_ref(),
+                self.query.is_some(),
+                &self.types(),
+            )));
+        }
         Ok(gaps)
     }
 
@@ -332,6 +342,69 @@ pub(crate) fn query_gaps(
         (None, Some(filter)) => filter.gaps(),
         (None, None) => Vec::new(),
     }
+}
+
+/// The attributes a preset's filter names that none of the output's `types` has in the model,
+/// one sentence each (API/02 §4a): each top-level attribute of `q`, and `geoproperty`, which must
+/// be a GeoProperty. System members (`id`, `createdAt` ...) and expanded IRIs are not checked;
+/// types the model lacks are gapped by their source already.
+pub(super) fn query_model_gaps(
+    model: &Model,
+    filter: Option<&OutputFilter>,
+    stored_as_query: bool,
+    types: &[&str],
+) -> Vec<String> {
+    let Some(filter) = filter else {
+        return Vec::new();
+    };
+    let types: Vec<&str> = types
+        .iter()
+        .copied()
+        .filter(|t| model.class(t).is_some())
+        .collect();
+    if types.is_empty() {
+        return Vec::new();
+    }
+    let (q, geoproperty) = if stored_as_query {
+        ("`query` parameter `q`", "`query` parameter `geoproperty`")
+    } else {
+        ("`filter.q`", "`filter.geoproperty`")
+    };
+    let missing = |name: &str| {
+        format!(
+            "names `{name}`, which {} does not have in the data model",
+            types.join(" or ")
+        )
+    };
+    let slot = |name: &str| types.iter().find_map(|t| resolve(model, t, name).ok());
+    let mut names: Vec<String> = filter
+        .q
+        .as_deref()
+        .and_then(|text| antares_ql::parse_q(text).ok())
+        .map(|node| {
+            node.attribute_paths()
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    names.dedup();
+    let mut gaps: Vec<String> = names
+        .iter()
+        .filter(|name| antares_ql::is_non_system_attr(name) && !name.contains(':'))
+        .filter(|name| slot(name).is_none())
+        .map(|name| format!("{q} {}", missing(name)))
+        .collect();
+    if let Some(name) = filter.geoproperty.as_deref() {
+        match slot(name) {
+            None => gaps.push(format!("{geoproperty} {}", missing(name))),
+            Some(s) if s.kind.as_deref().is_some_and(|k| k != "GeoProperty") => gaps.push(format!(
+                "{geoproperty} names `{name}`, which holds no geometry (a GeoProperty)"
+            )),
+            Some(_) => {}
+        }
+    }
+    gaps
 }
 
 impl OutputFilter {
@@ -1624,6 +1697,67 @@ mod tests {
             assert!(preset.shape_gaps().is_empty(), "{:?}", preset.shape_gaps());
             assert_eq!(preset.effective_filter(), old.effective_filter(), "{q:?}");
         }
+    }
+
+    /// T-6762 (API/02 §4a): a preset's query names attributes the space's model has; the
+    /// sentence names the output, the parameter and the attribute.
+    #[test]
+    fn a_preset_query_names_attributes_the_model_has() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/ical-mapping/");
+        let model = std::fs::read_to_string(format!("{root}model.linkml.yaml")).expect("model");
+        let preset = |query: &str| IcalOutput {
+            name: "kultura".into(),
+            query: Some(query.to_owned()),
+            ..IcalOutput::legacy(IcalMapping::default())
+        };
+        let gaps = |query: &str| {
+            preset(query)
+                .model_gaps(Some(&model))
+                .expect("model parses")
+        };
+        for fine in [
+            r#"q=category=="music""#,
+            "q=address[addressLocality]==%22Zvolen%22;startDate>=2026-01-01T00:00:00Z",
+            "q=id==%22urn:ngsi-ld:Event:1%22;!createdAt",
+            "georel=near;maxDistance==500&geometry=Point&coordinates=[19.1,48.7]&geoproperty=location",
+        ] {
+            assert_eq!(gaps(fine), Vec::<String>::new(), "{fine}");
+        }
+        assert_eq!(
+            gaps(r#"q=genre=="jazz"|category=="music""#),
+            ["`ical` output `kultura`: `query` parameter `q` names `genre`, which Event does not \
+              have in the data model"]
+        );
+        assert_eq!(
+            gaps("georel=near;maxDistance==500&geometry=Point&coordinates=[19.1,48.7]&geoproperty=venue"),
+            ["`ical` output `kultura`: `query` parameter `geoproperty` names `venue`, which Event \
+              does not have in the data model"]
+        );
+        assert_eq!(
+            gaps("georel=near;maxDistance==500&geometry=Point&coordinates=[19.1,48.7]&geoproperty=name"),
+            ["`ical` output `kultura`: `query` parameter `geoproperty` names `name`, which holds no \
+              geometry (a GeoProperty)"]
+        );
+        // the deprecated `filter` gets the same check, named as `filter`
+        let old = IcalOutput {
+            name: "kultura".into(),
+            filter: Some(OutputFilter {
+                q: Some("genre==1".into()),
+                ..OutputFilter::default()
+            }),
+            ..IcalOutput::legacy(IcalMapping::default())
+        };
+        assert_eq!(
+            old.model_gaps(Some(&model)).expect("model parses"),
+            ["`ical` output `kultura`: `filter.q` names `genre`, which Event does not have in the \
+              data model"]
+        );
+        // without a model the space's sources are gapped already; the query adds nothing
+        assert!(preset("q=genre==1")
+            .model_gaps(None)
+            .expect("no model")
+            .iter()
+            .all(|g| !g.contains("genre")));
     }
 
     #[test]

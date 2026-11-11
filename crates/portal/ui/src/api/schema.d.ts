@@ -2782,6 +2782,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/endpoints/{name}/ical-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview A Calendar Preset
+         * @description The first calendar entries a candidate iCal output (a stored preset with its query, sort, limit and timezone) renders through the Endpoint's saved view, read as the person. Members of the Endpoint's Context Space only (API/02 §4a). Changes no data.
+         */
+        post: operations["preview_ical"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/endpoints/{name}/preview": {
         parameters: {
             query?: never;
@@ -10308,6 +10328,42 @@ export interface components {
             name?: string | null;
             /** @description The Context Space an Endpoint writes into. */
             space?: string | null;
+        };
+        /** @description The body of `POST …/endpoints/{name}/ical-preview`. */
+        IcalPreviewRequest: {
+            /**
+             * Format: int32
+             * @description How many Entities to read, 1 to 50 (the default).
+             */
+            limit?: number | null;
+            /** @description The candidate calendar output (preset), as `spec.representations.ical[]`. */
+            output: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description What a candidate calendar renders over the first Entities. */
+        IcalPreviewed: {
+            /** @description The first entries in the calendar's order, as `VEVENT` text. */
+            events: string[];
+            /**
+             * Format: int64
+             * @description Entities outside the calendar's window.
+             */
+            outside: number;
+            /**
+             * Format: int64
+             * @description Entities read.
+             */
+            read: number;
+            /** @description Entities left out, per reason (`missing-summary` ...). */
+            skipped: {
+                [key: string]: number;
+            };
+            /**
+             * Format: int64
+             * @description Entities that render a calendar entry.
+             */
+            valid: number;
         };
         /** @description Who is signed in. Returned by `GET /api/v1/auth/me` and used by every protected route. */
         Identity: {
@@ -22070,6 +22126,107 @@ export interface operations {
                 };
             };
             /** @description No gateway, no realm admin client, or one of them did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    preview_ical: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Endpoint name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        /** @description The candidate output. */
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "output": {
+                 *         "limit": 100,
+                 *         "name": "kultura",
+                 *         "query": "q=eventCategory==%22koncert%22",
+                 *         "sort": "start",
+                 *         "sources": [
+                 *           {
+                 *             "preset": "sdm-event",
+                 *             "type": "Event"
+                 *           }
+                 *         ],
+                 *         "timezone": "Europe/Bratislava"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["IcalPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Counts and the first entries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IcalPreviewed"];
+                };
+            };
+            /** @description A body that does not read */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A workload token, or the broker refused the reading */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such Endpoint in a space the caller may read */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The output has gaps, each naming its member */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No broker, or the Endpoint's view is not compiled yet */
             503: {
                 headers: {
                     [name: string]: unknown;

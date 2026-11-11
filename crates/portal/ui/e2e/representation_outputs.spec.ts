@@ -73,6 +73,19 @@ async function stubApi(page: Page, answer: "refuse" | "forbid" | "accept" | "ref
       if (answer === "forbid")
         return json({ type: "https://joinedcontext.com/problems/forbidden", title: "Forbidden", status: 403, detail: "no role of yours grants create on endpoints in project bbsk" }, 403);
     }
+    if (path.endsWith("/endpoints/podujatia/ical-preview") && route.request().method() === "POST") {
+      posted.push(route.request().postData() ?? "");
+      return json({
+        read: 12,
+        valid: 11,
+        outside: 0,
+        skipped: { "missing-summary": 1 },
+        events: [
+          "BEGIN:VEVENT\r\nDTSTART;TZID=Europe/Prague:20261212T190000\r\nSUMMARY:Vianočný koncert v parku\r\nEND:VEVENT\r\n",
+          "BEGIN:VEVENT\r\nDTSTART;TZID=Europe/Prague:20261205T170000\r\nSUMMARY:Mikulášsky jarmok\r\nEND:VEVENT\r\n",
+        ],
+      });
+    }
     if (path.endsWith("/endpoints")) return json(list([ENDPOINT]));
     if (path.endsWith("/endpoints/podujatia")) return json(ENDPOINT);
     return json(list([]));
@@ -191,6 +204,26 @@ for (const width of [1440, 400]) {
       const refusal = page.getByRole("alert").filter({ hasText: /grants create on endpoints|permission|Forbidden/i });
       await expect(refusal.first()).toBeVisible();
       await shot(page, "5-forbidden");
+    });
+
+    test("a calendar preset's order, limit and zone, then its preview through the saved Endpoint (T-6762)", async ({ page }) => {
+      const posted = await stubApi(page, "accept");
+      await page.goto("/projects/bbsk/endpoints/podujatia/edit?lang=en");
+      const calendars = page.getByTestId("representation-outputs").locator("section").filter({ hasText: "Calendars (iCal)" });
+      await calendars.getByLabel("Order", { exact: true }).selectOption("-start");
+      await calendars.getByLabel(/^Most entries/).fill("0");
+      await expect(calendars.getByText("Enter a whole number from 1 to 10000.").first()).toBeVisible();
+      await expect(calendars.getByRole("button", { name: "Preview this calendar" })).toHaveAttribute("aria-disabled", "true");
+      await shot(page, "7-preset-refused", calendars);
+      await calendars.getByLabel(/^Most entries/).fill("20");
+      await calendars.getByLabel("Time zone", { exact: true }).selectOption("Europe/Prague");
+      await calendars.getByRole("button", { name: "Preview this calendar" }).click();
+      await expect(calendars.getByText("Vianočný koncert v parku")).toBeVisible();
+      await expect(calendars.getByText("12 records read, 11 become calendar entries. Showing the first 2 of 11.")).toBeVisible();
+      await expect(calendars.getByText(/Left out: 1 without a title \(SUMMARY\)/)).toBeVisible();
+      await expect(calendars.getByText("2026-12-12 19:00 Europe/Prague")).toBeVisible();
+      expect(JSON.parse(posted.at(-1) ?? "{}")).toMatchObject({ output: { name: "events", sort: "-start", limit: 20, timezone: "Europe/Prague" } });
+      await shot(page, "8-preview", calendars);
     });
 
     test("the Endpoint page offers the calendar", async ({ page }) => {
