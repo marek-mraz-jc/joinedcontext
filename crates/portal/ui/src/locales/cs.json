@@ -8442,7 +8442,8 @@
         "alertMe": "Upozornit mě…",
         "alertMeHint": "Dostanete oznámení do schránky, když má tento agent nával odmítnutí, blíží se limitu tokenů nebo zapisuje mimo pracovní dobu.",
         "alertMeNone": "Neschvalujete změny v žádném projektu a běhy všech lidí vidí jen schvalovatel. Požádejte správce projektu o roli schvalovatele."
-      }
+      },
+      "emptyAction": "Otevřít projekty"
     },
     "connectors": {
       "title": "Konektory",

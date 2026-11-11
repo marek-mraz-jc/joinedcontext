@@ -11,7 +11,7 @@ import type { Manifest, ResourceProposal } from "../../api/manifest";
 import { usePermissions } from "../../api/permissions";
 import { proposeChecked } from "../../api/proposal";
 import type { components } from "../../api/schema";
-import { Alert, Badge, Button, EmptyState, safeHref, tabPanelProps, Tabs } from "../../components/ui";
+import { Alert, Badge, Button, buttonClass, EmptyState, safeHref, tabPanelProps, Tabs } from "../../components/ui";
 import { AdminGrid } from "../../components/grid/AdminGrid";
 import type { DataColumn } from "../../components/grid/AdminGrid";
 import type { BadgeTone } from "../../components/ui/Badge";
@@ -145,9 +145,14 @@ export function Agents(): JSX.Element {
           empty={
             <EmptyState
               bare
-              icon="access"
+              icon="chat"
               title={t("organization.agents.empty")}
               description={t("organization.agents.emptyHint")}
+              action={
+                <Link to="/organization/$tab" params={{ tab: "projects" }} className={buttonClass("secondary", "md")}>
+                  {t("organization.agents.emptyAction")}
+                </Link>
+              }
             />
           }
         />

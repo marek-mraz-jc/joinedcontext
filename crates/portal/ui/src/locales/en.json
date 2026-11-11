@@ -8442,7 +8442,8 @@
         "alertMe": "Alert me…",
         "alertMeHint": "Get a notice in the inbox when this agent has a refusal spike, nears its token cap or writes outside office hours.",
         "alertMeNone": "You approve changes in no project, and only an approver sees every person's runs. Ask a steward of the project for the approver role."
-      }
+      },
+      "emptyAction": "Open the projects"
     },
     "connectors": {
       "title": "Connectors",

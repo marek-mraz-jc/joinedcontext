@@ -8442,7 +8442,8 @@
         "alertMe": "Benachrichtigen…",
         "alertMeHint": "Sie erhalten einen Hinweis im Posteingang, wenn dieser Agent gehäuft abgelehnt wird, sich seinem Token-Limit nähert oder außerhalb der Bürozeiten schreibt.",
         "alertMeNone": "Sie genehmigen in keinem Projekt Änderungen, und nur wer genehmigt, sieht die Läufe aller Personen. Bitten Sie eine verantwortliche Person des Projekts um die Genehmigerrolle."
-      }
+      },
+      "emptyAction": "Projekte öffnen"
     },
     "connectors": {
       "title": "Konnektoren",

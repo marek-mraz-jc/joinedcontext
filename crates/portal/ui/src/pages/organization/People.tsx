@@ -511,6 +511,7 @@ export function People(): JSX.Element {
             rows={items}
             rowKey={(person) => person.id}
             columns={columns}
+            stack
             noSearch
             pageSizes={[PAGE]}
             empty={

@@ -81,6 +81,7 @@ describe("Administration lists on the shared grid", () => {
     answer = () => json({ items: [] });
     renderPage(<Agents />, { path: "/organization/agents", answer: (url) => (url.pathname === "/api/v1/organization/agents" ? answer() : undefined) });
     expect(await screen.findByText(t.empty)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: t.emptyAction })).toHaveAttribute("href", "/organization/projects");
     cleanup();
     answer = () => problem(503, "The agent index is not answering.");
     renderPage(<Agents />, { path: "/organization/agents", answer: (url) => (url.pathname === "/api/v1/organization/agents" ? answer() : undefined) });
