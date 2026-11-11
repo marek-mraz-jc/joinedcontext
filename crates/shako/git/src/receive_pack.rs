@@ -179,32 +179,66 @@ static YAML_FIELD: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"^\s*(?:-\s+)?["']?([A-Za-z_]+)["']?\s*:\s*(.*)$"#).expect("static regex")
 });
 
-/// The secret field a YAML manifest line writes out as a literal (`password: hunter2`), or
-/// `None`: an empty value, `null`, a nested map or list, and a whole `${VAR}` hold none.
-fn literal_secret_field(line: &str) -> Option<&str> {
-    let caps = YAML_FIELD.captures(line)?;
-    let field = caps.get(1)?.as_str();
-    if !SECRET_FIELDS.contains(&field) {
-        return None;
-    }
-    let value = caps.get(2)?.as_str();
-    let value = value.split(" #").next().unwrap_or_default().trim();
-    let value = value.trim_matches(|c| c == '"' || c == '\'');
+/// Whether a secret field's string value holds no credential: empty, a whole `${VAR}`
+/// reference, a whole `${{ secrets.X }}` workflow expression, or sops ciphertext
+/// (`ENC[AES256_GCM,...]`).
+fn is_open_secret_value(value: &str) -> bool {
+    let value = value.trim();
     let reference = value
         .strip_prefix("${")
         .and_then(|rest| rest.strip_suffix('}'))
         .is_some_and(|name| {
             !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         });
-    let open = value.is_empty()
-        || value == "~"
-        || value.eq_ignore_ascii_case("null")
-        || value.starts_with('{')
-        || value.starts_with('[')
-        || value.starts_with('&')
-        || value.starts_with('*')
-        || reference;
-    (!open).then_some(field)
+    let expression = value.starts_with("${{") && value.ends_with("}}");
+    value.is_empty() || reference || expression || value.starts_with("ENC[")
+}
+
+/// The first secret field a parsed YAML value writes out as a literal string, with that string:
+/// a mapping key from [`SECRET_FIELDS`] whose value is a scalar string, the shape the Portal's
+/// `find_literal_secret` judges. Text inside a block scalar is a value, never a key.
+fn find_secret_field(value: &serde_norway::Value) -> Option<(&str, &str)> {
+    use serde_norway::Value;
+    match value {
+        Value::Mapping(map) => map.iter().find_map(|(key, val)| match (key, val) {
+            (Value::String(k), Value::String(v))
+                if SECRET_FIELDS.contains(&k.as_str()) && !is_open_secret_value(v) =>
+            {
+                Some((k.as_str(), v.as_str()))
+            }
+            _ => find_secret_field(val),
+        }),
+        Value::Sequence(items) => items.iter().find_map(find_secret_field),
+        Value::Tagged(tagged) => find_secret_field(&tagged.value),
+        _ => None,
+    }
+}
+
+/// The literal secret field of a YAML manifest (`password: hunter2`) as (field, 1-based line),
+/// or `None`. Each document is parsed and judged when it is a manifest (top-level `apiVersion`
+/// and `kind`); Helm values (`secret: <Secret name>`), workflows and a file that is no YAML are
+/// left to the shape patterns. The line is the first `field: value` line holding that value,
+/// `None` for a multi-line one.
+fn literal_secret_field(text: &str) -> Option<(String, Option<usize>)> {
+    use serde::Deserialize;
+    for doc in serde_norway::Deserializer::from_str(text) {
+        let Ok(value) = serde_norway::Value::deserialize(doc) else {
+            return None;
+        };
+        let manifest = ["apiVersion", "kind"]
+            .iter()
+            .all(|key| value.get(key).is_some_and(serde_norway::Value::is_string));
+        if let Some((field, literal)) = find_secret_field(&value).filter(|_| manifest) {
+            let line = text.lines().position(|line| {
+                YAML_FIELD.captures(line).is_some_and(|caps| {
+                    caps.get(1).is_some_and(|f| f.as_str() == field)
+                        && caps.get(2).is_some_and(|v| v.as_str().contains(literal))
+                })
+            });
+            return Some((field.to_owned(), line.map(|n| n + 1)));
+        }
+    }
+    None
 }
 
 /// Scans blob bytes for leaked secrets before a push lands (Threat T9, SEC-06): the credential
@@ -220,16 +254,14 @@ pub fn scan_blob_for_secrets(path: &str, bytes: &[u8]) -> Option<String> {
             ));
         }
     }
-    if path.ends_with(".yaml") || path.ends_with(".yml") {
-        for (n, line) in text.lines().enumerate() {
-            if let Some(field) = literal_secret_field(line) {
-                return Some(format!(
-                    "pre-receive secret scan blocked literal-secret-field in '{path}' line {} \
-                     (field '{field}'; name the credential with secretRef)",
-                    n + 1
-                ));
-            }
-        }
+    if (path.ends_with(".yaml") || path.ends_with(".yml"))
+        && let Some((field, line)) = literal_secret_field(&text)
+    {
+        let at = line.map(|n| format!(" line {n}")).unwrap_or_default();
+        return Some(format!(
+            "pre-receive secret scan blocked literal-secret-field in '{path}'{at} \
+             (field '{field}'; name the credential with secretRef)"
+        ));
     }
     None
 }
@@ -670,6 +702,8 @@ fn verify_tip_connectivity_and_tree(
 /// not only the tip's: a credential added in one commit and removed in the next would otherwise
 /// stay in history. Commits any branch already holds are hidden from the walk. The scan always
 /// runs; no instance or repository setting turns it off (T-6713).
+/// ponytail: only local branches are hidden, so a first push into an empty repository walks every
+/// commit's full tree (fine at seed size); hide tags too or diff trees if large imports lag.
 fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), String> {
     let missing = |_| "missing necessary objects".to_owned();
     let tip = repo

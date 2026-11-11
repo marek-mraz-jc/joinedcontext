@@ -110,8 +110,10 @@ mod tests {
         let cases = [
             (
                 "spaces/air/source.yaml",
-                format!("kind: DataSource\nspec:\n  http:\n    password: {literal}\n"),
-                "literal-secret-field in 'spaces/air/source.yaml' line 4 (field 'password'",
+                format!(
+                    "apiVersion: joinedcontext.com/v1\nkind: DataSource\nspec:\n  http:\n    password: {literal}\n"
+                ),
+                "literal-secret-field in 'spaces/air/source.yaml' line 5 (field 'password'",
             ),
             (
                 "app/src/config.ts",
@@ -170,6 +172,17 @@ mod tests {
             "  token:\n    secretRef: feed",
             "    apiTokenRef: opendata",
             "    description: \"the password lives in the secret form\"",
+            // A Bloblang mapping inside a block scalar (deployment seeds
+            // bbsk-pipeline-ukazovatele.yaml:83, slovensko-pipeline-participacia-statistika.yaml:37).
+            "spec:\n  mapping: |\n    root = this.map_each(w -> {\n      \"token\": $territory.get(w.area),\n    })\n",
+            "spec:\n  mapping: |-\n    root = {\n      \"token\": e.proposalState.value.or(\"\")\n    }\n",
+            // A sops-encrypted value is ciphertext, no literal.
+            "password: ENC[AES256_GCM,data:Zm9v,iv:YmFy,tag:YmF6,type:str]",
+            // Not YAML at all: the field rule judges parsed manifests only.
+            "password: [unclosed",
+            // Helm values naming a Kubernetes Secret, and a workflow's secrets expression.
+            "apiToken:\n  secret: ckan-api-token\n",
+            "kind: A\napiVersion: v1\nwith: { password: \"${{ secrets.GITHUB_TOKEN }}\" }",
         ] {
             assert_eq!(
                 scan_blob_for_secrets("a/b.yaml", open.as_bytes()),
@@ -177,8 +190,21 @@ mod tests {
                 "{open}"
             );
         }
-        let literal = format!("clientSecret: \"{}\"", "s3cr3t".repeat(2));
+        let literal = format!(
+            "apiVersion: v1\nkind: A\nclientSecret: \"{}\"",
+            "s3cr3t".repeat(2)
+        );
         assert!(scan_blob_for_secrets("a/b.yml", literal.as_bytes()).is_some());
+        // The same literal in the second document, nested under a list item, names its line.
+        let nested = format!(
+            "kind: A\n---\napiVersion: v1\nkind: A\nspec:\n  users:\n    - name: x\n      password: {}\n",
+            "s3cr3t".repeat(2)
+        );
+        let said = scan_blob_for_secrets("a/b.yaml", nested.as_bytes()).expect("refused");
+        assert!(
+            said.contains("line 8") && said.contains("'password'"),
+            "{said}"
+        );
         assert_eq!(scan_blob_for_secrets("a/b.md", literal.as_bytes()), None);
     }
 
