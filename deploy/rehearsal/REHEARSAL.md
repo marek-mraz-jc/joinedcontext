@@ -98,6 +98,9 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   The rehearsal answers on `http://127.0.0.1:<port>` (up.sh `origin`), so each client URL on the source Portal's
   host (or its domain, where the Apps live) gets a twin on that address beside it (`realms
   --public-base`); the source URLs stay. Rehearsal only: the cutover runs jc on the source hosts.
+  `portal-api` also gets the port-less `http://127.0.0.1/api/v1/auth/callback`: kaisatsu admits any
+  loopback port on that one exact path (RFC 8252), so the restore suite's copy on its own port signs
+  the Portal in from the restored realm file as it is. No wildcard, no web origin, no other client.
 - One prod reader, loopback prod rehearsal only (supervisor 2026-11-09): banskabystrica-zaznamy's
   Endpoint has one read Policy naming one user id (fc3b55df, demo.steward). `REHEARSAL_APP_HOLDER_ID`
   gives the Apps' holder `rehearsal-app-roles` that id, with its own rehearsal password, no e-mail,

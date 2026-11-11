@@ -92,7 +92,7 @@ def test_counts_parse_and_differ():
 class FakeOps:
     """docker, pg_dump and up.sh stood in for: writes results the way the inner suites would."""
 
-    def __init__(self, a, home, rhome, backup, after=None, restored=None, held=()):
+    def __init__(self, a, home, rhome, backup, after=None, restored=None, held=(), roles=None):
         self.a, self.home, self.rhome, self.backup = a, home, rhome, backup
         self.dst = SimpleNamespace(container=f"rh-pg-{rhome.name}")
         self.counts = {}
@@ -101,6 +101,9 @@ class FakeOps:
         self.held = list(held)
         self.calls = []
         self.torn = False
+        # pid -> --role: the source (pid 1 in jc.pid) and the copy (999999) held alike by default
+        self.roles = roles or {"1": HELD, "999999": HELD}
+        self.started_role = None
 
     def check_disk(self):
         return {"databases": ["antares", "portal"], "needBytes": 1}
@@ -125,6 +128,11 @@ class FakeOps:
         (self.backup / "home.tar").write_text("tar")
 
     def fresh(self):
+        # the tar of a faithful backup: the runner's files of the source home land in the copy's
+        self.rhome.mkdir(parents=True, exist_ok=True)
+        for f in suite.HOME_FILES:
+            if (self.home / f).exists():
+                (self.rhome / f).write_bytes((self.home / f).read_bytes())
         return self.held
 
     def relocate(self):
@@ -136,14 +144,21 @@ class FakeOps:
     def restore(self, db):
         return (self.restored or {}).get(db, {"public.t": 2})
 
-    def start(self):
+    def start(self, role):
+        self.started_role = role
         return 999999
+
+    def role(self, pid):
+        return self.roles.get(str(pid), "")
 
     def converge(self, timeout):
         return 2
 
     def teardown(self):
         self.torn = True
+
+
+HELD = "kaisatsu,dataroom,daiya,antares,gateway,portal,shako,model-tools,assistant,viz"
 
 
 def args(tmp_path, **kw):
@@ -155,6 +170,8 @@ def args(tmp_path, **kw):
     (home / "state" / "portal-admin-client-secret").write_text("s")
     (home / "smoke-state").mkdir()
     os.symlink(home / "state" / "portal-admin-client-secret", home / "smoke-state" / "portal-admin-client-secret")
+    (home / "ekiben-resources.yaml").write_text("caches: {}\n")
+    (home / "gtfs-realtime.proto").write_text("syntax = 'proto2';\n")
     a = SimpleNamespace(base_url="http://localhost:42310", home=str(home), suites="endpoints,names", extra={},
                         backup_dir=None, restore_env=None, restore_port=42311, restore_pg_port=55461,
                         jc_bin="/bin/true", converge=1, max_disk=0.92, suite_timeout=10, keep=False, export="/e",
@@ -185,7 +202,9 @@ def test_a_faithful_copy_passes_every_row_and_times_each_step(tmp_path, monkeypa
                  "restore.antares", "restore.portal", "start", "converge", "after"):
         assert rows[f"step.{step}"]["result"] == "pass" and step in meta["steps"]
     assert {"control.fresh-empty", "control.data.antares", "control.own-process", "control.unknown-slug",
-            "endpoints/t/two", "names/t/one"} <= set(rows)
+            "control.role", "control.held", "endpoints/t/two", "names/t/one"} <= set(rows)
+    # the copy started on the held source's role
+    assert ops.started_role == HELD and rows["control.held"]["actual"] == "held on both"
     # the backup lies under $REHEARSAL_HOME/backups, private, and the copy was torn down
     backup = Path(meta["backup"])
     assert backup.parent == tmp_path / "rh" / "backups" and oct(backup.stat().st_mode & 0o777) == "0o700"
@@ -280,3 +299,95 @@ def test_a_check_id_repeated_per_target_is_compared_per_target(tmp_path):
     res = Results("restore", "http://localhost:1")
     suite.compare(res, "endpoints", before, after, "run endpoints")
     assert [r["id"] for r in res.rows if r["result"] == "fail"] == ["endpoints/a/anon.types"]
+
+
+def test_a_copy_on_another_role_than_the_source_fails_its_control(tmp_path, monkeypatch):
+    # The red proof of the role rule: a held source compared with a copy running every module.
+    res, _, ops = run_fake(tmp_path, monkeypatch, roles={"1": HELD, "999999": "all"})
+    rows = by_id(res)
+    assert rows["control.role"]["result"] == "fail" and rows["control.role"]["actual"] == "all"
+    assert ops.started_role == HELD
+    # a source whose --role cannot be read fails it too, whatever the copy runs
+    res, _, ops = run_fake(tmp_path / "u", monkeypatch, roles={"999999": "all"})
+    assert by_id(res)["control.role"]["result"] == "fail" and ops.started_role == ""
+
+
+def test_pipelines_running_on_either_side_name_the_run_no_count_proof(tmp_path, monkeypatch):
+    for i, roles in enumerate(({"1": "all", "999999": "all"}, {"1": HELD + ",ekiben", "999999": HELD})):
+        res, _, _ = run_fake(tmp_path / str(i), monkeypatch, roles=roles)
+        row = by_id(res)["control.held"]
+        assert row["result"] == "skip" and "no count proof" in row["reason"] and "source" in row["reason"]
+    assert suite.runs_ekiben("all") and suite.runs_ekiben("portal,ekiben") and not suite.runs_ekiben(HELD)
+    assert not suite.runs_ekiben("ekiben-x")
+
+
+def test_role_of_reads_a_running_process_flag():
+    import subprocess as sp
+    p = sp.Popen([sys.executable, "-c", "import time; time.sleep(30)", "--role", HELD])
+    try:
+        for _ in range(50):
+            if suite.role_of(p.pid):
+                break
+            import time
+            time.sleep(0.05)
+        assert suite.role_of(p.pid) == HELD
+    finally:
+        p.kill()
+        p.wait()
+    assert suite.role_of(p.pid) == "" and suite.role_of("?") == ""
+
+
+def test_the_copy_starts_on_the_role_given_without_the_sources_realm_lines_or_hold(tmp_path, monkeypatch):
+    """The copy has no export: up.sh exits 1 on REHEARSAL_REALM_LINES_* without one (gate
+    2026-11-10T203500Z-gc, restore's second run died at step.start)."""
+    for k in suite.COPY_ENV_DROPPED + ("REHEARSAL_ROLE",):
+        monkeypatch.setenv(k, "/from/the/source")
+    rhome = tmp_path / "prod-restore"
+    rhome.mkdir()
+    (rhome / "jc.pid").write_text("4242\n")
+    seen = []
+    monkeypatch.setattr(suite, "run", lambda argv, env=None, timeout=0, cwd=None: seen.append((argv, env)) or "")
+    ops = suite.Ops(args(tmp_path, src_pg_port=55460), tmp_path / "rh" / "prod", rhome, tmp_path / "b")
+    assert ops.start(HELD) == 4242
+    argv, env = seen[-1]
+    assert argv[0].endswith("deploy/rehearsal/up.sh") and argv[1] == "prod-restore"
+    assert env["REHEARSAL_ROLE"] == HELD and not set(suite.COPY_ENV_DROPPED) & set(env)
+    assert env["REHEARSAL_EXPORT"] == str(rhome / "no-export")
+    ops.start("")
+    assert "REHEARSAL_ROLE" not in seen[-1][1]
+
+
+def test_the_runners_files_are_backed_up_and_compared(tmp_path, monkeypatch):
+    class Lossy(FakeOps):
+        def fresh(self):  # a backup that lost the proto
+            held = super().fresh()
+            (self.rhome / "gtfs-realtime.proto").unlink()
+            return held
+    assert {"ekiben-resources.yaml", "gtfs-realtime.proto"} <= set(suite.HOME_PARTS)
+    res, _, _ = run_fake(tmp_path / "ok", monkeypatch)
+    assert by_id(res)["control.home-files"]["result"] == "pass"
+    monkeypatch.setenv("REHEARSAL_HOME", str(tmp_path / "lossy" / "rh"))
+    res = Results("restore", "http://localhost:42310")
+    suite.execute(args(tmp_path / "lossy"), res, tmp_path / "lossy" / "out", Lossy)
+    row = by_id(res)["control.home-files"]
+    assert row["result"] == "fail" and "gtfs-realtime.proto" in row["actual"]
+    # a source without them: a named skip
+    a = args(tmp_path / "none")
+    for f in suite.HOME_FILES:
+        (Path(a.home) / f).unlink()
+    monkeypatch.setenv("REHEARSAL_HOME", str(tmp_path / "none" / "rh"))
+    res = Results("restore", "http://localhost:42310")
+    suite.execute(a, res, tmp_path / "none" / "out", FakeOps)
+    assert by_id(res)["control.home-files"]["result"] == "skip"
+
+
+def test_teardown_removes_the_copys_functions_container_by_name(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(suite.subprocess, "run", lambda argv, **kw: calls.append(argv))
+    rhome = tmp_path / "prod-restore"
+    rhome.mkdir()
+    ops = suite.Ops(args(tmp_path, src_pg_port=55460), tmp_path / "rh" / "prod", rhome, tmp_path / "b")
+    ops.teardown()
+    removed = [c[-1] for c in calls if c[:3] == ["docker", "rm", "-f"]]
+    assert removed == ["rh-pg-prod-restore", "rh-functions-42311"]
+    assert not rhome.exists()
