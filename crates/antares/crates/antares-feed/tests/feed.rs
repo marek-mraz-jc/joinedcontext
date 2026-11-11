@@ -103,6 +103,7 @@ fn outputs() -> Value {
          "sources": [{"type": "Event", "preset": "event", "mapping": {"updated": "dateModified"}}],
          "filter": {"q": "category==\"šport\""}},
         {"name": "tajne", "sources": [{"type": "Secret", "preset": "generic"}]},
+        {"name": "news", "title": {"sk": "Správy"}, "sources": [{"type": "Article", "preset": "article"}]},
         {"name": "blizko", "sources": [{"type": "Event", "preset": "event"}],
          "filter": {"georel": "near;maxDistance==1000", "geometry": "Point", "coordinates": "[19.14,48.73]"}}
     ])
@@ -388,6 +389,45 @@ async fn pages_link_each_other_and_bad_parameters_are_400() {
         body.contains("<updated>1970-01-01T00:00:00Z</updated>") && !body.contains("<entry>"),
         "{body}"
     );
+}
+
+/// T-6756: an Endpoint with Article gets the base preset `news`; its RSS 2.0 document is a
+/// channel of the articles alone, with an `ETag` a conditional GET answers 304 to.
+#[tokio::test]
+async fn the_news_preset_is_an_rss_channel_of_articles_with_an_etag() {
+    let app = fixture().await;
+    let uri = "/x/views/city/feed/v1/news/rss.xml";
+    let (status, headers, body) = call(&app, "GET", uri, "", &[]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        headers["content-type"],
+        "application/rss+xml; charset=utf-8"
+    );
+    let rss = body
+        .split_once("<rss")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    assert!(rss.starts_with(" version=\"2.0\""), "{body}");
+    let channel = rss
+        .split_once("<channel>")
+        .and_then(|(_, rest)| rest.split_once("</channel>"))
+        .map(|(inner, _)| inner)
+        .unwrap_or_default();
+    for element in ["<title>Správy</title>", "<link>", "<description>"] {
+        assert!(channel.contains(element), "{element}: {body}");
+    }
+    assert_eq!(
+        channel.matches("<item>").count(),
+        channel.matches("</item>").count()
+    );
+    assert_eq!(
+        ids("rss.xml", &body),
+        ["tag:localhost,2026:city/urn:ngsi-ld:Article:a1"]
+    );
+    assert!(body.trim_end().ends_with("</rss>"), "{body}");
+    let etag = headers["etag"].to_str().expect("etag").to_owned();
+    let (status, _, body) = call(&app, "GET", uri, "", &[("If-None-Match", etag.as_str())]).await;
+    assert_eq!((status, body.as_str()), (StatusCode::NOT_MODIFIED, ""));
 }
 
 #[tokio::test]
