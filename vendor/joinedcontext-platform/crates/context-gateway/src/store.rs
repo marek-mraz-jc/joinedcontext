@@ -386,6 +386,18 @@ pub fn load_from(
             "a registered project has no checkout"
         );
     }
+    for (entry, refusal) in assembly
+        .entries
+        .iter()
+        .filter_map(|entry| Some((entry, entry.refused.as_ref()?)))
+    {
+        tracing::warn!(
+            project = %entry.slug,
+            reason = %refusal.reason,
+            kept = entry.rendered,
+            "a registered project does not load: its last render serves, the others go on"
+        );
+    }
     Ok(tables(&assembly.repository, &checkouts.assembly))
 }
 
