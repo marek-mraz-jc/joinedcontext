@@ -266,6 +266,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                 aria-describedby={`${ids.editor}-next ${ids.editor}-state`}
                 onClick={() => {
                   const body = asProposal();
+                  setInserted(false);
                   if (body) check.mutate(body);
                 }}
               >
