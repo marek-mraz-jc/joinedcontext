@@ -419,6 +419,17 @@ pub async fn protect_branch(
     rule: BranchProtectionRule,
 ) -> ShakoResult<ProtectionRuleRecord> {
     let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
+    if let Some(stored) = state
+        .store()
+        .get_protection_rule(repo.instance_id, repo.org_id, repo.id, &rule.rule_name)
+        .await?
+        && loosens(&stored.rule, &rule)
+    {
+        return Err(ShakoError::Forbidden(format!(
+            "branch rule '{}' guards who writes the branch and is not loosened through the API",
+            rule.rule_name
+        )));
+    }
     RefPolicy::validate_rule_for_repo(
         &rule,
         state.authorizer.as_ref(),
@@ -451,10 +462,48 @@ pub async fn unprotect_branch(
     rule_name: &str,
 ) -> ShakoResult<bool> {
     let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
+    if let Some(stored) = state
+        .store()
+        .get_protection_rule(repo.instance_id, repo.org_id, repo.id, rule_name)
+        .await?
+        && guards_writers(&stored.rule)
+    {
+        return Err(ShakoError::Forbidden(format!(
+            "branch rule '{rule_name}' guards who writes the branch and is not removed through the API"
+        )));
+    }
     state
         .store()
         .delete_protection_rule(repo.instance_id, repo.org_id, repo.id, rule_name)
         .await
+}
+
+/// A rule that keeps some writer off the branch: push closed, or push or merge narrowed to an
+/// allow-list. Neither an admin token nor the Portal's removes one through the API (P-24): a bug
+/// or a leaked token must not reopen `main` or a Change branch. Removing the repository removes
+/// its rules.
+fn guards_writers(rule: &BranchProtectionRule) -> bool {
+    !rule.enable_push || rule.enable_push_whitelist || rule.enable_merge_whitelist
+}
+
+/// Whether `next` lets someone write or merge whom `stored` kept out (P-24). The allow-lists'
+/// names may change; dropping a guard may not.
+fn loosens(stored: &BranchProtectionRule, next: &BranchProtectionRule) -> bool {
+    let opens = |was_on: bool, was_listed: bool, on: bool, listed: bool| {
+        (!was_on && on) || (was_listed && on && !listed)
+    };
+    opens(
+        stored.enable_push,
+        stored.enable_push_whitelist,
+        next.enable_push,
+        next.enable_push_whitelist,
+    ) || opens(
+        stored.enable_force_push,
+        stored.enable_force_push_allowlist,
+        next.enable_force_push,
+        next.enable_force_push_allowlist,
+    ) || (stored.enable_merge_whitelist && !next.enable_merge_whitelist)
+        || (stored.block_admin_merge_override && !next.block_admin_merge_override)
 }
 
 // =========================================================================
@@ -930,6 +979,9 @@ pub struct MergeRequest {
     /// The head the caller reviewed: a head that moved since is `Conflict` (T10).
     pub head_commit_id: Option<String>,
     pub delete_branch_after_merge: bool,
+    /// Who the merge commit is attributed to (the person who merged in the Portal); the caller
+    /// when `None`. The caller stays the committer, so the history names both.
+    pub author: Option<CommitAuthor>,
 }
 
 /// Merges a pull request under the base branch's protection rules; answers the merge commit and
@@ -995,7 +1047,8 @@ pub async fn merge_pull_request(
         .message
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| format!("Merge pull request #{number}: {}", pr.title));
-    let author = caller_as_author(ctx);
+    let committer = caller_as_author(ctx);
+    let author = req.author.unwrap_or_else(|| committer.clone());
     let (d, b, h, style) = (
         disk_path.clone(),
         pr.base_ref.clone(),
@@ -1013,7 +1066,7 @@ pub async fn merge_pull_request(
                 style,
                 message: &message,
                 author: &author,
-                committer: &author,
+                committer: &committer,
             },
         )
     })

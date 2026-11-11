@@ -83,7 +83,7 @@ event, so the Portal's webhook fires, and runs the repository's push mirrors.
 | 25 | `review_bodies` | `GET R/PullRequests({n})/Reviews` | `value[].Body` |
 | 26 | `close_pull_request` | `POST R/PullRequests({n})/Shako.Close` | status |
 | 27 | `update_pull_request` | `POST R/PullRequests({n})/Shako.UpdateBranch` | status (200 when already up to date) |
-| 28 | `merge` | `POST R/PullRequests({n})/Shako.Merge` `{Style: merge\|squash, Message, HeadCommitId?}` | status; a moved head is 409 |
+| 28 | `merge` | `POST R/PullRequests({n})/Shako.Merge` `{Style: merge\|squash, Message, HeadCommitId?, Author?: {Name, Email}}` (Author: the person who merged; the caller stays committer) | status; a moved head is 409 |
 
 `PullRequest` properties the client reads: `Number`, `HtmlUrl`, `State`, `Title`, `Body`, `Head`,
 `HeadSha`, `Base`, `BaseSha`, `MergeBase`, `Mergeable`, `Merged`, `MergeCommitSha`, `Author`
