@@ -93,6 +93,13 @@ pub fn validate_org_domain(domain: &str) -> Result<()> {
     Ok(())
 }
 
+/// The Organization id of a verified domain: its labels reversed and joined by `_` (`bbsk.sk` ->
+/// `sk_bbsk`, `praha.eu` -> `eu_praha`), the owner segment of every entity URN the Organization's
+/// spaces hold (ADR-N-068, EP-186). A hostname holds no `_`, so the map is one-to-one.
+pub fn org_id(domain: &str) -> String {
+    domain.rsplit('.').collect::<Vec<_>>().join("_")
+}
+
 /// Validates a local identifier within an entity URN (`^[A-Za-z0-9._~-]{1,128}$`) (PF-42).
 pub fn validate_local_id(local_id: &str) -> Result<()> {
     if local_id.is_empty() || local_id.len() > 128 || !LOCAL_ID_RE.is_match(local_id) {
@@ -242,6 +249,39 @@ pub(crate) fn validate_relative_path(field: &'static str, path: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-6769 (ADR-N-068): the owner segment is the text before the first `:` of the id part,
+    /// and a URN with nothing after it, or without a `:`, names no owner.
+    #[test]
+    fn the_owner_segment_is_the_first_of_the_id() {
+        for (urn, owner) in [
+            (
+                "urn:ngsi-ld:KeyPerformanceIndicator:sk_bbsk:bbsk-otvorene-data:k1",
+                Some("sk_bbsk"),
+            ),
+            ("urn:ngsi-ld:Device:sk_bratislava:1", Some("sk_bratislava")),
+            ("urn:ngsi-ld:Device:bbsk.sk:space:1", Some("bbsk.sk")),
+            ("urn:ngsi-ld:WeatherObserved:Helsinki-001", None),
+        ] {
+            let parsed: crate::Urn = urn.parse().expect("a URN");
+            assert_eq!(parsed.owner(), owner, "{urn}");
+        }
+    }
+
+    /// T-6769: the four Organizations of the owner's order, and a domain of three labels.
+    #[test]
+    fn an_org_id_is_the_domain_reversed() {
+        for (domain, id) in [
+            ("bbsk.sk", "sk_bbsk"),
+            ("bratislava.sk", "sk_bratislava"),
+            ("praha.eu", "eu_praha"),
+            ("hel.fi", "fi_hel"),
+            ("banskabystrica.sk", "sk_banskabystrica"),
+            ("city.example.com", "com_example_city"),
+        ] {
+            assert_eq!(org_id(domain), id);
+        }
+    }
 
     /// T-1479: one rule for a path beside a manifest, reported against the caller's field.
     #[test]

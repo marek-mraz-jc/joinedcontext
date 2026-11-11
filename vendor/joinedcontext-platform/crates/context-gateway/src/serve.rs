@@ -194,9 +194,10 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
     ) {
         tokio::spawn(Arc::clone(&domain_gate).follow(url, token.clone()));
     }
-    let gateway = gateway
+    let mut gateway = gateway
         .deliver_privately_to(config.egress_private_hosts.clone())
         .gate_writes_on(domain_gate);
+    gateway.urn_owner_prefix = config.urn_owner_prefix;
     // The publishers' pages, searched by the assistant for the hub and the servers (EP-133).
     let gateway = match config.assistant_url.as_deref() {
         Some(url) => gateway.search_documents_with(crate::mcp::documents::Documents::new(

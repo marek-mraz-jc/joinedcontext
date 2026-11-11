@@ -1281,18 +1281,83 @@ impl AppState {
         let key = (session.identity.subject.clone(), session.issued_at);
         if let Ok(mut kept) = self.session_claims.write() {
             kept.retain(|_, claims| claims.expires_at > now);
-            let id_token = match (session.id_token.is_empty(), kept.get(&key)) {
+            let before = kept.remove(&key);
+            let id_token = match (session.id_token.is_empty(), &before) {
                 (true, Some(before)) => before.id_token.clone(),
                 _ => session.id_token.clone(),
             };
+            let (access, exchanged) = before
+                .map(|before| (before.access, before.exchanged))
+                .unwrap_or_default();
             kept.insert(
                 key,
                 SessionClaims {
                     expires_at: session.expires_at,
                     id_token,
                     groups: session.identity.groups.clone(),
+                    access,
+                    exchanged,
                 },
             );
+        }
+    }
+
+    /// Keeps a cookie session's access token beside its claims, never in a cookie, until
+    /// `session.access_expires_at`: what the person's Endpoint reads are exchanged from
+    /// ([`crate::auth::endpoint_token`], T-6783). Call after [`Self::keep_session_claims`].
+    pub fn keep_access_token(&self, session: &Session, token: String) {
+        let key = (session.identity.subject.clone(), session.issued_at);
+        let Ok(mut kept) = self.session_claims.write() else {
+            return;
+        };
+        if let Some(claims) = kept.get_mut(&key) {
+            claims.access = Some((token, session.access_expires_at));
+        }
+    }
+
+    /// The access token [`Self::keep_access_token`] kept for this session while it is valid at
+    /// `now`; `None` when this process holds none (a restart, another replica) or it expired.
+    pub fn session_access_token(&self, session: &Session, now: i64) -> Option<String> {
+        self.session_claims
+            .read()
+            .ok()?
+            .get(&(session.identity.subject.clone(), session.issued_at))?
+            .access
+            .as_ref()
+            .filter(|(_, until)| *until > now)
+            .map(|(token, _)| token.clone())
+    }
+
+    /// The token this session's access token was exchanged for on Endpoint `slug`, while valid
+    /// at `now` ([`Self::keep_exchanged`]).
+    pub fn session_exchanged(&self, session: &Session, slug: &str, now: i64) -> Option<String> {
+        self.session_claims
+            .read()
+            .ok()?
+            .get(&(session.identity.subject.clone(), session.issued_at))?
+            .exchanged
+            .get(slug)
+            .filter(|(_, until)| *until > now)
+            .map(|(token, _)| token.clone())
+    }
+
+    /// Keeps the exchanged token for Endpoint `slug` until `until`, so a page's reads of one
+    /// Endpoint ask the realm once. At most [`MAX_EXCHANGED_PER_SESSION`] per session: past it
+    /// the expired ones go, then the whole set.
+    pub fn keep_exchanged(&self, session: &Session, slug: &str, token: String, until: i64) {
+        let key = (session.identity.subject.clone(), session.issued_at);
+        let Ok(mut kept) = self.session_claims.write() else {
+            return;
+        };
+        if let Some(claims) = kept.get_mut(&key) {
+            if claims.exchanged.len() >= MAX_EXCHANGED_PER_SESSION {
+                let now = crate::auth::session::now_unix();
+                claims.exchanged.retain(|_, (_, at)| *at > now);
+                if claims.exchanged.len() >= MAX_EXCHANGED_PER_SESSION {
+                    claims.exchanged.clear();
+                }
+            }
+            claims.exchanged.insert(slug.to_owned(), (token, until));
         }
     }
 
@@ -1353,7 +1418,14 @@ struct SessionClaims {
     expires_at: i64,
     id_token: String,
     groups: Vec<String>,
+    /// The session's access token and when it expires ([`AppState::keep_access_token`]).
+    access: Option<(String, i64)>,
+    /// Exchanged Endpoint tokens by slug, each with its expiry ([`AppState::keep_exchanged`]).
+    exchanged: HashMap<String, (String, i64)>,
 }
+
+/// How many Endpoint tokens one session keeps at once ([`AppState::keep_exchanged`]).
+const MAX_EXCHANGED_PER_SESSION: usize = 64;
 
 impl FromRef<AppState> for Key {
     fn from_ref(state: &AppState) -> Key {
