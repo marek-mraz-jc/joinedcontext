@@ -10,7 +10,7 @@
 # dropped. Each image-embedder export writes ~140 MB of new blobs that the next one supersedes,
 # and the 10 GB cap's eviction took the 607 MB portal-test target cache (oldest read) before them.
 # sccache keeps its entries: content-addressed, it has no superseded entry the API can tell.
-#   GH_TOKEN=... sh cache-prune.sh     # in dockerfile-cache.yml (actions: write)
+#   GH_TOKEN=... sh cache-prune.sh     # in cache-prune.yml (actions: write)
 #   sh cache-prune.sh --selftest
 set -eu
 
