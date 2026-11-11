@@ -14,6 +14,7 @@ import type { ValueRule } from "./rules";
 import type { TypeChoice } from "./GridFilterRow";
 import { GridCellPanels, GridDetail } from "./GridDetail";
 import { GridMapPanel } from "./GridMapPanel";
+import { ArrangeColumns } from "./ArrangeColumns";
 import { GridNotices, GridStatus } from "./GridNotices";
 import { GridPager } from "./GridPager";
 import { GridQueryBox } from "./GridQueryBox";
@@ -273,7 +274,11 @@ function GridBody(props: EntityGridProps & { onDrill?: (urn: string, type: strin
   const { toolbar } = props;
   return (
     <GridFrame view={view}>
-      {toolbar && <div className="jc-grid-toolbar">{toolbar}</div>}
+      {/* The host's tools, then the grid's own: Arrange columns (T-6738). */}
+      <div className="jc-grid-toolbar">
+        {toolbar && <div className="jc-grid-toolbar-host">{toolbar}</div>}
+        <ArrangeColumns view={view} />
+      </div>
       <GridNotices view={view} />
       <GridTable view={view} />
       <GridMapPanel view={view} />

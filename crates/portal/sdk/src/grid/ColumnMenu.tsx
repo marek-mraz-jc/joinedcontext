@@ -1,15 +1,19 @@
 /**
- * A column's header menu (T-4827, T-6328): Sort A to Z, Z to A, Filter and Hide, each with its
- * icon, as Baserow and Excel keep it. A label of this view's own, the width and the place sit
- * folded under the column's settings with the attribute's metadata: dragging the header or its
- * edge moves and widens it, and these buttons are the keyboard's way to the same.
+ * A column's header menu (T-4827, T-6328, T-6738): the quick actions alone, Sort in the column's own
+ * words ("Earliest first" for a date, "A to Z" for text), Filter, Hide and History, as Baserow and
+ * Excel keep it. Width and order move by dragging the header and its edge; labels, order, hides and
+ * the metadata columns live in the toolbar's Arrange columns panel. It is a menu: the arrow keys,
+ * Home and End move between its items, Escape and Tab close it back to the header's button.
  */
-import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef } from "react";
+import type { ColumnKind } from "./cells";
 import type { GridLabels } from "./useEntityGrid";
 
 export interface ColumnMenuProps {
-  /** What the column is called now, without its unit: what Rename starts from. */
+  /** What the column is called now: what the menu is named after. */
   label: string;
+  /** What the column holds: the words its sort uses. */
+  kind: ColumnKind;
   labels: GridLabels;
   /** The direction this column orders the rows in, if it does. */
   sorted: "asc" | "desc" | null;
@@ -18,16 +22,17 @@ export interface ColumnMenuProps {
   onFilter?: () => void;
   /** Absent for the primary column: it names the row and is never hidden. */
   onHide?: () => void;
-  /** A label of this view's own; `undefined` goes back to the model's. */
-  onRename: (label: string | undefined) => void;
-  renamed: boolean;
-  onWiden: (delta: number) => void;
-  onMove?: (delta: -1 | 1) => void;
-  canMoveLeft: boolean;
-  canMoveRight: boolean;
-  /** History and the metadata columns, as the grid offered them before. */
-  details?: React.ReactNode;
+  /** Absent where the source keeps no history. */
+  onHistory?: () => void;
   onClose: () => void;
+}
+
+/** The two sort words a column of `kind` reads in. */
+export function sortWords(kind: ColumnKind, labels: GridLabels): [asc: string, desc: string] {
+  if (kind === "datetime") return [labels.sortAscDate, labels.sortDescDate];
+  if (kind === "number") return [labels.sortAscNumber, labels.sortDescNumber];
+  if (kind === "boolean") return [labels.sortAscBoolean, labels.sortDescBoolean];
+  return [labels.sortAsc, labels.sortDesc];
 }
 
 /**
@@ -78,106 +83,68 @@ export function usePlaceAtCell(): React.MutableRefObject<HTMLDivElement | null> 
   return box;
 }
 
-/** Pixels one Narrower or Wider press moves the edge. */
+/** Pixels one arrow key moves a header's edge. */
 export const WIDTH_STEP = 40;
 
 export const ColumnMenu = React.forwardRef<HTMLDivElement, ColumnMenuProps>(function ColumnMenu(
-  { label, labels, sorted, onSort, onFilter, onHide, onRename, renamed, onWiden, onMove, canMoveLeft, canMoveRight, details, onClose },
+  { label, kind, labels, sorted, onSort, onFilter, onHide, onHistory, onClose },
   ref,
 ) {
-  const id = useId();
-  const [draft, setDraft] = useState(label);
-  const first = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    first.current?.focus();
-  }, []);
   const box = usePlaceAtCell();
   const setBox = (el: HTMLDivElement | null) => {
     box.current = el;
     if (typeof ref === "function") ref(el);
     else if (ref) ref.current = el;
   };
-  const commit = () => {
-    const text = draft.trim();
-    if (text !== "" && text !== label) onRename(text);
-  };
+  const items = () => [...(box.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])];
+  useEffect(() => {
+    items()[0]?.focus();
+  }, []);
+  const [asc, desc] = sortWords(kind, labels);
+  const item = (text: string, icon: React.ReactNode, onClick: () => void, checked?: boolean) => (
+    <button
+      type="button"
+      className="jc-grid-meta-item"
+      role={checked === undefined ? "menuitem" : "menuitemradio"}
+      aria-checked={checked}
+      tabIndex={-1}
+      onClick={onClick}
+    >
+      <span className="jc-grid-menu-icon" aria-hidden="true">{icon}</span>
+      {text}
+    </button>
+  );
   return (
     <div
       className="jc-grid-meta-menu jc-grid-col-menu"
       ref={setBox}
-      role="dialog"
+      role="menu"
       aria-label={`${labels.columnMenu}: ${label}`}
       onKeyDown={(e) => {
         // Inside the menu the grid's own arrow and Enter keys do not apply.
         e.stopPropagation();
-        if (e.key === "Escape") onClose();
+        const all = items();
+        const at = all.indexOf(document.activeElement as HTMLElement);
+        const go = (to: number) => {
+          e.preventDefault();
+          all[(to + all.length) % all.length]?.focus();
+        };
+        if (e.key === "ArrowDown") go(at + 1);
+        else if (e.key === "ArrowUp") go(at - 1);
+        else if (e.key === "Home") go(0);
+        else if (e.key === "End") go(all.length - 1);
+        else if (e.key === "Escape" || e.key === "Tab") {
+          e.preventDefault();
+          onClose();
+        }
       }}
     >
-      <button ref={first} type="button" className="jc-grid-meta-item" aria-pressed={sorted === "asc"} onClick={() => onSort("asc")}>
-        <span className="jc-grid-menu-icon" aria-hidden="true">↑</span>
-        {labels.sortAsc}
-      </button>
-      <button type="button" className="jc-grid-meta-item" aria-pressed={sorted === "desc"} onClick={() => onSort("desc")}>
-        <span className="jc-grid-menu-icon" aria-hidden="true">↓</span>
-        {labels.sortDesc}
-      </button>
-      {(onFilter || onHide) && <hr className="jc-grid-menu-sep" />}
-      {onFilter && (
-        <button type="button" className="jc-grid-meta-item" onClick={onFilter}>
-          <span className="jc-grid-menu-icon jc-grid-funnel" aria-hidden="true" />
-          {labels.filterColumn}
-        </button>
-      )}
-      {onHide && (
-        <button type="button" className="jc-grid-meta-item" onClick={onHide}>
-          <span className="jc-grid-menu-icon" aria-hidden="true">⊘</span>
-          {labels.hideColumn}
-        </button>
-      )}
-      <details className="jc-grid-col-menu-details">
-        <summary>
-          <span className="jc-grid-menu-icon" aria-hidden="true">⚙</span>
-          {labels.details}
-        </summary>
-        <label className="jc-grid-col-menu-field" htmlFor={`${id}-label`}>
-          {labels.renameColumn}
-        </label>
-        <input
-          id={`${id}-label`}
-          className="jc-grid-col-menu-input"
-          value={draft}
-          maxLength={80}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commit();
-          }}
-        />
-        {renamed && (
-          <button type="button" className="jc-grid-meta-item" onClick={() => onRename(undefined)}>
-            {labels.renameReset}
-          </button>
-        )}
-        <div className="jc-grid-col-menu-row" role="group" aria-label={labels.columnWidth}>
-          <button type="button" className="jc-grid-meta-item" onClick={() => onWiden(-WIDTH_STEP)}>
-            {labels.narrower}
-          </button>
-          <button type="button" className="jc-grid-meta-item" onClick={() => onWiden(WIDTH_STEP)}>
-            {labels.wider}
-          </button>
-        </div>
-        {onMove && (
-          <div className="jc-grid-col-menu-row">
-            <button type="button" className="jc-grid-meta-item" disabled={!canMoveLeft} onClick={() => onMove(-1)}>
-              {labels.moveLeft}
-            </button>
-            <button type="button" className="jc-grid-meta-item" disabled={!canMoveRight} onClick={() => onMove(1)}>
-              {labels.moveRight}
-            </button>
-          </div>
-        )}
-        {details}
-      </details>
+      {item(asc, "↑", () => onSort("asc"), sorted === "asc")}
+      {item(desc, "↓", () => onSort("desc"), sorted === "desc")}
+      {(onFilter || onHide || onHistory) && <hr className="jc-grid-menu-sep" role="separator" />}
+      {onFilter && item(labels.filterColumn, <span className="jc-grid-funnel" />, onFilter)}
+      {onHide && item(labels.hideColumn, "⊘", onHide)}
+      {onHistory && item(labels.history, "◷", onHistory)}
     </div>
   );
 });

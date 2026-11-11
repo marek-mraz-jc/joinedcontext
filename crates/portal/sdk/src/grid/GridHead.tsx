@@ -1,12 +1,12 @@
 import React from "react";
 import { HeaderFilter } from "./AutoFilter";
-import { ColumnMenu } from "./ColumnMenu";
+import { ColumnMenu, WIDTH_STEP } from "./ColumnMenu";
 import { complete } from "./filters";
 import { GridFilterRow } from "./GridFilterRow";
 import { KIND_ICON, KIND_LABEL } from "./gridKinds";
 import { cellText } from "./model";
 import { NAME_COLUMN } from "./useEntityGrid";
-import type { MetaKey, VisibleColumn } from "./useEntityGrid";
+import type { VisibleColumn } from "./useEntityGrid";
 import type { GridView } from "./useGridView";
 
 /** `list` with `attr` moved to `index`, every other name in its order. */
@@ -56,12 +56,11 @@ export function GridHead({ view }: { view: GridView }): React.JSX.Element {
 }
 
 function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleColumn; index: number }): React.JSX.Element {
-  const { grid, labels, kindOf, order, asText, filterable, dragOver, setDragOver, layout, setLayout, sortLabel, where, openFilter, closeFilter, focusFilter, loadValues, locks, openMenu, toggleMenu, menuRef, baseLabel, closeMenu, hideColumn, renameColumn, widen, firstMovable, startResize } = view;
+  const { grid, labels, kindOf, order, asText, filterable, dragOver, setDragOver, layout, setLayout, sortLabel, where, openFilter, closeFilter, focusFilter, loadValues, locks, openMenu, toggleMenu, menuRef, closeMenu, hideColumn, widen, startResize, historyOn } = view;
   const { state, setFilter, setSort, getHeaderProps } = grid;
   const kind = kindOf.get(col.key) ?? "text";
   const kindLabel = labels[KIND_LABEL[kind]] as string;
   const own = col.attr !== null && col.meta === null ? col.attr : null;
-  const at = own === null ? -1 : order.indexOf(own);
   const fixed = own === NAME_COLUMN;
   const movable = own !== null && !col.pinned && !fixed;
   // The Type filter lives in the filter row alone: its values are the grid's own types.
@@ -123,7 +122,7 @@ function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleCol
         type="button"
         className="jc-grid-meta-btn"
         aria-label={`${labels.columnMenu}: ${col.label}`}
-        aria-haspopup="dialog"
+        aria-haspopup="menu"
         aria-expanded={openMenu === own}
         onClick={() => toggleMenu(own)}
       >
@@ -133,73 +132,48 @@ function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleCol
     {own !== null && openMenu === own && (
       <ColumnMenu
         ref={menuRef}
-        label={layout.labels?.[own] ?? baseLabel(col)}
+        label={col.label}
+        kind={kind}
         labels={labels}
         sorted={state.sort?.attr === own ? state.sort.dir : null}
         onSort={(dir) => { setSort(own, dir); closeMenu(); }}
         onFilter={headerFilter ? () => focusFilter(col.key) : undefined}
         onHide={col.pinned || fixed ? undefined : () => hideColumn(own)}
-        renamed={layout.labels?.[own] !== undefined}
-        onRename={(text) => renameColumn(own, text)}
-        onWiden={(delta) => widen(own, col.width, delta)}
-        onMove={movable ? (delta) => setLayout({ ...layout, order: moveTo(order, own, at + delta) }) : undefined}
-        canMoveLeft={movable && at > firstMovable}
-        canMoveRight={movable && at < order.length - 1}
+        onHistory={historyOn ? () => openHistory(view, col) : undefined}
         onClose={closeMenu}
-          details={<ColumnDetails view={view} col={col} />}
-        />
-      )}
+      />
+    )}
     {own !== null && (
-      // The edge a pointer drags; a keyboard has Narrower and Wider under the menu's settings.
-      <span className="jc-grid-resize" aria-hidden="true" onPointerDown={(e) => startResize(e, own)} />
+      // The edge a pointer drags; a keyboard focuses it and widens or narrows with the arrow keys.
+      <span
+        className="jc-grid-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={`${labels.columnWidth}: ${col.label}`}
+        aria-valuenow={col.width}
+        tabIndex={0}
+        onPointerDown={(e) => startResize(e, own)}
+        onKeyDown={(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();
+          e.stopPropagation();
+          widen(own, col.width, e.key === "ArrowRight" ? WIDTH_STEP : -WIDTH_STEP);
+        }}
+      />
     )}
   </th>
   );
 }
 
-/** Under a column menu's Details: the attribute's history and the metadata columns it can show. */
-function ColumnDetails({ view, col }: { view: GridView; col: VisibleColumn }): React.JSX.Element {
-  const { grid, labels, options, setHistory, setOpenMenu, handleMetaCheck } = view;
+/** A column's history for the row the person is on, under the grid. */
+function openHistory(view: GridView, col: VisibleColumn): void {
+  const { grid, labels, options, setHistory, setOpenMenu } = view;
   const { rows, state } = grid;
-  return (
-    <>
-    {options.source.history && options.config.history.enabled !== false && (
-      <button
-        type="button"
-        className="jc-grid-meta-item"
-        onClick={() => {
-          // The row the person is on, else the first: history belongs to one
-          // entity, and the panel names which.
-          const row = rows[state.activeCell?.row ?? 0] ?? rows[0];
-          // Named as a person reads it: the column's label and the row's name,
-          // never the id (T-2991).
-          const name = cellText(row?.cells.name);
-          const title = options.labels?.historyLabels?.title ?? labels.history;
-          setHistory({
-            attr: col.attr!,
-            id: row?.id ?? "",
-            heading: `${title}: ${col.label}${name ? ` — ${name}` : ""}`,
-          });
-          setOpenMenu(null);
-        }}
-      >
-        {labels.history}
-      </button>
-    )}
-    {(["observedAt", "unit", "datasetId", "createdAt", "modifiedAt"] as MetaKey[]).map((meta) => {
-      const checked = (state.shown[col.attr!] ?? []).includes(meta);
-      const metaLabel = meta === "observedAt" ? labels.observedAt : meta === "unit" ? labels.unit : meta === "datasetId" ? labels.datasetId : meta === "createdAt" ? labels.createdAt : labels.modifiedAt;
-      return (
-        <label key={meta} className="jc-grid-meta-item">
-          <input
-            type="checkbox"
-            checked={checked}
-            onChange={() => handleMetaCheck(col.attr!, meta)}
-          />
-          {metaLabel}
-        </label>
-      );
-    })}
-    </>
-  );
+  // The row the person is on, else the first: history belongs to one entity, and the panel names which.
+  const row = rows[state.activeCell?.row ?? 0] ?? rows[0];
+  // Named as a person reads it: the column's label and the row's name, never the id (T-2991).
+  const name = cellText(row?.cells.name);
+  const title = options.labels?.historyLabels?.title ?? labels.history;
+  setHistory({ attr: col.attr!, id: row?.id ?? "", heading: `${title}: ${col.label}${name ? ` — ${name}` : ""}` });
+  setOpenMenu(null);
 }
