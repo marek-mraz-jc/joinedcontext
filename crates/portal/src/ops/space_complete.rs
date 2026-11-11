@@ -632,7 +632,7 @@ pub async fn run(
                 records.mapping(&class_name, &slots)
             }
             None => format!(
-                "root = this\nroot.id = \"urn:ngsi-ld:{class_name}:\" + env(\"JC_ORG_DOMAIN\") + \":\" + env(\"JC_SPACE\") + \":\" + (this.stationId | this.id | this.station_id | uuid_v4()).string()\nroot.type = \"{class_name}\"\n"
+                "root = this\nroot.id = \"urn:ngsi-ld:{class_name}:\" + env(\"JC_ORG_ID\") + \":\" + env(\"JC_SPACE\") + \":\" + (this.stationId | this.id | this.station_id | uuid_v4()).string()\nroot.type = \"{class_name}\"\n"
             ),
         });
         let endpoint_name = endpoint_manifest

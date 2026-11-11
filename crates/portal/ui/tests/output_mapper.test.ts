@@ -52,7 +52,7 @@ describe("the output mapper", () => {
   it("generates a step that mints the id, wraps each attribute as its kind and coerces CSV text", () => {
     const step = generate(STATE, ATTRIBUTES, "ovzdusie");
     expect(step.startsWith(HEADER)).toBe(true);
-    expect(step).toContain('root.id = "urn:ngsi-ld:%v:%v:%v:%v".format("AirQualityObserved", $domain, "ovzdusie", this."Station ID".string()');
+    expect(step).toContain('root.id = "urn:ngsi-ld:%v:%v:%v:%v".format("AirQualityObserved", $owner, "ovzdusie", this."Station ID".string()');
     expect(step).toContain('root.type = "AirQualityObserved"');
     expect(step).toContain('if this.PM10 != null && this.PM10 != "" { this.PM10.number() } else { null }');
     expect(step).toContain('"unitCode": "GQ"');
