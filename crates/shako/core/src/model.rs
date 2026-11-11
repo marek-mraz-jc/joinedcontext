@@ -23,7 +23,6 @@ pub struct InstanceRecord {
     pub max_repos: u64,
     pub max_storage_bytes: u64,
     pub max_push_bytes: u64,
-    pub secret_scan_enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -40,7 +39,6 @@ impl InstanceRecord {
             max_repos: 200,
             max_storage_bytes: 5 * 1024 * 1024 * 1024,
             max_push_bytes: 512 * 1024 * 1024,
-            secret_scan_enabled: true,
             created_at: now,
             updated_at: now,
         }

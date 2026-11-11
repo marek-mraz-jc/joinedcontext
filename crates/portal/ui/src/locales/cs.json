@@ -242,7 +242,7 @@
     "needsRole": "Ke schválení je třeba přiřazená role s právem `approve` v tomto projektu.",
     "needsPublisher": "Zpřístupnění endpointu veřejnosti vyžaduje roli `publisher`; samotný steward to nemůže.",
     "ownProposal": "Nemůžete schválit ani zamítnout vlastní návrh.",
-    "ownAccessChange": "Změny přístupu schvaluje druhá osoba: vlastní změnu rolí, skupin či servisních účtů schválí jiný administrátor.",
+    "ownAccessChange": "Změny přístupu schvaluje druhá osoba: vlastní změnu rolí, skupin, servisních účtů či politik schválí jiný administrátor.",
     "ownModelChange": "Změnu datového modelu schvaluje druhá osoba: vlastní změnu modelu schválí jiný administrátor.",
     "confirmPrompt": "Pro potvrzení napište tento název:",
     "confirmLabel": "Pro potvrzení napište název",

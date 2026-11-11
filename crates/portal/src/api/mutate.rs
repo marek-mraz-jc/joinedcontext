@@ -58,12 +58,39 @@ pub const SECRET_KEYS: &[&str] = &[
     "userNkeySeed",
 ];
 
-/// Detects string-valued literal secrets in manifest payloads (MF-24).
-///
-/// Returns the first offending key name if any string-valued key named `password`, `token`,
-/// `secret`, `clientSecret` or `apiKey` exists at any depth. Object-valued secret references
-/// (such as `secretRef: { name: "..." }`) are permitted.
-pub fn find_literal_secret(val: &Value) -> Option<String> {
+/// A credential written out in a manifest: where it sits and which rule found it (MF-24, SEC-06).
+/// It names the path and never the value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiteralSecret {
+    /// The dotted path from the scanned value (`spec.http.headers.X-Api-Key`, `spec.steps.0.url`).
+    pub path: String,
+    pub rule: &'static str,
+}
+
+impl std::fmt::Display for LiteralSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "'{}' ({})", self.path, self.rule)
+    }
+}
+
+/// Detects literal secrets in manifest payloads (MF-24, SEC-06): a scalar under a credential's
+/// name ([`SECRET_KEYS`]), a credential in a request header, and a string shaped like a
+/// credential under any name ([`crate::secret_scan::manifest_value_rule`]: a token, a key, a
+/// password in a URL). Object-valued secret references (`secretRef: { name: "..." }`) and a whole
+/// `${VAR}` are permitted. Every door that takes a manifest (draft, propose, approval, load,
+/// import, offline validation) calls this one function.
+pub fn find_literal_secret(val: &Value) -> Option<LiteralSecret> {
+    literal_secret_under(val, "")
+}
+
+fn literal_secret_under(val: &Value, at: &str) -> Option<LiteralSecret> {
+    let join = |key: &str| {
+        if at.is_empty() {
+            key.to_owned()
+        } else {
+            format!("{at}.{key}")
+        }
+    };
     match val {
         Value::Object(map) => {
             for (k, v) in map {
@@ -75,24 +102,32 @@ pub fn find_literal_secret(val: &Value) -> Option<String> {
                     || v.is_number()
                     || v.is_boolean();
                 if SECRET_KEYS.contains(&k.as_str()) && scalar {
-                    return Some(k.clone());
+                    return Some(LiteralSecret {
+                        path: join(k),
+                        rule: "a credential's field name",
+                    });
                 }
                 if let Some(header) = (k == "headers").then(|| credential_header(v)).flatten() {
-                    return Some(format!("headers.{header}"));
+                    return Some(LiteralSecret {
+                        path: format!("{}.{header}", join(k)),
+                        rule: "a credential in a request header",
+                    });
                 }
-                if let Some(found) = find_literal_secret(v) {
+                if let Some(found) = literal_secret_under(v, &join(k)) {
                     return Some(found);
                 }
             }
             None
         }
-        Value::Array(arr) => {
-            for item in arr {
-                if let Some(found) = find_literal_secret(item) {
-                    return Some(found);
-                }
-            }
-            None
+        Value::Array(arr) => arr
+            .iter()
+            .enumerate()
+            .find_map(|(n, item)| literal_secret_under(item, &join(&n.to_string()))),
+        Value::String(text) => {
+            crate::secret_scan::manifest_value_rule(text).map(|rule| LiteralSecret {
+                path: at.to_owned(),
+                rule,
+            })
         }
         _ => None,
     }
@@ -1576,7 +1611,7 @@ fn envelope_for(
 fn refuse_platform_fields(body_val: &Value, envelope: &ResourceEnvelope) -> Result<(), ApiError> {
     if let Some(secret_key) = find_literal_secret(body_val) {
         return Err(ApiError::BadRequest(format!(
-            "literal secret in field '{secret_key}' is forbidden; use secretRef instead (MF-24)"
+            "literal secret in field {secret_key} is forbidden; use secretRef instead (MF-24)"
         )));
     }
 
@@ -2969,7 +3004,7 @@ pub async fn patch(
 
     if let Some(secret_key) = find_literal_secret(&patch_val) {
         return Err(ApiError::BadRequest(format!(
-            "literal secret in field '{secret_key}' is forbidden; use secretRef instead (MF-24)"
+            "literal secret in field {secret_key} is forbidden; use secretRef instead (MF-24)"
         )));
     }
 
@@ -3549,6 +3584,62 @@ mod tests {
         })
     }
 
+    fn secret_path(val: &Value) -> Option<String> {
+        find_literal_secret(val).map(|found| found.path)
+    }
+
+    /// SEC-06 (T-6713): a credential under a name that does not say so is found by its shape,
+    /// and the finding names its path and rule, never its value.
+    #[test]
+    fn a_credential_shaped_value_under_any_name_is_a_literal_secret() {
+        // Built at run time so no scanner meets a literal token in this file.
+        let token = format!("ghp_{}", "a1B2c3D4".repeat(5));
+        let jwt = format!("eyJhbGci.{}.{}", "eyJzdWIi", "c2lnbmF0dXJl");
+        let cases = [
+            (
+                json!({ "spec": { "input": { "query": token } } }),
+                "spec.input.query",
+            ),
+            (
+                json!({ "spec": { "steps": [{ "note": jwt }] } }),
+                "spec.steps.0.note",
+            ),
+            (
+                json!({ "spec": { "url": "postgres://feed:pw4feed@db:5432/x" } }),
+                "spec.url",
+            ),
+            (
+                json!({ "spec": { "auth": format!("Bearer {token}") } }),
+                "spec.auth",
+            ),
+        ];
+        for (manifest, path) in cases {
+            let found = find_literal_secret(&manifest).expect("a credential-shaped value");
+            assert_eq!(found.path, path);
+            assert_eq!(found.rule, "a credential-shaped value");
+            assert!(!found.to_string().contains("pw4feed") && !found.to_string().contains(&token));
+        }
+        let query = json!({ "spec": { "source": "https://api.example.org/v1?api_key=k3y4feed" } });
+        assert_eq!(
+            find_literal_secret(&query),
+            Some(LiteralSecret {
+                path: "spec.source".into(),
+                rule: "a credential in a URL query"
+            })
+        );
+        // Prose, a variable, a certificate and an address without a password stay readable.
+        for open in [
+            json!({ "spec": { "description": "Basic air quality model for the city" } }),
+            json!({ "spec": { "description": "Bearer tokens come from the Keycloak client" } }),
+            json!({ "spec": { "url": "postgres://feed:${FEED_PW}@db:5432/x" } }),
+            json!({ "spec": { "source": "https://api.example.org/v1?api_key=${KEY}" } }),
+            json!({ "spec": { "ca": "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----" } }),
+            json!({ "spec": { "url": "https://data.example.org/feed.csv?limit=10" } }),
+        ] {
+            assert_eq!(find_literal_secret(&open), None, "{open}");
+        }
+    }
+
     /// T-3972: a credential field of a runner step names the pipeline's secret as `${VAR}`, which
     /// is a reference and no secret; jc-core holds which names a manifest may read (PL-15). A
     /// value that is anything more than one whole reference is still a literal.
@@ -3563,16 +3654,13 @@ mod tests {
             "Cookie",
         ] {
             assert_eq!(
-                find_literal_secret(&spec(json!({ name: "abc123pastedkey456" }))),
-                Some(format!("headers.{name}"))
+                secret_path(&spec(json!({ name: "abc123pastedkey456" }))),
+                Some(format!("spec.http.headers.{name}"))
             );
-            assert_eq!(
-                find_literal_secret(&spec(json!({ name: "${API_KEY}" }))),
-                None
-            );
+            assert_eq!(secret_path(&spec(json!({ name: "${API_KEY}" }))), None);
         }
         assert_eq!(
-            find_literal_secret(&spec(json!({ "Accept": "text/csv", "User-Agent": "jc" }))),
+            secret_path(&spec(json!({ "Accept": "text/csv", "User-Agent": "jc" }))),
             None
         );
     }
@@ -3588,8 +3676,8 @@ mod tests {
                 } } }]
             } })
         };
-        assert_eq!(find_literal_secret(&step(json!("${FEED_PW}"))), None);
-        assert_eq!(find_literal_secret(&step(json!("${_PW2}"))), None);
+        assert_eq!(secret_path(&step(json!("${FEED_PW}"))), None);
+        assert_eq!(secret_path(&step(json!("${_PW2}"))), None);
         for literal in [
             json!("hunter2"),
             json!("x${FEED_PW}"),
@@ -3601,8 +3689,8 @@ mod tests {
             json!(1234),
         ] {
             assert_eq!(
-                find_literal_secret(&step(literal.clone())),
-                Some("password".into()),
+                secret_path(&step(literal.clone())),
+                Some("spec.steps.0.processor.http.basic_auth.password".into()),
                 "{literal}"
             );
         }
@@ -3611,37 +3699,34 @@ mod tests {
     #[test]
     fn detects_literal_secrets_and_permits_secret_refs() {
         assert_eq!(
-            find_literal_secret(&json!({ "password": "supersecret" })),
+            secret_path(&json!({ "password": "supersecret" })),
             Some("password".into())
         );
         assert_eq!(
-            find_literal_secret(&json!({ "spec": { "token": "ghp_123" } })),
-            Some("token".into())
+            secret_path(&json!({ "spec": { "token": "ghp_123" } })),
+            Some("spec.token".into())
         );
         assert_eq!(
-            find_literal_secret(&json!({ "spec": { "nested": { "clientSecret": "plain" } } })),
-            Some("clientSecret".into())
+            secret_path(&json!({ "spec": { "nested": { "clientSecret": "plain" } } })),
+            Some("spec.nested.clientSecret".into())
         );
         assert_eq!(
-            find_literal_secret(&json!({ "apiKey": "12345" })),
+            secret_path(&json!({ "apiKey": "12345" })),
             Some("apiKey".into())
         );
         // T-2540, MF-24: a number or a boolean under a credential name is a literal too.
         assert_eq!(
-            find_literal_secret(&json!({ "spec": { "password": 123456 } })),
-            Some("password".into())
+            secret_path(&json!({ "spec": { "password": 123456 } })),
+            Some("spec.password".into())
         );
         assert_eq!(
-            find_literal_secret(&json!({ "spec": { "token": true } })),
-            Some("token".into())
+            secret_path(&json!({ "spec": { "token": true } })),
+            Some("spec.token".into())
         );
-        assert_eq!(
-            find_literal_secret(&json!({ "spec": { "password": null } })),
-            None
-        );
+        assert_eq!(secret_path(&json!({ "spec": { "password": null } })), None);
 
         assert_eq!(
-            find_literal_secret(&json!({
+            secret_path(&json!({
                 "spec": {
                     "password": {
                         "secretRef": { "name": "db-secret", "key": "password" }
@@ -3651,7 +3736,7 @@ mod tests {
             None
         );
         assert_eq!(
-            find_literal_secret(&json!({
+            secret_path(&json!({
                 "spec": {
                     "secretRef": { "name": "vault-key" }
                 }
@@ -3659,7 +3744,7 @@ mod tests {
             None
         );
         assert_eq!(
-            find_literal_secret(&json!({
+            secret_path(&json!({
                 "metadata": { "name": "public-air" },
                 "spec": { "audience": "public" }
             })),

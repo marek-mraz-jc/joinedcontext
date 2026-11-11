@@ -234,7 +234,6 @@ async fn handle_post_receive_pack(
     let owner_clone = repo.owner.clone();
     let name_clone = repo.name.clone();
     let disk_clone = disk_path.clone();
-    let secret_scan = instance.secret_scan_enabled;
 
     let res = tokio::task::spawn_blocking(move || {
         let _hold = permit;
@@ -246,7 +245,6 @@ async fn handle_post_receive_pack(
                 owner: &owner_clone,
                 repo_name: &name_clone,
                 policy: &policy,
-                secret_scan_enabled: secret_scan,
             },
             max_push_bytes,
             &req_bytes,

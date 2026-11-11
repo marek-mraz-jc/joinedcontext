@@ -49,6 +49,165 @@ mod tests {
     };
     use std::time::Duration;
 
+    /// Pushes `main` of `source` into a new empty repository and answers the report-status text.
+    fn push_main(tmp: &std::path::Path, source: &std::path::Path, tip: &str) -> String {
+        let inst = InstanceId::from_u128(1);
+        let org = OrgId::from_u128(1);
+        let dest = init_bare_repo(tmp, inst, RepoId::from_u128(201), "main", false, "Dest")
+            .expect("init dest");
+        let bundle = create_single_ref_bundle(source, "main").expect("bundle");
+        let pack = bundle
+            .windows(2)
+            .position(|w| w == b"\n\n")
+            .expect("header end")
+            + 2;
+        let mut body = Vec::new();
+        write_text_line(
+            &mut body,
+            &format!(
+                "0000000000000000000000000000000000000000 {tip} refs/heads/main\0 report-status"
+            ),
+        )
+        .unwrap();
+        write_flush(&mut body).unwrap();
+        body.extend_from_slice(&bundle[pack..]);
+        let authz = LocalAuthorizer::new(vec![RoleBinding {
+            org_id: org,
+            principal: "jc-portal".into(),
+            actions: vec![Action::Write],
+            project_id: None,
+            repo: None,
+        }]);
+        let ctx = RequestCtx::new(
+            inst,
+            org,
+            Subject::authenticated("jc-portal", "jc-portal", vec![org], vec![]),
+        );
+        let guard = PushGuard {
+            ctx: &ctx,
+            authorizer: &authz,
+            owner: "helsinki",
+            repo_name: "dest",
+            policy: &RefPolicy::default(),
+        };
+        let out =
+            handle_receive_pack(&dest, &guard, 10 * 1024 * 1024, &body).expect("receive-pack");
+        String::from_utf8_lossy(&out.response_bytes).into_owned()
+    }
+
+    /// SEC-06, P-19 (T-6713): a credential committed and removed again inside one push is still
+    /// refused, since it would stay in history; the refusal names the file, the line and the rule,
+    /// never the value. The scan has no off switch.
+    #[test]
+    fn a_secret_anywhere_in_a_pushed_history_is_refused() {
+        let author = CommitAuthor {
+            name: "Alice".into(),
+            email: "alice@hel.fi".into(),
+        };
+        // Built at run time so no scanner meets a literal credential in this file.
+        let literal = format!("pw{}", "4feed".repeat(3));
+        let token = format!("ghp_{}", "a1B2c3D4e5".repeat(4));
+        let cases = [
+            (
+                "spaces/air/source.yaml",
+                format!(
+                    "apiVersion: joinedcontext.com/v1\nkind: DataSource\nspec:\n  http:\n    password: {literal}\n"
+                ),
+                "literal-secret-field in 'spaces/air/source.yaml' line 5 (field 'password'",
+            ),
+            (
+                "app/src/config.ts",
+                format!("export const key = \"{token}\";\n"),
+                "github-token in 'app/src/config.ts' line 1",
+            ),
+        ];
+        for (path, content, rule) in cases {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let source = init_bare_repo(
+                tmp.path(),
+                InstanceId::from_u128(1),
+                RepoId::from_u128(200),
+                "main",
+                true,
+                "Source",
+            )
+            .expect("init source");
+            let commit = |message: &str, operation, content: Option<&str>, sha: Option<String>| {
+                commit_file_changes(
+                    &source,
+                    "main",
+                    message,
+                    &author,
+                    &author,
+                    &[FileChangeOp {
+                        operation,
+                        path: path.into(),
+                        content: content.map(|c| c.as_bytes().to_vec()),
+                        sha,
+                    }],
+                )
+                .expect("commit")
+            };
+            commit("add the feed", FileOpKind::Create, Some(&content), None);
+            let (_, entries) = list_tree_entries(&source, "main", true).expect("tree");
+            let blob = entries
+                .into_iter()
+                .find(|e| e.path == path)
+                .expect("the file")
+                .sha;
+            let tip = commit("take it out again", FileOpKind::Delete, None, Some(blob));
+            let said = push_main(tmp.path(), &source, &tip);
+            assert!(said.contains("ng refs/heads/main"), "{said}");
+            assert!(said.contains(rule), "{said}");
+            assert!(!said.contains(&literal) && !said.contains(&token), "{said}");
+        }
+    }
+
+    #[test]
+    fn a_secret_reference_in_a_manifest_passes_the_scan() {
+        for open in [
+            "    password: ${FEED_PW}",
+            "    password:",
+            "    password: null",
+            "  token:\n    secretRef: feed",
+            "    apiTokenRef: opendata",
+            "    description: \"the password lives in the secret form\"",
+            // A Bloblang mapping inside a block scalar (deployment seeds
+            // bbsk-pipeline-ukazovatele.yaml:83, slovensko-pipeline-participacia-statistika.yaml:37).
+            "spec:\n  mapping: |\n    root = this.map_each(w -> {\n      \"token\": $territory.get(w.area),\n    })\n",
+            "spec:\n  mapping: |-\n    root = {\n      \"token\": e.proposalState.value.or(\"\")\n    }\n",
+            // A sops-encrypted value is ciphertext, no literal.
+            "password: ENC[AES256_GCM,data:Zm9v,iv:YmFy,tag:YmF6,type:str]",
+            // Not YAML at all: the field rule judges parsed manifests only.
+            "password: [unclosed",
+            // Helm values naming a Kubernetes Secret, and a workflow's secrets expression.
+            "apiToken:\n  secret: ckan-api-token\n",
+            "kind: A\napiVersion: v1\nwith: { password: \"${{ secrets.GITHUB_TOKEN }}\" }",
+        ] {
+            assert_eq!(
+                scan_blob_for_secrets("a/b.yaml", open.as_bytes()),
+                None,
+                "{open}"
+            );
+        }
+        let literal = format!(
+            "apiVersion: v1\nkind: A\nclientSecret: \"{}\"",
+            "s3cr3t".repeat(2)
+        );
+        assert!(scan_blob_for_secrets("a/b.yml", literal.as_bytes()).is_some());
+        // The same literal in the second document, nested under a list item, names its line.
+        let nested = format!(
+            "kind: A\n---\napiVersion: v1\nkind: A\nspec:\n  users:\n    - name: x\n      password: {}\n",
+            "s3cr3t".repeat(2)
+        );
+        let said = scan_blob_for_secrets("a/b.yaml", nested.as_bytes()).expect("refused");
+        assert!(
+            said.contains("line 8") && said.contains("'password'"),
+            "{said}"
+        );
+        assert_eq!(scan_blob_for_secrets("a/b.md", literal.as_bytes()), None);
+    }
+
     #[test]
     fn git_engine_commit_merge_bundle_archive_receive_pack_and_compaction() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -205,7 +364,6 @@ mod tests {
                 owner: "helsinki",
                 repo_name: "dest",
                 policy: &RefPolicy::default(),
-                secret_scan_enabled: true,
             },
             10 * 1024 * 1024,
             &rp_body,
@@ -217,11 +375,21 @@ mod tests {
 
         // Verify quarantine is clean and quota refusal leaves no quarantine behind
         assert!(!has_active_quarantine(&dest_path));
-        let over_quota = handle_receive_pack(&dest_path, &PushGuard { ctx: &ctx, authorizer: &authz, owner: "helsinki", repo_name: "dest", policy: &RefPolicy {
-                branch_rules: vec![BranchProtectionRule::default()],
-                tag_rules: vec![],
-            }, secret_scan_enabled: // 10 bytes max_push_bytes -> refused with unpack error quota
-            true }, 10, &rp_body)
+        let over_quota = handle_receive_pack(
+            &dest_path,
+            &PushGuard {
+                ctx: &ctx,
+                authorizer: &authz,
+                owner: "helsinki",
+                repo_name: "dest",
+                policy: &RefPolicy {
+                    branch_rules: vec![BranchProtectionRule::default()],
+                    tag_rules: vec![],
+                },
+            },
+            10,
+            &rp_body,
+        ) // 10 bytes max_push_bytes -> refused with unpack error quota
         .expect("quota refusal");
         assert!(String::from_utf8_lossy(&over_quota.response_bytes).contains("unpack error quota"));
         assert!(!has_active_quarantine(&dest_path));
