@@ -1304,35 +1304,102 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add(
         "subscribe_mine",
-        "Your calendar from these rows",
-        "Váš kalendár z týchto riadkov",
-        "Váš kalendář z těchto řádků",
-        "Ihr Kalender aus diesen Zeilen",
-        "Saját naptár ezekből a sorokból",
+        "Your own calendar",
+        "Váš vlastný kalendár",
+        "Váš vlastní kalendář",
+        "Ihr eigener Kalender",
+        "Saját naptár",
     );
     add(
         "subscribe_mine_lead",
-        "The table's filter and search become the calendar's query: only matching events arrive.",
-        "Filter a hľadanie tabuľky sa stanú dopytom kalendára: prídu len zodpovedajúce podujatia.",
-        "Filtr a hledání tabulky se stanou dotazem kalendáře: přijdou jen odpovídající akce.",
-        "Filter und Suche der Tabelle werden zur Abfrage des Kalenders: nur passende Termine kommen an.",
-        "A táblázat szűrője és keresése lesz a naptár lekérdezése: csak az egyező események érkeznek.",
-    );
-    add(
-        "subscribe_query",
-        "Filter",
-        "Filter",
-        "Filtr",
-        "Filter",
-        "Szűrő",
+        "Pick a town, a genre or dates: only matching events arrive, and the address below follows your choice.",
+        "Vyberte obec, žáner alebo dátumy: prídu len zodpovedajúce podujatia a adresa nižšie sa podľa výberu zmení.",
+        "Vyberte obec, žánr nebo data: přijdou jen odpovídající akce a adresa níže se podle výběru změní.",
+        "Wählen Sie einen Ort, ein Genre oder Daten: nur passende Termine kommen an, und die Adresse unten folgt Ihrer Wahl.",
+        "Válasszon települést, műfajt vagy dátumokat: csak az egyező események érkeznek, és a lenti cím a választást követi.",
     );
     add(
         "subscribe_query_hint",
-        "An NGSI-LD query, for example name~=\"(?i).*concert.*\" for names with concert; leave it empty for every event.",
-        "Dopyt NGSI-LD, napríklad name~=\"(?i).*koncert.*\" pre názvy so slovom koncert; prázdne pre všetky podujatia.",
-        "Dotaz NGSI-LD, například name~=\"(?i).*koncert.*\" pro názvy se slovem koncert; prázdné pro všechny akce.",
-        "Eine NGSI-LD-Abfrage, zum Beispiel name~=\"(?i).*konzert.*\" für Namen mit Konzert; leer für alle Termine.",
-        "NGSI-LD lekérdezés, például name~=\"(?i).*koncert.*\" a koncert szót tartalmazó nevekhez; üresen az összes esemény.",
+        "For example {example}; empty for all.",
+        "Napríklad {example}; prázdne pre všetky.",
+        "Například {example}; prázdné pro všechny.",
+        "Zum Beispiel {example}; leer für alle.",
+        "Például {example}; üresen az összes.",
+    );
+    add(
+        "subscribe_google",
+        "Add to Google Calendar",
+        "Pridať do Kalendára Google",
+        "Přidat do Kalendáře Google",
+        "Zu Google Kalender hinzufügen",
+        "Hozzáadás a Google Naptárhoz",
+    );
+    add(
+        "subscribe_refresh",
+        "Calendar apps fetch a subscribed calendar again every few hours, so a new event shows up there later than here.",
+        "Kalendárové aplikácie načítajú odoberaný kalendár znova každých pár hodín, takže nové podujatie sa v nich objaví neskôr ako tu.",
+        "Kalendářové aplikace načtou odebíraný kalendář znovu každých pár hodin, takže nová akce se v nich objeví později než zde.",
+        "Kalender-Apps laden einen abonnierten Kalender alle paar Stunden neu, daher erscheint ein neuer Termin dort später als hier.",
+        "A naptáralkalmazások néhány óránként töltik be újra a feliratkozott naptárat, így egy új esemény ott később jelenik meg, mint itt.",
+    );
+    add("subscribe_town", "Town", "Obec", "Obec", "Ort", "Település");
+    add(
+        "subscribe_genre",
+        "Genre",
+        "Žáner",
+        "Žánr",
+        "Genre",
+        "Műfaj",
+    );
+    add("subscribe_from", "From", "Od", "Od", "Von", "Ettől");
+    add("subscribe_to", "To", "Do", "Do", "Bis", "Eddig");
+    add(
+        "subscribe_dates_hint",
+        "The day an event starts, for example 2026-12-01; leave both empty for every date.",
+        "Deň začiatku podujatia, napríklad 2026-12-01; obe prázdne pre všetky dátumy.",
+        "Den začátku akce, například 2026-12-01; obě prázdná pro všechna data.",
+        "Der Tag, an dem ein Termin beginnt, zum Beispiel 2026-12-01; beide leer für alle Daten.",
+        "Az esemény kezdőnapja, például 2026-12-01; mindkettő üresen az összes dátumhoz.",
+    );
+    add(
+        "subscribe_not_listed",
+        "„{value}“ is not in the list; pick one of its values or clear the field.",
+        "„{value}“ nie je v zozname; vyberte jednu z jeho hodnôt alebo pole vymažte.",
+        "„{value}“ není v seznamu; vyberte jednu z jeho hodnot nebo pole vymažte.",
+        "„{value}“ steht nicht in der Liste; wählen Sie einen ihrer Werte oder leeren Sie das Feld.",
+        "„{value}” nincs a listában; válasszon egy értéket belőle, vagy törölje a mezőt.",
+    );
+    add(
+        "subscribe_link_held",
+        "No link while a field holds a value outside its list: correct or clear the field marked red.",
+        "Kým pole obsahuje hodnotu mimo zoznamu, odkaz sa nezobrazí: opravte alebo vymažte pole označené červenou.",
+        "Dokud pole obsahuje hodnotu mimo seznam, odkaz se nezobrazí: opravte nebo vymažte pole označené červeně.",
+        "Solange ein Feld einen Wert außerhalb seiner Liste enthält, gibt es keinen Link: korrigieren oder leeren Sie das rot markierte Feld.",
+        "Amíg egy mező a listán kívüli értéket tartalmaz, nincs hivatkozás: javítsa vagy törölje a pirossal jelölt mezőt.",
+    );
+    add(
+        "subscribe_no_facets",
+        "This calendar offers no town or genre lists; narrow it by dates, or subscribe to it whole above.",
+        "Tento kalendár neponúka zoznam obcí ani žánrov; zúžte ho dátumami alebo ho vyššie odoberajte celý.",
+        "Tento kalendář nenabízí seznam obcí ani žánrů; zužte ho daty nebo ho výše odebírejte celý.",
+        "Dieser Kalender bietet keine Orts- oder Genrelisten; grenzen Sie ihn mit Daten ein oder abonnieren Sie ihn oben ganz.",
+        "Ez a naptár nem kínál település- vagy műfajlistát; szűkítse dátumokkal, vagy fent iratkozzon fel a teljesre.",
+    );
+    add(
+        "subscribe_events",
+        "{count} events",
+        "{count} podujatí",
+        "{count} akcí",
+        "{count} Termine",
+        "{count} esemény",
+    );
+    add(
+        "subscribe_csv",
+        "Table (CSV)",
+        "Tabuľka (CSV)",
+        "Tabulka (CSV)",
+        "Tabelle (CSV)",
+        "Táblázat (CSV)",
     );
     add(
         "subscribe_preview",
@@ -1360,11 +1427,11 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add(
         "subscribe_preview_failed",
-        "The calendar cannot use this filter; compare it with the example above. The server says: {detail}",
-        "Kalendár tento filter nevie použiť; porovnajte ho s príkladom vyššie. Server hlási: {detail}",
-        "Kalendář tento filtr neumí použít; porovnejte ho s příkladem výše. Server hlásí: {detail}",
-        "Der Kalender kann diesen Filter nicht verwenden; vergleichen Sie ihn mit dem Beispiel oben. Der Server meldet: {detail}",
-        "A naptár nem tudja használni ezt a szűrőt; vesse össze a fenti példával. A szerver üzenete: {detail}",
+        "The calendar cannot use this choice. The server says: {detail}",
+        "Kalendár tento výber nevie použiť. Server hlási: {detail}",
+        "Kalendář tento výběr neumí použít. Server hlásí: {detail}",
+        "Der Kalender kann diese Auswahl nicht verwenden. Der Server meldet: {detail}",
+        "A naptár nem tudja használni ezt a választást. A szerver üzenete: {detail}",
     );
     add(
         "search_publishers",

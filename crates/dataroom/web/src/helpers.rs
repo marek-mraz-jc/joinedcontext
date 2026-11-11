@@ -1478,8 +1478,53 @@ pub fn jc_visualizations(
 /// Subscribe block items (`jc_subscriptions` in `plugin.py` line 1903, D3).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SubscriptionsView {
-    pub calendar: Vec<(String, String, String, String)>, // (name, url, webcal_url, mimetype)
-    pub news: Vec<(String, String, String)>,             // (name, url, mimetype)
+    pub calendar: Vec<(String, String, String, String, String)>, // (name, url, webcal_url, mimetype, google)
+    pub news: Vec<(String, String, String)>,                     // (name, url, mimetype)
+    /// The calendar a reader builds from the Endpoint's facets and dates (T-6758).
+    pub builder: Option<FeedBuilder>,
+}
+
+/// What the page's calendar builder needs: the dataset's own Endpoint, the stored output its
+/// link narrows, and whether the Endpoint also has a feed (RSS and Atom endings).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedBuilder {
+    /// `https://{host}/api/endpoint/{slug}`, without a trailing `/`.
+    pub base: String,
+    /// The output name, `[A-Za-z0-9_-]{1,63}`.
+    pub output: String,
+    pub feed: bool,
+}
+
+/// Google Calendar's "add by URL" for a calendar feed: it takes the `webcal:` address as `cid`.
+fn google_calendar(webcal: &str) -> String {
+    let cid: String = url::form_urlencoded::byte_serialize(webcal.as_bytes()).collect();
+    format!("https://calendar.google.com/calendar/r?cid={cid}")
+}
+
+/// The builder of a calendar at `url` when it is an output of the dataset's own Endpoint
+/// `endpoint`: `{endpoint}/ical/v1/{name}.ics` or `{endpoint}/feeds/{name}.ics`.
+fn feed_builder(endpoint: &str, url: &str, feed: bool) -> Option<FeedBuilder> {
+    let base = endpoint.trim_end_matches('/');
+    let parsed = url::Url::parse(base).ok()?;
+    let slug = parsed.path().strip_prefix("/api/endpoint/")?;
+    let named = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    if parsed.scheme() != "https"
+        || parsed.query().is_some()
+        || slug.is_empty()
+        || !slug.chars().all(|c| c.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    let file = url.strip_prefix(base)?;
+    let name = file
+        .strip_prefix("/ical/v1/")
+        .or_else(|| file.strip_prefix("/feeds/"))?
+        .strip_suffix(".ics")?;
+    (!name.is_empty() && name.len() <= 63 && name.chars().all(named)).then(|| FeedBuilder {
+        base: base.to_owned(),
+        output: name.to_owned(),
+        feed,
+    })
 }
 
 impl SubscriptionsView {
@@ -1513,11 +1558,13 @@ pub fn jc_subscriptions(ds: &Dataset, lang: &str, default_lang: &str) -> Subscri
                 .is_some_and(|f| f.eq_ignore_ascii_case("ICS"))
         {
             let webcal = dist.access_url.replacen("https://", "webcal://", 1);
+            let google = google_calendar(&webcal);
             sub.calendar.push((
                 name,
                 dist.access_url.clone(),
                 webcal,
                 "text/calendar".into(),
+                google,
             ));
         } else if matches!(
             mime.as_str(),
@@ -1526,6 +1573,15 @@ pub fn jc_subscriptions(ds: &Dataset, lang: &str, default_lang: &str) -> Subscri
             sub.news.push((name, dist.access_url.clone(), mime));
         }
     }
+    let endpoint = ds
+        .endpoint_url
+        .as_deref()
+        .or_else(|| ds.extras.get("endpoint").map(String::as_str));
+    sub.builder = endpoint.and_then(|endpoint| {
+        sub.calendar
+            .first()
+            .and_then(|cal| feed_builder(endpoint, &cal.1, !sub.news.is_empty()))
+    });
     sub
 }
 
