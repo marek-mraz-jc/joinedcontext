@@ -231,7 +231,7 @@ test.describe("the KPI editor over several sources", () => {
     await expect(page.getByRole("button", { name: "Propose change" })).toBeEnabled();
     await expect(editor.getByText("The pipeline cannot read this yet")).toBeVisible();
     await editor.getByRole("button", { name: "Compute now" }).click();
-    await expect(editor.getByRole("cell", { name: "Kallio", exact: true })).toBeVisible();
+    await expect(editor.getByRole("rowheader", { name: "Kallio", exact: true })).toBeVisible();
     await expect(editor.getByText("parking: 48 rows · stops: 31 rows")).toBeVisible();
     await shot(page, "filled");
 
