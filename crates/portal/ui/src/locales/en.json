@@ -194,6 +194,10 @@
     "dns1123": "Lower-case letters, digits and hyphens only, starting with a letter or a digit, at most 63 characters.",
     "entityType": "An NGSI-LD type: a capital letter, then letters and digits, at most 64 characters.",
     "requiredCount": "{filled} of {total} required fields filled",
+    "svgPreview": "Preview of {label}",
+    "svgPreviewNote": "Drawn as an image: nothing in the SVG runs.",
+    "fixCount": "Fields to fix: {count}",
+    "fixFirst": "Show the first",
     "askAboutField": "Ask about this field",
     "askAboutFieldQuestion": "In the {kind} form: what goes in “{label}”, and what happens when it is left empty?",
     "fillFromSentence": "Fill this from a sentence",
@@ -7649,8 +7653,7 @@
       "creationAdmin": "Only an organization administrator opens projects.",
       "cooldown": "{days} days",
       "noQuota": "No limit is set for a new project.",
-      "appearanceInstallation": "The installation's name, colours and logo",
-      "appearanceLogo": "with its own logo"
+      "fromInstallation": "the installation's"
     },
     "members": {
       "title": "Members",

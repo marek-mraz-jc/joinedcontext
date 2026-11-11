@@ -5,6 +5,7 @@ import validator from "./validator";
 import { TranslatableString, deepEquals, englishStringTranslator, retrieveSchema } from "@rjsf/utils";
 import type { ErrorSchema, RJSFSchema, RJSFValidationError } from "@rjsf/utils";
 import { useTranslation } from "react-i18next";
+import { Button } from "../ui";
 import { requiredProgress } from "./uischema";
 import type { JsonSchema, UiSchema } from "./types";
 import {
@@ -117,6 +118,19 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
   if (!checked && hasAnyError(extraErrors)) {
     setChecked(true);
   }
+  // The fields a refused submit left to fix (T-6772): the footer names how many and leads to the
+  // first, where "3 of 3 required fields filled" said nothing was wrong.
+  const [refused, setRefused] = React.useState(0);
+  const formBox = React.useRef<HTMLDivElement>(null);
+  const showFirstRefused = React.useCallback(() => {
+    const field = formBox.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+    if (!field) return;
+    for (let fold = field.closest("details"); fold; fold = fold.parentElement?.closest("details") ?? null) {
+      fold.open = true;
+    }
+    field.scrollIntoView({ block: "center" });
+    field.focus();
+  }, []);
   const touched = React.useMemo(() => ({ all: checked, ids: touchedIds }), [checked, touchedIds]);
   const touch = React.useCallback((id: string | undefined) => {
     if (id) {
@@ -169,7 +183,14 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
       value={
         actions || progress.total > 0 ? (
           <>
-            {progress.total > 0 ? (
+            {checked && refused > 0 ? (
+              <span role="alert" className="mr-auto flex flex-wrap items-center gap-2 text-caption text-danger">
+                {t("form.fixCount", { count: refused })}
+                <Button type="button" variant="ghost" size="sm" onClick={showFirstRefused}>
+                  {t("form.fixFirst")}
+                </Button>
+              </span>
+            ) : progress.total > 0 ? (
               <span
                 data-testid="required-count"
                 // The form's left edge, whatever wraps beside it: the footer's lines end flush right.
@@ -191,6 +212,7 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
           <FormProjectContext.Provider value={project}>
           <FormDataContext.Provider value={held ?? shown}>
           <TouchedContext.Provider value={touched}>
+          <div ref={formBox} className="contents">
           <Form<T>
             validator={validator}
             schema={schema}
@@ -214,15 +236,18 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
               onSubmit(data.formData as T);
             }}
             onBlur={touch}
-            onError={() => {
+            onError={(errors) => {
               setChecked(true);
+              setRefused(new Set(errors.map((error) => error.property)).size);
             }}
             onChange={(data, id) => {
+              setRefused(new Set(data.errors.map((error) => error.property)).size);
               touch(id);
               setHeld(data.formData);
               onChange?.(data.formData as T | undefined);
             }}
           />
+          </div>
           </TouchedContext.Provider>
           </FormDataContext.Provider>
           </FormProjectContext.Provider>

@@ -125,7 +125,7 @@ export function ChangeNotice({
         <span>{waiting ? t("changes.accepted") : t("changes.approvedAsProposed")}</span>
         {plain ? null : <span className="font-mono font-medium">{change.metadata.name}</span>}
         {/* The lane says who must approve: once approved, red beside Merged only reads as a failure. */}
-        {waiting && !plain ? <LifecycleBadge kind="lane" value={change.status.lane} /> : null}
+        {waiting && !plain && change.status.lane ? <LifecycleBadge kind="lane" value={change.status.lane} /> : null}
         {plain ? null : <LifecycleBadge kind="phase" value={change.status.phase} />}
       </span>
     </Alert>

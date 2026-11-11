@@ -1,5 +1,7 @@
 import { PageFailed } from "../../components/ui/PageState";
-import type { JSX } from "react";
+import { Fragment } from "react";
+import type { JSX, ReactNode } from "react";
+import { clsx } from "clsx";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, queryKeys, unwrap } from "../../api/client";
@@ -8,6 +10,7 @@ import { useChosenOrganizationName } from "../../api/projects";
 import { EditResourceAction } from "../../components/EditResourceDialog";
 import type { EditableForm } from "../../components/EditResourceDialog";
 import { EmptyState, Skeleton } from "../../components/ui";
+import { Swatch, svgImageUrl } from "../../components/forms/widgets/AppearanceWidgets";
 import { APP_SERVICES_UI, organizationSchema } from "../../schemas/kinds";
 import { OrganizationDomain } from "../access/OrganizationDomain";
 import { OrganizationLimitsView } from "./OrganizationLimitsView";
@@ -43,6 +46,7 @@ interface OrganizationSpec {
     shortName?: string;
     colours?: Partial<Record<"primary" | "secondary" | "accent" | "background" | "text", string>>;
     logoSvg?: string;
+    faviconSvg?: string;
   };
 }
 
@@ -82,26 +86,53 @@ export function toOrganization(form: Record<string, unknown>, stored: unknown): 
   return { ...manifest, spec: next };
 }
 
-/** `spec.appearance` in words: the name, a swatch per colour set, whether a logo is (UIX-16). */
+const COLOURS = ["primary", "secondary", "accent", "background", "text"] as const;
+
+/** A pasted SVG drawn as an image (never inline markup), else the installation's. */
+function SvgShown({ svg, label }: { svg?: string; label: string }): JSX.Element {
+  const { t } = useTranslation();
+  const url = svgImageUrl(svg);
+  if (!url) return <>{t("organization.settings.fromInstallation")}</>;
+  return <img src={url} alt={label} className="h-10 max-w-40 rounded border border-border bg-surface object-contain p-1" />;
+}
+
+/** `spec.appearance` member by member, each unset one named as the installation's (UIX-16). */
 function AppearanceSummary({ appearance }: { appearance?: OrganizationSpec["appearance"] }): JSX.Element {
   const { t } = useTranslation();
-  const colours = Object.entries(appearance?.colours ?? {}).filter(([, value]) => value);
-  if (!appearance?.instanceName && !appearance?.shortName && colours.length === 0 && !appearance?.logoSvg) {
-    return <>{t("organization.settings.appearanceInstallation")}</>;
-  }
+  const installation = t("organization.settings.fromInstallation");
+  const row = (label: string, value: ReactNode) => (
+    <>
+      <dt className="text-fg-muted">{label}</dt>
+      <dd className="min-w-0">{value}</dd>
+    </>
+  );
   return (
-    <span className="flex flex-wrap items-center gap-2">
-      {appearance.instanceName ?? appearance.shortName ? <span>{appearance.instanceName ?? appearance.shortName}</span> : null}
-      {colours.map(([name, value]) => (
-        <span key={name} className="inline-flex items-center gap-1 text-caption text-fg-muted">
-          <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 rounded border border-border">
-            <rect width="16" height="16" fill={value} />
-          </svg>
-          {t(`organization.field.appearance.colour.${name}`)} {value}
-        </span>
-      ))}
-      {appearance.logoSvg ? <span className="text-caption text-fg-muted">{t("organization.settings.appearanceLogo")}</span> : null}
-    </span>
+    <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1">
+      {row(t("organization.field.appearance.instanceName"), appearance?.instanceName || installation)}
+      {row(t("organization.field.appearance.shortName"), appearance?.shortName || installation)}
+      {COLOURS.map((name) => {
+        const value = appearance?.colours?.[name];
+        return (
+          <Fragment key={name}>
+            {row(
+              t(`organization.field.appearance.colour.${name}`),
+              <span className="inline-flex items-center gap-2">
+                <Swatch colour={value} className={clsx("h-control-xs w-control-xs", !value && "border-dashed")} />
+                {value ?? installation}
+              </span>,
+            )}
+          </Fragment>
+        );
+      })}
+      {row(
+        t("organization.field.appearance.logoSvg"),
+        <SvgShown svg={appearance?.logoSvg} label={t("organization.field.appearance.logoSvg")} />,
+      )}
+      {row(
+        t("organization.field.appearance.faviconSvg"),
+        <SvgShown svg={appearance?.faviconSvg} label={t("organization.field.appearance.faviconSvg")} />,
+      )}
+    </dl>
   );
 }
 

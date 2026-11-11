@@ -194,6 +194,10 @@
     "dns1123": "Jen malá písmena, číslice a spojovníky, začíná písmenem nebo číslicí, nejvýše 63 znaků.",
     "entityType": "Typ NGSI-LD: velké písmeno, pak písmena a číslice, nejvýše 64 znaků.",
     "requiredCount": "{filled} z {total} povinných polí vyplněno",
+    "svgPreview": "Náhled: {label}",
+    "svgPreviewNote": "Vykresleno jako obrázek: nic v SVG se nespustí.",
+    "fixCount": "Pole k opravě: {count}",
+    "fixFirst": "Ukázat první",
     "askAboutField": "Zeptat se na toto pole",
     "askAboutFieldQuestion": "Ve formuláři {kind}: co patří do „{label}“ a co se stane, když to zůstane prázdné?",
     "fillFromSentence": "Vyplnit z jedné věty",
@@ -7649,8 +7653,7 @@
       "creationAdmin": "Projekty otevírá jen administrátor organizace.",
       "cooldown": "{days} dní",
       "noQuota": "Pro nový projekt není stanoven žádný limit.",
-      "appearanceInstallation": "Název, barvy a logo instalace",
-      "appearanceLogo": "s vlastním logem"
+      "fromInstallation": "z instalace"
     },
     "members": {
       "title": "Členové",
