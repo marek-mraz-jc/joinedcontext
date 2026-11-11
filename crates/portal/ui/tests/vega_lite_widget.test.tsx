@@ -102,6 +102,8 @@ describe("the source a vega-lite widget reads", () => {
     expect(drawn.data).toEqual({ name: "source" });
     expect(drawn.datasets).toEqual({ source: [{ district: "Staré Mesto", pm10: 12 }] });
     expect(drawn.width).toBe("container");
+    expect(drawn.height).toBe(220);
+    expect(withRows({ ...SPEC, height: 120 }, []).height).toBe(120);
     expect(drawn.title).toBeUndefined();
   });
 });

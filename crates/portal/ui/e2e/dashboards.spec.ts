@@ -113,6 +113,87 @@ test.describe("map dashboard", () => {
     expect(geojsonRequests.every((path) => path.startsWith(`/api/endpoint/${SLUG}/`))).toBe(true);
   });
 
+  // T-6786: a `vega-lite` widget draws its spec over one source of its Endpoint, filled and
+  // empty, at desktop and phone width; the shots go to test-results/T-6786 for the task.
+  for (const [state, rows] of [
+    ["filled", [
+      { id: "s1", district: "Staré Mesto", pm10: 31 },
+      { id: "s2", district: "Ružinov", pm10: 24 },
+      { id: "s3", district: "Petržalka", pm10: 18 },
+      { id: "s4", district: "Nové Mesto", pm10: 27 },
+    ]],
+    ["empty", []],
+  ] as const) {
+    for (const width of [1440, 400]) {
+      test(`a vega-lite widget draws its source, ${state}, at ${width} px`, async ({ page }) => {
+        const chart = {
+          ...DASHBOARD,
+          spec: {
+            ...DASHBOARD.spec,
+            pages: [{
+              title: "Prehľad",
+              layers: ["air-quality-stations"],
+              widgets: [{
+                widgetType: "vega-lite",
+                endpointRef: "public-air",
+                data: { source: "ogc", collection: "AirQualityObserved" },
+                spec: {
+                  $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+                  title: "PM10 by district",
+                  data: { name: "source" },
+                  params: [{ name: "pick", select: { type: "point", fields: ["district"] } }],
+                  mark: { type: "bar", tooltip: true },
+                  encoding: {
+                    y: { field: "district", type: "nominal", sort: "-x", title: null },
+                    x: { field: "pm10", type: "quantitative", title: "PM10 (µg/m³)" },
+                    opacity: { condition: { param: "pick", value: 1 }, value: 0.4 },
+                  },
+                },
+              }],
+            }],
+          },
+        };
+        await page.setViewportSize({ width, height: 900 });
+        await page.route("https://demotiles.maplibre.org/**", (route) =>
+          route.fulfill({ contentType: "application/json", body: JSON.stringify({ version: 8, sources: {}, layers: [] }) }),
+        );
+        await page.route("**/api/endpoint/**", (route) => {
+          const path = new URL(route.request().url()).pathname;
+          if (path.includes("/ogc/features/collections/AirQualityObserved/items")) {
+            return route.fulfill({
+              contentType: "application/geo+json",
+              body: JSON.stringify({ type: "FeatureCollection", features: rows.map(({ id, ...properties }) => ({ type: "Feature", id, geometry: null, properties })), links: [] }),
+            });
+          }
+          return route.fulfill({ contentType: "application/json", body: JSON.stringify(FEATURES) });
+        });
+        await page.route("**/api/v1/**", (route) => {
+          const path = new URL(route.request().url()).pathname;
+          const json = (body: unknown) => route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
+          const list = (items: unknown[]) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items });
+          if (path.endsWith("/auth/me")) return json(IDENTITY);
+          if (path === "/api/v1/projects") return json(list([{ name: "banskabystrica" }]));
+          if (path.endsWith("/dashboards")) return json(list([chart]));
+          if (path.endsWith("/layers")) return json(list([LAYER]));
+          if (path.endsWith("/endpoints")) return json(list([ENDPOINT]));
+          return json(list([]));
+        });
+
+        await page.goto("/projects/banskabystrica/dashboards?lang=en");
+        await expect(page.getByRole("heading", { name: "Air quality" })).toBeVisible();
+        const figure = page.getByRole("figure").filter({ hasText: "PM10 by district" });
+        if (state === "filled") {
+          await expect(figure.getByRole("img", { name: "PM10 by district" }).locator("canvas")).toBeVisible();
+        } else {
+          await expect(figure.getByText("This chart's source holds no rows.", { exact: false })).toBeVisible();
+        }
+        await figure.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `test-results/T-6786/vega-lite-${state}-${width}.png`, fullPage: true });
+        expect(await axeViolations(page)).toEqual([]);
+      });
+    }
+  }
+
   test("the dashboards route has no axe violations", async ({ page }) => {
     await page.route("https://demotiles.maplibre.org/**", (route) =>
       route.fulfill({

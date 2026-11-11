@@ -16,8 +16,9 @@ import type { Spec } from "../panels/specs";
 import { readSource } from "./vegaLiteSource";
 import type { WidgetSource } from "./vegaLiteSource";
 
-/** The chart's height when its spec names none. */
+/** The chart's height when its spec names none, and the plot's inside it (axes take the rest). */
 const HEIGHT = 280;
+const PLOT_HEIGHT = 220;
 
 /** The spec's own title, when it gives one as text. */
 export function specTitle(spec: Spec): string | null {
@@ -32,6 +33,8 @@ export function withRows(spec: Spec, rows: Record<string, unknown>[]): Spec {
   const { title: _title, ...rest } = spec;
   return {
     width: "container",
+    // A plot fills the card: without a height a band scale draws 20 px per row and leaves the rest empty.
+    height: PLOT_HEIGHT,
     autosize: { type: "fit", contains: "padding" },
     ...rest,
     datasets: { ...((spec.datasets as Record<string, unknown>) ?? {}), source: rows },
@@ -63,7 +66,7 @@ export function VegaLiteWidget({
     },
   });
   const drawn = useMemo(() => (read.data ? withRows(spec, read.data.rows) : null), [spec, read.data]);
-  const height = typeof spec.height === "number" ? spec.height : HEIGHT;
+  const height = typeof spec.height === "number" ? spec.height + HEIGHT - PLOT_HEIGHT : HEIGHT;
 
   return (
     <Card as="figure" padding="sm" className="flex flex-col gap-2">
