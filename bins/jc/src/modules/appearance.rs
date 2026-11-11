@@ -115,7 +115,14 @@ pub(crate) fn dashboard_cards(
                     .into_iter()
                     .flatten()
                     .filter_map(|widget| Some(widget.get("endpointRef")?.as_str()?.to_owned()));
-                for source in from_layers.chain(from_widgets) {
+                // Only a public Endpoint is named: UI-19 checks a public Dashboard's layers on
+                // write, not its widgets, so a widget's Endpoint is checked here.
+                let public = |source: &String| {
+                    mirror.get(&project, "Endpoint", source).is_some_and(|e| {
+                        e.spec.get("audience").and_then(Value::as_str) == Some("public")
+                    })
+                };
+                for source in from_layers.chain(from_widgets).filter(public) {
                     if !sources.contains(&source) {
                         sources.push(source);
                     }
@@ -207,7 +214,8 @@ mod tests {
     }
 
     /// T-6780: a catalogue home draws only its own Organization's public Dashboards, with the
-    /// title in the page's language and the Endpoints its layers and widgets read.
+    /// title in the page's language and the public Endpoints its layers and widgets read; a
+    /// widget's non-public Endpoint is never named.
     #[cfg(feature = "dataroom")]
     #[test]
     fn a_catalogue_home_draws_only_its_own_organizations_public_dashboards() {
@@ -250,9 +258,22 @@ mod tests {
                 "pages": [
                     { "title": "Mapa", "layers": ["zastavky"] },
                     { "widgets": [{ "type": "bar-chart", "endpointRef": "nehody-public" },
-                                  { "type": "grid", "endpointRef": "mhd-public" }] },
+                                  { "type": "grid", "endpointRef": "mhd-public" },
+                                  { "type": "grid", "endpointRef": "interne" }] },
                 ] }),
         ));
+        for (endpoint, audience) in [
+            ("mhd-public", "public"),
+            ("nehody-public", "public"),
+            ("interne", "organization"),
+        ] {
+            mirror.upsert(envelope(
+                "Endpoint",
+                endpoint,
+                "doprava",
+                serde_json::json!({ "audience": audience }),
+            ));
+        }
         mirror.upsert(envelope(
             "Dashboard",
             "interny",
