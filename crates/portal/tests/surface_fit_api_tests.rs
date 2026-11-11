@@ -40,6 +40,13 @@ async fn portal(linkml: &str, lifecycle: &str) -> (AppState, wiremock::MockServe
         .mount(&shako)
         .await;
     let state = common::state_on(&shako);
+    // The Policy the proposed Endpoint names (P-18, T-6740).
+    state.mirror.upsert(common::envelope(
+        "Policy",
+        "air-read",
+        PROJECT,
+        json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "air" } }),
+    ));
     for space in ["air", "bare"] {
         state
             .mirror
@@ -135,7 +142,8 @@ fn endpoint(representations: Value) -> Value {
             "slug": "si6epqkx364lprho5uaigutk274r5grb",
             "audience": "project-list",
             "allowedProjects": [PROJECT],
-            "enabledRepresentations": representations
+            "enabledRepresentations": representations,
+            "policyRefs": [format!("urn:ngsi-ld:Policy:hel.fi:{PROJECT}-air:air-read")]
         }
     })
 }

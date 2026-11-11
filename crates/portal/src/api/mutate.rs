@@ -1093,6 +1093,12 @@ async fn propose_engine(
     } else {
         Vec::new()
     };
+    // 4d-refs. A new or changed Endpoint names the Policies it serves (P-18, T-6740): judged at
+    //     this door alone, so `main`'s Endpoints without references load and approve unchanged,
+    //     and after the content, rights and reference checks, so their refusals are heard first.
+    if operation != Operation::Delete {
+        check_names_policies(state, identity, project, &envelope)?;
+    }
 
     // 4h. Every role of an App comes with its default group, in the same Change (AP-118,
     //     ADR-N-031): the group of a new role and its access entry are written, the group of a
@@ -1686,12 +1692,7 @@ async fn check_content(
 
     // 4b-contact. A catalogue record publishes its contact point to everyone, so a person's own
     //       address is refused at every door (EP-80, T-2789).
-    crate::catalog::check_contact(&state.mirror, identity, kind, &envelope.spec)?;
-
-    // 4b-refs. A new or changed Endpoint names the Policies it serves (P-18, T-6740): judged
-    //     here alone, last, so `main`'s Endpoints without references load and approve unchanged
-    //     and a refusal of what the Endpoint serves is heard first.
-    check_names_policies(state, identity, project, envelope)
+    crate::catalog::check_contact(&state.mirror, identity, kind, &envelope.spec)
 }
 
 /// The Keycloak client id `{project}-{name}` derives, when another project's ServiceAccount
@@ -2519,7 +2520,7 @@ pub(crate) fn check_names_policies(
     match unreadable.is_empty() {
         true => Ok(()),
         false => Err(ApiError::Denied(format!(
-            "spec.policyRefs: you do not read the Policy {}, so you cannot bind it to an              Endpoint; pick one the policy list offers you",
+            "spec.policyRefs: you do not read the Policy {}, so you cannot bind it to an Endpoint; pick one the policy list offers you",
             unreadable.join(", ")
         ))),
     }

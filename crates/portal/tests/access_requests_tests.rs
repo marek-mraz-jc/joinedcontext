@@ -1083,7 +1083,9 @@ async fn a_persons_request_is_refused_field_by_field() {
             hidden.text
         );
     }
-    // An Endpoint serving only the Policies it names cannot carry a new grant: said, not stored.
+    // An Endpoint serving only the Policies it names takes the grant into its list when the
+    // request is approved (P-18, T-6740): it is no longer refused up front, so this Portal
+    // without a database answers that it keeps no requests.
     state.mirror.upsert(common::envelope(
         "Endpoint",
         "air-quality",
@@ -1098,8 +1100,13 @@ async fn a_persons_request_is_refused_field_by_field() {
         Some(person_ask(&["AirQualityObserved"])),
     )
     .await;
-    assert_eq!(fixed.status, StatusCode::CONFLICT, "{}", fixed.text);
-    assert!(fixed.text.contains("policy list"), "{}", fixed.text);
+    assert_eq!(
+        fixed.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        fixed.text
+    );
+    assert!(!fixed.text.contains("policy list"), "{}", fixed.text);
 }
 
 /// T-5567, AUT-2: approving, declining and revoking an access request are decisions; an owner

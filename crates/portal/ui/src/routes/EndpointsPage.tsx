@@ -1374,7 +1374,8 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     policyRefs: {
       "ui:widget": "checkboxes",
       "ui:help": t(projecting ? "endpoints.help.policyRefsDrafted" : "endpoints.help.policyRefs", {
-        example: `${editing?.name || "air-quality"}-read`,
+        // The example names a Policy the list offers when there is one.
+        example: policyChoices[0]?.title ?? `${editing?.name || "air-quality"}-read`,
       }),
     },
   };
