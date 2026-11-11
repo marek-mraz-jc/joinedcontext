@@ -51,7 +51,7 @@
       timeout: "The data took longer than 15 seconds. Narrow the search or try again.", noAddress: "This page shows the live data of an open-data Endpoint; the address names none.",
       noWidget: "The table could not start. Reload the page; if it stays, the catalogue's administrators can see why in the browser console.",
       mapHint: "Click a point to open its details. The table lists the same entities.", mapCap: "The map shows the first {n} of {total} in view; zoom in for the rest.",
-      mapNone: "No entity of this query has a location.", mapLoading: "Loading map…", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
+      mapNone: "No entity of this query has a location.", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
       viewLink: "This view (type, filter and order)", yes: "yes", no: "no",
       cardYes: "Yes", cardNo: "No", dev: "For developers", onMap: "Show on the map", idLabel: "Identifier", typeLabel: "Type", placeMap: "Location map",
       embed: "Embed", embedLead: "Put this live table on your own website. It keeps reading the current data; nothing is copied.",
@@ -76,7 +76,7 @@
       timeout: "Dáta sa načítavali dlhšie ako 15 sekúnd. Zúžte hľadanie alebo to skúste znova.", noAddress: "Táto stránka ukazuje živé dáta Endpointu otvorených dát; adresa žiadny neuvádza.",
       noWidget: "Tabuľka sa nespustila. Načítajte stránku znova; ak to pretrváva, správcovia katalógu vidia príčinu v konzole prehliadača.",
       mapHint: "Kliknite na bod a otvorí sa jeho detail. Tabuľka uvádza tie isté entity.", mapCap: "Mapa ukazuje prvých {n} z {total} vo výreze; priblížte pre ďalšie.",
-      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapLoading: "Načítavam mapu…", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
+      mapNone: "Žiadna entita tohto dopytu nemá polohu.", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
       viewLink: "Toto zobrazenie (typ, filter a poradie)", yes: "áno", no: "nie",
       cardYes: "Áno", cardNo: "Nie", dev: "Pre vývojárov", onMap: "Zobraziť na mape", idLabel: "Identifikátor", typeLabel: "Typ", placeMap: "Mapa miesta",
       embed: "Vložiť na web", embedLead: "Dajte túto živú tabuľku na svoj web. Stále číta aktuálne dáta; nič sa nekopíruje.",
@@ -447,40 +447,6 @@
       else shapes.push(f);
     });
     return { points: points, shapes: shapes };
-  }
-
-  // Every position of a feature's geometry, [lon, lat] each; none for a feature without one.
-  function positions(f) {
-    var out = [];
-    var walk = function (c) { if (typeof c[0] === "number") { if (isFinite(c[0]) && isFinite(c[1])) out.push(c); } else c.forEach(walk); };
-    if (f && f.geometry && Array.isArray(f.geometry.coordinates)) walk(f.geometry.coordinates);
-    return out;
-  }
-
-  // The box around every located feature, [[west, south], [east, north]], or null when none has a position.
-  function boundsOf(features) {
-    var w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
-    (features || []).forEach(function (f) {
-      positions(f).forEach(function (p) { w = Math.min(w, p[0]); s = Math.min(s, p[1]); e = Math.max(e, p[0]); n = Math.max(n, p[1]); });
-    });
-    return w === Infinity ? null : [[w, s], [e, n]];
-  }
-
-  // How many features lie within the view [west, south, east, north], as the broker's `within` counts them.
-  function inBox(features, b) {
-    return (features || []).filter(function (f) {
-      var ps = positions(f);
-      return ps.length > 0 && ps.every(function (p) { return p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3]; });
-    }).length;
-  }
-
-  // What a view change needs (T-5794 follow-up, brief 132): the rows held already when the first read
-  // returned every row of the query (counted in view, no read), nothing when this very read was asked
-  // last, else one read.
-  function viewPlan(held, lastUrl, url, b) {
-    if (held) return { local: inBox(held, b) };
-    if (url === lastUrl) return { skip: true };
-    return { read: url };
   }
 
   // "Na mape 412 z 1 680 · 96 bez polohy", numbers in the page's language.
