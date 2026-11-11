@@ -155,11 +155,11 @@ describe("GridPager", () => {
     expect(pageNumbers(5, 9)).toEqual([1, null, 4, 5, 6, null, 9]);
   });
 
-  it("names the rows of a page without a total, and a next page only when this one is full (R22)", () => {
-    expect(shownLine(DEFAULT_LABELS, 0, 20, 20)).toBe("Rows 1–20 · more on the next page");
+  it("names the rows of a page without a total, and and that more may follow only when this one is full (R22)", () => {
+    expect(shownLine(DEFAULT_LABELS, 0, 20, 20)).toBe("Rows 1–20 · more may follow");
     expect(shownLine(DEFAULT_LABELS, 40, 7, 20)).toBe("Rows 41–47");
-    const sk = { ...DEFAULT_LABELS, rowsShown: "Riadky {first}–{last}", moreNext: "ďalšie na nasledujúcej strane" };
-    expect(shownLine(sk, 20, 20, 20)).toBe("Riadky 21–40 · ďalšie na nasledujúcej strane");
+    const sk = { ...DEFAULT_LABELS, rowsShown: "Riadky {first}–{last}", moreNext: "ďalšie môžu nasledovať" };
+    expect(shownLine(sk, 20, 20, 20)).toBe("Riadky 21–40 · ďalšie môžu nasledovať");
     // An App's labels from before these two words still read.
     const { rowsShown: _r, moreNext: _m, ...old } = DEFAULT_LABELS;
     expect(shownLine(old, 0, 5, 20)).toBe("Rows 1–5");

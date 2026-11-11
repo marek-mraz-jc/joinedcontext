@@ -8,7 +8,7 @@ export function pageNumbers(current: number, total: number): (number | null)[] {
   return kept.flatMap((page, at) => (at > 0 && page - (kept[at - 1] ?? page) > 1 ? [null, page] : [page]));
 }
 
-/** "Rows 21–40 · more on the next page": the rows of a page whose answer gave no total (R22). */
+/** "Rows 21–40 · more may follow": the rows of a page whose answer gave no total (R22). */
 export function shownLine(labels: GridLabels, offset: number, count: number, pageSize: number): string {
   const rows = (labels.rowsShown ?? DEFAULT_LABELS.rowsShown ?? "").replace("{first}", String(offset + 1)).replace("{last}", String(offset + count));
   return count >= pageSize ? `${rows} · ${labels.moreNext ?? DEFAULT_LABELS.moreNext}` : rows;
@@ -82,7 +82,7 @@ export function GridPager({ view, mode }: { view: GridView; mode?: "status" | "p
       {grid.total !== undefined ? (
         <span className="jc-grid-total">{labels.matching.includes("{n}") ? labels.matching.replace("{n}", String(grid.total)) : `${grid.total} ${labels.matching}`}</span>
       ) : rows.length > 0 ? (
-        // No total (R22): which rows this page holds, and whether a next page may follow.
+        // No total (R22): which rows this page holds, and that more may follow when it is full.
         <span className="jc-grid-total">{shownLine(labels, state.offset, rows.length, pageSize)}</span>
       ) : null}
       <button
