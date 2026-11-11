@@ -11,6 +11,7 @@ import { download } from "@joinedcontext/sdk";
 import { Alert, Button, Dialog, Field, FilePicker, Input, RadioGroup, Select, safeHref } from "../../components/ui";
 import { RetentionGuide } from "../../components/RetentionGuide";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "../../components/ui/Table";
+import { RecordsGrid } from "../../components/grid/RecordsGrid";
 import type { Manifest } from "../../api/manifest";
 import { servedRepresentations } from "../../components/endpoints/links";
 import { effectiveHistory, fromIso, HISTORY_FOREVER, HISTORY_OFF } from "./retention";
@@ -220,26 +221,16 @@ function MapStep({
         <summary className="focus-ring cursor-pointer rounded-md text-body font-medium text-fg">
           {t("spaces.import.preview", { count: Math.min(PREVIEW_ROWS, table.rows.length) })}
         </summary>
-        <Table caption={t("spaces.import.previewCaption")} maxHeight="max-h-80">
-          <TableHead>
-            <TableHeaderCell>#</TableHeaderCell>
-            {table.columns.map((column) => (
-              <TableHeaderCell key={column}>{column}</TableHeaderCell>
-            ))}
-          </TableHead>
-          <TableBody>
-            {table.rows.slice(0, PREVIEW_ROWS).map((row, at) => (
-              <TableRow key={at}>
-                <TableCell className="text-fg-muted">{at + 2}</TableCell>
-                {table.columns.map((column) => (
-                  <TableCell key={column} className="max-w-48 truncate">
-                    {row[column]}
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <RecordsGrid
+          caption={t("spaces.import.previewCaption")}
+          fields={table.columns}
+          records={table.rows.slice(0, PREVIEW_ROWS)}
+          text={(row, column) => row[column] ?? ""}
+          // The file's own line: its header is line 1, so the first row is line 2.
+          lead={[{ key: "line", label: "#", kind: "number", text: (row) => String(row.at + 2), filter: false }]}
+          storageKey="spaces.import.preview"
+          empty={t("spaces.import.empty")}
+        />
       </details>
       <Table caption={t("spaces.import.mapping")} maxHeight="max-h-80">
         <TableHead>

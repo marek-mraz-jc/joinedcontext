@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { DataGrid } from "../src/grid/DataGrid";
+import { DataGrid, DEFAULT_DATA_LABELS } from "../src/grid/DataGrid";
 import { arrangeRows, EMPTY_QUERY, passes, sortDataRows, valuesOf } from "../src/grid/arrayRows";
 import type { DataColumn } from "../src/grid/arrayRows";
 
@@ -143,6 +143,13 @@ describe("DataGrid", () => {
     expect(bodyNames()).toHaveLength(3);
     expect(screen.queryByText("3 rows")).toBeNull();
     expect(screen.queryByRole("button", { name: /Next/ })).toBeNull();
+  });
+
+  it("counts a short list without a pager to step through", () => {
+    grid();
+    expect(screen.getByText("3 rows")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Next/ })).toBeNull();
+    expect(screen.queryByLabelText(DEFAULT_DATA_LABELS.rowsPerPage)).toBeNull();
   });
 
   it("in server mode shows the host's rows as given and reports the query", () => {

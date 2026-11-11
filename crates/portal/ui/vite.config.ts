@@ -7,11 +7,15 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 const PUBLIC_LOCALE = "\0public-locale:";
+const GRID_LOCALE = "\0grid-locale:";
+const GRID_GROUPS = ["entityGrid", "dataGrid"];
 
 /**
  * `./locales/<lng>.json?public` is that locale's groups the public pages use (T-5122), listed in
  * src/locales/public-groups.json; the rest of the file loads with the full Portal (src/i18n.ts).
  * Vitest gets the whole file, so a test reads every word at once as it did before the split.
+ * `?grid` is the shared grid's words alone (GRID_GROUPS, T-6752), loaded with the grid a public
+ * page draws lazily (components/grid/LazyAdminGrid.tsx), in Vitest too.
  */
 function publicLocales(): Plugin {
   const groups: string[] = JSON.parse(readFileSync(new URL("./src/locales/public-groups.json", import.meta.url), "utf8"));
@@ -19,15 +23,18 @@ function publicLocales(): Plugin {
     name: "public-locales",
     enforce: "pre",
     async resolveId(source, importer) {
-      if (!source.endsWith(".json?public")) return null;
-      const file = await this.resolve(source.slice(0, -"?public".length), importer);
+      const query = source.endsWith(".json?public") ? "?public" : source.endsWith(".json?grid") ? "?grid" : null;
+      if (!query) return null;
+      const file = await this.resolve(source.slice(0, -query.length), importer);
       // The id must not end in .json, or Vite's own JSON plugin parses the module this one writes.
-      return file ? `${PUBLIC_LOCALE}${file.id}.js` : null;
+      return file ? `${query === "?public" ? PUBLIC_LOCALE : GRID_LOCALE}${file.id}.js` : null;
     },
     load(id) {
-      if (!id.startsWith(PUBLIC_LOCALE)) return null;
-      const all: Record<string, unknown> = JSON.parse(readFileSync(id.slice(PUBLIC_LOCALE.length, -".js".length), "utf8"));
-      const kept = process.env.VITEST ? all : Object.fromEntries(groups.filter((group) => group in all).map((group) => [group, all[group]]));
+      const prefix = [PUBLIC_LOCALE, GRID_LOCALE].find((p) => id.startsWith(p));
+      if (!prefix) return null;
+      const all: Record<string, unknown> = JSON.parse(readFileSync(id.slice(prefix.length, -".js".length), "utf8"));
+      const picked = prefix === GRID_LOCALE ? GRID_GROUPS : process.env.VITEST ? Object.keys(all) : groups;
+      const kept = Object.fromEntries(picked.filter((group) => group in all).map((group) => [group, all[group]]));
       return `export default ${JSON.stringify(kept)};`;
     },
   };

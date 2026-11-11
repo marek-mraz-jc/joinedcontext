@@ -16,13 +16,8 @@ import { CodeBlock,
   PageFailed,
   PageHeader,
   PageLoading,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
+import { LazyAdminGrid } from "../../components/grid/LazyAdminGrid";
 import { useThemeLabel } from "./labels";
 import { snippets } from "./snippets";
 import type { Snippet } from "./snippets";
@@ -265,16 +260,22 @@ function Resources({ detail }: { detail: DatasetDetail }): JSX.Element {
       {detail.resources.length === 0 ? (
         <p className="text-body text-fg-muted">{t("catalogue.dataset.noResources")}</p>
       ) : (
-        <Table caption={t("catalogue.dataset.resources")}>
-          <TableHead>
-            <TableHeaderCell>{t("catalogue.dataset.resource")}</TableHeaderCell>
-            <TableHeaderCell>{t("catalogue.facets.format")}</TableHeaderCell>
-            <TableHeaderCell>{t("catalogue.dataset.links")}</TableHeaderCell>
-          </TableHead>
-          <TableBody>
-            {detail.resources.map((resource) => (
-              <TableRow key={`${resource.format}-${resource.url}`}>
-                <TableCell primary>
+        <LazyAdminGrid
+          caption={t("catalogue.dataset.resources")}
+          rows={detail.resources}
+          rowKey={(resource) => `${resource.format}-${resource.url}`}
+          storageKey="catalogue.dataset.resources"
+          // A dataset has a handful of resources: a search box over them only pushes them down a phone.
+          noSearch={detail.resources.length <= 5}
+          empty={t("catalogue.dataset.noResources")}
+          stack
+          columns={[
+            {
+              key: "name",
+              label: t("catalogue.dataset.resource"),
+              text: (resource) => resource.name,
+              cell: (resource) => (
+                <>
                   <div>{resource.name}</div>
                   <ResourceSays format={resource.format} />
                   {/* The publisher's text is commands and digests for a developer, in English: it
@@ -285,21 +286,24 @@ function Resources({ detail }: { detail: DatasetDetail }): JSX.Element {
                       <Blocks blocks={notesBlocks(resource.description)} className="mt-1 text-fg-muted [overflow-wrap:anywhere]" />
                     </details>
                   ) : null}
-                </TableCell>
-                <TableCell>
-                  <Badge mono>{resource.format || "—"}</Badge>
-                </TableCell>
-                <TableCell>
-                  <ul className="flex flex-wrap gap-3">
-                    <li>
-                      <ExternalLink href={resource.url}>{t("catalogue.dataset.download")}</ExternalLink>
-                    </li>
-                  </ul>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                </>
+              ),
+            },
+            {
+              key: "format",
+              label: t("catalogue.facets.format"),
+              text: (resource) => resource.format,
+              cell: (resource) => <Badge mono>{resource.format || "—"}</Badge>,
+            },
+            {
+              key: "links",
+              label: t("catalogue.dataset.links"),
+              text: () => "",
+              actions: true,
+              cell: (resource) => <ExternalLink href={resource.url}>{t("catalogue.dataset.download")}</ExternalLink>,
+            },
+          ]}
+        />
       )}
     </section>
   );

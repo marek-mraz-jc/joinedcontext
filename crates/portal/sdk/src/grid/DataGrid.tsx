@@ -157,6 +157,8 @@ export function DataGrid<T>({
   const pages = Math.max(1, Math.ceil(page.total / query.pageSize));
   const current = Math.min(pages, Math.floor(query.offset / query.pageSize) + 1);
   const narrowed = query.search.trim() !== "" || Object.values(query.filters).some(complete);
+  // A local list that fits the smallest page has nothing to page through: its count alone (T-6752).
+  const short = !remote && rows.length <= Math.min(...pageSizes);
   if (error) return <div className="jc-grid jc-data-grid">{error}</div>;
 
   const items: ArrangeItem[] = order.map((key, at) => {
@@ -342,8 +344,13 @@ export function DataGrid<T>({
       </div>
       {loading ? (
         <p role="status" className="jc-grid-sr-only">{labels.loading}</p>
-      ) : page.total === 0 || (pages === 1 && pageSizes.length === 1) ? null : (
-        // One fixed page size and one page: nothing to step or choose (a list the server pages brings its own pager).
+      ) : page.total === 0 || (pages === 1 && pageSizes.length === 1) ? null : short ? (
+        // One fixed page size and one page: nothing to step or choose (a list the server pages brings its own pager);
+        // a short local list shows only its count.
+        <div className="jc-grid-pager">
+          <span className="jc-grid-total" role="status">{labels.rowCount.replace("{n}", String(page.total))}</span>
+        </div>
+      ) : (
         <div className="jc-grid-pager">
           <button type="button" className="jc-grid-pager-step" disabled={current <= 1} onClick={() => setQuery({ ...query, offset: (current - 2) * query.pageSize })}>
             <span aria-hidden="true">‹</span> <span className="jc-grid-pager-word">{labels.previous}</span>

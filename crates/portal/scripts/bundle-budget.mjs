@@ -24,10 +24,12 @@ export const ENTRY_BUDGET_KB = 154;
 /**
  * KB gzipped that each public route loads beyond the entry, keyed by its chunk's name: measured on
  * 2026-10-22 (T-5122; PublicView and FormView 2026-10-24, T-5165) plus 5 %, and at least 2 KB so a one-line change does not flap the lane.
+ * DatasetPage 10 -> 11 on 2026-11-11 (T-6752): its resources table is the shared grid, loaded with its
+ * first drawing; the lazy boundary and its preload list are 0.7 KB of the route, the grid none.
  */
 export const ROUTE_BUDGETS_KB = {
   CataloguePage: 26,
-  DatasetPage: 10,
+  DatasetPage: 11,
   AccessibilityPage: 3,
   GlossaryPage: 4,
   PublicView: 15,

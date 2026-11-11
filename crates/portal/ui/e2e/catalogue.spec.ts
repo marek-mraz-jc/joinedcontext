@@ -341,6 +341,8 @@ test.describe("the public catalogue", () => {
       );
       await page.goto("/catalogue/bbsk-kpi?lang=en");
       await expect(page.getByRole("heading", { level: 1, name: "Ukazovatele kraja" })).toBeVisible();
+      // The resources grid loads beside the page (LazyAdminGrid): its rows hold the toggles.
+      await expect(page.getByRole("table", { name: "Resources" })).toBeVisible();
       for (const toggle of await page.getByText("For developers").all()) await toggle.click();
       await expect(page.locator("pre code", { hasText: '"x-op":"x-subscribe"' })).toBeVisible();
       await expect(page.locator("pre code", { hasText: '"mcpServers"' })).toBeVisible();

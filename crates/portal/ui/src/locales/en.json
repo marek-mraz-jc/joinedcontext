@@ -9555,6 +9555,7 @@
       "liveData": "Live data",
       "sourceNumber": "Source {n}",
       "data": "Data the answer read",
+      "noRows": "The read returned no rows. Ask again with a wider question.",
       "dataset": "Open the dataset",
       "download": "Download the data",
       "again": "Try again",

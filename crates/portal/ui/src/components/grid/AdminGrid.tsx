@@ -15,22 +15,10 @@ import { recordCard } from "../ui";
 
 export type { DataColumn };
 
-export function AdminGrid<T>({
-  query,
-  caption,
-  rows,
-  columns,
-  rowKey,
-  empty,
-  storageKey,
-  stack,
-  noSearch,
-  pageSizes,
-  view,
-  onViewChange,
-}: {
-  /** The list's read: the skeleton while it runs, the API's reason and a retry when it fails. */
-  query: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
+export interface AdminGridProps<T> {
+  /** The list's read: the skeleton while it runs, the API's reason and a retry when it fails;
+   * absent for rows the page already holds (a sample, a result the assistant returned). */
+  query?: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
   caption: string;
   rows: readonly T[];
   columns: readonly DataColumn<T>[];
@@ -47,7 +35,22 @@ export function AdminGrid<T>({
   /** The grid's search, filters, sort and page, held by a page that acts on the rows it shows (People's bulk actions). */
   view?: DataQuery;
   onViewChange?: (view: DataQuery) => void;
-}): JSX.Element {
+}
+
+export function AdminGrid<T>({
+  query,
+  caption,
+  rows,
+  columns,
+  rowKey,
+  empty,
+  storageKey,
+  stack,
+  noSearch,
+  pageSizes,
+  view,
+  onViewChange,
+}: AdminGridProps<T>): JSX.Element {
   const { t } = useTranslation();
   const labels = useMemo<DataGridLabels>(
     () => ({
@@ -65,9 +68,9 @@ export function AdminGrid<T>({
       rows={rows}
       columns={columns}
       rowKey={rowKey}
-      loading={query.isPending}
+      loading={query?.isPending ?? false}
       error={
-        query.isError ? (
+        query?.isError ? (
           <PageFailed
             error={query.error}
             onRetry={() => {

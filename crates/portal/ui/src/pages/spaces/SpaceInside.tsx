@@ -98,6 +98,7 @@ import {
   Term,
 } from "../../components/ui";
 import { Card, ConfirmDialog, Field, Input, Select } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
 import { MAX_REASON, reasonProblem } from "../../components/entities/reason";
 import { ResourcePageFailed } from "../../components/ui/PageState";
 import { SourceRemovalsPanel } from "../pipelines/PipelineSourceReport";
@@ -2210,30 +2211,27 @@ export function SpaceInside({ project, name }: { project: string; name: string }
         {spaceEndpoints.length === 0 ? (
           <SectionState query={endpoints} empty={t("spaces.inside.noEndpoints")} />
         ) : (
-          <Table caption={t("endpoints.title")}>
-            <TableHead>
-              <TableHeaderCell>{t("endpoints.field.name")}</TableHeaderCell>
-              <TableHeaderCell>{t("endpoints.field.audience")}</TableHeaderCell>
-              <TableHeaderCell>{t("endpoints.field.representations")}</TableHeaderCell>
-              <TableHeaderCell>{t("spaces.inside.catalogue")}</TableHeaderCell>
-            </TableHead>
-            <TableBody>
-              {spaceEndpoints.map((endpoint) => {
-                const spec = endpoint.spec as {
-                  slug?: string;
-                  audience?: string;
-                  enabledRepresentations?: string[];
-                };
-                const endpointSlug = spec.slug ?? "";
-                const policyRefs = policyRefsOf(endpoint);
-                const catalogue = catalogueLink(project, endpoint);
-                return (
-                  <TableRow key={endpoint.metadata.name}>
-                    <TableCell>
+          <AdminGrid
+            caption={t("endpoints.title")}
+            rows={spaceEndpoints}
+            rowKey={(endpoint) => endpoint.metadata.name}
+            storageKey="spaces.inside.endpoints"
+            empty={t("spaces.inside.noEndpoints")}
+            stack
+            columns={[
+              {
+                key: "name",
+                label: t("endpoints.field.name"),
+                text: (endpoint) => localized(endpoint.metadata.title, locale, endpoint.metadata.name),
+                cell: (endpoint) => {
+                  const policyRefs = policyRefsOf(endpoint);
+                  return (
+                    <>
                       <Link
                         to="/projects/$project/$plural/$name"
                         params={{ project, plural: "endpoints", name: endpoint.metadata.name }}
                         className="focus-ring font-medium text-primary-soft-fg underline-offset-2 hover:underline"
+                        data-row-link
                       >
                         {localized(endpoint.metadata.title, locale, endpoint.metadata.name)}
                       </Link>
@@ -2243,28 +2241,42 @@ export function SpaceInside({ project, name }: { project: string; name: string }
                           ? `${endpoint.metadata.title ? " · " : ""}${policyRefs.map(refName).join(", ")}`
                           : ""}
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <SharedWithBadge endpoint={endpoint} />
-                    </TableCell>
-                    <TableCell>
-                      <Representations
-                        slug={endpointSlug}
-                        representations={servedRepresentations(spec)}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      {catalogue ? (
-                        <EndpointLink href={catalogue}>{t("spaces.inside.catalogueLink")}</EndpointLink>
-                      ) : (
-                        <span className="text-fg-subtle">{t("spaces.inside.notPublished")}</span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+                    </>
+                  );
+                },
+              },
+              {
+                key: "audience",
+                label: t("endpoints.field.audience"),
+                text: (endpoint) => (endpoint.spec as { audience?: string }).audience ?? "",
+                cell: (endpoint) => <SharedWithBadge endpoint={endpoint} />,
+              },
+              {
+                key: "representations",
+                label: t("endpoints.field.representations"),
+                text: (endpoint) => servedRepresentations(endpoint.spec as { enabledRepresentations?: string[] }).join(", "),
+                cell: (endpoint) => (
+                  <Representations
+                    slug={(endpoint.spec as { slug?: string }).slug ?? ""}
+                    representations={servedRepresentations(endpoint.spec as { enabledRepresentations?: string[] })}
+                  />
+                ),
+              },
+              {
+                key: "catalogue",
+                label: t("spaces.inside.catalogue"),
+                text: (endpoint) => (catalogueLink(project, endpoint) ? t("spaces.inside.catalogueLink") : t("spaces.inside.notPublished")),
+                cell: (endpoint) => {
+                  const catalogue = catalogueLink(project, endpoint);
+                  return catalogue ? (
+                    <EndpointLink href={catalogue}>{t("spaces.inside.catalogueLink")}</EndpointLink>
+                  ) : (
+                    <span className="text-fg-subtle">{t("spaces.inside.notPublished")}</span>
+                  );
+                },
+              },
+            ]}
+          />
         )}
       </Section>
       </div>
@@ -2276,79 +2288,86 @@ export function SpaceInside({ project, name }: { project: string; name: string }
         {spacePolicies.length === 0 ? (
           <SectionState query={policies} empty={t("spaces.inside.noPolicies")} />
         ) : (
-          <Table caption={t("spaces.inside.policies")} stack>
-            <TableHead>
-              <TableHeaderCell>{t("spaces.field.name")}</TableHeaderCell>
-              <TableHeaderCell>{t("spaces.inside.assignee")}</TableHeaderCell>
-              <TableHeaderCell>{t("spaces.inside.operations")}</TableHeaderCell>
-              <TableHeaderCell>{t("spaces.inside.type")}</TableHeaderCell>
-            </TableHead>
-            <TableBody>
-              {spacePolicies.map((policy) => {
-                const spec = policy.spec as {
-                  assignee?: { kind?: string; id?: string };
-                  operations?: string[];
-                  information?: Array<{ entities?: Array<{ type?: string }> }>;
-                };
-                const policyTypes = [
-                  ...new Set(
-                    (spec.information ?? [])
-                      .flatMap((info) => info.entities ?? [])
-                      .map((entity) => entity.type)
-                      .filter((type): type is string => typeof type === "string"),
+          <AdminGrid
+            caption={t("spaces.inside.policies")}
+            rows={spacePolicies.map((policy) => {
+              const spec = policy.spec as {
+                assignee?: { kind?: string; id?: string };
+                operations?: string[];
+                information?: Array<{ entities?: Array<{ type?: string }> }>;
+              };
+              const types = [
+                ...new Set(
+                  (spec.information ?? [])
+                    .flatMap((info) => info.entities ?? [])
+                    .map((entity) => entity.type)
+                    .filter((type): type is string => typeof type === "string"),
+                ),
+              ];
+              return { policy, assignee: spec.assignee, kinds: operationKinds(spec.operations ?? []), types };
+            })}
+            rowKey={(row) => row.policy.metadata.name}
+            storageKey="spaces.inside.policies"
+            empty={t("spaces.inside.noPolicies")}
+            stack
+            columns={[
+              {
+                key: "name",
+                label: t("spaces.field.name"),
+                text: (row) => localized(row.policy.metadata.title, locale, row.policy.metadata.name),
+                cell: (row) => (
+                  <>
+                    <div className="font-medium">{localized(row.policy.metadata.title, locale, row.policy.metadata.name)}</div>
+                    {row.policy.metadata.title ? (
+                      <div className="font-mono text-caption text-fg-subtle">{row.policy.metadata.name}</div>
+                    ) : null}
+                  </>
+                ),
+              },
+              {
+                key: "assignee",
+                label: t("spaces.inside.assignee"),
+                text: (row) => assigneeWords(row.assignee, t),
+                cell: (row) => (
+                  <span title={row.assignee ? `${row.assignee.kind ?? ""}:${row.assignee.id ?? ""}` : undefined}>
+                    {assigneeWords(row.assignee, t)}
+                  </span>
+                ),
+              },
+              {
+                key: "operations",
+                label: t("spaces.inside.operations"),
+                text: (row) => row.kinds.map(({ kind }) => t(`spaces.inside.operationKind.${kind}`)).join(", "),
+                cell: (row) =>
+                  row.kinds.length === 0 ? (
+                    "—"
+                  ) : (
+                    <span className="flex flex-wrap gap-1">
+                      {row.kinds.map(({ kind, operations }) => (
+                        <Badge key={kind} tone={kind === "write" || kind === "delete" ? "warning" : "neutral"} title={operations.join(", ")}>
+                          {t(`spaces.inside.operationKind.${kind}`)}
+                        </Badge>
+                      ))}
+                    </span>
                   ),
-                ];
-                const kinds = operationKinds(spec.operations ?? []);
-                return (
-                  <TableRow key={policy.metadata.name}>
-                    <TableCell>
-                      <div className="font-medium">
-                        {localized(policy.metadata.title, locale, policy.metadata.name)}
-                      </div>
-                      {policy.metadata.title ? (
-                        <div className="font-mono text-caption text-fg-subtle">
-                          {policy.metadata.name}
-                        </div>
-                      ) : null}
-                    </TableCell>
-                    <TableCell data-label={t("spaces.inside.assignee")}>
-                      <span title={spec.assignee ? `${spec.assignee.kind ?? ""}:${spec.assignee.id ?? ""}` : undefined}>
-                        {assigneeWords(spec.assignee, t)}
-                      </span>
-                    </TableCell>
-                    <TableCell data-label={t("spaces.inside.operations")}>
-                      {kinds.length === 0 ? (
-                        "—"
-                      ) : (
-                        <span className="flex flex-wrap gap-1">
-                          {kinds.map(({ kind, operations }) => (
-                            <Badge
-                              key={kind}
-                              tone={kind === "write" || kind === "delete" ? "warning" : "neutral"}
-                              title={operations.join(", ")}
-                            >
-                              {t(`spaces.inside.operationKind.${kind}`)}
-                            </Badge>
-                          ))}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell data-label={t("spaces.inside.type")}>
-                      {policyTypes.length > 0 ? (
-                        <span className="flex flex-col">
-                          {policyTypes.map((type) => (
-                            <span key={type}>{type}</span>
-                          ))}
-                        </span>
-                      ) : (
-                        <span className="text-fg-muted">{t("spaces.inside.everyType")}</span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+              },
+              {
+                key: "types",
+                label: t("spaces.inside.type"),
+                text: (row) => (row.types.length > 0 ? row.types.join(", ") : t("spaces.inside.everyType")),
+                cell: (row) =>
+                  row.types.length > 0 ? (
+                    <span className="flex flex-col">
+                      {row.types.map((type) => (
+                        <span key={type}>{type}</span>
+                      ))}
+                    </span>
+                  ) : (
+                    <span className="text-fg-muted">{t("spaces.inside.everyType")}</span>
+                  ),
+              },
+            ]}
+          />
         )}
       </Section>
       </div>

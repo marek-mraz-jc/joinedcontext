@@ -9555,6 +9555,7 @@
       "liveData": "Živá data",
       "sourceNumber": "Zdroj {n}",
       "data": "Data, která odpověď přečetla",
+      "noRows": "Čtení nevrátilo žádné řádky. Zeptejte se znovu širší otázkou.",
       "dataset": "Otevřít dataset",
       "download": "Stáhnout data",
       "again": "Zkusit znovu",

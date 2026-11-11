@@ -701,7 +701,8 @@ describe("asking an assistant in the Portal (T-3058, AG-115)", () => {
     const dialog = await screen.findByRole("dialog", { name: "Ask obcania" });
     await userEvent.type(within(dialog).getByRole("textbox", { name: "Your question" }), "PM10?{Enter}");
     const rows = await within(dialog).findByRole("table", { name: "AirQualityObserved" });
-    expect(within(rows).getByRole("cell", { name: "2026-10-15T10:00:00Z" })).toBeInTheDocument();
+    // The shared grid draws the first column as the row's header (T-6752).
+    expect(within(rows).getByRole("rowheader", { name: "2026-10-15T10:00:00Z" })).toBeInTheDocument();
     const chart = within(dialog).getByTestId("assistant-chart");
     expect(chart).toHaveAttribute("aria-hidden", "true");
     expect(chart.querySelector("polyline")?.getAttribute("points")?.split(" ")).toHaveLength(2);
