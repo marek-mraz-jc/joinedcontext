@@ -359,7 +359,7 @@ function DataActions({
   const csvHint = useId();
   return (
     <>
-      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center" data-testid="data-actions">
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center [&>:nth-child(odd_of_a,button):nth-last-child(1_of_a,button)]:col-span-2" data-testid="data-actions">
         {actions}
         {space ? (
           <Button size="sm" variant="secondary" onClick={onCompare}>
