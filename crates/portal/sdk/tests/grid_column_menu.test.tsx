@@ -80,6 +80,9 @@ describe("the column header menu (T-4827)", () => {
     await waitFor(() => expect(names()).toEqual(["b", "c", "a"]));
     openMenu("Count");
     expect(screen.getByRole("menuitemradio", { name: "Largest first" })).toHaveAttribute("aria-checked", "true");
+    // The current sort shows to the eye as well: a check on its row and on no other.
+    expect(screen.getByRole("menuitemradio", { name: "Largest first" }).querySelector(".jc-grid-menu-check")).not.toBeNull();
+    expect(screen.getByRole("menuitemradio", { name: "Smallest first" }).querySelector(".jc-grid-menu-check")).toBeNull();
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Smallest first" }));
     await waitFor(() => expect(names()).toEqual(["a", "c", "b"]));
   });
@@ -225,6 +228,8 @@ describe("the column header menu (T-4827)", () => {
     render(<Kept onLayout={onLayout} initial={{ width: { count: 60 } }} />);
     await screen.findByText("Alpha");
     const edge = screen.getByRole("separator", { name: "Column width: Count" });
+    expect(edge).toHaveAttribute("aria-valuenow", "60");
+    expect(edge).toHaveAttribute("aria-valuemin", "40");
     fireEvent.keyDown(edge, { key: "ArrowRight" });
     expect(onLayout).toHaveBeenLastCalledWith({ width: { count: 100 } });
     fireEvent.keyDown(screen.getByRole("separator", { name: "Column width: Count" }), { key: "ArrowLeft" });

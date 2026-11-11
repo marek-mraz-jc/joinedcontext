@@ -2155,7 +2155,7 @@ a.jc-cell--link:focus-visible {
   right: 0;
   z-index: 20;
   width: min(26rem, calc(100vw - 32px));
-  max-height: min(70vh, 40rem);
+  max-height: min(80vh, 44rem);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -2172,6 +2172,30 @@ a.jc-cell--link:focus-visible {
    max-height (they did, and Extra details came out a clipped sliver). */
 .jc-grid-arrange-panel > * {
   flex-shrink: 0;
+}
+/* The columns, then Extra details; side by side where the screen is wide enough, so the whole
+   panel shows without scrolling at a desktop width. */
+.jc-grid-arrange-body,
+.jc-grid-arrange-cols {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-3, 12px);
+}
+@media (width >= 900px) {
+  .jc-grid-arrange-panel {
+    width: min(48rem, calc(100vw - 32px));
+  }
+  .jc-grid-arrange-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--jc-space-4, 16px);
+    align-items: start;
+  }
+  .jc-grid-arrange-body .jc-grid-arrange-meta {
+    padding: 0 0 0 var(--jc-space-4, 16px);
+    border-top: 0;
+    border-left: 1px solid var(--jc-color-line, #e0e0e0);
+  }
 }
 /* Done stays at the top and Reset at the bottom while the list scrolls between them. */
 .jc-grid-arrange-head,
@@ -2304,11 +2328,14 @@ a.jc-cell--link:focus-visible {
 }
 .jc-grid-arrange-foot {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--jc-space-3, 12px);
   padding-top: var(--jc-space-3, 12px);
   border-top: 1px solid var(--jc-color-line, #e0e0e0);
+}
+.jc-grid-arrange-foot .jc-grid-arrange-hint {
+  flex: 1 1 12rem;
 }
 /* A phone: the panel is a sheet from the bottom, every target 44 px (T-6738). */
 @media (width <= 640px) {
@@ -2322,6 +2349,12 @@ a.jc-cell--link:focus-visible {
     border-bottom: 0;
     /* A scrim over the page behind the sheet; a tap on it closes the sheet (ArrangeColumns). */
     box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.5);
+  }
+  /* Reset scrolls in at the end of the sheet instead of covering a hint mid-line; Done stays on top. */
+  .jc-grid-arrange-foot {
+    position: static;
+    margin-bottom: 0;
+    padding-bottom: 0;
   }
   .jc-grid-arrange-show { width: 2.75rem; height: 2.75rem; }
   .jc-grid-arrange-input,

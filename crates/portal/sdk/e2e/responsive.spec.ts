@@ -315,6 +315,10 @@ test.describe("the type page's grid", () => {
       await page.getByRole("button", { name: "Column options: Date observed" }).click();
       const menu = page.getByRole("menu", { name: "Column options: Date observed" });
       await expect(menu.getByRole("menuitemradio")).toHaveText([/Earliest first/, /Latest first/]);
+      await menu.getByRole("menuitemradio", { name: "Latest first" }).click();
+      await page.getByRole("button", { name: "Column options: Date observed" }).click();
+      // The current sort shows as a check on its row.
+      await expect(menu.getByRole("menuitemradio", { name: "Latest first" }).locator(".jc-grid-menu-check")).toBeVisible();
       await page.screenshot({ path: join(SHOTS, `menu-open-${width}.png`) });
       await page.keyboard.press("Escape");
       await expect(page.getByRole("button", { name: "Column options: Date observed" })).toBeFocused();
@@ -334,6 +338,10 @@ test.describe("the type page's grid", () => {
       }
       await panel.scrollIntoViewIfNeeded();
       await page.screenshot({ path: join(SHOTS, `panel-open-${width}.png`) });
+      if (width >= 900) {
+        // Side by side at a desktop width: the whole panel, Extra details and Reset included, shows without scrolling.
+        expect(await panel.evaluate((el) => el.scrollHeight <= el.clientHeight + 1)).toBe(true);
+      }
       // Extra details scrolls into view whole: the select and the last toggle's hint sit above the sticky foot.
       const details = panel.getByRole("group", { name: "Extra details" });
       await details.getByRole("combobox").scrollIntoViewIfNeeded();
