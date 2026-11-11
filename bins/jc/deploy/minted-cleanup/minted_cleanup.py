@@ -58,7 +58,9 @@ ID = re.compile(r"urn:ngsi-ld:([A-Za-z]+):" + re.escape(DOMAIN) + r":\S+")
 BATCH = 500
 MEM_STOP = 95.0
 ACCOUNT = "cleanup-t6676"
-REASON = "cleanup: copies minted under the wrong org domain (T-6676 R)"
+LABEL = "T-6676 R"
+DEFAULTS = (DOMAIN, ACCOUNT, LABEL)  # the T-6676 R run; main() starts from these every call
+REASON = f"cleanup: copies minted under the wrong org domain ({LABEL})"
 TIMEOUT = 300
 SLUG = re.compile(r"[a-z0-9-]{1,63}")
 
@@ -369,10 +371,10 @@ def policies(a) -> int:
         doc = {
             "apiVersion": "joinedcontext.com/v1alpha1", "kind": "ServiceAccount",
             "metadata": {"name": ACCOUNT, "namespace": project,
-                         "title": {"en": "Temporary cleanup account (T-6676 R)"}},
+                         "title": {"en": f"Temporary cleanup account ({LABEL})"}},
             "spec": {
                 "owner": {"user": a.owner},
-                "purpose": "temporary: deletes the T-6676 R copies; removed after the run",
+                "purpose": f"temporary: deletes the {LABEL} copies; removed after the run",
                 "roles": [{"role": "public", "scope": {"contextSpace": s}, "validity": {"notAfter": to}}
                           for s in spaces],
                 "credentials": [{"kind": "oauth-client", "name": "main"}],
@@ -380,12 +382,17 @@ def policies(a) -> int:
         }
         (state / f"serviceaccount-{project}.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
         log(state, f"{project}: serviceaccount-{project}.json, space(s) {', '.join(spaces)}")
+    per_project = defaultdict(int)
+    for g in groups.values():
+        per_project[g["project"]] += 1
     for tenant, g in sorted(groups.items()):
         types = sorted({r["type"] for r in g["rows"].values()})
+        # Policy names are unique per project: a second space of one project gets its own.
+        name = ACCOUNT if per_project[g["project"]] == 1 else f"{ACCOUNT}-{tenant}"
         doc = {
             "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Policy",
-            "metadata": {"name": ACCOUNT, "namespace": g["project"],
-                         "title": {"en": "Temporary: the cleanup account deletes the copies minted under the wrong org domain (T-6676 R)"}},
+            "metadata": {"name": name, "namespace": g["project"],
+                         "title": {"en": f"Temporary: the cleanup account deletes the copies minted under the wrong org domain ({LABEL})"}},
             "spec": {
                 "contextSpaceRef": {"kind": "ContextSpace", "name": tenant},
                 "assigner": "did:web:{orgDomain}",
@@ -430,8 +437,23 @@ def verify(a) -> int:
     return 1 if live or stayed else 0
 
 
+def configure(domain: str, account: str, label: str) -> None:
+    """Another wrong-domain cleanup (T-6743: hel.fi copies in the Zilina spaces) reuses the tool."""
+    global DOMAIN, ID, ACCOUNT, LABEL, REASON
+    if not re.fullmatch(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?", domain):
+        raise Stop(f"--domain {domain!r} is not a lowercase DNS name")
+    if not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", account):
+        raise Stop(f"--account {account!r} is not a lowercase resource name")
+    DOMAIN, ACCOUNT, LABEL = domain, account, label
+    ID = re.compile(r"urn:ngsi-ld:([A-Za-z]+):" + re.escape(DOMAIN) + r":\S+")
+    REASON = f"cleanup: copies minted under the wrong org domain ({LABEL})"
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("--domain", default=DEFAULTS[0], help="the wrong org domain the copies carry")
+    p.add_argument("--account", default=DEFAULTS[1], help="the temporary ServiceAccount's name")
+    p.add_argument("--label", default=DEFAULTS[2], help="the task named in titles and the delete reason")
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--list", required=True)
@@ -465,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "run" and a.max_batches is not None and a.max_batches < 1:
         p.error("--max-batches needs a number >= 1")
     try:
+        configure(a.domain, a.account, a.label)
         return {"run": run, "policies": policies, "verify": verify}[a.cmd](a)
     except Stop as e:
         log(Path(a.state) if Path(a.state).is_dir() else None, f"STOP: {e}")

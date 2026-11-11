@@ -56,6 +56,24 @@ A list of more than 20 outputs or with a name twice loads and serves nobody
 do not hold serves nobody while the other outputs of the list still serve. The
 shared contract is `antares_ops::outputs`; the surface reads its own member.
 
+`representations.facets` (T-6757) is a list of at most 10 facetable Attributes
+instead: a short name (`category`) or a name and one member of its value
+(`address.addressLocality`). Each must be an Attribute a rule shows, listed
+once, or the view does not load. `GET /x/views/{view}/facets?attr=category`
+answers `{"attr", "values": [{"value", "count"}], "truncated"}`: the distinct
+values of that Attribute among the Entities Query Entities through the view
+selects for the caller, each with how many Entities hold it (an Entity counts a
+value once, list items and instances included). It takes `type`, `q`,
+`scopeQ`, the geo-query parameters, `id`, `idPattern` and `limit` (1 to 100,
+default 20, the highest counts first, ties in value order); any other
+parameter is a 400. The count runs over the same read every surface makes, so
+an Entity the Policy hides counts nowhere. An `attr` that is not listed,
+unknown or hidden from the caller by the engine answers one 400 with one body.
+Past 10 000 selected Entities the answer is 413, never a partial count. An
+answer to a request without `Authorization`, `Cookie` or a policy subject
+header carries `Cache-Control: public, max-age=300`; every other answer
+`private, no-store`.
+
 ## 2. What a client sees
 
 - An Entity is in the view when a rule names its type and the view's `q`,

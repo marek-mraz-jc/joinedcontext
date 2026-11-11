@@ -7,7 +7,7 @@
  * else, and the React inside the grid is the Portal's React — a second copy would make every hook
  * in it throw "invalid hook call" at runtime, which no typecheck catches.
  */
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fixtureSource, parseGridConfig } from "@joinedcontext/sdk";
@@ -33,6 +33,14 @@ const config = parseGridConfig({
   columns: [{ attr: "availableBikeNumber", label: "Bikes" }],
   pageSize: 10,
 }).config!;
+
+/** The metadata columns live in the toolbar's Arrange columns panel (T-6738), never in the header menu. */
+function showObservedFor(attr: string) {
+  fireEvent.click(screen.getByRole("button", { name: en.entityGrid.arrangeColumns }));
+  const extra = within(screen.getByRole("dialog", { name: en.entityGrid.arrangeColumns })).getByRole("group", { name: en.entityGrid.metaHeading });
+  fireEvent.change(within(extra).getByRole("combobox", { name: en.entityGrid.metaFor }), { target: { value: attr } });
+  fireEvent.click(within(extra).getByRole("checkbox", { name: new RegExp(`^${en.entityGrid.observedAt}`) }));
+}
 
 function show(project = PROJECT) {
   return render(
@@ -85,8 +93,7 @@ describe("the Portal's entity grid", () => {
     await i18n.changeLanguage("en");
     const first = show();
     await waitFor(() => expect(screen.getByText("5")).toBeInTheDocument());
-    fireEvent.click(screen.getByLabelText(`${en.entityGrid.columnMenu}: Bikes`));
-    fireEvent.click(screen.getByLabelText(en.entityGrid.observedAt));
+    showObservedFor("availableBikeNumber");
     await waitFor(() => expect(screen.getAllByText(/Sep 19, 2026/).length).toBeGreaterThan(0));
     first.unmount();
 
@@ -122,8 +129,7 @@ describe("the Portal's entity grid", () => {
     show();
     await waitFor(() => expect(screen.getByText("5")).toBeInTheDocument());
     // The column still opens; only remembering it is lost.
-    fireEvent.click(screen.getByLabelText(`${en.entityGrid.columnMenu}: Bikes`));
-    fireEvent.click(screen.getByLabelText(en.entityGrid.observedAt));
+    showObservedFor("availableBikeNumber");
     await waitFor(() => expect(screen.getAllByText(/Sep 19, 2026/).length).toBeGreaterThan(0));
     // The write was attempted and refused, and the page carried on regardless.
     expect(attempts).toBeGreaterThan(0);

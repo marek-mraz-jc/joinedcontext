@@ -100,17 +100,21 @@ pub(crate) fn narrow(
             .collect();
         // The IRI the view reads the type by, as the OData surface states it (T-5206 finding 1):
         // a class shown only by its short name is that name under the core @context.
+        // The IRI the author gave it stays as its exact mapping (T-6747).
         let own = source.class_iri(name);
-        let class_uri = if typed.get(name).is_some_and(|(_, ty)| *ty == own) {
-            class.class_uri.clone()
+        let (class_uri, exact_mappings) = if typed.get(name).is_some_and(|(_, ty)| *ty == own) {
+            (class.class_uri.clone(), Vec::new())
         } else {
-            Some(antares_ops::core_iri(name))
+            let core = antares_ops::core_iri(name);
+            let authored = authored(&own, class.class_uri.as_ref(), &core);
+            (Some(core), authored)
         };
         classes.insert(
             (*name).to_owned(),
             Class {
                 name: class.name.clone(),
                 class_uri,
+                exact_mappings,
                 is_a,
                 slots: slots.iter().map(|(n, _)| n.clone()).collect(),
                 slot_usage,
@@ -133,6 +137,9 @@ pub(crate) fn narrow(
         id: format!("{}/views/{view}", s.id.trim_end_matches(['/', '#'])),
         name: s.name.clone(),
         version: s.version.clone(),
+        title: s.title.clone(),
+        description: s.description.clone(),
+        license: s.license.clone(),
         prefixes: BTreeMap::new(),
         default_prefix: s.default_prefix.clone(),
         classes,
@@ -173,13 +180,28 @@ fn kept_slots(
     slot_names
         .iter()
         .filter_map(|n| {
-            let mut slot = rewrite(s.slots.get(*n)?);
+            let declared = s.slots.get(*n)?;
+            let mut slot = rewrite(declared);
             if !by_own_iri(n) {
-                slot.slot_uri = Some(antares_ops::core_iri(n));
+                let core = antares_ops::core_iri(n);
+                slot.exact_mappings =
+                    authored(&source.slot_iri(n), declared.slot_uri.as_ref(), &core);
+                slot.slot_uri = Some(core);
             }
             Some(((*n).to_owned(), slot))
         })
         .collect()
+}
+
+/// The IRI the author gave an element the view names by `core` instead: as
+/// written (a CURIE keeps its prefix in the view) when it is the element's own
+/// URI, else its expanded IRI; none when it is `core` already or names no
+/// absolute IRI (a CURIE on an undeclared prefix expands to itself).
+fn authored(own: &str, written: Option<&String>, core: &str) -> Vec<String> {
+    if own == core || (!own.contains("://") && !own.starts_with("urn:")) {
+        return Vec::new();
+    }
+    vec![written.cloned().unwrap_or_else(|| own.to_owned())]
 }
 
 /// `schema` with class `any` (`linkml:Any`) and the `linkml` prefix when a kept slot ranges over
@@ -289,7 +311,7 @@ fn used_enums(
 }
 
 /// The prefixes a kept element names: the default prefix and the prefix of
-/// every CURIE in a URI, a meaning or a unit mapping (LK6: a prefix no kept
+/// every CURIE in a URI, an exact mapping, a meaning or a unit mapping (LK6: a prefix no kept
 /// element uses may name a hidden namespace).
 fn used_prefixes(s: &Schema) -> BTreeSet<String> {
     let mut curies: Vec<&str> = s.default_prefix.iter().map(String::as_str).collect();
@@ -299,11 +321,17 @@ fn used_prefixes(s: &Schema) -> BTreeSet<String> {
         .chain(s.classes.values().flat_map(|c| c.slot_usage.values()));
     for slot in slots {
         curies.extend(slot.slot_uri.as_deref());
+        curies.extend(slot.exact_mappings.iter().map(String::as_str));
         if let Some(unit) = &slot.unit {
             curies.extend(unit.exact_mappings.iter().map(String::as_str));
         }
     }
     curies.extend(s.classes.values().filter_map(|c| c.class_uri.as_deref()));
+    curies.extend(
+        s.classes
+            .values()
+            .flat_map(|c| c.exact_mappings.iter().map(String::as_str)),
+    );
     curies.extend(
         s.enums
             .values()
@@ -563,6 +591,88 @@ mod tests {
         let context: serde_json::Value =
             serde_json::from_str(&linkml_model::context(&m)).expect("json");
         assert_eq!(context["@context"]["status"], core("status"));
+    }
+
+    /// T-6747: a view naming an authored model's classes and slots by their stored IRIs keeps the
+    /// model: its title, description and licence, each authored IRI as the element's exact
+    /// mapping with the prefix it is written in, as plain LinkML YAML; a hidden slot and the prefix
+    /// only it uses stay out.
+    #[test]
+    fn a_view_keeps_the_authored_model_and_its_vocabulary() {
+        let source = model(
+            r#"{"id": "https://e.org/m", "name": "m", "title": "Registers",
+              "description": "What the register space carries.",
+              "license": "https://e.org/licenses/cc-by-4.0",
+              "prefixes": {"sdm": "https://smartdatamodels.org/",
+                           "sdm-poi": "https://smartdatamodels.org/dataModel.PointOfInterest/",
+                           "schema": "http://schema.org/",
+                           "hid": "https://hidden.e.org/"},
+              "default_prefix": "sdm",
+              "classes": {"PointOfInterest": {"class_uri": "sdm-poi:PointOfInterest",
+                                              "slots": ["name", "category", "secretNote"]}},
+              "slots": {"name": {"slot_uri": "schema:name",
+                                 "annotations": {"label": {"tag": "label",
+                                                           "value": {"sk": "Názov", "en": "Name"}}}},
+                        "category": {"slot_uri": "sdm-poi:category"},
+                        "secretNote": {"slot_uri": "hid:note"}}}"#,
+        );
+        let core = |n: &str| format!("https://uri.etsi.org/ngsi-ld/default-context/{n}");
+        let v = antares_ops::Visible::from_filter(&Filter {
+            rules: vec![Rule {
+                types: vec![core("PointOfInterest")],
+                attributes: vec![core("name"), core("category")],
+                ..Rule::default()
+            }],
+            ..Filter::default()
+        });
+        let (m, left_out) = narrow(&source, &v, "pois").expect("narrowed");
+        assert!(left_out);
+        let s = m.schema();
+        assert_eq!(s.title.as_deref(), Some("Registers"));
+        assert_eq!(
+            s.description.as_deref(),
+            Some("What the register space carries.")
+        );
+        assert_eq!(
+            s.license.as_deref(),
+            Some("https://e.org/licenses/cc-by-4.0")
+        );
+        // the stored IRI, as the @context maps the term, and the author's beside it
+        let poi = &s.classes["PointOfInterest"];
+        assert_eq!(
+            poi.class_uri.as_deref(),
+            Some(core("PointOfInterest").as_str())
+        );
+        assert_eq!(poi.exact_mappings, ["sdm-poi:PointOfInterest"]);
+        assert_eq!(s.slots["name"].exact_mappings, ["schema:name"]);
+        assert_eq!(s.slots["category"].exact_mappings, ["sdm-poi:category"]);
+        assert_eq!(
+            s.prefixes.keys().collect::<Vec<_>>(),
+            ["schema", "sdm", "sdm-poi"]
+        );
+        let context: serde_json::Value =
+            serde_json::from_str(&linkml_model::context(&m)).expect("json");
+        assert_eq!(context["@context"]["name"], core("name"));
+
+        let yaml = linkml_model::yaml(&m);
+        for line in [
+            "id: https://e.org/m/views/pois\n",
+            "title: Registers\n",
+            "license: https://e.org/licenses/cc-by-4.0\n",
+            "  sdm-poi: https://smartdatamodels.org/dataModel.PointOfInterest/\n",
+            "    exact_mappings:\n      - sdm-poi:PointOfInterest\n",
+            "    exact_mappings:\n      - schema:name\n",
+            "          sk: Názov\n",
+        ] {
+            assert!(yaml.contains(line), "{line:?} in {yaml}");
+        }
+        assert!(
+            !yaml.lines().any(|l| l.trim_start().starts_with('"')),
+            "no key is quoted: {yaml}"
+        );
+        for hidden in ["secretNote", "hid", "hidden.e.org"] {
+            assert!(!yaml.contains(hidden), "{hidden} leaks: {yaml}");
+        }
     }
 
     /// T-5206 finding 2: an inlined object whose class the view hides stays an object of
