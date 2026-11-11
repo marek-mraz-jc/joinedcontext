@@ -3596,10 +3596,22 @@ mod tests {
         let token = format!("ghp_{}", "a1B2c3D4".repeat(5));
         let jwt = format!("eyJhbGci.{}.{}", "eyJzdWIi", "c2lnbmF0dXJl");
         let cases = [
-            (json!({ "spec": { "input": { "query": token } } }), "spec.input.query"),
-            (json!({ "spec": { "steps": [{ "note": jwt }] } }), "spec.steps.0.note"),
-            (json!({ "spec": { "url": "postgres://feed:pw4feed@db:5432/x" } }), "spec.url"),
-            (json!({ "spec": { "auth": format!("Bearer {token}") } }), "spec.auth"),
+            (
+                json!({ "spec": { "input": { "query": token } } }),
+                "spec.input.query",
+            ),
+            (
+                json!({ "spec": { "steps": [{ "note": jwt }] } }),
+                "spec.steps.0.note",
+            ),
+            (
+                json!({ "spec": { "url": "postgres://feed:pw4feed@db:5432/x" } }),
+                "spec.url",
+            ),
+            (
+                json!({ "spec": { "auth": format!("Bearer {token}") } }),
+                "spec.auth",
+            ),
         ];
         for (manifest, path) in cases {
             let found = find_literal_secret(&manifest).expect("a credential-shaped value");
@@ -3645,10 +3657,7 @@ mod tests {
                 secret_path(&spec(json!({ name: "abc123pastedkey456" }))),
                 Some(format!("spec.http.headers.{name}"))
             );
-            assert_eq!(
-                secret_path(&spec(json!({ name: "${API_KEY}" }))),
-                None
-            );
+            assert_eq!(secret_path(&spec(json!({ name: "${API_KEY}" }))), None);
         }
         assert_eq!(
             secret_path(&spec(json!({ "Accept": "text/csv", "User-Agent": "jc" }))),
@@ -3714,10 +3723,7 @@ mod tests {
             secret_path(&json!({ "spec": { "token": true } })),
             Some("spec.token".into())
         );
-        assert_eq!(
-            secret_path(&json!({ "spec": { "password": null } })),
-            None
-        );
+        assert_eq!(secret_path(&json!({ "spec": { "password": null } })), None);
 
         assert_eq!(
             secret_path(&json!({

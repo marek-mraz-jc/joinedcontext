@@ -56,11 +56,17 @@ mod tests {
         let dest = init_bare_repo(tmp, inst, RepoId::from_u128(201), "main", false, "Dest")
             .expect("init dest");
         let bundle = create_single_ref_bundle(source, "main").expect("bundle");
-        let pack = bundle.windows(2).position(|w| w == b"\n\n").expect("header end") + 2;
+        let pack = bundle
+            .windows(2)
+            .position(|w| w == b"\n\n")
+            .expect("header end")
+            + 2;
         let mut body = Vec::new();
         write_text_line(
             &mut body,
-            &format!("0000000000000000000000000000000000000000 {tip} refs/heads/main\0 report-status"),
+            &format!(
+                "0000000000000000000000000000000000000000 {tip} refs/heads/main\0 report-status"
+            ),
         )
         .unwrap();
         write_flush(&mut body).unwrap();
@@ -84,7 +90,8 @@ mod tests {
             repo_name: "dest",
             policy: &RefPolicy::default(),
         };
-        let out = handle_receive_pack(&dest, &guard, 10 * 1024 * 1024, &body).expect("receive-pack");
+        let out =
+            handle_receive_pack(&dest, &guard, 10 * 1024 * 1024, &body).expect("receive-pack");
         String::from_utf8_lossy(&out.response_bytes).into_owned()
     }
 
@@ -141,7 +148,11 @@ mod tests {
             };
             commit("add the feed", FileOpKind::Create, Some(&content), None);
             let (_, entries) = list_tree_entries(&source, "main", true).expect("tree");
-            let blob = entries.into_iter().find(|e| e.path == path).expect("the file").sha;
+            let blob = entries
+                .into_iter()
+                .find(|e| e.path == path)
+                .expect("the file")
+                .sha;
             let tip = commit("take it out again", FileOpKind::Delete, None, Some(blob));
             let said = push_main(tmp.path(), &source, &tip);
             assert!(said.contains("ng refs/heads/main"), "{said}");
@@ -160,7 +171,11 @@ mod tests {
             "    apiTokenRef: opendata",
             "    description: \"the password lives in the secret form\"",
         ] {
-            assert_eq!(scan_blob_for_secrets("a/b.yaml", open.as_bytes()), None, "{open}");
+            assert_eq!(
+                scan_blob_for_secrets("a/b.yaml", open.as_bytes()),
+                None,
+                "{open}"
+            );
         }
         let literal = format!("clientSecret: \"{}\"", "s3cr3t".repeat(2));
         assert!(scan_blob_for_secrets("a/b.yml", literal.as_bytes()).is_some());
@@ -334,10 +349,21 @@ mod tests {
 
         // Verify quarantine is clean and quota refusal leaves no quarantine behind
         assert!(!has_active_quarantine(&dest_path));
-        let over_quota = handle_receive_pack(&dest_path, &PushGuard { ctx: &ctx, authorizer: &authz, owner: "helsinki", repo_name: "dest", policy: &RefPolicy {
-                branch_rules: vec![BranchProtectionRule::default()],
-                tag_rules: vec![],
-            } }, 10, &rp_body) // 10 bytes max_push_bytes -> refused with unpack error quota
+        let over_quota = handle_receive_pack(
+            &dest_path,
+            &PushGuard {
+                ctx: &ctx,
+                authorizer: &authz,
+                owner: "helsinki",
+                repo_name: "dest",
+                policy: &RefPolicy {
+                    branch_rules: vec![BranchProtectionRule::default()],
+                    tag_rules: vec![],
+                },
+            },
+            10,
+            &rp_body,
+        ) // 10 bytes max_push_bytes -> refused with unpack error quota
         .expect("quota refusal");
         assert!(String::from_utf8_lossy(&over_quota.response_bytes).contains("unpack error quota"));
         assert!(!has_active_quarantine(&dest_path));

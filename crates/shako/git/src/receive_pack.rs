@@ -193,7 +193,9 @@ fn literal_secret_field(line: &str) -> Option<&str> {
     let reference = value
         .strip_prefix("${")
         .and_then(|rest| rest.strip_suffix('}'))
-        .is_some_and(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+        .is_some_and(|name| {
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
     let open = value.is_empty()
         || value == "~"
         || value.eq_ignore_ascii_case("null")
@@ -649,8 +651,7 @@ fn verify_tip_connectivity_and_tree(
 
     for (path, (_, blob_oid)) in &new_blobs {
         validate_tree_path(path).map_err(|e| e.to_string())?;
-        let blob = repo
-            .find_blob(*blob_oid)
+        repo.find_blob(*blob_oid)
             .map_err(|_| "missing necessary objects".to_owned())?;
         let old_entry = old_blobs.get(path);
         if old_entry.map(|(_, o)| o) != Some(blob_oid) {

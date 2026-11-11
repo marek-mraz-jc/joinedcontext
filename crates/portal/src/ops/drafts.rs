@@ -1272,12 +1272,21 @@ mod tests {
         let token = format!("ghp_{}", "a1B2c3D4".repeat(5));
         let shaped = json!({ "kind": "DataSource", "spec": { "input": { "query": token } } });
         let shaped_err = store
-            .put("helsinki", "DataSource", "feed-shaped", shaped, None, "steward", "person")
+            .put(
+                "helsinki",
+                "DataSource",
+                "feed-shaped",
+                shaped,
+                None,
+                "steward",
+                "person",
+            )
             .await
             .unwrap_err();
         let said = shaped_err.to_string();
         assert!(
-            said.contains("'spec.input.query' (a credential-shaped value)") && !said.contains(&token),
+            said.contains("'spec.input.query' (a credential-shaped value)")
+                && !said.contains(&token),
             "{said}"
         );
         assert!(store
