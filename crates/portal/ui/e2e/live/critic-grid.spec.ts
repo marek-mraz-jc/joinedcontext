@@ -238,10 +238,10 @@ async function walkGrid(page: Page, who: string): Promise<void> {
 
   await step(page, who, "column-menu", async () => {
     await page.getByRole("button", { name: "Column options: source" }).click();
-    return (await page.getByRole("dialog", { name: "Column options: source" }).innerText()).replace(/\s+/g, " ");
+    return (await page.getByRole("menu", { name: "Column options: source" }).innerText()).replace(/\s+/g, " ");
   });
   await step(page, who, "column-hidden", async () => {
-    await page.getByRole("dialog", { name: "Column options: source" }).getByRole("button", { name: "Hide field" }).click();
+    await page.getByRole("menu", { name: "Column options: source" }).getByRole("menuitem", { name: "Hide column" }).click();
     const restore = await page.getByRole("button", { name: /hidden|Show|field/i }).allInnerTexts();
     return `restore controls: ${restore.join(" / ") || "none found"}`;
   });

@@ -208,22 +208,43 @@ export interface GridLabels {
   no: string;
   /** The column header menu (T-4827). */
   columnMenu: string;
+  /** Sort in the column's own words (T-6738): text and the rest, dates, numbers, true/false. */
   sortAsc: string;
   sortDesc: string;
+  sortAscDate: string;
+  sortDescDate: string;
+  sortAscNumber: string;
+  sortDescNumber: string;
+  sortAscBoolean: string;
+  sortDescBoolean: string;
   filterColumn: string;
   hideColumn: string;
   /** The control that lists the fields hidden from the header menu (T-5620), with its count after it. */
   hiddenFields: string;
   showColumn: string;
   showAllColumns: string;
+  /** The toolbar's Arrange columns panel (T-6738): show, order, rename, metadata, reset. */
+  arrangeColumns: string;
+  arrangeHint: string;
+  arrangeDone: string;
+  /** Why the name and a pinned column have no hide in the panel. */
+  alwaysShown: string;
   renameColumn: string;
-  renameReset: string;
+  renameHint: string;
+  /** A header edge's keyboard name: the arrow keys widen and narrow it. */
   columnWidth: string;
-  narrower: string;
-  wider: string;
-  moveLeft: string;
-  moveRight: string;
-  details: string;
+  moveUp: string;
+  moveDown: string;
+  metaHeading: string;
+  metaHint: string;
+  metaFor: string;
+  observedAtHint: string;
+  unitHint: string;
+  datasetIdHint: string;
+  createdAtHint: string;
+  modifiedAtHint: string;
+  resetColumns: string;
+  resetHint: string;
   /** A column's header filter (T-6328): its values to tick, a condition, and the chips above the grid. */
   filterValues: string;
   searchValues: string;
@@ -413,21 +434,38 @@ export const DEFAULT_LABELS: GridLabels = {
   yes: "Yes",
   no: "No",
   columnMenu: "Column options",
-  sortAsc: "Sort A → Z",
-  sortDesc: "Sort Z → A",
+  sortAsc: "A to Z",
+  sortDesc: "Z to A",
+  sortAscDate: "Earliest first",
+  sortDescDate: "Latest first",
+  sortAscNumber: "Smallest first",
+  sortDescNumber: "Largest first",
+  sortAscBoolean: "No first",
+  sortDescBoolean: "Yes first",
   filterColumn: "Filter…",
   hideColumn: "Hide column",
   hiddenFields: "Hidden fields",
   showColumn: "Show field",
   showAllColumns: "Show all",
+  arrangeColumns: "Arrange columns",
+  arrangeHint: "Tick the columns to show, put them in order and rename them. Only your view changes, never the data.",
+  arrangeDone: "Done",
+  alwaysShown: "Always shown",
   renameColumn: "Label in this view",
-  renameReset: "Use the model's label",
-  columnWidth: "Width",
-  narrower: "Narrower",
-  wider: "Wider",
-  moveLeft: "Move left",
-  moveRight: "Move right",
-  details: "Column settings",
+  renameHint: "Type over a name to rename the column for you, such as Station for Station name. Empty it to use the model's name again.",
+  columnWidth: "Column width",
+  moveUp: "Move up",
+  moveDown: "Move down",
+  metaHeading: "Extra details",
+  metaHint: "Adds a column beside the one you choose. All are off until you tick them.",
+  metaFor: "Details for",
+  observedAtHint: "Show when the value was measured",
+  unitHint: "Show the unit the value is given in",
+  datasetIdHint: "Show which source each value came from",
+  createdAtHint: "Show when the value was first stored",
+  modifiedAtHint: "Show when the value last changed",
+  resetColumns: "Reset columns",
+  resetHint: "Brings back the model's order, names and widths, and every column you hid.",
   filterValues: "Values",
   searchValues: "Search values",
   searchValuesHint: "Type part of a value, then tick the ones to keep.",

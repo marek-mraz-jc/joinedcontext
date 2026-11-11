@@ -283,6 +283,67 @@ test.describe("the type page's grid", () => {
     expect(style).toEqual({ textAlign: "end", fontVariantNumeric: "tabular-nums" });
     await expect(page.locator(".jc-type-grid tbody td.jc-grid-pinned .jc-grid-cell").first()).not.toHaveCSS("text-align", "end");
   });
+
+  // T-6738: width and order by direct manipulation, the rest in the toolbar's Arrange columns panel.
+  const header = (page: Page, attr: string) => page.locator(`.jc-type-grid th[data-col-attr="${attr}"]`);
+  const order = (page: Page) => page.locator(".jc-type-grid th[data-col-attr]").evaluateAll((ths) => ths.map((th) => th.getAttribute("data-col-attr")));
+  const SHOTS = join(dirname(fileURLToPath(import.meta.url)), "..", "test-results", "T-6738");
+
+  test("dragging a header's edge widens the column, dragging the header moves it", async ({ page }) => {
+    await open(page, 1440);
+    await header(page, "pm25").scrollIntoViewIfNeeded();
+    const before = (await header(page, "pm25").boundingBox())!;
+    const edge = (await header(page, "pm25").locator(".jc-grid-resize").boundingBox())!;
+    await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(edge.x + edge.width / 2 + 80, edge.y + edge.height / 2, { steps: 5 });
+    await page.mouse.up();
+    await expect.poll(async () => Math.round((await header(page, "pm25").boundingBox())!.width - before.width)).toBeGreaterThanOrEqual(70);
+    const start = await order(page);
+    expect(start.indexOf("temperature")).toBeGreaterThan(start.indexOf("pm25"));
+    await header(page, "temperature").dragTo(header(page, "pm25"));
+    await expect.poll(async () => {
+      const now = await order(page);
+      return now.indexOf("temperature") < now.indexOf("pm25");
+    }).toBe(true);
+  });
+
+  for (const width of [1440, 400]) {
+    test(`at ${width} px the menu holds quick actions and Arrange columns renames and hides`, async ({ page }) => {
+      await open(page, width);
+      mkdirSync(SHOTS, { recursive: true });
+      await page.getByRole("button", { name: "Column options: Date observed" }).click();
+      const menu = page.getByRole("menu", { name: "Column options: Date observed" });
+      await expect(menu.getByRole("menuitemradio")).toHaveText([/Earliest first/, /Latest first/]);
+      await page.screenshot({ path: join(SHOTS, `menu-open-${width}.png`) });
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("button", { name: "Column options: Date observed" })).toBeFocused();
+
+      await page.getByRole("button", { name: "Arrange columns" }).click();
+      const panel = page.getByRole("dialog", { name: "Arrange columns" });
+      await expect(panel).toBeVisible();
+      const box = (await panel.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+      if (width < 640) {
+        // A bottom sheet: it meets the screen's bottom edge, every target 44 px high.
+        expect(Math.round(box.y + box.height)).toBe(800);
+        for (const target of await panel.locator("button, input[type=text], select").all()) {
+          expect((await target.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+        }
+      }
+      await panel.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: join(SHOTS, `panel-open-${width}.png`) });
+      const field = panel.getByRole("textbox", { name: "Label in this view: Station name" });
+      await field.fill("Station");
+      await field.press("Enter");
+      await panel.getByRole("checkbox", { name: "Show field: Temperature" }).uncheck();
+      await panel.getByRole("button", { name: "Done" }).click();
+      await expect(header(page, "stationName")).toContainText("Station");
+      await expect(header(page, "temperature")).toHaveCount(0);
+      await page.screenshot({ path: join(SHOTS, `renamed-hidden-${width}.png`) });
+    });
+  }
 });
 
 const LIVE = (process.env.JC_APP_URLS ?? "").split(/\s+/).filter(Boolean);
