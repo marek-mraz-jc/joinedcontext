@@ -86,7 +86,7 @@ export function GridStatus({ view }: { view: GridView }): React.JSX.Element {
 }
 
 /**
- * "Hidden fields (2)" above the rows (T-5620): the fields hidden from the header menu, each with
+ * "Hidden columns (2)" above the rows (T-5620): the fields hidden from the header menu, each with
  * "Show field", and "Show all" for more than one. Focus stays on the count while fields remain.
  */
 export function HiddenFields({ attrs, labels, labelOf, onShow }: { attrs: readonly string[]; labels: GridLabels; labelOf: (attr: string) => string; onShow: (attrs: readonly string[]) => void }) {

@@ -2109,7 +2109,7 @@ a.jc-cell--link:focus-visible {
   color: var(--jc-color-accent, #0066cc);
   font-weight: 700;
 }
-@media (pointer: coarse) {
+@media (pointer: coarse), (width <= 640px) {
   .jc-grid-col-menu button.jc-grid-meta-item { min-height: 2.75rem; }
 }
 

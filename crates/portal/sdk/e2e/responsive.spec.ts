@@ -319,6 +319,9 @@ test.describe("the type page's grid", () => {
       await page.getByRole("button", { name: "Column options: Date observed" }).click();
       // The current sort shows as a check on its row.
       await expect(menu.getByRole("menuitemradio", { name: "Latest first" }).locator(".jc-grid-menu-check")).toBeVisible();
+      if (width < 640) {
+        for (const item of await menu.locator('[role^="menuitem"]').all()) expect((await item.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      }
       await page.screenshot({ path: join(SHOTS, `menu-open-${width}.png`) });
       await page.keyboard.press("Escape");
       await expect(page.getByRole("button", { name: "Column options: Date observed" })).toBeFocused();
@@ -353,7 +356,8 @@ test.describe("the type page's grid", () => {
       const lastBox = (await last.boundingBox())!;
       expect(lastBox.height).toBeGreaterThan(30);
       expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(foot.y + 1);
-      await page.screenshot({ path: join(SHOTS, `panel-details-${width}.png`) });
+      // At a desktop width the panel does not scroll (checked above): the details shot is the phone's.
+      if (width < 640) await page.screenshot({ path: join(SHOTS, `panel-details-${width}.png`) });
       const field = panel.getByRole("textbox", { name: "Label in this view: Station name" });
       await field.fill("Station");
       await field.press("Enter");
