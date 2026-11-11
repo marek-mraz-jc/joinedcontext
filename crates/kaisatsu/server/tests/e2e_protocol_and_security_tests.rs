@@ -595,7 +595,7 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
 /// client gets it from `cimd_optional_client_scopes`, and the token's audience is the Portal API.
 #[tokio::test]
 async fn e2e_cimd_claude_client_gets_the_portal_mcp_scope_and_audience() {
-    let (state, _store, _kek) = setup_dev_realm_state().await;
+    let (state, store, _kek) = setup_dev_realm_state().await;
     let cimd_url = "https://claude.ai/oauth/mcp-oauth-client-metadata";
     state.guard().insert_mock(
         cimd_url,
@@ -610,6 +610,17 @@ async fn e2e_cimd_claude_client_gets_the_portal_mcp_scope_and_audience() {
         }))
         .unwrap(),
     );
+    // jc-dev and jc-prod stored the client before the fix, with the realm-wide list only.
+    let realm = store.get_realm("dev").await.unwrap().unwrap();
+    let doc = serde_json::from_value(json!({
+        "client_id": cimd_url,
+        "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"]
+    }))
+    .unwrap();
+    let mut stale =
+        kaisatsu_oidc::cimd::validate_and_build_cimd_client(&realm, cimd_url, doc).unwrap();
+    stale.optional_client_scopes = realm.default_optional_client_scopes.clone();
+    store.upsert_client(stale).await.unwrap();
     let mount = Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap();
     let app = router(state, mount);
 

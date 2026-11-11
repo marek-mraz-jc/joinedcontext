@@ -177,8 +177,9 @@ pub fn validate_and_build_cimd_client(
     })
 }
 
-/// The realm's default optional scopes, then the CIMD-only ones, each once.
-fn cimd_optional_scopes(realm: &RealmConfig) -> Vec<String> {
+/// The realm's default optional scopes, then the CIMD-only ones, each once. A stored CIMD client
+/// takes them from the realm at every resolve, so a change to either list reaches it at once.
+pub fn cimd_optional_scopes(realm: &RealmConfig) -> Vec<String> {
     let mut scopes = realm.default_optional_client_scopes.clone();
     for s in &realm.cimd_optional_client_scopes {
         if !scopes.contains(s) {
