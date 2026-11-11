@@ -4501,23 +4501,21 @@ mod tests {
             "{errors:?}"
         );
 
-        let errors = refusal(check(
+        // P-18 (T-6736): the Pipeline names public-air, so its derived write binds it beside
+        // the policyRef; only an Endpoint the project lacks is refused.
+        assert!(check(
             Operation::Create,
-            manifest("Pipeline", "stations", air_pipeline("public-air")),
-        ));
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(
-            errors[0].starts_with(
-                "spec.targetEndpoint: Pipeline stations output 1 writes as pl-stations"
-            ) && errors[0].contains("aim it at an Endpoint of the space without policyRef"),
-            "{errors:?}"
-        );
+            manifest("Pipeline", "stations", air_pipeline("public-air"))
+        )
+        .is_ok());
         let errors = refusal(check(
             Operation::Create,
             manifest("Pipeline", "lost", air_pipeline("no-such-endpoint")),
         ));
         assert!(
-            errors[0].contains("declares no Endpoint no-such-endpoint"),
+            errors[0].starts_with("spec.targetEndpoint: Pipeline lost output 1 writes as pl-lost")
+                && errors[0].contains("declares no Endpoint no-such-endpoint")
+                && errors[0].contains("aim it at an Endpoint of the space it writes"),
             "{errors:?}"
         );
 
@@ -4592,12 +4590,17 @@ mod tests {
 
     /// T-5040: the dry run a person sees answers a red verdict whose finding names the field
     /// (`spec.outputs.0.targetEndpoint`) and says what to change; the form marks that field.
+    /// Since P-18 (T-6736) an Endpoint with a policyRef binds the Pipeline naming it, so the red
+    /// case is a target the project lacks.
     #[tokio::test]
-    async fn a_dry_run_of_a_pipeline_aimed_at_a_policy_ref_endpoint_is_red() {
+    async fn a_dry_run_of_a_pipeline_aimed_at_a_missing_endpoint_is_red() {
         let state = narrowed_space();
-        let payload =
-            serde_json::to_value(manifest("Pipeline", "stations", air_pipeline("public-air")))
-                .expect("a manifest");
+        let payload = serde_json::to_value(manifest(
+            "Pipeline",
+            "stations",
+            air_pipeline("no-such-endpoint"),
+        ))
+        .expect("a manifest");
         let result = propose(
             &dummy_user(),
             &state,

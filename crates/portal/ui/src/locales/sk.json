@@ -11161,7 +11161,7 @@
       "anonymousRefused": "{surface} odmietol anonymného čitateľa ({status}), hoci je Endpoint verejný",
       "notServed": "{surface} odpovedal {status}",
       "noAnswer": "{surface} neodpovedal: {reason}",
-      "policyWrite": "Broker zápis odmietol: Policy cieľového Endpointu musí dať pl-{name} create a update, alebo spec.outputs[].targetEndpoint musí menovať Endpoint bez policyRef.",
+      "policyWrite": "Broker zápis odmietol: spec.outputs[].targetEndpoint musí menovať Endpoint priestoru, do ktorého výstup zapisuje, nie Endpoint aplikácie, a žiadny zákaz toho priestoru nesmie pokrývať create a update pre pl-{name}.",
       "policy": "Policy túto operáciu odmieta: skontrolujte policyRef Endpointu a pravidlá Policy na stránke Policies.",
       "token": "Token účtu bol odmietnutý: skontrolujte servisný účet a jeho secretRef, potom synchronizujte znova.",
       "robots": "robots.txt zdroja čitateľa nepúšťa: nasmerujte spec.source.url na povolenú adresu alebo sa obráťte na vydavateľa.",
