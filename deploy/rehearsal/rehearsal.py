@@ -489,6 +489,41 @@ def add_tester(realm: dict) -> dict:
     return out
 
 
+# The synthetic bundle's reader of its closed panel (helsinki-bikes-ops, `audience: organization`):
+# a kit person bound `viewer` on project helsinki, so the reconciler puts them into
+# helsinki-readers, the group Policy bikes-ops-read names, as a binding puts a prod reader there.
+# Only for a bundle `synth` made (manifest `synthetic`); never in a dev or prod export, and never
+# made by a suite at run time. A hand-added group member is taken out by the next reconcile.
+READER = "rehearsal-panel-reader"
+READER_ID = "7e5a0126-0000-4000-8000-00000000f126"
+READER_PROJECT = "helsinki"
+READER_BINDING = "users/assignments/rehearsal-panel-reader.yaml"
+
+
+def add_reader(realm: dict) -> dict:
+    """The synthetic bundle's panel reader, its password a secret variable up.sh fills."""
+    out = dict(realm)
+    reader = {"id": READER_ID, "username": READER, "enabled": True, "email": f"{READER}@rehearsal.invalid",
+              "emailVerified": True, "firstName": "Rehearsal", "lastName": "Panel reader",
+              "credentials": [{"type": "password", "value": "$(env:REHEARSAL_READER_PASSWORD)", "temporary": False}]}
+    out["users"] = [u for u in out.get("users") or [] if u.get("username") != READER] + [reader]
+    return out
+
+
+def reader_binding() -> bytes:
+    """The RoleBinding that makes READER a reader of READER_PROJECT, in the configuration repo."""
+    return (f"# The rehearsal kit's panel reader of the synthetic bundle (rehearsal.py READER).\n"
+            f"apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata:\n"
+            f"  name: rehearsal-panel-reader\n  namespace: org\nspec:\n  subjects:\n"
+            f"    - user: {READER_ID} # {READER}\n  role: viewer\n  scope: {{ project: {READER_PROJECT} }}\n").encode()
+
+
+def is_synthetic(export: Path) -> bool:
+    """Whether `export` is a bundle `synth` made, not an export of a running environment."""
+    f = export / "manifest.json"
+    return f.is_file() and json.loads(f.read_text()).get("synthetic") is True
+
+
 def state_client_secrets(realm: dict) -> list[tuple[str, str]]:
     """(jc state file, NAME) for each client of STATE_CLIENT_SECRETS whose secret is `$(env:NAME)`."""
     out = []
@@ -1019,6 +1054,8 @@ def cmd_realms(a):
             (dst.parent / f"realm-{name}-people.json").write_text(json.dumps(counts))
             print(f"realm {name}: {counts}")
         clean = add_tester(clean)
+        if is_synthetic(Path(a.export)):
+            clean = add_reader(clean)
         clean, by_secret = jc_clients_by_secret(clean)
         if a.public_base:
             clean, twins = add_rehearsal_origin(clean, a.public_base)
@@ -1347,6 +1384,7 @@ def cmd_aliases(a):
 
 def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: bytes = REHEARSAL_CATALOGUE):
     auth = {"Authorization": f"token {token}"}
+    synthetic = is_synthetic(export)
     types_of = space_types(export) if (export / "antares" / "entities.jsonl").is_file() else {}
     listing = json.loads((export / "gitea" / "repos.json").read_text())
     rows = []
@@ -1375,6 +1413,9 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
                     report.setdefault("fenced", []).append(f"{owner}/{name}/{rel}")
                 if named != fenced:
                     report.setdefault("renamed", []).append(f"{owner}/{name}/{rel}")
+        if synthetic and (root / "users" / "assignments").is_dir():
+            files[READER_BINDING] = reader_binding()
+            report["reader"] = f"{owner}/{name}/{READER_BINDING}"
         row = {"repo": f"{owner}/{name}", "files": len(files)}
         st, _ = h.json("GET", f"/git/api/v1/projects/{owner}/repositories/{name}", headers=auth)
         if st == 404:
