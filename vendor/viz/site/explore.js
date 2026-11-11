@@ -761,7 +761,7 @@
     function loading(on) {
       if (on) $("map").setAttribute("data-loading", t.mapLoading);
       else $("map").removeAttribute("data-loading");
-      if (on) $("map-note").textContent = t.mapLoading;
+      if (on) $("map-note").textContent = "";
     }
 
     function startMap() {
@@ -804,7 +804,8 @@
         root.jcExploreMap = map; // for the browser journey
         state.maplibre = maplibre;
         map.addControl(new maplibre.NavigationControl({ showCompass: false }));
-        map.addControl(new maplibre.AttributionControl({ compact: true }));
+        // A phone's bottom-right corner holds the host page's assistant button: the (i) goes left.
+        map.addControl(new maplibre.AttributionControl({ compact: true }), $("map").clientWidth < 640 ? "bottom-left" : "bottom-right");
         map.once("load", function () {
           // Lines and areas in "jc", points in "jc-pts", which clusters above CLUSTER_ABOVE in view.
           var empty = { type: "FeatureCollection", features: [] };
@@ -816,7 +817,9 @@
           map.addLayer({ id: "jc-cluster", type: "circle", source: "jc-pts", filter: ["has", "point_count"], paint: { "circle-color": COLOUR, "circle-opacity": 0.85, "circle-radius": ["step", ["get", "point_count"], 14, 50, 18, 200, 24], "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
           // The count on a cluster needs the style's glyphs; the basemap styles have them.
           if (map.getStyle().glyphs) map.addLayer({ id: "jc-cluster-count", type: "symbol", source: "jc-pts", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 }, paint: { "text-color": "#fff" } });
-          map.addLayer({ id: "jc-point", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": colour, "circle-radius": 6, "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
+          map.addLayer({ id: "jc-point", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": colour, "circle-radius": 7, "circle-stroke-color": "#fff", "circle-stroke-width": 2.5 } });
+          // On a narrow map the attribution starts folded to its (i) button, off the data.
+          if (map.getContainer().clientWidth < 640) Array.prototype.forEach.call(map.getContainer().querySelectorAll(".maplibregl-compact-show"), function (n) { n.classList.remove("maplibregl-compact-show"); });
           ["jc-point", "jc-line", "jc-fill"].forEach(function (layer) {
             map.on("click", layer, function (e) {
               var f = (state.mapData || []).filter(function (x) { return x.id === e.features[0].properties.jcId; })[0];

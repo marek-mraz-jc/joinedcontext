@@ -45,8 +45,13 @@ main:has(#data-api-tool) .page-head .actions { display: none; }
 #map { height: 420px; border: 1px solid var(--line); border-radius: 8px; }
 /* Until the map's first rows are drawn (brief 132): a calm box saying so, never a blank one. */
 #map { position: relative; background: var(--soft); }
-#map[data-loading]::after { content: attr(data-loading); position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--soft) 82%, transparent); color: var(--fg); font-size: 0.9375rem; pointer-events: none; }
-@media (max-width: 600px) { #map { height: 300px; } }
+#map[data-loading]::after { content: attr(data-loading); position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; padding-top: 56px; background: var(--soft); color: var(--fg); font-size: 0.9375rem; font-weight: 600; pointer-events: none; }
+#map[data-loading]::before { content: ""; position: absolute; z-index: 4; left: calc(50% - 16px); top: calc(50% - 28px); width: 32px; height: 32px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: jc-map-spin 0.9s linear infinite; pointer-events: none; }
+#map[data-loading] .maplibregl-control-container { visibility: hidden; }
+@keyframes jc-map-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #map[data-loading]::before { animation: none; } }
+#map-note { margin-top: 8px; }
+@media (max-width: 600px) { #map { height: 380px; } }
 #detail, #embed { max-width: min(40rem, calc(100vw - 32px)); width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); padding: 16px; box-sizing: border-box; }
 #detail::backdrop, #embed::backdrop { background: rgba(15, 23, 42, 0.5); }
 dialog a { color: var(--accent); overflow-wrap: break-word; }

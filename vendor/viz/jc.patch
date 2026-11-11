@@ -77,17 +77,24 @@
  .inline #title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
  #title { font-size: 1.15rem; margin: 0; }
  #map-title { font-size: 1rem; margin: 16px 0 6px; }
-@@ -33,6 +43,9 @@
+@@ -33,7 +43,15 @@
  .status:empty { display: none; }
  .status.error { padding: 10px 12px; border-radius: 8px; background: var(--err-bg); color: var(--err); }
  #map { height: 420px; border: 1px solid var(--line); border-radius: 8px; }
+-@media (max-width: 600px) { #map { height: 300px; } }
 +/* Until the map's first rows are drawn (brief 132): a calm box saying so, never a blank one. */
 +#map { position: relative; background: var(--soft); }
-+#map[data-loading]::after { content: attr(data-loading); position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--soft) 82%, transparent); color: var(--fg); font-size: 0.9375rem; pointer-events: none; }
- @media (max-width: 600px) { #map { height: 300px; } }
++#map[data-loading]::after { content: attr(data-loading); position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; padding-top: 56px; background: var(--soft); color: var(--fg); font-size: 0.9375rem; font-weight: 600; pointer-events: none; }
++#map[data-loading]::before { content: ""; position: absolute; z-index: 4; left: calc(50% - 16px); top: calc(50% - 28px); width: 32px; height: 32px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: jc-map-spin 0.9s linear infinite; pointer-events: none; }
++#map[data-loading] .maplibregl-control-container { visibility: hidden; }
++@keyframes jc-map-spin { to { transform: rotate(360deg); } }
++@media (prefers-reduced-motion: reduce) { #map[data-loading]::before { animation: none; } }
++#map-note { margin-top: 8px; }
++@media (max-width: 600px) { #map { height: 380px; } }
  #detail, #embed { max-width: min(40rem, calc(100vw - 32px)); width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); padding: 16px; box-sizing: border-box; }
  #detail::backdrop, #embed::backdrop { background: rgba(15, 23, 42, 0.5); }
-@@ -95,6 +108,8 @@
+ dialog a { color: var(--accent); overflow-wrap: break-word; }
+@@ -95,6 +113,8 @@
  /* T-5233: the map's count line, its Mapa panel, the reader's chips and the legend. */
  .map-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin: 16px 0 6px; }
  .map-head #map-title { margin: 0; }
@@ -388,7 +395,7 @@
 +    function loading(on) {
 +      if (on) $("map").setAttribute("data-loading", t.mapLoading);
 +      else $("map").removeAttribute("data-loading");
-+      if (on) $("map-note").textContent = t.mapLoading;
++      if (on) $("map-note").textContent = "";
      }
  
      function startMap() {
@@ -426,7 +433,7 @@
          if (root.pmtiles) maplibre.addProtocol("pmtiles", new root.pmtiles.Protocol().tile);
          // The Endpoint's vector tiles, read like every other request here: anonymous, no referrer.
          maplibre.addProtocol("jc-tile", function (request, controller) {
-@@ -653,8 +799,7 @@
+@@ -653,13 +799,13 @@
                return r.arrayBuffer().then(function (data) { return { data: data }; });
              });
          });
@@ -436,7 +443,25 @@
          state.map = map;
          root.jcExploreMap = map; // for the browser journey
          state.maplibre = maplibre;
-@@ -700,29 +845,63 @@
+         map.addControl(new maplibre.NavigationControl({ showCompass: false }));
+-        map.addControl(new maplibre.AttributionControl({ compact: true }));
++        // A phone's bottom-right corner holds the host page's assistant button: the (i) goes left.
++        map.addControl(new maplibre.AttributionControl({ compact: true }), $("map").clientWidth < 640 ? "bottom-left" : "bottom-right");
+         map.once("load", function () {
+           // Lines and areas in "jc", points in "jc-pts", which clusters above CLUSTER_ABOVE in view.
+           var empty = { type: "FeatureCollection", features: [] };
+@@ -671,7 +817,9 @@
+           map.addLayer({ id: "jc-cluster", type: "circle", source: "jc-pts", filter: ["has", "point_count"], paint: { "circle-color": COLOUR, "circle-opacity": 0.85, "circle-radius": ["step", ["get", "point_count"], 14, 50, 18, 200, 24], "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
+           // The count on a cluster needs the style's glyphs; the basemap styles have them.
+           if (map.getStyle().glyphs) map.addLayer({ id: "jc-cluster-count", type: "symbol", source: "jc-pts", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 }, paint: { "text-color": "#fff" } });
+-          map.addLayer({ id: "jc-point", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": colour, "circle-radius": 6, "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
++          map.addLayer({ id: "jc-point", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": colour, "circle-radius": 7, "circle-stroke-color": "#fff", "circle-stroke-width": 2.5 } });
++          // On a narrow map the attribution starts folded to its (i) button, off the data.
++          if (map.getContainer().clientWidth < 640) Array.prototype.forEach.call(map.getContainer().querySelectorAll(".maplibregl-compact-show"), function (n) { n.classList.remove("maplibregl-compact-show"); });
+           ["jc-point", "jc-line", "jc-fill"].forEach(function (layer) {
+             map.on("click", layer, function (e) {
+               var f = (state.mapData || []).filter(function (x) { return x.id === e.features[0].properties.jcId; })[0];
+@@ -700,29 +848,63 @@
              map.on("mouseleave", layer, function () { map.getCanvas().style.cursor = ""; });
            });
            map.on("moveend", mapMoved);
@@ -518,7 +543,7 @@
      }
  
      // Past MAP_LIMIT and with no filter (a tile takes no query), the map draws the type's vector
-@@ -825,20 +1004,30 @@
+@@ -825,20 +1007,30 @@
  
      function mapMoved() {
        var map = state.map;
@@ -556,7 +581,7 @@
          if (asked !== state.mapAsk) return;
          var features = ((answer.body && answer.body.features) || []).filter(function (f) { return f && f.geometry && typeof f.geometry.type === "string"; });
          state.mapData = features;
-@@ -939,8 +1128,9 @@
+@@ -939,8 +1131,9 @@
        if (moved) drawMap();
      }
  
@@ -568,7 +593,7 @@
        $("detail-type").hidden = true;
        $("detail-title").textContent = t.dataApi;
        $("detail-list").textContent = "";
-@@ -950,12 +1140,13 @@
+@@ -950,12 +1143,13 @@
        $("detail-dev").open = true;
        linkList(null);
        placeMap(null);
@@ -585,7 +610,7 @@
        var line = $("attribution");
        var draw = function (title, href, publisher, licence, licenceHref) {
          line.textContent = "";
-@@ -992,8 +1183,9 @@
+@@ -992,8 +1186,9 @@
        $("embed-keep-hint").textContent = words.length ? say(t.keepHint, { view: words.join("; ") }) : t.keepNone;
        $("embed-copied").textContent = "";
        try {
@@ -597,7 +622,7 @@
          $("embed-error").hidden = true;
          $("embed-height").removeAttribute("aria-invalid");
          $("embed-copy").disabled = false;
-@@ -1006,11 +1198,13 @@
+@@ -1006,11 +1201,13 @@
        }
      }
  
@@ -613,7 +638,7 @@
      $("embed-form").addEventListener("input", embedCode);
      $("embed-form").addEventListener("change", embedCode);
      $("embed-form").addEventListener("submit", function (e) { e.preventDefault(); });
-@@ -1022,7 +1216,7 @@
+@@ -1022,7 +1219,7 @@
        else select();
      });
      $("embed-close").addEventListener("click", function () { $("embed").close(); });
@@ -622,7 +647,7 @@
      if (embedded) attribute();
      $("detail-close").addEventListener("click", function () { $("detail").close(); });
      // A click on the backdrop (the dialog box itself, outside its content) closes it, as Esc does.
-@@ -1052,13 +1246,14 @@
+@@ -1052,13 +1249,14 @@
      // The type list only says which types have a location, for the map; the view reads its own.
      get(api + "ngsi-ld/v1/types?details=true").then(function (answer) {
        state.types = (Array.isArray(answer.body) ? answer.body : []).filter(function (x) { return x && NAME.test(x.typeName || ""); });
@@ -638,7 +663,7 @@
          slug: where.slug,
          lang: lang,
          link: { type: where.type || undefined, q: where.q || undefined, sort: where.sort || undefined, noDefault: where.all || undefined },
-@@ -1068,15 +1263,21 @@
+@@ -1068,15 +1266,21 @@
            if (card && card.type === state.type) drawMap();
          },
          onOpenRow: openRow,
