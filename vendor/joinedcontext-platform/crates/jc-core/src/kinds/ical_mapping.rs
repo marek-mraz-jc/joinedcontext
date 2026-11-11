@@ -322,7 +322,10 @@ pub(crate) fn query_gaps(
             Ok(filter) => filter
                 .gaps()
                 .into_iter()
-                .map(|gap| gap.replacen("`filter.", "`query` parameter `", 1).replacen("`filter`", "`query`", 1))
+                .map(|gap| {
+                    gap.replacen("`filter.", "`query` parameter `", 1)
+                        .replacen("`filter`", "`query`", 1)
+                })
                 .collect(),
             Err(why) => vec![why],
         },
@@ -1600,9 +1603,8 @@ mod tests {
             1,
             "a q the broker refuses is refused at save"
         );
-        assert!(
-            output(None, Some("q=a=1")).shape_gaps()[0].contains("`query` parameter `q` is no NGSI-LD query")
-        );
+        assert!(output(None, Some("q=a=1")).shape_gaps()[0]
+            .contains("`query` parameter `q` is no NGSI-LD query"));
         // The nine calendars of the deployment seeds and the bbsk-podujatia app: six whole
         // views and three bbsk genres.
         for q in [
