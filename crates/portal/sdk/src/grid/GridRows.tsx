@@ -184,7 +184,7 @@ function GridCell({ view, row, rowIndex, col, colIndex, tone }: { view: GridView
     ) : null}
     {/* At most three lines at the column's widest (T-5192): a dragged width replaces
         the cap, the full value stays in the row's detail. */}
-    <div className="jc-grid-cell" data-format={col.attr ? formatOf.get(col.attr) : undefined} style={col.width ? { maxWidth: "none" } : undefined}>
+    <div className="jc-grid-cell" data-format={col.attr ? formatOf.get(col.attr) : undefined} style={col.width || (props.compact && col.pinned) ? { maxWidth: "none" } : undefined}>
       {renderCellContent(row, col)}
     </div>
   </td>
