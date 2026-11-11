@@ -1,9 +1,9 @@
 //! The feed outputs of an Endpoint are the broker's `antares-feed` surface of its view (EP-150,
 //! EP-151, T-5203): `/api/endpoint/{slug}/feed/v1/{name}/{atom.xml|rss.xml|feed.json}` goes to
 //! `/x/views/{slug}/feed/v1/{name}/...` with the query as sent and the tenant and caller pinned.
-//! These tests hold what the gateway adds: the route per format, the links and the `tag:` ids
-//! on the public host, read-only, and no feed at all on an Endpoint without an output. The
-//! 401/403 of a non-public Endpoint is the route sweep's row (route_authz_sweep_tests.rs).
+//! These tests hold what the gateway adds: the route per format, the links as `feeds/` links and
+//! the feed's `tag:` id on the public host, read-only, and no feed at all on an Endpoint without
+//! an output. The 401/403 of a non-public Endpoint is the route sweep's row (route_authz_sweep_tests.rs).
 
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
@@ -25,7 +25,7 @@ const PUBLIC: &str = "https://data.example.sk";
 type Hops = Arc<Mutex<Vec<(String, Option<String>, HeaderMap)>>>;
 
 /// A broker answering each feed file with its media type, naming itself by its `Host` in the
-/// links, the `tag:` ids and the author, as Antares does.
+/// links, the feed's `tag:` id and the author, each entry by its Entity's URN, as Antares does.
 async fn broker() -> (String, Hops) {
     let hops: Hops = Arc::default();
     let recorder = Arc::clone(&hops);
@@ -52,15 +52,15 @@ async fn broker() -> (String, Hops) {
                 ))
             } else if path.ends_with("/rss.xml") {
                 ("application/rss+xml; charset=utf-8", format!(
-                    "<rss version=\"2.0\"><channel><link>{this}</link><item><guid isPermaLink=\"false\">tag:{host},2026:{SLUG}/urn:ngsi-ld:Event:1</guid></item></channel></rss>"
+                    "<rss version=\"2.0\"><channel><link>{this}</link><item><guid isPermaLink=\"false\">urn:ngsi-ld:Event:1</guid></item></channel></rss>"
                 ))
             } else if path.ends_with("/feed.json") {
                 ("application/feed+json; charset=utf-8", format!(
-                    r#"{{"version":"https://jsonfeed.org/version/1.1","feed_url":"{this}","authors":[{{"name":"{host}"}}],"items":[{{"id":"tag:{host},2026:{SLUG}/urn:ngsi-ld:Event:1"}}]}}"#
+                    r#"{{"version":"https://jsonfeed.org/version/1.1","feed_url":"{this}","authors":[{{"name":"{host}"}}],"items":[{{"id":"urn:ngsi-ld:Event:1"}}]}}"#
                 ))
             } else {
                 ("application/atom+xml; charset=utf-8", format!(
-                    "<feed xmlns=\"http://www.w3.org/2005/Atom\"><id>tag:{host},2026:{SLUG}/feed/kultura</id><author><name>{host}</name></author><generator>Antares</generator><link rel=\"self\" href=\"{this}\"/><link rel=\"next\" href=\"{this}?offset=50\"/></feed>"
+                    "<feed xmlns=\"http://www.w3.org/2005/Atom\"><id>tag:{host},2026:{SLUG}/feed/kultura</id><author><name>{host}</name></author><generator>Antares</generator><link rel=\"self\" href=\"{this}\"/><link rel=\"next\" href=\"{this}?offset=50\"/><entry><id>urn:ngsi-ld:Event:1</id></entry></feed>"
                 ))
             };
             ([("content-type", media)], body).into_response()
@@ -138,14 +138,27 @@ async fn call(
     method: Method,
     uri: &str,
 ) -> (StatusCode, HeaderMap, String) {
+    call_on(upstream, endpoint, method, uri, PUBLIC, "gateway.internal").await
+}
+
+/// [`call`] on a gateway configured with `public`, the request carrying `host` as its `Host`.
+async fn call_on(
+    upstream: &str,
+    endpoint: Endpoint,
+    method: Method,
+    uri: &str,
+    public: &str,
+    host: &str,
+) -> (StatusCode, HeaderMap, String) {
     let mut gateway =
         Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), DOMAIN).serve([endpoint]);
-    gateway.public_url = Some(PUBLIC.to_owned());
+    gateway.public_url = Some(public.to_owned());
     let response = router(Arc::new(gateway))
         .oneshot(
             Request::builder()
                 .method(method)
                 .uri(uri)
+                .header("host", host)
                 .body(Body::empty())
                 .expect("a request"),
         )
@@ -173,10 +186,10 @@ async fn each_format_is_the_views_feed_on_the_public_host() {
         .next()
         .unwrap_or_default()
         .to_owned();
-    for (file, media) in [
-        ("atom.xml", "application/atom+xml"),
-        ("rss.xml", "application/rss+xml"),
-        ("feed.json", "application/feed+json"),
+    for (file, media, ext) in [
+        ("atom.xml", "application/atom+xml", "atom"),
+        ("rss.xml", "application/rss+xml", "rss"),
+        ("feed.json", "application/feed+json", "json"),
     ] {
         let uri = format!("/api/endpoint/{SLUG}/feed/v1/kultura/{file}?lang=sk&limit=5");
         let (status, headers, body) = call(&upstream, endpoint(kultura()), Method::GET, &uri).await;
@@ -189,12 +202,11 @@ async fn each_format_is_the_views_feed_on_the_public_host() {
             "{file}: {headers:?}"
         );
         assert!(
-            body.contains(&format!(
-                "{PUBLIC}/api/endpoint/{SLUG}/feed/v1/kultura/{file}"
-            )),
+            body.contains(&format!("{PUBLIC}/api/endpoint/{SLUG}/feeds/kultura.{ext}")),
             "{file}: {body}"
         );
-        assert!(body.contains("tag:data.example.sk,2026:"), "{file}: {body}");
+        assert!(!body.contains("/feed/v1/"), "{file}: {body}");
+        assert!(body.contains("urn:ngsi-ld:Event:1"), "{file}: {body}");
         assert!(
             !body.contains(&broker_host),
             "{file} names the broker: {body}"
@@ -247,6 +259,49 @@ async fn facets_forward_to_the_view_as_sent() {
         (hops[1].0.as_str(), hops[1].1.as_deref()),
         (path.as_str(), None)
     );
+}
+
+/// A feed read on two configured public addresses lists the same entry ids, the Entity URNs,
+/// and its links name the configured address in the `feeds/` form; the request's `Host` is
+/// never written into the body (T-6771, RTE-06).
+#[tokio::test]
+async fn a_feed_under_two_addresses_keeps_its_entry_ids_and_never_echoes_the_host() {
+    let (upstream, _) = broker().await;
+    let uri = format!("/api/endpoint/{SLUG}/feeds/kultura.atom?limit=5");
+    let mut ids = Vec::new();
+    for (public, host) in [
+        (PUBLIC, "attacker.example"),
+        ("https://opendata.example.org/sk_bbsk", "evil.example:8443"),
+    ] {
+        let (status, _, body) = call_on(
+            &upstream,
+            endpoint(kultura()),
+            Method::GET,
+            &uri,
+            public,
+            host,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let host_name = host.split(':').next().unwrap_or(host);
+        assert!(!body.contains(host_name), "{host} in the body: {body}");
+        for rel in ["self", "next"] {
+            assert!(
+                body.contains(&format!(
+                    "rel=\"{rel}\" href=\"{public}/api/endpoint/{SLUG}/feeds/kultura.atom"
+                )),
+                "{rel} on {public}: {body}"
+            );
+        }
+        ids.push(
+            body.split("<entry><id>")
+                .skip(1)
+                .map(|e| e.split('<').next().unwrap_or_default().to_owned())
+                .collect::<Vec<_>>(),
+        );
+    }
+    assert_eq!(ids[0], ["urn:ngsi-ld:Event:1"]);
+    assert_eq!(ids[0], ids[1]);
 }
 
 /// The owner's test link (T-6755): `feeds/{filter}/events.ics` is `ical/v1/events.ics?{filter}`

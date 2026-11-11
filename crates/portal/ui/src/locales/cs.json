@@ -190,6 +190,7 @@
     "dependency": "Toto pole potřebuje pole, na kterém závisí",
     "check": "Zkontrolovat",
     "restartsStream": "Použití této změny restartuje stream na runneru. Periodický pipeline začne svůj rozvrh znovu, takže další běh je o celou periodu dál.",
+    "bindsEndpoints": "Tato politika po schválení rozhoduje o voláních těchto endpointů:",
     "dns1123": "Jen malá písmena, číslice a spojovníky, začíná písmenem nebo číslicí, nejvýše 63 znaků.",
     "entityType": "Typ NGSI-LD: velké písmeno, pak písmena a číslice, nejvýše 64 znaků.",
     "requiredCount": "{filled} z {total} povinných polí vyplněno",
@@ -1567,7 +1568,8 @@
         "datasetQuery": "Zužující dotaz",
         "datasetKeywords": "Klíčová slova",
         "datasetLicense": "Licence"
-      }
+      },
+      "policyRefs": "Politiky, které obsluhuje"
     },
     "rateClass": {
       "none": "Bez limitu",
@@ -2321,7 +2323,13 @@
         "anonymous": "Nepřihlášení",
         "unknown": "Zatím nerozlišeno"
       }
-    }
+    },
+    "help": {
+      "policyRefs": "Zaškrtněte politiky, jejichž oprávnění rozhodují o voláních tohoto endpointu, například {example}. Zobrazují se jen politiky jeho prostoru, které smíte číst; později přidaná politika jej zasáhne až po zaškrtnutí zde.",
+      "policyRefsDrafted": "Politiky pro čtení a zápis navržené s tímto endpointem jsou už uvedeny; zaškrtněte i další politiky jeho prostoru, které má obsluhovat."
+    },
+    "policyRefsNone": "Prostor {space} nemá žádnou politiku, kterou smíte číst, takže tento endpoint by neobsluhoval nikoho. Nejprve přidejte politiku pro prostor, pak ji vyberte zde.",
+    "policyRefsAdd": "Otevřít politiky"
   },
   "datasources": {
     "title": "Zdroje dat",

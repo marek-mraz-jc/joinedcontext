@@ -1473,7 +1473,10 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
         report["shako"] = []
         return
     rows, login = [], None
-    for r, owner, name, branch, files in prepared:
+    # The organization's repository last: the Portal protects a project repository's main as soon
+    # as the organization names the project, and an empty protected main takes no file (T-6764).
+    for r, owner, name, branch, files in sorted(
+            prepared, key=lambda p: p[1] != APPS_OWNER and p[2] == ORG_REPOSITORY):
         row = {"repo": f"{owner}/{name}", "files": len(files)}
         st, _ = h.json("GET", f"/git/api/v1/projects/{owner}/repositories/{name}", headers=auth)
         if st == 404:

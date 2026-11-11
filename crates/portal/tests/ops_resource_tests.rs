@@ -306,7 +306,8 @@ fn endpoint() -> Value {
             "contextSpaceRef": { "kind": "ContextSpace", "name": "ovzdusie" },
             "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y",
             "audience": "public",
-            "enabledRepresentations": ["ngsi-ld", "ogc-features"]
+            "enabledRepresentations": ["ngsi-ld", "ogc-features"],
+            "policyRefs": ["urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:public-read"]
         }
     })
 }
@@ -371,6 +372,13 @@ async fn an_endpoint_a_pipeline_a_policy_and_a_role_binding_are_proposed_at_thei
     state
         .mirror
         .upsert(envelope("ContextSpace", "ovzdusie", "ovzdusie", json!({})));
+    // The Policy the Endpoint names (P-18, T-6740).
+    state.mirror.upsert(envelope(
+        "Policy",
+        "public-read",
+        "ovzdusie",
+        json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "ovzdusie" } }),
+    ));
     // A binding names a role and a group the organization has (PF-52, PF-62).
     state.mirror.upsert(envelope(
         "Role",

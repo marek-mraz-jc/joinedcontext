@@ -44,9 +44,10 @@ client. Entries are sorted newest first by `updated`, then by id, and paged by
 `lang` and `attrs`, and `type` to keep some of the output's types. Any other
 parameter, or one given twice, is `400`.
 
-- An entry's id is `tag:{host},2026:{view}/{entity id}` (RFC 4151), the same in
-  the three formats; `{host}` is the host of `ANTARES_PUBLIC_URL` (else of the
-  request).
+- An entry's id is its Entity's id (the URN), the same in the three formats and
+  under every host the feed is read on, so moving a feed to another host, an
+  `/{org}/` prefix or an own domain shows no reader its entries again; RSS marks
+  the `guid` `isPermaLink="false"`.
 - Text is never markup: Atom and JSON Feed carry text alone, the RSS `title` and
   `description` are HTML-escaped once more, control characters are dropped, and
   a `link` or `image` that is not http(s) is left out.

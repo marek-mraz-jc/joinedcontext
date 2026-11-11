@@ -625,6 +625,23 @@ def test_the_organizations_and_an_apps_source_repository_keep_main_open(tmp_path
         assert not [c for c in forge.calls if "branch_protections" in c[1]]
 
 
+def test_the_organizations_repository_is_written_after_every_project_repository(tmp_path):
+    """T-6764: the Portal protects a project's main once the organization names it, and an empty
+    protected main refused helsinki-mobility's files on jc-dev (403 'direct pushes are disabled')."""
+    listing = [("joinedcontext", "configuration"), ("joinedcontext", "helsinki-mobility"),
+               (rh.APPS_OWNER, "configuration")]
+    for owner, name in listing:
+        path = tmp_path / "gitea" / "files" / owner / name / "spaces" / "a" / "space.yaml"
+        path.parent.mkdir(parents=True)
+        path.write_text(SPACE_FILE)
+    (tmp_path / "gitea" / "repos.json").write_text(json.dumps([{"owner": o, "name": n} for o, n in listing]))
+    forge, report = Forge(), {}
+    rh.import_shako(forge, "token", tmp_path, report, validate=lambda _: [])
+    written = [u.split("/")[5] + "/" + u.split("/")[7] for v, u, _ in forge.writes() if u.endswith("/contents")]
+    assert written == ["joinedcontext/helsinki-mobility", f"{rh.APPS_OWNER}/configuration",
+                       "joinedcontext/configuration"], written
+
+
 def test_jcctl_judges_the_organization_and_each_project_never_an_apps_source(tmp_path):
     seen = tmp_path / "seen"
     jcctl = tmp_path / "jcctl"
