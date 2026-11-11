@@ -364,9 +364,13 @@ async fn as_role_without_bypass(pool: &PgPool, sql: &str, tenant: &str) -> Strin
         ),
         format!("SET LOCAL ROLE {role}"),
     ] {
-        sqlx::query(&stmt).execute(&mut *tx).await.expect(&stmt);
+        // the role name is a uuid this test minted
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(&mut *tx)
+            .await
+            .expect(&stmt);
     }
-    let err = sqlx::query(sql)
+    let err = sqlx::query(sqlx::AssertSqlSafe(sql.to_owned()))
         .bind(tenant)
         .execute(&mut *tx)
         .await
