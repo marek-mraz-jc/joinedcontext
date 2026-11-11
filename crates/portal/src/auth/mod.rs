@@ -11,9 +11,11 @@
 pub mod bearer;
 pub mod client_auth;
 pub mod csrf;
+pub mod endpoint_token;
 pub mod internal;
 pub mod oidc;
 pub mod refresh;
 pub mod session;
 
+pub use endpoint_token::endpoint_token;
 pub use session::{CurrentUser, Front, Identity, Session};
