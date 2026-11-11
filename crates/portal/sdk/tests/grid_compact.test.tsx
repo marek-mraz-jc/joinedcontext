@@ -56,8 +56,11 @@ describe("EntityGrid compact (T-6748)", () => {
     const real = fixtureSource(entities);
     let reads = 0;
     const counted = { ...real, query: (q: Parameters<typeof real.query>[0], page: Parameters<typeof real.query>[1]) => (page.limit > 0 && reads++, real.query(q, page)) };
-    render(<EntityGrid config={config} source={counted} labels={{ next: "Ďalej" }} compact filterRow={false} />);
+    const grid = () => <EntityGrid config={config} source={counted} labels={{ next: "Ďalej" }} compact filterRow={false} />;
+    const { rerender } = render(grid());
     await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
+    // A host that renders again hands the grid a new labels object each time.
+    for (let i = 0; i < 3; i++) rerender(grid());
     await new Promise((settle) => setTimeout(settle, 100));
     expect(reads).toBe(1);
   });
