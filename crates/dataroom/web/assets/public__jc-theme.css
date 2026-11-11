@@ -747,7 +747,7 @@ body.jc-corner-compact .jc-assistant:not([open]) > summary > .jc-assistant-icon 
 .jc-subscribe > summary { display: inline-flex; align-items: center; gap: .375rem; cursor: pointer; list-style: none; min-height: 2.75rem; }
 .jc-subscribe > summary::-webkit-details-marker { display: none; }
 .jc-subscribe > summary::after { content: ""; width: .45em; height: .45em; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-.15em) rotate(45deg); }
-.jc-subscribe[open] > summary { background: var(--jc-n100); border-color: var(--jc-primary); }
+.jc-subscribe[open] > summary { background: rgba(var(--jc-primary-rgb), .08); border-color: var(--jc-primary); }
 .jc-subscribe[open] > summary::after { transform: translateY(.1em) rotate(-135deg); }
 .jc-subscribe-menu { position: absolute; right: 0; top: calc(100% + .375rem); z-index: 20; width: min(42rem, calc(100vw - 2rem)); padding: 1rem 1.25rem; border: 1px solid var(--jc-n300); border-radius: var(--jc-radius-lg); background: var(--jc-surface); box-shadow: 0 .75rem 2rem rgba(15, 23, 42, .18); }
 .jc-subscribe-menu ul { list-style: none; margin: 0 0 .75rem; padding: 0; }
