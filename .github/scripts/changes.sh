@@ -11,7 +11,10 @@
 # anyone's. Each key turned off prints `reused <job> from run <id>` per job. Reuse is per job,
 # never per run: a run's own diff base decides which jobs it ran, so a green run can have tested
 # fewer jobs than this one needs. supply-chain, gitleaks, the image, its scan and its signature
-# always run.
+# always run. On the refs that write the caches (trunk) a key is not reused while one of its
+# jobs' target caches (.github/actions/rust `key:`, the job name without its part) has no entry
+# this ref restores: a fast-forward skipped every job and an evicted cache was never saved again
+# (portal-test cold for 8 h, 14 min per part, run 42969260266); that run re-seeds it.
 #   EVENT=push BEFORE=<sha> sh changes.sh      # in ci.yml (reads GITHUB_REF)
 #   sh changes.sh --selftest
 set -eu
@@ -54,11 +57,12 @@ trunk() { case "$1" in refs/heads/main | refs/heads/jc-portal-1 | refs/heads/shi
 # ship: the image holds the Rust build (root reaches every crate) and the embedded UI
 ship() { awk -F= '($1 == "root" || $1 == "ui" || $1 == "image") && $2 == "true" { s = 1 } END { print "ship=" (s ? "true" : "false") }'; }
 
-# covered <"job run-id" lines that succeeded>: turns off each key all of whose jobs are in it and
-# prints, to stderr, the run each of its jobs is reused from
+# covered <"job run-id" lines that succeeded> [<target caches with no entry>]: turns off each key
+# all of whose jobs are in it and none of whose caches is missing, and prints, to stderr, the run
+# each of its jobs is reused from (or the cache it runs again to save)
 covered() {
   printf '%b\n' "$1" > "${TMPDIR:-/tmp}/ci-done.$$"
-  awk -v done="${TMPDIR:-/tmp}/ci-done.$$" '
+  awk -v done="${TMPDIR:-/tmp}/ci-done.$$" -v missing=" ${2:-} " '
     BEGIN {
       while ((getline l < done) > 0) { split(l, d, " "); if (d[1] != "") ok[d[1]] = d[2] }
       # every job of a key, each test partition of ci.yml (matrix part) by its name
@@ -73,6 +77,10 @@ covered() {
       if (kv[2] == "true" && (kv[1] in jobs)) {
         n = split(jobs[kv[1]], need, " "); all = 1
         for (i = 1; i <= n; i++) if (!(need[i] in ok)) all = 0
+        for (i = 1; all && i <= n; i++) {
+          c = need[i]; sub(/-[0-9]+$/, "", c)
+          if (index(missing, " " c " ")) { print "no cache " c ": " kv[1] " runs again to save it" > "/dev/stderr"; all = 0 }
+        }
         if (all) {
           for (i = 1; i <= n; i++) print "reused " need[i] " from run " ok[need[i]] > "/dev/stderr"
           print kv[1] "=false"; next
@@ -98,6 +106,18 @@ done_jobs() {
       gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" |
         jq -r --arg id "$id" '.jobs[] | select(.status == "completed" and .conclusion == "success") | "\(.name) \($id)"'
     done | sort -s -k1,1 -u
+}
+
+# missing_caches: the target caches ci.yml's jobs save (`key:` of .github/actions/rust) with no
+# rust-cache entry on this ref or on jc-portal-1, the default branch every ref restores from.
+# ponytail: an entry under a superseded toolchain (env hash) still counts as present until
+# cache-prune.sh drops it; compare the hash once the changes job knows the toolchain's.
+missing_caches() {
+  have=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/caches?per_page=100&key=v0-rust-" |
+    jq -r --arg ref "$GITHUB_REF" '.actions_caches[] | select(.ref == $ref or .ref == "refs/heads/jc-portal-1") | .key' |
+    sed -n 's/^v0-rust-\(.*\)-[^-]*-[^-]*-[^-]*-[^-]*$/\1/p' | sort -u)
+  grep -o '[{ ]key: [a-z0-9-]*' "${CI_YML:-.github/workflows/ci.yml}" | sed 's/.*key: //' | sort -u |
+    while read -r c; do echo "$have" | grep -qx "$c" || printf '%s ' "$c"; done
 }
 
 # reuse_selftest: done_jobs against stubbed API answers (one run per case, each with one job)
@@ -132,6 +152,23 @@ reuse_selftest() {
   unset -f gh
 }
 
+# missing_selftest: missing_caches against a stubbed cache list and a two-job ci.yml
+missing_selftest() {
+  GITHUB_REPOSITORY=o/r GITHUB_REF=refs/heads/main CI_YML=${TMPDIR:-/tmp}/ci-yml.$$
+  printf '%s\n' '      - uses: ./.github/actions/rust' '        with: { key: root-test }' \
+    '        with: { workspace: crates/portal, key: portal-test }' '        with: { workspace: crates/ekiben, key: ekiben, components: "clippy" }' \
+    '        with: { workspace: crates/antares, key: antares-test }' > "$CI_YML"
+  gh() {
+    e() { printf '{"key":"%s","ref":"%s"}' "$1" "$2"; }
+    printf '{"actions_caches":[%s,%s,%s,%s]}' "$(e v0-rust-root-test-Linux-x64-43996dc4-7649df7e refs/heads/main)" \
+      "$(e v0-rust-portal-test-Linux-x64-01bad09c-ac79bf3c refs/heads/jc-portal-1)" \
+      "$(e v0-rust-antares-test-Linux-x64-01bad09c-ac79bf3c refs/heads/agent/x)" "$(e sccache/0/0/0/00 refs/heads/main)"
+  }
+  got=$(missing_caches)
+  rm -f "$CI_YML"; unset -f gh; unset CI_YML
+  [ "$got" = "antares-test ekiben " ] || { echo "FAIL: missing_caches -> [$got], want [antares-test ekiben ]"; exit 1; }
+}
+
 if [ "${1:-}" = --selftest ]; then
   check() { # paths expected
     got=$(printf '%b' "$1" | map | grep '=true' | cut -d= -f1 | tr '\n' ' ' | sed 's/ $//')
@@ -164,7 +201,10 @@ if [ "${1:-}" = --selftest ]; then
     || { echo "FAIL: covered portal parts"; exit 1; }
   [ "$(printf 'image=true\nsupply=true\n' | covered 'dockerfile 7' 2>&1 >/dev/null)" = "reused dockerfile from run 7" ] \
     || { echo "FAIL: covered names its source run"; exit 1; }
+  [ "$(printf 'root=true\nportal=true\n' | covered 'root-clippy 1\nroot-test-1 1\nroot-test-2 1\nroot-test-3 1\nroot-test-4 1\nportal-clippy 1\nportal-test-1 1\nportal-test-2 1\nportal-test-3 1\nportal-test-4 1' 'antares-test portal-test' 2>/dev/null)" = "$(printf 'root=false\nportal=true')" ] \
+    || { echo "FAIL: covered re-seeds a missing cache"; exit 1; }
   reuse_selftest
+  missing_selftest
   echo "changes.sh selftest ok"
   exit 0
 fi
@@ -193,7 +233,9 @@ if [ "${REUSE:-0}" = 1 ]; then
   ok=$(done_jobs)
   if [ -n "$ok" ]; then
     echo "jobs already green on $GITHUB_SHA in another push run of ci.yml here:"; echo "$ok" | sed 's/^/  /'
-    lines=$(echo "$lines" | covered "$ok" 2>"${TMPDIR:-/tmp}/ci-reused.$$")
+    missing=
+    if trunk "${GITHUB_REF:-}"; then missing=$(missing_caches); fi
+    lines=$(echo "$lines" | covered "$ok" "$missing" 2>"${TMPDIR:-/tmp}/ci-reused.$$")
     cat "${TMPDIR:-/tmp}/ci-reused.$$"; rm -f "${TMPDIR:-/tmp}/ci-reused.$$"
   fi
 fi
