@@ -40,7 +40,11 @@ async function stub(page: Page): Promise<void> {
   await page.route("**/api/v1/**", (route) => {
     const path = new URL(route.request().url()).pathname;
     const json = (body: unknown) => route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
-    if (path.includes("/drafts/")) return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+    if (path.includes("/drafts/")) {
+      // No draft yet; an autosave is kept.
+      if (route.request().method() === "PUT") return json({ version: 1 });
+      return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+    }
     if (path.endsWith("/auth/me")) return json({ subject: "s1", username: "steward", name: "Steward", email: "s@hel.fi", roles: ["portal-editor"] });
     if (path.endsWith("/permissions/me")) {
       return json({ project: "helsinki", grants: [{ role: "steward", rule: { verbs: ["read", "propose", "approve"], kinds: ["Endpoint", "Policy", "ContextSpace"] }, binding: "stewards", scope: "project:helsinki" }] });

@@ -22,7 +22,7 @@ export function RepresentationCheckboxes(props: WidgetProps): JSX.Element {
     <>
       <CheckboxesWidget {...props} options={{ ...props.options, enumDisabled }} />
       {isPublic ? (
-        <p id={`${props.id}__mcp`} data-testid="public-mcp-hint" className={`mt-2 text-caption text-fg${on ? " font-medium" : ""}`}>
+        <p id={`${props.id}__mcp`} data-testid="public-mcp-hint" className={`mt-2 max-w-prose text-body text-fg${on ? " font-medium" : ""}`}>
           {t(on ? "endpoints.publicMcpOn" : "endpoints.publicMcpHint")}
         </p>
       ) : null}
