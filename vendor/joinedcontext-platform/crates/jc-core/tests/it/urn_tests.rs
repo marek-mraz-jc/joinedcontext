@@ -335,17 +335,3 @@ fn type_of_id_needs_a_type_and_the_rest() {
         assert_eq!(jc_core::type_of_id(id), None, "{id}");
     }
 }
-
-/// T-6769 (ADR-N-068): the owner segment is the text before the first `:` of the id part, and a
-/// URN with nothing after it, or without a `:`, names no owner.
-#[test]
-fn the_owner_segment_is_the_first_of_the_id() {
-    for (urn, owner) in [
-        ("urn:ngsi-ld:KeyPerformanceIndicator:sk_bbsk:bbsk-otvorene-data:k1", Some("sk_bbsk")),
-        ("urn:ngsi-ld:X:sk_bratislava:1", Some("sk_bratislava")),
-        ("urn:ngsi-ld:X:bbsk.sk:space:1", Some("bbsk.sk")),
-        ("urn:ngsi-ld:WeatherObserved:Helsinki-001", None),
-    ] {
-        assert_eq!(parse(urn).owner(), owner, "{urn}");
-    }
-}

@@ -250,6 +250,24 @@ pub(crate) fn validate_relative_path(field: &'static str, path: &str) -> Result<
 mod tests {
     use super::*;
 
+    /// T-6769 (ADR-N-068): the owner segment is the text before the first `:` of the id part,
+    /// and a URN with nothing after it, or without a `:`, names no owner.
+    #[test]
+    fn the_owner_segment_is_the_first_of_the_id() {
+        for (urn, owner) in [
+            (
+                "urn:ngsi-ld:KeyPerformanceIndicator:sk_bbsk:bbsk-otvorene-data:k1",
+                Some("sk_bbsk"),
+            ),
+            ("urn:ngsi-ld:Device:sk_bratislava:1", Some("sk_bratislava")),
+            ("urn:ngsi-ld:Device:bbsk.sk:space:1", Some("bbsk.sk")),
+            ("urn:ngsi-ld:WeatherObserved:Helsinki-001", None),
+        ] {
+            let parsed: crate::Urn = urn.parse().expect("a URN");
+            assert_eq!(parsed.owner(), owner, "{urn}");
+        }
+    }
+
     /// T-6769: the four Organizations of the owner's order, and a domain of three labels.
     #[test]
     fn an_org_id_is_the_domain_reversed() {

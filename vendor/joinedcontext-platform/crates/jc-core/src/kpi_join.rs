@@ -1662,7 +1662,10 @@ mod tests {
         let mapping = bloblang(&s, &expr, &inputs(), &target);
         assert!(mapping.contains("env(\"JC_ORG_DOMAIN\")"));
         // T-6769: the indicator's id names its owner by the Organization's id (ADR-N-068).
-        assert!(mapping.contains("KeyPerformanceIndicator:\" + $owner + \":\""), "{mapping}");
+        assert!(
+            mapping.contains("KeyPerformanceIndicator:\" + $owner + \":\""),
+            "{mapping}"
+        );
         let reads: BTreeSet<&str> = mapping
             .match_indices("env(\"")
             .map(|(at, _)| mapping[at + 5..].split('"').next().unwrap_or(""))

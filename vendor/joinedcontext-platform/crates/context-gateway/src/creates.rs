@@ -164,13 +164,17 @@ mod tests {
     fn minted_replaces_the_callers_id() {
         let body =
             br#"{"id":"urn:ngsi-ld:Report:mine","type":"https://uri.fiware.org/ns/Report","x":1}"#;
-        let out: Value = serde_json::from_slice(&minted(body, None).expect("minted")).expect("json");
+        let out: Value =
+            serde_json::from_slice(&minted(body, None).expect("minted")).expect("json");
         let id = out["id"].as_str().expect("id");
         assert!(id.starts_with("urn:ngsi-ld:Report:"), "{id}");
         assert_ne!(id, "urn:ngsi-ld:Report:mine");
         assert_eq!(id.len(), "urn:ngsi-ld:Report:".len() + 36);
         assert_eq!(out["x"], 1);
-        assert_ne!(minted(body, None).expect("again"), minted(body, None).expect("again"));
+        assert_ne!(
+            minted(body, None).expect("again"),
+            minted(body, None).expect("again")
+        );
     }
 
     /// T-6769: a form's id carries the space's Organization id when the owner check runs.

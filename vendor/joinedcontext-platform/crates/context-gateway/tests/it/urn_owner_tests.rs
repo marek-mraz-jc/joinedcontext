@@ -31,11 +31,16 @@ async fn broker() -> (String, Hops) {
     let app = Router::new().fallback(any(move |request: Request| {
         let recorder = Arc::clone(&recorder);
         async move {
-            recorder
-                .lock()
-                .expect("the hop log")
-                .push(format!("{} {}", request.method(), request.uri().path()));
-            (StatusCode::CREATED, [("content-type", "application/json")], String::new())
+            recorder.lock().expect("the hop log").push(format!(
+                "{} {}",
+                request.method(),
+                request.uri().path()
+            ));
+            (
+                StatusCode::CREATED,
+                [("content-type", "application/json")],
+                String::new(),
+            )
         }
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -166,12 +171,19 @@ fn device(id: &str) -> Value {
 }
 
 fn assert_refused_on_id(status: StatusCode, problem: &Value, asked: &[String], what: &str) {
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{what}: {problem}");
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{what}: {problem}"
+    );
     // The NGSI-LD surface answers in CIM 009's types and keeps the platform's slug in `code`.
     assert_eq!(problem["code"], "urn-owner", "{what}: {problem}");
     assert_eq!(problem["field"], "id", "{what}: {problem}");
     assert!(
-        problem["detail"].as_str().unwrap_or_default().contains("sk_bbsk"),
+        problem["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("sk_bbsk"),
         "{what}: the refusal says which owner to write: {problem}"
     );
     assert!(asked.is_empty(), "{what}: the broker was asked: {asked:?}");
@@ -182,12 +194,23 @@ fn assert_refused_on_id(status: StatusCode, problem: &Value, asked: &[String], w
 #[tokio::test]
 async fn a_foreign_or_missing_owner_is_refused_on_the_id() {
     for (uri, body, what) in [
-        ("/entities", device("urn:ngsi-ld:Device:sk_bratislava:1"), "foreign owner"),
+        (
+            "/entities",
+            device("urn:ngsi-ld:Device:sk_bratislava:1"),
+            "foreign owner",
+        ),
         ("/entities", device("urn:ngsi-ld:Device:lamp-1"), "no owner"),
-        ("/entities", device("urn:ngsi-ld:Device:bratislava.sk:x:1"), "foreign domain"),
+        (
+            "/entities",
+            device("urn:ngsi-ld:Device:bratislava.sk:x:1"),
+            "foreign domain",
+        ),
         (
             "/entityOperations/upsert",
-            json!([device("urn:ngsi-ld:Device:sk_bbsk:1"), device("urn:ngsi-ld:Device:sk_bratislava:2")]),
+            json!([
+                device("urn:ngsi-ld:Device:sk_bbsk:1"),
+                device("urn:ngsi-ld:Device:sk_bratislava:2")
+            ]),
             "a batch with one foreign member",
         ),
     ] {
@@ -220,8 +243,13 @@ async fn a_urn_never_authorizes_a_write_into_another_organizations_space() {
         "urn:ngsi-ld:Device:sk_bratislava:1",
         "urn:ngsi-ld:Device:1",
     ] {
-        let (status, problem, asked) =
-            send(&FOUR, endpoint("ba-data", "editor"), "/entities", device(id)).await;
+        let (status, problem, asked) = send(
+            &FOUR,
+            endpoint("ba-data", "editor"),
+            "/entities",
+            device(id),
+        )
+        .await;
         assert!(
             matches!(
                 status,
@@ -243,9 +271,17 @@ async fn a_single_deployment_may_switch_the_check_off_and_several_may_not() {
         projects: &[(PROJECT, "bbsk")],
         check: false,
     };
-    for id in ["urn:ngsi-ld:Device:sk_bratislava:1", "urn:ngsi-ld:Device:lamp-1"] {
-        let (status, problem, asked) =
-            send(&single_off, endpoint(PROJECT, "public"), "/entities", device(id)).await;
+    for id in [
+        "urn:ngsi-ld:Device:sk_bratislava:1",
+        "urn:ngsi-ld:Device:lamp-1",
+    ] {
+        let (status, problem, asked) = send(
+            &single_off,
+            endpoint(PROJECT, "public"),
+            "/entities",
+            device(id),
+        )
+        .await;
         assert_eq!(status, StatusCode::CREATED, "{id}: {problem}");
         assert_eq!(asked.len(), 1);
     }
