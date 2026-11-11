@@ -2111,6 +2111,9 @@ a.jc-cell--link:focus-visible {
   align-items: center;
   gap: var(--jc-space-2, 8px);
 }
+.jc-grid-toolbar .jc-grid-hidden {
+  padding: 0;
+}
 .jc-grid-toolbar-host {
   flex: 1 1 auto;
   min-width: 0;
@@ -2286,6 +2289,8 @@ a.jc-cell--link:focus-visible {
     padding-bottom: calc(var(--jc-space-3, 12px) + env(safe-area-inset-bottom, 0px));
     border-radius: 12px 12px 0 0;
     border-bottom: 0;
+    /* A scrim over the page behind the sheet; a tap on it closes the sheet (ArrangeColumns). */
+    box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.35);
   }
   .jc-grid-arrange-show { width: 2.75rem; height: 2.75rem; }
   .jc-grid-arrange-input,
