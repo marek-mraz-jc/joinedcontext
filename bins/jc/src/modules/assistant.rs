@@ -69,9 +69,10 @@ pub fn vars(
     // The chat links into these as origins (`/api/endpoint/{slug}`, the guide's pages): a module
     // under a path prefix leaves its key unset.
     let origin = |m: Module| public(m).filter(|url| crate::siblings::origin(url) == *url);
-    // A host-mounted gateway keeps its public base for the connectors' MCP calls; the Endpoint
-    // counts go to its host at jc's own listener (as the Portal's `JC_PORTAL_REACH`), so the
-    // minute round never leaves the pod through the edge (brief 119: ~1,100 a minute on jc-prod).
+    // A host-mounted gateway keeps its public base here; the assistant dials that host at jc's own
+    // listener (`JC_ASSISTANT_REACH`, as the Portal's `JC_PORTAL_REACH`) for the Endpoint counts
+    // and the connectors' MCP calls, so neither leaves the pod through the edge (brief 119: ~1,100
+    // counts a minute on jc-prod; T-6788: every visitor's MCP call on the pod's one address).
     let internal = |m: Module| siblings.get(m).map(|s| s.callable().to_owned());
     put("JC_ASSISTANT_GATEWAY_URL", internal(Module::Gateway));
     put(
@@ -614,7 +615,7 @@ mod tests {
         assert_eq!(filled["JC_ASSISTANT_REACH"], siblings.listener.to_string());
         assert!(
             filled["JC_ASSISTANT_GATEWAY_URL"].starts_with("https://api.smartcity.test"),
-            "the connectors keep the public base: {}",
+            "the gateway keeps its public base, dialed at the reach: {}",
             filled["JC_ASSISTANT_GATEWAY_URL"]
         );
         let none = |_: &str| None;

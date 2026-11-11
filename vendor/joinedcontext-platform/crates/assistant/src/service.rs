@@ -219,6 +219,7 @@ pub fn chat_state(
         .timeout(Duration::from_secs(120))
         .build()?;
     let (count_http, count_base) = counter(&config, &http)?;
+    let (connector_http, gateway) = connectors(&config, &http)?;
     let reader = Reader {
         http: count_http,
         gateway: count_base,
@@ -229,9 +230,9 @@ pub fn chat_state(
     let chat_state = Arc::new(ChatState {
         pool: pool.clone(),
         embedder: embedder.clone(),
-        model: Model::new(config.model, http.clone()),
-        http,
-        gateway: config.gateway,
+        model: Model::new(config.model, http),
+        http: connector_http,
+        gateway,
         functions: config.functions,
         portal_client: config.portal_client,
         public_origin: config.public_origin,
@@ -251,8 +252,8 @@ pub fn chat_state(
 /// The client and base the Endpoint counts go out on (the minute round and the catalogue sync):
 /// with a reach, the gateway's host over plain http dialed at `jc`'s own listener, which routes
 /// it by that name through the same router, layers and Policy check as a read through the edge,
-/// anonymous as there; else `http` at the gateway's base. Only the counts: the connectors' MCP
-/// calls keep the gateway's base.
+/// anonymous as there; else `http` at the gateway's base. The connectors' MCP calls take the
+/// same way ([`connectors`]).
 pub fn counter(
     config: &ChatConfig,
     http: &reqwest::Client,
@@ -269,6 +270,22 @@ pub fn counter(
         .resolve(host, addr)
         .build()?;
     Ok((client, url::Url::parse(&format!("http://{host}/")).ok()))
+}
+
+/// The client and gateway base the connectors' MCP calls go out on: with a reach, jc's own
+/// listener under the gateway's host, as [`counter`]. Through the edge every visitor's call
+/// would arrive from the pod's address and spend one shared anonymous MCP bucket (T-6788); on
+/// the listener it carries no forwarded address and the assistant limits its own visitors.
+pub fn connectors(
+    config: &ChatConfig,
+    http: &reqwest::Client,
+) -> Result<(reqwest::Client, String), reqwest::Error> {
+    let (client, base) = counter(config, http)?;
+    let gateway = match (config.reach, base) {
+        (Some(_), Some(base)) => base.as_str().trim_end_matches('/').to_owned(),
+        _ => config.gateway.clone(),
+    };
+    Ok((client, gateway))
 }
 
 #[cfg(test)]
@@ -455,5 +472,46 @@ mod tests {
             "{head}"
         );
         assert!(head.contains("\r\nhost: api.reach.invalid\r\n"), "{head}");
+    }
+
+    /// T-6788: with a reach a connector's MCP call names the gateway's host over plain http and
+    /// dials `jc`'s listener, never the edge; without one it keeps the gateway's base.
+    #[tokio::test]
+    async fn the_connectors_mcp_calls_go_to_the_gateways_host_at_the_reach() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let served = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut head = vec![0; 4096];
+            let n = socket.read(&mut head).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&head[..n]).to_ascii_lowercase()
+        });
+        let http = reqwest::Client::new();
+        let mut config = chat_config(ChatSettings {
+            gateway_url: "https://api.reach.invalid".into(),
+            ..settings()
+        })
+        .unwrap();
+        let (_, gateway) = connectors(&config, &http).unwrap();
+        assert_eq!(gateway, "https://api.reach.invalid");
+        config.reach = Some(addr);
+        let (client, gateway) = connectors(&config, &http).unwrap();
+        assert_eq!(gateway, "http://api.reach.invalid");
+        let surface = crate::chat::mcp::Surface {
+            gateway,
+            slug: "x".into(),
+            timeout: Duration::from_secs(5),
+            token: None,
+        };
+        let _ = surface.listing(&client).await;
+        let head = served.await.unwrap();
+        assert!(head.starts_with("post /api/endpoint/x/mcp http/1.1"), "{head}");
+        assert!(head.contains("\r\nhost: api.reach.invalid\r\n"), "{head}");
+        assert!(!head.contains("x-forwarded-for"), "{head}");
     }
 }
