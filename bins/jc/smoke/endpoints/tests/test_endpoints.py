@@ -162,6 +162,10 @@ class Fake:
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w") as z:
                 z.writestr("AirQualityObserved.csv", "id\n")
+            if self.broken == "cut-zip":
+                # The broker's file time ran out mid-body: the connection closes before its length.
+                raw = buf.getvalue()
+                return 200, {"Content-Type": "application/zip", "X-Fake-Length": str(len(raw) * 2)}, raw
             return 200, {"Content-Type": "application/zip"}, buf.getvalue()
         if rest == "ogc/features/collections":
             return 200, {}, {"collections": [{"id": "AirQualityObserved"}]}
@@ -209,10 +213,12 @@ def serve():
                 self.rfile.read(n)
                 st, hdrs, body = fake.answer(self.command, self.path, self.headers)
                 raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+                hdrs = dict(hdrs)
+                length = hdrs.pop("X-Fake-Length", str(len(raw)))
                 self.send_response(st)
                 for k, v in {"Content-Type": "application/json", **hdrs}.items():
                     self.send_header(k, v)
-                self.send_header("Content-Length", str(len(raw)))
+                self.send_header("Content-Length", length)
                 self.end_headers()
                 self.wfile.write(raw)
 
@@ -259,6 +265,17 @@ def test_each_broken_rule_turns_its_check_red(tmp_path, serve, broken, check):
     code, res = run(tmp_path, serve(Fake(broken)), now_iso())
     red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
     assert code == 1 and check in red, red
+
+
+def test_a_zip_cut_mid_body_fails_its_row_and_the_endpoint_goes_on(tmp_path, serve):
+    """The prod Garden ZIP ended in IncompleteRead (jc-garden-zip): that is the ZIP row's fail, not a
+    crash that drops the Endpoint's OData, write and dataset checks."""
+    code, res = run(tmp_path, serve(Fake("cut-zip")), now_iso())
+    rows = {r["id"]: r for r in res["checks"]}
+    assert code == 1 and "crash" not in rows, rows.get("crash")
+    assert rows["anon.ogc.zip"]["result"] == "fail" and "IncompleteRead" in rows["anon.ogc.zip"]["actual"]
+    for later in ("anon.odata.metadata", "anon.odata.query", "anon.write-outside", "dataset"):
+        assert rows.get(later, {}).get("result") == "pass", (later, rows.get(later))
 
 
 def test_a_csv_cell_past_the_default_field_limit_is_read(tmp_path, serve):

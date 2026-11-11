@@ -90,9 +90,11 @@ pub(crate) fn files_of(raw: Option<&str>) -> usize {
 pub(crate) const FILE_BYTES: usize = 512 << 20;
 
 /// The seconds one file may take to write unless `ANTARES_EXPORT_FILE_SECONDS` names another:
-/// that ZIP reads Garden twice at about 88 ms per 1,000 rows (jc-ogc-keyset), about 45 s, times
-/// 1.5 with room for a loaded host.
-pub(crate) const FILE_SECONDS: u64 = 120;
+/// that ZIP reads Garden's 256 pages twice (CSV, Parquet) at the 0.31 s a page a loaded restore
+/// copy measured (jc-garden-zip; jc-ogc-keyset had assumed 88 ms), 159 s, times 1.5. At 120 s it
+/// was cut at 119.9 s in its Parquet member. A slow reader holds its place as long, so six places
+/// can refuse other files for this long.
+pub(crate) const FILE_SECONDS: u64 = 240;
 
 /// The bytes a file may hold: `raw` when it is 1 MiB to 4 GiB less one byte (a ZIP member
 /// past 4 GiB needs ZIP64), else [`FILE_BYTES`].
@@ -137,6 +139,7 @@ mod file {
     use std::sync::{Arc, OnceLock};
     use std::time::Duration;
     use tokio::sync::mpsc;
+    use tracing::Instrument as _;
 
     /// Features an export reads per `items` page: the broker's default `max_limit`, so an
     /// export holds one store page at a time.
@@ -374,12 +377,31 @@ mod file {
     /// The body of a file went away: the client left, or the body was dropped.
     const GONE: Problem = Problem(StatusCode::INTERNAL_SERVER_ERROR, CUT);
 
+    /// What a file's task wrote so far, for the line a cut file logs.
+    #[derive(Default)]
+    pub(crate) struct Tally {
+        rows: AtomicUsize,
+        bytes: AtomicUsize,
+    }
+
+    tokio::task_local! {
+        static TALLY: Arc<Tally>;
+    }
+
+    /// `n` more rows written into the file of the task this runs on.
+    pub(crate) fn tally_rows(n: usize) {
+        let _ = TALLY.try_with(|t| t.rows.fetch_add(n, Ordering::Relaxed));
+    }
+
     /// Sends `bytes` on, unless there are none.
     pub(crate) async fn send(tx: &mpsc::Sender<Chunk>, bytes: Vec<u8>) -> Result<(), Problem> {
         if bytes.is_empty() {
             return Ok(());
         }
-        tx.send(bytes).await.map_err(|_| GONE)
+        let n = bytes.len();
+        tx.send(bytes).await.map_err(|_| GONE)?;
+        let _ = TALLY.try_with(|t| t.bytes.fetch_add(n, Ordering::Relaxed));
+        Ok(())
     }
 
     /// A file's place and the task writing it, held by its body: dropping the body (its end, or
@@ -413,8 +435,8 @@ mod file {
     /// task within `time`, and the body holds `slot`: the first chunk (or the refusal before it) sets the
     /// status, so a file refused before its first byte keeps its status. After it, a refusal,
     /// the time running out or a task that ends without finishing the file ends the body with
-    /// an error (and the CSV trailer), never as a whole file. Dropping the body stops the task
-    /// and frees `slot`.
+    /// an error (and the CSV trailer), never as a whole file, and the task logs it once at `WARN`
+    /// under the request's span. Dropping the body stops the task and frees `slot`.
     pub(crate) async fn streamed<W, F>(
         sent: &Sent<'_>,
         slot: Slot,
@@ -432,13 +454,31 @@ mod file {
         let open = tx.clone();
         let written = work(tx);
         let ended = Arc::clone(&outcome);
-        let task = tokio::spawn(async move {
-            let result = tokio::time::timeout(time, written)
-                .await
-                .unwrap_or(Err(TOO_SLOW));
-            let _ = ended.set(result);
-            drop(open);
-        });
+        let file = sent.name.to_owned();
+        let task = tokio::spawn(
+            async move {
+                let started = tokio::time::Instant::now();
+                let tally = Arc::new(Tally::default());
+                let result = TALLY
+                    .scope(Arc::clone(&tally), tokio::time::timeout(time, written))
+                    .await
+                    .unwrap_or(Err(TOO_SLOW));
+                if let Err(Problem(status, reason)) = &result {
+                    tracing::warn!(
+                        file,
+                        reason,
+                        status = status.as_u16(),
+                        rows = tally.rows.load(Ordering::Relaxed),
+                        bytes = tally.bytes.load(Ordering::Relaxed),
+                        seconds = started.elapsed().as_secs_f64(),
+                        "an OGC file stopped before its end"
+                    );
+                }
+                let _ = ended.set(result);
+                drop(open);
+            }
+            .instrument(tracing::Span::current()),
+        );
         let guard = Writing {
             task: task.abort_handle(),
             _slot: slot,
@@ -499,6 +539,7 @@ mod file {
         while let Some(page) = pages.next().await? {
             sink.page(&page)?;
             rows = rows.saturating_add(page.len());
+            tally_rows(page.len());
             send(tx, sink.drain()?).await?;
         }
         Ok(rows)
@@ -621,7 +662,9 @@ mod file {
 
 #[cfg(feature = "tabular")]
 mod bundle {
-    use super::file::{columns, refusal, send, streamed, with_rows, Chunk, Pages, Sent};
+    use super::file::{
+        columns, refusal, send, streamed, tally_rows, with_rows, Chunk, Pages, Sent,
+    };
     use crate::model::Collection;
     use crate::{items, Here, Problem, Reply};
     use antares_export::bundle::Bundle;
@@ -661,6 +704,7 @@ mod bundle {
             while let Some(page) = m.pages.next().await? {
                 m.sink.page(&page)?;
                 read = read.saturating_add(page.len());
+                tally_rows(page.len());
                 bundle.write(&m.sink.drain()?)?;
                 send(&tx, bundle.drain()).await?;
             }
@@ -1246,6 +1290,214 @@ mod tests {
         let (pages, _never, _) = held(0);
         let reply = csv_file(&gate, pages, short).await?;
         assert_eq!(reply.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        Ok(())
+    }
+
+    /// Pages of `rows` Features each, each read after `wait` of (paused) time: a store page
+    /// read at the speed a loaded host measured.
+    #[cfg(all(feature = "tabular", feature = "parquet"))]
+    struct Slow {
+        left: usize,
+        rows: usize,
+        wait: std::time::Duration,
+    }
+
+    #[cfg(all(feature = "tabular", feature = "parquet"))]
+    impl file::Pages for Slow {
+        fn next(
+            &mut self,
+        ) -> futures_util::future::BoxFuture<
+            '_,
+            Result<Option<Vec<serde_json::Value>>, crate::Problem>,
+        > {
+            Box::pin(async move {
+                if self.left == 0 {
+                    return Ok(None);
+                }
+                self.left = self.left.saturating_sub(1);
+                tokio::time::sleep(self.wait).await;
+                Ok(Some(
+                    (0..self.rows)
+                        .map(|n| serde_json::json!({"id": format!("urn:{n}"), "properties": {}}))
+                        .collect(),
+                ))
+            })
+        }
+    }
+
+    /// The prod Garden ZIP (jc-garden-zip): 256 pages read for its CSV and again for its
+    /// Parquet at the 0.31 s a page the loaded restore copy took, 159 s, comes out whole within
+    /// the default file time; the old 120 s cut it in its Parquet.
+    #[cfg(all(feature = "tabular", feature = "parquet"))]
+    #[tokio::test(start_paused = true)]
+    async fn the_prod_garden_zip_on_a_loaded_host_is_whole() -> Result<(), String> {
+        use parquet::file::reader::FileReader as _;
+        use std::io::Read as _;
+        const PAGES: usize = 256;
+        const ROWS: usize = 10;
+        let gate = file::Gate::new(1);
+        let slot = gate.take().map_err(|p| p.1.to_owned())?;
+        let garden = || -> Box<dyn file::Pages> {
+            Box::new(Slow {
+                left: PAGES,
+                rows: ROWS,
+                wait: std::time::Duration::from_millis(310),
+            })
+        };
+        let members = vec![
+            bundle::Member {
+                path: "Garden.csv".into(),
+                extension: "csv",
+                sink: csv_sink(gate.bytes).map_err(|e| e.to_string())?,
+                pages: garden(),
+                provenance: Vec::new(),
+                counted: true,
+            },
+            bundle::Member {
+                path: "Garden.parquet".into(),
+                extension: "parquet",
+                sink: file::parquet("Garden", Vec::new(), false, gate.bytes)
+                    .map_err(|e| e.to_string())?,
+                pages: garden(),
+                provenance: Vec::new(),
+                counted: false,
+            },
+        ];
+        let sent = file::Sent {
+            media: "application/zip",
+            name: "praha-zelen.zip",
+            trailer: None,
+        };
+        let close = |_: usize, _: &[(String, &str)]| Vec::new();
+        let archive = antares_export::bundle::Bundle::new(gate.bytes);
+        let time = gate.time;
+        let reply = file::streamed(&sent, slot, time, move |tx| {
+            bundle::members_into(tx, archive, members, close)
+        })
+        .await;
+        // A deflated member sends nothing for many pages: read the body whole, not frame by frame.
+        let bytes = http_body_util::BodyExt::collect(reply.into_body())
+            .await
+            .map_err(|e| format!("the ZIP was cut: {e}"))?
+            .to_bytes();
+        let mut zip =
+            zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+        let mut csv = String::new();
+        zip.by_name("Garden.csv")
+            .map_err(|e| e.to_string())?
+            .read_to_string(&mut csv)
+            .map_err(|e| e.to_string())?;
+        assert_eq!(
+            csv.lines().count(),
+            PAGES * ROWS + 1,
+            "every row and the header"
+        );
+        let mut parquet = Vec::new();
+        zip.by_name("Garden.parquet")
+            .map_err(|e| e.to_string())?
+            .read_to_end(&mut parquet)
+            .map_err(|e| e.to_string())?;
+        let parquet = parquet::file::reader::SerializedFileReader::new(bytes::Bytes::from(parquet))
+            .map_err(|e| e.to_string())?;
+        let rows = usize::try_from(parquet.metadata().file_metadata().num_rows())
+            .map_err(|e| e.to_string())?;
+        assert_eq!(rows, PAGES * ROWS);
+        Ok(())
+    }
+
+    /// Where a test's log lines go.
+    #[cfg(feature = "tabular")]
+    #[derive(Clone, Default)]
+    struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    #[cfg(feature = "tabular")]
+    impl std::io::Write for Log {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if let Ok(mut held) = self.0.lock() {
+                held.extend_from_slice(buf);
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[cfg(feature = "tabular")]
+    impl Log {
+        fn text(&self) -> String {
+            self.0
+                .lock()
+                .map(|held| String::from_utf8_lossy(&held).into_owned())
+                .unwrap_or_default()
+        }
+    }
+
+    /// A file cut by its time, and one cut by its bytes, each log one WARN under the request's
+    /// span naming why, the rows and bytes written and the seconds; a whole file logs none.
+    #[cfg(feature = "tabular")]
+    #[tokio::test]
+    async fn a_cut_file_logs_one_warn_with_its_request() -> Result<(), String> {
+        // The process's subscriber, not a scoped one: a callsite a parallel test hits first
+        // under no subscriber stays off for a scoped one. Lines are told apart by request id.
+        static LOG: std::sync::OnceLock<Log> = std::sync::OnceLock::new();
+        let log = LOG.get_or_init(|| {
+            let log = Log::default();
+            let writer = log.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(move || writer.clone())
+                .with_ansi(false)
+                .finish();
+            let _ = tracing::subscriber::set_global_default(subscriber);
+            log
+        });
+        let warns = |id: &str| -> Vec<String> {
+            log.text()
+                .lines()
+                .filter(|l| l.contains("WARN") && l.contains(id))
+                .map(str::to_owned)
+                .collect()
+        };
+        let short = std::time::Duration::from_millis(150);
+        let gate = file::Gate::with_limits(1, 1 << 20, short);
+        let (pages, _never, _) = held(1);
+        let span = tracing::info_span!("request", request_id = "garden-zip-time");
+        let reply = tracing::Instrument::instrument(csv_file(&gate, pages, short), span).await?;
+        let _ = rest(&mut reply.into_body()).await?;
+        let lines = warns("garden-zip-time");
+        assert_eq!(lines.len(), 1, "{}", log.text());
+        let line = lines.first().cloned().unwrap_or_default();
+        for part in [
+            "an OGC file stopped before its end",
+            "took longer than a file may take",
+            "file=\"Car.csv\"",
+            "rows=1",
+            "bytes=11",
+            "seconds=0.1",
+        ] {
+            assert!(line.contains(part), "{part}: {line}");
+        }
+        let under = file::Gate::with_limits(1, 24, SECOND);
+        let (pages, release, _) = held(3);
+        release.add_permits(1);
+        let span = tracing::info_span!("request", request_id = "garden-zip-bytes");
+        let reply = tracing::Instrument::instrument(csv_file(&under, pages, SECOND), span).await?;
+        let _ = rest(&mut reply.into_body()).await?;
+        let lines = warns("garden-zip-bytes");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines
+                .iter()
+                .all(|l| l.contains("larger than a file may be") && l.contains("rows=")),
+            "{lines:?}"
+        );
+        let whole = file::Gate::with_limits(1, 1 << 20, SECOND);
+        let (pages, release, _) = held(3);
+        release.add_permits(1);
+        let span = tracing::info_span!("request", request_id = "garden-zip-whole");
+        let reply = tracing::Instrument::instrument(csv_file(&whole, pages, SECOND), span).await?;
+        let _ = rest(&mut reply.into_body()).await?;
+        assert_eq!(warns("garden-zip-whole"), Vec::<String>::new());
         Ok(())
     }
 

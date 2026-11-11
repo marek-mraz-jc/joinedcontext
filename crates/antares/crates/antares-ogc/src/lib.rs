@@ -56,7 +56,8 @@ pub const EXPORT_FILES_ENV: &str = "ANTARES_EXPORT_FILES";
 
 /// The files the surface writes at once unless `ANTARES_EXPORT_FILES` names another
 /// (jc-ogc-stream): a file holds one page in memory and its place for its whole transfer, up to
-/// 58 s for the frozen prod export's Garden ZIP, so 2 places refused the endpoints suite's six
+/// the file time (240 s; the frozen prod export's Garden ZIP took past 120 s on a loaded restore
+/// copy, jc-garden-zip), so 2 places refused the endpoints suite's six
 /// workers past their retries. Six (one per worker) passed every OGC file row of the scoped
 /// rehearsal with jc's peak resident memory within 60 MiB of two places.
 pub const EXPORT_FILES: usize = 6;
