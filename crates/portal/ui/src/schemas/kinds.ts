@@ -3097,7 +3097,9 @@ export function organizationSchema(t: (key: string) => string, entries: readonly
                 type: "array",
                 title: t("organization.policy.models"),
                 description: t("organization.policy.modelsHint"),
-                minItems: 1,
+                // No `minItems`: RJSF fills a required first item into an Organization that names
+                // no models, and that empty item refused every edit of the form (T-6772). An
+                // empty list goes out as no list (`toOrganization`), which allows every model.
                 uniqueItems: true,
                 items: { type: "string", minLength: 1, maxLength: 200 },
               },

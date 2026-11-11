@@ -63,6 +63,15 @@ export function toOrganization(form: Record<string, unknown>, stored: unknown): 
     delete apps.services;
     next.policies = { ...next.policies, apps };
   }
+  // An empty list of models is "every model", which jc-core writes as no list at all.
+  const models = next.policies?.agents?.models?.filter((model) => typeof model === "string" && model.trim() !== "");
+  if (next.policies?.agents && (models === undefined || models.length === 0)) {
+    const agents = { ...next.policies.agents };
+    delete agents.models;
+    next.policies = { ...next.policies, agents };
+  } else if (next.policies?.agents && models) {
+    next.policies = { ...next.policies, agents: { ...next.policies.agents, models } };
+  }
   return { ...manifest, spec: next };
 }
 
