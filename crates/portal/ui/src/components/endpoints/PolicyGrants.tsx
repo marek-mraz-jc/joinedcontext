@@ -67,7 +67,7 @@ export function PolicyGrants({
 }): JSX.Element {
   const { t } = useTranslation();
   const [showAll, setShowAll] = useState(false);
-  const policies = binding.kind === "unbound" ? [] : binding.policies;
+  const policies = binding.kind === "unbound" || binding.kind === "none" ? [] : binding.policies;
   const kinds = new Set(policies.flatMap((policy) => rulesOf(policy).map((rule) => rule.assignee?.kind)));
   const titles = {
     group: useTitles(ORG_NAMESPACE, "groups", "Group", kinds.has("group")),
@@ -88,6 +88,25 @@ export function PolicyGrants({
   }
   if (binding.kind === "unbound") {
     return <Alert tone="warning">{t("endpoints.page.policyUnbound", { urn: binding.urn })}</Alert>;
+  }
+  if (binding.kind === "none") {
+    return (
+      <Alert
+        tone="warning"
+        title={t("endpoints.page.policyNoneTitle")}
+        actions={
+          <Link
+            to="/projects/$project/$plural/$name/edit"
+            params={{ project, plural: "endpoints", name: binding.endpoint }}
+            className="focus-ring rounded-sm font-medium text-fg underline underline-offset-2"
+          >
+            {t("endpoints.page.policyNoneAction")}
+          </Link>
+        }
+      >
+        {t("endpoints.page.policyNone")}
+      </Alert>
+    );
   }
   if (policies.length === 0) {
     return <p className="text-body text-fg-muted">{t("endpoints.page.noPolicy")}</p>;

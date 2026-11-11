@@ -45,6 +45,7 @@ spec:
   contextSpaceRef: kiosks
   slug: bbbbbbbbbbbbbbbbbbbbbbbbbb
   audience: public
+  policyRefs: [urn:ngsi-ld:Policy:bbsk.sk:kiosks:kiosks, urn:ngsi-ld:Policy:bbsk.sk:kiosks:closed]
   enabledRepresentations: ["ngsi-ld"]
 "#;
 

@@ -50,7 +50,7 @@ type Check = fn(&Ground<'_>, &str, &ResourceEnvelope) -> Result<(), ApiError>;
 
 /// Every check, by name, in the order a proposal meets them. A deletion is never judged here:
 /// the propose door checks what a deletion leaves behind itself.
-pub const CHECKS: [(&str, Check); 17] = [
+pub const CHECKS: [(&str, Check); 18] = [
     ("literal-secret", literal_secret),
     ("kind", kind),
     ("endpoint-representations", endpoint_representations),
@@ -61,6 +61,7 @@ pub const CHECKS: [(&str, Check); 17] = [
     ("service-account-client-id", service_account_client_id),
     ("agent-operations", agent_operations),
     ("endpoint-policy-refs", endpoint_policy_refs),
+    ("endpoint-names-policy", endpoint_names_policy),
     ("pipeline-replace", pipeline_replace),
     ("one-data-model", one_data_model),
     ("unmade-writes", unmade_writes),
@@ -70,8 +71,26 @@ pub const CHECKS: [(&str, Check); 17] = [
     ("catalogue-publication", catalogue_publication),
 ];
 
-/// The first refusal `envelope`, written into `project`, meets.
+/// What the propose door judges in its own place, after the proposer's rights are heard:
+/// `endpoint-names-policy` runs in `mutate::check_names_policies`, so a person refused the kind
+/// or the space hears that first (T-6740, T-6742).
+pub const NOT_AT_PROPOSE: [&str; 1] = ["endpoint-names-policy"];
+
+/// The first refusal `envelope`, written into `project`, meets at the propose door: every check
+/// but [`NOT_AT_PROPOSE`].
 pub fn manifest(
+    ground: &Ground<'_>,
+    project: &str,
+    envelope: &ResourceEnvelope,
+) -> Result<(), ApiError> {
+    CHECKS
+        .iter()
+        .filter(|(name, _)| !NOT_AT_PROPOSE.contains(name))
+        .try_for_each(|(_, check)| check(ground, project, envelope))
+}
+
+/// [`manifest`] at the reconciler's load and `validate --as-portal`: every check.
+pub fn manifest_at_load(
     ground: &Ground<'_>,
     project: &str,
     envelope: &ResourceEnvelope,
@@ -153,7 +172,7 @@ pub fn replay(
                     apex,
                     domain,
                 };
-                match manifest(&ground, &namespace, envelope) {
+                match manifest_at_load(&ground, &namespace, envelope) {
                     Ok(()) => {
                         let mut accepted = envelope.clone();
                         accepted.status = base
@@ -315,6 +334,15 @@ fn endpoint_policy_refs(
         "Endpoint" => mutate::check_policy_refs(ground, project, envelope),
         _ => Ok(()),
     }
+}
+
+/// A non-App Endpoint naming no Policy while its space holds one binds none (P-18, T-6742).
+fn endpoint_names_policy(
+    ground: &Ground<'_>,
+    project: &str,
+    envelope: &ResourceEnvelope,
+) -> Result<(), ApiError> {
+    mutate::check_endpoint_names_policy(ground, project, envelope)
 }
 
 /// A replace output meeting another Pipeline's writes of the same ids (PL-79, T-4409).
@@ -668,6 +696,18 @@ mod tests {
                     json!({ "policyRef": "urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:nobody" }),
                 )),
             ),
+            "endpoint-names-policy" => (
+                vec![
+                    org(json!({ "domain": "hel.fi", "installation": true })),
+                    envelope(
+                        "Policy",
+                        "public-read",
+                        "ovzdusie",
+                        space_policy(json!({ "kind": "role", "id": "public" }), &["retrieveOps"]),
+                    ),
+                ],
+                air(endpoint(json!({}))),
+            ),
             "pipeline-replace" => (
                 vec![
                     air(endpoint(json!({}))),
@@ -770,7 +810,7 @@ mod tests {
     }
 
     /// P-2: every check is registered in the one judge, and each refuses its fixture through
-    /// [`manifest`], the function propose, approve, load and `validate --as-portal` call.
+    /// [`manifest_at_load`], the function load and `validate --as-portal` call.
     #[test]
     fn every_check_is_in_the_judge_and_refuses_its_fixture() {
         let bounds: OrganizationBounds = serde_json::from_value(json!({
@@ -790,7 +830,7 @@ mod tests {
             let project = proposed.metadata.namespace.clone().unwrap_or_default();
             let alone = check(&ground, &project, &proposed)
                 .expect_err(&format!("{name} refuses its fixture"));
-            manifest(&ground, &project, &proposed)
+            manifest_at_load(&ground, &project, &proposed)
                 .expect_err(&format!("the judge refuses the {name} fixture"));
             assert!(!reason(&alone).is_empty(), "{name}");
         }

@@ -32,6 +32,7 @@ spec:
   slug: zt4qm7ge2xdv6ksb3ncf5arw2y
   audience: public
   enabledRepresentations: ["ngsi-ld"]
+  policyRefs: ["urn:ngsi-ld:Policy:banskabystrica.sk:ovzdusie-ovzdusie:public-read"]
 "#;
 
 const POLICY: &str = r#"apiVersion: joinedcontext.com/v1alpha1

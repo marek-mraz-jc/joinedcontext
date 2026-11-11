@@ -125,17 +125,26 @@ fn types_of(policies: &[jc_core::kinds::PolicySpec]) -> Vec<String> {
     types
 }
 
+/// P-18 (T-6742): an Endpoint naming no Policy binds none, so a Policy added for another
+/// Endpoint of its space never opens it; the space's canonical surface still evaluates every
+/// Policy of the space.
 #[test]
-fn an_endpoint_without_policy_ref_evaluates_every_policy_of_its_space() {
+fn an_endpoint_without_policy_ref_binds_none_and_the_space_surface_every_policy() {
     let dir = repo("all");
     let (endpoints, spaces, ..) = store::load(&dir).expect("the repository loads");
     let all = endpoints
         .iter()
         .find(|endpoint| endpoint.slug == "aaaaaaaaaaaaaaaaaaaaaaaaaa")
         .expect("the unbound endpoint");
-    assert_eq!(all.policies.len(), 3, "both public slices and the writer");
-    assert_eq!(types_of(&all.policies), ["BikeHireDockingStation", "Event"]);
-    assert!(all.policies.iter().any(|policy| {
+    assert!(all.policies.is_empty(), "{:?}", all.policy_names);
+    assert!(all.policy_names.is_empty());
+    let space = &spaces[0].endpoint;
+    assert_eq!(space.policies.len(), 3, "both public slices and the writer");
+    assert_eq!(
+        types_of(&space.policies),
+        ["BikeHireDockingStation", "Event"]
+    );
+    assert!(space.policies.iter().any(|policy| {
         policy.assignee
             == Principal {
                 kind: PrincipalKind::ServiceAccount,
@@ -148,21 +157,17 @@ fn an_endpoint_without_policy_ref_evaluates_every_policy_of_its_space() {
                 )
             })
     }));
-    // The canonical space surface is the whole space too.
-    assert_eq!(spaces[0].endpoint.policies.len(), 3);
     // Each Policy keeps its manifest name at its own index, so an answer can name it (EP-103).
-    for endpoint in [all, &spaces[0].endpoint] {
-        let mut names = endpoint.policy_names.clone();
-        names.sort();
-        assert_eq!(names, ["pipelines-write", "public-bikes", "public-events"]);
-        for (name, policy) in endpoint.policy_names.iter().zip(&endpoint.policies) {
-            let wanted = match name.as_str() {
-                "public-bikes" => vec!["BikeHireDockingStation".to_owned()],
-                "public-events" => vec!["Event".to_owned()],
-                _ => types_of(std::slice::from_ref(policy)),
-            };
-            assert_eq!(types_of(std::slice::from_ref(policy)), wanted, "{name}");
-        }
+    let mut names = space.policy_names.clone();
+    names.sort();
+    assert_eq!(names, ["pipelines-write", "public-bikes", "public-events"]);
+    for (name, policy) in space.policy_names.iter().zip(&space.policies) {
+        let wanted = match name.as_str() {
+            "public-bikes" => vec!["BikeHireDockingStation".to_owned()],
+            "public-events" => vec!["Event".to_owned()],
+            _ => types_of(std::slice::from_ref(policy)),
+        };
+        assert_eq!(types_of(std::slice::from_ref(policy)), wanted, "{name}");
     }
 }
 

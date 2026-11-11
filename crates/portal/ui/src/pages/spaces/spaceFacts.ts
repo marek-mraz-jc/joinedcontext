@@ -36,8 +36,9 @@ export function isAppEndpoint(endpoint: Manifest): boolean {
 }
 
 /**
- * The endpoint the portal reads a space through: one without a policy narrows nothing, so it
- * shows everything the space holds; failing that the first public one is at least readable.
+ * The endpoint the portal reads a space through: of the space's own, the one naming the most
+ * policies shows the most, a public one first among equals; one naming no policy grants nothing
+ * and is never picked (P-18, T-6742).
  * Given the person's `groups`, only an endpoint whose audience admits them is picked, and `null`
  * (the identity not known yet) picks none: a page does not fetch what the gateway will refuse
  * (T-2631). The space's own endpoints come before an App's: an App's Endpoint serves its App's
@@ -52,10 +53,16 @@ export function pickReadEndpoint(
     return undefined;
   }
   const readable = groups === undefined ? endpoints : endpoints.filter((endpoint) => admitsPerson(endpoint, groups, project));
-  const pick = (among: Manifest[]) =>
+  const width = (endpoint: Manifest) => policyRefsOf(endpoint)?.length ?? -1;
+  const widest = (among: Manifest[]) =>
+    among
+      .filter((endpoint) => policyRefsOf(endpoint) !== undefined)
+      .sort((a, b) => width(b) - width(a) || Number(b.spec.audience === "public") - Number(a.spec.audience === "public"))[0];
+  // An App's endpoint keeps the App rule: without a policy it serves its App's grants.
+  const appPick = (among: Manifest[]) =>
     among.find((endpoint) => policyRefsOf(endpoint) === undefined) ??
     among.find((endpoint) => endpoint.spec.audience === "public");
-  return pick(readable.filter((endpoint) => !isAppEndpoint(endpoint))) ?? pick(readable.filter(isAppEndpoint));
+  return widest(readable.filter((endpoint) => !isAppEndpoint(endpoint))) ?? appPick(readable.filter(isAppEndpoint));
 }
 
 /**

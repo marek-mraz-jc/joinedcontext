@@ -280,13 +280,19 @@ describe("count header parsing", () => {
 });
 
 describe("space helpers", () => {
-  it("prefers the endpoint without a policy, then the first public one", () => {
+  it("prefers the endpoint naming the most policies, a public one among equals, never one naming none", () => {
     const narrowed = manifest("Endpoint", "a", { audience: "public", policyRef: "urn:x" });
-    const open = manifest("Endpoint", "b", { audience: "organization" });
+    const bare = manifest("Endpoint", "b", { audience: "organization" });
     const secondPublic = manifest("Endpoint", "c", { audience: "public", policyRef: "urn:y" });
-    expect(pickReadEndpoint([narrowed, open])?.metadata.name).toBe("b");
+    const internal = manifest("Endpoint", "d", { audience: "organization", policyRef: "urn:z" });
+    const wide = manifest("Endpoint", "e", { audience: "organization", policyRefs: ["urn:x", "urn:z"] });
+    // T-6742: an endpoint naming no policy binds none, so reading through it would be refused.
+    expect(pickReadEndpoint([bare, narrowed])?.metadata.name).toBe("a");
+    expect(pickReadEndpoint([bare])).toBeUndefined();
     expect(pickReadEndpoint([narrowed, secondPublic])?.metadata.name).toBe("a");
-    expect(pickReadEndpoint([manifest("Endpoint", "d", { audience: "organization", policyRef: "urn:z" })])).toBeUndefined();
+    expect(pickReadEndpoint([internal, narrowed])?.metadata.name).toBe("a");
+    expect(pickReadEndpoint([internal])?.metadata.name).toBe("d");
+    expect(pickReadEndpoint([narrowed, wide])?.metadata.name).toBe("e");
     expect(pickReadEndpoint([])).toBeUndefined();
   });
 

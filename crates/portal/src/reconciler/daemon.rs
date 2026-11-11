@@ -4651,6 +4651,7 @@ output_error{stream="kpi"} 6
                 "projects/city/spaces/quiet/endpoints/quiet.yaml",
                 "quiet",
                 "cccccccccccccccccccccccccc",
+                Some("quiet"),
             ),
             grant(
                 "projects/city/spaces/quiet/policies/quiet.yaml",
@@ -4660,20 +4661,26 @@ output_error{stream="kpi"} 6
         ]
     }
 
-    fn space_endpoint(file: &'static str, space: &str, slug: &str) -> (&'static str, String) {
-        (
-            file,
-            manifest(
-                "Endpoint",
-                space,
-                json!({
-                    "contextSpaceRef": space,
-                    "slug": slug,
-                    "audience": "public",
-                    "enabledRepresentations": ["ngsi-ld"],
-                }),
-            ),
-        )
+    /// The Endpoint `space` of `space`, naming its Policy `policy` when the space holds one
+    /// (P-18, T-6742).
+    fn space_endpoint(
+        file: &'static str,
+        space: &str,
+        slug: &str,
+        policy: Option<&str>,
+    ) -> (&'static str, String) {
+        let mut spec = json!({
+            "contextSpaceRef": space,
+            "slug": slug,
+            "audience": "public",
+            "enabledRepresentations": ["ngsi-ld"],
+        });
+        if let Some(policy) = policy {
+            spec["policyRefs"] = json!([format!(
+                "urn:ngsi-ld:Policy:city.example:city-{space}:{policy}"
+            )]);
+        }
+        (file, manifest("Endpoint", space, spec))
     }
 
     fn grant(file: &'static str, name: &str, space: &str) -> (&'static str, String) {
@@ -4698,6 +4705,7 @@ output_error{stream="kpi"} 6
             "projects/city/spaces/air/endpoints/air.yaml",
             "air",
             "dddddddddddddddddddddddddd",
+            Some("vendor-write"),
         )
     }
 
@@ -6739,6 +6747,7 @@ output_error{stream="kpi"} 6
             "projects/city/spaces/air/endpoints/air.yaml",
             "air",
             "dddddddddddddddddddddddddd",
+            None,
         );
         assert!(run(&[(path, good)], "aaaa1111").is_empty());
 

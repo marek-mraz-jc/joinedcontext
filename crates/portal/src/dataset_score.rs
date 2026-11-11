@@ -449,8 +449,9 @@ pub fn required(
 }
 
 /// The entity types `spec` (an Endpoint's) serves: the `entityTypes` it lists, else the types its
-/// granting Policies name (`policyRef`/`policyRefs`, else every Policy of `space`); `None` when
-/// one of those Policies names no type, so the whole space is served.
+/// granting Policies name (`policyRef`/`policyRefs`; an Endpoint naming none binds none, P-18,
+/// T-6742); `None` when one of those Policies names no type, so the whole space is served, or
+/// when it binds no grant.
 fn served_types(
     policies: &[crate::resource::ResourceEnvelope],
     space: &str,
@@ -480,7 +481,7 @@ fn served_types(
         .filter(|policy| {
             crate::resource::reference_name(&policy.spec["contextSpaceRef"]) == Some(space)
         })
-        .filter(|policy| refs.is_empty() || refs.contains(&policy.metadata.name))
+        .filter(|policy| refs.contains(&policy.metadata.name))
         // a Policy is one rule or its `rules[]`, never both (PolicySpec::check_shape)
         .flat_map(|policy| match policy.spec["rules"].as_array() {
             Some(rules) => rules.iter().collect::<Vec<_>>(),
@@ -802,9 +803,14 @@ mod tests {
             set(&["EVChargingStation"])
         );
         assert_eq!(
-            served(serde_json::json!({})),
+            served(serde_json::json!({ "policyRefs": [
+                "urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-charging",
+                "urn:ngsi-ld:Policy:barcelona.cat:barcelona:steward",
+            ] })),
             set(&["EVChargingStation", "ParkingSpot"])
         );
+        // Naming no Policy binds none (T-6742): no type is known to be served.
+        assert_eq!(served(serde_json::json!({})), None);
         assert_eq!(
             served(
                 serde_json::json!({ "entityTypes": ["Bus"], "policyRef": "urn:ngsi-ld:Policy:public-charging" })
@@ -820,7 +826,11 @@ mod tests {
             serde_json::json!({ "contextSpaceRef": "barcelona" }),
         )];
         assert_eq!(
-            served_types(&open, "barcelona", &serde_json::json!({})),
+            served_types(
+                &open,
+                "barcelona",
+                &serde_json::json!({ "policyRef": "urn:ngsi-ld:Policy:barcelona.cat:barcelona:all" }),
+            ),
             None
         );
     }

@@ -1744,6 +1744,9 @@
       "noPolicy": "Bez vlastní politiky: kdo tu smí číst, rozhodují oprávnění prostoru.",
       "policyBound": "Vlastní politika: {name}",
       "policyUnbound": "Odkaz na politiku nepojmenovává žádnou politiku tohoto prostoru, takže tento endpoint neuděluje nic, dokud se odkaz neopraví: {urn}",
+      "policyNoneTitle": "Neuděluje nic",
+      "policyNone": "Tento endpoint nepojmenovává žádnou politiku, takže ho nikdo nemůže volat. V jeho nastavení zaškrtněte politiky, které obsluhuje, například veřejné čtení prostoru.",
+      "policyNoneAction": "Vybrat jeho politiky",
       "policyAssignee": "Uděleno komu",
       "policyGrants": "Může",
       "grantChanges": {

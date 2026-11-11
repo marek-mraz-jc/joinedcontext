@@ -495,8 +495,29 @@ impl Sources {
                 .unwrap_or_default()
         };
         let compiled = super::agreements::compile_all(&agreements, &offers, bound);
-        for (space, policies) in compiled {
-            sources.policies.entry(space).or_default().extend(policies);
+        // Each binds the Endpoints of its space its offer names, as a Pipeline's grant does
+        // (P-18, T-6742).
+        for ((project, space), endpoints, policies) in compiled {
+            let of_space = |endpoint: &String| {
+                sources.endpoints.iter().any(|e| {
+                    e.project == project
+                        && e.name == *endpoint
+                        && e.spec.context_space_ref.name() == space
+                })
+            };
+            let endpoints: Vec<String> = endpoints.into_iter().filter(of_space).collect();
+            for endpoint in endpoints {
+                sources
+                    .doors
+                    .entry((project.clone(), endpoint))
+                    .or_default()
+                    .extend(policies.iter().cloned());
+            }
+            sources
+                .policies
+                .entry((project, space))
+                .or_default()
+                .extend(policies);
         }
         sources
     }
@@ -535,14 +556,14 @@ impl Sources {
                     reference.space() == Some(e.tenant.as_str())
                         && PolicySpec::policy_of(name) == reference.local_id()
                 }),
-                None => true,
+                // An App's Endpoint starts from its space, narrowed below; any other naming no
+                // Policy binds none (P-18 deny by default, T-6742).
+                None => app,
             });
         let mut bound: Vec<&'s (String, PolicySpec)> = listed.collect();
-        if e.spec.policy_refs().is_some() {
-            for grant in door {
-                if !bound.iter().any(|(name, _)| *name == grant.0) {
-                    bound.push(grant);
-                }
+        for grant in door {
+            if !bound.iter().any(|(name, _)| *name == grant.0) {
+                bound.push(grant);
             }
         }
         bound
@@ -1314,8 +1335,8 @@ fn space_view(sources: &Sources, project: &str, name: &str, tenant: &str) -> Res
 }
 
 /// The rule document of one space's tenant (plan 3.3, the `joinedcontext` engine's README
-/// section 2): every Policy, each operation as its clause, and per Endpoint view that binds
-/// fewer than all of them (`policyRef`, an App's Endpoint) the ids it is decided by (T-3702).
+/// section 2): every Policy, each operation as its clause, and per Endpoint view the ids it is
+/// decided by (T-3702): an Endpoint naming no Policy lists none (P-18, T-6742).
 fn rule_document(sources: &Sources, project: &str, space: &str) -> Value {
     let mut policies: Vec<Value> = sources
         .policies_of(project, space)
@@ -1331,10 +1352,6 @@ fn rule_document(sources: &Sources, project: &str, space: &str) -> Value {
         let window = projection_of(sources, e)
             .and_then(|projection| projection.filter.as_ref())
             .and_then(|filter| filter.temporal_q.as_deref());
-        // a view not listed is decided by every Policy, as it was written
-        if e.spec.policy_refs().is_none() && !sources.is_app(e) && window.is_none() {
-            continue;
-        }
         let slug = e.spec.slug.to_string();
         let mut ids = Vec::new();
         for (name, policy) in sources.bound(e) {
@@ -1668,23 +1685,36 @@ impl ViewSync {
             e.project.clone(),
             e.spec.context_space_ref.name().to_owned(),
         );
+        let kept = |(_, p): &&(String, PolicySpec)| {
+            derived.is_none()
+                || !(p.assignee.kind == PrincipalKind::ServiceAccount && p.assignee.id == account)
+        };
+        let draft: Vec<(String, PolicySpec)> = derived
+            .unwrap_or_default()
+            .iter()
+            .filter(|(_, p)| p.context_space_ref.name() == key.1)
+            .cloned()
+            .collect();
         let mut policies: Vec<(String, PolicySpec)> = sources
             .policies_of(&key.0, &key.1)
             .iter()
-            .filter(|(_, p)| {
-                derived.is_none()
-                    || !(p.assignee.kind == PrincipalKind::ServiceAccount
-                        && p.assignee.id == account)
-            })
+            .filter(kept)
             .cloned()
             .collect();
-        policies.extend(
-            derived
-                .unwrap_or_default()
-                .iter()
-                .filter(|(_, p)| p.context_space_ref.name() == key.1)
-                .cloned(),
-        );
+        policies.extend(draft.iter().cloned());
+        // The pipeline writes through this Endpoint, so its draft's grants bind it as its last
+        // run's did, whatever policyRefs the Endpoint lists (P-18, T-6736, T-6742).
+        let door_key = (e.project.clone(), e.name.clone());
+        let mut door: Vec<(String, PolicySpec)> = sources
+            .doors
+            .get(&door_key)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .filter(kept)
+            .cloned()
+            .collect();
+        door.extend(draft);
         // Only what this Endpoint's view is made of, so a check copies no other space's model.
         let narrow = Sources {
             endpoints: vec![e.clone()],
@@ -1708,6 +1738,7 @@ impl ViewSync {
                 .map(|m| BTreeMap::from([(key.clone(), m.clone())]))
                 .unwrap_or_default(),
             quarantines: sources.quarantines.clone(),
+            doors: BTreeMap::from([(door_key, door)]),
             ..Sources::default()
         };
         let bound = narrow
@@ -2533,11 +2564,38 @@ mod tests {
         endpoint_named("air-public", spec)
     }
 
+    thread_local! {
+        /// The Policies the last [`sources`] of this test holds, which [`endpoint_named`] lists.
+        static SPACE_POLICIES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// An Endpoint of `city/air`. Unless `extra` names its own (`"policyRefs": null` naming none,
+    /// T-6742) or it is an App's, it lists every Policy the test's [`sources`] holds, so it binds
+    /// the space as a migrated Endpoint does (P-18).
     fn endpoint_named(name: &str, extra: Value) -> EndpointSource {
         let mut spec = json!({
             "contextSpaceRef": "air", "slug": SLUG, "audience": "public",
             "enabledRepresentations": ["ngsi-ld"]
         });
+        let own = extra.get("policyRef").is_some() || extra.get("policyRefs").is_some();
+        if !own && !name.starts_with("app-") {
+            let mut refs: Vec<String> = SPACE_POLICIES.with(|names| {
+                names
+                    .borrow()
+                    .iter()
+                    .map(|name| {
+                        format!(
+                            "urn:ngsi-ld:Policy:city.example:city-air:{}",
+                            PolicySpec::policy_of(name)
+                        )
+                    })
+                    .collect()
+            });
+            refs.dedup();
+            if !refs.is_empty() {
+                spec["policyRefs"] = json!(refs);
+            }
+        }
         if let (Some(spec), Some(extra)) = (spec.as_object_mut(), extra.as_object()) {
             spec.extend(extra.clone());
         }
@@ -2562,6 +2620,12 @@ mod tests {
     }
 
     fn sources(policies: Vec<(&str, PolicySpec)>) -> Sources {
+        SPACE_POLICIES.with(|names| {
+            *names.borrow_mut() = policies
+                .iter()
+                .map(|(name, _)| (*name).to_owned())
+                .collect();
+        });
         let mut sources = Sources::default();
         sources
             .spaces
@@ -2588,7 +2652,13 @@ mod tests {
             }))
         };
         let mut s = fleet(sources(vec![("pl-buses-w-1", writes("Car"))]));
-        s.endpoints.push(endpoint(json!({})));
+        // The Endpoint names no Policy: the pipeline's grants bind it as the Endpoint its
+        // manifest names (P-18, T-6742), its draft's in place of the last run's.
+        s.endpoints.push(endpoint(json!({"policyRefs": null})));
+        s.doors.insert(
+            ("city".into(), "air-public".into()),
+            vec![("pl-buses-w-1".into(), writes("Car"))],
+        );
         let sync = ViewSync::new("http://broker.invalid", "/nonexistent");
         assert!(sync
             .write_view("city", "air-public", "pl-buses", None)
@@ -2845,8 +2915,11 @@ mod tests {
         let copy = |name: &str| format!("city/{name}@{SLUG}");
         assert_eq!(
             document["views"],
-            json!({ SLUG: [copy("cars"), copy("month"), copy("day"), "city/no-trucks"] }),
-            "a view without a window and without a policyRef stays unlisted"
+            json!({
+                SLUG: [copy("cars"), copy("month"), copy("day"), "city/no-trucks"],
+                // the space's other Endpoint lists what it names, unwindowed (T-6742)
+                "b".repeat(26): ["city/cars", "city/month", "city/day", "city/no-trucks"],
+            }),
         );
         assert_eq!(
             temporal_q(document, &copy("cars")),
@@ -2886,7 +2959,7 @@ mod tests {
         assert!(why.contains("cannot be compared"), "{why}");
         assert_eq!(
             desired(&s).documents["city-air"].1["views"],
-            json!({ SLUG: [] })
+            json!({ SLUG: [], "b".repeat(26): ["city/fixed"] })
         );
 
         let (s, e) = windowed(vec![("cars", cars())], "timerel=after;timeAt=P-1M");
@@ -3698,6 +3771,10 @@ mod tests {
             ("city".into(), "air-a".into()),
             vec![("pl-load-w-1".into(), cars())],
         );
+        s.doors.insert(
+            ("city".into(), "air-d".into()),
+            vec![("pl-fill-w-1".into(), cars())],
+        );
         let listing = |name: &str, policy: &str| {
             endpoint_named(
                 name,
@@ -3715,12 +3792,15 @@ mod tests {
             ["a-read", "pl-load-w-1"]
         );
         assert_eq!(names(&listing("air-b", "b-read")), ["b-read"]);
+        // Naming no Policy: C binds none, D only the Pipeline aimed at it (T-6742).
+        let none = || json!({"policyRefs": null});
+        assert!(names(&endpoint_named("air-c", none())).is_empty());
+        assert_eq!(names(&endpoint_named("air-d", none())), ["pl-fill-w-1"]);
     }
 
-    /// T-3702: the rule document lists, per Endpoint view that binds fewer than all the
-    /// space's Policies, the ids it is decided by: `policyRef` its one Policy (another space's
-    /// binds none), an App's Endpoint its own grants and the prohibitions. An Endpoint binding
-    /// every Policy is not listed, so the engine decides it with all of them.
+    /// T-3702: the rule document lists, per Endpoint view, the ids it is decided by: `policyRef`
+    /// its one Policy (another space's binds none), an App's Endpoint its own grants and the
+    /// prohibitions, and one naming no Policy none (P-18, T-6742).
     #[test]
     fn the_rule_document_lists_the_policies_each_bound_view_is_decided_by() {
         let own = jc_core::kinds::endpoint_role("city", "app-map", None);
@@ -3750,7 +3830,7 @@ mod tests {
             endpoint_named(name, extra)
         };
         s.endpoints = vec![
-            with_slug("air-public", 'a', json!({})),
+            with_slug("air-public", 'a', json!({"policyRefs": null})),
             with_slug(
                 "buses-only",
                 'b',
@@ -3767,6 +3847,8 @@ mod tests {
         assert_eq!(
             document["views"],
             json!({
+                // naming no Policy, it binds none (T-6742)
+                slug('a'): [],
                 slug('b'): ["city/buses"],
                 slug('c'): [],
                 slug('d'): ["city/mine", "city/no-trucks"],
@@ -4001,7 +4083,7 @@ mod tests {
         );
         write(
             "projects/city/spaces/air/endpoints/air-public.yaml",
-            &format!("{}  contextSpaceRef: air\n  slug: {SLUG}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n", head("Endpoint", "air-public")),
+            &format!("{}  contextSpaceRef: air\n  slug: {SLUG}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n  policyRefs: [urn:ngsi-ld:Policy:city.example:city-air:cars]\n", head("Endpoint", "air-public")),
         );
         write(
             "projects/city/spaces/air/policies/cars.yaml",
@@ -4058,7 +4140,7 @@ mod tests {
         );
         write(
             "projects/city/spaces/air/endpoints/air-public.yaml",
-            &format!("{}  contextSpaceRef: air\n  slug: {SLUG}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n", head("Endpoint", "air-public")),
+            &format!("{}  contextSpaceRef: air\n  slug: {SLUG}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n  policyRefs: [urn:ngsi-ld:Policy:city.example:luft:cars]\n", head("Endpoint", "air-public")),
         );
         write(
             "projects/city/spaces/air/policies/cars.yaml",

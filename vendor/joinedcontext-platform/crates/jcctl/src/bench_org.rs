@@ -93,7 +93,8 @@ pub fn write(root: &Path, endpoints: usize) -> io::Result<Tree> {
                 &format!(
                     "{HEAD}kind: Endpoint\nmetadata:\n  name: e{i:05}\n  namespace: {project}\n\
                      spec:\n  contextSpaceRef: {space}\n  slug: {slug}\n  audience: public\n  \
-                     enabledRepresentations: [\"ngsi-ld\"]\n"
+                     enabledRepresentations: [\"ngsi-ld\"]\n  \
+                     policyRefs: [\"urn:ngsi-ld:Policy:bench.example:{project}-{space}:r{i:05}\"]\n"
                 ),
             )?;
             put(

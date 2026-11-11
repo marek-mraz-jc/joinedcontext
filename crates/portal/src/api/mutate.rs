@@ -2309,25 +2309,9 @@ pub(crate) fn bound_today(
         .collect()
 }
 
-/// Whether `endpoint` is an App's own (`app-{name}` beside App `{name}` in the mirror or the same
-/// Change), which keeps the App rule (AP-139).
-fn app_endpoint(
-    state: &AppState,
-    project: &str,
-    bundle: &[ResourceEnvelope],
-    endpoint: &str,
-) -> bool {
-    endpoint.strip_prefix("app-").is_some_and(|app| {
-        state.mirror.get(project, "App", app).is_some()
-            || bundle
-                .iter()
-                .any(|e| e.kind == "App" && e.metadata.name == app)
-    })
-}
-
 /// The Endpoints of `policy`'s space whose calls it decides once it lands (CHG-11 lite, P-18,
-/// T-6740): each naming no Policy, so binding every Policy of the space, and each listing this
-/// one; an App's own Endpoint keeps the App rule and is left out. The same Change's Endpoints
+/// T-6740): each listing this one; an Endpoint naming no Policy binds none (T-6742), and an App's
+/// own Endpoint keeps the App rule and is left out. The same Change's Endpoints
 /// stand in for the mirror's.
 pub(crate) fn endpoints_binding(
     state: &AppState,
@@ -2360,13 +2344,13 @@ pub(crate) fn endpoints_binding(
     );
     endpoints
         .into_iter()
-        .filter(|(endpoint, _)| !app_endpoint(state, project, &bundle, endpoint))
+        .filter(|(endpoint, _)| !held_app_endpoint(&state.mirror, project, endpoint))
         .filter_map(|(endpoint, e)| {
             let spec = serde_json::from_value::<EndpointSpec>(e.spec).ok()?;
             let binds = spec.context_space_ref.name() == space
                 && spec
                     .policy_refs()
-                    .is_none_or(|refs| refs.iter().any(|r| r.to_string().ends_with(&named)));
+                    .is_some_and(|refs| refs.iter().any(|r| r.to_string().ends_with(&named)));
             binds.then_some(endpoint)
         })
         .collect()
@@ -2462,13 +2446,56 @@ pub(crate) fn check_policy_refs(
     }
 }
 
-/// Refuses, at the propose door alone, a new or changed Endpoint that names no Policy (P-18,
-/// T-6740): without policyRefs every Policy of its space decides its calls, one added later for
-/// another Endpoint included. The 422 lists what it binds today as URNs to paste. An App's own
-/// Endpoint (`app-{name}` beside App `{name}`) keeps the App rule, and an unchanged file passes,
-/// so approval and the reconciler's load keep serving the Endpoints `main` holds until they are
-/// migrated (T-6741). A reference the Endpoint did not hold names a Policy the proposer reads,
-/// or the answer is a 403 naming the field.
+/// Refuses a non-App Endpoint that names no Policy while its space holds one (P-18, T-6742): such
+/// an Endpoint binds none of them, so it would answer every call 403 while the person who wrote
+/// it expects the space's grants. The 422 lists the URNs it bound before the flip, to paste. An
+/// App's own Endpoint (`app-{name}` beside App `{name}`, held or in the same Change) keeps the App
+/// rule, and an Endpoint of a space with no Policy binds only the Pipelines aimed at it either
+/// way. The judge runs it at approval and at the reconciler's load; the propose door runs it in
+/// [`check_names_policies`], after the proposer's rights are heard.
+pub(crate) fn check_endpoint_names_policy(
+    ground: &crate::judge::Ground<'_>,
+    project: &str,
+    envelope: &ResourceEnvelope,
+) -> Result<(), ApiError> {
+    use jc_core::kinds::EndpointSpec;
+    if envelope.kind != "Endpoint" {
+        return Ok(());
+    }
+    let Ok(spec) = serde_json::from_value::<EndpointSpec>(envelope.spec.clone()) else {
+        return Ok(());
+    };
+    let name = &envelope.metadata.name;
+    if spec.policy_refs().is_some() || held_app_endpoint(ground.mirror, project, name) {
+        return Ok(());
+    }
+    let space = spec.context_space_ref.name();
+    let today = bound_today(ground, project, space);
+    if today.is_empty() {
+        return Ok(());
+    }
+    Err(unprocessable(vec![format!(
+        "spec.policyRefs: Endpoint {name} names no Policy, so it binds none and answers every call 403: list the Policies of the space {space} it serves, from: {}",
+        today.join(", ")
+    )]))
+}
+
+/// Whether `endpoint` is an App's own: `app-{name}` beside App `{name}` in `mirror` or the same
+/// Change (AP-139).
+fn held_app_endpoint(mirror: &crate::store::Mirror, project: &str, endpoint: &str) -> bool {
+    endpoint.strip_prefix("app-").is_some_and(|app| {
+        mirror.get(project, "App", app).is_some()
+            || bundled_bindings(project)
+                .iter()
+                .any(|e| e.kind == "App" && e.metadata.name == app)
+    })
+}
+
+/// Refuses, at the propose door, a non-App Endpoint that names no Policy (P-18, T-6740, T-6742):
+/// [`check_endpoint_names_policy`] when its space holds one, and a new or changed one of a space
+/// that holds none yet, which is told to propose the Policy in the same plan. A reference the
+/// Endpoint did not hold names a Policy the proposer reads, or the answer is a 403 naming the
+/// field.
 pub(crate) fn check_names_policies(
     state: &AppState,
     identity: &crate::auth::session::Identity,
@@ -2483,34 +2510,19 @@ pub(crate) fn check_names_policies(
         return Ok(());
     };
     let name = &envelope.metadata.name;
-    let bundle = bundled_bindings(project);
-    let app_endpoint = name.strip_prefix("app-").is_some_and(|app| {
-        state.mirror.get(project, "App", app).is_some()
-            || bundle
-                .iter()
-                .any(|e| e.kind == "App" && e.metadata.name == app)
-    });
-    if app_endpoint {
+    if held_app_endpoint(&state.mirror, project, name) {
         return Ok(());
     }
     let held = state.mirror.get(project, "Endpoint", name);
     let space = spec.context_space_ref.name();
     let Some(references) = spec.policy_refs() else {
+        check_endpoint_names_policy(&crate::judge::Ground::of(state), project, envelope)?;
         if held.is_some_and(|held| held.spec == envelope.spec) {
             return Ok(());
         }
-        let ground = crate::judge::Ground::of(state);
-        let today = bound_today(&ground, project, space);
-        let line = match today.is_empty() {
-            true => format!(
-                "spec.policyRefs: Endpoint {name} names no Policy, and the space {space} holds none yet: propose the Policy it serves in the same plan and list its URN here"
-            ),
-            false => format!(
-                "spec.policyRefs: Endpoint {name} names no Policy, so every Policy of the space {space} decides its calls, one added later for another Endpoint too: list the ones it serves. It binds today: {}",
-                today.join(", ")
-            ),
-        };
-        return Err(unprocessable(vec![line]));
+        return Err(unprocessable(vec![format!(
+            "spec.policyRefs: Endpoint {name} names no Policy, and the space {space} holds none yet: propose the Policy it serves in the same plan and list its URN here"
+        )]));
     };
     let held = held
         .and_then(|held| serde_json::from_value::<EndpointSpec>(held.spec).ok())
@@ -4582,7 +4594,7 @@ mod tests {
     /// propose door with what it binds today as URNs; the same file held unchanged on `main`
     /// passes, as does an App's own Endpoint, and the judge `main` loads with never refuses it.
     #[test]
-    fn an_endpoint_naming_no_policy_is_refused_at_propose_and_loads_unchanged() {
+    fn an_endpoint_naming_no_policy_is_refused_at_propose_approval_and_load() {
         const READ: &str = "urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:public-read";
         let state = AppState::new(Config::for_tests(), None);
         state.mirror.upsert(organization(
@@ -4599,39 +4611,38 @@ mod tests {
         ));
         let identity = dummy_user().0.identity;
         let open = manifest("Endpoint", "public-air", public_air(None));
+        let ground = crate::judge::Ground::of(&state);
 
         let errors = refusal(check_names_policies(&state, &identity, "ovzdusie", &open));
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(errors[0].starts_with("spec.policyRefs: "), "{errors:?}");
-        assert!(
-            errors[0].ends_with(&format!("It binds today: {READ}")),
-            "{errors:?}"
-        );
-        // The judge approval and load run keeps serving it.
-        crate::judge::manifest(&crate::judge::Ground::of(&state), "ovzdusie", &open)
-            .expect("load judges no reference count");
+        assert!(errors[0].ends_with(&format!("from: {READ}")), "{errors:?}");
+        // Approval and the reconciler's load refuse it in the same words (T-6742).
+        let at_load = crate::judge::manifest_at_load(&ground, "ovzdusie", &open);
+        assert_eq!(refusal(at_load), errors);
+        let at_approval = crate::judge::manifest_at_approval(&ground, "ovzdusie", &open);
+        assert_eq!(refusal(at_approval), errors);
 
-        // Held unchanged on main it passes; changed it is refused again.
+        // Held unchanged on main it is refused too: it binds nothing any more.
         state.mirror.upsert(open.clone());
-        check_names_policies(&state, &identity, "ovzdusie", &open).expect("unchanged");
-        let mut changed = open.clone();
-        changed.spec["audience"] = json!("organization");
-        refusal(check_names_policies(
-            &state, &identity, "ovzdusie", &changed,
-        ));
+        refusal(check_names_policies(&state, &identity, "ovzdusie", &open));
 
         // Naming the Policy it serves passes; an App's own Endpoint keeps the App rule.
         let named = manifest("Endpoint", "public-air", public_air(Some(READ)));
         check_names_policies(&state, &identity, "ovzdusie", &named).expect("names one");
+        crate::judge::manifest_at_load(&ground, "ovzdusie", &named).expect("loads");
         state.mirror.upsert(manifest("App", "map", json!({})));
         let app = manifest("Endpoint", "app-map", public_air(None));
         check_names_policies(&state, &identity, "ovzdusie", &app).expect("an App's own");
+        crate::judge::manifest_at_load(&ground, "ovzdusie", &app).expect("an App's own loads");
 
-        // A space without a Policy says to propose one in the same plan.
+        // A space without a Policy: a new Endpoint is told to propose one in the same plan; one
+        // main holds loads, since it binds only the Pipelines aimed at it either way.
         let mut bare = manifest("Endpoint", "lonely", public_air(None));
         bare.spec["contextSpaceRef"] = json!("empty");
         let errors = refusal(check_names_policies(&state, &identity, "ovzdusie", &bare));
         assert!(errors[0].contains("holds none yet"), "{errors:?}");
+        check_endpoint_names_policy(&ground, "ovzdusie", &bare).expect("no Policy to name");
     }
 
     /// A reference to a Policy the proposer may not read is a 403 naming the field, never a bind
@@ -4669,8 +4680,9 @@ mod tests {
         }
     }
 
-    /// CHG-11 lite: a Policy's dry run names each Endpoint of its space it decides: B naming no
-    /// Policy, C listing it; not D listing another, not an App's own, not another space's.
+    /// CHG-11 lite: a Policy's dry run names each Endpoint of its space it decides: C listing it;
+    /// not B naming no Policy (it binds none, T-6742), not D listing another, not an App's own,
+    /// not another space's.
     #[test]
     fn a_policys_dry_run_names_the_endpoints_it_binds() {
         let state = AppState::new(Config::for_tests(), None);
@@ -4703,7 +4715,7 @@ mod tests {
                 &["retrieveOps"],
             ),
         );
-        assert_eq!(endpoints_binding(&state, "ovzdusie", &policy), ["b", "c"]);
+        assert_eq!(endpoints_binding(&state, "ovzdusie", &policy), ["c"]);
     }
 
     /// An `Organization` in the namespace that holds them.

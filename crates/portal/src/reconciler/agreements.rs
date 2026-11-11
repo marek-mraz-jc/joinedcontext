@@ -243,8 +243,8 @@ fn overlap(policy: Option<&Validity>, agreement: &Validity) -> Result<Validity, 
     }
 }
 
-/// Named Policies by (project, space).
-pub type Granted = Vec<((String, String), Vec<(String, PolicySpec)>)>;
+/// Named Policies by (project, space), with the offer's Endpoints they bind (P-18, T-6742).
+pub type Granted = Vec<((String, String), Vec<String>, Vec<(String, PolicySpec)>)>;
 
 /// Every provider agreement of `project` with the Policies its offer's Endpoints are bound to,
 /// by the offer's space; an agreement that does not compile is reported and grants nothing.
@@ -274,14 +274,19 @@ pub fn compile_all(
                         }
                     }
                 }
+                let endpoints = offer
+                    .endpoint_refs
+                    .iter()
+                    .map(|endpoint| endpoint.name().to_owned())
+                    .collect();
                 offer_actions(&offer.policy)
                     .and_then(|actions| compile(name, agreement, &actions, &offered))
-                    .map(|policies| (offer.context_space_ref.clone(), policies))
+                    .map(|policies| (offer.context_space_ref.clone(), endpoints, policies))
             }
         };
         match compiled {
-            Ok((space, policies)) if !policies.is_empty() => {
-                out.push(((project.clone(), space), policies));
+            Ok((space, endpoints, policies)) if !policies.is_empty() => {
+                out.push(((project.clone(), space), endpoints, policies));
             }
             Ok(_) => {}
             Err(why) => tracing::warn!(

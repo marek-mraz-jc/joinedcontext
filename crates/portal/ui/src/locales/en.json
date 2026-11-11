@@ -1744,6 +1744,9 @@
       "noPolicy": "No policy of its own: the grants of the space decide who may read here.",
       "policyBound": "Its own policy: {name}",
       "policyUnbound": "Its policy reference names no policy of this space, so this endpoint grants nothing until the reference is fixed: {urn}",
+      "policyNoneTitle": "It grants nothing",
+      "policyNone": "This endpoint names no policy, so nobody may call it. Tick the policies it serves in its settings, for example the space's public read.",
+      "policyNoneAction": "Choose its policies",
       "policyAssignee": "Granted to",
       "policyGrants": "May",
       "grantChanges": {

@@ -100,3 +100,21 @@ for (const width of [1440, 400]) {
     await page.screenshot({ path: join(dir, `policy-binds-endpoints-${width}.png`) });
   });
 }
+
+for (const width of [1440, 400]) {
+  test(`an Endpoint naming no Policy says it grants nothing and how to fix it at ${width} px (T-6742)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await stub(page);
+    const dir = join("test-results", "T-6742");
+    mkdirSync(dir, { recursive: true });
+
+    // P-18 deny by default: air-open names no Policy, so neither Policy of its space decides it.
+    await page.goto("/projects/helsinki/endpoints/air-open?lang=en");
+    const who = page.getByRole("region", { name: "Who may call it" }).or(page.locator("section", { hasText: "Who may call it" })).first();
+    await expect(who).toContainText("This endpoint names no policy, so nobody may call it.");
+    await expect(who.getByRole("link", { name: "Choose its policies" })).toBeVisible();
+    await expect(who.getByRole("link", { name: "air-read" })).toHaveCount(0);
+    await who.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(dir, `endpoint-names-no-policy-${width}.png`) });
+  });
+}

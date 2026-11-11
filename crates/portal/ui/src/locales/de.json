@@ -1744,6 +1744,9 @@
       "noPolicy": "Keine eigene Richtlinie: wer hier lesen darf, entscheiden die Berechtigungen des Raums.",
       "policyBound": "Eigene Richtlinie: {name}",
       "policyUnbound": "Der Richtlinienverweis benennt keine Richtlinie dieses Raums, deshalb gewährt dieser Endpunkt nichts, bis der Verweis berichtigt ist: {urn}",
+      "policyNoneTitle": "Gewährt nichts",
+      "policyNone": "Dieser Endpunkt benennt keine Richtlinie, deshalb darf ihn niemand aufrufen. Haken Sie in seinen Einstellungen die Richtlinien an, die er bedient, zum Beispiel das öffentliche Lesen des Raums.",
+      "policyNoneAction": "Richtlinien wählen",
       "policyAssignee": "Gewährt an",
       "policyGrants": "Darf",
       "grantChanges": {
