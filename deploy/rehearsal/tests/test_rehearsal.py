@@ -253,6 +253,7 @@ def test_the_import_never_sends_an_instance_older_than_the_window(tmp_path, monk
         {"tenant": "t", "entity": {"id": "urn:ngsi-ld:X:1", "type": "X"}}) + "\n")
     (export / "antares" / "temporal.jsonl").write_text("".join(json.dumps(instance(d)) + "\n" for d in (25, 23, 1)))
     (export / "manifest.json").write_text(json.dumps({"env": "unit", "exportedAt": rh.iso(NOW)}))  # written last
+    rh.stamp_digests(export)
     (tmp_path / "antares-admin-token").write_text("unit-admin-token\n")
     report = tmp_path / "report.json"
     def run(now):
@@ -644,8 +645,44 @@ def test_jcctl_judges_the_organization_and_each_project_never_an_apps_source(tmp
     assert rh.jcctl_refusals(str(ok), prepared[1:]) != []
 
 
+def test_a_bundle_with_one_changed_byte_or_no_digests_is_not_imported(tmp_path):
+    """P-26: export fidelity by content, not counts. The import refuses a bundle whose file differs
+    from its manifest's digest by one byte, one missing or added file, or a manifest with none."""
+    (tmp_path / "gitea" / "files" / "o" / "r").mkdir(parents=True)
+    spec = tmp_path / "gitea" / "files" / "o" / "r" / "space.yaml"
+    spec.write_text("kind: ContextSpace\nmetadata:\n  name: air\n")
+    (tmp_path / "antares").mkdir()
+    (tmp_path / "antares" / "entities.jsonl").write_text('{"tenant": "t", "entity": {"id": "urn:ngsi-ld:X:1"}}\n')
+    (tmp_path / "manifest.json").write_text(json.dumps({"env": "unit"}))
+    def run():
+        old = (tmp_path / "manifest.json").stat().st_mtime - 10
+        for p in tmp_path.rglob("*"):  # a tamperer can keep the times: the digest still tells
+            if p.is_file() and p.name != "manifest.json":
+                os.utime(p, (old, old))
+        rh.main(["import", "--export", str(tmp_path), "--base", "http://127.0.0.1:9", "--state", str(tmp_path),
+                 "--report", str(tmp_path / "r.json"), "--only", "shako"])
+    with pytest.raises(SystemExit, match="names no digests"):
+        run()
+    manifest = rh.stamp_digests(tmp_path)
+    assert set(manifest["digests"]) == {"gitea/files/o/r/space.yaml", "antares/entities.jsonl"}
+    with pytest.raises(SystemExit, match="jcctl"):  # whole: past the check, to the next refusal
+        run()
+    spec.write_text("kind: ContextSpace\nmetadata:\n  name: aiR\n")
+    with pytest.raises(SystemExit, match="space.yaml: content differs from its digest"):
+        run()
+    spec.write_text("kind: ContextSpace\nmetadata:\n  name: air\n")
+    (tmp_path / "antares" / "extra.jsonl").write_text("")
+    with pytest.raises(SystemExit, match="extra.jsonl: not in the digests"):
+        run()
+    (tmp_path / "antares" / "extra.jsonl").unlink()
+    (tmp_path / "antares" / "entities.jsonl").unlink()
+    with pytest.raises(SystemExit, match="entities.jsonl: missing"):
+        run()
+
+
 def test_the_import_refuses_to_start_without_a_validator(tmp_path):
     (tmp_path / "manifest.json").write_text(json.dumps({"env": "unit"}))
+    rh.stamp_digests(tmp_path)
     with pytest.raises(SystemExit, match="jcctl"):
         rh.main(["import", "--export", str(tmp_path), "--base", "http://127.0.0.1:9", "--state", str(tmp_path),
                  "--report", str(tmp_path / "r.json"), "--only", "shako"])
@@ -1022,6 +1059,7 @@ def stub_import(tmp_path, admit):
         {"tenant": "t", "entity": {"id": f"urn:ngsi-ld:X:{i}", "type": "X"}}) + "\n" for i in range(3)))
     (export / "antares" / "temporal.jsonl").write_text(json.dumps(instance(1)) + "\n")
     (export / "manifest.json").write_text(json.dumps({"env": "unit", "exportedAt": rh.iso(NOW)}))
+    rh.stamp_digests(export)
     state = tmp_path / "state"
     state.mkdir()
     (state / "antares-admin-token").write_text("the-admin-token\n")

@@ -18,7 +18,8 @@ Rules for every file:
 ## Layout
 
 ```text
-manifest.json                       {"env": "dev", "exportedAt": "2026-11-08T12:00:00Z", "source": "..."}
+manifest.json                       {"env": "dev", "exportedAt": "2026-11-08T12:00:00Z", "source": "...",
+                                     "digests": {"<bundle path>": "<sha256>", ...}}
 keycloak/realm-<name>.json          the realm representation without people (master is skipped)
 gitea/repos.json                    [{"owner", "name", "defaultBranch", "private", "description"}]
 gitea/files/<owner>/<repo>/<path>   the files of the default branch head, byte for byte
@@ -39,6 +40,11 @@ bypass. The bundles of 2026-11-08 hold API-normalized entities, which that impor
 so they go through `import.sh` (REHEARSAL.md).
 
 ## Making it
+
+- Last, after every file is written: `rehearsal.py digest --export <dir>` writes the sha256 of each
+  file into manifest.json (P-26). The import refuses a bundle with no digests, or with one file
+  that differs from its digest by a byte, is missing or was added; counts alone pass a dropped
+  field. A tool that rewrites a bundle on purpose (bins/jc/smoke/ci/redate.py) stamps it again.
 
 - Realm: `kc.sh export --realm <name> --users skip` (or the admin API's partial export without users),
   then drop `users` except service accounts. Never `--users realm_file`.
