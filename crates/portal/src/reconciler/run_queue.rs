@@ -262,7 +262,10 @@ fn field(text: &str, lo: u32, hi: u32) -> Option<u64> {
 /// clock, and whether an output replaces its entities (PL-79).
 #[derive(Debug, Clone)]
 pub struct Planned {
-    pub stream: Value,
+    /// The stream as its compact JSON text, parsed only when its run starts: the queue holds
+    /// every scheduled pipeline's stream, and parsed they held 145 MiB on the prod rehearsal,
+    /// several times their text (jc-memory-peak).
+    pub stream: String,
     pub clock: Clock,
     pub replace: bool,
 }
@@ -282,7 +285,7 @@ struct Retry {
 
 #[derive(Debug)]
 struct Entry {
-    stream: Value,
+    stream: String,
     clock: Clock,
     lane: Lane,
     /// When it is due next.
@@ -866,9 +869,10 @@ pub enum RunNow {
 
 /// The stream of one run with its run id written in, in place of the clock's time, so the
 /// pipeline's log files the run under the id this Portal hands out (PL-62, T-4349).
-fn with_run(stream: &Value, run: &str) -> Value {
+fn with_run(stream: &str, run: &str) -> Value {
     let named = format!("meta jc_run = {}", Value::from(run));
-    let mut stream = stream.clone();
+    // The queue's own text of a `Value`: it always parses back.
+    let mut stream: Value = serde_json::from_str(stream).unwrap_or_default();
     fn walk(value: &mut Value, named: &str) {
         match value {
             Value::String(text) if text.contains(crate::pipeline_log::TICK) => {
@@ -895,9 +899,9 @@ fn missed(clock: &Clock, last: DateTime<Utc>, now: DateTime<Utc>) -> Option<Date
 /// The fingerprint of a pipeline's stream as the reconciler renders it, before a run id is
 /// written in (T-5825): SHA-256 of its JSON text, stable across Portal builds. The stream names
 /// secrets by environment variable only, so no secret value is hashed.
-pub fn stream_hash(stream: &Value) -> String {
+pub fn stream_hash(stream: &str) -> String {
     use sha2::{Digest, Sha256};
-    Sha256::digest(stream.to_string().as_bytes())
+    Sha256::digest(stream.as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
@@ -1059,7 +1063,7 @@ mod tests {
 
     fn planned(clock: Clock) -> Planned {
         Planned {
-            stream: serde_json::json!({"input": {"generate": {"count": 1}}}),
+            stream: serde_json::json!({"input": {"generate": {"count": 1}}}).to_string(),
             clock,
             replace: false,
         }
@@ -1405,7 +1409,7 @@ mod tests {
 
     fn weekly_run(replace: bool, count: u64) -> Planned {
         Planned {
-            stream: serde_json::json!({"input": {"generate": {"count": count}}}),
+            stream: serde_json::json!({"input": {"generate": {"count": count}}}).to_string(),
             clock: Clock::of(None, Some("0 5 * * 1")).expect("a schedule"),
             replace,
         }
@@ -1515,7 +1519,7 @@ mod tests {
     /// the stream changes it.
     #[test]
     fn a_stream_hash_is_sha256_of_its_text() {
-        let stream = serde_json::json!({"input": {"generate": {"count": 1}}});
+        let stream = serde_json::json!({"input": {"generate": {"count": 1}}}).to_string();
         assert_eq!(
             stream_hash(&stream),
             "9406b26e4cbbee539aeb8444702f2e6394d766abf9f0a9d94fa5489252e93c31"
@@ -1878,7 +1882,7 @@ mod tests {
         changed.insert(
             key("loop"),
             Planned {
-                stream: serde_json::json!({"input": {"generate": {"count": 2}}}),
+                stream: serde_json::json!({"input": {"generate": {"count": 2}}}).to_string(),
                 clock: Clock::Once,
                 replace: false,
             },
@@ -1896,7 +1900,7 @@ mod tests {
         let fake = Fake::default();
         let now = at("2026-10-17T05:00:00Z");
         let hourly = |count: u64| Planned {
-            stream: serde_json::json!({"input": {"generate": {"count": count}}}),
+            stream: serde_json::json!({"input": {"generate": {"count": count}}}).to_string(),
             clock: Clock::Every(Duration::from_secs(3600), Duration::ZERO),
             replace: false,
         };
@@ -1929,7 +1933,7 @@ mod tests {
     #[test]
     fn a_short_poll_is_capped_at_three_periods_and_two_minutes_at_least() {
         let entry = |clock| Entry {
-            stream: Value::Null,
+            stream: String::new(),
             clock,
             lane: Lane::Short,
             next: None,
@@ -2088,7 +2092,7 @@ mod tests {
         let wanted = [(
             key("a"),
             Planned {
-                stream: tick_stream,
+                stream: tick_stream.to_string(),
                 clock: daily_at_5(),
                 replace: false,
             },
