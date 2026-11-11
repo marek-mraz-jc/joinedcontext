@@ -153,15 +153,18 @@ fn names_are_quoted_and_cannot_inject_yaml() {
         let model =
             Model::read(doc.to_string().as_bytes(), &LIMITS).unwrap_or_else(|e| panic!("{i}: {e}"));
         let yaml = linkml_model::yaml(&model);
-        // Every line is a quoted key, a quoted list item or a closing marker:
-        // nothing the schema supplied stands outside quotes.
-        for line in yaml.lines() {
-            let t = line.trim_start();
-            assert!(
-                t.starts_with('"') || t.starts_with("- \""),
-                "{i}: unquoted line {line:?}"
-            );
-        }
+        // No value restructures the document: it reads back as the same schema,
+        // each hostile text double-quoted where a plain scalar would read as more.
+        let mut back: serde_json::Value = serde_saphyr::from_str(&yaml)
+            .unwrap_or_else(|e| panic!("{i}: emitted YAML does not parse: {e}\n{yaml}"));
+        linkml_model::normalize(&mut back);
+        let back: linkml_model::Schema = serde_json::from_value(back)
+            .unwrap_or_else(|e| panic!("{i}: emitted YAML is another shape: {e}\n{yaml}"));
+        assert_eq!(&back, model.schema(), "{i}: {yaml}");
+        assert!(
+            yaml.contains(&format!("name: {}\n", serde_json::to_string(name).unwrap())),
+            "{i}: the hostile name is quoted: {yaml}"
+        );
         assert_eq!(
             yaml.lines().count(),
             yaml.matches('\n').count(),
@@ -252,7 +255,7 @@ fn every_builtin_type_maps_in_json_schema_and_turtle() {
             "{range}"
         );
         assert!(
-            linkml_model::yaml(&model).contains("\"unit\":\n      \"ucum_code\": \"m\"\n"),
+            linkml_model::yaml(&model).contains("unit:\n      ucum_code: m\n"),
             "{range}"
         );
     }
@@ -432,7 +435,7 @@ fn shacl_carries_the_display_order_groups_and_labels() {
 
     let yaml = linkml_model::yaml(&model);
     assert!(
-        yaml.contains("\"rank\": 1") && yaml.contains("\"title\": \"Name\""),
+        yaml.contains("rank: 1\n") && yaml.contains("title: Name\n"),
         "{yaml}"
     );
 }
@@ -482,12 +485,14 @@ fn a_permissible_value_keeps_its_label_annotation() {
     let model = Model::read(doc.to_string().as_bytes(), &LIMITS).unwrap();
     let yaml = linkml_model::yaml(&model);
     let value = yaml
-        .split("\"thirdClass\":")
+        .split("\n      thirdClass:\n")
         .nth(1)
         .expect("the value is written");
-    assert!(value.contains("\"annotations\":"), "{yaml}");
-    assert!(value.contains("\"tag\": \"label\""), "{yaml}");
-    assert!(value.contains(r#"\"sk\": \"cesta III. triedy\""#), "{yaml}");
+    assert!(value.contains("annotations:\n"), "{yaml}");
+    assert!(value.contains("tag: label\n"), "{yaml}");
+    // the language map as a map, as its author wrote it (T-6747)
+    assert!(value.contains("value:\n"), "{yaml}");
+    assert!(value.contains("  sk: cesta III. triedy\n"), "{yaml}");
 }
 
 /// T-5206 finding 3: the `@context` and the JSON Schema follow each NGSI-LD kind before the range
