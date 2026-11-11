@@ -26,6 +26,8 @@ export interface DataColumn<T> {
   /** Left out until the person shows it in Arrange columns. */
   hidden?: boolean;
   align?: "left" | "right";
+  /** The row's actions: no sort, no filter, no header menu and no label on a phone's card. */
+  actions?: boolean;
 }
 
 export interface DataSort {
@@ -106,10 +108,11 @@ export function passes(text: string, kind: DataKind, filter: ColumnFilter): bool
 /** The rows a query keeps, before paging: search over every shown column, then each filter. */
 export function filterRows<T>(rows: readonly T[], columns: readonly DataColumn<T>[], query: Pick<DataQuery, "search" | "filters">): T[] {
   const needle = query.search.trim().toLocaleLowerCase();
-  const active = columns.filter((col) => complete(query.filters[col.key]));
+  const read = columns.filter((col) => !col.actions);
+  const active = read.filter((col) => complete(query.filters[col.key]));
   return rows.filter(
     (row) =>
-      (needle === "" || columns.some((col) => col.text(row).toLocaleLowerCase().includes(needle))) &&
+      (needle === "" || read.some((col) => col.text(row).toLocaleLowerCase().includes(needle))) &&
       active.every((col) => passes(col.text(row), col.kind ?? "text", query.filters[col.key]!)),
   );
 }

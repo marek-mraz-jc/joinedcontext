@@ -12411,6 +12411,6 @@
     "searchRows": "Hledat v seznamu",
     "searchRowsHint": "Napište část libovolné hodnoty, např. název nebo prostor.",
     "noMatch": "Hledání ani filtrům neodpovídá žádný řádek.",
-    "rowCount": "Řádků: {{n}}"
+    "rowCount": "Řádků: {n}"
   }
 }

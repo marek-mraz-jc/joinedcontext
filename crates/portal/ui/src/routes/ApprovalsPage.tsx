@@ -128,8 +128,7 @@ export function ApprovalsPage({ project }: { project: string }): JSX.Element {
       key: "actions",
       label: t("approvals.actions"),
       text: () => "",
-      sortable: false,
-      filter: false,
+      actions: true,
       align: "right",
       cell: (proposal) => (
         <Link to="/projects/$project/approvals/$id" params={{ project, id: proposal.metadata.name }} className={buttonClass("secondary", "sm")}>

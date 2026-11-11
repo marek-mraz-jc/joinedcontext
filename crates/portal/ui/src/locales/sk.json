@@ -12411,6 +12411,6 @@
     "searchRows": "Hľadať v zozname",
     "searchRowsHint": "Napíšte časť ľubovoľnej hodnoty, napr. názov alebo priestor.",
     "noMatch": "Hľadaniu ani filtrom nezodpovedá žiadny riadok.",
-    "rowCount": "Riadkov: {{n}}"
+    "rowCount": "Riadkov: {n}"
   }
 }

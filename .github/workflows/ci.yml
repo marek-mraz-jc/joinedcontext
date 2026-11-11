@@ -413,6 +413,9 @@ jobs:
       - run: cd ui && pnpm install --frozen-lockfile
       - run: cd ui && pnpm lint
       - run: cd ui && pnpm build && test -s dist/index.html
+      # The open-data explorer is the Portal's grid in one bundle, committed under vendor/viz: it
+      # must be what these sources build, or open data and the Portal run two grids (T-6739).
+      - run: cd ui && sh scripts/explorer-bundle.sh
       # The SDK's own suite (the standalone Portal's sdk job, about 70 s): it reads only sdk/.
       - run: cd sdk && pnpm vitest run
   # The whole UI vitest in four shards (vitest --shard splits the files: every file once, in one

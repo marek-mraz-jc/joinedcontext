@@ -308,8 +308,7 @@ export function RegistrationsPage({ project, edit }: { project: string; edit?: s
       key: "actions",
       label: t("approvals.actions"),
       text: () => "",
-      sortable: false,
-      filter: false,
+      actions: true,
       align: "right",
       cell: (registration) => {
         const shape = fromRegistrationEnvelope(registration);

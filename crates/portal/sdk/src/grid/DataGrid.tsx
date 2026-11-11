@@ -165,8 +165,8 @@ export function DataGrid<T>({
   const header = (col: DataColumn<T>) => {
     const kind = col.kind ?? "text";
     const sorted = query.sort?.key === col.key ? query.sort.dir : null;
-    const sortable = col.sortable !== false;
-    const filterable = col.filter !== false;
+    const sortable = !col.actions && col.sortable !== false;
+    const filterable = !col.actions && col.filter !== false;
     const fixed = col.key === primary;
     const label = labelOf(col);
     const filterColumn: FilterColumn = { key: col.key, attr: null, kind: FILTER_KIND[kind] };
@@ -200,7 +200,7 @@ export function DataGrid<T>({
         ) : (
           <span>{label}</span>
         )}
-        {(sortable || filterable || !fixed) && (
+        {!col.actions && (
           <span className="jc-grid-th-menu" style={{ position: "relative" }}>
             <button
               type="button"
@@ -282,7 +282,7 @@ export function DataGrid<T>({
               key={col.key}
               scope={at === 0 ? "row" : undefined}
               className="jc-grid-td"
-              data-label={labelOf(col)}
+              data-label={at === 0 || col.actions ? undefined : labelOf(col)}
               style={col.align === "right" ? { textAlign: "right" } : undefined}
             >
               {col.cell ? col.cell(row) : col.text(row)}
@@ -297,9 +297,10 @@ export function DataGrid<T>({
     <div className={`jc-grid jc-data-grid${stack ? " jc-data-grid--stack" : ""}`} data-density="comfortable">
       <div className="jc-grid-toolbar jc-data-grid-toolbar">
         {!noSearch && (
-          <label className="jc-data-grid-search">
-            <span className="jc-data-grid-search-label">{labels.searchRows}</span>
+          <div className="jc-data-grid-search">
+            <label htmlFor={`${id}-search`} className="jc-data-grid-search-label">{labels.searchRows}</label>
             <input
+              id={`${id}-search`}
               type="search"
               value={query.search}
               maxLength={200}
@@ -307,7 +308,7 @@ export function DataGrid<T>({
               onChange={(e) => setQuery({ ...query, search: e.target.value, offset: 0 })}
             />
             <span id={`${id}-search-hint`} className="jc-grid-arrange-hint">{labels.searchRowsHint}</span>
-          </label>
+          </div>
         )}
         <ArrangePanel
           labels={labels}

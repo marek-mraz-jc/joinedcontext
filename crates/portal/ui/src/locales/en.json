@@ -12411,6 +12411,6 @@
     "searchRows": "Search this list",
     "searchRowsHint": "Type part of any value, e.g. a name or a space.",
     "noMatch": "No rows match the search or the filters.",
-    "rowCount": "{{n}} rows"
+    "rowCount": "{n} rows"
   }
 }

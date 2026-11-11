@@ -319,8 +319,7 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
       key: "actions",
       label: t("approvals.actions"),
       text: () => "",
-      sortable: false,
-      filter: false,
+      actions: true,
       align: "right",
       cell: (policy) => {
         const shape = fromPolicyEnvelope(policy);
