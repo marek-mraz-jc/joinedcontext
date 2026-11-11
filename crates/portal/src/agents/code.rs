@@ -147,6 +147,25 @@ pub const SERVER_SECTION: &str = include_str!("server_section.md");
 pub const SDK_API: &str = include_str!("../../sdk/API.md");
 pub const SDK_EXPORTS: &str = include_str!("../../sdk/src/sdk/index.ts");
 
+/// `text` without its `portal-only` blocks (from a line naming `portal-only` to the one naming
+/// `/portal-only`, both dropped): SDK parts only the Portal's own pages use, such as the admin
+/// lists' `DataGrid` (T-6739), which an app never needs and the code call's budget does not hold.
+pub fn for_apps(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut skip = false;
+    for line in text.lines() {
+        if line.contains("/portal-only") {
+            skip = false;
+        } else if line.contains("portal-only") {
+            skip = true;
+        } else if !skip {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 /// Whether the model may write `path` (SDK-11).
 pub fn writable(path: &str) -> bool {
     if path
@@ -444,6 +463,16 @@ pub fn outline(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_app_builder_reads_the_sdk_without_its_portal_only_parts() {
+        let api = super::for_apps(super::SDK_API);
+        let exports = super::for_apps(super::SDK_EXPORTS);
+        assert!(super::SDK_API.contains("function DataGrid"));
+        assert!(!api.contains("DataGrid") && !api.contains("portal-only"), "{api}");
+        assert!(!exports.contains("DataGrid") && !exports.contains("portal-only"));
+        assert!(api.contains("function endpointSource") && exports.contains("EntityGrid"));
+    }
+
     /// T-6442: 187 "empty" stations of 67 came from reading a missing number as 0.
     #[test]
     fn the_prompt_keeps_an_absent_attribute_unknown() {
