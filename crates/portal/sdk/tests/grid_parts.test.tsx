@@ -82,7 +82,7 @@ describe("GridTable", () => {
     const onRows = vi.fn();
     render(<Host onRows={onRows} parts={(view) => <GridTable view={view} />} />);
     await rows();
-    expect(onRows.mock.lastCall?.[0]).toHaveLength(2);
+    await waitFor(() => expect(onRows.mock.lastCall?.[0]).toHaveLength(2));
     fireEvent.click(screen.getByRole("button", { name: `${DEFAULT_LABELS.sortAll} Bikes` }));
     await waitFor(() => expect(screen.getByRole("button", { name: `${DEFAULT_LABELS.sortAll} Bikes` }).textContent).toContain("↑"));
   });
