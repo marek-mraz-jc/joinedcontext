@@ -1268,17 +1268,17 @@ pub(crate) fn hidden_refusal(endpoint: &Endpoint, key: &str) -> Option<ProblemDe
     })
 }
 
-/// The refusal of a create or upsert naming an entity whose URN does not carry the owning
-/// Organization: `urn:ngsi-ld:{Type}:{orgId}:...`, the id of `domain` (`sk_bbsk` for
-/// `bbsk.sk`), or the domain itself, the form minted before the id existed (ADR-N-068). A batch
-/// is refused whole, as a malformed id refuses it (PF-42). The URN is checked, never trusted:
-/// the space and every right still come from the Endpoint and its Policy (TEN-02). An id that is
-/// no URN is left to the URN check, a fragment and a delete name no new entity.
-pub(crate) fn owner_refusal(
+/// The entities of a create or upsert whose URN does not carry the owning Organization, as
+/// `(id, owner segment)` (empty when the URN names none): `urn:ngsi-ld:{Type}:{orgId}:...` must
+/// name the id of `domain` (`sk_bbsk` for `bbsk.sk`), or the domain itself, the form minted before
+/// the id existed (ADR-N-068). The URN is checked, never trusted: the space and every right still
+/// come from the Endpoint and its Policy (TEN-02). An id that is no URN is left to the URN check, a
+/// fragment and a delete name no new entity.
+pub(crate) fn foreign_owners(
     body: &[u8],
     operation: Operation,
     domain: &str,
-) -> Option<ProblemDetails> {
+) -> Vec<(String, String)> {
     if !matches!(
         operation,
         Operation::CreateEntity
@@ -1286,9 +1286,11 @@ pub(crate) fn owner_refusal(
             | Operation::UpsertBatch
             | Operation::UpsertTemporal
     ) {
-        return None;
+        return Vec::new();
     }
-    let payload: Value = serde_json::from_slice(body).ok()?;
+    let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+        return Vec::new();
+    };
     let entities = match &payload {
         Value::Array(entities) => entities.iter().collect(),
         entity => vec![entity],
@@ -1298,16 +1300,22 @@ pub(crate) fn owner_refusal(
         .into_iter()
         .filter_map(batch_entry_id)
         .filter_map(|raw| Some((raw.parse::<jc_core::Urn>().ok()?, raw)))
-        .find(|(urn, _)| {
+        .filter(|(urn, _)| {
             !urn.owner()
                 .is_some_and(|owner| owner == id || owner == domain)
         })
-        .map(|(_, raw)| {
-            ProblemDetails::urn_owner().with_detail(format!(
-                "`{raw}` does not name the Organization owning this space: write it as \
-                 urn:ngsi-ld:{{Type}}:{id}:{{id}}"
-            ))
-        })
+        .map(|(urn, raw)| (raw.to_owned(), urn.owner().unwrap_or_default().to_owned()))
+        .collect()
+}
+
+/// The refusal of a write naming `raw`, an id [`foreign_owners`] found: a batch is refused whole,
+/// as a malformed id refuses it (PF-42).
+pub(crate) fn owner_refusal(raw: &str, domain: &str) -> ProblemDetails {
+    let id = jc_core::names::org_id(domain);
+    ProblemDetails::urn_owner().with_detail(format!(
+        "`{raw}` does not name the Organization owning this space: write it as \
+         urn:ngsi-ld:{{Type}}:{id}:{{id}}"
+    ))
 }
 
 /// Checks one entity of a write, or the fragment of an addressed one, against the grants and
