@@ -7,9 +7,7 @@ name: dockerfile-cache
 # (c79331ab, kaisatsu-server dev-dependencies) missed the dependency layer of every branch after it
 # (13 min, run 42655700338). It is its own workflow so it never gates or delays a merge: no ci
 # verdict waits on it and a newer push supersedes a queued one.
-# Then it drops the target caches .github/actions/rust saved under a superseded key (one per
-# lockfile hash): they hold the 10 GB Actions cache over its cap, and the eviction that follows takes
-# the oldest entries, the layer cache included. The layer cache and sccache entries are not touched.
+# cache-prune.yml drops the superseded caches on every jc-portal-1 push.
 # Only a push that changes a cached layer's input runs it: the Dockerfile and its ignore file, the
 # manifests, lockfiles and toolchain files the dependency layer (`plan` stub) is built from, the
 # patched crates' sources it copies whole, the scripts the `rust` stage runs, the pnpm install
@@ -37,7 +35,6 @@ on:
       - "crates/portal/**/pnpm-lock.yaml"
       - .github/workflows/dockerfile-cache.yml
       - .github/scripts/free-disk.sh
-      - .github/scripts/cache-prune.sh
       - .github/scripts/check-build-context.sh
   workflow_dispatch:
 permissions: { contents: read }
@@ -72,12 +69,3 @@ jobs:
             ACTIONS_RUNTIME_TOKEN=ACTIONS_RUNTIME_TOKEN
             ACTIONS_RESULTS_URL=ACTIONS_RESULTS_URL
             SCCACHE_GHA_RW_MODE=SCCACHE_GHA_RW_MODE
-  prune:
-    if: github.ref == 'refs/heads/jc-portal-1'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions: { actions: write }
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - env: { GH_TOKEN: "${{ github.token }}" }
-        run: sh .github/scripts/cache-prune.sh
