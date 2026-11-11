@@ -476,7 +476,8 @@ async fn a_change_to_an_existing_endpoint_opens_its_form_with_the_change_and_kee
             "contextSpaceRef": "helsinki",
             "slug": "newsnewsnewsnewsnewsnewsne",
             "audience": "public",
-            "enabledRepresentations": ["ngsi-ld", "ogc-features"]
+            "enabledRepresentations": ["ngsi-ld", "ogc-features"],
+            "policyRefs": ["urn:ngsi-ld:Policy:hel.fi:helsinki-helsinki:news-read"]
         }),
     );
     endpoint
@@ -485,6 +486,13 @@ async fn a_change_to_an_existing_endpoint_opens_its_form_with_the_change_and_kee
         .insert("joinedcontext.com/space".into(), "helsinki".into());
     let mut seeded = bikes_space();
     seeded.push(endpoint);
+    // The Policy the Endpoint names (P-18, T-6740).
+    seeded.push(envelope(
+        "Policy",
+        "news-read",
+        "helsinki",
+        json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "helsinki" } }),
+    ));
     let (state, events, prompts) = converse_with(
         Some(endpoint_access()),
         person("admin@hel.fi", &["portal-approver"]),

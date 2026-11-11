@@ -324,7 +324,7 @@
     - proves: expect
       as: project-admin
       call: jc_change_plan
-      args: { changes: [{ op: create, kind: ContextSpace, name: parking, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: ContextSpace, metadata: { name: parking, namespace: '{project}' }, spec: { isSandbox: true } } }, { op: create, kind: Endpoint, name: '{project}-parking', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-parking', namespace: '{project}' }, spec: { contextSpaceRef: parking, audience: public, enabledRepresentations: [ngsi-ld] } } }, { op: create, kind: Policy, name: parking-writers, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Policy, metadata: { name: parking-writers, namespace: '{project}' }, spec: { contextSpaceRef: parking, assigner: 'did:web:hel.fi', assignee: { kind: group, id: scn-writers }, operations: [createEntity, updateAttrs], information: [{ entities: [{ type: BikeCounter }] }] } } }] }
+      args: { changes: [{ op: create, kind: ContextSpace, name: parking, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: ContextSpace, metadata: { name: parking, namespace: '{project}' }, spec: { isSandbox: true } } }, { op: create, kind: Endpoint, name: '{project}-parking', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-parking', namespace: '{project}' }, spec: { contextSpaceRef: parking, policyRefs: ['urn:ngsi-ld:Policy:hel.fi:{project}-parking:parking-writers'], audience: public, enabledRepresentations: [ngsi-ld] } } }, { op: create, kind: Policy, name: parking-writers, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Policy, metadata: { name: parking-writers, namespace: '{project}' }, spec: { contextSpaceRef: parking, assigner: 'did:web:hel.fi', assignee: { kind: group, id: scn-writers }, operations: [createEntity, updateAttrs], information: [{ entities: [{ type: BikeCounter }] }] } } }] }
       keep: planId
       contains: ['"planId"', '"ok":true', 'no Policy of the space parking grants the public role']
     - proves: expect
@@ -354,7 +354,7 @@
   script:
     - proves: expect
       call: jc_change_plan
-      args: { changes: [{ op: create, kind: Endpoint, name: '{project}-public', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-public', namespace: '{project}' }, spec: { contextSpaceRef: doprava, audience: public, enabledRepresentations: [ngsi-ld, odata, ogc-features] } } }] }
+      args: { changes: [{ op: create, kind: Endpoint, name: '{project}-public', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-public', namespace: '{project}' }, spec: { contextSpaceRef: doprava, policyRefs: ['urn:ngsi-ld:Policy:hel.fi:{project}-doprava:public-read'], audience: public, enabledRepresentations: [ngsi-ld, odata, ogc-features] } } }] }
       keep: planId
       contains: ['"planId"', '"ok":true', 'changes nothing live']
     - proves: expect
@@ -583,14 +583,14 @@
     # An Endpoint and the Pipeline writing into it plan together and open one change (T-6282).
     - proves: expect
       call: jc_change_plan
-      args: { changes: [{ op: create, kind: Pipeline, name: counters-bundled, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Pipeline, metadata: { name: counters-bundled, namespace: '{project}' }, spec: { class: scheduled, schedule: '0 * * * *', source: { dataSourceRef: { kind: DataSource, name: counters-csv } }, targetEndpoint: 'urn:ngsi-ld:Endpoint:hel.fi:{project}-doprava:{project}-bundled', output: { type: BikeCounter, mode: upsert }, quotas: { maxMemoryMb: 128, cpuMillicores: 100 } } } }, { op: create, kind: Endpoint, name: '{project}-bundled', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-bundled', namespace: '{project}' }, spec: { contextSpaceRef: doprava, audience: public, enabledRepresentations: [ngsi-ld] } } }] }
+      args: { changes: [{ op: create, kind: Pipeline, name: counters-bundled, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Pipeline, metadata: { name: counters-bundled, namespace: '{project}' }, spec: { class: scheduled, schedule: '0 * * * *', source: { dataSourceRef: { kind: DataSource, name: counters-csv } }, targetEndpoint: 'urn:ngsi-ld:Endpoint:hel.fi:{project}-doprava:{project}-bundled', output: { type: BikeCounter, mode: upsert }, quotas: { maxMemoryMb: 128, cpuMillicores: 100 } } } }, { op: create, kind: Endpoint, name: '{project}-bundled', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-bundled', namespace: '{project}' }, spec: { contextSpaceRef: doprava, policyRefs: ['urn:ngsi-ld:Policy:hel.fi:{project}-doprava:public-read'], audience: public, enabledRepresentations: [ngsi-ld] } } }] }
       refused: true
       contains: ['/changes/0/manifest', 'jc_pipeline_test']
     - proves: expect
       runner_tested: counters-bundled
     - proves: expect
       call: jc_change_plan
-      args: { changes: [{ op: create, kind: Pipeline, name: counters-bundled, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Pipeline, metadata: { name: counters-bundled, namespace: '{project}' }, spec: { class: scheduled, schedule: '0 * * * *', source: { dataSourceRef: { kind: DataSource, name: counters-csv } }, targetEndpoint: 'urn:ngsi-ld:Endpoint:hel.fi:{project}-doprava:{project}-bundled', output: { type: BikeCounter, mode: upsert }, quotas: { maxMemoryMb: 128, cpuMillicores: 100 } } } }, { op: create, kind: Endpoint, name: '{project}-bundled', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-bundled', namespace: '{project}' }, spec: { contextSpaceRef: doprava, audience: public, enabledRepresentations: [ngsi-ld] } } }] }
+      args: { changes: [{ op: create, kind: Pipeline, name: counters-bundled, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Pipeline, metadata: { name: counters-bundled, namespace: '{project}' }, spec: { class: scheduled, schedule: '0 * * * *', source: { dataSourceRef: { kind: DataSource, name: counters-csv } }, targetEndpoint: 'urn:ngsi-ld:Endpoint:hel.fi:{project}-doprava:{project}-bundled', output: { type: BikeCounter, mode: upsert }, quotas: { maxMemoryMb: 128, cpuMillicores: 100 } } } }, { op: create, kind: Endpoint, name: '{project}-bundled', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-bundled', namespace: '{project}' }, spec: { contextSpaceRef: doprava, policyRefs: ['urn:ngsi-ld:Policy:hel.fi:{project}-doprava:public-read'], audience: public, enabledRepresentations: [ngsi-ld] } } }] }
       keep: planId
       contains: ['"planId"', '"ok":true']
     - proves: expect
@@ -1122,7 +1122,7 @@
       absent: ['"merged"']
     - proves: deny
       call: jc_change_plan
-      args: { changes: [{ op: create, kind: Endpoint, name: '{project}-internal', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-internal', namespace: '{project}' }, spec: { contextSpaceRef: doprava, audience: organization, enabledRepresentations: [ngsi-ld], publish: { ckan: { instanceRef: opendata, organization: doprava } } } } }] }
+      args: { changes: [{ op: create, kind: Endpoint, name: '{project}-internal', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-internal', namespace: '{project}' }, spec: { contextSpaceRef: doprava, policyRefs: ['urn:ngsi-ld:Policy:hel.fi:{project}-doprava:public-read'], audience: organization, enabledRepresentations: [ngsi-ld], publish: { ckan: { instanceRef: opendata, organization: doprava } } } } }] }
       refused: true
       contains: ["spec.audience is 'organization'", 'EP-83']
 - id: S-34
@@ -1215,7 +1215,7 @@
   script:
     - proves: expect
       call: jc_change_plan
-      args: { changes: [{ op: create, kind: Endpoint, name: '{project}-events', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-events', namespace: '{project}' }, spec: { contextSpaceRef: doprava, audience: public, enabledRepresentations: [ngsi-ld, ical], representations: { ical: [{ name: events, sources: [{ type: Event, preset: sdm-event }] }] } } } }] }
+      args: { changes: [{ op: create, kind: Endpoint, name: '{project}-events', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-events', namespace: '{project}' }, spec: { contextSpaceRef: doprava, policyRefs: ['urn:ngsi-ld:Policy:hel.fi:{project}-doprava:public-read'], audience: public, enabledRepresentations: [ngsi-ld, ical], representations: { ical: [{ name: events, sources: [{ type: Event, preset: sdm-event }] }] } } } }] }
       keep: planId
       contains: ['"planId"', '"ok":true']
     - proves: expect
@@ -1224,7 +1224,7 @@
       contains: ['changeRequests']
     - proves: deny
       call: jc_change_plan
-      args: { changes: [{ op: create, kind: Endpoint, name: '{project}-counter-feed', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-counter-feed', namespace: '{project}' }, spec: { contextSpaceRef: doprava, audience: public, enabledRepresentations: [ngsi-ld, ical], representations: { ical: [{ name: counters, sources: [{ type: BikeCounter, mapping: { DTSTART: { attribute: count }, SUMMARY: { attribute: name } } }] }] } } } }] }
+      args: { changes: [{ op: create, kind: Endpoint, name: '{project}-counter-feed', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-counter-feed', namespace: '{project}' }, spec: { contextSpaceRef: doprava, policyRefs: ['urn:ngsi-ld:Policy:hel.fi:{project}-doprava:public-read'], audience: public, enabledRepresentations: [ngsi-ld, ical], representations: { ical: [{ name: counters, sources: [{ type: BikeCounter, mapping: { DTSTART: { attribute: count }, SUMMARY: { attribute: name } } }] }] } } } }] }
       refused: true
       contains: ['DTSTART', 'BikeCounter', 'EP-125']
 
@@ -1418,7 +1418,7 @@
               apiVersion: joinedcontext.com/v1alpha1
               kind: Endpoint
               metadata: { name: '{project}-preview', namespace: '{project}' }
-              spec: { contextSpaceRef: doprava, audience: public, enabledRepresentations: [ngsi-ld] }
+              spec: { contextSpaceRef: doprava, policyRefs: ['urn:ngsi-ld:Policy:hel.fi:{project}-doprava:public-read'], audience: public, enabledRepresentations: [ngsi-ld] }
       keep: planId
       contains: ['"planId"', 'bike-counter', '{project}-preview']
     - proves: expect
@@ -2113,7 +2113,7 @@
     - proves: expect
       via: connector
       call: jc_change_plan
-      args: { changes: [{ op: create, kind: ContextSpace, name: vendor, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: ContextSpace, metadata: { name: vendor, namespace: '{project}' }, spec: { isSandbox: true } } }, { op: create, kind: Endpoint, name: '{project}-vendor', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-vendor', namespace: '{project}' }, spec: { contextSpaceRef: vendor, audience: public, enabledRepresentations: [ngsi-ld] } } }, { op: create, kind: Policy, name: vendor-readers, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Policy, metadata: { name: vendor-readers, namespace: '{project}' }, spec: { contextSpaceRef: vendor, assigner: 'did:web:{orgDomain}', assignee: { kind: group, id: scn-readers }, operations: [retrieveOps], information: [{ entities: [{ type: BikeCounter }] }] } } }, { op: create, kind: DataSource, name: vendor-feed, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: DataSource, metadata: { name: vendor-feed, namespace: '{project}' }, spec: { type: http, http: { url: 'https://data.example.sk/counters.csv', format: csv } } } }, { op: create, kind: Layer, name: vendor-map, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Layer, metadata: { name: vendor-map, namespace: '{project}' }, spec: { entityType: BikeCounter, sourceEndpointRef: '{project}-vendor' } } }] }
+      args: { changes: [{ op: create, kind: ContextSpace, name: vendor, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: ContextSpace, metadata: { name: vendor, namespace: '{project}' }, spec: { isSandbox: true } } }, { op: create, kind: Endpoint, name: '{project}-vendor', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-vendor', namespace: '{project}' }, spec: { contextSpaceRef: vendor, policyRefs: ['urn:ngsi-ld:Policy:hel.fi:{project}-vendor:vendor-readers'], audience: public, enabledRepresentations: [ngsi-ld] } } }, { op: create, kind: Policy, name: vendor-readers, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Policy, metadata: { name: vendor-readers, namespace: '{project}' }, spec: { contextSpaceRef: vendor, assigner: 'did:web:{orgDomain}', assignee: { kind: group, id: scn-readers }, operations: [retrieveOps], information: [{ entities: [{ type: BikeCounter }] }] } } }, { op: create, kind: DataSource, name: vendor-feed, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: DataSource, metadata: { name: vendor-feed, namespace: '{project}' }, spec: { type: http, http: { url: 'https://data.example.sk/counters.csv', format: csv } } } }, { op: create, kind: Layer, name: vendor-map, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Layer, metadata: { name: vendor-map, namespace: '{project}' }, spec: { entityType: BikeCounter, sourceEndpointRef: '{project}-vendor' } } }] }
       keep: planId
       contains: ['"planId"', '"ok":true']
       absent: ['you would not reach']
@@ -2133,7 +2133,7 @@
     - proves: deny
       via: connector
       call: jc_change_plan
-      args: { changes: [{ op: create, kind: Endpoint, name: '{project}-listed', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-listed', namespace: '{project}' }, spec: { contextSpaceRef: doprava, audience: project-list, allowedProjects: [t-scn-other], enabledRepresentations: [ngsi-ld] } } }] }
+      args: { changes: [{ op: create, kind: Endpoint, name: '{project}-listed', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-listed', namespace: '{project}' }, spec: { contextSpaceRef: doprava, policyRefs: ['urn:ngsi-ld:Policy:hel.fi:{project}-doprava:public-read'], audience: project-list, allowedProjects: [t-scn-other], enabledRepresentations: [ngsi-ld] } } }] }
       contains: ['you would not reach this Endpoint', '"path":"spec.audience"']
     - proves: deny
       via: connector

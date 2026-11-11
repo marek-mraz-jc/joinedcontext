@@ -190,6 +190,7 @@
     "dependency": "This field needs the field it depends on",
     "check": "Check",
     "restartsStream": "Applying this restarts the stream on the runner. A periodic pipeline starts its schedule over, so the next run is a full period away.",
+    "bindsEndpoints": "This Policy decides the calls of these Endpoints once it is approved:",
     "dns1123": "Lower-case letters, digits and hyphens only, starting with a letter or a digit, at most 63 characters.",
     "entityType": "An NGSI-LD type: a capital letter, then letters and digits, at most 64 characters.",
     "requiredCount": "{filled} of {total} required fields filled",
@@ -1567,7 +1568,8 @@
         "datasetQuery": "Narrowing query",
         "datasetKeywords": "Keywords",
         "datasetLicense": "Licence"
-      }
+      },
+      "policyRefs": "Policies it serves"
     },
     "rateClass": {
       "none": "No limit",
@@ -2321,7 +2323,13 @@
         "anonymous": "Not signed in",
         "unknown": "Not told apart yet"
       }
-    }
+    },
+    "help": {
+      "policyRefs": "Tick the Policies whose grants decide this Endpoint's calls, e.g. {example}. Only Policies of its space you may read are listed; a Policy added later reaches it only once it is ticked here.",
+      "policyRefsDrafted": "The read and write Policies drafted with this Endpoint are named for you; tick any other Policy of its space it should serve too."
+    },
+    "policyRefsNone": "The space {space} holds no Policy you may read, so this Endpoint would serve nobody. Add a Policy for the space first, then pick it here.",
+    "policyRefsAdd": "Open the policies"
   },
   "datasources": {
     "title": "Data sources",

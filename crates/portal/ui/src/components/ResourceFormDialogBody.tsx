@@ -414,6 +414,7 @@ export function ResourceFormDialogBody<T>({
           draft={draft.currentDraft}
           verdict={draft.verdict}
           restartsStream={check.restartsStream}
+          bindsEndpoints={check.bindsEndpoints}
         />
 
         {source || kind ? (
