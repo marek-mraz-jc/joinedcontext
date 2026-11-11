@@ -414,13 +414,16 @@ only where the template put a <wbr> (before a slash). */
 .jc-ribbon { position: sticky; top: 0; z-index: 1030; padding: .375rem 1rem; text-align: center; font-weight: 600; background: var(--jc-accent); color: var(--jc-text); }
 .jc-footer-lines { font-size: .875rem; }
 .jc-footer-lines p { margin: 0 0 .375rem; }
+/* The contact address reads as a link and is a 44px target. */
+.site-footer .jc-footer-lines a { display: inline-flex; align-items: center; min-block-size: 2.75rem; text-decoration: underline; text-underline-offset: .2em; }
 .site-footer .lang-select label { display: flex; align-items: center; min-block-size: 2.75rem; font-size: .8125rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .jc-footer-lang { display: flex; gap: .5rem; }
-.site-footer .form-select { block-size: 2.75rem; max-inline-size: 16rem; padding: 0 .75rem; border-radius: var(--jc-radius); background-color: color-mix(in oklab, var(--jc-paper) 10%, var(--jc-ink)); color: var(--jc-paper); border-color: color-mix(in oklab, var(--jc-paper) 35%, var(--jc-ink)); }
-.site-footer .form-select:hover { border-color: color-mix(in oklab, var(--jc-paper) 60%, var(--jc-ink)); }
+.site-footer .form-select { flex: 1 1 auto; min-inline-size: 0; block-size: 2.75rem; padding: 0 .75rem; border-radius: var(--jc-radius); background-color: color-mix(in oklab, var(--jc-paper) 10%, var(--jc-ink)); color: var(--jc-paper); border-color: color-mix(in oklab, var(--jc-paper) 50%, var(--jc-ink)); }
+.site-footer .form-select:hover { border-color: color-mix(in oklab, var(--jc-paper) 75%, var(--jc-ink)); }
 /* The language form's Go: only without script (jc-forms.js sends the form on change); never a
    display rule here, it would tie with `.js .js-hide`. */
-.site-footer .lang-select .btn { block-size: 2.75rem; padding-inline: 1rem; border-radius: var(--jc-radius); background: var(--jc-paper); border-color: var(--jc-paper); color: var(--jc-ink); font-weight: 600; }
+.site-footer .lang-select .btn { block-size: 2.75rem; padding-inline: 1rem; border-radius: var(--jc-radius); background: transparent; border-color: color-mix(in oklab, var(--jc-paper) 50%, var(--jc-ink)); color: var(--jc-paper); font-weight: 600; }
+.site-footer .lang-select .btn:hover { border-color: var(--jc-paper); }
 /* ---- The table view, framed on the dataset page and on its own page --------------------- */
 body.dt-view { background: var(--jc-surface); }
 /* The DataTables stylesheet loads after this one, so its rules are outranked by the body class. */
