@@ -39,9 +39,11 @@ import "monaco-editor/features/wordHighlighter/register";
 import "monaco-editor/features/wordOperations/register";
 import "monaco-editor/languages/definitions/yaml/register";
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
+// The JSON service's worker (T-6791): a file of its own, fetched only when a JSON editor opens.
+import JsonWorker from "monaco-editor/languages/features/json/json.worker.js?worker";
 
-(self as unknown as { MonacoEnvironment?: { getWorker: () => Worker } }).MonacoEnvironment = {
-  getWorker: () => new EditorWorker(),
+(self as unknown as { MonacoEnvironment?: { getWorker: (id: string, label: string) => Worker } }).MonacoEnvironment = {
+  getWorker: (_id, label) => (label === "json" ? new JsonWorker() : new EditorWorker()),
 };
 
 loader.config({ monaco });

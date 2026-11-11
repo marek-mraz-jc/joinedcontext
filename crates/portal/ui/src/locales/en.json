@@ -3747,7 +3747,41 @@
     "emptyHint": "A dashboard is a page of maps and numbers built from endpoints this project can read. Make one, or ask the assistant for a dashboard of what you already publish.",
     "layerEndpointGone": "The endpoint “{name}” is not in this project any more, so this layer has no type or filter to choose from. Choose another endpoint for this layer.",
     "moreHere": "{n} not listed: zoom in to tell them apart",
-    "stackedHere": "{n} at this spot, {shown} listed"
+    "stackedHere": "{n} at this spot, {shown} listed",
+    "json": {
+      "newTitle": "New dashboard in JSON",
+      "editTitle": "{name} in JSON",
+      "lead": "Write the dashboard as its manifest. The preview draws each widget from live data as you type; Check asks the server, Propose sends it as a change.",
+      "source": "Manifest (JSON)",
+      "preview": "Preview",
+      "editorHint": "Press Ctrl+Space for the fields a place takes; endpointRef lists the endpoints you may read. Example: \"endpointRef\": \"bikes\".",
+      "widgetType": "Widget",
+      "widgetTypeHint": "Added to the last page, e.g. a bar chart of one entity type.",
+      "endpoint": "Endpoint",
+      "endpointHint": "Endpoints of this project you may read, e.g. bikes.",
+      "entityType": "Entity type",
+      "entityTypeHint": "Types of the endpoint's data model, e.g. BikeHireDockingStation.",
+      "noTypes": "This endpoint's space has no data model with types yet: add one to its space first.",
+      "insert": "Insert widget",
+      "fixFirst": "Fix the JSON first: a widget is added to a valid manifest only.",
+      "invalid": "The JSON does not read",
+      "invalidAt": "Line {line}, column {column}: {message}",
+      "refused": "The server refused it",
+      "checked": "The server accepts this dashboard",
+      "check": "Check",
+      "previewInvalid": "The preview comes back as soon as the JSON reads.",
+      "previewEmpty": "No widget yet. Choose a widget, an endpoint and a type above, then Insert widget.",
+      "notPublic": "A public dashboard reads only public endpoints, so these are not drawn: {endpoints}.",
+      "noEndpoints": "No endpoint to read yet",
+      "noEndpointsHint": "A dashboard draws data an endpoint of this project publishes. Create an endpoint first, then come back.",
+      "toEndpoints": "Go to endpoints",
+      "editJson": "Edit as JSON",
+      "newJson": "New in JSON",
+      "type": {
+        "vega-lite": "Chart (Vega-Lite)",
+        "grid": "Table"
+      }
+    }
   },
   "access": {
     "title": "Access",

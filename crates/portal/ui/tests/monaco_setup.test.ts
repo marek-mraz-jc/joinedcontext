@@ -18,6 +18,7 @@ vi.mock("@monaco-editor/react", () => ({ loader: { config } }));
 // The real editor API and language registry, not a mock: Monaco's clipboard feature asks
 // `document.queryCommandSupported`, which jsdom lacks.
 Object.assign(document, { queryCommandSupported: () => false });
+vi.mock("monaco-editor/languages/features/json/json.worker.js?worker", () => ({ default: class {} }));
 vi.mock("monaco-editor/editor/editor.worker.js?worker", () => ({
   default: class {
     static created = 0;

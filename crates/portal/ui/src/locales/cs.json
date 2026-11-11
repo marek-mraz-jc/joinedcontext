@@ -3747,7 +3747,41 @@
     "emptyHint": "Nástěnka je stránka s mapami a čísly, postavená z endpointů, které tento projekt umí čist. Vytvořte jednu nebo požádejte asistenta o nástěnku z toho, co už zveřejňujete.",
     "layerEndpointGone": "Endpoint „{name}“ už v tomto projektu není, proto tato vrstva nemá z čeho vybrat typ ani filtr. Vyberte pro tuto vrstvu jiný endpoint.",
     "moreHere": "Mimo seznam: {n}; přibližte mapu, abyste je rozlišili",
-    "stackedHere": "Na tomto místě: {n}, v seznamu {shown}"
+    "stackedHere": "Na tomto místě: {n}, v seznamu {shown}",
+    "json": {
+      "newTitle": "Nový dashboard v JSON",
+      "editTitle": "{name} v JSON",
+      "lead": "Napište dashboard jako jeho manifest. Náhled kreslí každý widget z aktuálních dat během psaní; Zkontrolovat se zeptá serveru, Navrhnout jej pošle jako změnu.",
+      "source": "Manifest (JSON)",
+      "preview": "Náhled",
+      "editorHint": "Ctrl+Mezerník nabídne pole, která místo bere; endpointRef nabídne endpointy, které smíte číst. Příklad: \"endpointRef\": \"bikes\".",
+      "widgetType": "Widget",
+      "widgetTypeHint": "Přidá se na poslední stránku, např. sloupcový graf jednoho typu entit.",
+      "endpoint": "Endpoint",
+      "endpointHint": "Endpointy tohoto projektu, které smíte číst, např. bikes.",
+      "entityType": "Typ entity",
+      "entityTypeHint": "Typy datového modelu endpointu, např. BikeHireDockingStation.",
+      "noTypes": "Prostor tohoto endpointu zatím nemá datový model s typy: nejprve jej přidejte.",
+      "insert": "Vložit widget",
+      "fixFirst": "Nejprve opravte JSON: widget se přidá jen do platného manifestu.",
+      "invalid": "JSON nelze přečíst",
+      "invalidAt": "Řádek {line}, sloupec {column}: {message}",
+      "refused": "Server jej odmítl",
+      "checked": "Server tento dashboard přijímá",
+      "check": "Zkontrolovat",
+      "previewInvalid": "Náhled se vrátí, jakmile půjde JSON přečíst.",
+      "previewEmpty": "Zatím žádný widget. Vyberte výše widget, endpoint a typ a stiskněte Vložit widget.",
+      "notPublic": "Veřejný dashboard čte jen veřejné endpointy, proto se tyto nekreslí: {endpoints}.",
+      "noEndpoints": "Zatím žádný endpoint ke čtení",
+      "noEndpointsHint": "Dashboard kreslí data, která zveřejňuje endpoint tohoto projektu. Nejprve vytvořte endpoint a pak se vraťte.",
+      "toEndpoints": "Na endpointy",
+      "editJson": "Upravit jako JSON",
+      "newJson": "Nový v JSON",
+      "type": {
+        "vega-lite": "Graf (Vega-Lite)",
+        "grid": "Tabulka"
+      }
+    }
   },
   "access": {
     "title": "Přístup",
