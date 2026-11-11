@@ -69,7 +69,18 @@ export function fieldPath(path: string, schema: JsonSchema): string[] {
   // An element is `roles[0]` in the server's path and `roles.0` in rjsf's errors (T-5590).
   const segments = path.replace(/^metadata\./, "").replace(/\[(\d+)\]/g, ".$1").split(".");
   const flat = segments[0] === "spec" && !(schema.properties && "spec" in schema.properties);
-  return flat ? segments.slice(1) : segments;
+  const field = flat ? segments.slice(1) : segments;
+  // A list of choices is one multi-select, which shows the list's errors and none of an element's:
+  // `homeWidgets.0` is marked on `homeWidgets` (T-6779).
+  let node: JsonSchema | undefined = schema;
+  for (const [at, segment] of field.entries()) {
+    const shape = node as { properties?: Record<string, JsonSchema>; items?: { oneOf?: unknown; enum?: unknown } } | undefined;
+    if (/^\d+$/.test(segment) && (shape?.items?.oneOf !== undefined || shape?.items?.enum !== undefined)) {
+      return field.slice(0, at);
+    }
+    node = shape?.properties?.[segment];
+  }
+  return field;
 }
 
 /**

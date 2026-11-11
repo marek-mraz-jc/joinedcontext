@@ -1341,9 +1341,24 @@ impl AppState {
             .is_some_and(|mark| at <= mark)
     }
 
-    /// The branding of this installation, loaded from `JC_BRANDING_FILE` or neutral defaults.
+    /// The branding of the request's Organization: the installation's, loaded from
+    /// `JC_BRANDING_FILE` or neutral defaults, with the appearance of the Organization the
+    /// request's host pins over it (UIX-16, T-6772).
     pub fn branding(&self) -> Branding {
-        Branding::load(self.config.branding_file.as_deref())
+        let installation = Branding::load(self.config.branding_file.as_deref());
+        match self.pinned_organization() {
+            Some(spec) => installation.with_organization(&spec),
+            None => installation,
+        }
+    }
+
+    /// The manifest of the Organization the running request is pinned to, when it parses.
+    pub fn pinned_organization(&self) -> Option<jc_core::kinds::OrganizationSpec> {
+        let name = crate::organization_host::organization()?;
+        let envelope = self
+            .mirror
+            .get(crate::permissions::ORG_NAMESPACE, "Organization", &name)?;
+        serde_json::from_value(envelope.spec).ok()
     }
 }
 

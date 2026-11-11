@@ -194,6 +194,12 @@
     "dns1123": "Lower-case letters, digits and hyphens only, starting with a letter or a digit, at most 63 characters.",
     "entityType": "An NGSI-LD type: a capital letter, then letters and digits, at most 64 characters.",
     "requiredCount": "{filled} of {total} required fields filled",
+    "svgPreview": "Preview of {label}",
+    "svgPreviewNote": "Drawn as an image: nothing in the SVG runs.",
+    "fixCount": "Fields to fix: {count}.",
+    "fixFirst": "Show the first field to fix",
+    "fixFirstInGroup": "First: {field}, in {group}.",
+    "fixFirstNamed": "First: {field}.",
     "askAboutField": "Ask about this field",
     "askAboutFieldQuestion": "In the {kind} form: what goes in “{label}”, and what happens when it is left empty?",
     "fillFromSentence": "Fill this from a sentence",
@@ -222,7 +228,8 @@
     "mapLanguage": "Language",
     "mapAddLanguage": "Add a language",
     "advancedFields": "Advanced",
-    "advancedFieldsHint": "Runner settings most sources leave at their defaults."
+    "advancedFieldsHint": "Runner settings most sources leave at their defaults.",
+    "chosenOf": "{chosen} of {max} chosen"
   },
   "approvals": {
     "lead": "Every change to the project is a proposal here until an approver merges it.",
@@ -7577,6 +7584,30 @@
         "agentRunsPerDay": "Assistant runs per day",
         "entitiesPerSpace": "Entities per space",
         "requestsPerMinute": "Requests per minute per endpoint"
+      },
+      "appearance": {
+        "title": "Appearance",
+        "instanceName": "Name",
+        "shortName": "Short name",
+        "city": "City or region",
+        "publisher": "Publisher",
+        "contactEmail": "Contact e-mail",
+        "licenseDefault": "Default licence",
+        "colours": "Colours",
+        "logoSvg": "Logo (SVG)",
+        "faviconSvg": "Favicon (SVG)",
+        "colour": {
+          "primary": "Primary",
+          "secondary": "Secondary",
+          "accent": "Accent",
+          "background": "Background",
+          "text": "Text"
+        },
+        "homeWidgets": "Home page dashboards",
+        "homeWidgetsNone": "No dashboard to offer yet. Open a project of this organization, go to Dashboards and make one; it is offered here next time.",
+        "homeWidgetsProjects": "Open the organization's projects",
+        "opendataWidgets": "Open data portal dashboards",
+        "opendataWidgetsNone": "No public dashboard to offer yet: set a dashboard of this organization's projects to public first."
       }
     },
     "contactRole": {
@@ -7629,7 +7660,8 @@
       "creationGroup": "The members of the group {group} open projects.",
       "creationAdmin": "Only an organization administrator opens projects.",
       "cooldown": "{days} days",
-      "noQuota": "No limit is set for a new project."
+      "noQuota": "No limit is set for a new project.",
+      "fromInstallation": "installation default"
     },
     "members": {
       "title": "Members",
@@ -9966,6 +9998,12 @@
       "empty": "Nothing is shared with you yet. When another project shares an app with the whole organization, it appears here.",
       "from": "From the project {project}",
       "newTab": "(opens in a new tab)"
+    },
+    "widgets": {
+      "title": "Dashboards on the home page",
+      "lead": "Chosen by your organization; you see the ones you may open.",
+      "open": "Open",
+      "pages": "{count, plural, one {# page} other {# pages}}"
     }
   },
   "alerts": {

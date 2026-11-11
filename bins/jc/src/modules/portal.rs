@@ -91,6 +91,7 @@ pub async fn build(
     if let Some(addr) = listener.as_ref().and_then(|l| l.local_addr().ok()) {
         let _ = super::PORTAL_INTERNAL.set(addr);
     }
+    let _ = super::appearance::PORTAL_MIRROR.set(state.mirror.clone());
     server::spawn_background(&state);
     let token = shutdown.clone();
     let internal = listener

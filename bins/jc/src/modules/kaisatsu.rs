@@ -461,8 +461,109 @@ fn follow_endpoint_scopes(
     });
 }
 
+/// Keeps each Organization's sign-in pages its `Organization.spec.appearance` over the realm's
+/// block (UIX-16, T-6777): one block per Organization, keyed by its Portal host, which the
+/// sign-in finds by the redirect URI the Portal there sends. A member the Organization leaves
+/// out, or a removed appearance, shows the realm's block again.
+#[cfg(feature = "portal")]
+fn follow_appearances(
+    store: &Arc<dyn Store>,
+    realm: &setup::Realm,
+    organizations: &[crate::config::OrganizationSection],
+    shutdown: &CancellationToken,
+    tasks: &TaskTracker,
+) {
+    let hosts: std::collections::BTreeMap<String, String> = organizations
+        .iter()
+        .map(|org| (org.name.clone(), org.hosts.portal.clone()))
+        .collect();
+    let (store, realm) = (store.clone(), realm.as_str().to_owned());
+    super::appearance::follow(
+        hosts.keys().cloned().collect(),
+        shutdown,
+        tasks,
+        move |name, look| {
+            let (store, realm, host) = (store.clone(), realm.clone(), hosts.get(&name).cloned());
+            async move {
+                let Some(host) = host else { return };
+                let base = match realm_branding(&store, &realm).await {
+                    Ok(Some(base)) => base,
+                    Ok(None) => return,
+                    Err(e) => {
+                        tracing::warn!(organization = %name, error = %e, "kaisatsu: realm branding unreadable");
+                        return;
+                    }
+                };
+                let block = organization_block(base, &host, look.as_ref());
+                match store.upsert_branding(block).await {
+                    Ok(()) => {
+                        tracing::info!(organization = %name, appearance = look.is_some(), "kaisatsu: sign-in pages follow the Organization")
+                    }
+                    Err(e) => {
+                        tracing::warn!(organization = %name, error = %e, "kaisatsu: Organization branding not stored")
+                    }
+                }
+            }
+        },
+    );
+}
+
+/// The block of the realm named `realm`, its platform defaults when none is stored; `None`
+/// without the realm.
+#[cfg(feature = "portal")]
+async fn realm_branding(
+    store: &Arc<dyn Store>,
+    realm: &str,
+) -> kaisatsu_core::Result<Option<kaisatsu_core::BrandingBlock>> {
+    let Some(realm) = store.get_realm(realm).await? else {
+        return Ok(None);
+    };
+    let base = store.get_branding(&realm.id, None).await?;
+    Ok(Some(kaisatsu_core::BrandingBlock {
+        realm_id: realm.id,
+        org_id: None,
+        ..base.unwrap_or_default()
+    }))
+}
+
+/// The realm's block `base` as the Organization on Portal host `host` shows it: its
+/// appearance over `base`, member by member.
+#[cfg(feature = "portal")]
+fn organization_block(
+    mut base: kaisatsu_core::BrandingBlock,
+    host: &str,
+    look: Option<&jc_core::kinds::OrganizationAppearance>,
+) -> kaisatsu_core::BrandingBlock {
+    base.id = format!("{}:{host}", base.realm_id);
+    base.org_id = Some(host.to_owned());
+    if let Some(look) = look {
+        let over = |target: &mut String, value: Option<&String>| {
+            if let Some(value) = value {
+                value.clone_into(target);
+            }
+        };
+        over(&mut base.instance_name, look.instance_name.as_ref());
+        over(&mut base.short_name, super::appearance::short_name(look));
+        over(&mut base.city, look.city.as_ref());
+        over(
+            &mut base.organisation,
+            look.publisher.as_ref().or(look.instance_name.as_ref()),
+        );
+        over(&mut base.contact_email, look.contact_email.as_ref());
+        let colours = &look.colours;
+        over(&mut base.colours.primary, colours.primary.as_ref());
+        over(&mut base.colours.secondary, colours.secondary.as_ref());
+        over(&mut base.colours.accent, colours.accent.as_ref());
+        over(&mut base.colours.background, colours.background.as_ref());
+        over(&mut base.colours.text, colours.text.as_ref());
+        over(&mut base.logo_svg, look.logo_svg.as_ref());
+    }
+    base.sanitised()
+}
+
 pub async fn build(
     cfg: &KaisatsuSection,
+    organizations: &[crate::config::OrganizationSection],
     ctx: BuildCtx<'_>,
     mount: Mount,
     shutdown: &CancellationToken,
@@ -498,6 +599,10 @@ pub async fn build(
     }
     check_edge_client(&store, realm).await?;
     follow_endpoint_scopes(store.clone(), realm.clone(), shutdown, tasks);
+    #[cfg(feature = "portal")]
+    follow_appearances(&store, realm, organizations, shutdown, tasks);
+    #[cfg(not(feature = "portal"))]
+    let _ = organizations;
     let state = KaisatsuState::new(
         store,
         kek,
@@ -528,6 +633,47 @@ mod tests {
 
     fn names(v: &[&str]) -> Vec<String> {
         v.iter().map(|n| (*n).to_owned()).collect()
+    }
+
+    /// An Organization's sign-in block (UIX-16, T-6777): keyed by its Portal host, its
+    /// appearance over the realm's block; without one the realm's block under that key.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn an_organizations_sign_in_block_is_its_appearance_over_the_realms() {
+        let mut realm = kaisatsu_core::BrandingBlock {
+            realm_id: "r1".into(),
+            organisation: "Installation".into(),
+            city: "Slovakia".into(),
+            ..kaisatsu_core::BrandingBlock::default()
+        };
+        realm.colours.secondary = "#222222".into();
+        let plain = organization_block(realm.clone(), "portal.praha.example", None);
+        assert_eq!(plain.org_id.as_deref(), Some("portal.praha.example"));
+        assert_eq!(plain.id, "r1:portal.praha.example");
+        assert_eq!(
+            kaisatsu_core::BrandingBlock {
+                id: realm.id.clone(),
+                org_id: None,
+                ..plain
+            },
+            realm.clone().sanitised(),
+            "no appearance: the realm's look"
+        );
+        let look: jc_core::kinds::OrganizationAppearance =
+            serde_json::from_value(serde_json::json!({
+                "instanceName": "Banskobystrický kraj",
+                "colours": { "primary": "#0b5394" },
+            }))
+            .expect("an appearance");
+        let own = organization_block(realm, "portal.bbsk.example:8443", Some(&look));
+        assert_eq!(
+            own.organisation, "Banskobystrický kraj",
+            "no publisher: its name"
+        );
+        assert_eq!(own.instance_name, "Banskobystrický kraj");
+        assert_eq!(own.colours.primary, "#0b5394");
+        assert_eq!(own.colours.secondary, "#222222", "left out: the realm's");
+        assert_eq!(own.city, "Slovakia");
     }
 
     #[test]

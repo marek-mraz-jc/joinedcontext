@@ -42,6 +42,10 @@ pub struct Grant {
     pub organization: Option<String>,
     #[schema(value_type = Object)]
     pub rule: Rule,
+    /// JSON pointers a write under this grant leaves at the value given (`Null`: absent): an
+    /// Organization's domain, limits and catalogue stay the operators' (TEN-06, T-6766).
+    #[serde(skip)]
+    pub frozen: Vec<(String, Value)>,
 }
 
 /// Something the caller may or may not do that no rule expresses as a kind and a verb, with the
@@ -160,6 +164,28 @@ pub fn belongs_to_organization(
         || in_force(mirror, identity, Utc::now())
             .iter()
             .any(|(reach, _)| organization_of_reach(mirror, reach).as_deref() == Some(organization))
+}
+
+/// Whether a binding in force scoped to `organization` itself grants `verb` on `kind` for
+/// `target` (T-6766): the right an Organization's own setting asks for when a project is opened in
+/// it, read at that Organization and never through a binding of another one or of one of its
+/// projects. The bootstrap group holds it.
+pub fn holds_at_organization(
+    state: &AppState,
+    identity: &Identity,
+    organization: &str,
+    kind: &str,
+    verb: Verb,
+    target: Option<&Value>,
+) -> bool {
+    in_group(identity, &state.config.bootstrap_admins)
+        || in_force(&state.mirror, identity, Utc::now())
+            .iter()
+            .any(|(reach, grant)| {
+                matches!(reach, Reach::Organization(held) if held == organization)
+                    && grant.rule.grants(kind, verb)
+                    && grant.rule.constraints.iter().all(|c| satisfied(c, target))
+            })
 }
 
 /// Reads every `Role` and `RoleBinding` of the mirror and keeps the rules whose binding names
@@ -479,6 +505,27 @@ impl Effective {
                     continue;
                 }
             }
+            let changed = |(pointer, value): &&(String, Value)| {
+                target
+                    .and_then(|t| t.pointer(pointer))
+                    .unwrap_or(&Value::Null)
+                    != value
+            };
+            if let Some((pointer, _)) = grant
+                .frozen
+                .iter()
+                .find(changed)
+                .filter(|_| verb != Verb::Read)
+            {
+                violation.get_or_insert_with(|| {
+                    format!(
+                        "{} is set by the installation's operators, not by role {} (TEN-06)",
+                        pointer.trim_start_matches('/').replace('/', "."),
+                        grant.role
+                    )
+                });
+                continue;
+            }
             match rule.constraints.iter().find(|c| !satisfied(c, target)) {
                 None => return Ok(()),
                 Some(c) => {
@@ -735,6 +782,11 @@ fn without_organization_kinds(mirror: &Mirror, project: &str, grants: Vec<Grant>
 /// those bindings name. Roles, brokers, environments and platform settings stay the installation's.
 const OWN_SETTINGS_KINDS: [&str; 3] = ["Organization", "RoleBinding", "Group"];
 
+/// The members of an Organization's own manifest its administrator leaves as they are: its
+/// domain (the `{orgDomain}` of its URNs), repository, limits and catalogue publisher are set by
+/// the installation's operators (TEN-06, T-6766).
+const OPERATOR_FIELDS: [&str; 4] = ["domain", "gitRepositoryUrl", "limits", "catalog"];
+
 fn one_of(field: &str, values: Vec<String>) -> Constraint {
     Constraint {
         field: field.to_owned(),
@@ -757,8 +809,9 @@ fn none_of(field: &str, values: Vec<String>) -> Constraint {
 /// [`ORG_NAMESPACE`]: its rules on [`OWN_SETTINGS_KINDS`], each confined by constraints to what
 /// stays inside that Organization (ADR-N-058 section 2.4, T-5248).
 ///
-/// - `Organization`: `metadata.name` is `organization`, `spec.installation` is never set, and no
-///   `delete` (an Organization's projects would point at nothing).
+/// - `Organization`: `metadata.name` is `organization`, `spec.installation` is never set, the
+///   [`OPERATOR_FIELDS`] keep their values, and no `delete` (an Organization's projects would
+///   point at nothing).
 /// - `RoleBinding`: `spec.scope` names `organization`, one of its projects or one of their spaces
 ///   (one rule each, so any one of them admits it; a level it owns nothing of gets no rule).
 /// - `Group`: any name but one a binding outside `organization` names, so a group whose members
@@ -773,6 +826,18 @@ fn narrowed_to_own_settings(mirror: &Mirror, organization: &str, grant: Grant) -
         return Vec::new();
     }
     let own = Reach::Organization(organization.to_owned());
+    let current = mirror
+        .get(ORG_NAMESPACE, "Organization", organization)
+        .map(|env| env.spec)
+        .unwrap_or_default();
+    let frozen: Vec<(String, Value)> = OPERATOR_FIELDS
+        .iter()
+        .map(|field| {
+            let pointer = format!("/spec/{field}");
+            let value = current.get(*field).cloned().unwrap_or(Value::Null);
+            (pointer, value)
+        })
+        .collect();
     let mut narrowed = Vec::new();
     let mut push = |kind: &str, verbs: Vec<Verb>, extra: Vec<Constraint>| {
         if verbs.is_empty() {
@@ -782,6 +847,11 @@ fn narrowed_to_own_settings(mirror: &Mirror, organization: &str, grant: Grant) -
         constraints.extend(extra);
         narrowed.push(Grant {
             organization: Some(organization.to_owned()),
+            frozen: if kind == "Organization" {
+                frozen.clone()
+            } else {
+                Vec::new()
+            },
             rule: Rule {
                 kinds: vec![kind.to_owned()],
                 verbs,
@@ -1061,6 +1131,7 @@ fn in_force(mirror: &Mirror, identity: &Identity, now: DateTime<Utc>) -> Vec<(Re
                     scope: reach.name(),
                     space: None,
                     organization: None,
+                    frozen: Vec::new(),
                     rule: rule.clone(),
                 },
             ));
@@ -1179,6 +1250,7 @@ fn account_grants(
                     scope: reach.name(),
                     space: None,
                     organization: None,
+                    frozen: Vec::new(),
                     rule: Rule { verbs, ..rule },
                 },
             ));

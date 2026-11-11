@@ -9,6 +9,7 @@ import { Suspense, lazy } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { localized } from "../../api/manifest";
 import { mayRead, usePermissions } from "../../api/permissions";
 import { spaceUsageQuery } from "../../api/spaceUsage";
 import { useSampleProjects } from "../../api/projects";
@@ -42,6 +43,9 @@ function useList(project: string, plural: string, enabled: boolean) {
   });
 }
 
+/** A tile that is one link, its whole surface the target: a next step or a home page dashboard. */
+const TILE = "focus-ring block rounded-lg border border-border bg-surface p-4 hover:bg-surface-subtle";
+
 /** How many spaces are counted for entities, so a project of many spaces asks a few. */
 const COUNTED_SPACES = 5;
 
@@ -55,7 +59,7 @@ export function HomePage({
   welcome?: boolean;
   onWelcomeClosed?: () => void;
 }): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const permissions = usePermissions(project);
   const role = roleOf(permissions.data);
   // No grant here yet: the role an invitation proposed waits for its approval.
@@ -69,6 +73,13 @@ export function HomePage({
   // An installation that hides the dashboards section has no page for the card to open (T-2874).
   const dashboardsShown = !isHiddenSection("dashboards", useHiddenSections());
   const dashboards = useList(project, "dashboards", dashboardsShown && role === "viewer" && reads("Dashboard"));
+  // The Organization's home page Dashboards, each read again under this person's rights (T-6779).
+  const widgets = useQuery({
+    queryKey: ["organization", "widgets"],
+    enabled: dashboardsShown,
+    retry: false,
+    queryFn: async () => unwrap(await api.GET("/api/v1/organization/widgets", {})),
+  });
   const changes = useQuery({
     queryKey: queryKeys.changes(project),
     enabled: role === "steward",
@@ -241,10 +252,41 @@ export function HomePage({
               <li key={card.key}>
                 <Link
                   to={card.to}
-                  className="focus-ring block rounded-lg border border-border bg-surface p-4 hover:bg-surface-subtle"
+                  className={TILE}
                 >
                   <span className="block text-body font-semibold text-fg">{t(`home.card.${card.key}.title`, { count: card.count })}</span>
                   <span className="block text-caption text-fg-muted">{t(`home.card.${card.key}.action`)}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {(widgets.data?.widgets ?? []).length > 0 ? (
+        <section aria-labelledby="home-widgets-heading" className="space-y-3">
+          <div>
+            <h2 id="home-widgets-heading" className="text-title font-semibold text-fg">
+              {t("home.widgets.title")}
+            </h2>
+            <p className="text-body text-fg-muted">{t("home.widgets.lead")}</p>
+          </div>
+          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {(widgets.data?.widgets ?? []).map((widget) => (
+              <li key={widget.reference}>
+                <Link
+                  to="/projects/$project/$plural"
+                  params={{ project: widget.project, plural: "dashboards" }}
+                  search={{ dashboard: widget.name }}
+                  className={`${TILE} h-full`}
+                >
+                  <span className="block text-body font-semibold text-fg">
+                    {localized(widget.title as string | Record<string, string> | null, i18n.language, widget.name)}
+                  </span>
+                  <span className="block text-caption text-fg-muted">
+                    {widget.project} · {t("home.widgets.pages", { count: widget.pages })}
+                  </span>
+                  <span className="mt-2 block text-caption font-medium text-primary-soft-fg">{t("home.widgets.open")}</span>
                 </Link>
               </li>
             ))}

@@ -53,6 +53,9 @@ pub struct CreateProjectInput {
     pub display_name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// The Organization it belongs to, when the caller may open a project in several (T-6766).
+    #[serde(default)]
+    pub organization: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -104,9 +107,9 @@ fn export_input_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "format": { "type": "string", "enum": ["yaml", "json"], "description": "The bundle's format; yaml when absent" },
+            "format": { "type": "string", "enum": ["yaml", "json"], "description": "yaml when absent" },
             "kinds": text("Comma-separated plurals, e.g. endpoints,pipelines", QUERY),
-            "names": text("Comma-separated metadata.name values, e.g. doprava", QUERY),
+            "names": text("Comma-separated names, e.g. doprava", QUERY),
             "revision": text("A commit of the configuration repository", TERM)
         },
         "additionalProperties": false
@@ -128,9 +131,10 @@ fn create_project_input_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "name": text("The project slug, a DNS-1123 label", 63),
-            "displayName": text("What people call it; the slug when absent", TITLE),
-            "description": text("One line about what the project is for", TITLE)
+            "name": text("Slug, a DNS-1123 label", 63),
+            "displayName": text("Shown name; the slug when absent", TITLE),
+            "description": text("What it is for, one line", TITLE),
+            "organization": text("Its Organization, e.g. bbsk; only when you may open projects in several", 63)
         },
         "required": ["name"],
         "additionalProperties": false
@@ -156,7 +160,7 @@ fn import_input_schema() -> Value {
                 "The bundle document an export answered",
                 crate::api::import::MAX_UPLOAD_BYTES as u64
             ),
-            "orgDomain": text("Organisation imported ids are rewritten to; this one when absent", NAME),
+            "orgDomain": text("Organisation ids are rewritten to; this one when absent", NAME),
             "conflictPolicy": {
                 "type": "string",
                 "enum": ["fail", "skip", "replace", "rename"],
@@ -230,7 +234,7 @@ pub fn operations() -> Vec<Operation> {
         Operation {
             name: "jc_project_create",
             title: "Open A Project",
-            description: "Opens a project, with the opener's steward binding in the same change; the organization's own setting says who may",
+            description: "Opens a project with you as its steward, in an Organization whose own setting lets you",
             input: create_project_input_schema,
             output: change_schema,
             annotations: OperationAnnotations {
@@ -255,6 +259,7 @@ pub fn operations() -> Vec<Operation> {
                             name: input.name,
                             display_name: input.display_name,
                             description: input.description,
+                            organization: input.organization,
                         }),
                     )
                     .await?;
@@ -265,7 +270,7 @@ pub fn operations() -> Vec<Operation> {
         Operation {
             name: "jc_project_delete",
             title: "Delete A Project",
-            description: "Proposes the one red-lane change that removes a project and every space, endpoint, app, service account, role and binding written for it",
+            description: "Proposes the red-lane change removing a project and its spaces, endpoints, apps, service accounts, roles and bindings",
             input: delete_project_input_schema,
             output: change_schema,
             annotations: OperationAnnotations {
@@ -285,7 +290,7 @@ pub fn operations() -> Vec<Operation> {
         Operation {
             name: "jc_project_export",
             title: "Export Project",
-            description: "The project's manifests as one bundle, narrowed to the kinds and names asked for; the whole project is for organization administrators",
+            description: "The project's manifests as one bundle, narrowed to the kinds and names asked; the whole one needs an organization admin",
             input: export_input_schema,
             output: export_output_schema,
             annotations: OperationAnnotations {

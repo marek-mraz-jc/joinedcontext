@@ -10,6 +10,7 @@ import { RolePresetField } from "./RolePresetField";
 import { SecretRefWidget } from "./SecretRef";
 import { AssigneePicker, AttributeSuggest, PersonPickerWidget } from "./SuggestWidgets";
 import { CronScheduleWidget } from "./CronSchedule";
+import { ColourWidget, NoChoicesField, SvgImageWidget } from "./AppearanceWidgets";
 
 export {
   DataModelPickerWidget,
@@ -25,6 +26,7 @@ export {
 export const portalWidgets = {
   assigneePicker: AssigneePicker,
   attributeSuggest: AttributeSuggest,
+  colour: ColourWidget,
   cronSchedule: CronScheduleWidget,
   dataModelPicker: DataModelPickerWidget,
   entityPicker: EntityPicker,
@@ -32,6 +34,7 @@ export const portalWidgets = {
   personPicker: PersonPickerWidget,
   resourcePicker: ResourcePicker,
   secretRef: SecretRefWidget,
+  svgImage: SvgImageWidget,
   typePicker: TypePickerWidget,
 };
 
@@ -41,5 +44,6 @@ export const portalFields = {
   entitySelector: EntitySelectorField,
   representationOutputs: RepresentationOutputsField,
   knowledgeSources: KnowledgeSourcesField,
+  noChoices: NoChoicesField,
   rolePreset: RolePresetField,
 };

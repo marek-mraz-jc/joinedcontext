@@ -4853,6 +4853,81 @@
         }
       }
     },
+    "/api/v1/organization/widgets": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List The Home Page Widgets",
+        "description": "The Dashboards the request's Organization shows on its Portal home page (spec.appearance.homeWidgets, UIX-16), each read again under the caller's rights: one the caller may not read, or one of another Organization, is left out (T-6779).",
+        "operationId": "list_widgets",
+        "responses": {
+          "200": {
+            "description": "The widgets the caller may read, in the manifest's order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeWidgets"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/widgets/options": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List The Dashboards A Home Page May Show",
+        "description": "Every Dashboard of the named Organization's projects the caller may read: the choices of spec.appearance.homeWidgets, which the propose door checks again (T-6779). An Organization the caller reads nothing in answers an empty list.",
+        "operationId": "list_options",
+        "parameters": [
+          {
+            "name": "organization",
+            "in": "query",
+            "description": "The Organization the form edits, by `metadata.name`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Dashboards the caller may name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetOptions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/preferences": {
       "get": {
         "tags": [
@@ -27287,7 +27362,7 @@
     },
     "/api/v1/projects/{project}/ops/jc_project_create": {
       "post": {
-        "description": "Opens a project, with the opener's steward binding in the same change; the organization's own setting says who may",
+        "description": "Opens a project with you as its steward, in an Organization whose own setting lets you",
         "operationId": "jc_project_create",
         "parameters": [
           {
@@ -27310,17 +27385,22 @@
                 "additionalProperties": false,
                 "properties": {
                   "description": {
-                    "description": "One line about what the project is for",
+                    "description": "What it is for, one line",
                     "maxLength": 256,
                     "type": "string"
                   },
                   "displayName": {
-                    "description": "What people call it; the slug when absent",
+                    "description": "Shown name; the slug when absent",
                     "maxLength": 256,
                     "type": "string"
                   },
                   "name": {
-                    "description": "The project slug, a DNS-1123 label",
+                    "description": "Slug, a DNS-1123 label",
+                    "maxLength": 63,
+                    "type": "string"
+                  },
+                  "organization": {
+                    "description": "Its Organization, e.g. bbsk; only when you may open projects in several",
                     "maxLength": 63,
                     "type": "string"
                   }
@@ -27517,7 +27597,7 @@
     },
     "/api/v1/projects/{project}/ops/jc_project_delete": {
       "post": {
-        "description": "Proposes the one red-lane change that removes a project and every space, endpoint, app, service account, role and binding written for it",
+        "description": "Proposes the red-lane change removing a project and its spaces, endpoints, apps, service accounts, roles and bindings",
         "operationId": "jc_project_delete",
         "parameters": [
           {
@@ -27737,7 +27817,7 @@
     },
     "/api/v1/projects/{project}/ops/jc_project_export": {
       "post": {
-        "description": "The project's manifests as one bundle, narrowed to the kinds and names asked for; the whole project is for organization administrators",
+        "description": "The project's manifests as one bundle, narrowed to the kinds and names asked; the whole one needs an organization admin",
         "operationId": "jc_project_export",
         "parameters": [
           {
@@ -27758,7 +27838,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "format": {
-                    "description": "The bundle's format; yaml when absent",
+                    "description": "yaml when absent",
                     "enum": [
                       "yaml",
                       "json"
@@ -27771,7 +27851,7 @@
                     "type": "string"
                   },
                   "names": {
-                    "description": "Comma-separated metadata.name values, e.g. doprava",
+                    "description": "Comma-separated names, e.g. doprava",
                     "maxLength": 2048,
                     "type": "string"
                   },
@@ -28050,7 +28130,7 @@
                     "type": "boolean"
                   },
                   "orgDomain": {
-                    "description": "Organisation imported ids are rewritten to; this one when absent",
+                    "description": "Organisation ids are rewritten to; this one when absent",
                     "maxLength": 253,
                     "type": "string"
                   }
@@ -50896,6 +50976,58 @@
           "incomplete"
         ]
       },
+      "HomeWidget": {
+        "type": "object",
+        "description": "One Dashboard a home page shows or a form offers.",
+        "required": [
+          "reference",
+          "project",
+          "name",
+          "title",
+          "pages",
+          "public"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "pages": {
+            "type": "integer",
+            "description": "How many pages it has.",
+            "minimum": 0
+          },
+          "project": {
+            "type": "string"
+          },
+          "public": {
+            "type": "boolean",
+            "description": "Whether it carries `visibility: public`, so the open data portal may show it (T-6780)."
+          },
+          "reference": {
+            "type": "string",
+            "description": "`project/name`, as `spec.appearance.homeWidgets` writes it."
+          },
+          "title": {
+            "type": "object",
+            "description": "The Dashboard's title: one string, or one per locale."
+          }
+        }
+      },
+      "HomeWidgets": {
+        "type": "object",
+        "description": "The widgets of the request's Organization this viewer may read, in the manifest's order.",
+        "required": [
+          "widgets"
+        ],
+        "properties": {
+          "widgets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HomeWidget"
+            }
+          }
+        }
+      },
       "Hop": {
         "type": "object",
         "description": "One hop of a binding: a manifest by name, or `hidden` when the caller may not read it.",
@@ -52664,6 +52796,13 @@
           "name": {
             "type": "string",
             "description": "The slug: the `{project}` segment of every path of it (PF-67)."
+          },
+          "organization": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Organization the project belongs to, e.g. `bbsk`: needed only when the caller may open\na project in several; the caller must hold that right there (T-6766)."
           }
         },
         "additionalProperties": false
@@ -58788,6 +58927,21 @@
           }
         ],
         "description": "Who is tried: one person, a member of a group or of a realm role with no person of their own,\none of the project's ServiceAccounts, or the public."
+      },
+      "WidgetOptions": {
+        "type": "object",
+        "description": "Every Dashboard of one Organization the caller may read: what the form offers.",
+        "required": [
+          "options"
+        ],
+        "properties": {
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HomeWidget"
+            }
+          }
+        }
       },
       "Windows": {
         "type": "object",

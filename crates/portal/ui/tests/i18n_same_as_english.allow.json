@@ -118,7 +118,8 @@
     "Euro",
     "Interval",
     "Panel",
-    "Filter: {field}"
+    "Filter: {field}",
+    "Logo (SVG)"
   ],
   "cs": [
     "@context",
@@ -236,7 +237,8 @@
     "Panel: {title}",
     "Euro",
     "Interval",
-    "Panel"
+    "Panel",
+    "Logo (SVG)"
   ],
   "de": [
     "@context",
@@ -405,6 +407,8 @@
     "Position",
     "Variable",
     "Panel",
-    "Filter: {field}"
+    "Filter: {field}",
+    "Logo (SVG)",
+    "Favicon (SVG)"
   ]
 }

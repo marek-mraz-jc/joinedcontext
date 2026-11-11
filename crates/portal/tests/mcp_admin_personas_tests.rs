@@ -691,7 +691,9 @@ async fn a_platform_administrator_sets_up_an_organization_a_project_and_its_data
         json!({ "name": "hel-air", "displayName": "Helsinki air" }),
     )
     .await;
-    proposed(status, &body, "project");
+    // The installation's Organization holds no new data projects (T-6766): one it held before
+    // several Organizations existed stays, and its administrator still builds the data path there.
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     approved(
         &state,
         &manifest(
@@ -742,7 +744,7 @@ async fn an_organization_administrator_runs_its_own_organization_and_no_other() 
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     }
-    // A new project belongs to the installation Organization (ADR-N-058 §2.2).
+    // A new project belongs to the caller's Organization, never the installation's (T-6766).
     let (status, body) = step(
         &who,
         &state,
@@ -751,7 +753,7 @@ async fn an_organization_administrator_runs_its_own_organization_and_no_other() 
         json!({ "name": "esp-bus" }),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(status, StatusCode::OK, "{body}");
 
     data_path(&who, &state, ESP_PROJECT, "espoo.fi").await;
     let space = manifest("ContextSpace", "bus", HEL_PROJECT, json!({}));

@@ -183,6 +183,7 @@ pub fn for_proposal(
         scope: format!("project:{owner}"),
         space: None,
         organization: None,
+        frozen: Vec::new(),
         rule: Rule {
             kinds: vec!["Group".to_owned()],
             verbs: vec![Verb::Propose],
@@ -215,6 +216,7 @@ fn project_binding(state: &AppState, identity: &Identity, manifest: &Value) -> O
         scope: format!("project:{project}"),
         space: None,
         organization: None,
+        frozen: Vec::new(),
         rule: Rule {
             kinds: vec!["RoleBinding".to_owned()],
             verbs: vec![Verb::Propose],
@@ -256,6 +258,7 @@ fn project_unbinding(state: &AppState, identity: &Identity, name: &str) -> Optio
         scope: format!("project:{project}"),
         space: None,
         organization: None,
+        frozen: Vec::new(),
         rule: Rule {
             kinds: vec!["RoleBinding".to_owned()],
             verbs: vec![Verb::Read, Verb::Delete],

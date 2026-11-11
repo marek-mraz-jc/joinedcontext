@@ -1461,6 +1461,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organization/widgets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List The Home Page Widgets
+         * @description The Dashboards the request's Organization shows on its Portal home page (spec.appearance.homeWidgets, UIX-16), each read again under the caller's rights: one the caller may not read, or one of another Organization, is left out (T-6779).
+         */
+        get: operations["list_widgets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/widgets/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List The Dashboards A Home Page May Show
+         * @description Every Dashboard of the named Organization's projects the caller may read: the choices of spec.appearance.homeWidgets, which the propose door checks again (T-6779). An Organization the caller reads nothing in answers an empty list.
+         */
+        get: operations["list_options"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/preferences": {
         parameters: {
             query?: never;
@@ -5065,7 +5105,7 @@ export interface paths {
         put?: never;
         /**
          * Open A Project
-         * @description Opens a project, with the opener's steward binding in the same change; the organization's own setting says who may
+         * @description Opens a project with you as its steward, in an Organization whose own setting lets you
          */
         post: operations["jc_project_create"];
         delete?: never;
@@ -5085,7 +5125,7 @@ export interface paths {
         put?: never;
         /**
          * Delete A Project
-         * @description Proposes the one red-lane change that removes a project and every space, endpoint, app, service account, role and binding written for it
+         * @description Proposes the red-lane change removing a project and its spaces, endpoints, apps, service accounts, roles and bindings
          */
         post: operations["jc_project_delete"];
         delete?: never;
@@ -5105,7 +5145,7 @@ export interface paths {
         put?: never;
         /**
          * Export Project
-         * @description The project's manifests as one bundle, narrowed to the kinds and names asked for; the whole project is for organization administrators
+         * @description The project's manifests as one bundle, narrowed to the kinds and names asked; the whole one needs an organization admin
          */
         post: operations["jc_project_export"];
         delete?: never;
@@ -10306,6 +10346,23 @@ export interface components {
          * @enum {string}
          */
         HoldReason: "share-exceeded" | "empty" | "incomplete";
+        /** @description One Dashboard a home page shows or a form offers. */
+        HomeWidget: {
+            name: string;
+            /** @description How many pages it has. */
+            pages: number;
+            project: string;
+            /** @description Whether it carries `visibility: public`, so the open data portal may show it (T-6780). */
+            public: boolean;
+            /** @description `project/name`, as `spec.appearance.homeWidgets` writes it. */
+            reference: string;
+            /** @description The Dashboard's title: one string, or one per locale. */
+            title: Record<string, never>;
+        };
+        /** @description The widgets of the request's Organization this viewer may read, in the manifest's order. */
+        HomeWidgets: {
+            widgets: components["schemas"]["HomeWidget"][];
+        };
         /** @description One hop of a binding: a manifest by name, or `hidden` when the caller may not read it. */
         Hop: {
             hidden?: boolean;
@@ -11033,6 +11090,11 @@ export interface components {
             displayName?: string | null;
             /** @description The slug: the `{project}` segment of every path of it (PF-67). */
             name: string;
+            /**
+             * @description The Organization the project belongs to, e.g. `bbsk`: needed only when the caller may open
+             *     a project in several; the caller must hold that right there (T-6766).
+             */
+            organization?: string | null;
         };
         /** @description What opening a workspace asks for (API/01 §22). */
         OpenRequest: {
@@ -13268,6 +13330,10 @@ export interface components {
         } | {
             /** @enum {string} */
             kind: "public";
+        };
+        /** @description Every Dashboard of one Organization the caller may read: what the form offers. */
+        WidgetOptions: {
+            options: components["schemas"]["HomeWidget"][];
         };
         /** @description Where each window starts: its oldest reading. */
         Windows: {
@@ -17205,6 +17271,67 @@ export interface operations {
             };
             /** @description Not an administrator of the organization (PF-03) */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_widgets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The widgets the caller may read, in the manifest's order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeWidgets"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_options: {
+        parameters: {
+            query: {
+                /** @description The Organization the form edits, by `metadata.name`. */
+                organization: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Dashboards the caller may name */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WidgetOptions"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -32036,12 +32163,14 @@ export interface operations {
                  *     }
                  */
                 "application/json": {
-                    /** @description One line about what the project is for */
+                    /** @description What it is for, one line */
                     description?: string;
-                    /** @description What people call it; the slug when absent */
+                    /** @description Shown name; the slug when absent */
                     displayName?: string;
-                    /** @description The project slug, a DNS-1123 label */
+                    /** @description Slug, a DNS-1123 label */
                     name: string;
+                    /** @description Its Organization, e.g. bbsk; only when you may open projects in several */
+                    organization?: string;
                 };
             };
         };
@@ -32259,13 +32388,13 @@ export interface operations {
                 /** @example {} */
                 "application/json": {
                     /**
-                     * @description The bundle's format; yaml when absent
+                     * @description yaml when absent
                      * @enum {string}
                      */
                     format?: "yaml" | "json";
                     /** @description Comma-separated plurals, e.g. endpoints,pipelines */
                     kinds?: string;
-                    /** @description Comma-separated metadata.name values, e.g. doprava */
+                    /** @description Comma-separated names, e.g. doprava */
                     names?: string;
                     /** @description A commit of the configuration repository */
                     revision?: string;
@@ -32445,7 +32574,7 @@ export interface operations {
                     conflictPolicy?: "fail" | "skip" | "replace" | "rename";
                     /** @description Answer the plan and write nothing */
                     dryRun?: boolean;
-                    /** @description Organisation imported ids are rewritten to; this one when absent */
+                    /** @description Organisation ids are rewritten to; this one when absent */
                     orgDomain?: string;
                 };
             };
