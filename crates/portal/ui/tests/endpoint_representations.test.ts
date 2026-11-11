@@ -56,14 +56,15 @@ describe("the Endpoint's standards", () => {
   it("keeps an existing list as checked, in its order, and never widens it on save", () => {
     const stored = endpoint({ enabledRepresentations: ["csv", "ngsi-ld"] });
     const form = toForm(stored);
-    expect(form.enabledRepresentations).toEqual(["ngsi-ld", "csv", "mcp"]);
+    // Public and not opted in: MCP is unchecked (T-6761).
+    expect(form.enabledRepresentations).toEqual(["ngsi-ld", "csv"]);
     expect(toEnvelope("helsinki", form, "air", [], undefined, stored).spec).toEqual(stored.spec);
 
     form.enabledRepresentations = [...form.enabledRepresentations, "odata"];
     expect(toEnvelope("helsinki", form, "air", [], undefined, stored).spec).toMatchObject({
       enabledRepresentations: ["csv", "ngsi-ld", "odata"],
     });
-    form.enabledRepresentations = ["ngsi-ld", "mcp"];
+    form.enabledRepresentations = ["ngsi-ld"];
     const narrowed = toEnvelope("helsinki", form, "air", [], undefined, stored).spec as Record<string, unknown>;
     expect(narrowed.enabledRepresentations).toEqual(["ngsi-ld"]);
     expect(narrowed).not.toHaveProperty("disabledRepresentations");
@@ -72,7 +73,7 @@ describe("the Endpoint's standards", () => {
   it("drops a retired file a stored list still names on save (T-4600)", () => {
     const stored = endpoint({ enabledRepresentations: ["geojson", "ngsi-ld", "csv", "xlsx"] });
     const form = toForm(stored);
-    expect(form.enabledRepresentations).toEqual(["ngsi-ld", "csv", "mcp"]);
+    expect(form.enabledRepresentations).toEqual(["ngsi-ld", "csv"]);
     expect(toEnvelope("helsinki", form, "air", [], undefined, stored).spec).toMatchObject({
       enabledRepresentations: ["ngsi-ld", "csv"],
     });
@@ -95,5 +96,49 @@ describe("the Endpoint's standards", () => {
     const form = toForm(stored);
     expect(form.enabledRepresentations).not.toContain("mcp");
     expect(toEnvelope("helsinki", form, "air", [], undefined, stored).spec).toEqual(stored.spec);
+  });
+});
+
+/** T-6761 (EP-24, deny by default): MCP on a public Endpoint is the person's switch. */
+describe("MCP on a public Endpoint", () => {
+  it("is not served until the spec opts in, as jc-core's mcp_on", () => {
+    expect(servedRepresentations({ audience: "public", enabledRepresentations: ["csv"] })).toEqual(["csv", "ngsi-ld"]);
+    expect(servedRepresentations({ audience: "public" })).not.toContain("mcp");
+    expect(servedRepresentations({ audience: "public", mcp: true })).toContain("mcp");
+    expect(servedRepresentations({ audience: "public", enabledRepresentations: ["mcp"] })).toContain("mcp");
+    // An internal Endpoint keeps today's default.
+    expect(servedRepresentations({ audience: "project-list" })).toContain("mcp");
+  });
+
+  it("writes mcp: true when checked and nothing when unchecked", () => {
+    const stored = endpoint({});
+    const form = toForm(stored);
+    expect(form.enabledRepresentations).not.toContain("mcp");
+    expect(toEnvelope("helsinki", form, "air", [], undefined, stored).spec).not.toHaveProperty("mcp");
+
+    form.enabledRepresentations = [...form.enabledRepresentations, "mcp"];
+    expect(toEnvelope("helsinki", form, "air", [], undefined, stored).spec).toMatchObject({ mcp: true });
+  });
+
+  it("lists mcp on a listing Endpoint, and drops a stored switch once unchecked", () => {
+    const listing = endpoint({ enabledRepresentations: ["ngsi-ld", "csv"] });
+    const form = toForm(listing);
+    form.enabledRepresentations = [...form.enabledRepresentations, "mcp"];
+    const opted = toEnvelope("helsinki", form, "air", [], undefined, listing).spec as Record<string, unknown>;
+    expect(opted.enabledRepresentations).toEqual(["ngsi-ld", "csv", "mcp"]);
+    expect(opted).not.toHaveProperty("mcp");
+
+    const switched = endpoint({ mcp: true });
+    const kept = toForm(switched);
+    expect(kept.enabledRepresentations).toContain("mcp");
+    expect(toEnvelope("helsinki", kept, "air", [], undefined, switched).spec).toEqual(switched.spec);
+    kept.enabledRepresentations = kept.enabledRepresentations.filter((rep) => rep !== "mcp");
+    expect(toEnvelope("helsinki", kept, "air", [], undefined, switched).spec).not.toHaveProperty("mcp");
+  });
+
+  it("keeps an internal Endpoint's mcp: false on save", () => {
+    const stored = endpoint({ audience: "project-list", allowedProjects: ["helsinki"], mcp: false });
+    const form = toForm(stored);
+    expect(toEnvelope("helsinki", form, "air", [], undefined, stored).spec).toMatchObject({ mcp: false });
   });
 });

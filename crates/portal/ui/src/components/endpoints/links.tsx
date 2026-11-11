@@ -36,9 +36,14 @@ export const ALL_REPRESENTATIONS = ["ngsi-ld", "mcp", "csv", "ogc-features", "st
 /** The file representations an Endpoint no longer serves (T-4600). */
 export const RETIRED_REPRESENTATIONS: readonly string[] = ["xlsx", "parquet", "json", "zip", "geojson"];
 
-/** Served by every Endpoint whatever it lists: `mcp` only while `spec.mcp` is not `false`. */
-export function alwaysServed(spec: { mcp?: unknown }): string[] {
-  return spec.mcp === false ? ["ngsi-ld"] : ["ngsi-ld", "mcp"];
+/**
+ * Served by every Endpoint whatever it lists: `mcp` only as jc-core's `mcp_on` says, on an
+ * internal Endpoint while `spec.mcp` is not `false`, on a public one only with `spec.mcp: true`
+ * (deny by default, T-6761).
+ */
+export function alwaysServed(spec: { mcp?: unknown; audience?: unknown }): string[] {
+  const mcp = typeof spec.mcp === "boolean" ? spec.mcp : spec.audience !== "public";
+  return mcp ? ["ngsi-ld", "mcp"] : ["ngsi-ld"];
 }
 
 function names(list: unknown): string[] | undefined {
@@ -48,8 +53,8 @@ function names(list: unknown): string[] | undefined {
 /**
  * What an Endpoint serves: the representations its manifest lists or, when it lists none,
  * every one but `sta` less `disabledRepresentations` (EP-104), never a retired file (T-4600);
- * then `ngsi-ld`, which every Endpoint serves (EP-10), and `mcp`, which every Endpoint serves,
- * public or internal, unless `spec.mcp` is `false` (EP-24). The gateway reads the same rule
+ * then `ngsi-ld`, which every Endpoint serves (EP-10), and `mcp` as {@link alwaysServed} says
+ * (EP-24, T-6761). The gateway reads the same rule
  * (jc-core's `served_representations`), so a link shown here answers there; its Policy still
  * decides every call.
  */
@@ -57,6 +62,7 @@ export function servedRepresentations(spec: {
   enabledRepresentations?: unknown;
   disabledRepresentations?: unknown;
   mcp?: unknown;
+  audience?: unknown;
 }): string[] {
   const always = alwaysServed(spec);
   const disabled = names(spec.disabledRepresentations) ?? [];

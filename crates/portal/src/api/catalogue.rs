@@ -1319,7 +1319,8 @@ pub(crate) fn endpoint_url(base: &Url, slug: &str) -> String {
 
 /// What an Endpoint spec serves: the listed representations or, with no list, every one but
 /// the opt-in `sta` and `ical` less `disabledRepresentations` (EP-104); then `ngsi-ld`, which every Endpoint serves
-/// (EP-10), and `mcp` unless `spec.mcp` is `false` (EP-24). CSV is the one file: the retired
+/// (EP-10), and `mcp` as jc-core's `mcp_on` says: unless `spec.mcp` is `false` (EP-24), on a
+/// `public` Endpoint only with `spec.mcp: true` (T-6761). CSV is the one file: the retired
 /// ones (`xlsx`, `parquet`, `json`, `zip`, `geojson`, T-4600) are never listed, whatever a
 /// manifest the migration has not reached yet still names. The default set is jc-core's
 /// `Representation::ALL`, so the page and the instance agree.
@@ -1332,7 +1333,10 @@ pub(crate) fn served_representations(spec: &Value) -> Vec<String> {
                 .collect()
         })
     };
-    let mcp_off = spec["mcp"] == Value::Bool(false);
+    let mcp_off = match spec["mcp"].as_bool() {
+        Some(on) => !on,
+        None => spec["audience"] == "public",
+    };
     let mut served: Vec<String> = names("enabledRepresentations").unwrap_or_else(|| {
         let disabled = names("disabledRepresentations").unwrap_or_default();
         jc_core::kinds::endpoint::Representation::ALL
@@ -2710,6 +2714,21 @@ classes:
             ["sta", "ngsi-ld", "mcp"],
             "a list wins; sta is served only where listed"
         );
+        // T-6761: a public Endpoint serves MCP only when it opts in, as jc-core's `mcp_on`.
+        let public = |more: Value| {
+            let mut spec = json!({ "audience": "public", "enabledRepresentations": ["csv"] });
+            spec.as_object_mut()
+                .expect("an object")
+                .extend(more.as_object().expect("an object").clone());
+            served(spec)
+        };
+        assert_eq!(public(json!({})), ["csv", "ngsi-ld"]);
+        assert_eq!(public(json!({ "mcp": true })), ["csv", "ngsi-ld", "mcp"]);
+        assert_eq!(
+            public(json!({ "enabledRepresentations": ["csv", "mcp"] })),
+            ["csv", "mcp", "ngsi-ld"]
+        );
+        assert!(!served(json!({ "audience": "public" })).contains(&"mcp".to_owned()));
     }
 
     #[test]

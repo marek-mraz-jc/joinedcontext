@@ -166,6 +166,7 @@ export function checkedRepresentations(spec: {
   enabledRepresentations?: unknown;
   disabledRepresentations?: unknown;
   mcp?: unknown;
+  audience?: unknown;
 }): string[] {
   const served = servedRepresentations(spec);
   return REPRESENTATIONS.filter((rep) => served.includes(rep));
@@ -177,26 +178,38 @@ export function checkedRepresentations(spec: {
  * one that serves `sta`, which only a list turns on. Every other Endpoint lists nothing and
  * names the unchecked ones in `disabledRepresentations`, so a standard added later reaches it.
  * The always-on ones are never written as disabled: jc-core refuses that (EP-10, EP-24).
+ * MCP on a public Endpoint is the person's switch (T-6761): checked, it is listed or written as
+ * `mcp: true`; unchecked, neither. An internal Endpoint keeps the `mcp` it had.
  */
 export function representationSpec(
   checked: string[],
   stored: { enabledRepresentations?: unknown; mcp?: unknown } = {},
-): { enabledRepresentations?: string[]; disabledRepresentations?: string[] } {
-  const always = alwaysServed(stored);
+  audience?: string,
+): { enabledRepresentations?: string[]; disabledRepresentations?: string[]; mcp?: boolean } {
+  const isPublic = audience === "public";
+  const always = isPublic ? ["ngsi-ld"] : alwaysServed(stored);
   const chosen = checked.filter((rep) => !always.includes(rep));
+  const on = isPublic && chosen.includes("mcp");
+  // The `mcp` line to write: an internal Endpoint keeps its own; a public one that opted in by
+  // `mcp: true` keeps the switch rather than a list entry, and an unchecked one keeps `false`.
+  const switched = on && stored.mcp === true;
+  const own = typeof stored.mcp === "boolean" ? { mcp: stored.mcp } : {};
+  const mcp = !isPublic ? own : switched ? { mcp: true } : !on && stored.mcp === false ? own : {};
   const listed = Array.isArray(stored.enabledRepresentations)
     ? stored.enabledRepresentations.filter((rep): rep is string => typeof rep === "string")
     : undefined;
   // SensorThings and iCalendar are served only where a list names them (EP-104, EP-125).
   if (listed || chosen.includes("sta") || chosen.includes("ical")) {
-    const kept = (listed ?? []).filter((rep) => always.includes(rep) || chosen.includes(rep));
-    const list = [...kept, ...chosen.filter((rep) => !kept.includes(rep))];
-    return { enabledRepresentations: list.length > 0 ? list : ["ngsi-ld"] };
+    const fresh = chosen.filter((rep) => !(switched && rep === "mcp"));
+    const held = (listed ?? []).filter((rep) => always.includes(rep) || fresh.includes(rep));
+    const list = [...held, ...fresh.filter((rep) => !held.includes(rep))];
+    return { enabledRepresentations: list.length > 0 ? list : ["ngsi-ld"], ...mcp };
   }
+  const opted = on ? { mcp: true } : mcp;
   const disabled = REPRESENTATIONS.filter(
     (rep) => rep !== "sta" && rep !== "ical" && rep !== "mcp" && !always.includes(rep) && !chosen.includes(rep),
   );
-  return disabled.length > 0 ? { disabledRepresentations: disabled } : {};
+  return disabled.length > 0 ? { disabledRepresentations: disabled, ...opted } : opted;
 }
 
 function toSpec(
@@ -224,7 +237,7 @@ function toSpec(
   delete (rest as Partial<EndpointForm>).title;
   return {
     ...rest,
-    ...representationSpec(checked ?? [], stored),
+    ...representationSpec(checked ?? [], stored, form.audience),
     ...keptRepresentations(representations, checked ?? []),
     slug,
     ...publishOf(form),
@@ -257,6 +270,7 @@ const OWNED_SPEC = [
   "audience",
   "enabledRepresentations",
   "disabledRepresentations",
+  "mcp",
   "allowedProjects",
   "rateLimits",
   "caching",
@@ -1286,8 +1300,9 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     ...endpointUiSchema,
     enabledRepresentations: {
       ...endpointUiSchema.enabledRepresentations,
+      // MCP on a public Endpoint is the person's switch, off until checked (T-6761).
       "ui:enumDisabled": disabledRepresentations(
-        ALWAYS_ON_REPRESENTATIONS,
+        editing?.audience === "public" ? ["ngsi-ld"] : ALWAYS_ON_REPRESENTATIONS,
         editedSpace ? fitQuery.data : undefined,
         editing?.enabledRepresentations,
       ),
@@ -1643,7 +1658,13 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
         onSubmit={(form, draftRef) => propose.mutate({ form, create: isNew, draft: draftRef })}
         onChange={(form) => {
           if (form) {
-            setEditing(form);
+            // Turning an Endpoint public turns its MCP off until the person checks it (T-6761).
+            const turnedPublic = form.audience === "public" && editing !== null && editing.audience !== "public";
+            setEditing(
+              turnedPublic
+                ? { ...form, enabledRepresentations: form.enabledRepresentations.filter((rep) => rep !== "mcp") }
+                : form,
+            );
           }
         }}
         afterFields={
@@ -1659,7 +1680,8 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
 
             {editing?.audience === "public" ? (
               <Alert role="note" tone="warning">
-                {t("endpoints.publicNotice")}
+                <p>{t("endpoints.publicNotice")}</p>
+                <p data-testid="public-mcp-hint">{t("endpoints.publicMcpHint")}</p>
               </Alert>
             ) : null}
 

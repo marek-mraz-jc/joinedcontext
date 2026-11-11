@@ -1188,7 +1188,8 @@ fn member(name: &str) -> String {
     format!("    - {{ kind: Endpoint, name: {name} }}\n")
 }
 
-/// A project-list Endpoint beside the seed's public one, and one that serves no MCP.
+/// A project-list Endpoint beside the seed's public one (which does not opt in to MCP), one
+/// that turns MCP off and a public one that opts in (T-6761).
 fn narrow_endpoints(dir: &Path) {
     for (name, slug, extra) in [
         (
@@ -1200,6 +1201,11 @@ fn narrow_endpoints(dir: &Path) {
             "no-mcp",
             "b4y7pq2mzt6vhx3nbwrs5cjd3f",
             "audience: public\n  mcp: false",
+        ),
+        (
+            "open-air",
+            "c4y7pq2mzt6vhx3nbwrs5cjd3f",
+            "audience: public\n  mcp: true",
         ),
     ] {
         write(
@@ -1219,7 +1225,8 @@ fn with_mcp_server(report: &validate::Report) -> Vec<&str> {
         .collect()
 }
 
-/// MF-53: a server over Endpoints that exist, serve MCP and admit its audience is no finding.
+/// MF-53: a server over Endpoints that exist, serve MCP and admit its audience is no finding;
+/// its public member serves MCP because it opts in (T-6761).
 #[test]
 fn a_named_mcp_server_over_its_projects_endpoints_is_valid() {
     let dir = valid_repo("mcp-server-ok");
@@ -1227,7 +1234,7 @@ fn a_named_mcp_server_over_its_projects_endpoints_is_valid() {
     mcp_server(
         &dir,
         "project-list",
-        &format!("{}{}", member("public-air"), member("team-air")),
+        &format!("{}{}", member("open-air"), member("team-air")),
     );
     let report = validate::run(&dir);
     assert!(report.findings.is_empty(), "{:?}", report.findings);
@@ -1244,15 +1251,24 @@ fn a_named_mcp_server_wider_than_its_members_or_naming_what_is_not_there_is_refu
         &dir,
         "public",
         &format!(
-            "{}{}{}",
+            "{}{}{}{}",
             member("team-air"),
             member("no-mcp"),
-            member("nowhere")
+            member("nowhere"),
+            member("public-air")
         ),
     );
     let report = validate::run(&dir);
     let found = with_mcp_server(&report);
-    assert_eq!(found.len(), 3, "{found:?}");
+    assert_eq!(found.len(), 4, "{found:?}");
+    // T-6761: a public member that does not opt in is refused naming the field to set.
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("`ovzdusie/public-air` serves no MCP")
+                && m.contains("`spec.mcp: true`")),
+        "{found:?}"
+    );
     assert!(
         found
             .iter()

@@ -496,8 +496,8 @@ fn listing(representations: &str, extra: &str) -> Endpoint {
     .expect("the manifest parses")
 }
 
-/// EP-24: MCP is served without being listed, internal or public, and only `mcp: false`
-/// leaves it out; the listed order stays as written.
+/// EP-24: an internal Endpoint serves MCP without listing it, and only `mcp: false` leaves it
+/// out; the listed order stays as written.
 #[test]
 fn every_endpoint_serves_mcp_unless_it_opts_out() {
     let listed = listing("[ngsi-ld, csv]", "");
@@ -527,6 +527,46 @@ fn every_endpoint_serves_mcp_unless_it_opts_out() {
         .spec
         .served_representations()
         .contains(&Representation::Mcp));
+}
+
+fn public(representations: &str, extra: &str) -> Endpoint {
+    Endpoint::from_yaml(&format!(
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: air\n  \
+         namespace: bb-ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  \
+         slug: zt4qm7ge2xdv6ksb3ncf5arw2y\n  audience: public\n{representations}{extra}"
+    ))
+    .expect("the manifest parses")
+}
+
+/// T-6761 (EP-24, deny by default): a public Endpoint serves MCP only when it opts in, with
+/// `mcp: true` or `mcp` in its list; listing nothing does not open it to anonymous AI clients.
+#[test]
+fn a_public_endpoint_serves_mcp_only_when_it_opts_in() {
+    use Representation as R;
+    for (representations, extra, served) in [
+        ("  enabledRepresentations: [ngsi-ld, csv]\n", "", false),
+        ("", "", false),
+        ("  disabledRepresentations: [csv]\n", "", false),
+        (
+            "  enabledRepresentations: [ngsi-ld, csv]\n",
+            "  mcp: true\n",
+            true,
+        ),
+        ("", "  mcp: true\n", true),
+        ("  enabledRepresentations: [ngsi-ld, mcp]\n", "", true),
+        ("", "  mcp: false\n", false),
+    ] {
+        let endpoint = public(representations, extra);
+        endpoint.validate().expect("valid");
+        assert_eq!(
+            endpoint.spec.served_representations().contains(&R::Mcp),
+            served,
+            "{representations}{extra}"
+        );
+        assert_eq!(endpoint.spec.mcp_on(), extra == "  mcp: true\n");
+    }
+    // An internal Endpoint keeps today's default.
+    assert!(listing("[ngsi-ld]", "").spec.mcp_on());
 }
 
 /// EP-10 (T-2939, T-4597): NGSI-LD is served without being listed, like MCP, so an endpoint
@@ -732,7 +772,8 @@ fn defaulted(extra: &str) -> Result<Endpoint, String> {
 
 #[test]
 fn an_endpoint_that_lists_nothing_serves_every_standard_but_sta() {
-    let ep = defaulted("").expect("parses");
+    // GOLDEN is public, so MCP is served only with its opt-in (T-6761).
+    let ep = defaulted("  mcp: true\n").expect("parses");
     ep.validate().expect("validates");
     use Representation as R;
     assert_eq!(
@@ -747,8 +788,8 @@ fn an_endpoint_that_lists_nothing_serves_every_standard_but_sta() {
         ],
         "EP-104, EP-125: SensorThings and iCalendar are opt-in"
     );
-    let narrowed =
-        defaulted("  disabledRepresentations: [odata, csv, websocket]\n").expect("parses");
+    let narrowed = defaulted("  mcp: true\n  disabledRepresentations: [odata, csv, websocket]\n")
+        .expect("parses");
     narrowed.validate().expect("validates");
     assert_eq!(
         narrowed.spec.served_representations(),
@@ -757,6 +798,8 @@ fn an_endpoint_that_lists_nothing_serves_every_standard_but_sta() {
     let no_mcp = defaulted("  mcp: false\n").expect("parses");
     no_mcp.validate().expect("validates");
     assert!(!no_mcp.spec.served_representations().contains(&R::Mcp));
+    let closed = defaulted("").expect("parses");
+    assert!(!closed.spec.served_representations().contains(&R::Mcp));
     let round = Endpoint::from_yaml(&narrowed.to_yaml().expect("yaml")).expect("re-import");
     assert_eq!(round, narrowed, "an omitted list stays omitted");
     assert!(!narrowed
