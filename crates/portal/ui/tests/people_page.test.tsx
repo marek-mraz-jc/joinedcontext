@@ -263,6 +263,34 @@ describe("Organization → People", () => {
     await expectNoViolations(screen.getByRole("table", { name: P.caption }).closest("section") as HTMLElement);
   });
 
+  it("ticks and deletes only the people the grid's filter shows, never a filtered-out one (T-6749)", async () => {
+    const user = userEvent.setup();
+    const sent: Sent[] = [];
+    renderPage(<People />, { path: "/organization/people", answer: answer(sent) });
+
+    // Jana is ticked first, then the State filter hides her: she leaves the selection with her row.
+    await user.click(await screen.findByRole("checkbox", { name: "Select Jana Nováková" }));
+    await user.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: ${P.state}` }));
+    await user.click(screen.getByRole("menuitem", { name: en.entityGrid.filterColumn }));
+    await user.click(
+      await within(screen.getByRole("dialog")).findByRole("button", {
+        name: `${en.entityGrid.onlyValue}: ${P.disabled}, ${P.unverified}`,
+      }),
+    );
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("link", { name: "Jana Nováková" })).toBeNull();
+    expect(screen.queryByRole("toolbar")).toBeNull();
+
+    await user.click(screen.getByRole("checkbox", { name: P.bulk.selectAll }));
+    const shown = document.querySelectorAll(".jc-data-grid tbody tr").length;
+    const toolbar = screen.getByRole("toolbar", { name: `${shown} selected` });
+    await user.click(within(toolbar).getByRole("button", { name: P.bulk.delete }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByTestId("confirm-accept"));
+
+    await waitFor(() => expect(sent.filter((s) => s.path.endsWith("/people/remove"))).toHaveLength(1));
+    expect(sent.find((s) => s.path.endsWith("/people/remove"))).toMatchObject({ body: { ids: ["eva-id"] } });
+  });
+
   it("disables the ticked people and names whom the server refused (T-5606)", async () => {
     const user = userEvent.setup();
     const sent: Sent[] = [];

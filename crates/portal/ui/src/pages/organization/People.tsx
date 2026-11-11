@@ -27,6 +27,8 @@ import {
 } from "../../components/ui";
 import { AdminGrid } from "../../components/grid/AdminGrid";
 import type { DataColumn } from "../../components/grid/AdminGrid";
+import { arrangeRows, EMPTY_QUERY } from "@joinedcontext/sdk/grid";
+import type { DataQuery } from "@joinedcontext/sdk/grid";
 import { ResourcePageFailed } from "../../components/ui/PageState";
 import { AskAdmins } from "./AskAdmins";
 import { DeniedNote, PermissionGuard } from "../../components/ui/PermissionGuard";
@@ -374,6 +376,8 @@ export function People(): JSX.Element {
   const [invited, setInvited] = useState<Invitation | null>(null);
   // The people ticked on this page; a new search or page starts with nobody ticked.
   const [selected, setSelected] = useState<Person[]>([]);
+  // The grid's filters and sort, held here so ticking and the bulk actions reach only the rows it shows.
+  const [view, setView] = useState<DataQuery>({ ...EMPTY_QUERY, pageSize: PAGE });
 
   const people = useQuery({
     queryKey: queryKeys.peoplePage(search, first),
@@ -391,18 +395,12 @@ export function People(): JSX.Element {
     {
       key: "name",
       label: t("organization.people.name"),
-      heading: (
-        <span className="inline-flex items-center gap-2">
-          <SelectAll items={items} selected={selected} onChange={setSelected} />
-          {t("organization.people.name")}
-        </span>
-      ),
       text: fullName,
       cell: (person) => (
         <span className="inline-flex items-center gap-2">
           <Checkbox
             label={<span className="sr-only">{t("organization.people.bulk.select", { name: fullName(person) })}</span>}
-            checked={selected.some((one) => one.id === person.id)}
+            checked={ticked.some((one) => one.id === person.id)}
             onChange={(event) =>
               setSelected((now) => (event.target.checked ? [...now, person] : now.filter((one) => one.id !== person.id)))
             }
@@ -446,6 +444,18 @@ export function People(): JSX.Element {
         when(person.lastSeen, locale) ?? <span className="text-fg-subtle">{t("organization.people.noSession")}</span>,
     },
   ];
+  // What the grid shows after its filters: a person filtered out is never ticked, so a bulk action never reaches them.
+  const shown = arrangeRows(items, columns, view).rows;
+  const ticked = selected.filter((person) => shown.some((one) => one.id === person.id));
+  columns[0] = {
+    ...columns[0],
+    heading: (
+      <span className="inline-flex items-center gap-2">
+        <SelectAll items={shown} selected={ticked} onChange={setSelected} />
+        {t("organization.people.name")}
+      </span>
+    ),
+  };
 
   if (permissions.isLoading) {
     return (
@@ -503,7 +513,7 @@ export function People(): JSX.Element {
           {people.isError ? null : (
             <>
               <PendingInvitations people={items} locale={locale} />
-              <BulkActions selected={selected} onDone={() => setSelected([])} />
+              <BulkActions selected={ticked} onDone={() => setSelected([])} />
             </>
           )}
 
@@ -518,6 +528,8 @@ export function People(): JSX.Element {
             stack
             noSearch
             pageSizes={[PAGE]}
+            view={view}
+            onViewChange={setView}
             empty={
               <EmptyState
                 bare
