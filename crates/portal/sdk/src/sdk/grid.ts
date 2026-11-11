@@ -7,7 +7,7 @@ export { EntityGrid } from "../grid/EntityGrid";
 // A list that is not NGSI-LD (an admin list) on the same grid: typed rows and columns (T-6739).
 export { DataGrid, DEFAULT_DATA_LABELS } from "../grid/DataGrid";
 export type { DataGridLabels, DataGridProps } from "../grid/DataGrid";
-export { arrangeRows, EMPTY_QUERY, filterRows, passes, sortRows, valuesOf } from "../grid/arrayRows";
+export { arrangeRows, EMPTY_QUERY, filterDataRows, passes, sortDataRows, valuesOf } from "../grid/arrayRows";
 export type { DataColumn, DataKind, DataQuery, DataSort } from "../grid/arrayRows";
 export { ArrangePanel } from "../grid/ArrangePanel";
 export type { ArrangeItem, ArrangeLabels, ArrangePanelProps } from "../grid/ArrangePanel";
