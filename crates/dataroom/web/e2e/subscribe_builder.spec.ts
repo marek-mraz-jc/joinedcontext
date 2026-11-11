@@ -66,7 +66,7 @@ async function serve(page: Page, opts: { facets: boolean }) {
 }
 
 // The date fields and the preview's dates read as a Slovak reader's browser shows them.
-test.use({ locale: "sk-SK", timezoneId: "Europe/Bratislava" });
+test.use({ locale: "sk-SK", timezoneId: "Europe/Bratislava", launchOptions: { args: ["--lang=sk-SK"], env: { ...process.env, LANG: "sk_SK.UTF-8", LANGUAGE: "sk" } } });
 
 const VIEWPORTS = [
   { width: 1440, height: 1000 },
@@ -83,6 +83,7 @@ for (const viewport of VIEWPORTS) {
     const genre = page.getByLabel("Žáner", { exact: true });
     await expect(town).toBeVisible();
     await expect(page.locator("#jc-subscribe-no-facets")).toBeHidden();
+    await expect(page.locator("#jc-subscribe-preview li").first()).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/builder-empty-${viewport.width}.png`, fullPage: true });
 
     await town.fill("zvolen");
@@ -137,6 +138,7 @@ for (const viewport of VIEWPORTS) {
     await expect(page.locator("#jc-subscribe-no-facets")).toBeVisible();
     await page.locator("#jc-subscribe-from").fill("2026-12-01");
     await expect(page.locator("#jc-subscribe-mine-url")).toHaveValue(/feeds\/q=startDate%3E%3D2026-12-01T00%3A00%3A00Z\/vsetky\.ics$/);
+    await expect(page.locator("#jc-subscribe-preview li").first()).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/builder-nofacets-${viewport.width}.png`, fullPage: true });
   });
 }
