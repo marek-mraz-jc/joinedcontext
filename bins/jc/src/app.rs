@@ -925,6 +925,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         };
         vars.extend(modules::portal::organization_vars(cfg, siblings.listener));
         vars.extend(modules::portal::apps_vars(cfg));
+        vars.extend(modules::portal::reconciler_vars(cfg));
         modules::portal::config(mount, env, vars)?;
     }
     let mut servers = vec![serve(listener, built.router, shutdown.clone())];
@@ -1077,6 +1078,7 @@ async fn portal_attempt(
                 modules::portal::organization_vars(&cfg, shared.siblings.listener)
                     .into_iter()
                     .chain(modules::portal::apps_vars(&cfg))
+                    .chain(modules::portal::reconciler_vars(&cfg))
                     .collect(),
                 mount,
                 &shutdown,
@@ -1443,6 +1445,17 @@ mod tests {
     }
 
     #[cfg(feature = "portal")]
+    #[test]
+    fn the_portal_section_sets_the_removal_hold() {
+        let cfg = dev_config("portal", "[portal]\nremoval_hold_percent = 40\n");
+        let vars = modules::portal::reconciler_vars(&cfg);
+        assert_eq!(
+            vars.get("JC_PORTAL_REMOVAL_HOLD_PERCENT").map(String::as_str),
+            Some("40")
+        );
+        assert!(modules::portal::reconciler_vars(&dev_config("portal", "")).is_empty());
+    }
+
     #[test]
     fn the_app_hosts_wildcard_is_a_portal_entry_and_names_the_apps_apex() {
         let cfg = dev_config(

@@ -4229,6 +4229,286 @@ output_error{stream="kpi"} 6
         assert_eq!(syncer.status().last_error, None);
     }
 
+    /// A space and nine Endpoints of the city: ten objects.
+    fn ten_objects() -> Vec<(&'static str, String)> {
+        const ENDPOINTS: [&str; 9] = [
+            "projects/city/endpoints/e0.yaml",
+            "projects/city/endpoints/e1.yaml",
+            "projects/city/endpoints/e2.yaml",
+            "projects/city/endpoints/e3.yaml",
+            "projects/city/endpoints/e4.yaml",
+            "projects/city/endpoints/e5.yaml",
+            "projects/city/endpoints/e6.yaml",
+            "projects/city/endpoints/e7.yaml",
+            "projects/city/endpoints/e8.yaml",
+        ];
+        let mut files = vec![(
+            "projects/city/spaces/catalog/space.yaml",
+            manifest("ContextSpace", "catalog", json!({})),
+        )];
+        for (i, path) in ENDPOINTS.into_iter().enumerate() {
+            let last = char::from(b'a' + u8::try_from(i).expect("nine"));
+            files.push((
+                path,
+                manifest(
+                    "Endpoint",
+                    &format!("e{i}"),
+                    json!({
+                        "contextSpaceRef": {"kind": "ContextSpace", "name": "catalog"},
+                        "slug": format!("{}{last}", "e".repeat(25)),
+                        "audience": "public",
+                        "enabledRepresentations": ["ngsi-ld"],
+                    }),
+                ),
+            ));
+        }
+        files
+    }
+
+    /// T-6708 (P-6): a revision that drops 3 of the city's 10 objects removes nothing live and
+    /// marks the project; the merge of a confirmed destructive Change releases it.
+    #[tokio::test]
+    async fn a_30_percent_removal_is_held_until_a_destructive_change_confirms_it() {
+        let base = ten_objects();
+        let (forge, shako, shared) = changing_forge(&base).await;
+        let mirror = Arc::new(Mirror::new());
+        let syncer = Syncer::new(Arc::new(shako), Arc::clone(&mirror));
+        syncer.sync_once().await.expect("the first run loads");
+        assert!(!mirror.removals_held());
+
+        next_revision(&shared, &base[..7], &[]);
+        syncer.sync_once().await.expect("the shrunk run loads");
+        assert!(mirror.removals_held(), "3 of 10 objects went unconfirmed");
+        assert_eq!(syncer.applied.get().expect("applied")["city"].len(), 10);
+        syncer.sync_once().await.expect("the run after loads");
+        assert!(mirror.removals_held(), "the hold stands until a confirm");
+
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Commits('rev-3')",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Message": "Merge change proposal chg-1: x\n\nApproved in the Portal by eva@bb.sk\nRisk: destructive"
+            })))
+            .mount(&forge)
+            .await;
+        next_revision(&shared, &base[..7], &[]);
+        syncer.sync_once().await.expect("the confirmed run loads");
+        assert!(!mirror.removals_held(), "the confirm releases the hold");
+        assert_eq!(syncer.applied.get().expect("applied")["city"].len(), 7);
+    }
+
+    /// T-6708 (P-6): dropping one object of ten applies as written.
+    #[tokio::test]
+    async fn a_10_percent_removal_applies() {
+        let base = ten_objects();
+        let (_forge, shako, shared) = changing_forge(&base).await;
+        let mirror = Arc::new(Mirror::new());
+        let syncer = Syncer::new(Arc::new(shako), Arc::clone(&mirror));
+        syncer.sync_once().await.expect("the first run loads");
+        next_revision(&shared, &base[..9], &[]);
+        syncer.sync_once().await.expect("the next run loads");
+        assert!(!mirror.removals_held());
+        assert_eq!(syncer.applied.get().expect("applied")["city"].len(), 9);
+    }
+
+    /// T-6708 (P-6): a ContextSpace is never removed unconfirmed, however small its share.
+    #[tokio::test]
+    async fn a_context_space_removal_is_held() {
+        let base = ten_objects();
+        let extra = (
+            "projects/city/spaces/extra/space.yaml",
+            manifest("ContextSpace", "extra", json!({})),
+        );
+        let (_forge, shako, shared) = changing_forge(&base).await;
+        next_revision(&shared, &base, std::slice::from_ref(&extra));
+        let mirror = Arc::new(Mirror::new());
+        let syncer = Syncer::new(Arc::new(shako), Arc::clone(&mirror));
+        syncer.sync_once().await.expect("the first run loads");
+        next_revision(&shared, &base, &[]);
+        syncer.sync_once().await.expect("the next run loads");
+        assert!(mirror.removals_held(), "1 of 11, but a ContextSpace");
+    }
+
+    /// Project `repo`'s own repository on `forge`: `files` while `up` holds, a 503 otherwise.
+    async fn project_repository(
+        forge: &MockServer,
+        repo: &str,
+        files: Vec<(&'static str, String)>,
+        up: Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let at = format!("/odata/Repositories(Owner='test-owner',Name='{repo}')");
+        let tree: Vec<serde_json::Value> = files
+            .iter()
+            .map(|(p, _)| json!({ "Path": p, "Type": "blob" }))
+            .collect();
+        let listed = Arc::clone(&up);
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{at}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .respond_with(move |_: &wiremock::Request| {
+                if listed.load(std::sync::atomic::Ordering::SeqCst) {
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({ "Truncated": false, "Tree": tree.clone() }))
+                } else {
+                    ResponseTemplate::new(503)
+                }
+            })
+            .mount(forge)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{at}/Shako.File(Path=@p,Ref=@r)")))
+            .respond_with(move |request: &wiremock::Request| {
+                let wanted = request
+                    .url
+                    .query_pairs()
+                    .find(|(key, _)| key == "@p")
+                    .map(|(_, value)| value.trim_matches('\'').to_owned())
+                    .unwrap_or_default();
+                match files.iter().find(|(p, _)| *p == wanted) {
+                    Some((_, text)) if up.load(std::sync::atomic::Ordering::SeqCst) => {
+                        ResponseTemplate::new(200).set_body_json(json!({
+                            "Sha": "blob-sha",
+                            "Content": base64::engine::general_purpose::STANDARD.encode(text)
+                        }))
+                    }
+                    _ => ResponseTemplate::new(503),
+                }
+            })
+            .mount(forge)
+            .await;
+    }
+
+    /// The organization `bb` a layout 2 registry names.
+    fn organization() -> String {
+        serde_json::to_string(&json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Organization",
+            "metadata": {"name": "bb", "namespace": "org"},
+            "spec": {"domain": "bb.sk", "locales": ["en"], "defaultLocale": "en"},
+        }))
+        .expect("JSON")
+    }
+
+    /// Project `slug`'s registry entry, its repository `{slug}-repo`.
+    fn registry_entry(slug: &str) -> String {
+        serde_json::to_string(&json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Project",
+            "metadata": {"name": slug, "namespace": "org"},
+            "spec": {"organizationRef": "bb", "repository": {"name": format!("{slug}-repo")}, "ref": "main"},
+        }))
+        .expect("JSON")
+    }
+
+    /// Project `slug`'s own files: a space and an Endpoint `e` on it.
+    fn project_files(slug: &str) -> Vec<(&'static str, String)> {
+        let doc = |kind: &str, name: &str, spec: serde_json::Value| {
+            serde_json::to_string(&json!({
+                "apiVersion": "joinedcontext.com/v1alpha1",
+                "kind": kind,
+                "metadata": {"name": name, "namespace": slug},
+                "spec": spec,
+            }))
+            .expect("JSON")
+        };
+        let own = serde_json::to_string(&json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Project",
+            "metadata": {"name": slug, "namespace": "org"},
+            "spec": {"organizationRef": "bb"},
+        }))
+        .expect("JSON");
+        vec![
+            (".jc/layout", "2\n".to_owned()),
+            ("project.yaml", own),
+            ("spaces/s/space.yaml", doc("ContextSpace", "s", json!({}))),
+            (
+                "endpoints/e.yaml",
+                doc(
+                    "Endpoint",
+                    "e",
+                    json!({
+                        "contextSpaceRef": {"kind": "ContextSpace", "name": "s"},
+                        "slug": "ffffffffffffffffffffffffff",
+                        "audience": "public",
+                        "enabledRepresentations": ["ngsi-ld"],
+                    }),
+                ),
+            ),
+        ]
+    }
+
+    fn state_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("jc-t6708-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// T-6708 (P-5): after a restart, a project whose repository answers 503 renders from the
+    /// last good copy on the state directory, so its Endpoint and with it its view stay.
+    #[tokio::test]
+    async fn a_restart_whose_project_repository_does_not_load_keeps_its_objects() {
+        let org = vec![
+            (".jc/layout", "2\n".to_owned()),
+            ("organization.yaml", organization()),
+            ("projects/b.yaml", registry_entry("b")),
+        ];
+        let (forge, shako, _shared) = changing_forge(&org).await;
+        let up = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        project_repository(&forge, "b-repo", project_files("b"), Arc::clone(&up)).await;
+        let shako = Arc::new(shako);
+        let dir = state_dir("restart");
+        let before = Arc::new(Mirror::new());
+        Syncer::new(Arc::clone(&shako), Arc::clone(&before))
+            .with_state_dir(Some(dir.clone()))
+            .sync_once()
+            .await
+            .expect("the first run loads");
+        assert!(before.get("b", "Endpoint", "e").is_some());
+
+        up.store(false, std::sync::atomic::Ordering::SeqCst);
+        let after = Arc::new(Mirror::new());
+        Syncer::new(Arc::clone(&shako), Arc::clone(&after))
+            .with_state_dir(Some(dir.clone()))
+            .sync_once()
+            .await
+            .expect("the restarted run loads the last render");
+        assert!(
+            after.get("b", "Endpoint", "e").is_some(),
+            "the restart lost the project that did not load"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T-6708 (P-5): a project registered after the source loaded whose repository never
+    /// staged holds nothing in the mirror, so every removal of the run waits.
+    #[tokio::test]
+    async fn a_project_that_never_loaded_holds_every_removal() {
+        let org = vec![
+            (".jc/layout", "2\n".to_owned()),
+            ("organization.yaml", organization()),
+            ("projects/b.yaml", registry_entry("b")),
+        ];
+        let (forge, shako, shared) = changing_forge(&org).await;
+        let up = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        project_repository(&forge, "b-repo", project_files("b"), up).await;
+        let down = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        project_repository(&forge, "c-repo", project_files("c"), down).await;
+        let dir = state_dir("never");
+        let mirror = Arc::new(Mirror::new());
+        let syncer = Syncer::new(Arc::new(shako), Arc::clone(&mirror))
+            .with_state_dir(Some(dir.clone()));
+        syncer.sync_once().await.expect("the first run loads");
+        assert!(!mirror.removals_held(), "b loaded");
+
+        next_revision(&shared, &org, &[("projects/c.yaml", registry_entry("c"))]);
+        syncer.sync_once().await.expect("the run loads b");
+        assert!(mirror.removals_held(), "c never loaded, yet removals went on");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// T-6455: a merge that changed nothing a run answers for stops no run.
     #[tokio::test]
     async fn a_push_that_goes_live_with_nothing_stops_no_run() {
