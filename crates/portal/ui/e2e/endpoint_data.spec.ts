@@ -233,6 +233,11 @@ for (const width of [1440, 400]) {
     const retry = section.getByRole("button", { name: "Try again" });
     await expect(retry).toBeVisible();
     expect((await retry.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    // The busy broker in the page's words, its own sentence only under the disclosure; no count over no rows.
+    const line = section.locator(".jc-grid-error");
+    await expect(line).toContainText("the data source is busy right now");
+    await expect(line.getByText("the broker is busy")).toBeHidden();
+    await expect(section.getByText("42 matching")).toHaveCount(0);
     await section.screenshot({ path: join("test-results", "T-6781", `data-error-${width}.png`) });
     await retry.click();
     await expect(section.getByText("42 matching")).toBeVisible();
