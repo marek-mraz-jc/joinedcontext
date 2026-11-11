@@ -346,17 +346,19 @@ pub fn opening_organization(
     let mirror = &state.mirror;
     let installation = crate::permissions::installation_organization(mirror);
     if !crate::permissions::several_organizations(mirror) {
-        let organization = installation.ok_or_else(|| {
-            ApiError::Unavailable(
+        // Who may not open a project learns that first, before whether the platform is ready.
+        let organization = installation.unwrap_or_default();
+        may_open_in(state, identity, &organization)?;
+        if organization.is_empty() {
+            return Err(ApiError::Unavailable(
                 "the organization's own manifest is not in the mirror yet; a project belongs to \
                  one (PF-66)"
                     .to_owned(),
-            )
-        })?;
+            ));
+        }
         if let Some(asked) = requested.filter(|asked| *asked != organization) {
             return Err(unknown_organization(asked));
         }
-        may_open_in(state, identity, &organization)?;
         return Ok(organization);
     }
     // On an Organization's own Portal host only that Organization exists (organization_host).
@@ -410,13 +412,14 @@ fn unknown_organization(asked: &str) -> ApiError {
 }
 
 /// Whether the caller may open a project in some Organization: [`opening_organization`] without
-/// a name, where one that must still be named counts as allowed.
+/// a name, where one that must still be named, or a mirror not yet holding the Organization,
+/// counts as allowed; the open itself answers those.
 pub fn may_open(
     state: &AppState,
     identity: &crate::auth::session::Identity,
 ) -> Result<(), ApiError> {
     match opening_organization(state, identity, None) {
-        Ok(_) | Err(ApiError::Unprocessable { .. }) => Ok(()),
+        Ok(_) | Err(ApiError::Unprocessable { .. } | ApiError::Unavailable(_)) => Ok(()),
         Err(err) => Err(err),
     }
 }
