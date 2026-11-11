@@ -510,7 +510,10 @@ mod tests {
         };
         let _ = surface.listing(&client).await;
         let head = served.await.unwrap();
-        assert!(head.starts_with("post /api/endpoint/x/mcp http/1.1"), "{head}");
+        assert!(
+            head.starts_with("post /api/endpoint/x/mcp http/1.1"),
+            "{head}"
+        );
         assert!(head.contains("\r\nhost: api.reach.invalid\r\n"), "{head}");
         assert!(!head.contains("x-forwarded-for"), "{head}");
     }
