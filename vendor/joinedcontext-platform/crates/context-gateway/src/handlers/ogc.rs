@@ -965,7 +965,11 @@ fn public_feed_host(text: &str, broker: &str, public: &str) -> String {
 /// copies (API/02 §4a, T-6771): `{feed}/{output}/rss.xml?{query}` becomes
 /// `{feeds}/{output}.rss?{query}`, the same read. Any other text stays as it is.
 fn feeds_links(text: &str, feed: &str, feeds: &str) -> String {
-    const FILES: [(&str, &str); 3] = [("rss.xml", "rss"), ("atom.xml", "atom"), ("feed.json", "json")];
+    const FILES: [(&str, &str); 3] = [
+        ("rss.xml", "rss"),
+        ("atom.xml", "atom"),
+        ("feed.json", "json"),
+    ];
     let from = format!("{feed}/");
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -974,8 +978,9 @@ fn feeds_links(text: &str, feed: &str, feeds: &str) -> String {
         let after = &rest[at + from.len()..];
         let link = after.split_once('/').and_then(|(output, tail)| {
             let (file, ext) = FILES.into_iter().find(|(file, _)| {
-                tail.strip_prefix(file)
-                    .is_some_and(|end| !end.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '.'))
+                tail.strip_prefix(file).is_some_and(|end| {
+                    !end.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '.')
+                })
             })?;
             output_name(output).then_some((output, file, ext))
         });
@@ -1110,7 +1115,8 @@ mod tests {
                 "<link rel=\"self\" href=\"{feeds}/kultura.atom?q=a&amp;offset=50\"/><link rel=\"first\" href=\"{feeds}/kultura.atom\"/><link href=\"{feed}/kultura/atom.xmlx\"/><link href=\"{feed}/a/b/rss.xml\"/>{feed}/"
             )
         );
-        let json = format!(r#"{{"feed_url":"{feed}/k_1/feed.json","next_url":"{feed}/k_1/rss.xml"}}"#);
+        let json =
+            format!(r#"{{"feed_url":"{feed}/k_1/feed.json","next_url":"{feed}/k_1/rss.xml"}}"#);
         assert_eq!(
             feeds_links(&json, feed, feeds),
             format!(r#"{{"feed_url":"{feeds}/k_1.json","next_url":"{feeds}/k_1.rss"}}"#)

@@ -181,8 +181,7 @@ fn ids(file: &str, body: &str) -> Vec<String> {
 #[tokio::test]
 async fn three_formats_list_the_same_entries_newest_first_without_what_the_view_hides() {
     let app = fixture().await;
-    let want = ["Event:e2", "Event:e1", "Article:a1"]
-        .map(|id| format!("urn:ngsi-ld:{id}"));
+    let want = ["Event:e2", "Event:e1", "Article:a1"].map(|id| format!("urn:ngsi-ld:{id}"));
     let media = [
         "application/atom+xml; charset=utf-8",
         "application/rss+xml; charset=utf-8",
@@ -252,10 +251,19 @@ async fn an_entry_id_is_the_entity_urn_under_any_host() {
     for file in FILES {
         let uri = format!("{ALL}/{file}");
         let (_, _, one) = call(&app, "GET", &uri, "", &[("Host", "data.example.sk")]).await;
-        let (_, _, two) = call(&app, "GET", &uri, "", &[("Host", "opendata.example.org:8443")]).await;
+        let (_, _, two) = call(
+            &app,
+            "GET",
+            &uri,
+            "",
+            &[("Host", "opendata.example.org:8443")],
+        )
+        .await;
         assert_eq!(ids(file, &one), ids(file, &two), "{file}");
         assert!(
-            ids(file, &one).iter().all(|id| id.starts_with("urn:ngsi-ld:")),
+            ids(file, &one)
+                .iter()
+                .all(|id| id.starts_with("urn:ngsi-ld:")),
             "{file}: {one}"
         );
     }
@@ -284,10 +292,7 @@ async fn a_filter_only_narrows_and_a_request_cannot_widen_it() {
     let sport = "/x/views/city/feed/v1/sport/feed.json";
     let (status, body) = send(&app, "GET", sport, "").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        ids("feed.json", &body),
-        ["urn:ngsi-ld:Event:e2"]
-    );
+    assert_eq!(ids("feed.json", &body), ["urn:ngsi-ld:Event:e2"]);
     let widen = format!("{sport}?q=name==%22x%22)%7C(category==%22kult%C3%BAra%22");
     let (status, body) = send(&app, "GET", &widen, "").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -300,8 +305,7 @@ async fn a_filter_only_narrows_and_a_request_cannot_widen_it() {
     let every = "/x/views/every/feed/v1/vsetky/feed.json";
     let (status, body) = send(&app, "GET", every, "").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let all = ["Event:e2", "Event:e1", "Article:a1"]
-        .map(|id| format!("urn:ngsi-ld:{id}"));
+    let all = ["Event:e2", "Event:e1", "Article:a1"].map(|id| format!("urn:ngsi-ld:{id}"));
     assert_eq!(
         ids("feed.json", &body),
         all,
@@ -332,10 +336,7 @@ async fn a_filter_only_narrows_and_a_request_cannot_widen_it() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let (status, body) = send(&app, "GET", &format!("{ALL}/feed.json?type=Article"), "").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        ids("feed.json", &body),
-        ["urn:ngsi-ld:Article:a1"]
-    );
+    assert_eq!(ids("feed.json", &body), ["urn:ngsi-ld:Article:a1"]);
 }
 
 #[tokio::test]
@@ -356,10 +357,7 @@ async fn pages_link_each_other_and_bad_parameters_are_400() {
         "",
     )
     .await;
-    assert_eq!(
-        ids("feed.json", &second),
-        ["urn:ngsi-ld:Article:a1"]
-    );
+    assert_eq!(ids("feed.json", &second), ["urn:ngsi-ld:Article:a1"]);
     let feed: Value = serde_json::from_str(&second).expect("json");
     assert!(feed.get("next_url").is_none(), "{second}");
     for query in [

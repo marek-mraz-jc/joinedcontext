@@ -238,8 +238,15 @@ async fn a_feed_under_two_addresses_keeps_its_entry_ids_and_never_echoes_the_hos
         (PUBLIC, "attacker.example"),
         ("https://opendata.example.org/sk_bbsk", "evil.example:8443"),
     ] {
-        let (status, _, body) =
-            call_on(&upstream, endpoint(kultura()), Method::GET, &uri, public, host).await;
+        let (status, _, body) = call_on(
+            &upstream,
+            endpoint(kultura()),
+            Method::GET,
+            &uri,
+            public,
+            host,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let host_name = host.split(':').next().unwrap_or(host);
         assert!(!body.contains(host_name), "{host} in the body: {body}");
