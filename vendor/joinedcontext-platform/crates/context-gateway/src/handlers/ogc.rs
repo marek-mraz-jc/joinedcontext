@@ -187,8 +187,13 @@ pub(crate) async fn feeds(
         .splitn(5, '/')
         .nth(4)
         .and_then(|rest| rest.strip_prefix("feeds/"))
-        .unwrap_or_default();
-    let Some((surface, forward)) = preset_link(rest, request.uri().query()) else {
+        .unwrap_or_default()
+        .to_owned();
+    if rest.ends_with(".csv") {
+        let slug = params.get("slug").cloned().unwrap_or_default();
+        return super::feeds_csv::preset_csv(gateway, &slug, &rest, request).await;
+    }
+    let Some((surface, forward)) = preset_link(&rest, request.uri().query()) else {
         return ProblemDetails::not_found().into_response();
     };
     read_surface(&gateway, &params, request, surface, Some(forward)).await
@@ -248,12 +253,7 @@ fn preset_link(
         _ => return None,
     };
     let (output, ext) = file.rsplit_once('.')?;
-    let named = !output.is_empty()
-        && output.len() <= 63
-        && output
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-    if !named {
+    if !output_name(output) {
         return None;
     }
     let (surface, below) = match ext {
@@ -274,9 +274,22 @@ fn preset_link(
     Some((surface, forward))
 }
 
+/// Whether `output` can name an output in a feeds link: `[A-Za-z0-9_-]{1,63}`.
+pub(super) fn output_name(output: &str) -> bool {
+    !output.is_empty()
+        && output.len() <= 63
+        && output
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 /// The `{filter}` segment as the query string it stands for, unchanged; `400` naming the `?`
 /// form when it is empty, too long, not `name=value` pairs, or comes with a query string too.
-fn filter_query(filter: &str, with_query: bool, file: &str) -> Result<String, Box<ProblemDetails>> {
+pub(super) fn filter_query(
+    filter: &str,
+    with_query: bool,
+    file: &str,
+) -> Result<String, Box<ProblemDetails>> {
     let refused = |why: &str| {
         Err(Box::new(
             ProblemDetails::new(400, "bad-request", "Bad Request").with_detail(format!(
