@@ -74,7 +74,7 @@ for (const width of [1440, 400]) {
     await expect(mcp).toBeChecked();
     await expect(mcp).toBeDisabled();
     const line = page.getByTestId("public-mcp-hint");
-    const hint = line.filter({ hasText: "stays off on a public endpoint until you check MCP" });
+    const hint = line.filter({ hasText: "stays off on a public endpoint until you check" });
     const on = line.filter({ hasText: "MCP is on: AI assistants" });
     await expect(line).toHaveCount(0);
 
