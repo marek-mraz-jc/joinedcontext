@@ -14,15 +14,15 @@
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use axum::Router;
 use axum::extract::{MatchedPath, Request};
 use axum::http::header::CONTENT_TYPE;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
-use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::MakeWriter;
 
 use crate::change::Lane;
 use crate::state::AppState;
@@ -106,8 +106,17 @@ const UNCOUNTED: &[&str] = &["/metrics", "/api/v1/health"];
 /// Without them the exporter renders a duration as a *summary*: a quantile computed inside one
 /// replica, and quantiles from two replicas cannot be combined into one. Buckets can be summed,
 /// so `histogram_quantile` over these stays correct however many Portal pods are running.
-const SECONDS: &[f64] = &[
+pub const SECONDS: &[f64] = &[
     0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+];
+
+/// The series whose buckets differ from [`SECONDS`], by full name or by a prefix ending in `*`.
+/// A host that installs the process recorder before the Portal (`jc`) sets them too.
+pub const BUCKETS: &[(&str, &[f64])] = &[
+    ("jc_agent_run_*", RUN_SECONDS),
+    (ANSWER_SECONDS, ANSWER_BUCKETS),
+    (MODEL_CALL_SECONDS, ANSWER_BUCKETS),
+    (PIPELINE_RUN_SECONDS, PIPELINE_RUN_BUCKETS),
 ];
 
 /// The bucket edges of a run's timings: a first version is promised inside a minute (AG-66).
@@ -123,20 +132,20 @@ const ANSWER_BUCKETS: &[f64] = &[
 
 /// The Portal's recorder, its buckets set per series.
 fn builder() -> PrometheusBuilder {
-    PrometheusBuilder::new()
-        .set_buckets(SECONDS)
-        .expect("the bucket list is not empty")
-        .set_buckets_for_metric(Matcher::Prefix("jc_agent_run_".to_owned()), RUN_SECONDS)
-        .expect("the bucket list is not empty")
-        .set_buckets_for_metric(Matcher::Full(ANSWER_SECONDS.to_owned()), ANSWER_BUCKETS)
-        .expect("the bucket list is not empty")
-        .set_buckets_for_metric(Matcher::Full(MODEL_CALL_SECONDS.to_owned()), ANSWER_BUCKETS)
-        .expect("the bucket list is not empty")
-        .set_buckets_for_metric(
-            Matcher::Full(PIPELINE_RUN_SECONDS.to_owned()),
-            PIPELINE_RUN_BUCKETS,
-        )
-        .expect("the bucket list is not empty")
+    BUCKETS.iter().fold(
+        PrometheusBuilder::new()
+            .set_buckets(SECONDS)
+            .expect("the bucket list is not empty"),
+        |builder, (name, buckets)| {
+            let matcher = match name.strip_suffix('*') {
+                Some(prefix) => Matcher::Prefix(prefix.to_owned()),
+                None => Matcher::Full((*name).to_owned()),
+            };
+            builder
+                .set_buckets_for_metric(matcher, buckets)
+                .expect("the bucket list is not empty")
+        },
+    )
 }
 
 fn handle() -> &'static PrometheusHandle {

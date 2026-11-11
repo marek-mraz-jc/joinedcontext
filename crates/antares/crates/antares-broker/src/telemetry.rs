@@ -228,14 +228,14 @@ pub fn init_hosted() -> Option<MetricsRender> {
 /// bottleneck. The exporter's own default stops at 10 s, which files every
 /// slow request under `+Inf` — precisely the requests a latency dashboard
 /// exists to show.
-const LATENCY_BUCKETS_SECONDS: &[f64] = &[
+pub const LATENCY_BUCKETS_SECONDS: &[f64] = &[
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0,
 ];
 
 /// Bucket bounds, in bytes, of `antares_answer_bytes` (T-5898): from a
 /// one-Entity page to the 64 MiB per-answer cap, so the p99 and the largest
 /// answers of each surface show which pool size the load needs.
-const ANSWER_BUCKETS_BYTES: &[f64] = &[
+pub const ANSWER_BUCKETS_BYTES: &[f64] = &[
     1024.0,
     16_384.0,
     131_072.0,
@@ -250,7 +250,7 @@ const ANSWER_BUCKETS_BYTES: &[f64] = &[
 
 /// Metric metadata — Prometheus-convention names (antares_ prefix, unit suffixes).
 fn describe() {
-    use metrics::{describe_counter, describe_gauge, describe_histogram, Unit};
+    use metrics::{Unit, describe_counter, describe_gauge, describe_histogram};
     describe_counter!(
         "antares_http_requests_total",
         Unit::Count,
