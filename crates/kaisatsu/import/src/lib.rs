@@ -1415,13 +1415,24 @@ pub async fn apply_realm_files(
                         let _ = store.add_user_to_group(&realm_id, &saved.id, &grp.id).await;
                     }
                 }
-                // Import credentials (`password`, `otp`, `webauthn`)
+                // Import credentials (`password`, `otp`, `webauthn`). A file seeds a credential
+                // type only while the user holds none of it: `jc` re-applies its realm files after
+                // every upgrade, and a password the person changed since must survive (P-23).
                 if let Some(creds) = u_val.get("credentials").and_then(Value::as_array) {
+                    let held: BTreeSet<String> = store
+                        .list_credentials(&realm_id, &saved.id)
+                        .await?
+                        .into_iter()
+                        .map(|c| c.credential_type)
+                        .collect();
                     for cred_val in creds {
                         let ctype = cred_val
                             .get("type")
                             .and_then(Value::as_str)
                             .unwrap_or("password");
+                        if held.contains(ctype) {
+                            continue;
+                        }
                         let cid = cred_val
                             .get("id")
                             .and_then(Value::as_str)
