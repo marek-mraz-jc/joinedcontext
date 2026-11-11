@@ -2600,12 +2600,37 @@ mod tests {
             "projects/air/spaces/air/entities/seed/stations.json",
             r#"[{"id":"urn:ngsi-ld:AirQualityObserved:bb.sk:air:1","type":"AirQualityObserved","index":{"type":"Property","value":1}}]"#,
         );
+        // A run with a gateway writes only from the reviewed main (P-14): a clean commit that
+        // `origin/main` names.
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["add", "-A"],
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.org",
+                "commit",
+                "-qm",
+                "seed",
+            ],
+            &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        ] {
+            let ok = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .status()
+                .is_ok_and(|status| status.success());
+            assert!(ok, "git {args:?}");
+        }
         root
     }
 
     /// A gateway named on the command line, with its token in a file beside the repository.
     fn gateway_connection(url: &str, dir: &Path) -> Connection {
-        let token = dir.join("token");
+        // Beside the checkout, never in it: an untracked file is a change nobody merged.
+        let token = dir.with_extension("token");
         std::fs::write(&token, format!("{APPLY_TOKEN}\n")).expect("the token file");
         Connection {
             gateway_url: Some(url.to_owned()),
