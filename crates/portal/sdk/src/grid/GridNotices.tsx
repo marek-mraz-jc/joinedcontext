@@ -7,9 +7,9 @@ import type { GridView } from "./useGridView";
 
 /** What stands above the rows: the last paste, Undo, the pending list, the folded filters, the chips and the hidden fields. */
 export function GridNotices({ view }: { view: GridView }): React.JSX.Element {
-  const { props, grid, labels, editing, columns, filterable, asText, where, pasteNote, lastApplied, undoNote, applying, undo, filtersOpen, setFiltersOpen, activeFilters, ownHidden, hiddenLabel, showColumns, unreadable } = view;
+  const { props, grid, labels, editing, columns, filterable, asText, where, pasteNote, lastApplied, undoNote, applying, undo, filtersOpen, setFiltersOpen, activeFilters, unreadable } = view;
   const { pendingChanges, state, setFilter, rows } = grid;
-  const { filterRow = true, onHide } = props;
+  const { filterRow = true } = props;
   return (
     <>
       {pasteNote && (
@@ -41,7 +41,6 @@ export function GridNotices({ view }: { view: GridView }): React.JSX.Element {
         </button>
       )}
       {!asText && <FilterChips columns={columns} filterable={filterable} filters={state.filters} labels={labels} locale={where} onRemove={(keys) => setFilter(keys, undefined)} />}
-      {!onHide && ownHidden.length > 0 && <HiddenFields attrs={ownHidden} labels={labels} labelOf={hiddenLabel} onShow={showColumns} />}
       {unreadable.length > 0 && <p className="jc-grid-sort-note jc-grid-not-readable">{labels.notReadable.replace("{count}", String(unreadable.length))}</p>}
       {grid.sortedLoadedOnly && rows.length > 0 && (
         <p className="jc-grid-sort-note" role="status">{labels.sortedLoaded.replace("{count}", String(rows.length))}</p>
@@ -87,7 +86,7 @@ export function GridStatus({ view }: { view: GridView }): React.JSX.Element {
 }
 
 /**
- * "Hidden fields (2)" above the rows (T-5620): the fields hidden from the header menu, each with
+ * "Hidden columns (2)" above the rows (T-5620): the fields hidden from the header menu, each with
  * "Show field", and "Show all" for more than one. Focus stays on the count while fields remain.
  */
 export function HiddenFields({ attrs, labels, labelOf, onShow }: { attrs: readonly string[]; labels: GridLabels; labelOf: (attr: string) => string; onShow: (attrs: readonly string[]) => void }) {
