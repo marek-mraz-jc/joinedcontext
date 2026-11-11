@@ -94,7 +94,7 @@ async fn every_entry_carries_its_bound_its_value_and_where_the_value_comes_from(
         ),
         (
             &json!("projects"),
-            &json!(0),
+            &json!(1),
             &json!(20),
             &json!(10),
             &json!("organization")
