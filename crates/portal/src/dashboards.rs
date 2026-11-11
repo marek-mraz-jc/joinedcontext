@@ -109,7 +109,10 @@ pub fn check(
                 .into_iter()
                 .filter(|d| is_public_dashboard(&d.spec))
             {
-                if let Some((widget, _)) = widget_endpoints(&dashboard.spec).into_iter().find(|(_, e)| e == name) {
+                if let Some((widget, _)) = widget_endpoints(&dashboard.spec)
+                    .into_iter()
+                    .find(|(_, e)| e == name)
+                {
                     return refuse(format!(
                         "endpoint {name} is read by widget {widget} of the public dashboard {}, so its audience stays public",
                         dashboard.metadata.name

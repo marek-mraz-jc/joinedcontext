@@ -248,7 +248,11 @@ async fn a_widget_of_a_public_dashboard_reads_only_a_public_endpoint() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(serde_json::from_str::<Value>(&body).unwrap_or_default()["verdict"]["ok"], true, "{body}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap_or_default()["verdict"]["ok"],
+        true,
+        "{body}"
+    );
 
     let (status, body) = put(
         &config,
@@ -260,7 +264,9 @@ async fn a_widget_of_a_public_dashboard_reads_only_a_public_endpoint() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let said = findings(&body);
     assert!(
-        said.contains("widget /spec/pages/0/widgets/0 reads internal whose audience is organization"),
+        said.contains(
+            "widget /spec/pages/0/widgets/0 reads internal whose audience is organization"
+        ),
         "{said}"
     );
     let (status, body) = propose(
@@ -273,7 +279,11 @@ async fn a_widget_of_a_public_dashboard_reads_only_a_public_endpoint() {
     assert!(status.is_client_error(), "{status} {body}");
     assert!(body.contains("/spec/pages/0/widgets/0"), "{body}");
 
-    let published = live("Dashboard", "air", chart_dashboard("public", "air")["spec"].clone());
+    let published = live(
+        "Dashboard",
+        "air",
+        chart_dashboard("public", "air")["spec"].clone(),
+    );
     let (status, body) = put(
         &config,
         vec![endpoint("air", "public"), published],
@@ -282,12 +292,20 @@ async fn a_widget_of_a_public_dashboard_reads_only_a_public_endpoint() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(findings(&body).contains("widget /spec/pages/0/widgets/0 of the public dashboard air"), "{body}");
+    assert!(
+        findings(&body).contains("widget /spec/pages/0/widgets/0 of the public dashboard air"),
+        "{body}"
+    );
 }
 
 /// `jc_resource_propose`, the registry operation MCP serves as a tool (T-6787: a dashboard made
 /// over MCP is a Change like any other), at `project`.
-async fn propose_op(config: &Config, envelopes: Vec<ResourceEnvelope>, project: &str, manifest: &Value) -> (StatusCode, String) {
+async fn propose_op(
+    config: &Config,
+    envelopes: Vec<ResourceEnvelope>,
+    project: &str,
+    manifest: &Value,
+) -> (StatusCode, String) {
     let state = AppState::new(config.clone(), None);
     for env in envelopes {
         state.mirror.upsert(env);
@@ -296,40 +314,63 @@ async fn propose_op(config: &Config, envelopes: Vec<ResourceEnvelope>, project: 
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/api/v1/projects/{project}/ops/jc_resource_propose"))
+                .uri(format!(
+                    "/api/v1/projects/{project}/ops/jc_resource_propose"
+                ))
                 .header(header::COOKIE, cookies(config))
                 .header(CSRF_HEADER, CSRF)
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(serde_json::to_vec(&json!({ "manifest": manifest })).expect("json")))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "manifest": manifest })).expect("json"),
+                ))
                 .expect("request"),
         )
         .await
         .expect("response");
     let status = response.status();
-    let bytes = response.into_body().collect().await.expect("body").to_bytes();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
     (status, String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// T-6787: the registry door (REST `ops/`, MCP) refuses what the PUT door refuses: a public
-/// dashboard over a private Endpoint names the widget, a spec with a URL names its member, and a
-/// dashboard written into a project the caller is not in is refused before anything is read.
+/// dashboard over a private Endpoint names the widget, a spec with a URL names its member. A write
+/// outside the caller's Organization is T-6766's rule, proven by its tests at the same door.
 #[tokio::test]
-async fn the_operation_door_refuses_a_private_widget_a_url_spec_and_another_project() {
+async fn the_operation_door_refuses_a_private_widget_and_a_url_spec_naming_the_member() {
     let config = Config::for_tests();
-    let (status, body) = propose_op(&config, vec![endpoint("internal", "organization")], PROJECT, &chart_dashboard("public", "internal")).await;
+    let (status, body) = propose_op(
+        &config,
+        vec![endpoint("internal", "organization")],
+        PROJECT,
+        &chart_dashboard("public", "internal"),
+    )
+    .await;
     assert!(status.is_client_error(), "{status} {body}");
-    assert!(body.contains("widget /spec/pages/0/widgets/0 reads internal"), "{body}");
+    assert!(
+        body.contains("widget /spec/pages/0/widgets/0 reads internal"),
+        "{body}"
+    );
 
     let mut fetching = chart_dashboard("project", "internal");
-    fetching["spec"]["pages"][0]["widgets"][0]["spec"]["data"] = json!({ "url": "https://evil.example/rows.json" });
-    let (status, body) = propose_op(&config, vec![endpoint("internal", "organization")], PROJECT, &fetching).await;
+    fetching["spec"]["pages"][0]["widgets"][0]["spec"]["data"] =
+        json!({ "url": "https://evil.example/rows.json" });
+    let (status, body) = propose_op(
+        &config,
+        vec![endpoint("internal", "organization")],
+        PROJECT,
+        &fetching,
+    )
+    .await;
     assert!(status.is_client_error(), "{status} {body}");
-    assert!(body.contains("/spec/pages/0/widgets/0/spec/data/url"), "{body}");
-
-    let mut elsewhere = chart_dashboard("project", "internal");
-    elsewhere["metadata"]["namespace"] = json!("another-city");
-    let (status, body) = propose_op(&config, vec![], "another-city", &elsewhere).await;
-    assert!(matches!(status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND), "{status} {body}");
+    assert!(
+        body.contains("/spec/pages/0/widgets/0/spec/data/url"),
+        "{body}"
+    );
 }
 
 #[tokio::test]
