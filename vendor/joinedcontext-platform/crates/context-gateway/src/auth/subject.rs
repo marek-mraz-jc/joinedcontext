@@ -923,6 +923,44 @@ mod tests {
         );
     }
 
+    /// The panel reader of the synthetic bundle (jc-panel-grant): the reconciler writes the
+    /// project's derived group under the Organization of its Project manifest (`/hel/...`), the
+    /// seed subtree gives `jc_org` another name. Under `hel` the group counts; under any other
+    /// Organization, or none, nothing does, and a same-named group of another Organization never.
+    #[test]
+    fn the_groups_of_the_endpoints_organization_are_the_only_ones_granted() {
+        let claims = |paths: &[&str]| -> Claims {
+            serde_json::from_value(serde_json::json!({
+                "sub": "5b1e", "iss": "realm", "exp": 1, "azp": "portal-api",
+                "preferred_username": "reader",
+                "groups": ["/helsinki-readers", "/helsinki/members"],
+                "jc_org": ["helsinki"], "jc_groups": paths,
+            }))
+            .expect("claims")
+        };
+        let reader = claims(&["/hel/helsinki-readers", "/helsinki/members"]);
+        let groups = |claims: &Claims, organization: Option<&str>| {
+            person(claims, Audience::Organization, organization)
+                .expect("a person")
+                .grant_groups()
+                .clone()
+        };
+        let readers = BTreeSet::from(["helsinki-readers".to_owned()]);
+        assert_eq!(groups(&reader, Some("hel")), readers);
+        assert_eq!(groups(&reader, Some("helsinki")), BTreeSet::from(["members".to_owned()]));
+        assert!(groups(&reader, None).is_empty(), "no Organization, no group");
+        let elsewhere = claims(&["/zilina/helsinki-readers"]);
+        assert!(groups(&elsewhere, Some("hel")).is_empty(), "another Organization's group");
+        assert!(groups(&claims(&[]), Some("hel")).is_empty(), "no group");
+        // A token without `jc_groups` keeps the plain `groups` claim, as before ADR-N-067.
+        let plain: Claims = serde_json::from_value(serde_json::json!({
+            "sub": "5b1e", "iss": "realm", "exp": 1, "preferred_username": "reader",
+            "groups": ["/helsinki-readers"],
+        }))
+        .expect("claims");
+        assert_eq!(groups(&plain, Some("hel")), readers);
+    }
+
     /// EP-14, EP-15, ADR-N-067 2.3: the gateway admits a person under a project their groups
     /// name, an Organization member on an `organization` audience without one, and nobody whose
     /// project is of another Organization.

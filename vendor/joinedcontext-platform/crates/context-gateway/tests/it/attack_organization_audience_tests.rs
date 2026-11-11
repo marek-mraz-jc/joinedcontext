@@ -114,6 +114,11 @@ async fn fixture(name: &str) -> Fixture {
 
 /// The fixture, with every project's Organization known or, before ADR-N-058, none.
 async fn fixture_of(name: &str, organizations_known: bool) -> Fixture {
+    fixture_serving(name, endpoint(), organizations_known).await
+}
+
+/// [`fixture_of`] serving `endpoint`.
+async fn fixture_serving(name: &str, endpoint: Endpoint, organizations_known: bool) -> Fixture {
     let realm = common::Realm::new();
     let broker = common::BrokerStub::start(vec![json!([])]).await;
     let repo = Repo::new(name, &[PROJECT, OUTSIDER]);
@@ -124,7 +129,7 @@ async fn fixture_of(name: &str, organizations_known: bool) -> Fixture {
         Box::new(PolicyPdp),
         "hel.fi",
     )
-    .serve([endpoint()])
+    .serve([endpoint])
     .authenticate(Arc::new(realm.verifier()), accounts, None);
     if organizations_known {
         gateway.replace_provenance(Provenance {
@@ -347,6 +352,50 @@ async fn a_person_bound_in_a_project_is_admitted_to_its_organization_endpoint() 
         hops,
         "the broker was not asked"
     );
+}
+
+/// The closed panel's reader (jc-panel-grant): a person RoleBinding-bound on project helsinki of
+/// `hel`, whose seed subtree gives `jc_org` `helsinki`. The hop carries the group of the
+/// Endpoint's Organization the Policy names; a same-named group of another Organization, and a
+/// group the Organization does not own, never reach `x-jc-groups`.
+#[tokio::test]
+async fn the_hop_carries_only_the_groups_of_the_endpoints_organization() {
+    let helsinki = Endpoint {
+        project: SIBLING.to_owned(),
+        ..endpoint()
+    };
+    let fixture = fixture_serving("hop-groups", helsinki, true).await;
+    let token = |jc_groups: &[&str]| {
+        fixture.realm.mint(&json!({
+            "iss": common::ISSUER,
+            "sub": "f:1:reader",
+            "aud": SLUG,
+            "exp": common::in_seconds(300),
+            "iat": common::in_seconds(-10),
+            "preferred_username": "reader",
+            "groups": ["/helsinki-readers", "/helsinki/members"],
+            "jc_org": ["helsinki"],
+            "jc_groups": jc_groups,
+            "realm_access": { "roles": ["member"] },
+        }))
+    };
+    let cases: [(&[&str], Option<&str>); 3] = [
+        (&["/hel/helsinki-readers", "/helsinki/members"], Some("helsinki-readers")),
+        (&["/zilina/helsinki-readers", "/helsinki/members"], None),
+        (&[], None),
+    ];
+    for (paths, sent) in cases {
+        let (status, body) = read(&fixture, SLUG, &token(paths)).await;
+        assert_eq!(status, StatusCode::OK, "{paths:?}: {body}");
+        let hops = fixture.broker.hops();
+        let hop = hops.last().expect("the read reached the broker");
+        let groups = hop
+            .headers
+            .get("x-jc-groups")
+            .map(|v| v.to_str().expect("ascii").to_owned());
+        assert_eq!(groups.as_deref(), sent, "{paths:?}");
+        assert!(hop.headers.get("x-jc-member").is_none(), "{paths:?}");
+    }
 }
 
 /// EP-173, T-6470: a vendor bound on one project holds its group and no `jc_org`. They read that
