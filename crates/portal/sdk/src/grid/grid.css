@@ -28,7 +28,15 @@
 
 /* A compact grid's label leads at most of a phone's width (T-6748): the row is told by its name. */
 .jc-grid[data-compact] .jc-grid-pinned {
-  min-width: min(14rem, 62vw);
+  min-width: 62vw;
+}
+
+/* Two lines of the name fit the row's height, so a long name is told apart from its neighbour. */
+.jc-grid[data-compact][data-row-size] td.jc-grid-pinned .jc-grid-open {
+  max-height: 2.5em;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 
 /* A compact grid's shared type, out of its columns (T-6748): one line, the choice beside its word. */

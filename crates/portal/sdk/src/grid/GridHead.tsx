@@ -71,7 +71,7 @@ function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleCol
       className={`jc-grid-th${col.pinned ? " jc-grid-pinned" : ""}${dragOver === col.key ? " jc-grid-th--drop" : ""}${complete(state.filters[col.key]) ? " jc-grid-th--filtered" : ""}`}
     // No header is squeezed below its first word (T-6328): a set width is the person's own.
     // A compact grid's label is as wide as a phone allows (grid.css), whatever width the model gave it (T-6748).
-    style={col.width && !(view.props.compact && col.pinned) ? { width: col.width, minWidth: col.width, maxWidth: col.width } : { minWidth: firstWordWidth(col.label) }}
+    style={view.props.compact && col.pinned ? undefined : col.width ? { width: col.width, minWidth: col.width, maxWidth: col.width } : { minWidth: firstWordWidth(col.label) }}
     data-col-attr={own ?? undefined}
     draggable={movable}
     onDragStart={movable ? (e) => { e.dataTransfer.setData(DRAG_TYPE, own!); e.dataTransfer.effectAllowed = "move"; } : undefined}
