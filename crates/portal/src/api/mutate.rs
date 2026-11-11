@@ -2280,11 +2280,14 @@ pub(crate) fn check_policy_refs(
         })
         .map(|e| e.metadata.name)
         .collect();
-    // With Organizations and none the installation's, no domain is known to be the binder's: the
+    // The gateway binds a reference on the project's own domains (its Project's and its
+    // Organization's, T-6759) and on the installation's only when the project names none. With
+    // Organizations and none the installation's, no domain is known to be the binder's: the
     // reference keeps its own, and only its segment and name are judged.
+    let own = crate::permissions::project_domains(mirror, project);
     let unclaimed = crate::permissions::installation_organization(mirror).is_none()
         && !crate::permissions::organizations(mirror).is_empty();
-    let domain = match unclaimed {
+    let installation = match unclaimed {
         true => String::new(),
         false => ground.org_domain(),
     };
@@ -2295,10 +2298,16 @@ pub(crate) fn check_policy_refs(
     let lines: Vec<String> = fresh
         .into_iter()
         .filter_map(|reference| {
-            let domain = Some(domain.as_str())
-                .filter(|domain| !domain.is_empty())
-                .or(reference.org_domain())
-                .unwrap_or_default();
+            let domain = match own.first() {
+                Some(first) => reference
+                    .org_domain()
+                    .filter(|domain| own.contains(*domain))
+                    .unwrap_or(first.as_str()),
+                None => Some(installation.as_str())
+                    .filter(|domain| !domain.is_empty())
+                    .or(reference.org_domain())
+                    .unwrap_or_default(),
+            };
             let policy = reference.local_id();
             let urn = format!("urn:ngsi-ld:Policy:{domain}:{segment}:{policy}");
             if !policies.contains(policy) {
@@ -4324,6 +4333,79 @@ mod tests {
         assert!(
             errors[0].contains("write urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:public-read"),
             "{errors:?}"
+        );
+    }
+
+    /// T-6759: in an installation of two Organizations, a project of the one that is not the
+    /// installation's binds its Policies on its own Organization's domain, as the gateway does
+    /// (`store.rs` `bound_policies`). The load (`judge::replay`) and the propose door give one
+    /// verdict; a Policy the project lacks and the installation's domain stay refused.
+    #[test]
+    fn a_policy_ref_binds_on_its_projects_organization_domain() {
+        const OWN: &str = "urn:ngsi-ld:Policy:zilina.sk:ovzdusie-ovzdusie:public-read";
+        let state = AppState::new(Config::for_tests(), None);
+        state.mirror.upsert(organization(
+            "helsinki",
+            json!({ "domain": "hel.fi", "installation": true }),
+        ));
+        state
+            .mirror
+            .upsert(organization("zilina", json!({ "domain": "zilina.sk" })));
+        let mut project = manifest(
+            "Project",
+            "ovzdusie",
+            json!({ "organizationRef": "zilina" }),
+        );
+        project.metadata.namespace = Some(crate::api::blueprints::ORG_NAMESPACE.into());
+        state.mirror.upsert(project);
+        state.mirror.upsert(manifest(
+            "Policy",
+            "public-read",
+            space_policy(
+                "{ \"kind\": \"role\", \"id\": \"public\" }",
+                &["retrieveOps"],
+            ),
+        ));
+        let endpoint =
+            |reference: &str| manifest("Endpoint", "public-air", public_air(Some(reference)));
+        let propose = |reference: &str| {
+            check_policy_refs(
+                &crate::judge::Ground::of(&state),
+                "ovzdusie",
+                &endpoint(reference),
+            )
+        };
+        let load = |reference: &str| {
+            let bounds = jc_core::kinds::OrganizationBounds::default();
+            crate::judge::replay(
+                &state.mirror,
+                (&bounds, None, None),
+                vec![endpoint(reference)],
+            )
+        };
+
+        propose(OWN).expect("the project's own Organization binds");
+        assert_eq!(load(OWN), vec![], "the load accepts what the door does");
+        for wrong in [
+            "urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:public-read",
+            "urn:ngsi-ld:Policy:zilina.sk:ovzdusie:public-read",
+        ] {
+            let errors = refusal(propose(wrong));
+            assert!(errors[0].contains(&format!("write {OWN}")), "{errors:?}");
+            let refused = load(wrong);
+            assert_eq!(refused.len(), 1, "{refused:?}");
+            assert!(
+                refused[0].1.contains(&format!("write {OWN}")),
+                "{refused:?}"
+            );
+        }
+        let unknown = "urn:ngsi-ld:Policy:zilina.sk:ovzdusie-ovzdusie:nobody";
+        let errors = refusal(propose(unknown));
+        assert!(errors[0].contains("names no Policy"), "{errors:?}");
+        assert_eq!(
+            load(unknown).len(),
+            1,
+            "an unknown Policy stays refused at load"
         );
     }
 
