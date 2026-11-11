@@ -2293,7 +2293,11 @@ path_prefix = "/api/endpoint"
     fn resolve_reads_the_file_and_reports_a_missing_one() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jc.toml");
-        std::fs::write(&path, "role = \"dataroom\"\nbase_host = \"from.file\"\n").unwrap();
+        std::fs::write(
+            &path,
+            "profile = \"development\"\nrole = \"dataroom\"\nbase_host = \"from.file\"\n",
+        )
+        .unwrap();
         let cfg = Config::resolve(Cli {
             config: Some(path),
             ..Cli::default()
@@ -2315,7 +2319,7 @@ path_prefix = "/api/endpoint"
         let path = dir.path().join("jc.toml");
         std::fs::write(
             &path,
-            "[kaisatsu]\nbranding_file = \"/etc/jc/branding/branding.yaml\"\n",
+            "profile = \"development\"\n[kaisatsu]\nbranding_file = \"/etc/jc/branding/branding.yaml\"\n",
         )
         .unwrap();
         let cfg = Config::resolve(Cli {
