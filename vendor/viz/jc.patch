@@ -1,5 +1,5 @@
 --- a/site/embed.js	2026-11-11 05:59:24.043638691 +0000
-+++ site/embed.js	2026-11-11 06:35:40.857470800 +0000
++++ site/embed.js	2026-11-11 06:47:47.759022624 +0000
 @@ -13,6 +13,11 @@
    var VIEWS = ["both", "table"];
    var HEIGHT = { min: 240, max: 2000, fallback: 640 };
@@ -59,7 +59,7 @@
    }
  })(typeof self !== "undefined" ? self : globalThis);
 --- a/site/explore.css	2026-11-11 05:59:24.062638654 +0000
-+++ site/explore.css	2026-11-11 06:35:40.860792319 +0000
++++ site/explore.css	2026-11-11 06:47:47.761162382 +0000
 @@ -23,6 +23,16 @@
    .page-head .actions { flex: 1 1 100%; flex-wrap: nowrap; gap: 8px; }
    .page-head .actions .page-button { flex: 1 1 0; min-width: 0; }
@@ -87,7 +87,7 @@
  .map-panel h3 { flex-basis: 100%; margin: 0; font-size: 1rem; font-weight: 600; }
  .map-panel .field { flex: 1 1 14rem; min-width: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; border: 0; padding: 0; }
 --- a/site/explore.html	2026-11-11 05:59:24.057638664 +0000
-+++ site/explore.html	2026-11-11 06:35:40.864704483 +0000
++++ site/explore.html	2026-11-11 06:47:47.762896852 +0000
 @@ -30,6 +30,7 @@
      <section id="map-section" aria-labelledby="map-title" hidden>
        <div class="map-head">
@@ -97,7 +97,7 @@
        </div>
        <div id="map-panel" class="map-panel" role="group" aria-labelledby="map-panel-title" hidden>
 --- a/site/explore.js	2026-11-11 05:59:24.037638703 +0000
-+++ site/explore.js	2026-11-11 06:35:40.867885000 +0000
++++ site/explore.js	2026-11-11 06:47:47.764085488 +0000
 @@ -7,8 +7,35 @@
  (function (root) {
    "use strict";
@@ -338,7 +338,7 @@
    else if (typeof document !== "undefined") main();
  })(typeof self !== "undefined" ? self : this);
 --- a/site/host.js	2026-11-11 05:59:24.052638674 +0000
-+++ site/host.js	2026-11-11 06:35:40.870470776 +0000
++++ site/host.js	2026-11-11 06:47:47.767943085 +0000
 @@ -40,7 +40,8 @@
    // `&lang=sk` (the page's language) in any order.
    function parseHash(hash) {
@@ -350,7 +350,7 @@
      return { id: parts[0], inline: parts.indexOf("inline") > 0, lang: lang ? lang[1] : null };
    }
 --- a/site/map.html	2026-11-11 05:59:24.045638687 +0000
-+++ site/map.html	2026-11-11 06:35:40.874958002 +0000
++++ site/map.html	2026-11-11 06:47:47.770731145 +0000
 @@ -8,8 +8,8 @@
  <link rel="stylesheet" href="vendor/maplibre-gl-6.14.0.css">
  <link rel="stylesheet" href="map.css">
