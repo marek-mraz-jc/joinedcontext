@@ -181,6 +181,11 @@ RUN for name in sharing-private sharing-project sharing-organization sharing-rol
       cp -r apps/sharing-probe/bundle "/srv/apps/$name" \
       && node /work/scripts/app-integrity.mjs "/srv/apps/$name" || exit 1; \
     done
+# The App bundles alone: smoke.yml builds this stage with buildx (BuildKit in its own container)
+# and hands it to deploy/rehearsal/apps.sh as REHEARSAL_JC_IMAGE, so dockerd loads /srv/apps only
+# (a `docker build --target apps` inside dockerd ran the 16 GB runner out of memory, brief 120).
+FROM scratch AS apps-bundles
+COPY --from=apps /srv/apps /srv/apps
 
 # The build stage's base: the Rust toolchain on the runtime's Debian (same glibc). make for
 # tikv-jemalloc-sys, cmake for aws-lc-sys' fallback build, g++ for the assistant's tokenizer

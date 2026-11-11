@@ -62,8 +62,50 @@ jobs:
       - run: cd crates/portal/sdk && pnpm install --frozen-lockfile && pnpm build
       - run: cd crates/portal/ui && pnpm install --frozen-lockfile && pnpm build
       - run: cargo build --locked -p jc -p kaisatsu-server -p daiya-server
+      # The App bundles (bins/jc/Dockerfile apps-bundles: the apps stage's /srv/apps alone) built by
+      # BuildKit in its own container: apps.sh's own `docker build --target apps` ran inside dockerd,
+      # which grew to 13.8 GB and the runner out of memory (run 42931221810, brief 120). The memory
+      # cap makes an overrun a red step instead of a lost runner. buildkit is moby/buildkit v0.34.2
+      # (the buildx-stable-1 tag setup-buildx pulls, pushed 2026-11-03).
+      - id: buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver-opts: |
+            image=moby/buildkit@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
+            memory=10g
+            memory-swap=10g
+      - name: memory probe for the App bundles build
+        run: |
+          ( while :; do
+              echo "build probe $(date -u +%T): $(free -m | awk 'NR==2{print "mem used "$3" avail "$7" MB"}')," \
+                "dockerd $(ps -C dockerd -o rss= | awk '{s+=$1} END{printf "%d", s/1024}') MB," \
+                "buildkitd $(ps -C buildkitd -o rss= | awk '{s+=$1} END{printf "%d", s/1024}') MB," \
+                "top $(ps -eo rss=,comm= --sort=-rss | head -3 | awk '{printf "%s:%dMB ", $2, $1/1024}')"
+              sleep 30
+            done ) > "$RUNNER_TEMP/build-probe.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/build-probe.pid"
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: bins/jc/Dockerfile
+          target: apps-bundles
+          load: true
+          push: false
+          tags: jc-apps:smoke
+          cache-from: type=gha,scope=jc
+      # The probe lines, then BuildKit stopped so the gate gets its memory back.
+      - name: memory probe lines
+        if: always()
+        env: { BUILDER: "${{ steps.buildx.outputs.name }}" }
+        run: |
+          kill "$(cat "$RUNNER_TEMP/build-probe.pid")" 2>/dev/null || true
+          cat "$RUNNER_TEMP/build-probe.log"
+          docker buildx stop "$BUILDER" || true
+          echo "after stop: $(free -m | awk 'NR==2{print "mem used "$3" avail "$7" MB"}')"
+      # REHEARSAL_JC_IMAGE: apps.sh copies /srv/apps out of that image instead of building the apps
+      # stage itself. REHEARSAL_APPS=off is never set here: it would drop every App row.
       - name: run all
-        env: { SMOKE_E2E: "1", REHEARSAL_HOME: "${{ runner.temp }}/rehearsal" }
+        env: { SMOKE_E2E: "1", REHEARSAL_HOME: "${{ runner.temp }}/rehearsal", REHEARSAL_JC_IMAGE: "jc-apps:smoke" }
         run: bins/jc/smoke/ci/gate.sh "$RUNNER_TEMP/smoke"
       - name: summary
         if: always()
