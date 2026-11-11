@@ -25,7 +25,7 @@ spec:
       Die Organisation ist die Stelle, der jedes Projekt hier gehört: ihre Internet-Domain benennt
       jede Entität, ihre Sprachen bietet das Portal an, und ihre Kontakte stehen für sie ein. Die
       Projektregeln unten bestimmen, wer ein Projekt eröffnet, wer es liest und was es enthalten darf.
-  order: [domain, locales, defaultLocale, contacts, projects, policies, limits]
+  order: [domain, locales, defaultLocale, contacts, appearance, projects, policies, limits]
   groups:
     - title:
         en: The organization
@@ -50,6 +50,18 @@ spec:
         de: Die Menschen, an die Nutzer der veröffentlichten Daten schreiben, je Zuständigkeit.
       fields: [contacts]
     - title:
+        en: How it looks
+        sk: Ako vyzerá
+        cs: Jak vypadá
+        de: Wie sie aussieht
+      description:
+        en: The name, colours and logo its Portal, open data portal and sign-in page show; an empty field shows the installation's.
+        sk: Názov, farby a logo, ktoré ukazuje jej Portál, portál otvorených dát a prihlasovacia stránka; prázdne pole ukazuje hodnotu inštalácie.
+        cs: Název, barvy a logo, které ukazuje její Portál, portál otevřených dat a přihlašovací stránka; prázdné pole ukazuje hodnotu instalace.
+        de: Name, Farben und Logo, die ihr Portal, ihr Open-Data-Portal und die Anmeldeseite zeigen; ein leeres Feld zeigt den Wert der Installation.
+      folded: true
+      fields: [appearance]
+    - title:
         en: Rules for projects
         sk: Pravidlá projektov
         cs: Pravidla projektů
@@ -73,6 +85,86 @@ spec:
       folded: true
       fields: [policies, limits]
   fields:
+    appearance.instanceName:
+      help:
+        en: "The full name on page titles and the sign-in page, for example City of Example."
+        sk: "Celý názov v titulkoch stránok a na prihlasovacej stránke, napríklad Obec Príklad."
+        cs: "Celý název v titulcích stránek a na přihlašovací stránce, například Obec Příklad."
+        de: "Der volle Name in Seitentiteln und auf der Anmeldeseite, zum Beispiel Stadt Beispiel."
+    appearance.shortName:
+      help:
+        en: "The short name in the sidebar and browser tabs, for example Example; empty takes the name."
+        sk: "Krátky názov v bočnom paneli a na kartách prehliadača, napríklad Príklad; prázdny preberie názov."
+        cs: "Krátký název v postranním panelu a na kartách prohlížeče, například Příklad; prázdný převezme název."
+        de: "Der Kurzname in der Seitenleiste und den Browser-Tabs, zum Beispiel Beispiel; leer übernimmt den Namen."
+    appearance.city:
+      help:
+        en: "The city or region the organization serves, for example Example Region."
+        sk: "Obec alebo región, ktorému organizácia slúži, napríklad Príkladový kraj."
+        cs: "Město nebo region, kterému organizace slouží, například Příkladový kraj."
+        de: "Die Stadt oder Region, der die Organisation dient, zum Beispiel Beispielregion."
+    appearance.publisher:
+      help:
+        en: "The legal publisher in the footer and on the open data portal, for example City of Example."
+        sk: "Právny vydavateľ v päte stránky a na portáli otvorených dát, napríklad Obec Príklad."
+        cs: "Právní vydavatel v patičce a na portálu otevřených dat, například Obec Příklad."
+        de: "Der rechtliche Herausgeber in der Fußzeile und im Open-Data-Portal, zum Beispiel Stadt Beispiel."
+    appearance.contactEmail:
+      help:
+        en: "The address people write to about the published data, for example opendata@city.example."
+        sk: "Adresa, na ktorú ľudia píšu o zverejnených dátach, napríklad opendata@city.example."
+        cs: "Adresa, na kterou lidé píší o zveřejněných datech, například opendata@city.example."
+        de: "Die Adresse für Fragen zu den veröffentlichten Daten, zum Beispiel opendata@city.example."
+    appearance.licenseDefault:
+      help:
+        en: "The licence a new dataset starts with, as an SPDX identifier, for example CC-BY-4.0."
+        sk: "Licencia, s ktorou začína nový dataset, ako identifikátor SPDX, napríklad CC-BY-4.0."
+        cs: "Licence, se kterou začíná nová datová sada, jako identifikátor SPDX, například CC-BY-4.0."
+        de: "Die Lizenz, mit der ein neuer Datensatz beginnt, als SPDX-Kennung, zum Beispiel CC-BY-4.0."
+    appearance.colours.primary:
+      help:
+        en: "The colour of buttons and the main actions as a hex value, for example #0b5394."
+        sk: "Farba pre tlačidlá a hlavné akcie ako hexadecimálna hodnota, napríklad #0b5394."
+        cs: "Barva pro tlačítka a hlavní akce jako hexadecimální hodnota, například #0b5394."
+        de: "Die Farbe für Schaltflächen und Hauptaktionen als Hexwert, zum Beispiel #0b5394."
+    appearance.colours.secondary:
+      help:
+        en: "The colour of links and the focus ring as a hex value, for example #0f766e."
+        sk: "Farba pre odkazy a rámček zamerania ako hexadecimálna hodnota, napríklad #0f766e."
+        cs: "Barva pro odkazy a rámeček zaměření jako hexadecimální hodnota, například #0f766e."
+        de: "Die Farbe für Links und den Fokusrahmen als Hexwert, zum Beispiel #0f766e."
+    appearance.colours.accent:
+      help:
+        en: "The colour of highlights as a hex value, for example #f59e0b."
+        sk: "Farba pre zvýraznenia ako hexadecimálna hodnota, napríklad #f59e0b."
+        cs: "Barva pro zvýraznění jako hexadecimální hodnota, například #f59e0b."
+        de: "Die Farbe für Hervorhebungen als Hexwert, zum Beispiel #f59e0b."
+    appearance.colours.background:
+      help:
+        en: "The colour of the page background as a hex value, for example #ffffff."
+        sk: "Farba pre pozadie stránky ako hexadecimálna hodnota, napríklad #ffffff."
+        cs: "Barva pro pozadí stránky jako hexadecimální hodnota, například #ffffff."
+        de: "Die Farbe für den Seitenhintergrund als Hexwert, zum Beispiel #ffffff."
+    appearance.colours.text:
+      help:
+        en: "The colour of body text as a hex value, for example #0f172a."
+        sk: "Farba pre bežný text ako hexadecimálna hodnota, napríklad #0f172a."
+        cs: "Barva pro běžný text jako hexadecimální hodnota, například #0f172a."
+        de: "Die Farbe für den Fließtext als Hexwert, zum Beispiel #0f172a."
+    appearance.logoSvg:
+      widget: textarea
+      help:
+        en: "Paste the SVG of the logo, up to 64 KiB, without scripts or links to other sites; it starts with <svg."
+        sk: "Vložte SVG pre logo, najviac 64 KiB, bez skriptov a odkazov na iné stránky; začína sa <svg."
+        cs: "Vložte SVG pro logo, nejvýše 64 KiB, bez skriptů a odkazů na jiné stránky; začíná <svg."
+        de: "Fügen Sie das SVG für Logo ein, höchstens 64 KiB, ohne Skripte und Links zu anderen Seiten; es beginnt mit <svg."
+    appearance.faviconSvg:
+      widget: textarea
+      help:
+        en: "Paste the SVG of the browser tab icon, up to 64 KiB, without scripts or links to other sites; it starts with <svg."
+        sk: "Vložte SVG pre ikonu na karte prehliadača, najviac 64 KiB, bez skriptov a odkazov na iné stránky; začína sa <svg."
+        cs: "Vložte SVG pro ikonu na kartě prohlížeče, nejvýše 64 KiB, bez skriptů a odkazů na jiné stránky; začíná <svg."
+        de: "Fügen Sie das SVG für Symbol im Browser-Tab ein, höchstens 64 KiB, ohne Skripte und Links zu anderen Seiten; es beginnt mit <svg."
     policies.apps.services:
       help:
         en: The platform services an app may call beyond identity and data; a project or an app may only narrow the list.

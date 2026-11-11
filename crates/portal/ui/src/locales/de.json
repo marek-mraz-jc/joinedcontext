@@ -7569,6 +7569,25 @@
         "agentRunsPerDay": "Assistentenläufe pro Tag",
         "entitiesPerSpace": "Entitäten pro Raum",
         "requestsPerMinute": "Anfragen pro Minute je Endpunkt"
+      },
+      "appearance": {
+        "title": "Erscheinungsbild",
+        "instanceName": "Name",
+        "shortName": "Kurzname",
+        "city": "Stadt oder Region",
+        "publisher": "Herausgeber",
+        "contactEmail": "Kontakt-E-Mail",
+        "licenseDefault": "Standardlizenz",
+        "colours": "Farben",
+        "logoSvg": "Logo (SVG)",
+        "faviconSvg": "Favicon (SVG)",
+        "colour": {
+          "primary": "Primär",
+          "secondary": "Sekundär",
+          "accent": "Akzent",
+          "background": "Hintergrund",
+          "text": "Text"
+        }
       }
     },
     "contactRole": {

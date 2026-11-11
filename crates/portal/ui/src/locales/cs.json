@@ -7569,6 +7569,25 @@
         "agentRunsPerDay": "Běhy asistenta za den",
         "entitiesPerSpace": "Entity v prostoru",
         "requestsPerMinute": "Požadavky za minutu na koncový bod"
+      },
+      "appearance": {
+        "title": "Vzhled",
+        "instanceName": "Název",
+        "shortName": "Krátký název",
+        "city": "Město nebo region",
+        "publisher": "Vydavatel",
+        "contactEmail": "Kontaktní e-mail",
+        "licenseDefault": "Výchozí licence",
+        "colours": "Barvy",
+        "logoSvg": "Logo (SVG)",
+        "faviconSvg": "Ikona stránky (SVG)",
+        "colour": {
+          "primary": "Hlavní",
+          "secondary": "Doplňková",
+          "accent": "Zvýraznění",
+          "background": "Pozadí",
+          "text": "Text"
+        }
       }
     },
     "contactRole": {

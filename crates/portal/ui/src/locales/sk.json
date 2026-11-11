@@ -7569,6 +7569,25 @@
         "agentRunsPerDay": "Behy asistenta za deň",
         "entitiesPerSpace": "Entity v priestore",
         "requestsPerMinute": "Požiadavky za minútu na endpoint"
+      },
+      "appearance": {
+        "title": "Vzhľad",
+        "instanceName": "Názov",
+        "shortName": "Krátky názov",
+        "city": "Mesto alebo región",
+        "publisher": "Vydavateľ",
+        "contactEmail": "Kontaktný e-mail",
+        "licenseDefault": "Predvolená licencia",
+        "colours": "Farby",
+        "logoSvg": "Logo (SVG)",
+        "faviconSvg": "Ikona stránky (SVG)",
+        "colour": {
+          "primary": "Hlavná",
+          "secondary": "Doplnková",
+          "accent": "Zvýraznenie",
+          "background": "Pozadie",
+          "text": "Text"
+        }
       }
     },
     "contactRole": {

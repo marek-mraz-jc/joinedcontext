@@ -7569,6 +7569,25 @@
         "agentRunsPerDay": "Assistant runs per day",
         "entitiesPerSpace": "Entities per space",
         "requestsPerMinute": "Requests per minute per endpoint"
+      },
+      "appearance": {
+        "title": "Appearance",
+        "instanceName": "Name",
+        "shortName": "Short name",
+        "city": "City or region",
+        "publisher": "Publisher",
+        "contactEmail": "Contact e-mail",
+        "licenseDefault": "Default licence",
+        "colours": "Colours",
+        "logoSvg": "Logo (SVG)",
+        "faviconSvg": "Favicon (SVG)",
+        "colour": {
+          "primary": "Primary",
+          "secondary": "Secondary",
+          "accent": "Accent",
+          "background": "Background",
+          "text": "Text"
+        }
       }
     },
     "contactRole": {

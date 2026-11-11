@@ -193,6 +193,7 @@ fn organization_names_validators_smoke() {
             dcat_profiles: vec![],
             installation: false,
             catalog: None,
+            appearance: Default::default(),
         }
     )
     .resource_path()
