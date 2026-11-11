@@ -117,18 +117,29 @@ impl SpaceRetention {
                 )
             })
             .collect();
-        for (tenant, space) in &current {
-            if state.retained.remove(tenant).is_some() {
-                tracing::info!(%tenant, project = %space.project, space = %space.space, "a removed Context Space is back within its grace: its data is kept");
+        // A space is the ContextSpace (project, name): an Update of its urnSegment moves it to a
+        // new tenant with no removal and no destructive confirm, so its earlier tenant is never
+        // retained or purged while the space exists.
+        let applied: std::collections::BTreeSet<(&str, &str)> = current
+            .values()
+            .map(|space| (space.project.as_str(), space.space.as_str()))
+            .collect();
+        let exists =
+            |space: &Space| applied.contains(&(space.project.as_str(), space.space.as_str()));
+        state.retained.retain(|tenant, retained| {
+            let back = current.contains_key(tenant) || exists(&retained.space);
+            if back {
+                tracing::info!(%tenant, project = %retained.space.project, space = %retained.space.space, "a removed Context Space is back within its grace: its data is kept");
             }
-        }
+            !back
+        });
         if held {
             state.live.extend(current);
         } else {
             let gone: Vec<(String, Space)> = state
                 .live
                 .iter()
-                .filter(|(tenant, _)| !current.contains_key(*tenant))
+                .filter(|(tenant, space)| !current.contains_key(*tenant) && !exists(space))
                 .map(|(tenant, space)| (tenant.clone(), space.clone()))
                 .collect();
             for (tenant, space) in gone {
@@ -291,6 +302,40 @@ mod tests {
         retention.observe(&spaces(&["air"]), &brokers(), false, T0 + 2);
         assert!(retention.retained().is_empty());
         assert!(retention.due(T0 + 2 * GRACE_SECS).is_empty());
+    }
+
+    #[test]
+    fn a_space_whose_tenant_changed_is_not_retained_or_purged() {
+        let retention = SpaceRetention::new(None);
+        retention.observe(&spaces(&["air"]), &brokers(), false, T0);
+        // An Update of the space's urnSegment: same (project, name), a new tenant.
+        let renamed = vec![("p".to_owned(), "air".to_owned(), "org-p-air2".to_owned())];
+        retention.observe(&renamed, &brokers(), false, T0 + 1);
+        assert!(
+            retention.retained().is_empty(),
+            "the space still exists: its old tenant is never purged"
+        );
+        assert!(retention.due(T0 + 2 * GRACE_SECS).is_empty());
+        // Removed later: only the tenant it applied last is retained.
+        retention.observe(&[], &brokers(), false, T0 + 2);
+        assert_eq!(
+            retention.retained().keys().collect::<Vec<_>>(),
+            ["org-p-air2"]
+        );
+    }
+
+    #[test]
+    fn a_removed_space_back_under_a_new_tenant_keeps_the_old_data() {
+        let retention = SpaceRetention::new(None);
+        retention.observe(&spaces(&["air"]), &brokers(), false, T0);
+        retention.observe(&[], &brokers(), false, T0 + 1);
+        assert_eq!(retention.retained().len(), 1);
+        let back = vec![("p".to_owned(), "air".to_owned(), "org-p-air2".to_owned())];
+        retention.observe(&back, &brokers(), false, T0 + 2);
+        assert!(
+            retention.retained().is_empty(),
+            "the ContextSpace is back: its earlier tenant is not purged"
+        );
     }
 
     #[test]
