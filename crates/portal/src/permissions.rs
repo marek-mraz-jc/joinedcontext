@@ -640,6 +640,30 @@ pub fn organization_of(mirror: &Mirror, project: &str) -> Option<String> {
         .or_else(|| installation_organization(mirror))
 }
 
+/// The domains `project` publishes under, as the gateway binds Policy URNs on them (PF-122,
+/// `store.rs` `policy_ref_domains`): its Project's `spec.domain` and the domain of the
+/// Organization its `spec.organizationRef` names. Empty when it names neither.
+pub fn project_domains(mirror: &Mirror, project: &str) -> std::collections::BTreeSet<String> {
+    let domain = |env: &crate::resource::ResourceEnvelope| {
+        env.spec["domain"]
+            .as_str()
+            .filter(|domain| !domain.is_empty())
+            .map(str::to_owned)
+    };
+    let Some(env) = mirror.get(ORG_NAMESPACE, "Project", project) else {
+        return Default::default();
+    };
+    let organization = env
+        .spec
+        .get("organizationRef")
+        .and_then(crate::resource::reference_name)
+        .and_then(|name| mirror.get(ORG_NAMESPACE, "Organization", name));
+    domain(&env)
+        .into_iter()
+        .chain(organization.as_ref().and_then(domain))
+        .collect()
+}
+
 /// The `Organization` manifest that owns `project` ([`organization_of`]): its policies, limits and
 /// domain are the ones that hold there, never another Organization's (ADR-N-058 section 2.3).
 pub fn organization_manifest_of(

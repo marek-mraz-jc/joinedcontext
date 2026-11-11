@@ -9,6 +9,7 @@ use jc_core::ProblemDetails;
 pub mod catalog;
 pub(crate) mod download_cache;
 pub mod endpoint_surface;
+pub(crate) mod feeds_csv;
 pub mod files;
 pub mod mappings;
 pub mod ngsi_ld;
