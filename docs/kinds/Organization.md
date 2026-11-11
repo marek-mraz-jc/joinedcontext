@@ -38,6 +38,7 @@ Desired specification of an `Organization` resource (PF-01, PF-02, PF-25, PF-41)
 | `colours` | [AppearanceColours](#appearancecolours) | no | The colour tokens, each a hex colour such as `#0b5394`. |
 | `contactEmail` | string | no | The contact address in the footer and the open data portal, e.g. `opendata@banskabystrica.sk`. |
 | `faviconSvg` | string | no | The favicon as an SVG document of at most 64 KiB, under the same rules as the logo. |
+| `homeWidgets` | list of string | no | Dashboards the Organization's Portal home page shows, each `project/name` of one of its projects, e.g. `doprava/prehlad`; a viewer sees only those they may read (T-6779). |
 | `instanceName` | string | no | Full name on page titles and the login page, e.g. `Mesto Banská Bystrica`. |
 | `licenseDefault` | string | no | The licence a new dataset starts with, e.g. `CC-BY-4.0`. |
 | `logoSvg` | string | no | The logo as an SVG document of at most 64 KiB, without script, event handler or external reference. |

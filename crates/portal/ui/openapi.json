@@ -4853,6 +4853,81 @@
         }
       }
     },
+    "/api/v1/organization/widgets": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List The Home Page Widgets",
+        "description": "The Dashboards the request's Organization shows on its Portal home page (spec.appearance.homeWidgets, UIX-16), each read again under the caller's rights: one the caller may not read, or one of another Organization, is left out (T-6779).",
+        "operationId": "list_widgets",
+        "responses": {
+          "200": {
+            "description": "The widgets the caller may read, in the manifest's order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeWidgets"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/widgets/options": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List The Dashboards A Home Page May Show",
+        "description": "Every Dashboard of the named Organization's projects the caller may read: the choices of spec.appearance.homeWidgets, which the propose door checks again (T-6779). An Organization the caller reads nothing in answers an empty list.",
+        "operationId": "list_options",
+        "parameters": [
+          {
+            "name": "organization",
+            "in": "query",
+            "description": "The Organization the form edits, by `metadata.name`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Dashboards the caller may name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetOptions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/preferences": {
       "get": {
         "tags": [
@@ -50901,6 +50976,53 @@
           "incomplete"
         ]
       },
+      "HomeWidget": {
+        "type": "object",
+        "description": "One Dashboard a home page shows or a form offers.",
+        "required": [
+          "reference",
+          "project",
+          "name",
+          "title",
+          "pages"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "pages": {
+            "type": "integer",
+            "description": "How many pages it has.",
+            "minimum": 0
+          },
+          "project": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string",
+            "description": "`project/name`, as `spec.appearance.homeWidgets` writes it."
+          },
+          "title": {
+            "type": "object",
+            "description": "The Dashboard's title: one string, or one per locale."
+          }
+        }
+      },
+      "HomeWidgets": {
+        "type": "object",
+        "description": "The widgets of the request's Organization this viewer may read, in the manifest's order.",
+        "required": [
+          "widgets"
+        ],
+        "properties": {
+          "widgets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HomeWidget"
+            }
+          }
+        }
+      },
       "Hop": {
         "type": "object",
         "description": "One hop of a binding: a manifest by name, or `hidden` when the caller may not read it.",
@@ -58800,6 +58922,21 @@
           }
         ],
         "description": "Who is tried: one person, a member of a group or of a realm role with no person of their own,\none of the project's ServiceAccounts, or the public."
+      },
+      "WidgetOptions": {
+        "type": "object",
+        "description": "Every Dashboard of one Organization the caller may read: what the form offers.",
+        "required": [
+          "options"
+        ],
+        "properties": {
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HomeWidget"
+            }
+          }
+        }
       },
       "Windows": {
         "type": "object",

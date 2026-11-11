@@ -7595,7 +7595,8 @@
           "accent": "Accent",
           "background": "Background",
           "text": "Text"
-        }
+        },
+        "homeWidgets": "Home page dashboards"
       }
     },
     "contactRole": {
@@ -9987,6 +9988,12 @@
       "empty": "Nothing is shared with you yet. When another project shares an app with the whole organization, it appears here.",
       "from": "From the project {project}",
       "newTab": "(opens in a new tab)"
+    },
+    "widgets": {
+      "title": "Dashboards on the home page",
+      "lead": "Chosen by your organization; you see the ones you may open.",
+      "open": "Open",
+      "pages": "{count, plural, one {# page} other {# pages}}"
     }
   },
   "alerts": {

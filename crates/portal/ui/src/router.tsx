@@ -1356,7 +1356,15 @@ const sectionRoute = createRoute({
   // `?dataType=`, `?dataQ=` and `?dataSort=` hold what an endpoint's Data section shows (T-5082).
   validateSearch: (
     search: Record<string, unknown>,
-  ): { edit?: string; draft?: string; dataType?: string; dataQ?: string; dataSort?: string; hidden?: "dashboards" } => {
+  ): {
+    edit?: string;
+    draft?: string;
+    dataType?: string;
+    dataQ?: string;
+    dataSort?: string;
+    hidden?: "dashboards";
+    dashboard?: string;
+  } => {
     const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
     return {
       edit: text(search.edit),
@@ -1366,6 +1374,8 @@ const sectionRoute = createRoute({
       dataType: text(search.dataType),
       dataQ: text(search.dataQ),
       dataSort: text(search.dataSort),
+      // `?dashboard=<name>` opens that dashboard first: a home page widget's link (T-6779).
+      dashboard: text(search.dashboard),
     };
   },
   // One list, one editor (T-4829): the generic DataModel list and its form opened version,

@@ -7595,7 +7595,8 @@
           "accent": "Zvýraznění",
           "background": "Pozadí",
           "text": "Text"
-        }
+        },
+        "homeWidgets": "Nástěnky na domovské stránce"
       }
     },
     "contactRole": {
@@ -9987,6 +9988,12 @@
       "empty": "Zatím s vámi nikdo nic nesdílí. Když jiný projekt sdílí aplikaci s celou organizací, objeví se zde.",
       "from": "Z projektu {project}",
       "newTab": "(otevře se na nové kartě)"
+    },
+    "widgets": {
+      "title": "Nástěnky na domovské stránce",
+      "lead": "Vybrala je vaše organizace; vidíte ty, které smíte otevřít.",
+      "open": "Otevřít",
+      "pages": "{count, plural, one {# strana} few {# strany} other {# stran}}"
     }
   },
   "alerts": {

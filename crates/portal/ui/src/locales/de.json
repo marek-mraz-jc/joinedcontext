@@ -7595,7 +7595,8 @@
           "accent": "Akzent",
           "background": "Hintergrund",
           "text": "Text"
-        }
+        },
+        "homeWidgets": "Dashboards auf der Startseite"
       }
     },
     "contactRole": {
@@ -9987,6 +9988,12 @@
       "empty": "Noch ist nichts mit Ihnen geteilt. Wenn ein anderes Projekt eine App mit der ganzen Organisation teilt, erscheint sie hier.",
       "from": "Aus dem Projekt {project}",
       "newTab": "(öffnet in einem neuen Tab)"
+    },
+    "widgets": {
+      "title": "Dashboards auf der Startseite",
+      "lead": "Von Ihrer Organisation ausgewählt; Sie sehen die, die Sie öffnen dürfen.",
+      "open": "Öffnen",
+      "pages": "{count, plural, one {# Seite} other {# Seiten}}"
     }
   },
   "alerts": {

@@ -165,6 +165,12 @@ spec:
         sk: "Vložte SVG pre ikonu na karte prehliadača, najviac 64 KiB, bez skriptov a odkazov na iné stránky; začína sa <svg."
         cs: "Vložte SVG pro ikonu na kartě prohlížeče, nejvýše 64 KiB, bez skriptů a odkazů na jiné stránky; začíná <svg."
         de: "Fügen Sie das SVG für Symbol im Browser-Tab ein, höchstens 64 KiB, ohne Skripte und Links zu anderen Seiten; es beginnt mit <svg."
+    appearance.homeWidgets:
+      help:
+        en: "Up to 6 dashboards of this organization's projects for its Portal home page, for example doprava/prehlad; each person sees the ones they may open. No choice offered: make a dashboard in a project first."
+        sk: "Najviac 6 násteniek z projektov tejto organizácie pre domovskú stránku jej Portálu, napríklad doprava/prehlad; každý vidí tie, ktoré smie otvoriť. Žiadna ponuka: najprv vytvorte nástenku v projekte."
+        cs: "Nejvýše 6 nástěnek z projektů této organizace pro domovskou stránku jejího Portálu, například doprava/prehlad; každý vidí ty, které smí otevřít. Žádná nabídka: nejprve vytvořte nástěnku v projektu."
+        de: "Bis zu 6 Dashboards aus den Projekten dieser Organisation für die Startseite ihres Portals, zum Beispiel doprava/prehlad; jede Person sieht die, die sie öffnen darf. Keine Auswahl: legen Sie zuerst ein Dashboard in einem Projekt an."
     policies.apps.services:
       help:
         en: The platform services an app may call beyond identity and data; a project or an app may only narrow the list.

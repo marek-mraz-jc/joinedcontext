@@ -32,6 +32,8 @@ interface World {
   dashboards?: string[];
   /** The installation's branding, its hidden sections included. */
   branding?: unknown;
+  /** What `GET /api/v1/organization/widgets` answers this person (T-6779). */
+  widgets?: unknown[];
 }
 
 function show(world: World) {
@@ -50,6 +52,7 @@ function show(world: World) {
         return json({ project: "helsinki", grants });
       }
       if (path === "/api/v1/shared-apps") return json(world.shared ?? []);
+      if (path === "/api/v1/organization/widgets") return json({ widgets: world.widgets ?? [] });
       if (path === "/api/v1/preferences") return json(world.dismissed ? { firstRunDismissed: true } : {});
       if (path === "/api/v1/projects") return json({ apiVersion: "v1", kind: "List", items: world.projects ?? [{ name: "helsinki", sample: false }] });
       if (path === "/api/v1/projects/helsinki/spaces") return json(list((world.spaces ?? []).map((s) => named(s))));
@@ -150,6 +153,27 @@ describe("the project home (T-3233, T-3235)", () => {
     await screen.findByText(en.home.lead.viewer);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByRole("link", { name: /1 dashboard/ })).toBeNull();
+  });
+
+  it("shows the Organization's home page dashboards the server lets this person read, each opening that dashboard (T-6779)", async () => {
+    const { container } = show({
+      verbs: ["read"],
+      dismissed: true,
+      widgets: [
+        { reference: "doprava/prehlad", project: "doprava", name: "prehlad", title: { en: "Traffic overview", sk: "Prehľad dopravy" }, pages: 2 },
+      ],
+    });
+    const section = await screen.findByRole("region", { name: en.home.widgets.title });
+    const card = within(section).getByRole("link", { name: /Traffic overview/ });
+    expect(card).toHaveAttribute("href", "/projects/doprava/dashboards?dashboard=prehlad");
+    expect(card).toHaveTextContent("doprava · 2 pages");
+    await expectNoViolations(container);
+    cleanup();
+    // None readable: no section, no empty heading.
+    show({ verbs: ["read"], dismissed: true, widgets: [] });
+    await screen.findByText(en.home.lead.viewer);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole("region", { name: en.home.widgets.title })).toBeNull();
   });
 });
 

@@ -211,6 +211,17 @@ describe("the Organization form", () => {
     expect(idle.description).toContain("Allowed: 5 – 120.");
   });
 
+  it("offers as home page dashboards only the ones the server lists for this person (T-6779)", () => {
+    const offered = [{ reference: "doprava/prehlad", label: "Traffic overview (doprava/prehlad)" }];
+    const errors = (homeWidgets: string[]) =>
+      validator
+        .validateFormData({ ...base, appearance: { homeWidgets } }, organizationSchema(t, LIMITS.entries, offered))
+        .errors.map((error) => `${error.property} ${error.message}`);
+    expect(errors(["doprava/prehlad"])).toEqual([]);
+    expect(errors(["mhd/linky"]).join("\n")).toMatch(/homeWidgets/);
+    expect(errors(["doprava/prehlad", "doprava/prehlad"]).join("\n")).toMatch(/homeWidgets/);
+  });
+
   it("refuses a public-app policy the platform does not know", () => {
     expect(errorsOf({ ...base, policies: { apps: { public: "sometimes" } } }).join("\n")).toMatch(/public/);
     expect(errorsOf({ ...base, policies: { apps: { public: "refused" } } })).toEqual([]);

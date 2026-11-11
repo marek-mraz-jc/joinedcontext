@@ -1461,6 +1461,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organization/widgets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List The Home Page Widgets
+         * @description The Dashboards the request's Organization shows on its Portal home page (spec.appearance.homeWidgets, UIX-16), each read again under the caller's rights: one the caller may not read, or one of another Organization, is left out (T-6779).
+         */
+        get: operations["list_widgets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/widgets/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List The Dashboards A Home Page May Show
+         * @description Every Dashboard of the named Organization's projects the caller may read: the choices of spec.appearance.homeWidgets, which the propose door checks again (T-6779). An Organization the caller reads nothing in answers an empty list.
+         */
+        get: operations["list_options"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/preferences": {
         parameters: {
             query?: never;
@@ -10306,6 +10346,21 @@ export interface components {
          * @enum {string}
          */
         HoldReason: "share-exceeded" | "empty" | "incomplete";
+        /** @description One Dashboard a home page shows or a form offers. */
+        HomeWidget: {
+            name: string;
+            /** @description How many pages it has. */
+            pages: number;
+            project: string;
+            /** @description `project/name`, as `spec.appearance.homeWidgets` writes it. */
+            reference: string;
+            /** @description The Dashboard's title: one string, or one per locale. */
+            title: Record<string, never>;
+        };
+        /** @description The widgets of the request's Organization this viewer may read, in the manifest's order. */
+        HomeWidgets: {
+            widgets: components["schemas"]["HomeWidget"][];
+        };
         /** @description One hop of a binding: a manifest by name, or `hidden` when the caller may not read it. */
         Hop: {
             hidden?: boolean;
@@ -11033,8 +11088,10 @@ export interface components {
             displayName?: string | null;
             /** @description The slug: the `{project}` segment of every path of it (PF-67). */
             name: string;
-            /** @description The Organization the project belongs to, e.g. `bbsk`: needed only when the caller may open
-             *     a project in several; the caller must hold that right there (T-6766). */
+            /**
+             * @description The Organization the project belongs to, e.g. `bbsk`: needed only when the caller may open
+             *     a project in several; the caller must hold that right there (T-6766).
+             */
             organization?: string | null;
         };
         /** @description What opening a workspace asks for (API/01 §22). */
@@ -13271,6 +13328,10 @@ export interface components {
         } | {
             /** @enum {string} */
             kind: "public";
+        };
+        /** @description Every Dashboard of one Organization the caller may read: what the form offers. */
+        WidgetOptions: {
+            options: components["schemas"]["HomeWidget"][];
         };
         /** @description Where each window starts: its oldest reading. */
         Windows: {
@@ -17208,6 +17269,67 @@ export interface operations {
             };
             /** @description Not an administrator of the organization (PF-03) */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_widgets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The widgets the caller may read, in the manifest's order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeWidgets"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_options: {
+        parameters: {
+            query: {
+                /** @description The Organization the form edits, by `metadata.name`. */
+                organization: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Dashboards the caller may name */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WidgetOptions"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -32045,6 +32167,8 @@ export interface operations {
                     displayName?: string;
                     /** @description The project slug, a DNS-1123 label */
                     name: string;
+                    /** @description The Organization it belongs to, e.g. bbsk; needed only when you may open a project in several */
+                    organization?: string;
                 };
             };
         };

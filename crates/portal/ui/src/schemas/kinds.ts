@@ -2973,7 +2973,17 @@ export const APP_SERVICES_UI = { "ui:widget": "checkboxes" } as const;
  * PF-73, PF-78), field for field jc-core's `OrganizationSpec`. `gitRepositoryUrl` is the
  * installation's and not offered; the form keeps it from the stored manifest.
  */
-export function organizationSchema(t: (key: string) => string, entries: readonly LimitEntry[] = []): JsonSchema {
+/** A Dashboard a home page may show, as `GET /api/v1/organization/widgets/options` offers it. */
+export interface WidgetOption {
+  reference: string;
+  label: string;
+}
+
+export function organizationSchema(
+  t: (key: string) => string,
+  entries: readonly LimitEntry[] = [],
+  widgets: readonly WidgetOption[] = [],
+): JsonSchema {
   const quota = Object.fromEntries(
     QUOTA_DIMENSIONS.map((dimension) => [
       dimension,
@@ -3107,7 +3117,7 @@ export function organizationSchema(t: (key: string) => string, entries: readonly
           },
         },
       },
-      appearance: appearanceProperty(t),
+      appearance: appearanceProperty(t, widgets),
     },
   } as JsonSchema;
   // Every numeric policy and limit, held to the operator's bound (PF-97, PF-102).
@@ -3125,7 +3135,7 @@ const APPEARANCE_COLOURS = ["primary", "secondary", "accent", "background", "tex
  * `spec.appearance` (UIX-16, T-6772): what the Organization's Portal, open data portal and login
  * page show of it; every field left empty shows the installation's.
  */
-function appearanceProperty(t: (key: string) => string): JsonSchema {
+function appearanceProperty(t: (key: string) => string, widgets: readonly WidgetOption[]): JsonSchema {
   const line = (key: string): JsonSchema => ({
     type: "string",
     title: t(`organization.field.appearance.${key}`),
@@ -3170,6 +3180,17 @@ function appearanceProperty(t: (key: string) => string): JsonSchema {
       },
       logoSvg: svg("logoSvg"),
       faviconSvg: svg("faviconSvg"),
+      // The Dashboards the server offers this person; the propose door checks each one again (T-6779).
+      homeWidgets: {
+        type: "array",
+        title: t("organization.field.appearance.homeWidgets"),
+        maxItems: 6,
+        uniqueItems: true,
+        items:
+          widgets.length > 0
+            ? { type: "string", oneOf: widgets.map((widget) => ({ const: widget.reference, title: widget.label })) }
+            : { type: "string", pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+      },
     },
   } as JsonSchema;
 }

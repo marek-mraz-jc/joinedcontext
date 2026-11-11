@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, queryKeys, unwrap } from "../../api/client";
-import { asManifests, ORG_NAMESPACE } from "../../api/manifest";
+import { asManifests, localized, ORG_NAMESPACE } from "../../api/manifest";
 import { useChosenOrganizationName } from "../../api/projects";
 import { EditResourceAction } from "../../components/EditResourceDialog";
 import type { EditableForm } from "../../components/EditResourceDialog";
@@ -120,7 +120,7 @@ function creationOf(t: (key: string, options?: Record<string, unknown>) => strin
  * verification below it (PF-41).
  */
 export function OrganizationSettings(): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const organizations = useQuery({
     queryKey: queryKeys.list(ORG_NAMESPACE, "organizations"),
     queryFn: async () =>
@@ -145,8 +145,24 @@ export function OrganizationSettings(): JSX.Element {
     all[0];
   const spec = (organization?.spec ?? {}) as OrganizationSpec;
   const policy = spec.projects ?? {};
+  // The home page's choices: the Organization's Dashboards this person may read (T-6779).
+  const organizationName = organization?.metadata.name;
+  const widgetOptions = useQuery({
+    queryKey: ["organization", "widget-options", organizationName],
+    enabled: organizationName !== undefined,
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/api/v1/organization/widgets/options", {
+          params: { query: { organization: organizationName ?? "" } },
+        }),
+      ),
+  });
+  const widgets = (widgetOptions.data?.options ?? []).map((option) => ({
+    reference: option.reference,
+    label: `${localized(option.title as string | Record<string, string> | null, i18n.language, option.name)} (${option.reference})`,
+  }));
   const form: EditableForm = {
-    schema: withMqttDefault(organizationSchema(t, limits.data?.entries ?? []), t),
+    schema: withMqttDefault(organizationSchema(t, limits.data?.entries ?? [], widgets), t),
     uiSchema: { policies: { apps: { services: APP_SERVICES_UI } }, limits: { mqtt: ALLOWANCE_UI } },
     fromManifest: fromOrganization,
     toManifest: toOrganization,

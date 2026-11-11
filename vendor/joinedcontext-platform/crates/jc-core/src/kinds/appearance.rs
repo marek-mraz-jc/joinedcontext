@@ -17,6 +17,9 @@ pub const MAX_APPEARANCE_TEXT: usize = 120;
 /// The largest logo or favicon SVG an appearance carries inline, in bytes.
 pub const MAX_APPEARANCE_SVG: usize = 64 * 1024;
 
+/// The most Dashboards an Organization's Portal home page shows.
+pub const MAX_HOME_WIDGETS: usize = 6;
+
 /// `spec.appearance` (UIX-16).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -48,6 +51,10 @@ pub struct OrganizationAppearance {
     /// The favicon as an SVG document of at most 64 KiB, under the same rules as the logo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub favicon_svg: Option<String>,
+    /// Dashboards the Organization's Portal home page shows, each `project/name` of one of its
+    /// projects, e.g. `doprava/prehlad`; a viewer sees only those they may read (T-6779).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub home_widgets: Vec<String>,
 }
 
 /// `spec.appearance.colours`: each one a hex colour, `#rgb` or `#rrggbb`.
@@ -150,6 +157,25 @@ impl OrganizationAppearance {
         ] {
             if let Some(svg) = value {
                 safe_svg(field, svg)?;
+            }
+        }
+        for (at, widget) in self.home_widgets.iter().enumerate() {
+            let field = format!("spec.appearance.homeWidgets[{at}]");
+            let named = widget.split_once('/').is_some_and(|(project, name)| {
+                crate::names::validate_dns1123_label(project).is_ok()
+                    && crate::names::validate_dns1123_label(name).is_ok()
+            });
+            if !named {
+                return Err(invalid(
+                    &field,
+                    "a Dashboard as project/name, e.g. doprava/prehlad",
+                ));
+            }
+            if at >= MAX_HOME_WIDGETS {
+                return Err(invalid(&field, "one of at most 6 Dashboards"));
+            }
+            if self.home_widgets[..at].contains(widget) {
+                return Err(invalid(&field, "a Dashboard not named twice"));
             }
         }
         Ok(())
@@ -273,6 +299,7 @@ mod tests {
             "colours": { "primary": "#0b5394", "text": "#000" },
             "licenseDefault": "CC-BY-4.0",
             "contactEmail": "opendata@banskabystrica.sk",
+            "homeWidgets": ["doprava/prehlad", "ovzdusie/mapa"],
             "logoSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\"><use href=\"#a\"/><rect fill=\"url(#g)\" width=\"1\"/></svg>",
         });
         assert!(checked(fine.clone()).is_ok(), "{:?}", checked(fine));
@@ -327,6 +354,22 @@ mod tests {
             (
                 json!({ "faviconSvg": "<html></html>" }),
                 "spec.appearance.faviconSvg",
+            ),
+            (
+                json!({ "homeWidgets": ["doprava/prehlad", "Doprava/x"] }),
+                "spec.appearance.homeWidgets[1]",
+            ),
+            (
+                json!({ "homeWidgets": ["prehlad"] }),
+                "spec.appearance.homeWidgets[0]",
+            ),
+            (
+                json!({ "homeWidgets": ["a/b", "a/b"] }),
+                "spec.appearance.homeWidgets[1]",
+            ),
+            (
+                json!({ "homeWidgets": ["a/a", "a/b", "a/c", "a/d", "a/e", "a/f", "a/g"] }),
+                "spec.appearance.homeWidgets[6]",
             ),
             (
                 json!({ "faviconSvg": format!("<svg>{}</svg>", "a".repeat(MAX_APPEARANCE_SVG)) }),

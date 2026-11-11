@@ -199,6 +199,191 @@ fn refused(status: StatusCode) -> bool {
     status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND
 }
 
+/// [`world`] with a project per Organization, each with Dashboards, and two `bbsk` people:
+/// `petr` reads Dashboards in both projects, `anna` reads only the spaces of `doprava`.
+fn widgets_world(test: &str) -> (AppState, std::path::PathBuf) {
+    let (state, dir) = world(test);
+    let m = &state.mirror;
+    for (project, org, dashboards) in [
+        ("doprava", "bbsk", &["prehlad", "nehody"][..]),
+        ("mhd", "praha", &["linky"][..]),
+    ] {
+        m.upsert(envelope(
+            "Project",
+            project,
+            ORG_NAMESPACE,
+            json!({ "organizationRef": org }),
+        ));
+        for name in dashboards {
+            m.upsert(envelope(
+                "Dashboard",
+                name,
+                project,
+                json!({ "title": format!("{name} title"), "pages": [{ "layers": [] }] }),
+            ));
+        }
+    }
+    for (role, kind) in [
+        ("dashboard-reader", "Dashboard"),
+        ("space-reader", "ContextSpace"),
+    ] {
+        m.upsert(envelope(
+            "Role",
+            role,
+            ORG_NAMESPACE,
+            json!({ "rules": [{ "kinds": [kind], "verbs": ["read"] }] }),
+        ));
+    }
+    for (name, who, role, project) in [
+        ("petr-doprava", "petr", "dashboard-reader", "doprava"),
+        ("petr-mhd", "petr", "dashboard-reader", "mhd"),
+        ("anna-doprava", "anna", "space-reader", "doprava"),
+    ] {
+        m.upsert(envelope(
+            "RoleBinding",
+            name,
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": format!("{who}@example.org") }], "role": role,
+                "scope": { "project": project } }),
+        ));
+    }
+    (state, dir)
+}
+
+/// `GET /api/v1/organization/widgets` on `portal.{organization}.example` as `who`, with a session
+/// cookie minted on that host (a session is sealed with its Organization).
+async fn widgets(state: &AppState, organization: &str, who: &str) -> Value {
+    use joinedcontext_portal::organization_host::{scope, OrganizationHost};
+    let host = format!("portal.{organization}.example");
+    let pin = OrganizationHost {
+        organization: organization.to_owned(),
+        base: format!("https://{host}").parse().expect("url"),
+    };
+    let cookie = scope(pin, async { common::cookie(&state.config, admin(who)) }).await;
+    let response = server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/organization/widgets")
+                .header(header::HOST, &host)
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let names = serde_json::from_slice::<Value>(&bytes).expect("json")["widgets"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|widget| widget["reference"].clone())
+        .collect();
+    Value::Array(names)
+}
+
+/// T-6779: a home page widget is read again for each viewer: one the viewer may not read is left
+/// out, and one of another Organization's project is never shown, even when the manifest names it.
+#[tokio::test]
+async fn a_home_widget_shows_only_to_a_viewer_who_reads_it_in_that_organization() {
+    let (state, dir) = widgets_world("widgets_viewer");
+    let mut spec = bbsk_spec();
+    // Another door could land a reference the propose check would refuse.
+    spec["appearance"]["homeWidgets"] = json!(["doprava/prehlad", "mhd/linky", "doprava/gone"]);
+    state
+        .mirror
+        .upsert(envelope("Organization", "bbsk", ORG_NAMESPACE, spec));
+
+    let bbsk = "bbsk";
+    assert_eq!(
+        widgets(&state, bbsk, "petr").await,
+        json!(["doprava/prehlad"])
+    );
+    assert_eq!(widgets(&state, bbsk, "anna").await, json!([]));
+    assert_eq!(widgets(&state, "praha", "petr").await, json!([]));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// T-6779: a widget naming a Dashboard the editor may not read, one of another Organization or
+/// one that does not exist is a 422 naming the member; one the editor reads is proposed.
+#[tokio::test]
+async fn a_home_widget_the_editor_may_not_read_is_refused_naming_the_field() {
+    let (state, dir) = widgets_world("widgets_refused");
+    let uri = format!("/api/v1/projects/{ORG_NAMESPACE}/organizations/bbsk");
+    for widgets in [
+        json!(["mhd/linky"]),
+        json!(["doprava/gone"]),
+        json!(["nikde/prehlad"]),
+    ] {
+        let mut spec = bbsk_spec();
+        spec["appearance"]["homeWidgets"] = widgets.clone();
+        let proposed = http(
+            &state,
+            admin("bbadmin"),
+            "PUT",
+            &uri,
+            Some(organization("bbsk", spec)),
+        )
+        .await;
+        assert_eq!(
+            proposed.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{widgets}: {}",
+            proposed.body
+        );
+        assert!(
+            proposed.text().contains("spec.appearance.homeWidgets[0]"),
+            "{widgets}: {}",
+            proposed.body
+        );
+        assert!(
+            !proposed.text().contains("linky title"),
+            "{}",
+            proposed.body
+        );
+    }
+
+    let mut spec = bbsk_spec();
+    spec["appearance"]["homeWidgets"] = json!(["doprava/prehlad"]);
+    let checked = http(
+        &state,
+        admin("bbadmin"),
+        "PUT",
+        &format!("{uri}?dryRun=All"),
+        Some(organization("bbsk", spec)),
+    )
+    .await;
+    assert_eq!(checked.body["valid"], json!(true), "{}", checked.body);
+
+    let options = http(
+        &state,
+        admin("bbadmin"),
+        "GET",
+        "/api/v1/organization/widgets/options?organization=bbsk",
+        None,
+    )
+    .await;
+    let offered: Vec<&str> = options.body["options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|option| option["reference"].as_str())
+        .collect();
+    assert_eq!(
+        offered,
+        ["doprava/nehody", "doprava/prehlad"],
+        "{}",
+        options.body
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `bbsk`'s administrator proposes no appearance for `praha`, over HTTP or MCP.
 #[tokio::test]
 async fn an_administrator_edits_no_other_organizations_appearance() {
