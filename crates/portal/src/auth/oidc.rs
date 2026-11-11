@@ -434,6 +434,17 @@ impl OidcClient {
     /// endpoint. The identity stays; the roles follow the new id token when the realm sends one
     /// and it verifies. Any refusal is `401`: the session is over, only a login brings it back.
     pub async fn refresh(&self, session: &Session) -> Result<Session, ApiError> {
+        self.refresh_with_access(session)
+            .await
+            .map(|(session, _)| session)
+    }
+
+    /// [`Self::refresh`], with the fresh access token the session's Endpoint reads are
+    /// exchanged from ([`crate::state::AppState::keep_access_token`], T-6783).
+    pub async fn refresh_with_access(
+        &self,
+        session: &Session,
+    ) -> Result<(Session, String), ApiError> {
         let refresh_token = session
             .refresh_token
             .as_deref()
@@ -467,18 +478,17 @@ impl OidcClient {
                 }
             }
         }
-        Ok(mint_session(
-            identity,
-            id_token,
-            session.issued_at,
-            &token_response,
+        Ok((
+            mint_session(identity, id_token, session.issued_at, &token_response),
+            token_response.access_token().secret().clone(),
         ))
     }
 }
 
 /// Builds the cookie session from a token response, at login and at every refresh.
 ///
-/// The access token itself is not kept: the portal calls nothing with it. Its `expires_in` sets
+/// The access token stays out of the session cookie: the caller hands it to
+/// `AppState::keep_access_token`, for the person's Endpoint reads. Its `expires_in` sets
 /// the refresh point; the refresh token's own `exp` (Keycloak slides it with the SSO session)
 /// sets how long the session lives without a login.
 fn mint_session(
@@ -882,6 +892,7 @@ pub async fn callback(
 
     let jar = session::store(jar, &session)?;
     state.keep_session_claims(&session);
+    state.keep_access_token(&session, token_response.access_token().secret().clone());
     let (cookies, _token) = csrf::issue(cookies);
     Ok((jar, cookies, Redirect::to(&flow.redirect_to)).into_response())
 }
@@ -898,7 +909,7 @@ pub(crate) fn jwt_payload<T: serde::de::DeserializeOwned>(token: &str) -> Option
 
 /// `exp` of a JWT-shaped token; `None` for an opaque one. Keycloak's refresh tokens are JWTs
 /// whose `exp` is the SSO session's remaining life, which is exactly the session ceiling.
-fn jwt_exp(token: &str) -> Option<i64> {
+pub(crate) fn jwt_exp(token: &str) -> Option<i64> {
     #[derive(serde::Deserialize)]
     struct Payload {
         exp: Option<i64>,

@@ -22,6 +22,13 @@ use tokio_util::task::TaskTracker;
 pub(crate) static PORTAL_INTERNAL: std::sync::LazyLock<Arc<std::sync::OnceLock<SocketAddr>>> =
     std::sync::LazyLock::new(Default::default);
 
+/// The Portal's state once `portal::build` made it: the gateway asks it for a signed-in person's
+/// Endpoint token (`gateway::session_reads`, T-6783). ponytail: one Portal per process, as
+/// [`PORTAL_INTERNAL`].
+#[cfg(feature = "portal")]
+pub(crate) static PORTAL_STATE: std::sync::OnceLock<joinedcontext_portal::state::AppState> =
+    std::sync::OnceLock::new();
+
 #[cfg(feature = "antares")]
 pub mod antares;
 #[cfg(feature = "assistant")]
