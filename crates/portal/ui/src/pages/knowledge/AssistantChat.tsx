@@ -4,6 +4,7 @@ import type { FormEvent, JSX, KeyboardEvent, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CodeBlock, Alert, Button, Checkbox, ExternalLink, Field, Table, Textarea } from "../../components/ui";
 import { useBranding } from "../../branding";
+import { RecordsGrid } from "../../components/grid/RecordsGrid";
 import { askAssistant, cellText, dataChart, embedSnippet, launcherSnippet } from "./knowledge";
 import type { ChatEvent, ChatTurn, Citation, DataChart, DataTable } from "./knowledge";
 import { label, markdown, sources } from "./answerFormat";
@@ -178,28 +179,15 @@ function Data({ table }: { table: DataTable }): JSX.Element {
   const chart = dataChart(table);
   return (
     <figure className="mt-2 text-caption">
-      <Table caption={table.caption || t("knowledge.chat.data")}>
-        <thead>
-          <tr>
-            {table.columns.map((c, i) => (
-              <th key={i} scope="col" className="whitespace-nowrap px-2 py-1 text-left">
-                {c}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {table.rows.map((row, r) => (
-            <tr key={r}>
-              {table.columns.map((_, c) => (
-                <td key={c} className="whitespace-nowrap border-t border-border px-2 py-1">
-                  {cellText(row[c])}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </Table>
+      <RecordsGrid
+        caption={table.caption || t("knowledge.chat.data")}
+        fields={table.columns.map((_, at) => String(at))}
+        label={(field) => table.columns[Number(field)] ?? field}
+        records={table.rows}
+        text={(row, field) => cellText(row[Number(field)])}
+        storageKey={`knowledge.chat.data.${table.columns.join(",")}`}
+        empty={t("knowledge.chat.noRows")}
+      />
       {chart ? <Chart chart={chart} /> : null}
       {table.dataset || table.download ? (
         <p className="mt-1 flex flex-wrap gap-3">

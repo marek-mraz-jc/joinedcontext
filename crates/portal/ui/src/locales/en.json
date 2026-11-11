@@ -9536,6 +9536,7 @@
       "liveData": "Live data",
       "sourceNumber": "Source {n}",
       "data": "Data the answer read",
+      "noRows": "The read returned no rows. Ask again with a wider question.",
       "dataset": "Open the dataset",
       "download": "Download the data",
       "again": "Try again",
@@ -12406,5 +12407,11 @@
   "hiddenSection": {
     "title": "Dashboards are not part of this installation",
     "body": "The address you opened is for dashboards, which this Portal does not offer, so you are on the project's Context Spaces instead."
+  },
+  "dataGrid": {
+    "searchRows": "Search this list",
+    "searchRowsHint": "Type part of any value, e.g. a name or a space.",
+    "noMatch": "No rows match the search or the filters.",
+    "rowCount": "{n} rows"
   }
 }

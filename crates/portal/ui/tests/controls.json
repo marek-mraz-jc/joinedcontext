@@ -1141,6 +1141,7 @@
       },
       "tests": [
         "entity_write_card.test.tsx",
+        "grid_data.test.tsx",
         "part_run_cards.test.tsx"
       ]
     },

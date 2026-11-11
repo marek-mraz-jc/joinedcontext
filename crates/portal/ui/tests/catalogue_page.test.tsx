@@ -5,6 +5,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import en from "../src/locales/en.json";
 import i18n from "../src/i18n";
 import { App } from "../src/App";
 import { keyFormats } from "../src/pages/catalogue/CataloguePage";
@@ -298,7 +299,8 @@ describe("the catalogue (EP-81, EP-82)", () => {
       "https://creativecommons.org/licenses/by/4.0/",
     );
 
-    const resources = screen.getByRole("table", { name: "Resources" });
+    // The resources grid loads with its first drawing (LazyAdminGrid, T-6752).
+    const resources = await screen.findByRole("table", { name: "Resources" });
     // CKAN holds no rows (T-5060): a resource is a download, never a preview of a copy.
     expect(within(resources).queryByRole("link", { name: /Preview/ })).toBeNull();
     // A resource URL the catalogue holds is checked before it becomes a link.
@@ -388,10 +390,15 @@ describe("the catalogue (EP-81, EP-82)", () => {
       PM10: "21.5",
     });
     fireEvent.click(screen.getByText("The 2 places as a list"));
-    const list = screen.getByRole("table", { name: "Map of AirQualityObserved" });
-    expect(within(list).getByRole("columnheader", { name: "PM10" })).toBeInTheDocument();
+    const list = await screen.findByRole("table", { name: "Map of AirQualityObserved" });
+    // The grid's header carries its column menu after the label (T-6752).
+    expect(within(list).getByRole("columnheader", { name: /^PM10/ })).toBeInTheDocument();
     expect(within(list).getByText("Praha 8 - Karlín")).toBeInTheDocument();
     expect(within(list).getByText("—")).toBeInTheDocument();
+    // The places are on the shared grid (T-6752): its search finds one place among them.
+    const grid = list.closest(".jc-data-grid") as HTMLElement;
+    fireEvent.change(within(grid).getByRole("searchbox", { name: en.dataGrid.searchRows }), { target: { value: "Karlín" } });
+    expect(within(list).queryByText("Praha 2 - Legerova")).toBeNull();
     const asked = fetchMock.mock.calls
       .map((call) => new URL((call[0] as Request).url))
       .find((url) => url.pathname.endsWith("/map"));

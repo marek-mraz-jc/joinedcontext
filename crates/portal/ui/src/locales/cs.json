@@ -9536,6 +9536,7 @@
       "liveData": "Živá data",
       "sourceNumber": "Zdroj {n}",
       "data": "Data, která odpověď přečetla",
+      "noRows": "Čtení nevrátilo žádné řádky. Zeptejte se znovu širší otázkou.",
       "dataset": "Otevřít dataset",
       "download": "Stáhnout data",
       "again": "Zkusit znovu",
@@ -12406,5 +12407,11 @@
   "hiddenSection": {
     "title": "Dashboardy nejsou součástí této instalace",
     "body": "Otevřená adresa patří dashboardům, které tento Portál nenabízí, proto jste v kontextových prostorech projektu."
+  },
+  "dataGrid": {
+    "searchRows": "Hledat v seznamu",
+    "searchRowsHint": "Napište část libovolné hodnoty, např. název nebo prostor.",
+    "noMatch": "Hledání ani filtrům neodpovídá žádný řádek.",
+    "rowCount": "Řádků: {n}"
   }
 }
