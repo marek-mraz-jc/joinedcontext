@@ -79,6 +79,15 @@ async function stub(page: Page, refuse: boolean, endpoints: unknown[] = [ENDPOIN
   });
 }
 
+/** Opens a phone tab and waits until it is drawn as the selected one (its colour transition). */
+async function openTab(page: Page, name: string) {
+  const tab = page.getByRole("tab", { name });
+  await tab.click();
+  await page.mouse.move(0, 0);
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  await expect(tab).not.toHaveCSS("border-bottom-color", "rgba(0, 0, 0, 0)");
+}
+
 for (const width of [1440, 400]) {
   test(`the dashboard JSON editor, every state, at ${width} px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -94,14 +103,14 @@ for (const width of [1440, 400]) {
 
     await page.getByRole("button", { name: "Insert widget" }).click();
     // On a phone the preview is its own tab.
-    if (width < 640) await page.getByRole("tab", { name: "Preview" }).click();
+    if (width < 640) await openTab(page, "Preview");
     const figure = page.getByRole("figure").filter({ hasText: "BikeHireDockingStation by type" });
     await expect(figure.locator("canvas")).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/T-6791/editor-valid-${width}.png`, fullPage: true });
 
     // Break the JSON: the alert names the line, the preview waits.
-    if (width < 640) await page.getByRole("tab", { name: "Manifest (JSON)" }).click();
+    if (width < 640) await openTab(page, "Manifest (JSON)");
     await editor.click();
     await page.keyboard.press("Control+End");
     await page.keyboard.type(",");
@@ -133,12 +142,17 @@ for (const width of [1440, 400]) {
     await page.evaluate(() => window.scrollTo(0, 0));
     if (width < 640) {
       await page.screenshot({ path: `test-results/T-6791/editor-refused-list-${width}.png`, fullPage: true });
-      await page.getByRole("tab", { name: "Preview (fix the manifest)" }).click();
+      await openTab(page, "Preview (fix the manifest)");
     }
     // The refused widget is not drawn: the preview shows what the server would publish.
     await expect(page.getByText("This widget is not drawn")).toBeVisible();
     await expect(page.getByRole("figure")).toHaveCount(0);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/T-6791/editor-refused-${width}.png`, fullPage: true });
+    if (width < 640) {
+      // The fix is in the manifest: one tap back from the refused widget.
+      await page.getByRole("button", { name: "Show the manifest" }).click();
+      await expect(page.locator(".monaco-editor").first()).toBeVisible();
+    }
   });
 }

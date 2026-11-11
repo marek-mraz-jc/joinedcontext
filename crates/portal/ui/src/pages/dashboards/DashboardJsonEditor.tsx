@@ -278,7 +278,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
             <p id={`${ids.editor}-hint`} className="text-caption text-fg-muted">
               {t("dashboards.json.editorHint")}
             </p>
-            <Card flush className="overflow-hidden">
+            <Card flush className={parsed.error ? "overflow-hidden border-danger" : "overflow-hidden"}>
               <Suspense fallback={<Skeleton className="h-112" />}>
                 <DashboardJsonMonaco
                   value={text}
@@ -395,6 +395,11 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                     .map((w) => (
                       <Alert key={w.at} tone="danger" title={t("dashboards.json.widgetRefused")}>
                         {t("dashboards.json.widgetRefusedAt", { path: refusedAt.get(w.at)?.path, reason: refusedAt.get(w.at)?.reason })}
+                        {phone ? (
+                          <Button variant="secondary" size="sm" className="mt-2" onClick={() => setView("edit")}>
+                            {t("dashboards.json.toManifest")}
+                          </Button>
+                        ) : null}
                       </Alert>
                     ))}
                   <DashboardWidgets project={project} widgets={page.widgets.filter((w) => !refusedAt.has(w.at))} />

@@ -1318,7 +1318,7 @@
     },
     "src/pages/dashboards/DashboardJsonEditor.tsx": {
       "controls": {
-        "Button": 3
+        "Button": 4
       },
       "tests": [
         "dashboard_json_editor.test.tsx"

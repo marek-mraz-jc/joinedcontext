@@ -3790,7 +3790,8 @@
       "widgetRefused": "This widget is not drawn",
       "widgetRefusedAt": "The server refused it at {path}: {reason}. Fix that field and Check again.",
       "views": "Manifest or preview",
-      "previewNeedsFix": "Preview (fix the manifest)"
+      "previewNeedsFix": "Preview (fix the manifest)",
+      "toManifest": "Show the manifest"
     }
   },
   "access": {

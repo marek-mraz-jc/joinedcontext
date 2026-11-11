@@ -3790,7 +3790,8 @@
       "widgetRefused": "Tento widget sa nekreslí",
       "widgetRefusedAt": "Server ho odmietol na ceste {path}: {reason}. Opravte toto pole a skontrolujte znova.",
       "views": "Manifest alebo náhľad",
-      "previewNeedsFix": "Náhľad (opravte manifest)"
+      "previewNeedsFix": "Náhľad (opravte manifest)",
+      "toManifest": "Ukázať manifest"
     }
   },
   "access": {
