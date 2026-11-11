@@ -1,8 +1,9 @@
 import { clsx } from "clsx";
 import type { JSX } from "react";
-import type { WidgetProps } from "@rjsf/utils";
+import type { FieldProps, WidgetProps } from "@rjsf/utils";
 import { useTranslation } from "react-i18next";
-import { BaseInputTemplate, TextareaWidget } from "../theme";
+import { BaseInputTemplate, LIST_BODY, LIST_FIELDSET, ListLegend, TextareaWidget } from "../theme";
+import { RECORD_LINK_STYLE } from "../../RecordLink";
 
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
@@ -65,5 +66,31 @@ export function SvgImageWidget(props: WidgetProps): JSX.Element {
         </span>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * A list of choices the server offers none of yet (T-6779: a home page's Dashboards): the list's
+ * heading over a dashed frame that says how to make one and links to the Organization's projects,
+ * instead of an empty list with nothing to add.
+ */
+export function NoChoicesField(props: FieldProps): JSX.Element {
+  const { t } = useTranslation();
+  const help = props.uiSchema?.["ui:help"];
+  const id = props.fieldPathId.$id;
+  return (
+    <fieldset id={id} className={LIST_FIELDSET} aria-describedby={`${id}__help`}>
+      <ListLegend heading={props.schema.title ?? ""} required={props.required} />
+      <div className={LIST_BODY}>
+        <div className="flex max-w-2xl flex-col gap-2 rounded-md border border-dashed border-fg-muted p-3">
+          <p id={`${id}__help`} className="text-body text-fg-muted">
+            {typeof help === "string" ? help : null}
+          </p>
+          <a href="/organization/projects" className={clsx(RECORD_LINK_STYLE, "self-start underline")}>
+            {t("organization.field.appearance.homeWidgetsProjects")}
+          </a>
+        </div>
+      </div>
+    </fieldset>
   );
 }

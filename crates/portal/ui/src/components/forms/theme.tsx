@@ -850,15 +850,30 @@ export function CheckboxWidget(props: WidgetProps): React.JSX.Element {
 }
 
 export function CheckboxesWidget(props: WidgetProps): React.JSX.Element {
-  const { id, disabled, options, value, readonly, onChange, onBlur, onFocus, htmlName } = props;
+  const { t } = useTranslation();
+  const { id, disabled, options, value, readonly, onChange, onBlur, onFocus, htmlName, rawErrors, schema } = props;
   const { inline = false, enumOptions, enumDisabled, emptyValue } = options;
+  // `stacked`: one choice per line in a framed list, red while refused, with how many are chosen
+  // against the list's `maxItems` (T-6779: a home page's Dashboards).
+  const stacked = options.stacked === true;
   const optionValueFormat = getOptionValueFormat(options);
   const values = Array.isArray(value) ? value : [value];
   const decode = (target: HTMLInputElement) =>
     enumOptionValueDecoder(target.value, enumOptions, optionValueFormat, emptyValue);
+  const chosen = values.filter((item) => item !== undefined).length;
 
   return (
-    <div id={id} className={clsx("flex gap-x-5 gap-y-2", inline ? "flex-row flex-wrap" : "flex-col sm:flex-row sm:flex-wrap")}>
+    <div
+      id={id}
+      className={clsx(
+        "flex gap-x-5 gap-y-2",
+        stacked
+          ? clsx("flex-col rounded-md border p-3", (rawErrors ?? []).length > 0 ? "border-danger" : "border-border")
+          : inline
+            ? "flex-row flex-wrap"
+            : "flex-col sm:flex-row sm:flex-wrap",
+      )}
+    >
       {Array.isArray(enumOptions)
         ? enumOptions.map((option, index) => {
             const checked = enumOptionsIsSelected(option.value, values);
@@ -888,6 +903,11 @@ export function CheckboxesWidget(props: WidgetProps): React.JSX.Element {
             );
           })
         : null}
+      {stacked && typeof schema.maxItems === "number" ? (
+        <p className="text-caption text-fg-muted" aria-live="polite">
+          {t("form.chosenOf", { chosen, max: schema.maxItems })}
+        </p>
+      ) : null}
     </div>
   );
 }

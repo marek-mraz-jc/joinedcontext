@@ -228,7 +228,8 @@
     "mapLanguage": "Jazyk",
     "mapAddLanguage": "Pridať jazyk",
     "advancedFields": "Rozšírené",
-    "advancedFieldsHint": "Nastavenia spúšťača, ktoré väčšina zdrojov necháva predvolené."
+    "advancedFieldsHint": "Nastavenia spúšťača, ktoré väčšina zdrojov necháva predvolené.",
+    "chosenOf": "Vybraté: {chosen} z {max}"
   },
   "approvals": {
     "lead": "Každá zmena projektu je tu návrhom, kým ju schvaľovateľ nezlúči.",
@@ -7603,7 +7604,8 @@
           "text": "Text"
         },
         "homeWidgets": "Nástenky na domovskej stránke",
-        "homeWidgetsNone": "Zatiaľ niet nástenky na výber: najprv vytvorte nástenku v projekte tejto organizácie.",
+        "homeWidgetsNone": "Zatiaľ niet nástenky na výber. Otvorte projekt tejto organizácie, prejdite na Nástenky a vytvorte ju; nabudúce sa ponúkne tu.",
+        "homeWidgetsProjects": "Otvoriť projekty organizácie",
         "opendataWidgets": "Nástenky na portáli otvorených údajov",
         "opendataWidgetsNone": "Zatiaľ niet verejnej nástenky na výber: najprv nastavte nástenku v projekte tejto organizácie ako verejnú."
       }
