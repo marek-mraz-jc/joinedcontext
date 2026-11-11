@@ -52,6 +52,16 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(container.querySelector(".jc-grid-typeline")).not.toHaveTextContent("Category");
   });
 
+  it("reads the source once when the labels prop is an inline literal (T-6781)", async () => {
+    const real = fixtureSource(entities);
+    let reads = 0;
+    const counted = { ...real, query: (q: Parameters<typeof real.query>[0], page: Parameters<typeof real.query>[1]) => (page.limit > 0 && reads++, real.query(q, page)) };
+    render(<EntityGrid config={config} source={counted} labels={{ next: "Ďalej" }} compact filterRow={false} />);
+    await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
+    await new Promise((settle) => setTimeout(settle, 100));
+    expect(reads).toBe(1);
+  });
+
   it("offers Try again under a failed read, and the press reads the rows again (T-6781)", async () => {
     const real = fixtureSource(entities);
     let calls = 0;

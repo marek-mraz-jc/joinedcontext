@@ -931,6 +931,8 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
   // The list by content, so a host that builds a new array each render does not rebuild columns.
   const hiddenKey = (hidden ?? []).join("\u0000");
   const labels = useMemo(() => mergeLabels(DEFAULT_LABELS, labelsPartial), [labelsPartial]);
+  // The reads depend on these strings, not on `labels`: an inline labels prop is a new object each render.
+  const { queryRefused, busy, timedOut } = labels;
 
   // Internal state (uncontrolled)
   const [internalOffset, setInternalOffset] = useState(0);
@@ -1210,16 +1212,16 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
         }
         if (err instanceof SourceError && err.status === 400 && err.problem) {
           // The broker's sentence quotes clauses and parameters: plain words first, its own under a disclosure.
-          setError(err.problem.title ? `${labels.queryRefused}: ${err.problem.title}` : labels.queryRefused);
+          setError(err.problem.title ? `${queryRefused}: ${err.problem.title}` : queryRefused);
           setErrorDetail(err.problem.detail ?? null);
         } else {
-          const failed = failureOf(err, labels);
+          const failed = failureOf(err, { busy, timedOut });
           setError(failed.error);
           setErrorDetail(failed.detail);
         }
         setLoading(false);
       });
-  }, [source, config.pageSize, offset, gridQueryKey, virtual, paged, labels]);
+  }, [source, config.pageSize, offset, gridQueryKey, virtual, paged, queryRefused, busy, timedOut]);
 
   /**
    * The next page of a scrolling grid, appended to what is loaded. An answer to an older question
@@ -1254,14 +1256,14 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
           setRefusalDetail(refused === "noAccess" && err instanceof Error ? err.message : null);
           return;
         }
-        const failed = failureOf(err, labels);
+        const failed = failureOf(err, { busy, timedOut });
         setError(failed.error);
         setErrorDetail(failed.detail);
       })
       .finally(() => {
         if (nonceRef.current === nonce) setLoadingMore(false);
       });
-  }, [virtual, paged, more, loadingMore, loading, rows.length, source, gridQueryKey, config.pageSize, labels]);
+  }, [virtual, paged, more, loadingMore, loading, rows.length, source, gridQueryKey, config.pageSize, busy, timedOut]);
 
   useEffect(() => {
     fetchData();
