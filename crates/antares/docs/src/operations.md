@@ -463,6 +463,66 @@ rollback onto it restores the backup. Proven by `tests/pg_rollback.rs`; the
 platform's release runbook (docs `Deployment/16-release-runbook.md`) holds the
 operator's steps.
 
+## Re-minting Entity ids to the owner prefix
+
+Every Entity URN names the Organization owning the data,
+`urn:ngsi-ld:{Type}:{orgId}:{rest}` with `orgId` the verified domain reversed
+(`sk_bbsk`, ADR-N-068). Ids written before carry the dotted domain
+(`urn:ngsi-ld:KPI:bbsk.sk:...`). Migration 0033 (T-6770) installs the
+functions that rename them; nothing calls them. The deployer runs them by
+hand, one Tenant per transaction, as the database owner (a role with
+superuser or BYPASSRLS; the broker's role is refused):
+
+- `antares_remint(tenant, from, to)` renames every id of the Tenant whose
+  fourth segment is `from`: the Entity, its temporal Entity, its history in
+  `attr_instances` and `attr_rows` (through `iri_ids`), its superseded
+  versions, its `entity_values` keys, and every string in a stored document
+  that is such an id (Relationship `object` and `objectList`, Subscription
+  and registration selectors, entity maps, snapshots). It writes old -> new
+  into `entity_id_remap` and returns the counts per table as JSON. It
+  refuses, renaming nothing, when a new id already exists. Writers wait on
+  its table locks until the transaction ends; readers go on.
+- A `GET /ngsi-ld/v1/entities/{old id}` answers the Entity under its new id
+  for twelve months after the remint, through the same Policy gate as the
+  new id. Writes to an old id are not redirected.
+- `antares_remint_digest(tenant, from, to)` returns per table a row count
+  and an order-free hash of the rows as the remint leaves them.
+- `antares_remint_rollback(tenant, from, to)` reverses a remint from the
+  map. It refuses when the Tenant holds an id with the `to` segment that
+  the remint did not write; restore the dump then.
+
+A regular expression is no id: an `idPattern` in a Subscription, a
+registration or a view, and every Policy in the Organization's repository,
+stays as written. The result's `selectors_still_naming_from` counts the
+broker documents still naming `from`; change those, and the Policies
+(`grep -rn 'bbsk\.sk\|\[a-z0-9.-\]' policies/`), through their normal
+review. With TimescaleDB compression on, decompress the Tenant's chunks
+first: an UPDATE of a compressed chunk fails the transaction.
+
+Steps, rehearsal first:
+
+1. `pg_dump -Fc` the broker database. The dump and the map are the way back.
+2. Restore the dump into a scratch database (`createdb remint_rehearsal &&
+   pg_restore -d remint_rehearsal ...`) and run steps 3-6 there.
+3. Per Tenant, before: count by owner segment and take the digest.
+
+   ```sql
+   SELECT tenant_id, split_part(id, ':', 4) AS owner, count(*)
+     FROM entities GROUP BY 1, 2 ORDER BY 1, 2;
+   SELECT * FROM antares_remint_digest('<tenant>', 'bbsk.sk', 'sk_bbsk');
+   ```
+
+4. `BEGIN; SELECT antares_remint('<tenant>', 'bbsk.sk', 'sk_bbsk'); COMMIT;`
+   once per Tenant and per old segment (`banskabystrica.sk` ->
+   `sk_banskabystrica` likewise).
+5. After: `SELECT * FROM antares_remint_digest('<tenant>', 'sk_bbsk',
+   'sk_bbsk');` equals step 3's digest row for row; the count by owner
+   segment shows no `bbsk.sk` row and the `sk_bbsk` row holds the sum.
+6. Sample 20 old ids from `entity_id_remap` and GET each through the
+   broker: each answers 200 with its new id.
+7. Only with 3-6 recorded: the same on jc-dev, then jc-prod, each after its
+   own `pg_dump`. Restart nothing: the broker reads the map on demand.
+
 ## Where the proofs run
 
 | Claim | Workflow |
