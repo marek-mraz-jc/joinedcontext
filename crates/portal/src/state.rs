@@ -406,6 +406,7 @@ impl AppState {
                     state.config.gateway_namespace.clone(),
                 )
                 .with_activity(state.activity.clone())
+                .with_notices(Arc::clone(&state.comments))
                 .with_pipeline_outcomes(
                     Arc::clone(&state.rejected),
                     Arc::clone(&state.pipeline_log),

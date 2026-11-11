@@ -6915,7 +6915,8 @@
       "config": {
         "planned": "Änderung geplant",
         "applied": "Konfiguration angewendet",
-        "drifted": "Abweichung vom Repository"
+        "drifted": "Abweichung vom Repository",
+        "refused": "Änderung abgelehnt"
       },
       "change": {
         "merged": "Änderung übernommen",
@@ -9737,7 +9738,8 @@
     "mentioned": "{name} hat Sie in {space} erwähnt",
     "changeOpened": "{name} hat über den Konnektor {connector} die Änderung {change} in {project} geöffnet: genehmigen oder ablehnen",
     "connectorPending": "{name} beantragt den Konnektor {connector} über der Obergrenze der Organisation: genehmigen oder ablehnen",
-    "connectorExpiring": "Ihr Konnektor {connector} endet innerhalb von 7 Tagen: verlängern Sie ihn oder legen Sie einen neuen an"
+    "connectorExpiring": "Ihr Konnektor {connector} endet innerhalb von 7 Tagen: verlängern Sie ihn oder legen Sie einen neuen an",
+    "configRefused": "Ihre Änderung {change} in {project} wurde abgelehnt und ist nicht live. Korrigieren Sie sie in einer neuen Änderung; die letzte geladene Version bleibt in Betrieb."
   },
   "problem": {
     "bad-request": "Korrigieren Sie die Anfrage wie beschrieben und senden Sie sie erneut.",

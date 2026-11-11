@@ -18,7 +18,7 @@
 //! the projects and a new pod of a rolling update is ready while the old one holds the lock
 //! (OPS-51).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -248,6 +248,12 @@ pub struct Syncer {
     accepted: std::sync::Mutex<Option<Arc<Repository>>>,
     warned_members: super::warned::Warned,
     warned_unstaged: super::warned::Warned,
+    warned_refused: super::warned::Warned,
+    /// The project refusals already told, by project and reason: one activity row and one
+    /// notice per refusal, not one per run (T-6709).
+    told_refused: std::sync::Mutex<BTreeSet<(String, String)>>,
+    /// Where the proposer of a refused change is told (T-6709): the Portal's notifications.
+    notices: Option<Arc<crate::entity_comments::CommentStore>>,
     warned_unbuilt: super::warned::Warned,
     /// Whether the source has loaded once in this process ([`source_loaded`]): until then the
     /// realm syncs remove nothing (Mirror::hold_removals).
@@ -371,6 +377,9 @@ impl Syncer {
             accepted: Default::default(),
             warned_members: Default::default(),
             warned_unstaged: Default::default(),
+            warned_refused: Default::default(),
+            told_refused: Default::default(),
+            notices: None,
             warned_unbuilt: Default::default(),
             source_loaded: Default::default(),
             roles_held: Default::default(),
@@ -480,6 +489,12 @@ impl Syncer {
     /// Makes each run tell the activity feed what it applied (OPS-48, UI-31).
     pub fn with_activity(mut self, activity: ActivityStore) -> Self {
         self.activity = Some(activity);
+        self
+    }
+
+    /// Tells the proposer of a change whose project the assembly refused (T-6709).
+    pub fn with_notices(mut self, notices: Arc<crate::entity_comments::CommentStore>) -> Self {
+        self.notices = Some(notices);
         self
     }
 
@@ -919,6 +934,139 @@ impl Syncer {
         self.record(events).await;
     }
 
+    /// Tells each project the assembly refused, once per reason (T-6709, CHG-09): one
+    /// `config.refused` row in that project's feed only, and a notice to the person who proposed
+    /// the commit that last touched the file (its approver too), or to the project's approvers
+    /// when the commit names nobody. A forge that does not answer is asked again next run.
+    async fn tell_refused(&self, scratch: &Render) {
+        let current: BTreeSet<(String, String)> = scratch
+            .refused
+            .iter()
+            .map(|refusal| (refusal.slug.clone(), refusal.reason.clone()))
+            .collect();
+        let told = {
+            let mut told = self.told_refused.lock().unwrap_or_else(|p| p.into_inner());
+            told.retain(|key| current.contains(key));
+            told.clone()
+        };
+        for refusal in &scratch.refused {
+            let key = (refusal.slug.clone(), refusal.reason.clone());
+            if told.contains(&key) {
+                continue;
+            }
+            let Some((forge, git_ref)) = scratch.projects.get(&refusal.slug) else {
+                continue;
+            };
+            // The project's own client has no mount: the path is the project repository's, and
+            // none is its whole history.
+            let file = refusal
+                .path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default();
+            let commit = match forge.list_commits(git_ref, &file, 1).await {
+                Ok(commits) => commits.into_iter().next(),
+                Err(error) => {
+                    tracing::warn!(project = %refusal.slug, %error, "who changed the refused project is not known yet: told next run");
+                    continue;
+                }
+            };
+            let (sha, authors) = match &commit {
+                Some(commit) => match forge.commit_message(&commit.sha).await {
+                    Ok(message) => (
+                        commit.sha.clone(),
+                        super::pipeline_authors::Authors::of_message(&message),
+                    ),
+                    Err(error) => {
+                        tracing::warn!(project = %refusal.slug, %error, "who changed the refused project is not known yet: told next run");
+                        continue;
+                    }
+                },
+                None => (git_ref.clone(), Default::default()),
+            };
+            self.tell_refusal(refusal, &sha, &authors).await;
+            self.told_refused
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(key);
+        }
+    }
+
+    async fn tell_refusal(
+        &self,
+        refusal: &ProjectRefusal,
+        sha: &str,
+        authors: &super::pipeline_authors::Authors,
+    ) {
+        let project = refusal.slug.as_str();
+        let file = refusal.path.as_ref().map_or_else(
+            || "project.yaml".to_owned(),
+            |path| path.display().to_string(),
+        );
+        // A parse error can quote the line it stopped at: one that reads like a credential is
+        // not repeated into a feed or a notice.
+        let reason = if crate::secret_scan::quoted_secret(&refusal.reason) {
+            format!("{file} does not load; open it in the repository to see where")
+        } else {
+            refusal.reason.clone()
+        };
+        let short: String = sha.chars().take(7).collect();
+        let proposer = authors
+            .proposer
+            .as_ref()
+            .map(|who| who.to_ascii_lowercase());
+        self.record(vec![ActivityEvent {
+            time: chrono::Utc::now(),
+            project: project.to_owned(),
+            space: None,
+            kind: "config.refused".to_owned(),
+            source: "reconciler".to_owned(),
+            summary: format!(
+                "Commit {short} was refused: {reason}. The last version that loaded keeps serving."
+            ),
+            severity: "error".to_owned(),
+            correlation_id: Some(sha.to_owned()),
+            details: serde_json::json!({
+                "revision": sha,
+                "path": file,
+                "reason": reason,
+                "proposer": proposer,
+            }),
+        }])
+        .await;
+        let Some(notices) = self.notices.as_ref() else {
+            return;
+        };
+        let mut recipients: Vec<String> = [&authors.proposer, &authors.approver]
+            .into_iter()
+            .flatten()
+            .map(|who| who.to_ascii_lowercase())
+            .filter(|who| !who.starts_with('@'))
+            .collect();
+        recipients.dedup();
+        if recipients.is_empty() {
+            recipients.push(crate::entity_comments::approvers_of(project));
+        }
+        let excerpt: String = format!("{file}: {reason}").chars().take(300).collect();
+        let link = format!("/projects/{project}/activity?kind=config.refused");
+        let key = format!("config.refused:{project}/{short}/{file}");
+        for recipient in recipients {
+            let notice = crate::entity_comments::Notice {
+                kind: "config.refused",
+                project,
+                about: sha,
+                author: proposer.as_deref().unwrap_or("reconciler"),
+                author_name: proposer.as_deref().unwrap_or("reconciler"),
+                connector: &excerpt,
+                link: &link,
+                key: &key,
+            };
+            if let Err(error) = notices.notify(&recipient, notice).await {
+                tracing::warn!(project, %error, "the proposer of a refused change is not notified");
+            }
+        }
+    }
+
     /// A run that could not load the repository: the mirror keeps the last revision that did,
     /// so the feed is the only place this is visible to a person (CC-08).
     async fn say_drifted(&self, message: &str) {
@@ -1090,6 +1238,7 @@ impl Syncer {
                     _staged: vec![org],
                     projects: BTreeMap::new(),
                     unstaged: Vec::new(),
+                    refused: Vec::new(),
                     listings,
                 },
                 repository,
@@ -1149,6 +1298,31 @@ impl Syncer {
         for finding in &assembly.findings {
             tracing::warn!(project = %finding.slug, path = %finding.path.display(), message = %finding.message, "a project repository's finding");
         }
+        // A project whose own manifests do not load is refused alone (T-6709): it stays at its
+        // last render, and every step that removes what the mirror lacks waits for it as for a
+        // project that did not stage.
+        let refused: Vec<ProjectRefusal> = assembly
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let refusal = entry.refused.as_ref()?;
+                Some(ProjectRefusal {
+                    slug: entry.slug.clone(),
+                    path: refusal.path.clone(),
+                    reason: refusal.reason.clone(),
+                })
+            })
+            .collect();
+        unstaged.extend(refused.iter().map(|refusal| refusal.slug.clone()));
+        let change = self.warned_refused.cycle(
+            refused
+                .iter()
+                .map(|refusal| format!("{}: {}", refusal.slug, refusal.reason)),
+        );
+        for warning in &change.new {
+            tracing::warn!(%warning, standing = change.standing, "the project's manifests do not load; its last render stays and the other projects go on");
+        }
+        cleared("projects whose manifests do not load", &change);
         staged.push(org);
         staged.extend(into);
         Ok((
@@ -1158,6 +1332,7 @@ impl Syncer {
                 _staged: staged,
                 projects,
                 unstaged,
+                refused,
                 listings,
             },
             assembly.repository,
@@ -1175,6 +1350,9 @@ impl Syncer {
         //       with every registered project mounted at `projects/{slug}/` (CC-86).
         // 4. Load and validate the whole repository the way `jcctl plan` does (CC-08, MF-05).
         let (scratch, repository) = self.stage_and_load(&revision).await?;
+        if leader {
+            self.tell_refused(&scratch).await;
+        }
         // 4a. A manifest its kind refuses is never served (CHG-05): its last good revision
         //     serves in its place, or nothing does (CHG-04).
         let (repository, refusals) = self.refuse_invalid(repository);
@@ -3170,9 +3348,20 @@ struct Render {
     /// holds of them is the last render, or nothing on a replica's first run, so a step that
     /// removes what the mirror lacks waits for a run where this is empty.
     unstaged: Vec<String>,
+    /// The registered projects whose own manifests did not load in this run, each also in
+    /// `unstaged`: the mirror holds their last render, or nothing (T-6709).
+    refused: Vec<ProjectRefusal>,
     /// What each repository listed when this render staged it: the organization under `""`,
     /// each staged project under its slug.
     listings: BTreeMap<String, Listing>,
+}
+
+/// A registered project the assembly refused this run (T-6709).
+struct ProjectRefusal {
+    slug: String,
+    /// The file, relative to the project's repository, when the error names one.
+    path: Option<PathBuf>,
+    reason: String,
 }
 
 impl Render {
@@ -3183,7 +3372,13 @@ impl Render {
         let same = |slug: &str, now: &Listing| {
             self.listings.get(slug) == Some(now) && now.iter().all(|(_, sha)| !sha.is_empty())
         };
-        if !self.unstaged.is_empty() || !same("", org) {
+        // A refused project staged, and a listing that did not move refuses it again: only a
+        // project that did not stage is asked for once more.
+        let restage = self
+            .unstaged
+            .iter()
+            .any(|slug| !self.refused.iter().any(|refusal| &refusal.slug == slug));
+        if restage || !same("", org) {
             return false;
         }
         for (slug, (client, git_ref)) in &self.projects {
@@ -5789,6 +5984,7 @@ output_error{stream="kpi"} 6
             _staged: Vec::new(),
             projects: BTreeMap::new(),
             unstaged: Vec::new(),
+            refused: Vec::new(),
             listings: BTreeMap::new(),
         };
         let syncer = bare_syncer();
@@ -5848,6 +6044,7 @@ output_error{stream="kpi"} 6
             _staged: Vec::new(),
             projects: BTreeMap::new(),
             unstaged: Vec::new(),
+            refused: Vec::new(),
             listings: BTreeMap::new(),
         };
         let invalid = |name: &str| format!("{}  notAField: 1\n", PIPELINE.replace("NAME", name));
