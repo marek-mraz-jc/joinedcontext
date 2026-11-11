@@ -1,7 +1,7 @@
-//! MCP is on for every Endpoint (T-2901, EP-24): an Endpoint serves its MCP instance whatever
-//! its audience and whether or not `enabledRepresentations` lists `mcp`, `mcp: false` is the one
-//! way to turn it off, and the instance adds no right, so an internal Endpoint's MCP refuses an
-//! outsider exactly as its NGSI-LD surface does.
+//! MCP on an Endpoint (T-2901, EP-24, T-6761): an internal Endpoint serves its MCP instance
+//! whether or not `enabledRepresentations` lists `mcp`, and `mcp: false` turns it off; a public
+//! one serves it only when it opts in (`mcp: true` or a listed `mcp`). The instance adds no
+//! right, so an internal Endpoint's MCP refuses an outsider exactly as its NGSI-LD surface does.
 //!
 //! The manifests go through the store, as the repository serves them: the rule lives where a
 //! manifest becomes the endpoint table, not in a hand-built table.
@@ -21,8 +21,10 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 const HOST: &str = "https://hel.example.fi";
-/// A public Endpoint that lists NGSI-LD only.
+/// A public Endpoint that lists NGSI-LD only and does not opt in to MCP.
 const LISTED_NGSI: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
+/// A public Endpoint that lists NGSI-LD only and opts in with `mcp: true` (T-6761).
+const OPTED_IN: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbb";
 /// A public Endpoint that opts out of MCP.
 const OPTED_OUT: &str = "dddddddddddddddddddddddddd";
 /// An internal Endpoint, for its own project only.
@@ -63,6 +65,10 @@ fn repo(test: &str) -> PathBuf {
     write(
         "listed.yaml",
         &endpoint("helsinki-bikes", LISTED_NGSI, "public", ""),
+    );
+    write(
+        "opted.yaml",
+        &endpoint("helsinki-open", OPTED_IN, "public", "  mcp: true\n"),
     );
     write(
         "off.yaml",
@@ -145,13 +151,23 @@ fn entities(slug: &str, token: &str) -> Request<Body> {
         .expect("a request")
 }
 
-/// EP-24: an Endpoint whose manifest lists NGSI-LD only still serves MCP, with the tools its
-/// Policy grants.
+/// EP-24, T-6761 (deny by default): a public Endpoint that lists NGSI-LD only serves no MCP and
+/// answers the bytes an unknown slug gets; with `mcp: true` it serves the tools its Policy grants.
 #[tokio::test]
-async fn an_endpoint_serves_mcp_without_listing_it() {
+async fn a_public_endpoint_serves_mcp_only_when_it_opts_in() {
     let realm = common::Realm::new();
     let dir = repo("listed");
-    let (status, body) = send(app(&dir, &realm).await, tools_list(LISTED_NGSI, None)).await;
+    let token = person(&realm, "helsinki", LISTED_NGSI);
+    let closed = send(
+        app(&dir, &realm).await,
+        tools_list(LISTED_NGSI, Some(&token)),
+    )
+    .await;
+    let unknown = send(app(&dir, &realm).await, tools_list(UNKNOWN, Some(&token))).await;
+    assert_eq!(closed.0, StatusCode::NOT_FOUND, "{}", closed.1);
+    assert_eq!(closed, unknown);
+
+    let (status, body) = send(app(&dir, &realm).await, tools_list(OPTED_IN, None)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let answer: Value = serde_json::from_str(&body).expect("a JSON-RPC answer");
     let tools = answer["result"]["tools"].as_array().expect("a tool list");
@@ -162,11 +178,19 @@ async fn an_endpoint_serves_mcp_without_listing_it() {
 
     // The table says so too, so every surface that reads it (DCAT, the space record) agrees.
     let (endpoints, ..) = store::load(&dir).expect("the repository loads");
-    let listed = endpoints
-        .iter()
-        .find(|e| e.slug == LISTED_NGSI)
-        .expect("loaded");
-    assert!(listed.serves(jc_core::kinds::Representation::Mcp));
+    let serves = |slug: &str| {
+        endpoints
+            .iter()
+            .find(|e| e.slug == slug)
+            .expect("loaded")
+            .serves(jc_core::kinds::Representation::Mcp)
+    };
+    assert!(!serves(LISTED_NGSI));
+    assert!(serves(OPTED_IN));
+    assert!(
+        serves(INTERNAL),
+        "an internal Endpoint keeps today's default"
+    );
 }
 
 /// EP-10 (T-2939, T-4597): NGSI-LD is what every endpoint serves unlisted; GeoJSON is no longer

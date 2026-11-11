@@ -505,8 +505,10 @@ pub struct EndpointSpec {
     /// Representations an Endpoint without `enabledRepresentations` does not serve (EP-104).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_representations: Vec<Representation>,
-    /// `false` turns the Endpoint's MCP instance off. Every Endpoint serves `mcp` without
-    /// listing it, public or internal, gated by its own Policy (EP-24, T-2901); see
+    /// The Endpoint's MCP instance. An internal Endpoint serves `mcp` without listing it and
+    /// `false` turns it off (EP-24, T-2901); a `public` one serves it only with `true` or `mcp`
+    /// listed in `enabledRepresentations`, so nothing reaches anonymous AI clients by default
+    /// (T-6761). Every call is still gated by the Endpoint's own Policy; see
     /// [`EndpointSpec::served_representations`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<bool>,
@@ -701,7 +703,8 @@ impl EndpointSpec {
 
     /// The representations this Endpoint serves: the ones it lists, or, when it lists none,
     /// every one but `sta` less the disabled ones (EP-104); then `ngsi-ld` and `geojson`, which
-    /// every Endpoint serves (EP-10, T-2939), and `mcp` unless `mcp: false` (EP-24, T-2901).
+    /// every Endpoint serves (EP-10, T-2939), and `mcp` where [`EndpointSpec::mcp_on`] says so
+    /// (EP-24, T-2901, T-6761).
     /// The gateway, the catalogue records and the publishers all read this, never the list
     /// alone.
     pub fn served_representations(&self) -> Vec<Representation> {
@@ -711,11 +714,11 @@ impl EndpointSpec {
                 .into_iter()
                 .filter(|r| !r.opt_in())
                 .filter(|r| !self.disabled_representations.contains(r))
-                .filter(|r| *r != Representation::Mcp || self.mcp != Some(false))
+                .filter(|r| *r != Representation::Mcp || self.mcp_on())
                 .collect(),
         };
         let mut always = vec![Representation::NgsiLd];
-        if self.mcp != Some(false) {
+        if self.mcp_on() {
             always.push(Representation::Mcp);
         }
         // A feed is its outputs: listed or not, the Endpoint serves `feed` exactly when it has one.
@@ -729,6 +732,15 @@ impl EndpointSpec {
             }
         }
         served
+    }
+
+    /// Whether `mcp` is served without being listed: an internal Endpoint unless `mcp: false`
+    /// (EP-24), a `public` one only with `mcp: true` (deny by default, T-6761).
+    pub fn mcp_on(&self) -> bool {
+        match self.mcp {
+            Some(on) => on,
+            None => self.audience != Audience::Public,
+        }
     }
 
     /// The iCalendar outputs the Endpoint serves (EP-125, EP-159): none unless it serves `ical`

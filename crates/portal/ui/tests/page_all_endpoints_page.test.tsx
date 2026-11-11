@@ -44,6 +44,7 @@ function endpoint(index: number, overrides: Record<string, unknown> = {}) {
       slug: `k7m2qz4tv6xh3n5jb2ryd3wcf${index}`,
       audience: "public",
       enabledRepresentations: ["ngsi-ld", "csv"],
+      mcp: true,
       ...overrides,
     },
     status: { phase: "Live" },
@@ -181,12 +182,19 @@ describe("all endpoints", () => {
     expect(link.getAttribute("href")).toBe("/projects/city-1/endpoints/..%2F..%2Fadmin");
   });
 
-  // EP-24, T-2901: MCP is served by every Endpoint that does not opt out, listed or not; a
-  // manifest with `mcp: false` is summarised without it.
-  it("names MCP for every endpoint unless it opts out", async () => {
-    renderAll({ items: [endpoint(0), endpoint(1, { mcp: false })] });
-    expect(await screen.findByText("NGSI-LD, MCP, CSV")).toBeInTheDocument();
-    expect(screen.getByText("NGSI-LD, CSV")).toBeInTheDocument();
+  // EP-24, T-2901, T-6761: a public Endpoint serves MCP only when it opts in, an internal one
+  // unless it opts out; a manifest that does not serve it is summarised without it.
+  it("names MCP where a public endpoint opts in and an internal one does not opt out", async () => {
+    renderAll({
+      items: [
+        endpoint(0),
+        endpoint(1, { mcp: false }),
+        endpoint(2, { mcp: undefined }),
+        endpoint(3, { mcp: undefined, audience: "organization" }),
+      ],
+    });
+    expect(await screen.findAllByText("NGSI-LD, MCP, CSV")).toHaveLength(2);
+    expect(screen.getAllByText("NGSI-LD, CSV")).toHaveLength(2);
   });
 
   // UI-16: every link on the page is reached by keyboard, in the order the table is read, and

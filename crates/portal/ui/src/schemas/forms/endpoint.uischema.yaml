@@ -131,19 +131,23 @@ spec:
       help:
         en: >-
           The standards callers can read it through. Every one but SensorThings is on until you
-          uncheck it; NGSI-LD, GeoJSON and MCP are always on. SensorThings needs a number with its
+          uncheck it; NGSI-LD and GeoJSON are always on, and so is MCP on an internal endpoint. On a
+          public one MCP is off until you check it. SensorThings needs a number with its
           unit in the space's data model, for example pm10 in µg/m³.
         sk: >-
           Štandardy, cez ktoré ho volajúci môžu čítať. Všetky okrem SensorThings sú zapnuté, kým
-          ich neodškrtnete; NGSI-LD, GeoJSON a MCP sú zapnuté vždy. SensorThings potrebuje v dátovom
+          ich neodškrtnete; NGSI-LD a GeoJSON sú zapnuté vždy, MCP na internom endpointe tiež. Na
+          verejnom je MCP vypnuté, kým ho nezaškrtnete. SensorThings potrebuje v dátovom
           modeli priestoru číslo s jednotkou, napríklad pm10 v µg/m³.
         cs: >-
           Standardy, přes které jej volající mohou číst. Všechny kromě SensorThings jsou zapnuté,
-          dokud je neodškrtnete; NGSI-LD, GeoJSON a MCP jsou zapnuté vždy. SensorThings potřebuje
+          dokud je neodškrtnete; NGSI-LD a GeoJSON jsou zapnuté vždy, MCP na interním endpointu také. Na
+          veřejném je MCP vypnuté, dokud ho nezaškrtnete. SensorThings potřebuje
           v datovém modelu prostoru číslo s jednotkou, například pm10 v µg/m³.
         de: >-
           Die Standards, über die Aufrufer lesen können. Alle außer SensorThings sind an, bis Sie
-          sie abwählen; NGSI-LD, GeoJSON und MCP sind immer an. SensorThings braucht im Datenmodell
+          sie abwählen; NGSI-LD und GeoJSON sind immer an, MCP an einem internen Endpunkt auch. An
+          einem öffentlichen ist MCP aus, bis Sie es ankreuzen. SensorThings braucht im Datenmodell
           des Raums eine Zahl mit Einheit, zum Beispiel pm10 in µg/m³.
     representations:
       help:

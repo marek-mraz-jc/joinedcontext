@@ -1634,8 +1634,13 @@ fn assistant_references(repo: &Repository) -> Vec<(Location, String)> {
                         .served_representations()
                         .contains(&jc_core::kinds::Representation::Mcp)
                     {
+                        // A public Endpoint serves MCP only when it opts in (T-6761).
+                        let why = match member.mcp {
+                            Some(false) => "its `spec.mcp: false` turns it off",
+                            _ => "a public Endpoint serves MCP only with `spec.mcp: true`, which it does not set",
+                        };
                         found.push((at.clone(), format!(
-                            "{id}: member Endpoint `{project}/{name}` serves no MCP (`mcp: false`); a named server reads its members through their MCP surface (MF-53)"
+                            "{id}: member Endpoint `{project}/{name}` serves no MCP: {why}; a named server reads its members through their MCP surface (MF-53)"
                         )));
                     }
                     if jc_core::kinds::mcp_server::breadth(member.audience)

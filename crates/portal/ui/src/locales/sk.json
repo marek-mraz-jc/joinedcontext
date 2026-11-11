@@ -1579,6 +1579,8 @@
       "custom": "Vlastná"
     },
     "publicNotice": "Endpoint s verejným publikom odpovedá anonymnému volajúcemu a ten smie iba čítať. Zápisy a odbery aj naďalej vyžadujú prihlásenie, nech sú zapnuté ktorékoľvek reprezentácie.",
+    "publicMcpHint": "MCP je na verejnom endpointe vypnuté, kým nezaškrtnete „MCP pre AI asistentov“. Príklad: zaškrtnite ho, aby Claude alebo ChatGPT čítali tento endpoint cez verejný MCP konektor projektu.",
+    "publicMcpOn": "MCP je zapnuté: AI asistenti ako Claude alebo ChatGPT čítajú tento endpoint cez verejný MCP konektor projektu a vidia len to, čo smie čítať anonymný volajúci. Odškrtnutím „MCP pre AI asistentov“ ho vypnete.",
     "data": {
       "title": "Čo tento endpoint odpovedá",
       "type": "Typ entity",

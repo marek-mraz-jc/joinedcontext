@@ -42,7 +42,8 @@ describe("fieldWidget reads the control off the kind's schema", () => {
     expect(representations?.kind).toBe("multiEnum");
     expect(representations?.kind === "multiEnum" && representations.options.map((o) => o.value)).toContain("ngsi-ld");
     expect(fieldWidget("Endpoint", endpointSchema, "contextSpaceRef")?.widget).toEqual({ kind: "reference", plural: "spaces" });
-    expect(fieldWidget("Endpoint", endpointSchema, "mcp")?.widget).toEqual({ kind: "boolean", absent: true });
+    // Unset means off on a public Endpoint (T-6761); the grid keeps one meaning per column.
+    expect(fieldWidget("Endpoint", endpointSchema, "mcp")?.widget).toEqual({ kind: "boolean", absent: false });
   });
 
   it("gives Subscription a switch, a number and a date-time, and Pipeline a class dropdown and a duration", () => {

@@ -761,7 +761,7 @@
           "description": "Optional ceiling on one `file.*` download (EP-44)."
         },
         "mcp": {
-          "description": "`false` turns the Endpoint's MCP instance off. Every Endpoint serves `mcp` without listing it, public or internal, gated by its own Policy (EP-24, T-2901); see [`EndpointSpec::served_representations`].",
+          "description": "The Endpoint's MCP instance. An internal Endpoint serves `mcp` without listing it and `false` turns it off (EP-24, T-2901); a `public` one serves it only with `true` or `mcp` listed in `enabledRepresentations`, so nothing reaches anonymous AI clients by default (T-6761). Every call is still gated by the Endpoint's own Policy; see [`EndpointSpec::served_representations`].",
           "type": [
             "boolean",
             "null"

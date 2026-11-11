@@ -414,7 +414,8 @@ export const ALWAYS_ON_REPRESENTATIONS = ["ngsi-ld", "mcp"] as const;
 
 export const endpointUiSchema: UiSchema = {
   enabledRepresentations: {
-    "ui:widget": "checkboxes",
+    // Checkboxes, with MCP the person's switch on a public Endpoint (T-6761).
+    "ui:widget": "representationCheckboxes",
     "ui:enumDisabled": [...ALWAYS_ON_REPRESENTATIONS],
   },
   representations: { "ui:field": "representationOutputs" },

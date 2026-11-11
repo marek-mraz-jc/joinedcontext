@@ -1,6 +1,7 @@
 import { AttributeCapabilitiesField } from "./AttributeCapabilitiesField";
 import { EntityPicker } from "./EntityPicker";
 import { EntitySelectorField, FormDataContext } from "./EntitySelectorField";
+import { RepresentationCheckboxes } from "./RepresentationCheckboxes";
 import { RepresentationOutputsField } from "./RepresentationOutputsField";
 import { KnowledgeSourcesField } from "./KnowledgeSourcesField";
 import { DataModelPickerWidget, FormProjectContext, TypePickerWidget } from "./ModelWidgets";
@@ -30,6 +31,7 @@ export const portalWidgets = {
   entityPicker: EntityPicker,
   operations: OperationsPicker,
   personPicker: PersonPickerWidget,
+  representationCheckboxes: RepresentationCheckboxes,
   resourcePicker: ResourcePicker,
   secretRef: SecretRefWidget,
   typePicker: TypePickerWidget,
