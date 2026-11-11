@@ -529,7 +529,7 @@ async fn a_published_wasm_app_keeps_its_build_and_shard() {
          https://forge.example.org/git/org/ovzdusie_kpi-forecast.git\n      ref: main\n  \
          build:\n    node: \"22\"\n    rust: \"1.90\"\n  server:\n    jobs:\n      - name: \
          daily-forecasts\n        schedule: \"20 3 * * *\"\n        export: record-forecasts\n  \
-         visibility: public\n  lifecycle: published\n  dataNeeds: []\nstatus:\n  phase: Pending\n  \
+         visibility: public\n  lifecycle: published\n  dataNeeds:\n    - contextSpaceRef: {{ kind: ContextSpace, name: ovzdusie }}\n      types: [AirQualityObserved]\n      operations: [queryEntity]\nstatus:\n  phase: Pending\n  \
          build:\n    digest: {digest}\n    commit: \"{commit}\"\n    sdkVersion: 0.4.1\n    builtAt: \"2026-10-10T20:04:45Z\"\n    component: {component}\n  \
          shard: 0\n",
         commit = "6".repeat(40),

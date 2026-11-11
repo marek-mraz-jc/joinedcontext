@@ -558,15 +558,18 @@ mod pass_edges {
 
     /// A DataSource that names `secret` for its password, or no secret at all.
     fn data_source(project: &str, name: &str, secret: Option<&str>) -> String {
-        let secrets = match secret {
-            Some(secret) => format!(
-                "  secrets:\n    - {{ name: {secret}, key: password, envVar: {} }}\n",
-                name.to_uppercase().replace('-', "_")
+        let env_var = name.to_uppercase().replace('-', "_");
+        let (sasl, secrets) = match secret {
+            Some(secret) => (
+                format!("    sasl:\n      password: \"${{{env_var}}}\"\n"),
+                format!(
+                    "  secrets:\n    - {{ name: {secret}, key: password, envVar: {env_var} }}\n"
+                ),
             ),
-            None => String::new(),
+            None => (String::new(), String::new()),
         };
         format!(
-            "apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata:\n  name: {name}\n  namespace: {project}\nspec:\n  type: mqtt\n  input:\n    urls: [\"tcp://broker.example.fi:1883\"]\n    topics: [\"vehicles/#\"]\n{secrets}"
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata:\n  name: {name}\n  namespace: {project}\nspec:\n  type: kafka\n  input:\n    addresses: [\"broker.example.fi:9092\"]\n    topics: [\"vehicles\"]\n{sasl}{secrets}"
         )
     }
 
@@ -718,7 +721,7 @@ mod pass_edges {
         let mut files = project("helsinki", &[("vehicles", None)]);
         files.push((
             "projects/helsinki/endpoints/vehicles-in.yaml".to_owned(),
-            "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: vehicles-in\n  namespace: helsinki\nspec:\n  contextSpaceRef: mobility\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: internal\n  enabledRepresentations:\n    - ngsi-ld\n".to_owned(),
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: vehicles-in\n  namespace: helsinki\nspec:\n  contextSpaceRef: mobility\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: organization\n  enabledRepresentations:\n    - ngsi-ld\n".to_owned(),
         ));
         let forge = serve(&[files]).await;
         let runner = MockServer::start().await;
@@ -901,7 +904,7 @@ mod pass_edges {
             let mut files = project("helsinki", &[("vehicles", Some("mqtt-mesto"))]);
             files.push((
                 "projects/helsinki/endpoints/vehicles-in.yaml".to_owned(),
-                "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: vehicles-in\n  namespace: helsinki\nspec:\n  contextSpaceRef: mobility\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: internal\n  enabledRepresentations:\n    - ngsi-ld\n".to_owned(),
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: vehicles-in\n  namespace: helsinki\nspec:\n  contextSpaceRef: mobility\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: organization\n  enabledRepresentations:\n    - ngsi-ld\n".to_owned(),
             ));
             let forge = serve(&[files]).await;
             let (bao, runner) = (openbao().await, runner().await);
@@ -1022,7 +1025,7 @@ mod pass_edges {
         let mut files = project("helsinki", &[("vehicles", None)]);
         files.push((
             "projects/helsinki/endpoints/vehicles-in.yaml".to_owned(),
-            "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: vehicles-in\n  namespace: helsinki\nspec:\n  contextSpaceRef: mobility\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: internal\n  enabledRepresentations:\n    - ngsi-ld\n".to_owned(),
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: vehicles-in\n  namespace: helsinki\nspec:\n  contextSpaceRef: mobility\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: organization\n  enabledRepresentations:\n    - ngsi-ld\n".to_owned(),
         ));
         let forge = serve(&[files]).await;
         let runner = MockServer::start().await;
