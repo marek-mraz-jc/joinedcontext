@@ -5,10 +5,14 @@
 import { lazy, Suspense } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
+import { loadGridLocales } from "../../i18n";
 import type { AdminGridProps } from "./AdminGrid";
 
 // `lazy` takes no type parameter of its own: the generic signature is AdminGrid's, restated.
-const Grid = lazy(() => import("./AdminGrid").then((module) => ({ default: module.AdminGrid }))) as unknown as <T>(
+// Its words come with it (i18n.ts loadGridLocales): outside the public groups, they would load the whole locale.
+const Grid = lazy(() =>
+  Promise.all([import("./AdminGrid"), loadGridLocales()]).then(([module]) => ({ default: module.AdminGrid })),
+) as unknown as <T>(
   props: AdminGridProps<T>,
 ) => JSX.Element;
 
