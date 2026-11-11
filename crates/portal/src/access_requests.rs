@@ -380,7 +380,8 @@ pub fn grant_bundle(request: &AccessRequest, endpoint: &Value, refs: &[String]) 
         !endpoint["spec"]["policyRef"].is_null() || !endpoint["spec"]["policyRefs"].is_null();
     if admits || names {
         let mut updated = writable(endpoint);
-        if let Some(spec) = updated["spec"].as_object_mut() {
+        // An empty list leaves a ref-less Endpoint binding every Policy of its space.
+        if let Some(spec) = updated["spec"].as_object_mut().filter(|_| !refs.is_empty()) {
             spec.remove("policyRef");
             spec.insert("policyRefs".into(), json!(refs));
         }

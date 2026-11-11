@@ -944,7 +944,9 @@ pub(crate) fn served_types(
 }
 
 /// The policyRefs `endpoint` lists once `request`'s grant lands (P-18, T-6740): the ones it names,
-/// or, naming none, every Policy of its space it binds today, and the new grant's.
+/// or, naming none, every Policy of its space it binds today, and the new grant's. The grant's URN
+/// carries the domain the Endpoint's own references carry, else the organization's; with no domain
+/// known a ref-less Endpoint stays ref-less (empty list), since it binds the grant as it is.
 fn served_with(
     state: &AppState,
     project: &str,
@@ -953,18 +955,36 @@ fn served_with(
 ) -> Vec<String> {
     let ground = crate::judge::Ground::of(state);
     let spec = &endpoint["spec"];
-    let named: Vec<String> = match (&spec["policyRef"], &spec["policyRefs"]) {
-        (Value::String(one), _) => vec![one.clone()],
-        (_, Value::Array(list)) => list
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect(),
-        _ => crate::api::mutate::bound_today(&ground, project, &request.space),
+    let named: Option<Vec<String>> = match (&spec["policyRef"], &spec["policyRefs"]) {
+        (Value::String(one), _) => Some(vec![one.clone()]),
+        (_, Value::Array(list)) => Some(
+            list.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+        ),
+        _ => None,
     };
-    let grant =
+    let domain = named
+        .iter()
+        .flatten()
+        .find_map(|urn| {
+            let domain = urn.strip_prefix("urn:ngsi-ld:Policy:")?.split(':').next()?;
+            (!domain.is_empty()).then(|| domain.to_owned())
+        })
+        .unwrap_or_else(|| ground.org_domain());
+    if domain.is_empty() && named.is_none() {
+        return Vec::new();
+    }
+    let mut refs =
+        named.unwrap_or_else(|| crate::api::mutate::bound_today(&ground, project, &request.space));
+    let generic =
         crate::api::mutate::policy_urn(&ground, project, &request.space, &request.policy_name());
-    let mut refs = named;
+    let tail = generic
+        .strip_prefix("urn:ngsi-ld:Policy:")
+        .and_then(|rest| rest.split_once(':'))
+        .map_or(generic.as_str(), |(_, tail)| tail);
+    let grant = format!("urn:ngsi-ld:Policy:{domain}:{tail}");
     if !refs.contains(&grant) {
         refs.push(grant);
     }
