@@ -581,10 +581,11 @@ async fn the_project_carries_its_usage_against_the_quota_in_force() {
     let detail: Value = serde_json::from_str(&answer.text).expect("the project");
     assert_eq!(detail["status"]["usage"]["contextSpaces"]["used"], 1);
     assert_eq!(detail["status"]["usage"]["contextSpaces"]["limit"], 3);
-    // A dimension no quota limits is listed with its count and no limit.
+    // A dimension neither the project nor the organization limits takes the deployment's
+    // ceiling (LIM-01): never unlimited.
     assert_eq!(detail["status"]["usage"]["apps"]["used"], 0);
-    assert!(
-        detail["status"]["usage"]["apps"]["limit"].is_null(),
+    assert_eq!(
+        detail["status"]["usage"]["apps"]["limit"], 100,
         "{}",
         answer.text
     );
