@@ -1,5 +1,5 @@
 --- a/site/embed.js	2026-11-11 05:59:24.043638691 +0000
-+++ site/embed.js	2026-11-11 06:04:21.219700303 +0000
++++ site/embed.js	2026-11-11 06:14:35.572888934 +0000
 @@ -13,6 +13,11 @@
    var VIEWS = ["both", "table"];
    var HEIGHT = { min: 240, max: 2000, fallback: 640 };
@@ -59,7 +59,7 @@
    }
  })(typeof self !== "undefined" ? self : globalThis);
 --- a/site/explore.css	2026-11-11 05:59:24.062638654 +0000
-+++ site/explore.css	2026-11-11 06:04:21.222572239 +0000
++++ site/explore.css	2026-11-11 06:14:35.574740144 +0000
 @@ -23,6 +23,16 @@
    .page-head .actions { flex: 1 1 100%; flex-wrap: nowrap; gap: 8px; }
    .page-head .actions .page-button { flex: 1 1 0; min-width: 0; }
@@ -77,8 +77,27 @@
  .inline #title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
  #title { font-size: 1.15rem; margin: 0; }
  #map-title { font-size: 1rem; margin: 16px 0 6px; }
+@@ -95,6 +105,8 @@
+ /* T-5233: the map's count line, its Mapa panel, the reader's chips and the legend. */
+ .map-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin: 16px 0 6px; }
+ .map-head #map-title { margin: 0; }
++/* The attribute the points come from, beside the title; Map settings keeps the row's right end. */
++.map-head .map-from { margin: 0 auto 0 0; }
+ .map-panel { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+ .map-panel h3 { flex-basis: 100%; margin: 0; font-size: 1rem; font-weight: 600; }
+ .map-panel .field { flex: 1 1 14rem; min-width: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; border: 0; padding: 0; }
+--- a/site/explore.html	2026-11-11 05:59:24.057638664 +0000
++++ site/explore.html	2026-11-11 06:14:35.576393331 +0000
+@@ -30,6 +30,7 @@
+     <section id="map-section" aria-labelledby="map-title" hidden>
+       <div class="map-head">
+         <h2 id="map-title" data-t="map"></h2>
++        <p id="map-from" class="hint map-from"></p>
+         <button type="button" id="map-panel-open" class="page-button" data-t="panelOpen" aria-expanded="false" aria-controls="map-panel"></button>
+       </div>
+       <div id="map-panel" class="map-panel" role="group" aria-labelledby="map-panel-title" hidden>
 --- a/site/explore.js	2026-11-11 05:59:24.037638703 +0000
-+++ site/explore.js	2026-11-11 06:04:21.228833353 +0000
++++ site/explore.js	2026-11-11 06:14:35.577599790 +0000
 @@ -7,8 +7,35 @@
  (function (root) {
    "use strict";
@@ -117,6 +136,24 @@
    var MAP_DWELL = 500;
    var SLUG = /^[a-z0-9]{16,64}$/;
    var NAME = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
+@@ -36,7 +63,7 @@
+       code: "Code to paste", copy: "Copy code", copied: "Copied. Paste it into your page's HTML.", copySelect: "Selected: press Ctrl+C to copy.", preview: "Open the widget alone",
+       invalid: "Check this setting: {why}.", source: "Source", licence: "Licence", licenceSee: "see the dataset", catalogue: "open data catalogue",
+       count: "On the map {n} of {total} · {none} without a location", countTiles: " · drawn as tiles", other: "Other",
+-      panelOpen: "Map settings", panel: "Map settings", geoLabel: "Location from", geoHint: "Which place of the entity the map draws, e.g. Location.",
++      panelOpen: "Map settings", pointsFrom: "Points from: {attr}", panel: "Map settings", geoLabel: "Location from", geoHint: "Which place of the entity the map draws, e.g. Location.",
+       colorLabel: "Colour by", colorNone: "One colour", colorType: "Type", colorHint: "Points take a colour per value, e.g. Status; the legend is under the map.",
+       popLabel: "In the bubble", popHint: "What a pointer over a point shows besides the title, e.g. Start and Web.",
+       clusterLabel: "Group points", clusterHint: "Above 200 points in view, nearby points merge into a bubble with their count.",
+@@ -61,7 +88,7 @@
+       code: "Kód na vloženie", copy: "Kopírovať kód", copied: "Skopírované. Vložte ho do HTML svojej stránky.", copySelect: "Označené: skopírujte stlačením Ctrl+C.", preview: "Otvoriť samotný widget",
+       invalid: "Skontrolujte toto nastavenie: {why}.", source: "Zdroj", licence: "Licencia", licenceSee: "pozri dataset", catalogue: "katalóg otvorených dát",
+       count: "Na mape {n} z {total} · {none} bez polohy", countTiles: " · kreslené ako dlaždice", other: "Iné",
+-      panelOpen: "Nastaviť mapu", panel: "Nastavenie mapy", geoLabel: "Poloha z", geoHint: "Ktoré miesto entity mapa kreslí, napr. Poloha.",
++      panelOpen: "Nastaviť mapu", pointsFrom: "Body z: {attr}", panel: "Nastavenie mapy", geoLabel: "Poloha z", geoHint: "Ktoré miesto entity mapa kreslí, napr. Poloha.",
+       colorLabel: "Farba podľa", colorNone: "Jedna farba", colorType: "Typ", colorHint: "Body dostanú farbu podľa hodnoty, napr. Stav; legenda je pod mapou.",
+       popLabel: "V bubline", popHint: "Čo ukáže kurzor nad bodom okrem názvu, napr. Začiatok a Web.",
+       clusterLabel: "Zoskupovať body", clusterHint: "Nad 200 bodov vo výreze sa blízke body spoja do bubliny s ich počtom.",
 @@ -123,6 +150,29 @@
      return "https://api." + String(hostname).replace(/^viz\./, "") + "/api/endpoint/" + slug + "/";
    }
@@ -172,7 +209,16 @@
          m.addControl(new maplibre.AttributionControl({ compact: true }));
          new maplibre.Marker({ color: COLOUR }).setLngLat([at[0], at[1]]).addTo(m);
          state.cardMap = m;
-@@ -641,8 +691,7 @@
+@@ -607,6 +657,8 @@
+         var picked = mapChoice(state.mapRaw, o);
+         var moved = state.mapping && state.mapping.choice.geo !== picked.choice.geo;
+         state.mapping = { options: o, choice: picked.choice, card: card };
++        // Which of the type's GeoProperties the points come from, in sight beside Map settings.
++        $("map-from").textContent = say(t.pointsFrom, { attr: o.labels[picked.choice.geo] || humanise(picked.choice.geo) });
+         // Only with the model in hand is a slot the address names known to be wrong: drop it, say so.
+         if (card && picked.unknown.length) {
+           picked.unknown.forEach(function (k) { delete state.mapRaw[k]; });
+@@ -641,8 +693,7 @@
      }
  
      function loadMap() {
@@ -182,7 +228,7 @@
          if (root.pmtiles) maplibre.addProtocol("pmtiles", new root.pmtiles.Protocol().tile);
          // The Endpoint's vector tiles, read like every other request here: anonymous, no referrer.
          maplibre.addProtocol("jc-tile", function (request, controller) {
-@@ -653,8 +702,7 @@
+@@ -653,8 +704,7 @@
                return r.arrayBuffer().then(function (data) { return { data: data }; });
              });
          });
@@ -192,7 +238,7 @@
          state.map = map;
          root.jcExploreMap = map; // for the browser journey
          state.maplibre = maplibre;
-@@ -939,8 +987,9 @@
+@@ -939,8 +989,9 @@
        if (moved) drawMap();
      }
  
@@ -204,7 +250,7 @@
        $("detail-type").hidden = true;
        $("detail-title").textContent = t.dataApi;
        $("detail-list").textContent = "";
-@@ -950,12 +999,13 @@
+@@ -950,12 +1001,13 @@
        $("detail-dev").open = true;
        linkList(null);
        placeMap(null);
@@ -221,7 +267,7 @@
        var line = $("attribution");
        var draw = function (title, href, publisher, licence, licenceHref) {
          line.textContent = "";
-@@ -992,8 +1042,9 @@
+@@ -992,8 +1044,9 @@
        $("embed-keep-hint").textContent = words.length ? say(t.keepHint, { view: words.join("; ") }) : t.keepNone;
        $("embed-copied").textContent = "";
        try {
@@ -233,7 +279,7 @@
          $("embed-error").hidden = true;
          $("embed-height").removeAttribute("aria-invalid");
          $("embed-copy").disabled = false;
-@@ -1006,11 +1057,13 @@
+@@ -1006,11 +1059,13 @@
        }
      }
  
@@ -249,7 +295,7 @@
      $("embed-form").addEventListener("input", embedCode);
      $("embed-form").addEventListener("change", embedCode);
      $("embed-form").addEventListener("submit", function (e) { e.preventDefault(); });
-@@ -1022,7 +1075,7 @@
+@@ -1022,7 +1077,7 @@
        else select();
      });
      $("embed-close").addEventListener("click", function () { $("embed").close(); });
@@ -258,7 +304,7 @@
      if (embedded) attribute();
      $("detail-close").addEventListener("click", function () { $("detail").close(); });
      // A click on the backdrop (the dialog box itself, outside its content) closes it, as Esc does.
-@@ -1058,7 +1111,7 @@
+@@ -1058,7 +1113,7 @@
      if (!root.jcExplorer || typeof root.jcExplorer.mount !== "function") return tell(t.noWidget, "error");
      try {
        root.jcExplorer.mount($("grid"), {
@@ -267,7 +313,7 @@
          slug: where.slug,
          lang: lang,
          link: { type: where.type || undefined, q: where.q || undefined, sort: where.sort || undefined, noDefault: where.all || undefined },
-@@ -1068,15 +1121,21 @@
+@@ -1068,15 +1123,21 @@
            if (card && card.type === state.type) drawMap();
          },
          onOpenRow: openRow,
@@ -292,7 +338,7 @@
    else if (typeof document !== "undefined") main();
  })(typeof self !== "undefined" ? self : this);
 --- a/site/host.js	2026-11-11 05:59:24.052638674 +0000
-+++ site/host.js	2026-11-11 06:04:21.232067723 +0000
++++ site/host.js	2026-11-11 06:14:35.579696723 +0000
 @@ -40,7 +40,8 @@
    // `&lang=sk` (the page's language) in any order.
    function parseHash(hash) {
@@ -304,7 +350,7 @@
      return { id: parts[0], inline: parts.indexOf("inline") > 0, lang: lang ? lang[1] : null };
    }
 --- a/site/map.html	2026-11-11 05:59:24.045638687 +0000
-+++ site/map.html	2026-11-11 06:04:21.235067718 +0000
++++ site/map.html	2026-11-11 06:14:35.580888919 +0000
 @@ -8,8 +8,8 @@
  <link rel="stylesheet" href="vendor/maplibre-gl-6.14.0.css">
  <link rel="stylesheet" href="map.css">

@@ -3,9 +3,9 @@
 # from this repository's crates/portal/ui (explorer/SHA256SUMS names the commit); site/ is components/viz/charts/renderer/files/site of that commit with
 # jc.patch applied to explore.js, explore.html, explore.css, embed.js, map.html and host.js (vendor/SOURCES.md).
 1fa68fbfc99c7a5c7715440de8ad6ad8e37d7f4e79192f627e07cd758d27fd87  embed.js
-77afb82346d92d01edae3ef0d4b5b5b19eafdfcd119559b82aae650df5df1689  explore.css
-27069139d2c71cef2237ab2cb22aece06991472fa40605f9423d4b0a51f2a5fc  explore.html
-5aef3270f2d0526f09f8c344f9cf473a46d0bc1ffbc10b9cf3c0fbb52758c358  explore.js
+e075206c948b729187a3a11e1b0879404295b75a3fd2a8880e4924020ca097c3  explore.css
+6fb2126f0813550d065f31f00b050f80157fb1740b7fe58da1b189fd1da94002  explore.html
+52e6457186071a00c97763c70eec803a440f5227a54de0e740e93ecf27923c94  explore.js
 59b948e2ecad2d9b29bdacea71b402a0e9ee2827ed0bd8e55290ab90b945119e  host.css
 46b5405cb28c62cefdde3c730f7625b7cedd2fff0f7d4af14bf937f939bdc3e4  host.js
 57dd801453cd7a724b95f98e4e4c44fe73a0691bd20aa7d3c873c88c16b3e2f2  index.html
@@ -17,7 +17,7 @@ ad57f5f528008c6adab6839cecee9cd804362d17f978c155e4613bb4eb49ad9d  render.css
 6292ee887de2099952519201564ab4def7ee721447d151c4ef32026e0ffe6bf2  render.html
 1b3cff68378e6e303fc3887309f827bc3aa5f0a0d80f19c5b8bb93e83ad63f8c  render.js
 2f72a716833c2207639a1b515178198e63789bcfe33bcc7abc0106c46814b4d5  explorer/explorer.css
-dd5e9f4761e870f949904c7a5cc155a14e67579b2e727339131b020cecfe1574  explorer/explorer.js
+5f5f71cba180fde6d38d5f6304d75ea902348ca6ea0ad08ecf0edf09ca7824b1  explorer/explorer.js
 caf981bc46f6327ee7e65d5dc964d89d38a69f60edca2bd4c5c890c21b554c6c  vendor/pmtiles-4.5.0.js
 8f6a3587cf8d4f42c7e08120e3eb05d067e746d554e39d2dcf52acc0bd5ba28f  vendor/vega-6.4.0.min.js
 b1455caba2fb1a72fb46025ba0ba1316e2dbc7f0dd40a3f6040172bf9c08ba91  vendor/vega-embed-7.3.0.min.js
