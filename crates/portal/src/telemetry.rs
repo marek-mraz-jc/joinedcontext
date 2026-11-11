@@ -14,15 +14,15 @@
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use axum::Router;
 use axum::extract::{MatchedPath, Request};
 use axum::http::header::CONTENT_TYPE;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use axum::Router;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::EnvFilter;
 
 use crate::change::Lane;
 use crate::state::AppState;

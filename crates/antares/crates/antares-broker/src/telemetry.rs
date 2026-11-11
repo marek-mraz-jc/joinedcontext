@@ -250,7 +250,7 @@ pub const ANSWER_BUCKETS_BYTES: &[f64] = &[
 
 /// Metric metadata — Prometheus-convention names (antares_ prefix, unit suffixes).
 fn describe() {
-    use metrics::{Unit, describe_counter, describe_gauge, describe_histogram};
+    use metrics::{describe_counter, describe_gauge, describe_histogram, Unit};
     describe_counter!(
         "antares_http_requests_total",
         Unit::Count,
