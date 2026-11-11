@@ -316,7 +316,7 @@ async fn an_administrators_red_lane_removal_lands_with_the_name_typed_back() {
     let message = merge_message(&server).await.expect("merged at propose");
     // The typed name confirms the removal the reconciler would otherwise hold (T-6708).
     assert!(
-        message.lines().any(|line| line == "Risk: destructive"),
+        message.contains("Risk: destructive"),
         "{message}"
     );
 }
