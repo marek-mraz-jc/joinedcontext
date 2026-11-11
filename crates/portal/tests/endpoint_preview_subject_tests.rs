@@ -65,7 +65,11 @@ fn endpoints() -> Vec<(&'static str, Value)> {
         ),
         (
             "air-public",
-            spec("k4y7pq2mzt6vhx3nbwrs5cjdaf", "public", json!({ "policyRefs": SPACE_POLICIES })),
+            spec(
+                "k4y7pq2mzt6vhx3nbwrs5cjdaf",
+                "public",
+                json!({ "policyRefs": SPACE_POLICIES }),
+            ),
         ),
         (
             "app-map",
