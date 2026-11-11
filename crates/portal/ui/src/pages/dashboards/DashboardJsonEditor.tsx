@@ -286,6 +286,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                 {t("dashboards.json.check")}
               </Button>
               <Button
+                variant="primary"
                 disabled={!parsed.manifest || proposal.mutation.isPending}
                 onClick={() => {
                   const body = asProposal();

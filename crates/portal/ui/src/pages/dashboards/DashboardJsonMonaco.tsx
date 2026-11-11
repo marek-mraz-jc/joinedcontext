@@ -72,6 +72,7 @@ export default function DashboardJsonMonaco({
       options={{
         ariaLabel,
         minimap: { enabled: false },
+        fontSize: 13,
         tabSize: 2,
         scrollBeyondLastLine: false,
         wordWrap: "on",
