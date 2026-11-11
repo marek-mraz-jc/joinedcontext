@@ -202,7 +202,7 @@ export function OrganizationSettings(): JSX.Element {
         homeWidgets:
           widgets.length > 0
             ? { "ui:widget": "checkboxes", "ui:options": { stacked: true } }
-            : { "ui:help": t("organization.field.appearance.homeWidgetsNone"), "ui:options": { addable: false } },
+            : { "ui:field": "noChoices", "ui:help": t("organization.field.appearance.homeWidgetsNone") },
       },
     },
     fromManifest: fromOrganization,

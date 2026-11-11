@@ -7604,7 +7604,8 @@
           "text": "Text"
         },
         "homeWidgets": "Nástenky na domovskej stránke",
-        "homeWidgetsNone": "Zatiaľ niet nástenky na výber. Otvorte projekt tejto organizácie, prejdite na Nástenky a vytvorte ju; nabudúce sa ponúkne tu."
+        "homeWidgetsNone": "Zatiaľ niet nástenky na výber. Otvorte projekt tejto organizácie, prejdite na Nástenky a vytvorte ju; nabudúce sa ponúkne tu.",
+        "homeWidgetsProjects": "Otvoriť projekty organizácie"
       }
     },
     "contactRole": {

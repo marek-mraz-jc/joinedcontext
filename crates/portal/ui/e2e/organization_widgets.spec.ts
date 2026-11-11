@@ -163,6 +163,8 @@ test.describe("an Organization's home page dashboards", () => {
       await expect(page.getByText("No dashboard to offer yet. Open a project of this organization, go to Dashboards and make one; it is offered here next time.")).toBeVisible();
       // Nothing to add by hand: a typed name would only be refused.
       await expect(page.locator("#root_appearance_homeWidgets").getByRole("button", { name: /Add/ })).toHaveCount(0);
+      // The way there is a link inside the field's own frame.
+      await expect(page.locator("#root_appearance_homeWidgets").getByRole("link", { name: "Open the organization's projects" })).toHaveAttribute("href", "/organization/projects");
       await page.getByText(/No dashboard to offer yet/).scrollIntoViewIfNeeded();
       await page.screenshot({ path: process.env.JC_EVIDENCE_DIR ? join(process.env.JC_EVIDENCE_DIR, `widgets-empty-${width}.png`) : undefined });
     });

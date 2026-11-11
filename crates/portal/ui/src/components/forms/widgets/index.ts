@@ -10,7 +10,7 @@ import { RolePresetField } from "./RolePresetField";
 import { SecretRefWidget } from "./SecretRef";
 import { AssigneePicker, AttributeSuggest, PersonPickerWidget } from "./SuggestWidgets";
 import { CronScheduleWidget } from "./CronSchedule";
-import { ColourWidget, SvgImageWidget } from "./AppearanceWidgets";
+import { ColourWidget, NoChoicesField, SvgImageWidget } from "./AppearanceWidgets";
 
 export {
   DataModelPickerWidget,
@@ -44,5 +44,6 @@ export const portalFields = {
   entitySelector: EntitySelectorField,
   representationOutputs: RepresentationOutputsField,
   knowledgeSources: KnowledgeSourcesField,
+  noChoices: NoChoicesField,
   rolePreset: RolePresetField,
 };

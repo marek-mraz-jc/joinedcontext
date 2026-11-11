@@ -1,8 +1,9 @@
 // covers src/components/forms/widgets/AppearanceWidgets.tsx: the colour swatch and the SVG preview
-// of an Organization's appearance form (UIX-16, T-6772).
+// of an Organization's appearance form (UIX-16, T-6772), the framed empty list (T-6779).
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { Swatch, svgImageUrl } from "../src/components/forms/widgets/AppearanceWidgets";
+import type { FieldProps } from "@rjsf/utils";
+import { NoChoicesField, Swatch, svgImageUrl } from "../src/components/forms/widgets/AppearanceWidgets";
 
 describe("the appearance form's widgets (T-6772)", () => {
   it("previews pasted SVG only as a data URL an <img> draws, and nothing else", () => {
@@ -19,5 +20,18 @@ describe("the appearance form's widgets (T-6772)", () => {
     expect(refused.querySelector("rect")?.getAttribute("fill")).toBeNull();
     expect(refused.querySelector("line")).not.toBeNull();
     expect(render(<Swatch className="h-4" />).container.querySelector("svg")?.getAttribute("class")).toContain("border-dashed");
+  });
+
+  it("draws a list with no choices as its heading over a framed line that says what to do and links there", () => {
+    const props = {
+      schema: { type: "array", title: "Home page dashboards" },
+      uiSchema: { "ui:help": "Make a dashboard first." },
+      fieldPathId: { $id: "root_homeWidgets", path: [] },
+      required: false,
+    } as unknown as FieldProps;
+    const { getByRole, getByText } = render(<NoChoicesField {...props} />);
+    expect(getByRole("group", { name: "Home page dashboards" })).toHaveAttribute("aria-describedby", "root_homeWidgets__help");
+    expect(getByText("Make a dashboard first.").parentElement?.className).toContain("border-dashed");
+    expect(getByRole("link").getAttribute("href")).toBe("/organization/projects");
   });
 });

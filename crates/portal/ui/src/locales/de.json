@@ -7604,7 +7604,8 @@
           "text": "Text"
         },
         "homeWidgets": "Dashboards auf der Startseite",
-        "homeWidgetsNone": "Noch kein Dashboard zur Auswahl. Öffnen Sie ein Projekt dieser Organisation, gehen Sie zu Dashboards und legen Sie eines an; es wird beim nächsten Mal hier angeboten."
+        "homeWidgetsNone": "Noch kein Dashboard zur Auswahl. Öffnen Sie ein Projekt dieser Organisation, gehen Sie zu Dashboards und legen Sie eines an; es wird beim nächsten Mal hier angeboten.",
+        "homeWidgetsProjects": "Projekte der Organisation öffnen"
       }
     },
     "contactRole": {
