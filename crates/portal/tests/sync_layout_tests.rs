@@ -302,6 +302,87 @@ async fn a_project_taken_out_of_the_registry_has_its_repository_archived() {
     );
 }
 
+/// T-6706: a project repository opened before the branch rules existed takes them on the
+/// leader's first run: only the Portal merges into its `main`, and the Change branches of it and
+/// of the organization repository are the Portal's alone. The organization's `main` keeps the
+/// rules its operator set, and a second run asks nothing again.
+#[tokio::test]
+async fn an_existing_project_repository_takes_the_portal_branch_rules_on_the_first_run() {
+    let server = MockServer::start().await;
+    organization(&server).await;
+    repository(
+        &server,
+        "ovzdusie",
+        "main",
+        &[
+            (".jc/layout", "2\n"),
+            ("project.yaml", PROJECT),
+            ("spaces/ovzdusie/space.yaml", SPACE),
+        ],
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path("/odata/Me()"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "Login": "jc-portal" })))
+        .mount(&server)
+        .await;
+    for repo in ["test-repo", "ovzdusie"] {
+        Mock::given(method("POST"))
+            .and(path(format!(
+                "/odata/Repositories(Owner='test-owner',Name='{repo}')/Shako.Protect"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+    }
+    let (syncer, _) = syncer(&server);
+    let rules = || async {
+        server
+            .received_requests()
+            .await
+            .expect("requests")
+            .into_iter()
+            .filter(|r| r.url.path().ends_with("/Shako.Protect"))
+            .map(|r| {
+                let rule = serde_json::from_slice::<serde_json::Value>(&r.body).unwrap_or_default();
+                let repo = r
+                    .url
+                    .path()
+                    .split('\'')
+                    .nth(3)
+                    .unwrap_or_default()
+                    .to_owned();
+                (
+                    repo,
+                    rule["Rule"]["rule_name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    syncer.sync_once().await.expect("the first sync");
+    let first = rules().await;
+    let named = |repo: &str| -> Vec<&str> {
+        first
+            .iter()
+            .filter(|(r, _)| r == repo)
+            .map(|(_, rule)| rule.as_str())
+            .collect()
+    };
+    assert_eq!(
+        named("ovzdusie"),
+        ["main", "portal/*", "workspace/*"],
+        "{first:?}"
+    );
+    assert_eq!(named("test-repo"), ["portal/*", "workspace/*"], "{first:?}");
+
+    syncer.sync_once().await.expect("the second sync");
+    assert_eq!(rules().await.len(), first.len(), "set once per process");
+}
+
 /// A cluster holding the edge's Ingress and Certificate and the host (Certificate and Ingress)
 /// the Portal once made for the App `luft`, answering every delete.
 async fn cluster_with_app_host() -> MockServer {

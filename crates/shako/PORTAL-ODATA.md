@@ -48,7 +48,8 @@ webhooks into the Portal's real receiver.
 | 5 | `archive_repository` | `POST R/Shako.Archive` | status |
 | 6 | `delete_repository` | `DELETE R`; 404 = done | status (204) |
 | 7 | `let_the_reader_in` | removed: shako grants reads through RoleBindings, so the Context Gateway's reader needs a RoleBinding, not a collaborator row (shako answered the Gitea call as a no-op) | — |
-| 8 | `protect_branch` | `POST R/Shako.Protect` `{Rule: {rule_name, enable_push: false}}` | status; a later contents write to the branch is 403 |
+| 8 | `protect_branch` | `GET Me()`, then `POST R/Shako.Protect` `{Rule: {rule_name, enable_push: false, enable_merge_whitelist: true, merge_whitelist_usernames: [Login], block_admin_merge_override: true}}`, then row 8a | status; a later contents write to the branch is 403, a merge by anyone but `Login` is 403 (T-6706) |
+| 8a | `reserve_change_branches` | `GET Me()`, then `POST R/Shako.Protect` for `portal/*` and `workspace/*` `{Rule: {rule_name, enable_push: true, enable_push_whitelist: true, push_whitelist_usernames: [Login], enable_force_push: true, enable_force_push_allowlist: true, force_push_allowlist_usernames: [Login]}}` | status; anyone but `Login` cutting, writing, rewriting or deleting such a branch is 403; `Login` deletes it (T-6706) |
 
 ## 3. Branches, trees, contents, history
 

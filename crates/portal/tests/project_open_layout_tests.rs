@@ -140,10 +140,7 @@ async fn a_project_opens_into_a_repository_of_its_own() {
         "{workflow}"
     );
     assert!(!workflow.contains("uses:"), "no action is fetched");
-    assert_eq!(
-        received(&server, "POST", &format!("{NEW}/Shako.Protect")).await[0]["Rule"]["rule_name"],
-        "main"
-    );
+    common::assert_portal_branch_rules(&server, NEW).await;
 
     let files = organization_files(&server).await;
     let paths: Vec<&str> = files.iter().map(|(path, _)| path.as_str()).collect();
