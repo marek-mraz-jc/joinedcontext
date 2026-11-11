@@ -390,6 +390,7 @@ async fn review_and_merge() {
             MergeStyle::Merge,
             "Merge PR #17",
             Some("reviewed-commit"),
+            None,
         )
         .await
         .unwrap();
@@ -420,7 +421,7 @@ async fn merge_without_a_reviewed_commit_sends_no_head_commit_id() {
         .await;
     for pinned in [None, Some("")] {
         client
-            .merge(18, MergeStyle::Squash, "Merge PR #18", pinned)
+            .merge(18, MergeStyle::Squash, "Merge PR #18", pinned, None)
             .await
             .unwrap();
     }

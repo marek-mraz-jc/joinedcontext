@@ -1066,7 +1066,7 @@ pub async fn merge_approved_edit(
     };
     let message = format!("Edit the dashboard of {name}\n\nApproved in the Portal by {approver}");
     if let Err(err) = repo
-        .merge(pull.number, MergeStyle::Merge, &message, Some(sha))
+        .merge(pull.number, MergeStyle::Merge, &message, Some(sha), None)
         .await
     {
         tracing::warn!(app = %name, pull = pull.number, error = %err, "approved dashboard edit not merged");

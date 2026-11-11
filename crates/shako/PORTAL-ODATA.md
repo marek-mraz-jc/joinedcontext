@@ -65,7 +65,7 @@ webhooks into the Portal's real receiver.
 | 16 | `change_files` / `update_files` / `write_files` | `POST R/Shako.CommitFiles` with `Files[]` of `upload`, `create`, `update`, `delete` | `Sha`; all or nothing, one stale `sha` is 409 and the branch does not move |
 | 17 | `delete_file` | `POST R/Shako.CommitFiles` `{Files: [{operation: delete, path, sha}]}` | `Sha` |
 | 18 | `list_commits` | `GET R/Shako.History(Ref=@r,Path=@p,Top={n})?@r='{ref}'&@p='{path}'` | `value[].{Sha, Message, Author, Email, Date}` |
-| 19 | `commit_message` | `GET R/Commits('{sha}')` | `Message` (whole message) |
+| 19 | `commit_message` | `GET R/Commits('{sha}')` | `Message` (whole message), `Author`, `Email`, `Committer`, `CommitterEmail` |
 
 `CommitFiles` takes `Author` and `Committer` as `{Name, Email}`: commits are attributed to the
 signed-in person while the token only authenticates the call (CC-44). A commit emits the `push`
@@ -83,7 +83,7 @@ event, so the Portal's webhook fires, and runs the repository's push mirrors.
 | 25 | `review_bodies` | `GET R/PullRequests({n})/Reviews` | `value[].Body` |
 | 26 | `close_pull_request` | `POST R/PullRequests({n})/Shako.Close` | status |
 | 27 | `update_pull_request` | `POST R/PullRequests({n})/Shako.UpdateBranch` | status (200 when already up to date) |
-| 28 | `merge` | `POST R/PullRequests({n})/Shako.Merge` `{Style: merge\|squash, Message, HeadCommitId?}` | status; a moved head is 409 |
+| 28 | `merge` | `POST R/PullRequests({n})/Shako.Merge` `{Style: merge\|squash, Message, HeadCommitId?, Author?: {Name, Email}}` (Author: the person who merged; the caller stays committer) | status; a moved head is 409 |
 
 `PullRequest` properties the client reads: `Number`, `HtmlUrl`, `State`, `Title`, `Body`, `Head`,
 `HeadSha`, `Base`, `BaseSha`, `MergeBase`, `Mergeable`, `Merged`, `MergeCommitSha`, `Author`

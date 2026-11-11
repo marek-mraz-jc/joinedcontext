@@ -135,7 +135,7 @@ pub async fn open(shako: &ShakoClient, proposal: &Proposal<'_>) -> Result<PullRe
 
     if proposal.auto_merge {
         shako
-            .merge(pull.number, MergeStyle::Merge, proposal.title, None)
+            .merge(pull.number, MergeStyle::Merge, proposal.title, None, None)
             .await?;
     }
     Ok(pull)

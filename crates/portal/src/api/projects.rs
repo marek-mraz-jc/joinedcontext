@@ -453,6 +453,7 @@ pub async fn open_project(
                 // Nothing was reviewed: the Portal wrote this bundle and merges it in the same
                 // call, so there is no commit an approver read to pin it to (T-1683).
                 None,
+                None,
             )
             .await?;
         // Nothing is waiting for a person, so the answer says so and the UI opens the project

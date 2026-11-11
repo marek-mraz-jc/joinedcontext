@@ -195,7 +195,7 @@ pub async fn merge_published(
     let mut attempt = 0;
     loop {
         match repo
-            .merge(pull.number, MergeStyle::Merge, &message, Some(sha))
+            .merge(pull.number, MergeStyle::Merge, &message, Some(sha), None)
             .await
         {
             Err(GitError::Api { status: 405, .. }) if attempt < 15 => {
