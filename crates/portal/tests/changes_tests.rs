@@ -1384,6 +1384,271 @@ spec:
     assert!(event.summary.contains("sandbox-space"), "{}", event.summary);
 }
 
+const HEAD_A: &str = "4917dcef8a1b2c3d4e5f60718293a4b5c6d7e8f9";
+const HEAD_B: &str = "5a28edf09b2c3d4e5f60718293a4b5c6d7e8f9a0";
+
+fn sandbox_space(sandbox: bool) -> String {
+    format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: review-space\n  namespace: ovzdusie\nspec:\n  isSandbox: {sandbox}\n")
+}
+
+/// An open change 9 updating `review-space`, its head at `head_sha` reading `head`, `main`
+/// reading `base`; mounted again on the same server, it is the branch after a push (CHG-13).
+async fn reviewed_change(server: &MockServer, head_sha: &str, head: &str, base: &str) {
+    server.reset().await;
+    let pr = json!({
+        "Number": 9,
+        "HtmlUrl": "https://shako.example.sk/pulls/9",
+        "State": "open",
+        "Title": "update ContextSpace review-space",
+        "Head": "portal/update-contextspace-review-space-99999999",
+        "HeadSha": head_sha,
+        "Base": "main",
+        "CreatedAt": "2026-11-11T09:14:22Z",
+        "Author": "different.author",
+        "AuthorName": "Different Author",
+        "AuthorEmail": "author@banskabystrica.sk",
+        "Mergeable": true,
+        "Merged": false
+    });
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(9)",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(pr.clone()))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [pr] })))
+        .mount(server)
+        .await;
+    for (git_ref, content) in [(head_sha, head), ("main", base)] {
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+            ))
+            .and(query_param(
+                "@p",
+                "'projects/ovzdusie/spaces/review-space/space.yaml'",
+            ))
+            .and(query_param("@r", format!("'{git_ref}'")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": format!("blob-{git_ref}"),
+                "Content": encode_b64(content)
+            })))
+            .mount(server)
+            .await;
+    }
+    pr_files(
+        server,
+        9,
+        &[(
+            "projects/ovzdusie/spaces/review-space/space.yaml",
+            "modified",
+        )],
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(9)/Shako.Merge",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .mount(server)
+        .await;
+}
+
+async fn review_fixture() -> (MockServer, AppState) {
+    let server = MockServer::start().await;
+    let client = ShakoClient::new(
+        server.uri().parse().expect("url"),
+        "test-owner",
+        "test-repo",
+        "token-xyz",
+    )
+    .expect("client");
+    let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
+    reviewed_change(&server, HEAD_A, &sandbox_space(true), &sandbox_space(false)).await;
+    (server, state)
+}
+
+/// The change as the approver's page reads it: its detail and, for the inbox, its list row.
+async fn page_of(state: &AppState) -> (ChangeProposal, ChangeList) {
+    let get = |uri: &'static str| {
+        let state = state.clone();
+        async move {
+            let response = server::app(state.clone())
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header(header::COOKIE, approver_cookies(&state.config))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            let status = response.status();
+            let bytes = response
+                .into_body()
+                .collect()
+                .await
+                .expect("bytes")
+                .to_bytes();
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{uri}: {}",
+                String::from_utf8_lossy(&bytes)
+            );
+            bytes
+        }
+    };
+    let detail = get("/api/v1/projects/ovzdusie/changes/chg-00000009").await;
+    let list = get("/api/v1/projects/ovzdusie/changes").await;
+    (
+        serde_json::from_slice(&detail).expect("a change"),
+        serde_json::from_slice(&list).expect("a change list"),
+    )
+}
+
+async fn approve_reviewed(state: &AppState, body: Value) -> (StatusCode, String) {
+    let response = server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/ovzdusie/changes/chg-00000009/approve")
+                .header(header::COOKIE, approver_cookies(&state.config))
+                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("bytes")
+        .to_bytes();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// The merge message the forge received, or none when nothing merged.
+async fn merge_message(server: &MockServer) -> Option<String> {
+    server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|request| request.url.path().ends_with("PullRequests(9)/Shako.Merge"))
+        .map(|request| {
+            let body: Value = serde_json::from_slice(&request.body).expect("merge body");
+            body.to_string()
+        })
+}
+
+/// CHG-13, P-9: the review an approval sends back is the one its page showed, in the detail and
+/// in the inbox's list alike, and an unchanged change merges with both recorded (CHG-07).
+#[tokio::test]
+async fn an_unchanged_change_merges_and_the_merge_records_the_reviewed_commit_and_plan() {
+    let (server, state) = review_fixture().await;
+    let (detail, list) = page_of(&state).await;
+    let review = detail
+        .review
+        .clone()
+        .expect("an open change names its review");
+    assert_eq!(review.head_sha, HEAD_A);
+    assert!(
+        review.plan_digest.starts_with("sha256:"),
+        "{}",
+        review.plan_digest
+    );
+    let [row] = list.items.as_slice() else {
+        panic!("one listed change, got {}", list.items.len());
+    };
+    assert_eq!(
+        row.review.as_ref(),
+        Some(&review),
+        "the inbox approves what the page shows"
+    );
+
+    let (status, body) = approve_reviewed(&state, json!({ "reviewed": review })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let message = merge_message(&server).await.expect("the change merged");
+    assert!(
+        message.contains(&format!("Reviewed-Head: {HEAD_A}")),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("Plan-Digest: {}", review.plan_digest)),
+        "{message}"
+    );
+}
+
+/// CHG-13, P-9: a push between the page and the click is never merged unseen.
+#[tokio::test]
+async fn a_push_after_the_page_was_read_makes_the_approval_refuse_and_nothing_merges() {
+    let (server, state) = review_fixture().await;
+    let (detail, _) = page_of(&state).await;
+    let review = detail.review.expect("review");
+    // Someone pushes a second commit; the file reads the same, the commit does not.
+    reviewed_change(&server, HEAD_B, &sandbox_space(true), &sandbox_space(false)).await;
+
+    let (status, body) = approve_reviewed(&state, json!({ "reviewed": review })).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("stale approval"), "{body}");
+    assert_eq!(
+        merge_message(&server).await,
+        None,
+        "a stale approval merges nothing"
+    );
+}
+
+/// CHG-13, P-9: the same head with a different plan (main changed the file under it) is a plan
+/// the approver never saw.
+#[tokio::test]
+async fn a_plan_that_changed_under_the_same_head_makes_the_approval_refuse() {
+    let (server, state) = review_fixture().await;
+    let (detail, _) = page_of(&state).await;
+    let review = detail.review.expect("review");
+    reviewed_change(&server, HEAD_A, &sandbox_space(true), &sandbox_space(true)).await;
+
+    let (status, body) = approve_reviewed(&state, json!({ "reviewed": review })).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(merge_message(&server).await, None);
+}
+
+/// A review in a shape the Portal never writes is refused before the forge is asked.
+#[tokio::test]
+async fn a_malformed_review_is_refused_with_the_field_named() {
+    let (server, state) = review_fixture().await;
+    for (reviewed, field) in [
+        (
+            json!({ "headSha": "main", "planDigest": format!("sha256:{}", "a".repeat(64)) }),
+            "reviewed.headSha",
+        ),
+        (
+            json!({ "headSha": HEAD_A, "planDigest": "md5:abc" }),
+            "reviewed.planDigest",
+        ),
+    ] {
+        let (status, body) = approve_reviewed(&state, json!({ "reviewed": reviewed })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body.contains(field), "{body}");
+    }
+    let (status, body) = approve_reviewed(
+        &state,
+        json!({ "reviewed": { "headSha": HEAD_A, "planDigest": "sha256:", "extra": 1 } }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(merge_message(&server).await, None);
+}
+
 /// T-3015: rejecting the Change that publishes an application ends the run that proposed it, so
 /// the catalogue no longer shows it waiting for an approval nothing can give; the reason reaches
 /// the run. Another run whose manifest names it but whose Change is another is left waiting.
@@ -1919,6 +2184,7 @@ async fn an_operation_never_approves_its_callers_own_change_even_for_an_administ
         "ovzdusie",
         "chg-00000001",
         Some("mobility"),
+        None,
         joinedcontext_portal::api::changes::ApprovedBy::Operation,
     )
     .await;
@@ -2806,6 +3072,7 @@ async fn the_operation_refuses_a_public_endpoint_in_the_same_words() {
         "ovzdusie",
         "chg-00000042",
         Some("air"),
+        None,
         joinedcontext_portal::api::changes::ApprovedBy::Operation,
     )
     .await
@@ -2935,6 +3202,7 @@ async fn an_agent_mcp_or_service_account_never_approves_a_public_publication() {
             "ovzdusie",
             "chg-00000042",
             Some("air"),
+            None,
             by,
         )
         .await
@@ -3325,6 +3593,7 @@ async fn an_agent_or_service_account_never_approves_making_an_app_public() {
             "ovzdusie",
             "chg-00000042",
             Some("air-desk"),
+            None,
             by,
         )
         .await

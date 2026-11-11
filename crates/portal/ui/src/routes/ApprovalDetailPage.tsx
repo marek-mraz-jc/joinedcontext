@@ -374,13 +374,22 @@ export function ApprovalDetailPage({
             </p>
           ) : null}
 
+          {proposal.review && isPendingApproval ? (
+            <p role="note" className="text-sm text-fg-muted" data-testid="approval-reviewing">
+              {t("approvals.reviewing", {
+                commit: proposal.review.headSha.slice(0, 7),
+                digest: proposal.review.planDigest.slice(0, 15),
+              })}
+            </p>
+          ) : null}
+
           <div className="flex flex-wrap items-center gap-3">
             <Button
               variant="primary"
               disabled={!canApprove}
               disabledReason={approveReason ?? undefined}
               loading={approveMutation.isPending}
-              onClick={() => approveMutation.mutate(isRedLane ? confirmInput : undefined)}
+              onClick={() => approveMutation.mutate({ confirm: isRedLane ? confirmInput : undefined, reviewed: proposal?.review })}
             >
               {approveMutation.isPending ? t("approvals.approving") : t("approvals.approve")}
             </Button>

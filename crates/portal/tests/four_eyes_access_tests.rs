@@ -177,6 +177,7 @@ async fn the_proposer_of_an_access_change_cannot_approve_it() {
             ORG_NAMESPACE,
             "chg-org-00000001",
             Some(&format!("{}-x", kind.to_ascii_lowercase())),
+            None,
             ApprovedBy::Person,
         )
         .await
@@ -197,6 +198,7 @@ async fn a_second_administrator_approves_an_access_change() {
             ORG_NAMESPACE,
             "chg-org-00000001",
             Some(&format!("{}-x", kind.to_ascii_lowercase())),
+            None,
             ApprovedBy::Person,
         )
         .await

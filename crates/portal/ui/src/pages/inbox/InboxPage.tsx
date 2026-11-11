@@ -93,7 +93,7 @@ function Decision({ project, change }: { project: string; change: ChangeProposal
               disabled={decision.pending || (red && confirm.trim() !== name)}
               disabledReason={red && confirm.trim() !== name ? t("approvals.confirmFirst", { name }) : undefined}
               onClick={() => {
-                decision.approve.mutate(red ? confirm : undefined, { onSuccess: () => setOpen(true) });
+                decision.approve.mutate({ confirm: red ? confirm : undefined, reviewed: change.review }, { onSuccess: () => setOpen(true) });
               }}
             >
               {t("approvals.approve")}

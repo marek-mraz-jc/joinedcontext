@@ -19,6 +19,9 @@ import { renderHook } from "@testing-library/react";
 import { AuthProvider } from "../src/auth/AuthProvider";
 import { InRouter } from "./pageHarness";
 
+// What the list says the approver reviews; the approval sends it back (CHG-13).
+const REVIEW = { headSha: "4917dcef8a1b2c3d4e5f60718293a4b5c6d7e8f9", planDigest: `sha256:${"ab".repeat(32)}` };
+
 const IDENTITY = { subject: "s", username: "jana", name: "Jana", email: "jana@hel.fi", roles: [] };
 
 function change(project: string, name: string, kind: string, lane = "yellow", author = "marek@hel.fi") {
@@ -31,6 +34,7 @@ function change(project: string, name: string, kind: string, lane = "yellow", au
     createdAt: "2026-10-07T12:00:00Z",
     status: { lane, phase: "PendingApproval", plan: { update: 1 } },
     planFields: [{ path: "spec.audience", from: "organization", to: "project-list" }],
+    review: REVIEW,
   };
 }
 
@@ -140,7 +144,7 @@ describe("the inbox (T-3273)", () => {
     await userEvent.click(within(endpoint).getByRole("button", { name: en.inbox.showDiff }));
     expect(await within(endpoint).findByText("organization")).toBeInTheDocument();
     await userEvent.click(within(endpoint).getByRole("button", { name: en.approvals.approve }));
-    await waitFor(() => expect(seen.writes).toEqual([{ path: "/api/v1/projects/helsinki/changes/chg-endpoint/approve", body: undefined }]));
+    await waitFor(() => expect(seen.writes).toEqual([{ path: "/api/v1/projects/helsinki/changes/chg-endpoint/approve", body: { reviewed: REVIEW } }]));
     expect(await within(endpoint).findByRole("status")).toHaveTextContent(en.inbox.decided.approved);
   });
 

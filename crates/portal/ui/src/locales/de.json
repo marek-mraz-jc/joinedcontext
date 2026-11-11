@@ -261,6 +261,7 @@
     "diffForFile": "Änderungen in {path}",
     "actions": "Aktionen",
     "view": "Anzeigen",
+    "reviewing": "Sie genehmigen Commit {commit}, Plan {digest}. Ändert sich eines davon vor Ihrer Genehmigung, bittet das Portal Sie, die Änderung erneut zu lesen.",
     "ownAsAdministrator": "Sie haben diese Änderung verfasst; Sie genehmigen sie als Administrator von {kind}.",
     "files": "Dateien in dieser Änderung",
     "fileCount": "{count, plural, one {# Datei} other {# Dateien}}",

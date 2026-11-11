@@ -52,6 +52,10 @@ pub struct ChangeProposal {
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_fields: Option<Vec<FieldChange>>,
+    /// The head commit and plan digest an approval sends back as `reviewed` (CHG-13); absent
+    /// while the forge names no head commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<ChangeReview>,
     /// Every file the merge request changes, on the detail of one change (T-0861). Absent in
     /// a listing, which carries `fileCount` instead: the list would otherwise read every
     /// file of every open change to render a number.
@@ -267,6 +271,70 @@ pub struct ApproveBody {
     /// Why a change is rejected; written on the merge request beside who rejected it.
     #[serde(default)]
     pub reason: Option<String>,
+    /// The head commit and plan digest the approver's page showed, as the change's `review`
+    /// read them (CHG-13, P-9). The approval refuses with 409 when either moved since.
+    #[serde(default)]
+    pub reviewed: Option<ChangeReview>,
+}
+
+/// What an approver reviews of an open change (CHG-07, CHG-13): its head commit and the digest
+/// of its plan. The approval merges only when both still read the same, so a push or a base
+/// change between the page and the click is never merged unseen, and the merge commit records
+/// both.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChangeReview {
+    /// The merge request's head commit, e.g. `4917dcef8a1b2c3d4e5f60718293a4b5c6d7e8f9`.
+    pub head_sha: String,
+    /// `sha256:` and the hex SHA-256 of the plan as the page shows it, secret values redacted.
+    pub plan_digest: String,
+}
+
+impl ChangeReview {
+    /// The review of `pr` with `plan`, or none while the forge names no head commit.
+    fn of(pr: &PullRequest, plan: &PlanDiff) -> Option<Self> {
+        (!pr.head_sha.is_empty()).then(|| Self {
+            head_sha: pr.head_sha.clone(),
+            plan_digest: plan_digest(plan),
+        })
+    }
+
+    /// A review a client sent names a commit and a digest in the shapes the Portal writes.
+    fn validate(&self) -> Result<(), ApiError> {
+        let hex = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_hexdigit());
+        if !(hex(&self.head_sha) && matches!(self.head_sha.len(), 40 | 64)) {
+            return Err(ApiError::BadRequest(
+                "reviewed.headSha is the change's head commit, 40 or 64 hex digits, as the change's review names it".into(),
+            ));
+        }
+        match self.plan_digest.strip_prefix("sha256:") {
+            Some(digest) if digest.len() == 64 && hex(digest) => Ok(()),
+            _ => Err(ApiError::BadRequest(
+                "reviewed.planDigest is `sha256:` and 64 hex digits, as the change's review names it".into(),
+            )),
+        }
+    }
+}
+
+/// The digest of a plan as a page shows it: secret values redacted, so the digest of a
+/// credential is never on the wire.
+fn plan_digest(plan: &PlanDiff) -> String {
+    use sha2::{Digest, Sha256};
+    let shown = PlanDiff {
+        summary: plan.summary.clone(),
+        fields: redact(plan.fields.clone()),
+    };
+    // A PlanDiff of JSON values always serialises.
+    let bytes = serde_json::to_vec(&shown).unwrap_or_default();
+    format!("sha256:{:x}", Sha256::digest(&bytes))
+}
+
+/// The answer to an approval of a change that moved since its page was read (CHG-13, P-9).
+fn stale_approval(id: &str) -> ApiError {
+    ApiError::Conflict(format!(
+        "stale approval: change proposal '{id}' has a new commit or a new plan since you opened \
+         it. Open the change again, read what it says now, and approve that (CHG-13)."
+    ))
 }
 
 /// Whether the field at `path` holds a credential by its name (CC-06).
@@ -1204,6 +1272,9 @@ fn build_proposal(
     };
 
     let change_meta = ChangeMeta::from_merge_request(pr.number, project);
+    let review = (phase == ChangePhase::PendingApproval)
+        .then(|| ChangeReview::of(pr, &plan))
+        .flatten();
     let change_status = ChangeStatus::new(lane, phase, plan.summary)
         .in_repository(&pr.repository)
         .proposed_through(&pr.body)
@@ -1221,6 +1292,7 @@ fn build_proposal(
         },
         created_at: pr.created_at.clone(),
         plan_fields,
+        review,
         // Filled by the caller that read the merge request's files; a proposal built from the
         // headline alone says nothing about them rather than claiming there is one.
         files: None,
@@ -1562,6 +1634,10 @@ pub(crate) fn connector_in(message: &str) -> Option<String> {
 
 /// What an autonomous approval writes after the approver (T-6552).
 const VIA_CONNECTOR: &str = ", via connector ";
+
+/// The lines `approve_change_for` writes the approved head commit and plan digest on (CHG-07).
+const REVIEWED_HEAD: &str = "Reviewed-Head: ";
+const PLAN_DIGEST: &str = "Plan-Digest: ";
 
 /// The line `approve_change_for` writes the proposer on (PL-95).
 const PROPOSED_BY: &str = "Proposed in the Portal by ";
@@ -1957,12 +2033,17 @@ pub async fn approve_change(
         )
     };
     let confirm = approve_body.as_ref().and_then(|b| b.confirm.as_deref());
+    let reviewed = approve_body.as_ref().and_then(|b| b.reviewed.as_ref());
+    if let Some(reviewed) = reviewed {
+        reviewed.validate()?;
+    }
     let change = approve_change_for(
         &state,
         &user.0.identity,
         &project,
         &id,
         confirm,
+        reviewed,
         ApprovedBy::Person,
     )
     .await?;
@@ -2463,6 +2544,7 @@ pub async fn approve_change_for(
     project: &str,
     id: &str,
     confirm: Option<&str>,
+    reviewed: Option<&ChangeReview>,
     by: ApprovedBy,
 ) -> Result<Change, ApiError> {
     // A connector's token is a client's; only the Portal itself, for a connector its owner set
@@ -2630,6 +2712,15 @@ pub async fn approve_change_for(
         )));
     }
 
+    // The approval covers what its page showed (CHG-13, P-9): a head commit or plan that moved
+    // since is refused before anything merges, and the merge below pins that same head.
+    let plan = plan::diff(data.base_envelope.as_ref(), data.head_envelope.as_ref());
+    let review = ChangeReview::of(&pr, &plan);
+    if reviewed.is_some_and(|seen| Some(seen) != review.as_ref()) {
+        tracing::warn!(change = %id, approver = %identity.username, "refused: the approval read an older head commit or plan");
+        return Err(stale_approval(id));
+    }
+
     // The Portal's forge token authored the pull request, and the forge refuses a review from the
     // author (422 "approve your own pull is not allowed"), so the approval is not a forge review:
     // the Portal checked the binding (PF-50) and the author (CC-34) above, and the merge commit
@@ -2664,6 +2755,14 @@ pub async fn approve_change_for(
         }
         _ => merge_msg,
     };
+    // The commit and plan approved, for the audit trail (CHG-07).
+    let merge_msg = match &review {
+        Some(review) => format!(
+            "{merge_msg}\n{REVIEWED_HEAD}{}\n{PLAN_DIGEST}{}",
+            review.head_sha, review.plan_digest
+        ),
+        None => merge_msg,
+    };
     merge_when_ready(shako, pr_number, &merge_msg, &pr.head_sha, id).await?;
     say_merged(state, project, id, &data, approver, connector).await;
 
@@ -2686,7 +2785,6 @@ pub async fn approve_change_for(
 
     sync_soon(state);
 
-    let plan = plan::diff(data.base_envelope.as_ref(), data.head_envelope.as_ref());
     let change_meta = change_meta(state, shako, pr_number, project);
     let change_status = ChangeStatus::new(lane, ChangePhase::Deploying, plan.summary)
         .in_repository(&pr.repository)
@@ -3077,6 +3175,7 @@ pub async fn approve_as_proposed(
         project,
         &change.metadata.name,
         confirm,
+        None,
         ApprovedBy::Person,
     )
     .await

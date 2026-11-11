@@ -13,6 +13,17 @@ import { usePermissions } from "./permissions";
 import { useAuth } from "../auth/AuthProvider";
 
 type ChangeProposal = components["schemas"]["ChangeProposal"];
+type ChangeReview = components["schemas"]["ChangeReview"];
+
+/**
+ * What an approval sends: the name typed back on a red change, and the head commit and plan
+ * digest the page showed, so a change that moved since is refused instead of merged unseen
+ * (CHG-13).
+ */
+export interface Approval {
+  confirm?: string;
+  reviewed?: ChangeReview;
+}
 
 export function useDecision(project: string, id: string) {
   const { t } = useTranslation();
@@ -33,12 +44,12 @@ export function useDecision(project: string, id: string) {
   };
 
   const approve = useMutation({
-    mutationFn: async (confirm: string | undefined) => {
+    mutationFn: async ({ confirm, reviewed }: Approval) => {
       setError(null);
       return unwrap(
         await api.POST("/api/v1/projects/{project}/changes/{id}/approve", {
           params: { path: { project, id } },
-          body: confirm !== undefined ? { confirm: confirm.trim() } : undefined,
+          body: { confirm: confirm?.trim(), reviewed },
         }),
       );
     },

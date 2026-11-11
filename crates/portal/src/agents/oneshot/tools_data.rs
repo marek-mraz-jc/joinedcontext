@@ -921,6 +921,7 @@ mod tests {
             },
             created_at: "2026-09-25T02:00:00Z".to_owned(),
             plan_fields: None,
+            review: None,
             files: None,
             file_count: None,
             workspace: None,

@@ -44576,6 +44576,17 @@
               "null"
             ],
             "description": "Why a change is rejected; written on the merge request beside who rejected it."
+          },
+          "reviewed": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ChangeReview",
+                "description": "The head commit and plan digest the approver's page showed, as the change's `review`\nread them (CHG-13, P-9). The approval refuses with 409 when either moved since."
+              }
+            ]
           }
         }
       },
@@ -46948,6 +46959,17 @@
               "$ref": "#/components/schemas/FieldChange"
             }
           },
+          "review": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ChangeReview",
+                "description": "The head commit and plan digest an approval sends back as `reviewed` (CHG-13); absent\nwhile the forge names no head commit."
+              }
+            ]
+          },
           "status": {
             "$ref": "#/components/schemas/ChangeStatus"
           },
@@ -46969,6 +46991,25 @@
             "description": "The workspace this Change brings back, so the approver reads that it was worked on as a\ncopy first, and whose (UI-63, CC-79)."
           }
         }
+      },
+      "ChangeReview": {
+        "type": "object",
+        "description": "What an approver reviews of an open change (CHG-07, CHG-13): its head commit and the digest\nof its plan. The approval merges only when both still read the same, so a push or a base\nchange between the page and the click is never merged unseen, and the merge commit records\nboth.",
+        "required": [
+          "headSha",
+          "planDigest"
+        ],
+        "properties": {
+          "headSha": {
+            "type": "string",
+            "description": "The merge request's head commit, e.g. `4917dcef8a1b2c3d4e5f60718293a4b5c6d7e8f9`."
+          },
+          "planDigest": {
+            "type": "string",
+            "description": "`sha256:` and the hex SHA-256 of the plan as the page shows it, secret values redacted."
+          }
+        },
+        "additionalProperties": false
       },
       "ChangeStatus": {
         "type": "object",

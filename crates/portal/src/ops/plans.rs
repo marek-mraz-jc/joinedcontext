@@ -1333,6 +1333,7 @@ async fn approve_autonomously(
             project,
             &id,
             None,
+            None,
             crate::api::changes::ApprovedBy::Connector(connector.to_owned()),
         )
         .await

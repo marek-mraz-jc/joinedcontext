@@ -440,6 +440,7 @@ async fn approve(state: &AppState, who: Identity) -> Result<(), ApiError> {
         ORG_NAMESPACE,
         "chg-org-00000001",
         Some("mine"),
+        None,
         ApprovedBy::Person,
     )
     .await

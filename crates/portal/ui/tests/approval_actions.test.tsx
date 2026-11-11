@@ -40,6 +40,10 @@ function proposal(over: Record<string, unknown> = {}) {
       mergeRequest: "https://gitea.example/city/city-config/pulls/7",
     },
     planFields: [{ path: "spec.audience", from: "public", to: "internal" }],
+    review: {
+      headSha: "4917dcef8a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      planDigest: `sha256:1a2b3c4d${"0".repeat(56)}`,
+    },
     ...over,
   };
 }
@@ -245,6 +249,16 @@ describe("approval actions", () => {
       "/api/v1/projects/banskabystrica/changes/chg-1a2b3c4d/approve",
     );
     expect(request.headers.get("x-csrf-token")).toBe("csrf-token-value");
+  });
+
+  it("shows the commit and plan digest it approves, and sends exactly those back (CHG-13)", async () => {
+    const fetchMock = renderDetail();
+    const note = await screen.findByTestId("approval-reviewing");
+    expect(note).toHaveTextContent("You approve commit 4917dce, plan sha256:1a2b3c4d");
+    await userEvent.click(screen.getByRole("button", { name: en.approvals.approve }));
+
+    await waitFor(() => expect(posts(fetchMock)).toHaveLength(1));
+    expect(await posts(fetchMock)[0].json()).toEqual({ reviewed: proposal().review });
   });
 
   it("says the change is being deployed, then that it is applied, with a link to its list", async () => {

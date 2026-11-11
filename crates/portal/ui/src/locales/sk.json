@@ -261,6 +261,7 @@
     "diffForFile": "Zmeny v {path}",
     "actions": "Akcie",
     "view": "Zobraziť",
+    "reviewing": "Schvaľujete commit {commit}, plán {digest}. Ak sa niektorý z nich pred schválením zmení, Portál vás požiada zmenu prečítať znova.",
     "ownAsAdministrator": "Túto zmenu ste navrhli vy; schvaľujete ju ako administrátor {kind}.",
     "files": "Súbory v tejto zmene",
     "fileCount": "{count, plural, one {# súbor} few {# súbory} other {# súborov}}",

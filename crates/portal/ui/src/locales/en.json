@@ -261,6 +261,7 @@
     "diffForFile": "Changes in {path}",
     "actions": "Actions",
     "view": "View",
+    "reviewing": "You approve commit {commit}, plan {digest}. If either changes before you approve, the Portal asks you to read the change again.",
     "ownAsAdministrator": "You wrote this change; you approve it as an administrator of {kind}.",
     "files": "Files in this change",
     "fileCount": "{count, plural, one {# file} other {# files}}",

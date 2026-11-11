@@ -77,7 +77,7 @@ export function ChangeDecide({ id, project }: { id: string; project: string }): 
         disabled={!typedRight}
         disabledReason={typedRight ? undefined : t("approvals.confirmFirst", { name: expected })}
         loading={decision.approve.isPending}
-        onClick={() => decision.approve.mutate(red ? typed : undefined)}
+        onClick={() => decision.approve.mutate({ confirm: red ? typed : undefined, reviewed: change.review })}
       >
         {t("approvals.approve")}
       </Button>

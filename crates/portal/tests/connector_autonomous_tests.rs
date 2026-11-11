@@ -167,6 +167,7 @@ async fn approve(state: &AppState, by: ApprovedBy) -> Result<(), ApiError> {
         PROJECT,
         "chg-00000001",
         None,
+        None,
         by,
     )
     .await

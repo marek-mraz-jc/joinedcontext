@@ -53,6 +53,8 @@ export function RunPublication({
       unwrap(
         await api.POST("/api/v1/projects/{project}/changes/{id}/approve", {
           params: { path: { project, id: changeId ?? "" } },
+          // The commit and plan this card shows; a change that moved since is refused (CHG-13).
+          body: { reviewed: change.data?.review },
         }),
       ),
     onSuccess: (approved) => {
