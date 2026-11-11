@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # import.sh <env> <port> <pg_port> <export dir>: the import of one environment's bundle, scripted.
 #   1. up.sh with the broker on allow-all, jc on a loopback bind only (up.sh refuses any other);
-#   2. rehearsal.py import (subject-less writes with the broker's admin bearer token); a short or
+#   2. rehearsal.py import (subject-less writes with the broker's admin bearer token), the forge on
+#      a jc without the Portal first, then the broker and daiya after a second up.sh; a short or
 #      refused import stops jc and fails the script; every manifest passes `jcctl validate` first
 #      (JCCTL_BIN, default jcctl beside jc: cargo build --manifest-path
 #      vendor/joinedcontext-platform/Cargo.toml -p jcctl);
@@ -18,16 +19,27 @@ home=${REHEARSAL_HOME:-$HOME/rehearsal}/$env_name
 jc_bin=${JC_BIN:-${CARGO_TARGET_DIR:-$here/../../target}/debug/jc}
 export REHEARSAL_EXPORT=$export_dir
 
-REHEARSAL_IMPORT_POLICY=allow-all "$here/up.sh" "$env_name" "$port" "$pg_port"
+# The import in two starts. First the forge, on a jc without the Portal or the gateway
+# (REHEARSAL_IMPORT_ROLE): a Portal's first start scaffolds the organization's repository and its
+# reconciler compiles users/ into it, and the shako step only creates (rehearsal.py import_shako),
+# so it must meet an empty forge; the gateway does not start without that repository. Then the
+# broker and daiya on every module, as before (daiya's import password is the Portal's).
 # rehearsal.py import fails on any refused broker call, an entity short of the export or a temporal
 # refusal other than the 24-hour cut-off; jc on allow-all never stays up after a failed import.
-if ! python3 -I "$here/rehearsal.py" import --export "$export_dir" --base "http://127.0.0.1:$port" \
-  --state "$home/state" --report "$home/import-report.json" --daiya-bin "$(dirname "$jc_bin")/daiya" \
-  --jcctl-bin "${JCCTL_BIN:-$(dirname "$jc_bin")/jcctl}"; then
-  kill "$(cat "$home/jc.pid")" 2>/dev/null || true
-  echo "$env_name: import FAILED ($home/import-report.json); jc on allow-all stopped" >&2
-  exit 1
-fi
+import_step() { # import_step <steps> <report>
+  if ! python3 -I "$here/rehearsal.py" import --export "$export_dir" --base "http://127.0.0.1:$port" \
+    --state "$home/state" --report "$2" --daiya-bin "$(dirname "$jc_bin")/daiya" --only "$1" \
+    --jcctl-bin "${JCCTL_BIN:-$(dirname "$jc_bin")/jcctl}"; then
+    kill "$(cat "$home/jc.pid")" 2>/dev/null || true
+    echo "$env_name: import FAILED ($2); jc on allow-all stopped" >&2
+    exit 1
+  fi
+}
+REHEARSAL_ROLE=${REHEARSAL_IMPORT_ROLE:-kaisatsu,daiya,antares,shako} \
+  REHEARSAL_IMPORT_POLICY=allow-all "$here/up.sh" "$env_name" "$port" "$pg_port"
+import_step shako "$home/import-shako-report.json"
+REHEARSAL_IMPORT_POLICY=allow-all "$here/up.sh" "$env_name" "$port" "$pg_port"
+import_step antares,daiya "$home/import-report.json"
 # The prod Portal's run log beside the bundle (<export>-runlog, or REHEARSAL_RUNLOG), loaded before
 # jc restarts so the run queue keeps each pipeline's clock instead of running the backlog at once.
 runlog=${REHEARSAL_RUNLOG:-${export_dir%/}-runlog}

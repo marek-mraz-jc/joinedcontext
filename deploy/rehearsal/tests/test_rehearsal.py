@@ -549,6 +549,8 @@ class Forge:
                                   for p, d in self.held[key].items()]}
         if verb == "GET" and "/branch_protections/" in url:
             return 404, {}
+        if verb == "GET" and url.endswith("/user"):
+            return 200, {"login": "portal"}
         if verb == "GET":
             return (200, {}) if key in self.held else (404, {})
         return 201, {}
@@ -604,7 +606,22 @@ def test_an_imported_main_takes_the_portals_branch_rule(tmp_path):
     assert report["shako"][0]["result"] == "imported", report
     verbs = [(v, u.rsplit("/", 1)[-1]) for v, u, _ in forge.writes()]
     assert verbs == [("POST", "repositories"), ("POST", "contents"), ("POST", "branch_protections")]
-    assert forge.writes()[-1][2] == {"rule_name": "main", "enable_push": False}
+    assert forge.writes()[-1][2] == {"rule_name": "main", "enable_push": False, "enable_merge_whitelist": True,
+                                     "merge_whitelist_usernames": ["portal"], "block_admin_merge_override": True}
+
+
+def test_the_organizations_and_an_apps_source_repository_keep_main_open(tmp_path):
+    """The reconciler commits compiled roles straight to the organization's main (publish_roles:
+    403 'direct pushes are disabled' on every pass when the import protected it, gate 2026-11-11)."""
+    for owner, name in (("joinedcontext", "configuration"), (rh.APPS_OWNER, "helsinki_air-quality")):
+        root = tmp_path / owner / name
+        (root / "gitea" / "files" / owner / name / "README.md").parent.mkdir(parents=True)
+        (root / "gitea" / "files" / owner / name / "README.md").write_text("x\n")
+        (root / "gitea" / "repos.json").write_text(json.dumps([{"owner": owner, "name": name}]))
+        forge, report = Forge(), {}
+        rh.import_shako(forge, "token", root, report, validate=lambda _: [])
+        assert report["shako"][0]["result"] == "imported", report
+        assert not [c for c in forge.calls if "branch_protections" in c[1]]
 
 
 def test_jcctl_judges_the_organization_and_each_project_never_an_apps_source(tmp_path):

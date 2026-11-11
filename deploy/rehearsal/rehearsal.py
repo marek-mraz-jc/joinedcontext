@@ -1428,8 +1428,8 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
     """Creates each repository of the export and commits its files, after `validate` (the
     prepared repositories -> refusals) found nothing to refuse; a refusal writes nothing. A
     repository whose `main` already holds a file the export would change or delete is refused, not
-    overwritten (a rerun only adds what a failed run left out), and every imported `main` takes
-    the branch rule a Portal-made repository has: no direct push (PF-87)."""
+    overwritten (a rerun only adds what a failed run left out), and every imported project
+    repository's `main` takes the Portal's branch rule (portal_rule, PF-87, T-6706)."""
     auth = {"Authorization": f"token {token}"}
     synthetic = is_synthetic(export)
     types_of = space_types(export) if (export / "antares" / "entities.jsonl").is_file() else {}
@@ -1471,7 +1471,7 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
             f"shako: {len(refused)} manifest refusal(s), nothing written (manifestRefusals)")
         report["shako"] = []
         return
-    rows = []
+    rows, login = [], None
     for r, owner, name, branch, files in prepared:
         row = {"repo": f"{owner}/{name}", "files": len(files)}
         st, _ = h.json("GET", f"/git/api/v1/projects/{owner}/repositories/{name}", headers=auth)
@@ -1531,8 +1531,15 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
                 commits += 1
             batch, size = ([op], len(op.get("content", ""))) if op else ([], 0)
         row.update(changed=len(ops), commits=commits)
-        if not failed:
-            failed = protect_main(h, auth, owner, name, branch)
+        # The organization's repository keeps the rules its operator set: the reconciler compiles
+        # users/ into its main by direct commits (publish_roles), and an App's source takes the
+        # build lane's pushes. Only a project repository's main is the Portal's to protect.
+        if not failed and owner != APPS_OWNER and name != ORG_REPOSITORY:
+            if login is None:
+                st, me = h.json("GET", "/git/api/v1/user", headers=auth)
+                login = me["login"] if st == 200 and isinstance(me, dict) and me.get("login") else {
+                    "call": "GET /git/api/v1/user", "status": st, "detail": "no login to name in the branch rule"}
+            failed = protect_main(h, auth, owner, name, branch, login) if isinstance(login, str) else login
         if failed:
             row.update(result="refused", **failed)
             report.setdefault("problems", []).append(f"shako: {owner}/{name}: {failed['call']} answered {failed['status']}")
@@ -1542,18 +1549,26 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
     report["shako"] = rows
 
 
-def protect_main(h: Http, auth: dict, owner: str, name: str, branch: str) -> dict | None:
-    """The rule the Portal's protect_branch sets on every repository it makes: `branch` takes no
-    direct push. None once it holds, else the failed call."""
-    rule = f"/git/api/v1/repos/{owner}/{name}/branch_protections"
+def portal_rule(branch: str, login: str) -> dict:
+    """The rule the Portal's protect_branch sets on a project repository's `branch`
+    (crates/portal/src/forge/shako.rs): no direct push, and only the Portal's own forge account
+    (`login`, the account of the token the import writes with) merges into it."""
+    return {"rule_name": branch, "enable_push": False, "enable_merge_whitelist": True,
+            "merge_whitelist_usernames": [login], "block_admin_merge_override": True}
+
+
+def protect_main(h: Http, auth: dict, owner: str, name: str, branch: str, login: str) -> dict | None:
+    """`branch` of a project repository takes portal_rule at once, as the reconciler's
+    protect_repositories sets it on its next pass. None once it holds, else the failed call."""
+    rule, want = f"/git/api/v1/repos/{owner}/{name}/branch_protections", portal_rule(branch, login)
     st, held = h.json("GET", f"{rule}/{branch}", headers=auth)
-    if st == 200 and isinstance(held, dict) and held.get("enable_push") is False:
+    if st == 200 and isinstance(held, dict) and all(held.get(k) == v for k, v in want.items()):
         return None
     if st == 200:
-        st, body = h.json("PATCH", f"{rule}/{branch}", headers=auth, body={"enable_push": False})
+        st, body = h.json("PATCH", f"{rule}/{branch}", headers=auth, body=want)
         call = f"PATCH {rule}/{branch}"
     else:
-        st, body = h.json("POST", rule, headers=auth, body={"rule_name": branch, "enable_push": False})
+        st, body = h.json("POST", rule, headers=auth, body=want)
         call = f"POST {rule}"
     return None if st in (200, 201) else {"call": call, "status": st, "detail": body}
 
