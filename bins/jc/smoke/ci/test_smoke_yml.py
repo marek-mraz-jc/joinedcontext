@@ -35,3 +35,12 @@ def test_the_gate_never_turns_the_apps_off():
         assert "REHEARSAL_APPS" not in env
     for s in steps():
         assert "REHEARSAL_APPS" not in s.get("run", "")
+
+
+def test_the_logs_suite_looks_for_the_realm_secrets_and_jcs_state_files():
+    # collect_secrets reads plain files directly in each dir: the realm client secrets sit in
+    # secrets/realm and the suites' --state is a view of links, so each needs its own flag.
+    gate = (repo / "bins/jc/smoke/ci/gate.sh").read_text()
+    line = next(x for x in gate.splitlines() if x.startswith('args+=(--with "logs='))
+    for d in ("$home/secrets ", "$home/secrets/realm ", "$home/state\""):
+        assert f"--secrets-dir {d}" in line, d
