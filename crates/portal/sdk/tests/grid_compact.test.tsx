@@ -79,6 +79,22 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(container.querySelector(".jc-grid-total")).toBeNull();
     expect(container.querySelector(".jc-grid-pages")).toBeNull();
     expect(container).not.toHaveTextContent("161");
+    expect(container.querySelector(".jc-grid-pager")).toBeNull();
+  });
+
+  it("keeps the rows, the header and the pager when a later read fails (T-6781)", async () => {
+    const real = fixtureSource(entities);
+    let fail = false;
+    const flaky = { ...real, query: (q: Parameters<typeof real.query>[0], page: Parameters<typeof real.query>[1]) => (fail && page.limit > 0 ? Promise.reject(new SourceError(503, "the broker is busy")) : real.query(q, page)) };
+    const { container, rerender } = render(<EntityGrid config={config} source={flaky} compact filterRow={false} reloadKey={0} />);
+    await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
+    const before = heads(container);
+    fail = true;
+    rerender(<EntityGrid config={config} source={flaky} compact filterRow={false} reloadKey={1} />);
+    await screen.findByRole("button", { name: "Try again" });
+    expect(screen.getByText("Kallio")).toBeInTheDocument();
+    expect(container.querySelector(".jc-grid-pager")).not.toBeNull();
+    expect(heads(container)).toEqual(before);
   });
 
   it("says a timed-out source in its own words (T-6781)", () => {

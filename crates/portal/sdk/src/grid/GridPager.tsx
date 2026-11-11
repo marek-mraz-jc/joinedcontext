@@ -18,9 +18,12 @@ export function shownLine(labels: GridLabels, offset: number, count: number, pag
  * Where a grid says how much it holds. `status` is the scrolling grid's line (rows loaded of how
  * many); `paged` the numbered pager with its page sizes. Without `mode` the grid's own setting decides.
  */
-export function GridPager({ view, mode }: { view: GridView; mode?: "status" | "paged" }): React.JSX.Element {
+export function GridPager({ view, mode }: { view: GridView; mode?: "status" | "paged" }): React.JSX.Element | null {
   const { grid, options, labels, props } = view;
   const { rows, state, setOffset } = grid;
+  // A failed read with no rows to page through: Try again is the one action, and a page line or
+  // arrows under it would offer a way that reads the same failing source.
+  if (grid.error && rows.length === 0) return null;
   const { classNames, pageSizes, onPageSize } = props;
   const pageSize = options.config.pageSize;
   // A failed read shows no rows: the count read beside it (T-6541) may still have answered, and a
