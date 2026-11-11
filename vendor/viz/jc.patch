@@ -1,6 +1,5 @@
-diff -ru a/site/embed.js site/embed.js
---- a/site/embed.js
-+++ site/embed.js
+--- a/site/embed.js	2026-11-11 05:59:24.043638691 +0000
++++ site/embed.js	2026-11-11 06:04:21.219700303 +0000
 @@ -13,6 +13,11 @@
    var VIEWS = ["both", "table"];
    var HEIGHT = { min: 240, max: 2000, fallback: 640 };
@@ -59,9 +58,27 @@ diff -ru a/site/embed.js site/embed.js
 +    if (src.origin !== location.origin) define(root, origin);
    }
  })(typeof self !== "undefined" ? self : globalThis);
-diff -ru a/site/explore.js site/explore.js
---- a/site/explore.js
-+++ site/explore.js
+--- a/site/explore.css	2026-11-11 05:59:24.062638654 +0000
++++ site/explore.css	2026-11-11 06:04:21.222572239 +0000
+@@ -23,6 +23,16 @@
+   .page-head .actions { flex: 1 1 100%; flex-wrap: nowrap; gap: 8px; }
+   .page-head .actions .page-button { flex: 1 1 0; min-width: 0; }
+ }
++/* The owner (2026-11-11): Data API and Embed sit in the view's action group (explorer/explorer.js
++   draws them as its secondary sm buttons) beside Full window and the CSV. While the group shows
++   them, the page's own pair is gone; refused or not ready, the pair stays as the way to the API. */
++main:has(#data-api-tool) .page-head .actions { display: none; }
++.inline main:has(#data-api-tool) .page-head { display: none; }
++/* The page's own pair and Map settings in the view's secondary sm look; dialog buttons keep theirs.
++   44 px only for a finger, as the view's buttons. */
++.page-head .actions .page-button, #map-panel-open { min-height: 0; height: var(--portal-control, 2rem); padding: 0 10px; font-size: var(--portal-text-caption, 0.8125rem); font-weight: 500; border-radius: var(--portal-radius-md, 6px); border-color: var(--portal-border, var(--line)); background: var(--portal-surface, var(--bg)); color: var(--portal-fg, var(--fg)); box-shadow: var(--portal-shadow-1, none); }
++.page-head .actions .page-button:hover, #map-panel-open:hover { background: var(--portal-surface-subtle, var(--soft)); }
++@media (pointer: coarse) { .page-head .actions .page-button, #map-panel-open { height: auto; min-height: 44px; } }
+ .inline #title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+ #title { font-size: 1.15rem; margin: 0; }
+ #map-title { font-size: 1rem; margin: 16px 0 6px; }
+--- a/site/explore.js	2026-11-11 05:59:24.037638703 +0000
++++ site/explore.js	2026-11-11 06:04:21.228833353 +0000
 @@ -7,8 +7,35 @@
  (function (root) {
    "use strict";
@@ -175,7 +192,27 @@ diff -ru a/site/explore.js site/explore.js
          state.map = map;
          root.jcExploreMap = map; // for the browser journey
          state.maplibre = maplibre;
-@@ -955,7 +1003,7 @@
+@@ -939,8 +987,9 @@
+       if (moved) drawMap();
+     }
+ 
+-    // The query's API addresses: the same dialog, developers' content open.
+-    $("data-api").addEventListener("click", function () {
++    // The query's API addresses: the same dialog, developers' content open. `from` is the button
++    // pressed, the page's own or the one in the view's action group, where focus returns.
++    function dataApi(from) {
+       $("detail-type").hidden = true;
+       $("detail-title").textContent = t.dataApi;
+       $("detail-list").textContent = "";
+@@ -950,12 +999,13 @@
+       $("detail-dev").open = true;
+       linkList(null);
+       placeMap(null);
+-      dialog($("data-api"));
+-    });
++      dialog(from);
++    }
++    $("data-api").addEventListener("click", function () { dataApi($("data-api")); });
      // The source line of an embed: the dataset's title, publisher and licence from the catalogue,
      // shown only when that dataset names this very Endpoint; else the catalogue itself.
      function attribute() {
@@ -184,7 +221,7 @@ diff -ru a/site/explore.js site/explore.js
        var line = $("attribution");
        var draw = function (title, href, publisher, licence, licenceHref) {
          line.textContent = "";
-@@ -992,8 +1040,9 @@
+@@ -992,8 +1042,9 @@
        $("embed-keep-hint").textContent = words.length ? say(t.keepHint, { view: words.join("; ") }) : t.keepNone;
        $("embed-copied").textContent = "";
        try {
@@ -196,7 +233,32 @@ diff -ru a/site/explore.js site/explore.js
          $("embed-error").hidden = true;
          $("embed-height").removeAttribute("aria-invalid");
          $("embed-copy").disabled = false;
-@@ -1058,7 +1107,7 @@
+@@ -1006,11 +1057,13 @@
+       }
+     }
+ 
+-    $("embed-open").addEventListener("click", function () {
++    function embedOpen(from) {
+       $("embed-lang").value = lang;
+       embedCode();
++      $("embed").returnFocus = from;
+       $("embed").showModal();
+-    });
++    }
++    $("embed-open").addEventListener("click", function () { embedOpen($("embed-open")); });
+     $("embed-form").addEventListener("input", embedCode);
+     $("embed-form").addEventListener("change", embedCode);
+     $("embed-form").addEventListener("submit", function (e) { e.preventDefault(); });
+@@ -1022,7 +1075,7 @@
+       else select();
+     });
+     $("embed-close").addEventListener("click", function () { $("embed").close(); });
+-    $("embed").addEventListener("close", function () { $("embed-open").focus(); });
++    $("embed").addEventListener("close", function () { var f = $("embed").returnFocus; if (f && f.focus) f.focus(); });
+     if (embedded) attribute();
+     $("detail-close").addEventListener("click", function () { $("detail").close(); });
+     // A click on the backdrop (the dialog box itself, outside its content) closes it, as Esc does.
+@@ -1058,7 +1111,7 @@
      if (!root.jcExplorer || typeof root.jcExplorer.mount !== "function") return tell(t.noWidget, "error");
      try {
        root.jcExplorer.mount($("grid"), {
@@ -205,8 +267,16 @@ diff -ru a/site/explore.js site/explore.js
          slug: where.slug,
          lang: lang,
          link: { type: where.type || undefined, q: where.q || undefined, sort: where.sort || undefined, noDefault: where.all || undefined },
-@@ -1071,12 +1120,14 @@
-         csv: true
+@@ -1068,15 +1121,21 @@
+           if (card && card.type === state.type) drawMap();
+         },
+         onOpenRow: openRow,
+-        csv: true
++        csv: true,
++        // Data API and Embed join the view's action group in its look (explore.css hides the page's
++        // own pair while the group shows them; refused or not ready, the page's pair stays).
++        actions: [{ id: "data-api-tool", label: t.dataApi, onClick: dataApi }].concat(
++          $("embed-open").hidden ? [] : [{ id: "embed-tool", label: t.embed, onClick: embedOpen, hasPopup: true }])
        });
      } catch (e) {
 +      // The text tells the administrators the cause is in the console: put it there.
@@ -221,9 +291,20 @@ diff -ru a/site/explore.js site/explore.js
    if (typeof module === "object" && module.exports) module.exports = root.jcExplore;
    else if (typeof document !== "undefined") main();
  })(typeof self !== "undefined" ? self : this);
-diff -ru a/site/map.html site/map.html
---- a/site/map.html
-+++ site/map.html
+--- a/site/host.js	2026-11-11 05:59:24.052638674 +0000
++++ site/host.js	2026-11-11 06:04:21.232067723 +0000
+@@ -40,7 +40,8 @@
+   // `&lang=sk` (the page's language) in any order.
+   function parseHash(hash) {
+     var parts = String(hash || "").replace(/^#/, "").split("&");
+-    if (!/^[0-9a-f-]{36}$/.test(parts[0])) return null;
++    // jc's catalogue mints `view-<uuid>` where CKAN minted the bare UUID: both name a view.
++    if (!/^(?:view-)?[0-9a-f-]{36}$/.test(parts[0])) return null;
+     var lang = parts.map(function (p) { return /^lang=([a-z]{2})$/.exec(p); }).filter(Boolean)[0];
+     return { id: parts[0], inline: parts.indexOf("inline") > 0, lang: lang ? lang[1] : null };
+   }
+--- a/site/map.html	2026-11-11 05:59:24.045638687 +0000
++++ site/map.html	2026-11-11 06:04:21.235067718 +0000
 @@ -8,8 +8,8 @@
  <link rel="stylesheet" href="vendor/maplibre-gl-6.14.0.css">
  <link rel="stylesheet" href="map.css">
@@ -235,16 +316,3 @@ diff -ru a/site/map.html site/map.html
  <script src="refuse.js" defer></script>
  <script src="vendor/pmtiles-4.5.0.js" defer></script>
  <script src="map.js" defer></script>
-diff -ru a/site/host.js site/host.js
---- a/site/host.js
-+++ site/host.js
-@@ -40,7 +40,8 @@
-   // `&lang=sk` (the page's language) in any order.
-   function parseHash(hash) {
-     var parts = String(hash || "").replace(/^#/, "").split("&");
--    if (!/^[0-9a-f-]{36}$/.test(parts[0])) return null;
-+    // jc's catalogue mints `view-<uuid>` where CKAN minted the bare UUID: both name a view.
-+    if (!/^(?:view-)?[0-9a-f-]{36}$/.test(parts[0])) return null;
-     var lang = parts.map(function (p) { return /^lang=([a-z]{2})$/.exec(p); }).filter(Boolean)[0];
-     return { id: parts[0], inline: parts.indexOf("inline") > 0, lang: lang ? lang[1] : null };
-   }

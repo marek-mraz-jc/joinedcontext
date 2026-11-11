@@ -896,6 +896,14 @@
         "ui_tabs_checkbox.test.tsx"
       ]
     },
+    "src/explorer/main.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "explorer_mount.test.tsx"
+      ]
+    },
     "src/navigation/PageTools.tsx": {
       "controls": {
         "Button": 2
