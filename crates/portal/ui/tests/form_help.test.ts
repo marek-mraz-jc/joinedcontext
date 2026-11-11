@@ -11,6 +11,7 @@
  * a field added to a form without help, for a locale left behind, and for an example the field's own
  * pattern would reject.
  */
+import { PORTAL_WIDGET_NAMES } from "../src/components/forms/widgetNames";
 import { describe, expect, it } from "vitest";
 import { arrange, localized, paths, prefilled } from "../src/components/forms/uischema";
 import type { UiSchemaManifest } from "../src/components/forms/uischema";
@@ -220,7 +221,7 @@ describe("the help and the example beside every form field", () => {
         ]).toEqual([]);
         for (const schema of branches) {
           expect(
-            arrange(manifest, { properties: paths(schema) }).problems,
+            arrange(manifest, { properties: paths(schema), widgets: [...PORTAL_WIDGET_NAMES] }).problems,
           ).toEqual([]);
         }
       });

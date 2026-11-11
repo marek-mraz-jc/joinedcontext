@@ -122,44 +122,49 @@ spec:
         cs: "Licence, se kterou začíná nová datová sada, jako identifikátor SPDX, například CC-BY-4.0."
         de: "Die Lizenz, mit der ein neuer Datensatz beginnt, als SPDX-Kennung, zum Beispiel CC-BY-4.0."
     appearance.colours.primary:
+      widget: colour
       help:
         en: "The colour of buttons and the main actions as a hex value, for example #0b5394."
         sk: "Farba pre tlačidlá a hlavné akcie ako hexadecimálna hodnota, napríklad #0b5394."
         cs: "Barva pro tlačítka a hlavní akce jako hexadecimální hodnota, například #0b5394."
         de: "Die Farbe für Schaltflächen und Hauptaktionen als Hexwert, zum Beispiel #0b5394."
     appearance.colours.secondary:
+      widget: colour
       help:
         en: "The colour of links and the focus ring as a hex value, for example #0f766e."
         sk: "Farba pre odkazy a rámček zamerania ako hexadecimálna hodnota, napríklad #0f766e."
         cs: "Barva pro odkazy a rámeček zaměření jako hexadecimální hodnota, například #0f766e."
         de: "Die Farbe für Links und den Fokusrahmen als Hexwert, zum Beispiel #0f766e."
     appearance.colours.accent:
+      widget: colour
       help:
         en: "The colour of highlights as a hex value, for example #f59e0b."
         sk: "Farba pre zvýraznenia ako hexadecimálna hodnota, napríklad #f59e0b."
         cs: "Barva pro zvýraznění jako hexadecimální hodnota, například #f59e0b."
         de: "Die Farbe für Hervorhebungen als Hexwert, zum Beispiel #f59e0b."
     appearance.colours.background:
+      widget: colour
       help:
         en: "The colour of the page background as a hex value, for example #ffffff."
         sk: "Farba pre pozadie stránky ako hexadecimálna hodnota, napríklad #ffffff."
         cs: "Barva pro pozadí stránky jako hexadecimální hodnota, například #ffffff."
         de: "Die Farbe für den Seitenhintergrund als Hexwert, zum Beispiel #ffffff."
     appearance.colours.text:
+      widget: colour
       help:
         en: "The colour of body text as a hex value, for example #0f172a."
         sk: "Farba pre bežný text ako hexadecimálna hodnota, napríklad #0f172a."
         cs: "Barva pro běžný text jako hexadecimální hodnota, například #0f172a."
         de: "Die Farbe für den Fließtext als Hexwert, zum Beispiel #0f172a."
     appearance.logoSvg:
-      widget: textarea
+      widget: svgImage
       help:
         en: "Paste the SVG of the logo, up to 64 KiB, without scripts or links to other sites; it starts with <svg."
         sk: "Vložte SVG pre logo, najviac 64 KiB, bez skriptov a odkazov na iné stránky; začína sa <svg."
         cs: "Vložte SVG pro logo, nejvýše 64 KiB, bez skriptů a odkazů na jiné stránky; začíná <svg."
         de: "Fügen Sie das SVG für Logo ein, höchstens 64 KiB, ohne Skripte und Links zu anderen Seiten; es beginnt mit <svg."
     appearance.faviconSvg:
-      widget: textarea
+      widget: svgImage
       help:
         en: "Paste the SVG of the browser tab icon, up to 64 KiB, without scripts or links to other sites; it starts with <svg."
         sk: "Vložte SVG pre ikonu na karte prehliadača, najviac 64 KiB, bez skriptov a odkazov na iné stránky; začína sa <svg."

@@ -6,6 +6,7 @@
 export const PORTAL_WIDGET_NAMES = [
   "assigneePicker",
   "attributeSuggest",
+  "colour",
   "cronSchedule",
   "dataModelPicker",
   "entityPicker",
@@ -13,5 +14,6 @@ export const PORTAL_WIDGET_NAMES = [
   "personPicker",
   "resourcePicker",
   "secretRef",
+  "svgImage",
   "typePicker",
 ] as const;

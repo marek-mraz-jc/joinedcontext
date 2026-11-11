@@ -194,6 +194,12 @@
     "dns1123": "Nur Kleinbuchstaben, Ziffern und Bindestriche, beginnend mit einem Buchstaben oder einer Ziffer, höchstens 63 Zeichen.",
     "entityType": "Ein NGSI-LD-Typ: ein Großbuchstabe, dann Buchstaben und Ziffern, höchstens 64 Zeichen.",
     "requiredCount": "{filled} von {total} Pflichtfeldern ausgefüllt",
+    "svgPreview": "Vorschau: {label}",
+    "svgPreviewNote": "Als Bild gezeichnet: nichts im SVG wird ausgeführt.",
+    "fixCount": "Zu korrigierende Felder: {count}.",
+    "fixFirst": "Das erste zu korrigierende Feld zeigen",
+    "fixFirstInGroup": "Zuerst: {field}, in {group}.",
+    "fixFirstNamed": "Zuerst: {field}.",
     "askAboutField": "Zu diesem Feld fragen",
     "askAboutFieldQuestion": "Im {kind}-Formular: Was gehört in „{label}“, und was passiert, wenn es leer bleibt?",
     "fillFromSentence": "Aus einem Satz ausfüllen",
@@ -7650,8 +7656,7 @@
       "creationAdmin": "Nur die Organisationsverwaltung eröffnet Projekte.",
       "cooldown": "{days} Tage",
       "noQuota": "Für ein neues Projekt ist keine Grenze gesetzt.",
-      "appearanceInstallation": "Name, Farben und Logo der Installation",
-      "appearanceLogo": "mit eigenem Logo"
+      "fromInstallation": "Vorgabe der Installation"
     },
     "members": {
       "title": "Mitglieder",

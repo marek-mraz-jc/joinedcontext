@@ -194,6 +194,12 @@
     "dns1123": "Iba malé písmená, číslice a spojovníky, začína písmenom alebo číslicou, najviac 63 znakov.",
     "entityType": "Typ NGSI-LD: veľké písmeno, potom písmená a číslice, najviac 64 znakov.",
     "requiredCount": "{filled} z {total} povinných polí vyplnených",
+    "svgPreview": "Náhľad: {label}",
+    "svgPreviewNote": "Vykreslené ako obrázok: nič v SVG sa nespustí.",
+    "fixCount": "Polia na opravu: {count}.",
+    "fixFirst": "Ukázať prvé pole na opravu",
+    "fixFirstInGroup": "Prvé: {field}, v skupine {group}.",
+    "fixFirstNamed": "Prvé: {field}.",
     "askAboutField": "Spýtať sa na toto pole",
     "askAboutFieldQuestion": "Vo formulári {kind}: čo patrí do „{label}“ a čo sa stane, keď to zostane prázdne?",
     "fillFromSentence": "Vyplniť z jednej vety",
@@ -7650,8 +7656,7 @@
       "creationAdmin": "Projekty otvára iba administrátor organizácie.",
       "cooldown": "{days} dní",
       "noQuota": "Pre nový projekt nie je stanovený žiadny limit.",
-      "appearanceInstallation": "Názov, farby a logo inštalácie",
-      "appearanceLogo": "s vlastným logom"
+      "fromInstallation": "predvolené inštaláciou"
     },
     "members": {
       "title": "Členovia",
