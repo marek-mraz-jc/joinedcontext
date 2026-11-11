@@ -16,7 +16,7 @@ import type { Change, ResourceProposal } from "../../api/manifest";
 import { useProposal } from "../../api/proposal";
 import { ChangeNotice } from "../../components/ChangeNotice";
 import { DashboardWidgets } from "../../components/dashboards/DashboardWidgets";
-import { Alert, Button, Card, EmptyState, Field, PageHeader, Select, Skeleton } from "../../components/ui";
+import { Alert, Button, buttonClass, Card, EmptyState, Field, PageHeader, Select, Skeleton, Tabs, tabPanelProps } from "../../components/ui";
 import { entityTypesOf, spaceOf } from "../spaces/spaceFacts";
 import {
   insertWidget,
@@ -48,7 +48,7 @@ function useList(project: string, plural: string) {
 
 export function DashboardJsonEditor({ project, name }: { project: string; name?: string }): JSX.Element {
   const { t } = useTranslation();
-  const ids = { type: useId(), endpoint: useId(), entity: useId(), editor: useId(), why: useId() };
+  const ids = { type: useId(), endpoint: useId(), entity: useId(), editor: useId(), why: useId(), view: useId() };
   const dashboards = useList(project, "dashboards");
   const endpoints = useList(project, "endpoints");
   const spaces = useList(project, "spaces");
@@ -90,6 +90,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
   const [pickedType, setPickedType] = useState<PickedWidget>("vega-lite");
   const [inserted, setInserted] = useState(false);
   const phone = useIsPhone();
+  const [view, setView] = useState<"edit" | "preview">("edit");
   const [pickedEndpoint, setPickedEndpoint] = useState("");
   const [pickedEntity, setPickedEntity] = useState("");
   const endpoint = pickedEndpoint || endpointNames[0] || "";
@@ -150,11 +151,12 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
       : [{ level: "error", message: check.error.message }]
     : (check.data?.verdict?.findings ?? []).filter((f) => f.level === "error" || !f.level);
   // A widget the server refused is not drawn: the preview shows what would be published.
-  const refusedAt = new Map<string, string>();
+  const refusedAt = new Map<string, { path: string; reason: string }>();
   for (const finding of refusals) {
     const text = `${finding.path ?? ""} ${finding.message ?? ""}`;
     const hit = /\/spec\/pages\/(\d+)\/widgets\/(\d+)/.exec(text);
-    if (hit && !refusedAt.has(`${hit[1]}/${hit[2]}`)) refusedAt.set(`${hit[1]}/${hit[2]}`, hit[0]);
+    const reason = (finding.message ?? "").replace(/^\/spec\/pages\/\d+\/widgets\/\d+\S*:\s*/, "");
+    if (hit && !refusedAt.has(`${hit[1]}/${hit[2]}`)) refusedAt.set(`${hit[1]}/${hit[2]}`, { path: finding.path ?? hit[0], reason });
   }
   const checkedGreen = check.isSuccess && check.data?.valid !== false && refusals.length === 0;
 
@@ -181,14 +183,31 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
           title={t("dashboards.json.noEndpoints")}
           description={t("dashboards.json.noEndpointsHint")}
           action={
-            <Link to="/projects/$project/$plural" params={{ project, plural: "endpoints" }}>
+            <Link to="/projects/$project/$plural" params={{ project, plural: "endpoints" }} className={buttonClass("primary")}>
               {t("dashboards.json.toEndpoints")}
             </Link>
           }
         />
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
-          <section aria-labelledby={`${ids.editor}-title`} className="flex min-w-0 flex-col gap-3">
+          {/* On a phone the manifest and its preview are two tabs, so each gets the screen. */}
+          {phone ? (
+            <Tabs
+              id={ids.view}
+              label={t("dashboards.json.views")}
+              tabs={[
+                { value: "edit", label: t("dashboards.json.source") },
+                { value: "preview", label: t("dashboards.json.preview") },
+              ]}
+              value={view}
+              onChange={setView}
+            />
+          ) : null}
+          <section
+            {...(phone ? tabPanelProps(ids.view, "edit") : { "aria-labelledby": `${ids.editor}-title` })}
+            hidden={phone && view !== "edit"}
+            className="flex min-w-0 flex-col gap-3"
+          >
             <h2 id={`${ids.editor}-title`} className="text-title">
               {t("dashboards.json.source")}
             </h2>
@@ -264,7 +283,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                   }}
                   schema={editorSchema}
                   ariaLabel={t("dashboards.json.source")}
-                  height={phone ? "18rem" : "min(50vh, 36rem)"}
+                  height={phone ? "min(60vh, 32rem)" : "min(50vh, 36rem)"}
                 />
               </Suspense>
             </Card>
@@ -333,13 +352,15 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
               {proposal.error ? <Alert tone="danger">{proposal.error}</Alert> : null}
             </div>
           </section>
-          <section aria-labelledby={`${ids.editor}-preview`} aria-live="polite" className="flex min-w-0 flex-col gap-3">
+          <section
+            {...(phone ? tabPanelProps(ids.view, "preview") : { "aria-labelledby": `${ids.editor}-preview` })}
+            hidden={phone && view !== "preview"}
+            aria-live="polite"
+            className="flex min-w-0 flex-col gap-3"
+          >
             <h2 id={`${ids.editor}-preview`} className="text-title">
               {t("dashboards.json.preview")}
             </h2>
-            {parsed.manifest && refusals.length > 0 ? (
-              <Alert tone="warning">{t("dashboards.json.previewRefused")}</Alert>
-            ) : null}
             {!parsed.manifest ? (
               <Card padding="sm">
                 <p role="status" className="text-body text-fg-muted">
@@ -363,7 +384,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                     .filter((w) => refusedAt.has(w.at))
                     .map((w) => (
                       <Alert key={w.at} tone="danger" title={t("dashboards.json.widgetRefused")}>
-                        {t("dashboards.json.widgetRefusedAt", { path: refusedAt.get(w.at) })}
+                        {t("dashboards.json.widgetRefusedAt", { path: refusedAt.get(w.at)?.path, reason: refusedAt.get(w.at)?.reason })}
                       </Alert>
                     ))}
                   <DashboardWidgets project={project} widgets={page.widgets.filter((w) => !refusedAt.has(w.at))} />

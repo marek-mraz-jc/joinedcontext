@@ -87,18 +87,21 @@ for (const width of [1440, 400]) {
     await expect(page.getByRole("heading", { name: "New dashboard in JSON" })).toBeVisible();
     const editor = page.locator(".monaco-editor").first();
     await expect(editor).toBeVisible();
-    await expect(page.getByText(/No widget yet/)).toBeVisible();
+    await expect(page.getByText(width < 640 ? /draws nothing yet/ : /No widget yet/)).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/T-6791/editor-starter-${width}.png`, fullPage: true });
     expect(await axeViolations(page)).toEqual([]);
 
     await page.getByRole("button", { name: "Insert widget" }).click();
+    // On a phone the preview is its own tab.
+    if (width < 640) await page.getByRole("tab", { name: "Preview" }).click();
     const figure = page.getByRole("figure").filter({ hasText: "BikeHireDockingStation by type" });
     await expect(figure.locator("canvas")).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/T-6791/editor-valid-${width}.png`, fullPage: true });
 
     // Break the JSON: the alert names the line, the preview waits.
+    if (width < 640) await page.getByRole("tab", { name: "Manifest (JSON)" }).click();
     await editor.click();
     await page.keyboard.press("Control+End");
     await page.keyboard.type(",");
@@ -127,6 +130,11 @@ for (const width of [1440, 400]) {
     await page.getByRole("button", { name: "Insert widget" }).click();
     await page.getByRole("button", { name: "Check" }).click();
     await expect(page.getByText("/spec/pages/0/widgets/0/endpointRef", { exact: false }).first()).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    if (width < 640) {
+      await page.screenshot({ path: `test-results/T-6791/editor-refused-list-${width}.png`, fullPage: true });
+      await page.getByRole("tab", { name: "Preview" }).click();
+    }
     // The refused widget is not drawn: the preview shows what the server would publish.
     await expect(page.getByText("This widget is not drawn")).toBeVisible();
     await expect(page.getByRole("figure")).toHaveCount(0);

@@ -1194,7 +1194,8 @@
         "evidence/T-6791/editor-invalid-1440.png",
         "evidence/T-6791/editor-invalid-400.png",
         "evidence/T-6791/editor-refused-1440.png",
-        "evidence/T-6791/editor-refused-400.png"
+        "evidence/T-6791/editor-refused-400.png",
+        "evidence/T-6791/editor-refused-list-400.png"
       ]
     },
     "src/pages/datasources/ConnectionTest.tsx": null,

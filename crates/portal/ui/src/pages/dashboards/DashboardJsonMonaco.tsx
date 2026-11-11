@@ -81,6 +81,8 @@ export default function DashboardJsonMonaco({
         wrappingStrategy: "advanced",
         wordBreak: "keepAll",
         fixedOverflowWidgets: true,
+        // The phone tabs hide and show the editor: it measures itself again when shown.
+        automaticLayout: true,
         quickSuggestions: { strings: true, other: true, comments: false },
       }}
     />

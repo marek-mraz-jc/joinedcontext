@@ -3785,11 +3785,11 @@
       "refusedHint": "Fix the field at each path in the manifest, then Check again.",
       "fixJson": "Check and Propose wait until the JSON reads.",
       "nextStep": "The JSON reads and the preview is live. Check asks the server whether it accepts the dashboard; nothing is saved until you propose.",
-      "previewRefused": "The server refused this manifest: the preview draws it, but it cannot be proposed until each refused field is fixed.",
       "fixRefused": "Propose waits until Check passes: fix each refused field, then Check again.",
       "nextStepEmpty": "The JSON reads but draws nothing yet: insert a widget, or write one, then Check.",
       "widgetRefused": "This widget is not drawn",
-      "widgetRefusedAt": "The server refused it at {path}. Fix that field in the manifest and Check again."
+      "widgetRefusedAt": "The server refused it at {path}: {reason}. Fix that field and Check again.",
+      "views": "Manifest or preview"
     }
   },
   "access": {

@@ -3785,11 +3785,11 @@
       "refusedHint": "Opravte pole na každé cestě v manifestu a zkontrolujte znovu.",
       "fixJson": "Zkontrolovat a Navrhnout čekají, dokud nepůjde JSON přečíst.",
       "nextStep": "JSON jde přečíst a náhled je živý. Zkontrolovat se zeptá serveru, zda dashboard přijme; nic se neuloží, dokud jej nenavrhnete.",
-      "previewRefused": "Server tento manifest odmítl: náhled jej kreslí, ale navrhnout jej lze až po opravě každého odmítnutého pole.",
       "fixRefused": "Navrhnout čeká, dokud kontrola neprojde: opravte každé odmítnuté pole a zkontrolujte znovu.",
       "nextStepEmpty": "JSON jde přečíst, ale zatím nic nekreslí: vložte widget nebo jej napište a zkontrolujte.",
       "widgetRefused": "Tento widget se nekreslí",
-      "widgetRefusedAt": "Server jej odmítl na cestě {path}. Opravte toto pole v manifestu a zkontrolujte znovu."
+      "widgetRefusedAt": "Server jej odmítl na cestě {path}: {reason}. Opravte toto pole a zkontrolujte znovu.",
+      "views": "Manifest nebo náhled"
     }
   },
   "access": {

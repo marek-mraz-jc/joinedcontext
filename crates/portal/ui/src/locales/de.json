@@ -3785,11 +3785,11 @@
       "refusedHint": "Korrigieren Sie das Feld an jedem Pfad im Manifest und prüfen Sie erneut.",
       "fixJson": "Prüfen und Vorschlagen warten, bis sich das JSON lesen lässt.",
       "nextStep": "Das JSON lässt sich lesen, die Vorschau ist live. Prüfen fragt den Server, ob er das Dashboard annimmt; gespeichert wird erst, wenn Sie es vorschlagen.",
-      "previewRefused": "Der Server hat dieses Manifest abgelehnt: die Vorschau zeichnet es, vorgeschlagen werden kann es erst, wenn jedes abgelehnte Feld korrigiert ist.",
       "fixRefused": "Vorschlagen wartet, bis die Prüfung besteht: korrigieren Sie jedes abgelehnte Feld und prüfen Sie erneut.",
       "nextStepEmpty": "Das JSON lässt sich lesen, zeichnet aber noch nichts: fügen Sie ein Widget ein oder schreiben Sie eines, dann Prüfen.",
       "widgetRefused": "Dieses Widget wird nicht gezeichnet",
-      "widgetRefusedAt": "Der Server hat es bei {path} abgelehnt. Korrigieren Sie dieses Feld im Manifest und prüfen Sie erneut."
+      "widgetRefusedAt": "Der Server hat es bei {path} abgelehnt: {reason}. Korrigieren Sie dieses Feld und prüfen Sie erneut.",
+      "views": "Manifest oder Vorschau"
     }
   },
   "access": {
