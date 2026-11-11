@@ -162,7 +162,11 @@ pub fn check(
                 .filter(|widget| widget.public || !public);
             if shown.is_none() {
                 let named = reference.as_str().unwrap_or_default();
-                let kind = if public { "public Dashboard" } else { "Dashboard" };
+                let kind = if public {
+                    "public Dashboard"
+                } else {
+                    "Dashboard"
+                };
                 let line = format!(
                     "spec.appearance.{member}[{at}]: {named} is not a {kind} of this \
                      Organization's projects that you may read; choose one the list offers"

@@ -111,9 +111,10 @@ pub(crate) fn dashboard_cards(
                     Some(layer.spec.get("sourceEndpointRef")?.as_str()?.to_owned())
                 });
                 let widgets = page.get("widgets").and_then(Value::as_array);
-                let from_widgets = widgets.into_iter().flatten().filter_map(|widget| {
-                    Some(widget.get("endpointRef")?.as_str()?.to_owned())
-                });
+                let from_widgets = widgets
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|widget| Some(widget.get("endpointRef")?.as_str()?.to_owned()));
                 for source in from_layers.chain(from_widgets) {
                     if !sources.contains(&source) {
                         sources.push(source);
@@ -212,15 +213,14 @@ mod tests {
     fn a_catalogue_home_draws_only_its_own_organizations_public_dashboards() {
         use joinedcontext_portal::permissions::ORG_NAMESPACE;
         use joinedcontext_portal::resource::ResourceEnvelope;
-        let envelope = |kind: &str, name: &str, namespace: &str, spec: serde_json::Value| {
-            ResourceEnvelope {
+        let envelope =
+            |kind: &str, name: &str, namespace: &str, spec: serde_json::Value| ResourceEnvelope {
                 api_version: jc_core::API_VERSION.to_owned(),
                 kind: kind.to_owned(),
                 metadata: jc_core::ObjectMeta::new(name, namespace),
                 spec,
                 status: None,
-            }
-        };
+            };
         let mirror = Mirror::new();
         mirror.upsert(envelope(
             "Organization",

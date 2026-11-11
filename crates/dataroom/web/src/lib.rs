@@ -979,7 +979,16 @@ pub fn render_home_page(
     csp_nonce: &str,
 ) -> String {
     render_home_page_mounted(
-        catalogue, None, datasets, publishers, &[], query, lang, false, "", csp_nonce,
+        catalogue,
+        None,
+        datasets,
+        publishers,
+        &[],
+        query,
+        lang,
+        false,
+        "",
+        csp_nonce,
     )
 }
 

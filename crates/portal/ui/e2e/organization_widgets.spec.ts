@@ -7,7 +7,8 @@ import { join } from "node:path";
 // Settings → Edit → "How it looks" from the Dashboards the server offers them, the server refuses
 // one the administrator may not read beside the field, and a project home shows each Dashboard
 // the server lets the viewer read, one click to it. `vite preview` has no Portal API behind it,
-// so the API is answered in the browser as the server answers Žilina's administrator.
+// so the API is answered in the browser as the server answers Žilina's administrator. The open data
+// portal's Dashboards (T-6780) are picked the same way, from the public ones only.
 
 const API = "joinedcontext.com/v1alpha1";
 const IDENTITY = { subject: "e5a2", username: "eva", name: "Eva Nováková", email: "eva@zilina.sk", roles: [] };
@@ -35,8 +36,8 @@ const VIEWER = {
   grants: [{ role: "viewer", binding: "readers", scope: "project", rule: { kinds: ["ContextSpace", "Endpoint", "Dashboard"], verbs: ["read"] } }],
 };
 const OPTIONS = [
-  { reference: "ovzdusie/prehlad", project: "ovzdusie", name: "prehlad", title: { sk: "Prehľad ovzdušia", en: "Air quality overview" }, pages: 2 },
-  { reference: "doprava/nehody", project: "doprava", name: "nehody", title: "Traffic accidents", pages: 1 },
+  { reference: "ovzdusie/prehlad", project: "ovzdusie", name: "prehlad", title: { sk: "Prehľad ovzdušia", en: "Air quality overview" }, pages: 2, public: true },
+  { reference: "doprava/nehody", project: "doprava", name: "nehody", title: "Traffic accidents", pages: 1, public: false },
 ];
 
 interface Stub {
@@ -137,6 +138,23 @@ test.describe("an Organization's home page dashboards", () => {
       expect(spec.appearance?.homeWidgets).toEqual(["ovzdusie/prehlad"]);
     });
 
+    test(`offer only public dashboards for the open data portal at ${width} px`, async ({ page }) => {
+      const stub: Stub = { proposed: [] };
+      await page.setViewportSize({ width, height: 900 });
+      await stubApi(page, stub);
+      await openWidgets(page);
+      const field = page.locator("#root_appearance_opendataWidgets");
+      await expect(field.getByRole("checkbox")).toHaveCount(1);
+      await field.getByRole("checkbox", { name: "Air quality overview (ovzdusie/prehlad)" }).check();
+      await expect(page.getByText(/anyone sees them without signing in/)).toBeVisible();
+      await field.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: process.env.JC_EVIDENCE_DIR ? join(process.env.JC_EVIDENCE_DIR, `opendata-form-${width}.png`) : undefined });
+      await page.getByRole("button", { name: "Propose change" }).click();
+      await expect.poll(() => stub.proposed.length).toBe(1);
+      const spec = (stub.proposed[0] as { spec: { appearance?: { opendataWidgets?: string[] } } }).spec;
+      expect(spec.appearance?.opendataWidgets).toEqual(["ovzdusie/prehlad"]);
+    });
+
     test(`refused by the server names the field at ${width} px`, async ({ page }) => {
       const stub: Stub = {
         proposed: [],
@@ -162,6 +180,8 @@ test.describe("an Organization's home page dashboards", () => {
       await expect(page.getByText("No dashboard to offer yet: make one in a project of this organization first.")).toBeVisible();
       // Nothing to add by hand: a typed name would only be refused.
       await expect(page.locator("#root_appearance_homeWidgets").getByRole("button", { name: /Add/ })).toHaveCount(0);
+      await expect(page.getByText(/No public dashboard to offer yet/)).toBeVisible();
+      await expect(page.locator("#root_appearance_opendataWidgets").getByRole("button", { name: /Add/ })).toHaveCount(0);
       await page.getByText("No dashboard to offer yet").scrollIntoViewIfNeeded();
       await page.screenshot({ path: process.env.JC_EVIDENCE_DIR ? join(process.env.JC_EVIDENCE_DIR, `widgets-empty-${width}.png`) : undefined });
     });

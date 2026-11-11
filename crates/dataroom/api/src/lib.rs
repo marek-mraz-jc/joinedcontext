@@ -155,8 +155,7 @@ pub type SubjectResolver = Arc<dyn Fn(&HeaderMap) -> Option<Subject> + Send + Sy
 /// asked on every render, so the host re-checks each one's visibility and Organization.
 pub use dataroom_web::DashboardCard;
 
-pub type DashboardResolver =
-    Arc<dyn Fn(&CatalogueId, &str) -> Vec<DashboardCard> + Send + Sync>;
+pub type DashboardResolver = Arc<dyn Fn(&CatalogueId, &str) -> Vec<DashboardCard> + Send + Sync>;
 
 /// Shared application state for the Axum router.
 #[derive(Clone)]
