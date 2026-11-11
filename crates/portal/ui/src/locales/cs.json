@@ -4455,7 +4455,8 @@
       "readUrl": "Přečíst adresu",
       "urlInvalid": "Zadejte celou adresu začínající na https:// nebo http://.",
       "urlCredential": "Adresa obsahuje jméno, heslo nebo klíč. Zadejte ji bez nich, nebo zdroj připojte jako zdroj dat, jehož přihlašovací údaj je secret.",
-      "enterAddress": "Nejprve zadejte adresu souboru."
+      "enterAddress": "Nejprve zadejte adresu souboru.",
+      "noColumns": "Soubor nemá žádný sloupec, ze kterého by vzniklo pole: zkontrolujte, že první řádek pojmenovává sloupce."
     },
     "source": {
       "loading": "Načítá se zdroj modelu…",
@@ -4599,7 +4600,8 @@
         "nothingToApply": "Nejprve něco změňte."
       },
       "zoomMin": "Už je nejmenší přiblížení.",
-      "zoomMax": "Už je největší přiblížení."
+      "zoomMax": "Už je největší přiblížení.",
+      "noRelationships": "Mezi těmito třídami zatím není žádný vztah."
     },
     "field": {
       "name": "Název",

@@ -82,10 +82,24 @@
       "group": "ui-parts",
       "reason": "a computed size: the project menu takes the trigger's own width, which Radix measures and publishes, and says so on the line"
     },
-    "src/components/panels/GeomapPanel.tsx": {
+    "src/pages/apps/ConversationPanel.tsx": {
+      "lines": 1,
+      "group": "ui-forms",
+      "reason": "the width of a chat bubble is a share of the column it sits in, so the person sees at a glance which side said it; a percentage is on no spacing scale and the line says so"
+    },
+    "src/pages/assistant/AssistantPage.tsx": {
+      "lines": 1,
+      "group": "ui-forms"
+    },
+    "src/routes/DashboardsPage.tsx": {
+      "lines": 2,
+      "group": "ui-pages",
+      "reason": "`h-[60vh]` sizes the map against the window and the spacing scale has no viewport step; the colour-ramp swatch takes its fill from the layer's own scale, which is a value, not a token."
+    },
+    "src/pages/models/ModelViews.tsx": {
       "lines": 1,
       "group": "ui-parts",
-      "reason": "computed sizes: the map's height, and the empty map frame's, is the panel's gridPos height in px (capped on a phone), as VegaChart's chart host"
+      "reason": "the LinkML source runs down to near the page bottom, the viewport less the header and tabs above it: a computed size, commented on the line (owner 2026-10-31)."
     },
     "src/components/panels/VegaChart.tsx": {
       "lines": 2,
@@ -97,24 +111,10 @@
       "group": "ui-parts",
       "reason": "a threshold or mapping colour from the dashboard JSON painted as a swatch, a bar's fill and a tinted value, and the bar's length as the value's share of min to max: computed values, one component per use, so no other panel file writes a style"
     },
-    "src/pages/apps/ConversationPanel.tsx": {
-      "lines": 1,
-      "group": "ui-forms",
-      "reason": "the width of a chat bubble is a share of the column it sits in, so the person sees at a glance which side said it; a percentage is on no spacing scale and the line says so"
-    },
-    "src/pages/assistant/AssistantPage.tsx": {
-      "lines": 1,
-      "group": "ui-forms"
-    },
-    "src/pages/models/ModelViews.tsx": {
+    "src/components/panels/GeomapPanel.tsx": {
       "lines": 1,
       "group": "ui-parts",
-      "reason": "the LinkML source runs down to near the page bottom, the viewport less the header and tabs above it: a computed size, commented on the line (owner 2026-10-31)."
-    },
-    "src/routes/DashboardsPage.tsx": {
-      "lines": 2,
-      "group": "ui-pages",
-      "reason": "`h-[60vh]` sizes the map against the window and the spacing scale has no viewport step; the colour-ramp swatch takes its fill from the layer's own scale, which is a value, not a token."
+      "reason": "computed sizes: the map's height, and the empty map frame's, is the panel's gridPos height in px (capped on a phone), as VegaChart's chart host"
     }
   },
   "panel_is_a_card": {
@@ -124,19 +124,19 @@
       "group": "ui-parts",
       "reason": "T-4888: an app tile is one Link whose whole surface is the target, with a hover tone; Card renders a non-interactive element, so the link keeps the card's border, radius and surface tokens itself."
     },
-    "src/pages/gallery/Gallery.tsx": {
-      "lines": 1,
-      "group": "ui-pages",
-      "reason": "T-4888: the development gallery frames each specimen without a shadow so the specimen's own shadow reads; it ships in no production build."
-    },
     "src/pages/home/HomePage.tsx": {
       "lines": 1,
       "group": "ui-parts",
       "reason": "T-4888: a next-step tile is one Link whose whole surface is the target, with a hover tone; Card renders a non-interactive element, so the link keeps the card's tokens itself."
+    },
+    "src/pages/gallery/Gallery.tsx": {
+      "lines": 1,
+      "group": "ui-pages",
+      "reason": "T-4888: the development gallery frames each specimen without a shadow so the specimen's own shadow reads; it ships in no production build."
     }
   },
   "data_table_is_the_grid": {
-    "_max": 71,
+    "_max": 42,
     "src/components/ActivityFeed.tsx": {
       "lines": 2,
       "group": "grid-ops"
@@ -151,7 +151,8 @@
     },
     "src/components/endpoints/AccessMatrix.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each cell is a toggle button that grants or revokes one action for one principal; a two-axis matrix of controls, which a sorted or filtered grid would scramble"
     },
     "src/components/endpoints/UsageSection.tsx": {
       "lines": 2,
@@ -159,11 +160,13 @@
     },
     "src/components/forms/widgets/AttributeCapabilitiesField.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): a form widget: each row is one attribute of the Policy being edited, each cell a capability control bound to the form value"
     },
     "src/components/forms/widgets/OutputSourceEditors.tsx": {
       "lines": 2,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): two form widgets: the fixed iCal fields and feed roles in their schema order, each row an attribute picker bound to the Endpoint form"
     },
     "src/components/grid/ManifestGrid.tsx": {
       "lines": 1,
@@ -200,15 +203,18 @@
     },
     "src/pages/endpoints/EndpointDocs.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "a key-value fact table (T-6753): an operation's parameters beside their meaning, two columns in the order the API declares them"
     },
     "src/pages/endpoints/FilterProof.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "a comparison, not a list (T-6753): each row puts the original entity beside what the Endpoint serves, and a phone shows one side; sorting or hiding a column would break the pairing"
     },
     "src/pages/endpoints/SchemaProjectionPanel.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): one checkbox per attribute of the type that hides it from the projection, a key-value form in the model's order"
     },
     "src/pages/explore/TypeQuality.tsx": {
       "lines": 1,
@@ -230,47 +236,33 @@
     },
     "src/pages/models/EnumValues.tsx": {
       "lines": 1,
-      "group": "grid-editors"
-    },
-    "src/pages/models/LinkmlGraphView.tsx": {
-      "lines": 1,
-      "group": "grid-editors"
-    },
-    "src/pages/models/LinkmlPreviewPanel.tsx": {
-      "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each row is a permissible value with label inputs per language and a remove button, bound to the model draft"
     },
     "src/pages/models/LinkmlVisualEditor.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each row opens its slot in the editor and marks the selected slot; the slot order is the model's order, which the editor writes back"
     },
     "src/pages/models/MappingsEditor.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each row is a target slot with a source picker and a unit control bound to the mapping draft"
     },
     "src/pages/models/ModelCanvas.tsx": {
       "lines": 1,
-      "group": "grid-editors"
-    },
-    "src/pages/models/ModelFields.tsx": {
-      "lines": 1,
-      "group": "grid-editors"
-    },
-    "src/pages/models/ModelFileDrop.tsx": {
-      "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "a key-value fact table (T-6753): a class card on the canvas listing field and type, two columns highlighted from the drawing"
     },
     "src/pages/models/ModelPage.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "a key-value fact table (T-6753): a type's field beside its range, two columns in the model's order"
     },
     "src/pages/models/RelationshipEditor.tsx": {
       "lines": 1,
-      "group": "grid-editors"
-    },
-    "src/pages/pipelines/KpiEditor.tsx": {
-      "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each row is a relationship with cardinality and on-delete pickers and row actions, bound to the model draft"
     },
     "src/pages/pipelines/PipelineHealth.tsx": {
       "lines": 2,

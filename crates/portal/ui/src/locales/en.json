@@ -4474,7 +4474,8 @@
       "readUrl": "Read the address",
       "urlInvalid": "Give a full address starting with https:// or http://.",
       "urlCredential": "The address carries a user name, a password or a key. Give one without, or connect the source as a data source whose credential is a secret.",
-      "enterAddress": "Enter the file's address first."
+      "enterAddress": "Enter the file's address first.",
+      "noColumns": "The file holds no column to turn into a field: check that its first row names the columns."
     },
     "classParent": "The class it specialises",
     "classParentNone": "None",
@@ -4599,7 +4600,8 @@
         "nothingToApply": "Change something first."
       },
       "zoomMin": "Already at the smallest zoom.",
-      "zoomMax": "Already at the largest zoom."
+      "zoomMax": "Already at the largest zoom.",
+      "noRelationships": "No relationship between these classes yet."
     },
     "field": {
       "name": "Name",

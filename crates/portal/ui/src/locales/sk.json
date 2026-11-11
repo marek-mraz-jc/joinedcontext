@@ -4455,7 +4455,8 @@
       "readUrl": "Prečítať adresu",
       "urlInvalid": "Zadajte celú adresu začínajúcu na https:// alebo http://.",
       "urlCredential": "Adresa obsahuje meno, heslo alebo kľúč. Zadajte ju bez nich, alebo zdroj pripojte ako zdroj údajov, ktorého prihlasovací údaj je secret.",
-      "enterAddress": "Najprv zadajte adresu súboru."
+      "enterAddress": "Najprv zadajte adresu súboru.",
+      "noColumns": "Súbor nemá žiadny stĺpec, z ktorého by vzniklo pole: skontrolujte, či prvý riadok pomenúva stĺpce."
     },
     "source": {
       "loading": "Načítava sa zdroj modelu…",
@@ -4599,7 +4600,8 @@
         "nothingToApply": "Najprv niečo zmeňte."
       },
       "zoomMin": "Už je najmenšie priblíženie.",
-      "zoomMax": "Už je najväčšie priblíženie."
+      "zoomMax": "Už je najväčšie priblíženie.",
+      "noRelationships": "Medzi týmito triedami zatiaľ nie je žiadny vzťah."
     },
     "field": {
       "name": "Názov",

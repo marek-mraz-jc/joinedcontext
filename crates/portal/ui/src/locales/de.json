@@ -4455,7 +4455,8 @@
       "readUrl": "Adresse lesen",
       "urlInvalid": "Geben Sie eine vollständige Adresse an, die mit https:// oder http:// beginnt.",
       "urlCredential": "Die Adresse enthält einen Benutzernamen, ein Passwort oder einen Schlüssel. Geben Sie sie ohne an, oder binden Sie die Quelle als Datenquelle an, deren Zugangsdaten ein Secret sind.",
-      "enterAddress": "Geben Sie zuerst die Adresse der Datei ein."
+      "enterAddress": "Geben Sie zuerst die Adresse der Datei ein.",
+      "noColumns": "Die Datei enthält keine Spalte, aus der ein Feld würde: Prüfen Sie, ob die erste Zeile die Spalten benennt."
     },
     "source": {
       "loading": "Modellquelle wird geladen…",
@@ -4599,7 +4600,8 @@
         "nothingToApply": "Ändern Sie zuerst etwas."
       },
       "zoomMin": "Bereits die kleinste Zoomstufe.",
-      "zoomMax": "Bereits die größte Zoomstufe."
+      "zoomMax": "Bereits die größte Zoomstufe.",
+      "noRelationships": "Zwischen diesen Klassen gibt es noch keine Beziehung."
     },
     "field": {
       "name": "Name",

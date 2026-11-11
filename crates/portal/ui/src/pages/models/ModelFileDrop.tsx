@@ -15,13 +15,8 @@ import {
   FilePicker,
   Icon,
   Input,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
 import { blankSource, edit, UPSTREAM_ANNOTATION } from "./linkml";
 import { applyOperations } from "./operations";
 import type { Operation, Refusal } from "./operations";
@@ -390,7 +385,8 @@ export function ModelFileDrop({
         }}
         title={t("models.infer.preview", { name: draft?.name ?? "" })}
         description={t("models.infer.previewLead", { rows: draft?.answer.rows ?? 0, classes })}
-        size="lg"
+        // A six-column grid: xl keeps its words whole (T-6753).
+        size="xl"
         closeLabel={t("models.infer.close")}
         footer={
           <>
@@ -423,32 +419,39 @@ export function ModelFileDrop({
       >
         {draft ? (
           <div className="flex flex-col gap-3 text-body">
-            <Table caption={t("models.infer.title")}>
-              <TableHead>
-                <TableHeaderCell>{t("models.infer.class")}</TableHeaderCell>
-                <TableHeaderCell>{t("models.infer.column")}</TableHeaderCell>
-                <TableHeaderCell>{t("models.infer.slot")}</TableHeaderCell>
-                <TableHeaderCell>{t("models.infer.range")}</TableHeaderCell>
-                <TableHeaderCell>{t("models.infer.kind")}</TableHeaderCell>
-                <TableHeaderCell>{t("models.infer.unit")}</TableHeaderCell>
-                <TableHeaderCell>{t("models.infer.match")}</TableHeaderCell>
-              </TableHead>
-              <TableBody>
-                {rows.map((row) => (
-                  <TableRow key={`${row.klass}/${row.name}`}>
-                    <TableCell className="font-mono">{row.klass}</TableCell>
-                    <TableCell className="max-w-64 break-words">{row.title ?? row.name}</TableCell>
-                    <TableCell className="font-mono">{row.name}</TableCell>
-                    <TableCell>
-                      <Badge mono>{row.range ?? "string"}</Badge>
-                    </TableCell>
-                    <TableCell>{row.kind ?? "Property"}</TableCell>
-                    <TableCell className="font-mono">{row.unit ?? ""}</TableCell>
-                    <TableCell className="break-all font-mono">{draft.answer.matches[row.name]?.model ?? ""}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <AdminGrid<SlotRow>
+              caption={t("models.infer.title")}
+              storageKey="models:infer"
+              stack
+              rows={rows}
+              rowKey={(row) => `${row.klass}/${row.name}`}
+              columns={[
+                {
+                  key: "column",
+                  label: t("models.infer.column"),
+                  text: (row) => row.title ?? row.name,
+                  cell: (row) => <span className="block max-w-64 break-words">{row.title ?? row.name}</span>,
+                },
+                { key: "slot", label: t("models.infer.slot"), text: (row) => row.name, cell: (row) => <span className="font-mono">{row.name}</span> },
+                {
+                  key: "range",
+                  label: t("models.infer.range"),
+                  text: (row) => row.range ?? "string",
+                  cell: (row) => <Badge mono>{row.range ?? "string"}</Badge>,
+                },
+                { key: "kind", label: t("models.infer.kind"), text: (row) => row.kind ?? "Property" },
+                { key: "unit", label: t("models.infer.unit"), text: (row) => row.unit ?? "", cell: (row) => <span className="font-mono">{row.unit ?? ""}</span> },
+                {
+                  key: "match",
+                  label: t("models.infer.match"),
+                  text: (row) => draft.answer.matches[row.name]?.model ?? "",
+                  cell: (row) => <span className="font-mono [overflow-wrap:anywhere]">{draft.answer.matches[row.name]?.model ?? ""}</span>,
+                },
+                // One class per sheet, so the column repeats one name; Arrange columns shows it.
+                { key: "class", label: t("models.infer.class"), hidden: true, text: (row) => row.klass, cell: (row) => <span className="font-mono">{row.klass}</span> },
+              ]}
+              empty={<p className="text-body text-fg-muted">{t("models.infer.noColumns")}</p>}
+            />
             {draft.answer.untyped.length > 0 ? (
               <div>
                 <p className="font-medium">{t("models.infer.untyped")}</p>

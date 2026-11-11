@@ -650,6 +650,82 @@ test.describe("a model's fields beside what its space holds (T-5066)", () => {
   }
 });
 
+// T-6753: the model's read-only lists on the shared grid (column menu, Arrange columns, search),
+// shot at 1440 and 400 into JC_EVIDENCE_DIR for the UI judge.
+const INFERRED = {
+  linkml: "name: sensors\n",
+  operations: [
+    { op: "addClass", name: "Sensors", is_a: "Entity" },
+    { op: "addSlot", name: "temperature", class: "Sensors", range: "float" },
+    { op: "setSlot", name: "temperature", field: "unit", value: "CEL" },
+    { op: "addSlot", name: "plate", class: "Sensors", range: "string" },
+    { op: "addSlot", name: "parent", class: "Sensors", range: "uriorcurie", kind: "Relationship" },
+    { op: "addSlot", name: "note", class: "Sensors", range: "string" },
+  ],
+  detectedTypes: { temperature: "float", plate: "string", parent: "Relationship", note: "string" },
+  matches: { temperature: { model: "dataModel.Environment/AirQualityObserved", slotUri: "https://smartdatamodels.org/dataModel.Environment/temperature" } },
+  untyped: [],
+  rows: 2,
+};
+
+test.describe("a model's lists on the shared grid (T-6753)", () => {
+  for (const width of [1440, 400]) {
+    test(`fields, slot options and a spreadsheet draft at ${width} px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await stubApi(page);
+      await page.route("**/api/v1/projects/helsinki/spaces/helsinki/quality", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(QUALITY) }),
+      );
+      await page.route("**/api/v1/tools/infer-schema", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(INFERRED) }),
+      );
+
+      await page.goto("/projects/helsinki/models/helsinki?tab=fields&lang=en");
+      const alert = page.getByRole("table", { name: "Fields of Alert, what each allows and what the space holds" });
+      await expect(alert.getByRole("row").filter({ hasText: "category" })).toContainText("98%");
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `grid-fields-filled-${width}`);
+      if (width === 1440) {
+        await page.getByRole("button", { name: "Column options: In the space" }).first().click();
+        await expect(page.getByRole("menu")).toBeVisible();
+        await shot(page, `grid-fields-menu-${width}`, false);
+        await page.keyboard.press("Escape");
+      }
+      await page.getByRole("button", { name: "Arrange columns" }).first().click();
+      await expect(page.getByRole("dialog", { name: "Arrange columns" })).toBeVisible();
+      await shot(page, `grid-fields-arrange-${width}`, false);
+      await page.getByRole("button", { name: "Done" }).click();
+      await page.getByRole("searchbox", { name: "Search this list" }).first().fill("zzz-nothing");
+      await expect(page.getByText("No rows match the search or the filters.").first()).toBeVisible();
+      await shot(page, `grid-fields-nomatch-${width}`);
+
+      await page.goto("/projects/helsinki/models?new=blank&lang=en");
+      await nameNewModel(page, "Sensors");
+      await page.getByRole("button", { name: "Add type", exact: true }).click();
+      await page.getByRole("dialog", { name: "Add type" }).getByRole("button", { name: /From a spreadsheet/ }).click();
+      await page.getByLabel("Choose a sample file").setInputFiles({
+        name: "sensors.csv",
+        mimeType: "text/csv",
+        buffer: Buffer.from("temperature,plate,parent,note\n21.5,BB123AB,urn:ngsi-ld:S:1,ok\n"),
+      });
+      const draft = page.getByRole("table", { name: "Model from a file" });
+      await expect(draft).toContainText("dataModel.Environment/AirQualityObserved");
+      await shot(page, `grid-infer-filled-${width}`, false);
+
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+      await stubKpi(page, ["read", "propose"]);
+      await page.route("**/api/v1/tools/generate", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(KPI_ARTIFACTS) }),
+      );
+      await page.goto("/projects/helsinki/models?edit=helsinki-kpi&lang=en");
+      await page.getByRole("tab", { name: "Preview" }).click();
+      await page.getByRole("tab", { name: "Filters and layers" }).click();
+      await expect(page.getByRole("table", { name: "Filters and layers" })).toContainText("startsAt");
+      await shot(page, `grid-options-filled-${width}`);
+    });
+  }
+});
+
 test.describe("removing a model from its page (T-5066)", () => {
   for (const width of [1440, 400]) {
     test(`proposes the removal with the name typed back at ${width} px`, async ({ page }) => {
