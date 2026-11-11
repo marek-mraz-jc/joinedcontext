@@ -2413,6 +2413,15 @@ pub(crate) fn check_policy_refs(
         return Ok(());
     }
     let space = spec.context_space_ref.name();
+    // A space neither held nor in the same Change is the reference check's (MF-13: refused at
+    // spec.contextSpaceRef, or awaited from an open change and judged again at approval).
+    let known = mirror.get(project, "ContextSpace", space).is_some()
+        || bundled_bindings(project)
+            .iter()
+            .any(|e| e.kind == "ContextSpace" && e.metadata.name == space);
+    if !known {
+        return Ok(());
+    }
     let SpacePolicies {
         segment,
         names: policies,
@@ -4539,6 +4548,9 @@ mod tests {
     #[test]
     fn a_policy_ref_keeps_its_own_domain_when_no_organization_is_the_installations() {
         let state = AppState::new(Config::for_tests(), None);
+        state
+            .mirror
+            .upsert(manifest("ContextSpace", "ovzdusie", json!({})));
         for (name, domain) in [("a-other", "barcelona.cat"), ("city", "hel.fi")] {
             state
                 .mirror
@@ -4705,6 +4717,9 @@ mod tests {
     async fn a_policy_ref_that_binds_nothing_is_refused_naming_the_urn_to_write() {
         const RIGHT: &str = "urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:public-read";
         let state = AppState::new(Config::for_tests(), None);
+        state
+            .mirror
+            .upsert(manifest("ContextSpace", "ovzdusie", json!({})));
         // The gateway binds on the installation Organization: one sorting first must not lead.
         state.mirror.upsert(organization(
             "a-other",
