@@ -487,7 +487,9 @@ impl CurrentStateDriver for Double {
     ) -> Result<antares_store::filter::QueryOutcome, NgsiError> {
         self.saw_query(f)?;
         if let Some((slow, delay)) = &self.slow_type {
-            if f.types.is_some_and(|g| g.iter().any(|t| t.first() == Some(slow))) {
+            if f.types
+                .is_some_and(|g| g.iter().any(|t| t.first() == Some(slow)))
+            {
                 tokio::time::sleep(*delay).await;
             }
         }

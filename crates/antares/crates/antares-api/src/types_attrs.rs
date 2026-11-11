@@ -6,9 +6,9 @@ use crate::state::AppState;
 use antares_model::NgsiError;
 use antares_store::filter::{EntityFilter, Page};
 use axum::extract::{Path, State};
-use futures_util::{StreamExt, TryStreamExt};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use futures_util::{StreamExt, TryStreamExt};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
