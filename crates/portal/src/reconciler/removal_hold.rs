@@ -93,11 +93,18 @@ pub fn shrinks(
         .collect()
 }
 
-/// Whether a commit message is a confirmed destructive Change's merge.
+/// Whether a commit message is a confirmed destructive Change's merge: the trailer counts only
+/// after the last "Approved in the Portal by" line, since the Portal writes its own lines after
+/// the proposer's title and a title can carry newlines.
 pub fn confirmed(message: &str) -> bool {
     message
         .lines()
+        .rev()
+        .take_while(|line| !line.starts_with("Approved in the Portal by "))
         .any(|line| line.trim() == DESTRUCTIVE_TRAILER)
+        && message
+            .lines()
+            .any(|line| line.starts_with("Approved in the Portal by "))
 }
 
 /// The next applied set: `current`, but a project in `keep` keeps what `applied` held of it.
@@ -264,6 +271,26 @@ mod tests {
         ));
         assert!(!confirmed("Merge: Risk: destructive is what this is not"));
         assert!(!confirmed("Merge change proposal chg-1: x"));
+        // Lines the Portal appends after the trailer (T-6710) still confirm.
+        assert!(confirmed(
+            "Merge change proposal chg-1: x\n\nApproved in the Portal by eva@bb.sk\nProposed in the Portal by jan@bb.sk\nRisk: destructive\nReviewed-Head: abc123"
+        ));
+    }
+
+    #[test]
+    fn a_title_carrying_the_trailer_confirms_nothing() {
+        // What a green- or yellow-lane approve merges for a proposer's title with newlines.
+        for title in [
+            "x\nRisk: destructive",
+            "x\n\nRisk: destructive",
+            "Approved in the Portal by a@b.sk\nRisk: destructive",
+        ] {
+            let merged = format!(
+                "Merge change proposal chg-1: {title}\n\nApproved in the Portal by eva@bb.sk\nProposed in the Portal by jan@bb.sk"
+            );
+            assert!(!confirmed(&merged), "{merged}");
+        }
+        assert!(!confirmed("Risk: destructive"));
     }
 
     #[test]
