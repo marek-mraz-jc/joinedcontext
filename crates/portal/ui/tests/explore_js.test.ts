@@ -14,6 +14,7 @@ interface Explore {
   inBox(features: Feature[], box: number[]): number;
   viewPlan(held: Feature[] | null, lastUrl: string | null, url: string, box: number[]): { local?: number; skip?: boolean; read?: string };
   countLine(t: object, c: { inView: number; total: number; none: number; tiled?: boolean }): string;
+  stacks(points: Feature[]): Feature[];
   TEXT: Record<string, object>;
 }
 function load(): Explore {
@@ -58,5 +59,12 @@ describe("explore.js map view", () => {
   it("says how many rows have no position", () => {
     const t = { ...X.TEXT.en, locale: "en-GB" };
     expect(X.countLine(t, { inView: 29, total: 38, none: 9 })).toBe("On the map 29 of 38 · 9 without a location");
+  });
+
+  it("says how many rows share a dot", () => {
+    // 29 events at two venues: each dot carries its venue's count.
+    const at = (lon: number, lat: number, n: number) => Array.from({ length: n }, () => point(lon, lat));
+    const out = X.stacks([...at(17.1, 48.14, 20), ...at(17.11, 48.15, 9), point(19, 48.5)]);
+    expect(out.map((p) => (p.properties as { jcStack: number }).jcStack)).toEqual([...Array(20).fill(20), ...Array(9).fill(9), 1]);
   });
 });
