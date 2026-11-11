@@ -382,11 +382,16 @@ def policies(a) -> int:
         }
         (state / f"serviceaccount-{project}.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
         log(state, f"{project}: serviceaccount-{project}.json, space(s) {', '.join(spaces)}")
+    per_project = defaultdict(int)
+    for g in groups.values():
+        per_project[g["project"]] += 1
     for tenant, g in sorted(groups.items()):
         types = sorted({r["type"] for r in g["rows"].values()})
+        # Policy names are unique per project: a second space of one project gets its own.
+        name = ACCOUNT if per_project[g["project"]] == 1 else f"{ACCOUNT}-{tenant}"
         doc = {
             "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Policy",
-            "metadata": {"name": ACCOUNT, "namespace": g["project"],
+            "metadata": {"name": name, "namespace": g["project"],
                          "title": {"en": f"Temporary: the cleanup account deletes the copies minted under the wrong org domain ({LABEL})"}},
             "spec": {
                 "contextSpaceRef": {"kind": "ContextSpace", "name": tenant},
