@@ -193,6 +193,24 @@ async fn the_approval_pins_the_merge_to_the_commit_it_reviewed() {
     );
 }
 
+/// P-24: the forge history names the person who approved: the merge carries them as its author,
+/// and the forge records this Portal's account as the committer.
+#[tokio::test]
+async fn the_approval_names_the_approver_as_the_merge_author() {
+    let shako = forge_at(200).await;
+    let state = state_with(&shako);
+    let answer = approve(&state).await;
+    assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
+    let payload = merge_payload(&shako)
+        .await
+        .expect("the merge was asked for");
+    assert_eq!(
+        payload.get("Author"),
+        Some(&json!({ "Name": "steward", "Email": "steward@hel.fi" })),
+        "{payload}"
+    );
+}
+
 /// PF-57, T-1683: the review reads the commit and not the branch. Every file of this fixture is
 /// mounted at the commit alone, so an approval that still read `BRANCH` would find no manifest
 /// and answer 404 — this case is green only while the two are the same read.

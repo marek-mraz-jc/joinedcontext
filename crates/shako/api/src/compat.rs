@@ -1932,6 +1932,7 @@ async fn compat_merge_pull(
         message: req.merge_message_field.or(req.merge_title_field),
         head_commit_id: req.head_commit_id,
         delete_branch_after_merge: req.delete_branch_after_merge == Some(true),
+        author: None,
     };
     match service::merge_pull_request(&state, &ctx, &owner, &repo_name, number, merge).await {
         Ok(merge_commit_sha) => {

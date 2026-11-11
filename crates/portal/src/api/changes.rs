@@ -2665,7 +2665,16 @@ pub async fn approve_change_for(
         }
         _ => merge_msg,
     };
-    merge_when_ready(shako, pr_number, &merge_msg, &pr.head_sha, id).await?;
+    let (merger_name, merger_email) = crate::api::mutate::author_credentials(identity, project);
+    merge_when_ready(
+        shako,
+        pr_number,
+        &merge_msg,
+        &pr.head_sha,
+        id,
+        Some((&merger_name, &merger_email)),
+    )
+    .await?;
     say_merged(state, project, id, &data, approver, connector).await;
 
     // A published application's own repository merges once its Change has (AP-77).
@@ -2834,12 +2843,13 @@ async fn merge_when_ready(
     message: &str,
     head_sha: &str,
     id: &str,
+    author: Option<(&str, &str)>,
 ) -> Result<(), ApiError> {
     let mut head = head_sha.to_owned();
     let mut attempt = 0;
     loop {
         match shako
-            .merge(pr_number, MergeStyle::Squash, message, Some(&head))
+            .merge(pr_number, MergeStyle::Squash, message, Some(&head), author)
             .await
         {
             Err(err) if behind_base(&err) && attempt < 15 => {
@@ -2973,7 +2983,7 @@ pub(crate) async fn merge_if_only(
         tracing::warn!(change = %id, "the change carries a file the Portal did not check and waits for a person");
         return change;
     }
-    if let Err(err) = merge_when_ready(shako, pr.number, message, &pr.head_sha, &id).await {
+    if let Err(err) = merge_when_ready(shako, pr.number, message, &pr.head_sha, &id, None).await {
         tracing::warn!(change = %id, error = %err, "the change waits for a person: the forge did not merge it");
         return change;
     }
