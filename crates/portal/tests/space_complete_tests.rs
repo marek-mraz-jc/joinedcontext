@@ -393,6 +393,7 @@ spec:
 async fn complete_as_steward(payload: Value) -> (StatusCode, Value) {
     let config = Config::for_tests();
     let state = AppState::new(config.clone(), None);
+    with_organization(&state.mirror);
     let app = server::app(state);
     let cookie = session_cookie(
         &config,
@@ -422,6 +423,18 @@ async fn complete_as_steward(payload: Value) -> (StatusCode, Value) {
     )
 }
 
+/// The installation's Organization, whose domain the drafted Endpoint's policyRefs are minted
+/// under (EP-117, P-18).
+fn with_organization(mirror: &Mirror) {
+    mirror.upsert(joinedcontext_portal::resource::ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: "Organization".to_owned(),
+        metadata: joinedcontext_portal::resource::ObjectMeta::new("hel", "org"),
+        spec: json!({ "domain": "hel.fi", "locales": ["en"], "defaultLocale": "en" }),
+        status: None,
+    });
+}
+
 /// The same call against a mirror that already holds the Context Spaces `held`, as
 /// `(project, space)` pairs.
 /// `held` is `(project, space, pin)`: the spaces the organization already has (PF-84).
@@ -431,6 +444,7 @@ async fn complete_against(
 ) -> (StatusCode, Value) {
     let config = Config::for_tests();
     let mirror = std::sync::Arc::new(Mirror::new());
+    with_organization(&mirror);
     for (project, space, pin) in held {
         mirror.upsert(joinedcontext_portal::resource::ResourceEnvelope {
             api_version: API_VERSION.to_owned(),
@@ -962,6 +976,7 @@ async fn space_complete_endpoint_has_all_classes_projected() {
     let mut config = Config::for_tests();
     config.model_tools_url = Some(model_tools_mock.uri());
     let state = AppState::new(config.clone(), None);
+    with_organization(&state.mirror);
     let app = server::app(state);
     let steward_cookie = session_cookie(
         &config,
@@ -1121,6 +1136,7 @@ async fn a_project_that_has_the_account_keeps_it_and_drafts_no_second_one() {
 async fn complete_with_account(payload: Value) -> (StatusCode, Value) {
     let config = Config::for_tests();
     let mirror = std::sync::Arc::new(Mirror::new());
+    with_organization(&mirror);
     mirror.upsert(joinedcontext_portal::resource::ResourceEnvelope {
         api_version: API_VERSION.to_owned(),
         kind: "ServiceAccount".to_owned(),
@@ -1427,6 +1443,7 @@ async fn a_proposed_space_commits_its_model_with_the_compiled_artifacts() {
     )
     .expect("client");
     let state = AppState::new(config.clone(), None).with_shako(std::sync::Arc::new(client));
+    with_organization(&state.mirror);
     let cookie = session_cookie(
         &config,
         "steward.user",
@@ -1563,6 +1580,7 @@ async fn proposed_again(
     )
     .expect("client");
     let mirror = std::sync::Arc::new(Mirror::new());
+    with_organization(&mirror);
     if served {
         for (kind, name) in [
             ("ContextSpace", "room-bookings"),
