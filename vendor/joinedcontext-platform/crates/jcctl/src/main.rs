@@ -1273,12 +1273,19 @@ fn apply(dir: &Path, options: commands::apply::Options, live: Connection) -> Exi
         Ok(repo) => repo,
         Err(err) => return fail(&err.to_string()),
     };
+
     // Opened before anything is converged: an unreachable gateway or an unreadable token is a
     // run that cannot finish, and finding that out after half a replay helps nobody.
     let gateway = match live.open() {
         Ok(gateway) => gateway,
         Err(err) => return fail(&err),
     };
+    // A gateway makes this run write seed entities: only from the reviewed main (P-14).
+    if gateway.is_some() {
+        if let Err(err) = commands::reviewed::check(dir) {
+            return fail(&err);
+        }
+    }
     let mut platform = InMemory::new();
     let report = match commands::apply::run(&repo, &mut platform, options) {
         Ok(report) => report,
@@ -1503,6 +1510,10 @@ fn publish_ckan(options: &PublishCkanOptions) -> ExitCode {
         Ok(repo) => repo,
         Err(err) => return fail(&err.to_string()),
     };
+    // The catalogue is live state: published only from the reviewed main (P-14).
+    if let Err(err) = commands::reviewed::check(&options.repo_dir) {
+        return fail(&err);
+    }
     let (targets, unplanned) = match command::targets_with(&repo, &options.project, None) {
         Ok(found) => found,
         Err(err) => return fail(&err.to_string()),
@@ -2602,12 +2613,37 @@ mod tests {
             "projects/air/spaces/air/entities/seed/stations.json",
             r#"[{"id":"urn:ngsi-ld:AirQualityObserved:bb.sk:air:1","type":"AirQualityObserved","index":{"type":"Property","value":1}}]"#,
         );
+        // A run with a gateway writes only from the reviewed main (P-14): a clean commit that
+        // `origin/main` names.
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["add", "-A"],
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.org",
+                "commit",
+                "-qm",
+                "seed",
+            ],
+            &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        ] {
+            let ok = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .status()
+                .is_ok_and(|status| status.success());
+            assert!(ok, "git {args:?}");
+        }
         root
     }
 
     /// A gateway named on the command line, with its token in a file beside the repository.
     fn gateway_connection(url: &str, dir: &Path) -> Connection {
-        let token = dir.join("token");
+        // Beside the checkout, never in it: an untracked file is a change nobody merged.
+        let token = dir.with_extension("token");
         std::fs::write(&token, format!("{APPLY_TOKEN}\n")).expect("the token file");
         Connection {
             gateway_url: Some(url.to_owned()),

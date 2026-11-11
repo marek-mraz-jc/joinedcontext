@@ -13,6 +13,7 @@ pub mod mqtt_roles;
 pub mod plan;
 pub mod policy;
 pub mod publish_ckan;
+pub mod reviewed;
 pub mod seed;
 pub mod sync;
 pub use jc_manifest::validate;

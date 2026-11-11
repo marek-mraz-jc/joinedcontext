@@ -1726,9 +1726,27 @@ impl Syncer {
     fn refuse_invalid(&self, repository: Arc<Repository>) -> (Arc<Repository>, Refusals) {
         let mut refusals = Refusals::new();
         for (id, resource) in repository.iter() {
-            let Ok(yaml) = serde_json::to_string(&resource.manifest) else {
+            let Ok(mut manifest) = serde_json::to_value(&resource.manifest) else {
                 continue;
             };
+            // A manifest without a namespace takes the one its path gives (CC-08), as
+            // load_mirror shows it; the kind's check reads that, not the missing field.
+            if let Some(metadata) = manifest
+                .get_mut("metadata")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                let unset = metadata
+                    .get("namespace")
+                    .and_then(serde_json::Value::as_str)
+                    .is_none_or(str::is_empty);
+                if unset {
+                    metadata.insert(
+                        "namespace".to_owned(),
+                        namespace_of(&resource.path.to_string_lossy()).into(),
+                    );
+                }
+            }
+            let yaml = manifest.to_string();
             if let Some(Err(err)) = jc_core::registry::validate_yaml(&resource.manifest.kind, &yaml)
             {
                 refusals.insert(
@@ -4347,7 +4365,7 @@ output_error{stream="kpi"} 6
                 json!({
                     "contextSpaceRef": space,
                     "assigner": "did:web:city.example",
-                    "assignee": {"kind": "user", "id": "vendor"},
+                    "assignee": {"kind": "user", "id": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14"},
                     "operations": ["upsertBatch"],
                     "information": [{"entities": [{"type": "Car"}], "propertyNames": ["speed"]}],
                 }),
@@ -5496,7 +5514,7 @@ output_error{stream="kpi"} 6
     }
 
     const ORG_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  name: hel\nspec:\n  domain: hel.fi\n  locales: [en]\n  defaultLocale: en\n";
-    const ROLE_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Role\nmetadata:\n  name: steward\n  namespace: org\nspec:\n  rules:\n    - kinds: [\"*\"]\n      verbs: [propose, approve, delete]\n";
+    const ROLE_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Role\nmetadata:\n  name: steward\n  namespace: org\nspec:\n  rules:\n    - kinds: [Pipeline, Endpoint]\n      verbs: [propose, approve, delete]\n";
     const BINDING_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata:\n  name: stewards\n  namespace: org\nspec:\n  subjects:\n    - group: stewards\n  role: steward\n  scope:\n    organization: hel\n";
 
     /// T-0527: `users/` is compiled into the five managed files, and only the ones whose

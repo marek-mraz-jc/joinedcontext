@@ -560,6 +560,7 @@ async fn merge_requests_reviews_merge_and_webhooks() {
             MergeStyle::Merge,
             "Merge a\n\nApproved-by: alice",
             Some(&a.head_sha),
+            None,
         )
         .await
         .unwrap();
@@ -586,7 +587,7 @@ async fn merge_requests_reviews_merge_and_webhooks() {
     // b is behind main now: a merge pinned to a head nobody read is refused, the update
     // brings main in, and the merge of the new head goes through.
     let stale = forge
-        .merge(b.number, MergeStyle::Merge, "Merge b", Some(&main0))
+        .merge(b.number, MergeStyle::Merge, "Merge b", Some(&main0), None)
         .await;
     assert!(
         matches!(stale, Err(GitError::Conflict(_))),
@@ -615,11 +616,32 @@ async fn merge_requests_reviews_merge_and_webhooks() {
             MergeStyle::Squash,
             "Add b\n\nApproved-by: bob",
             Some(&b2.head_sha),
+            Some(("Bob Approver", "bob@example.org")),
         )
         .await
         .unwrap();
     let squashed = forge.pull_request(b.number).await.unwrap();
     assert!(squashed.merged);
+    // The forge history names the person who merged in the Portal as the author and the
+    // Portal's own account as the committer (P-24).
+    let (st, commit) = w
+        .raw(
+            "GET",
+            &format!(
+                "odata/Repositories(Owner='{OWNER}',Name='config')/Commits('{}')",
+                squashed.merge_commit_sha
+            ),
+            None,
+        )
+        .await;
+    assert_eq!(st, 200, "{commit}");
+    assert_eq!(commit["Author"], "Bob Approver", "{commit}");
+    assert_eq!(commit["Email"], "bob@example.org", "{commit}");
+    assert_ne!(commit["Committer"], "Bob Approver", "{commit}");
+    assert!(
+        commit["Committer"].as_str().is_some_and(|c| !c.is_empty()),
+        "{commit}"
+    );
     assert_eq!(
         forge.branch_head("main").await.unwrap(),
         squashed.merge_commit_sha
@@ -678,6 +700,88 @@ async fn merge_requests_reviews_merge_and_webhooks() {
     assert_eq!(merges, 2, "{seen:?}");
 }
 
+/// A rule that guards who writes a branch is not removed or loosened through the forge's API, not
+/// even by the Portal's own admin token (P-24): a Portal bug or a leaked token cannot open `main`
+/// or a Change branch again. A rule that guards nothing still goes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_portal_token_cannot_remove_or_loosen_a_branch_rule() {
+    let w = World::start().await;
+    let forge = w.client("config");
+    assert!(forge.ensure_repository("Configuration").await.unwrap());
+    forge.protect_branch("main").await.unwrap();
+    forge.reserve_change_branches().await.unwrap();
+    let rules = "api/v1/repos/joinedcontext/config/branch_protections";
+
+    for rule in ["main", "portal/*", "workspace/*"] {
+        let (st, body) = w.raw("DELETE", &format!("{rules}/{rule}"), None).await;
+        assert_eq!(st, 403, "{rule} deleted: {body}");
+        let (st, _) = w.raw("GET", &format!("{rules}/{rule}"), None).await;
+        assert_eq!(st, 200, "{rule} is still there");
+    }
+    let (st, body) = w
+        .raw(
+            "POST",
+            "odata/Repositories(Owner='joinedcontext',Name='config')/Shako.Unprotect",
+            Some(json!({ "Pattern": "main" })),
+        )
+        .await;
+    assert_eq!(st, 403, "OData Unprotect: {body}");
+
+    // A PATCH replaces the whole rule: each one starts from the stored rule and changes one field.
+    let changed = |stored: &Value, field: &str, value: bool| {
+        let mut rule = stored.clone();
+        rule[field] = json!(value);
+        rule
+    };
+    let (_, main) = w.raw("GET", &format!("{rules}/main"), None).await;
+    let (_, portal) = w.raw("GET", &format!("{rules}/portal/*"), None).await;
+    for (what, rule, patch) in [
+        (
+            "push opened on main",
+            "main",
+            changed(&main, "enable_push", true),
+        ),
+        (
+            "merge allow-list dropped",
+            "main",
+            changed(&main, "enable_merge_whitelist", false),
+        ),
+        (
+            "admin override allowed",
+            "main",
+            changed(&main, "block_admin_merge_override", false),
+        ),
+        (
+            "portal/* allow-list dropped",
+            "portal/*",
+            changed(&portal, "enable_push_whitelist", false),
+        ),
+    ] {
+        let (st, body) = w
+            .raw("PATCH", &format!("{rules}/{rule}"), Some(patch))
+            .await;
+        assert_eq!(st, 403, "{what}: {body}");
+    }
+    let (_, after) = w.raw("GET", &format!("{rules}/main"), None).await;
+    assert_eq!(after, main, "main's rule is unchanged");
+
+    // Tightening stays open, and a rule that guards no writer is removed as before.
+    let (st, body) = w
+        .raw(
+            "PATCH",
+            &format!("{rules}/main"),
+            Some(changed(&main, "block_on_rejected_reviews", true)),
+        )
+        .await;
+    assert_eq!(st, 200, "tightening main: {body}");
+    let (st, body) = w
+        .raw("POST", rules, Some(json!({ "rule_name": "release/*", "enable_push": true, "enable_status_check": true, "status_check_contexts": ["ci"] })))
+        .await;
+    assert!(st == 200 || st == 201, "a loose rule: {body}");
+    let (st, body) = w.raw("DELETE", &format!("{rules}/release/*"), None).await;
+    assert_eq!(st, 204, "a loose rule goes: {body}");
+}
+
 /// Only the Portal moves a protected `main` and writes a Change branch (T-6706, CHG-12, AUZ-08):
 /// a person holding Write merges nothing into `main` through shako's own API, pushes, moves and
 /// deletes no `portal/` or `workspace/` branch, so a Change branch's head commit, and the author
@@ -715,7 +819,13 @@ async fn only_the_portal_merges_into_main_and_writes_change_branches() {
         .unwrap();
     let main0 = forge.branch_head("main").await.unwrap();
     let own_merge = writer
-        .merge(pr.number, MergeStyle::Merge, "Merge x", Some(&pr.head_sha))
+        .merge(
+            pr.number,
+            MergeStyle::Merge,
+            "Merge x",
+            Some(&pr.head_sha),
+            None,
+        )
         .await;
     assert!(
         matches!(own_merge, Err(GitError::Api { status: 403, .. })),
@@ -723,7 +833,13 @@ async fn only_the_portal_merges_into_main_and_writes_change_branches() {
     );
     assert_eq!(forge.branch_head("main").await.unwrap(), main0);
     forge
-        .merge(pr.number, MergeStyle::Merge, "Merge x", Some(&pr.head_sha))
+        .merge(
+            pr.number,
+            MergeStyle::Merge,
+            "Merge x",
+            Some(&pr.head_sha),
+            None,
+        )
         .await
         .expect("the Portal merges once the Change is approved");
 

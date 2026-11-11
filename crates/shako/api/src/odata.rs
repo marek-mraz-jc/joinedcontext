@@ -1000,6 +1000,8 @@ async fn repo_navigation_get(
                 "Author": c.author_name,
                 "Email": c.author_email,
                 "Date": c.author_date,
+                "Committer": c.committer_name,
+                "CommitterEmail": c.committer_email,
                 "Parents": c.parent_shas,
             }))
         }
@@ -1847,6 +1849,7 @@ pub async fn exec_odata_operation(
                 message: text(&body, "Message"),
                 head_commit_id: text(&body, "HeadCommitId"),
                 delete_branch_after_merge: flag(&body, "DeleteBranchAfterMerge").unwrap_or(false),
+                author: person(&body, "Author")?,
             };
             let sha =
                 service::merge_pull_request(state, ctx, &repo.owner, &repo.name, number, merge)

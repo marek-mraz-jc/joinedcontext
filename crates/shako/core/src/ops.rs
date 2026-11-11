@@ -849,7 +849,7 @@ impl OperationRegistry {
                 rest_method: "POST",
                 rest_path: "/api/v1/projects/{project}/repositories/{repo}/pulls/{number}/merge",
                 compat_path: Some("/api/v1/repos/{owner}/{repo}/pulls/{number}/merge"),
-                input_schema: json!({"type":"object","properties":{"repo":{"type":"string"},"number":{"type":"integer"},"style":{"type":"string"},"message":{"type":"string"},"headCommitId":{"type":"string"}},"required":["repo","number","style"]}),
+                input_schema: json!({"type":"object","properties":{"repo":{"type":"string"},"number":{"type":"integer"},"style":{"type":"string"},"message":{"type":"string"},"headCommitId":{"type":"string"},"author":{"type":"object","properties":{"name":{"type":"string"},"email":{"type":"string"}}}},"required":["repo","number","style"]}),
                 output_schema: json!({"type":"object"}),
                 odata: ODataOperation {
                     kind: A,
@@ -861,6 +861,7 @@ impl OperationRegistry {
                         p("Message", "Edm.String", true),
                         p("HeadCommitId", "Edm.String", true),
                         p("DeleteBranchAfterMerge", "Edm.Boolean", true),
+                        p("Author", "Edm.Untyped", true),
                     ],
                     return_type: Some("Edm.Untyped"),
                 },

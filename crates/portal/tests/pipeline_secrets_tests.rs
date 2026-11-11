@@ -34,13 +34,12 @@ metadata:
   name: mesto-mqtt
   namespace: helsinki
 spec:
-  contextSpaceRef: { kind: ContextSpace, name: mobility }
-  class: resident
-  type: mqtt
+  type: kafka
   input:
-    urls: ["tcp://broker.example.fi:1883"]
-    topics: ["vehicles/#"]
-    password: "${MQTT_PASSWORD}"
+    addresses: ["broker.example.fi:9092"]
+    topics: ["vehicles"]
+    sasl:
+      password: "${MQTT_PASSWORD}"
   secrets:
     - { name: mqtt-mesto, key: password, envVar: MQTT_PASSWORD }
 "#;
@@ -59,7 +58,7 @@ spec:
     dataSourceRef: { kind: DataSource, name: mesto-mqtt }
   compute:
     kind: bloblang
-    mapping: "root = this"
+    bloblang: "root = this"
 "#;
 
 async fn forge(files: &[(&str, &str)]) -> MockServer {
