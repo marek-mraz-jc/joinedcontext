@@ -26,14 +26,15 @@ const EMPTY_IDS: readonly string[] = [];
 
 /**
  * The attributes every loaded row holds with one value (T-6748), as text, the row's label aside: on a
- * phone they say nothing a row does not, so they leave the columns for the line above the table.
+ * phone they say nothing a row does not, so they leave the columns for the line above the table. A
+ * field empty on every row (value "") leaves too, so the next field with data sits beside the label.
  */
 function sharedValues(rows: readonly RichRow[], skip: ReadonlySet<string>): { attr: string; value: string }[] {
   if (rows.length < 2) return [];
   return Object.keys(rows[0].cells)
     .filter((attr) => !skip.has(attr))
     .map((attr) => ({ attr, value: cellText(rows[0].cells[attr]) }))
-    .filter(({ attr, value }) => value !== "" && rows.every((row) => cellText(row.cells[attr]) === value));
+    .filter(({ attr, value }) => rows.every((row) => cellText(row.cells[attr]) === value));
 }
 
 function withoutAttrs(config: ResolvedGridConfig, gone: readonly string[]): ResolvedGridConfig {

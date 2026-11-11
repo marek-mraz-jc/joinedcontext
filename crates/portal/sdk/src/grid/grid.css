@@ -26,9 +26,10 @@
   border-bottom: 1px solid var(--jc-color-line, #e0e0e0);
 }
 
-/* A compact grid's label leads at most of a phone's width (T-6748): the row is told by its name. */
+/* A compact grid's label takes a phone's width (T-6748): the row is told by its name. */
 .jc-grid[data-compact] .jc-grid-pinned {
-  min-width: 62vw;
+  /* The window less a peek of the next column: no empty half of a row, and the way on stays seen. */
+  min-width: calc(100vw - 6rem);
 }
 
 /* Two lines of the name fit the row's height, so a long name is told apart from its neighbour. */

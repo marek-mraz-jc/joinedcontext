@@ -311,7 +311,7 @@ function GridTypeLine({ view }: { view: GridView }): React.JSX.Element | null {
   const { props, labels, options, shared } = view;
   const type = options.config.type;
   const oneType = !type.includes(",");
-  if (!props.compact || (!oneType && shared.length === 0)) return null;
+  if (!props.compact || (!oneType && !shared.some((each) => each.value !== ""))) return null;
   const labelOf = (attr: string) => options.layout?.labels?.[attr] ?? options.config.columns.find((column) => column.attr === attr)?.label ?? readableName(attr);
   return (
     <div className="jc-grid-typeline">
@@ -321,7 +321,7 @@ function GridTypeLine({ view }: { view: GridView }): React.JSX.Element | null {
           {props.typeChoice ? <TypeChoiceCell choice={props.typeChoice} /> : <span>{type}</span>}
         </span>
       ) : null}
-      {shared.map((each) => (
+      {shared.filter((each) => each.value !== "").map((each) => (
         <span key={each.attr} className="jc-grid-typeline__part">
           <span className="jc-grid-typeline__label">{labelOf(each.attr)}</span>
           <span>{each.value}</span>

@@ -43,6 +43,14 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(heads(container)[0]).toMatch(/^Title/);
   });
 
+  it("drops a field empty on every row, without a word on the line above", async () => {
+    const blank = entities.map((each) => ({ ...each, category: { type: "Property", value: "" } }));
+    const { container } = render(<EntityGrid config={config} source={fixtureSource(blank)} compact filterRow={false} />);
+    await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
+    await waitFor(() => expect(heads(container).some((name) => /^Category/.test(name))).toBe(false));
+    expect(container.querySelector(".jc-grid-typeline")).not.toHaveTextContent("Category");
+  });
+
   it("keeps a column whose rows differ", async () => {
     const { container } = render(<EntityGrid config={config} source={fixtureSource(entities)} compact filterRow={false} />);
     await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());

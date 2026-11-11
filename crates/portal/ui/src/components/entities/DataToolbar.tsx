@@ -197,7 +197,7 @@ export function DataToolbar(props: DataToolbarProps): JSX.Element {
     const set = tools.reduce((sum, tool) => sum + (tool.count ?? 0), 0);
     return (
       <>
-        <ToolbarPopover label={t("spaces.toolbar.tools")} count={set} outlined tall anchored={props.anchorMenu} closeLabel={t("app.close")}>
+        <ToolbarPopover label={t("spaces.toolbar.tools")} count={set} outlined tall spread={props.anchorMenu} closeLabel={t("app.close")}>
           <div className="flex flex-col gap-1">
             {panels}
             {query}

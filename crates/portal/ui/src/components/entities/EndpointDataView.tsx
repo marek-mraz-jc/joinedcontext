@@ -904,7 +904,7 @@ export function EndpointDataView({
     <div {...windowProps(full, t("endpoints.data.title"))}>
       {refused ? null : (
       <>
-      <div className="flex flex-wrap items-center gap-1 border-b border-border pb-2" data-testid="grid-toolbar">
+      <div className="relative flex flex-wrap items-center gap-1 border-b border-border pb-2" data-testid="grid-toolbar">
         <DataToolbar
           {...tools.props}
           filterTitle={filterTitle}
