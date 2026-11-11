@@ -3,9 +3,9 @@
 # from this repository's crates/portal/ui (explorer/SHA256SUMS names the commit); site/ is components/viz/charts/renderer/files/site of that commit with
 # jc.patch applied to explore.js, explore.html, explore.css, embed.js, map.html and host.js (vendor/SOURCES.md).
 1fa68fbfc99c7a5c7715440de8ad6ad8e37d7f4e79192f627e07cd758d27fd87  embed.js
-e5a821dff9b64ee9d6ba6c017dc3f709d69d00137bf4671000e2e18ee46e5b27  explore.css
+3be8accffc2a543d62b9b2c8fd5b86e8fa0555274285f2645f63847e4f2727c8  explore.css
 edeedacd18be65b800c35f6bad65b7ebfec2326a83e635828e21f60815de830f  explore.html
-9fc88b8a768c23e43b5f5617d24bb4f2a9acf77026875c46dff3b46ec8ae8bd6  explore.js
+3a12f38fc553d4cbe24fe01cfdf4f943eac13cccbb6823da73b152089b89cbb8  explore.js
 59b948e2ecad2d9b29bdacea71b402a0e9ee2827ed0bd8e55290ab90b945119e  host.css
 46b5405cb28c62cefdde3c730f7625b7cedd2fff0f7d4af14bf937f939bdc3e4  host.js
 57dd801453cd7a724b95f98e4e4c44fe73a0691bd20aa7d3c873c88c16b3e2f2  index.html
