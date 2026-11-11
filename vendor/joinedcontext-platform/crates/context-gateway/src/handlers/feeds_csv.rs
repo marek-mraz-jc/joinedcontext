@@ -70,13 +70,13 @@ pub(crate) async fn preset_csv(
             let types = o.sources.iter().map(|s| s.entity_type.clone());
             (
                 types.collect::<Vec<_>>(),
-                o.filter.clone().unwrap_or_default(),
+                o.effective_filter().unwrap_or_default(),
             )
         })
         .or_else(|| {
             endpoint.feeds.iter().find(|o| o.name == output).map(|o| {
                 let types = o.sources.iter().map(|s| s.entity_type.clone());
-                (types.collect(), o.filter.clone())
+                (types.collect(), o.effective_filter())
             })
         });
     let Some((types, base)) = preset else {
