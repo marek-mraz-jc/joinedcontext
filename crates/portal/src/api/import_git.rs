@@ -497,6 +497,21 @@ async fn land<'a>(
                      (MF-46)"
                 )));
             }
+            // Every manifest at the pushed head passes the gates a zip import and a proposal
+            // pass, before `main` is protected or anything names the project; a refusal removes
+            // what was created (CHG-05, MF-24). ponytail: the head only, not every blob of the
+            // history; a history scan needs the pack read before the push.
+            let refused = judge_head(state, client, &head).await?;
+            if !refused.is_empty() {
+                return Err(ApiError::Invalid {
+                    detail: format!(
+                        "the project at {head} holds {} manifest refusal(s); fix them in the \
+                         source project and export again",
+                        refused.len()
+                    ),
+                    errors: refused,
+                });
+            }
         }
         verified.push(Verified {
             path: repository.file.clone(),
@@ -579,6 +594,28 @@ async fn land<'a>(
         Some(("Project", project)),
     )
     .await
+}
+
+/// The refusals of every YAML file of the project repository at `head` (see
+/// [`crate::api::import::judge_files`]).
+async fn judge_head(
+    state: &AppState,
+    client: &ShakoClient,
+    head: &str,
+) -> Result<Vec<String>, ApiError> {
+    let mut files = Vec::new();
+    for path in client.list_tree(head).await? {
+        if !(path.ends_with(".yaml") || path.ends_with(".yml")) {
+            continue;
+        }
+        if let Some(file) = client.get_file(&path, head).await? {
+            files.push((path, file.content));
+        }
+    }
+    Ok(crate::api::import::judge_files(
+        &files,
+        state.config.apps_dir.as_deref(),
+    ))
 }
 
 #[cfg(test)]
