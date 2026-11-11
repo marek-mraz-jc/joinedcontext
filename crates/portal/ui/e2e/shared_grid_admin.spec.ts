@@ -11,7 +11,16 @@ const IDENTITY = { subject: "b7c1e0f4", username: "jana", name: "Jana Kováčov�
 const PROJECTS = { apiVersion: "joinedcontext.com/v1alpha1", kind: "ProjectList", items: [{ name: "helsinki" }] };
 const GRANTS = {
   bootstrap: false,
-  grants: [{ rule: { kinds: ["Person", "AgentProfile", "DataSource"], verbs: ["read", "create", "update", "disable", "delete", "propose"] } }],
+  grants: [
+    {
+      role: "org-admin",
+      binding: "admins",
+      rule: {
+        kinds: ["Person", "AgentProfile", "DataSource", "RoleBinding", "Role", "Group", "Organization", "Project"],
+        verbs: ["read", "create", "update", "disable", "delete", "propose", "approve"],
+      },
+    },
+  ],
 };
 
 const person = (id: string, first: string, last: string, extra: Record<string, unknown> = {}) => ({
@@ -88,8 +97,7 @@ for (const width of [1440, 400]) {
 
       await stub(page, "filled");
       await page.goto(`${target.path}?lang=en`);
-      await expect(page.getByText(target.first).first()).toBeVisible();
-      await expect(page.locator(".jc-data-grid")).toBeVisible();
+      await expect(page.locator(".jc-data-grid").getByText(target.first).first()).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
       await shot("filled");
 
