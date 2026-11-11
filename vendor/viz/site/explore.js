@@ -37,6 +37,36 @@
     });
   }
   var MAP_DWELL = 500;
+  // A map that cannot start says so in its box (T-6737): no WebGL 2 (hardware acceleration off), a
+  // constructor that throws, a style that does not load, or a graphics context the browser takes
+  // back and does not return within CONTEXT_BACK_MS. `fail` gets only the kind, never the error's text.
+  var CONTEXT_BACK_MS = 5000;
+  function webgl2(doc) {
+    try { return !!doc.createElement("canvas").getContext("webgl2"); } catch (e) { return false; }
+  }
+  function mapStart(maplibre, options, fail) {
+    var map;
+    try { map = new maplibre.Map(options); } catch (e) { fail("start"); return null; }
+    var loaded = false, done = false, lost = null;
+    var stop = function (kind) {
+      if (done) return;
+      done = true;
+      clearTimeout(lost);
+      try { map.remove(); } catch (e) { /* a map that never started has little to remove */ }
+      fail(kind);
+    };
+    map.once("load", function () { loaded = true; });
+    // A tile of one source is a gap in the map; a failure without a source before the first view
+    // (the style, the sprite, the glyphs) leaves nothing drawn.
+    map.on("error", function (e) {
+      if (done) return;
+      if (e && e.sourceId) fail("tiles");
+      else if (!loaded) stop("start");
+    });
+    map.on("webglcontextlost", function () { clearTimeout(lost); lost = setTimeout(function () { stop("lost"); }, CONTEXT_BACK_MS); });
+    map.on("webglcontextrestored", function () { clearTimeout(lost); });
+    return map;
+  }
   var SLUG = /^[a-z0-9]{16,64}$/;
   var NAME = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
   var DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?$/;
@@ -51,7 +81,11 @@
       timeout: "The data took longer than 15 seconds. Narrow the search or try again.", noAddress: "This page shows the live data of an open-data Endpoint; the address names none.",
       noWidget: "The table could not start. Reload the page; if it stays, the catalogue's administrators can see why in the browser console.",
       mapHint: "Click a point to open its details. The table lists the same entities.", mapCap: "The map shows the first {n} of {total} in view; zoom in for the rest.",
-      mapNone: "No entity of this query has a location.", mapLoading: "Loading map…", mapTwoFingers: "Use two fingers to move the map", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
+      mapNone: "No entity of this query has a location.", mapLoading: "Loading map…",
+      mapOff: { webgl: "This browser cannot draw the map: it needs WebGL 2, which is switched off or not supported here (often by a setting such as hardware acceleration). The table above lists the same rows.",
+        start: "The map could not load. The table above lists the same rows.",
+        lost: "The map stopped drawing because the browser took back its graphics memory. The table above lists the same rows." },
+      mapRetry: "Try the map again", mapTiles: "Part of the map could not be loaded. The table above lists every row.", mapTwoFingers: "Use two fingers to move the map", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
       viewLink: "This view (type, filter and order)", yes: "yes", no: "no",
       cardYes: "Yes", cardNo: "No", dev: "For developers", onMap: "Show on the map", idLabel: "Identifier", typeLabel: "Type", placeMap: "Location map",
       embed: "Embed", embedLead: "Put this live table on your own website. It keeps reading the current data; nothing is copied.",
@@ -76,7 +110,11 @@
       timeout: "Dáta sa načítavali dlhšie ako 15 sekúnd. Zúžte hľadanie alebo to skúste znova.", noAddress: "Táto stránka ukazuje živé dáta Endpointu otvorených dát; adresa žiadny neuvádza.",
       noWidget: "Tabuľka sa nespustila. Načítajte stránku znova; ak to pretrváva, správcovia katalógu vidia príčinu v konzole prehliadača.",
       mapHint: "Kliknite na bod a otvorí sa jeho detail. Tabuľka uvádza tie isté entity.", mapCap: "Mapa ukazuje prvých {n} z {total} vo výreze; priblížte pre ďalšie.",
-      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapLoading: "Načítavam mapu…", mapTwoFingers: "Mapu posuniete dvoma prstami", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
+      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapLoading: "Načítavam mapu…",
+      mapOff: { webgl: "Tento prehliadač nevie nakresliť mapu: potrebuje WebGL 2, ktoré je tu vypnuté alebo nepodporované (často nastavením ako hardvérová akcelerácia). Tabuľka vyššie uvádza tie isté riadky.",
+        start: "Mapu sa nepodarilo načítať. Tabuľka vyššie uvádza tie isté riadky.",
+        lost: "Mapa prestala kresliť, lebo prehliadač si vzal späť grafickú pamäť. Tabuľka vyššie uvádza tie isté riadky." },
+      mapRetry: "Skúsiť mapu znova", mapTiles: "Časť mapy sa nepodarilo načítať. Tabuľka vyššie uvádza všetky riadky.", mapTwoFingers: "Mapu posuniete dvoma prstami", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
       viewLink: "Toto zobrazenie (typ, filter a poradie)", yes: "áno", no: "nie",
       cardYes: "Áno", cardNo: "Nie", dev: "Pre vývojárov", onMap: "Zobraziť na mape", idLabel: "Identifikátor", typeLabel: "Typ", placeMap: "Mapa miesta",
       embed: "Vložiť na web", embedLead: "Dajte túto živú tabuľku na svoj web. Stále číta aktuálne dáta; nič sa nekopíruje.",
@@ -658,7 +696,7 @@
       if (geo) { at = geo.coordinates; while (Array.isArray(at[0])) at = at[0]; }
       var ok = !!at && typeof at[0] === "number" && typeof at[1] === "number" && Math.abs(at[0]) <= 180 && Math.abs(at[1]) <= 90;
       box.hidden = !ok;
-      go.hidden = !ok || $("map-section").hidden || !state.mapLoading;
+      go.hidden = !ok || $("map-section").hidden || !state.mapLoading || !!state.mapFailed;
       go.onclick = ok ? function () {
         $("detail").close();
         $("map-section").scrollIntoView({ block: "center" });
@@ -667,9 +705,12 @@
         else state.mapAt = [at[0], at[1]];
       } : null;
       if (!ok) return;
+      if (!webgl2(document)) { box.hidden = true; return; }
       maplibreReady().then(function (maplibre) {
         if (box.hidden || !$("detail").open) return;
-        var m = new maplibre.Map({ container: box, style: styleOf(H.tiles, lang), center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false });
+        var m = mapStart(maplibre, { container: box, style: styleOf(H.tiles, lang), center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false },
+          function (kind) { if (kind !== "tiles") { box.hidden = true; state.cardMap = null; } });
+        if (!m) return;
         m.addControl(new maplibre.AttributionControl({ compact: true }));
         new maplibre.Marker({ color: COLOUR }).setLngLat([at[0], at[1]]).addTo(m);
         state.cardMap = m;
@@ -795,7 +836,27 @@
       seen.observe($("map"));
     }
 
+    // The failed map (mapStart): its box says why and offers a retry where one can help; the points
+    // line, Map settings, legend and counts hide with it (explore.css, .map-off).
+    function mapTrouble(kind) {
+      if (kind === "tiles") { if (state.drawn) $("map-note").textContent = t.mapTiles; return; }
+      if (state.map && root.jcExploreMap === state.map) root.jcExploreMap = null;
+      state.map = null;
+      state.mapFailed = kind;
+      state.mapAsk++;
+      loading(false);
+      if (state.popup) state.popup.remove();
+      $("map-section").classList.add("map-off");
+      $("map-off-text").textContent = t.mapOff[kind] || t.mapOff.start;
+      $("map-retry").hidden = kind === "webgl";
+      $("map-off").hidden = false;
+      // A retry that failed again keeps the reader's focus on the retry.
+      if (state.retried && !$("map-retry").hidden) $("map-retry").focus();
+      height();
+    }
+
     function loadMap() {
+      if (!webgl2(document)) return mapTrouble("webgl");
       // The query's rows load beside MapLibre, not after its style.
       var first = firstRead();
       maplibreReady().then(function (maplibre) {
@@ -812,8 +873,9 @@
         // On a touch screen one finger scrolls the page past the map and two move it: a phone map
         // fills most of a short screen.
         var touch = !!(root.matchMedia && root.matchMedia("(pointer: coarse)").matches);
-        var map = new maplibre.Map({ container: "map", style: styleOf(H.tiles, lang), attributionControl: false, center: [17.1, 48.15], zoom: 4,
-          cooperativeGestures: touch, locale: { "CooperativeGesturesHandler.MobileHelpText": t.mapTwoFingers } });
+        var map = mapStart(maplibre, { container: "map", style: styleOf(H.tiles, lang), attributionControl: false, center: [17.1, 48.15], zoom: 4,
+          cooperativeGestures: touch, locale: { "CooperativeGesturesHandler.MobileHelpText": t.mapTwoFingers } }, mapTrouble);
+        if (!map) return;
         state.map = map;
         root.jcExploreMap = map; // for the browser journey
         state.maplibre = maplibre;
@@ -871,7 +933,7 @@
             state.mapAt = null;
           });
         });
-      }, function () { loading(false); $("map-note").textContent = failure(null); });
+      }, function () { mapTrouble("start"); });
     }
 
     // The query's rows for the map, up to MAP_LIMIT, wherever they are: the first view fits them all.
@@ -939,6 +1001,7 @@
       var known = state.tilesets[type] || (state.tilesets[type] = get(at).then(function (a) { return templateOf(a.body, at); }, function () { return null; }));
       return known.then(function (template) {
         var map = state.map;
+        if (!map) return false;
         if (!template || state.type !== type || state.q || geoOf() !== "location" || state.tiled === type) return !!template && state.tiled === type;
         untile();
         var is = function (types) { return ["in", ["geometry-type"], ["literal", types]]; };
@@ -1130,6 +1193,16 @@
       $("map-panel-open").setAttribute("aria-expanded", String(open));
       height();
     });
+    $("map-retry").addEventListener("click", function () {
+      state.mapFailed = null;
+      state.drawn = null;
+      $("map-off").hidden = true;
+      $("map-section").classList.remove("map-off");
+      state.retried = true;
+      loading(true);
+      $("map").focus();
+      loadMap();
+    });
     $("map-reset").addEventListener("click", function () {
       state.mapRaw = {};
       $("map-fallback").hidden = true;
@@ -1302,7 +1375,7 @@
     height();
   }
 
-  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, stacks: stacks, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, TEXT: TEXT };
+  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, stacks: stacks, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, mapStart: mapStart, TEXT: TEXT };
   if (typeof module === "object" && module.exports) module.exports = root.jcExplore;
   else if (typeof document !== "undefined") main();
 })(typeof self !== "undefined" ? self : this);
