@@ -920,6 +920,28 @@ fn g1_dataset_page_follows_the_addresses_named_one_by_one() {
         "the height messages come from the viz origin"
     );
     assert!(html.contains("http://localhost:42241/api/mcp"));
+    // The assistant setup is a native disclosure, closed until opened; its summary names it (T-6745).
+    let mcp = html
+        .split("<details class=\"jc-live jc-mcp\">")
+        .nth(1)
+        .expect("the assistant section is a closed <details>");
+    let summary = mcp.split("</summary>").next().expect("summary end");
+    assert!(summary.trim_start().starts_with("<summary>"), "{summary}");
+    assert!(
+        summary.contains(&format!(
+            "<h2 id=\"jc-mcp-title\">{}</h2>",
+            esc_t("mcp", "sk")
+        )),
+        "{summary}"
+    );
+    assert!(
+        summary.contains(&esc_t("mcp_lead", "sk")),
+        "the lead line in the summary"
+    );
+    assert!(
+        mcp.contains("data-jc-copy=\"jc-mcp-url\""),
+        "the copy buttons inside"
+    );
     // Snippets carry no credential.
     for secret in ["token", "Bearer", "apikey", "Authorization"] {
         let curl = html

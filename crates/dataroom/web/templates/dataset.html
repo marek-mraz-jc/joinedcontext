@@ -268,9 +268,13 @@
               {% endif %}
 
               {% if let Some(m) = mcp %}
-              <section class="jc-live jc-mcp" aria-labelledby="jc-mcp-title">
-                <h2 id="jc-mcp-title">{{ labels.mcp }}</h2>
-                <p>{{ labels.mcp_lead }}</p>
+              {# closed by default (owner 2026-11-11, T-6745): the setup steps are for the few who connect an assistant #}
+              <details class="jc-live jc-mcp">
+                <summary>
+                  {% include "jc/icons/chevron-right.svg" %}
+                  <h2 id="jc-mcp-title">{{ labels.mcp }}</h2>
+                  <p class="jc-mcp-lead">{{ labels.mcp_lead }}</p>
+                </summary>
                 <div class="jc-mcp-body">
                   <div>
                     <h3 class="jc-mcp-client">{{ labels.mcp_claude_ai }}</h3>
@@ -301,7 +305,7 @@
                     </div>
                   </div>
                 </div>
-              </section>
+              </details>
               {% endif %}
 
               <section id="dataset-resources" class="resources jc-resources sdk-datagrid" data-grid-config="{{ distributions_grid_config }}" aria-labelledby="jc-resources-title">

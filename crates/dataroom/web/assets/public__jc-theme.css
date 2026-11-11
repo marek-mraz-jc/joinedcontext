@@ -337,6 +337,19 @@ the code keeps the column's whole width; code never wraps inside a word, and the
 only where the template put a <wbr> (before a slash). */
 .jc-mcp { --jc-code-pad: .875rem; }
 .jc-main > .jc-mcp { margin-top: 2.5rem; }
+/* The assistant setup folds into its summary row: heading, lead line and an arrow like the tables'. */
+.jc-mcp > summary { position: relative; cursor: pointer; list-style: none; padding-inline-start: 2rem; }
+.jc-mcp > summary::-webkit-details-marker { display: none; }
+.jc-mcp > summary:focus-visible { outline-offset: .375rem; }
+.jc-mcp > summary > .jc-icon { position: absolute; inset-inline-start: 0; top: .2rem; width: 1.375rem; height: 1.375rem; color: var(--jc-primary); transition: transform .15s; }
+.jc-mcp[open] > summary > .jc-icon { transform: rotate(90deg); }
+.jc-mcp > summary h2 { margin: 0; }
+.jc-mcp > summary .jc-mcp-lead { margin: .25rem 0 0; }
+.jc-mcp[open] > summary { margin-bottom: .75rem; }
+/* Closed on a phone, the lead stops at three lines; opening shows it whole. */
+@media (max-width: 575.98px) {
+  .jc-mcp:not([open]) > summary .jc-mcp-lead { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+}
 /* A code line that does not wrap must scroll inside its block, never widen the page. */
 .jc-main, .jc-mcp-body > div { min-width: 0; }
 /* Claude's steps beside the editors and the code where the card is wide enough, stacked below. */
