@@ -102,6 +102,7 @@ mod reg_narrowing_5_12;
 mod registration_counters_5_2_9;
 mod registration_expiry_5_9;
 mod registration_listing_5_10_2;
+mod remint_pg;
 mod response_compression_t5847;
 mod response_key_order;
 mod scope_merge_null_5_5_12;
