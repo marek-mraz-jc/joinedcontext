@@ -51,6 +51,9 @@ pub type Tables = (
 pub struct Provenance {
     /// The Organization each Project names in `spec.organizationRef`, by Project.
     pub organizations: BTreeMap<String, String>,
+    /// The domain each Organization declares, by Organization: the owner segment of its spaces'
+    /// URNs is its id (ADR-N-068).
+    pub domains: BTreeMap<String, String>,
     /// The slugs of the Endpoints with `spec.audit: changes` (DM-136), every preview's included
     /// (CC-93).
     pub audited: BTreeSet<String>,
@@ -78,6 +81,11 @@ pub fn provenance_of(repo: &Repository) -> Provenance {
                 if let Some(spec) = spec_of::<ProjectSpec>(&resource.manifest) {
                     out.organizations
                         .insert(id.name.clone(), spec.organization_ref.name().to_owned());
+                }
+            }
+            "Organization" => {
+                if let Some(spec) = spec_of::<OrganizationSpec>(&resource.manifest) {
+                    out.domains.insert(id.name.clone(), spec.domain);
                 }
             }
             "Endpoint" => {

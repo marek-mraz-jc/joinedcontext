@@ -60,12 +60,13 @@ fn without_an_id_option_the_file_is_the_authors() {
 }
 
 #[test]
+/// T-6769 (ADR-N-068): the owner segment is the Organization's id, `JC_ORG_ID`.
 fn prefixed_mints_the_platform_shape_from_a_field() {
     let yaml =
         rendered(&pipeline(", id: { mint: prefixed, from: station.code }")).expect("renders");
     assert_eq!(
         last_mapping(&yaml),
-        "root = this\nroot.id = \"urn:ngsi-ld:WeatherObserved:%s:%s:%s\".format(env(\"JC_ORG_DOMAIN\"), env(\"JC_SPACE\"), this.station.code.string().re_replace_all(\"[^A-Za-z0-9._~-]\", \"-\"))\n"
+        "root = this\nroot.id = \"urn:ngsi-ld:WeatherObserved:%s:%s:%s\".format(env(\"JC_ORG_ID\"), env(\"JC_SPACE\"), this.station.code.string().re_replace_all(\"[^A-Za-z0-9._~-]\", \"-\"))\n"
     );
 }
 
@@ -74,7 +75,7 @@ fn keep_uses_the_sources_id_and_makes_a_urn_of_it_only_when_it_is_none() {
     let yaml = rendered(&pipeline(", id: { mint: keep, from: id }")).expect("renders");
     assert_eq!(
         last_mapping(&yaml),
-        "root = this\nroot.id = if this.id.string().has_prefix(\"urn:ngsi-ld:\") { this.id.string() } else { \"urn:ngsi-ld:WeatherObserved:\" + this.id.string() }\n"
+        "root = this\nroot.id = if this.id.string().has_prefix(\"urn:ngsi-ld:\") { this.id.string() } else { \"urn:ngsi-ld:WeatherObserved:\" + env(\"JC_ORG_ID\") + \":\" + this.id.string() }\n"
     );
 }
 

@@ -137,11 +137,12 @@ export function kpiBloblang(params: {
 
   return [
     `let domain = env("JC_ORG_DOMAIN")`,
+    `let owner = env("JC_ORG_ID")`,
     filterLine.trimEnd(),
     // Whole seconds: the broker refuses an observedAt with a nanosecond fraction, and a 15-minute
     // indicator does not need one (Architecture/08).
     `let now = now().ts_format("2006-01-02T15:04:05Z")`,
-    `root.id = "urn:ngsi-ld:KeyPerformanceIndicator:%v:${project}-kpi:${kpiName}".format($domain)`,
+    `root.id = "urn:ngsi-ld:KeyPerformanceIndicator:%v:${project}-kpi:${kpiName}".format($owner)`,
     `root.type = "KeyPerformanceIndicator"`,
     `root.name = { "type": "Property", "value": ${JSON.stringify(kpiName)} }`,
     `root.calculationFormula = { "type": "Property", "value": ${JSON.stringify(formula)} }`,
@@ -210,10 +211,10 @@ export function aggregateBloblang(
   const property = `${attribute}${aggregate[0].toUpperCase()}${aggregate.slice(1)}`;
   return [
     `# ${aggregate} of ${JSON.stringify(attribute)} over the ${JSON.stringify(type)} entities the fetch returned (PL-41, PL-36)`,
-    `let domain = env("JC_ORG_DOMAIN")`,
+    `let owner = env("JC_ORG_ID")`,
     `let seen = now().ts_format("2006-01-02T15:04:05Z")`,
     `root = [{`,
-    `  "id": "urn:ngsi-ld:%v:%v:%v:%v".format(${JSON.stringify(outputType)}, $domain, ${JSON.stringify(space)}, ${JSON.stringify(`${attribute}-${aggregate}`)}),`,
+    `  "id": "urn:ngsi-ld:%v:%v:%v:%v".format(${JSON.stringify(outputType)}, $owner, ${JSON.stringify(space)}, ${JSON.stringify(`${attribute}-${aggregate}`)}),`,
     `  "type": ${JSON.stringify(outputType)},`,
     `  ${JSON.stringify(property)}: { "type": "Property", "value": ${value}, "observedAt": $seen },`,
     `  "derivedFrom": { "type": "Property", "value": this.map_each(e -> e.id) }`,

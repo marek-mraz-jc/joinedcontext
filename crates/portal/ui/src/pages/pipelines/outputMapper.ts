@@ -145,12 +145,12 @@ function valueOf(source: Source, attribute: Attribute): string {
 export function generate(state: MapperState, attributes: Attribute[], space: string): string {
   const lines = [
     `${HEADER}${JSON.stringify(state)}`,
-    `let domain = env("JC_ORG_DOMAIN")`,
+    `let owner = env("JC_ORG_ID")`,
     "root = {}",
   ];
   if (state.idField) {
     lines.push(
-      `root.id = "urn:ngsi-ld:%v:%v:%v:%v".format(${JSON.stringify(state.type)}, $domain, ${JSON.stringify(space)}, ${fieldPath(state.idField)}.string().re_replace_all("[^A-Za-z0-9._~-]", "-"))`,
+      `root.id = "urn:ngsi-ld:%v:%v:%v:%v".format(${JSON.stringify(state.type)}, $owner, ${JSON.stringify(space)}, ${fieldPath(state.idField)}.string().re_replace_all("[^A-Za-z0-9._~-]", "-"))`,
     );
   }
   lines.push(`root.type = ${JSON.stringify(state.type)}`);

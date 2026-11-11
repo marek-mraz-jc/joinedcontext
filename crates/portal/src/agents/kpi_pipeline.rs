@@ -566,6 +566,8 @@ pub fn bloblang(m: &Mapping) -> String {
     };
     let mut lines = vec![
         "let domain = env(\"JC_ORG_DOMAIN\")".to_owned(),
+        // The owner segment of the indicator's id, the Organization's id (ADR-N-068).
+        "let owner = env(\"JC_ORG_ID\")".to_owned(),
         // The space the indicator is written into, rendered per stream (PL-57).
         "let space = env(\"JC_SPACE\")".to_owned(),
         "let rows = if this.type() == \"array\" { this } else { [this] }".to_owned(),
@@ -576,7 +578,7 @@ pub fn bloblang(m: &Mapping) -> String {
     lines.extend([
         "let now = now().ts_format(\"2006-01-02T15:04:05Z\")".to_owned(),
         format!(
-            "root.id = \"urn:ngsi-ld:KeyPerformanceIndicator:%v:%v:{}\".format($domain, $space)",
+            "root.id = \"urn:ngsi-ld:KeyPerformanceIndicator:%v:%v:{}\".format($owner, $space)",
             m.name
         ),
         "root.type = \"KeyPerformanceIndicator\"".to_owned(),
@@ -760,7 +762,7 @@ mod tests {
             "{mapping}"
         );
         assert!(mapping.contains(
-            "KeyPerformanceIndicator:%v:%v:bikes-available-avg\".format($domain, $space)"
+            "KeyPerformanceIndicator:%v:%v:bikes-available-avg\".format($owner, $space)"
         ));
         assert!(mapping.contains("ts_sub_iso8601(\"PT15M\")"));
         assert!(mapping.contains("urn:ngsi-ld:Endpoint:%v:helsinki:helsinki-all"));
@@ -825,7 +827,7 @@ mod tests {
         );
         let mapping = spec["compute"]["bloblang"].as_str().expect("mapping");
         assert!(
-            mapping.contains("KeyPerformanceIndicator:%v:%v:free-bikes\".format($domain, $space)")
+            mapping.contains("KeyPerformanceIndicator:%v:%v:free-bikes\".format($owner, $space)")
         );
         assert!(mapping.contains("\"start\": $now, \"end\": $now"));
         assert!(mapping.contains("$values.sum() }"));

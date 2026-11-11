@@ -130,6 +130,11 @@ pub struct Config {
     /// `report` or `enforce` (`JC_GATEWAY_DOMAIN_VERIFICATION`, default `report`): whether a
     /// write waits for the Organization's verified domain (PF-41, Architecture/03 §3).
     pub domain_verification: crate::domain_gate::Mode,
+    /// Whether a create or upsert must name the space's owning Organization in its URN,
+    /// `urn:ngsi-ld:{Type}:{orgId}:...` (`JC_GATEWAY_URN_OWNER_PREFIX`, `enforce` by default or
+    /// `off`, ADR-N-068). `off` holds only while the repository has at most one Organization: with
+    /// several the check runs whatever this says.
+    pub urn_owner_prefix: bool,
     /// The Portal's list of domain states (`JC_GATEWAY_DOMAIN_VERIFICATIONS_URL`, its internal
     /// listener's `/internal/domain-verifications`); required under `enforce`.
     pub domain_verifications_url: Option<String>,
@@ -271,6 +276,11 @@ impl Config {
                     name: "JC_GATEWAY_DOMAIN_VERIFICATION",
                     reason,
                 })?;
+        let urn_owner_prefix = urn_owner_prefix(var("JC_GATEWAY_URN_OWNER_PREFIX").ok().as_deref())
+            .map_err(|reason| ConfigError::Invalid {
+                name: "JC_GATEWAY_URN_OWNER_PREFIX",
+                reason,
+            })?;
         let domain_verifications_url = var("JC_GATEWAY_DOMAIN_VERIFICATIONS_URL")
             .ok()
             .filter(|url| !url.trim().is_empty());
@@ -357,6 +367,7 @@ impl Config {
             loadtest_in_flight,
             public_max_age,
             domain_verification,
+            urn_owner_prefix,
             domain_verifications_url,
             bind,
             internal_bind,
@@ -442,6 +453,17 @@ impl Config {
 pub const PUBLIC_MAX_AGE_LIMIT: u32 = 60;
 
 /// `JC_GATEWAY_PUBLIC_MAX_AGE` as whole seconds from 0 to [`PUBLIC_MAX_AGE_LIMIT`]; 0 when unset.
+/// `JC_GATEWAY_URN_OWNER_PREFIX`: unset, empty or `enforce` checks the owner segment; `off` does
+/// not on a deployment of one Organization. Any other word is an error, so a typo never runs as
+/// the weaker setting.
+fn urn_owner_prefix(value: Option<&str>) -> Result<bool, String> {
+    match value.map(str::trim) {
+        None | Some("") | Some("enforce") => Ok(true),
+        Some("off") => Ok(false),
+        Some(other) => Err(format!("`{other}` is neither `enforce` nor `off`")),
+    }
+}
+
 fn public_max_age(read: Result<String, std::env::VarError>) -> Result<u32, ConfigError> {
     match read {
         Ok(value) if !value.trim().is_empty() => match value.trim().parse::<u32>() {
@@ -614,6 +636,7 @@ mod tests {
             egress_private_hosts: Vec::new(),
             personal_keys: None,
             domain_verification: crate::domain_gate::Mode::Report,
+            urn_owner_prefix: true,
             domain_verifications_url: None,
             write_budget_mib: crate::app::WRITE_BUDGET_MIB,
             max_in_flight: crate::middleware::in_flight::MAX_IN_FLIGHT,
@@ -629,6 +652,16 @@ mod tests {
     /// `tracing::debug!(?config)` while chasing a startup problem would reach, and it holds the
     /// realm client secret. The property is the absence of the value, not the presence of the word
     /// "redacted": this test fails on a derived `Debug` over a plain `String`.
+    /// T-6769: the owner check is on unless the operator writes `off`; a typo is no setting.
+    #[test]
+    fn the_urn_owner_prefix_is_enforced_unless_switched_off() {
+        for on in [None, Some(""), Some("enforce"), Some(" enforce ")] {
+            assert_eq!(urn_owner_prefix(on), Ok(true), "{on:?}");
+        }
+        assert_eq!(urn_owner_prefix(Some("off")), Ok(false));
+        assert!(urn_owner_prefix(Some("of")).is_err());
+    }
+
     #[test]
     fn debugging_the_configuration_prints_the_client_id_and_never_the_secret() {
         let config = config_with_a_client_secret();
