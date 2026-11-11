@@ -708,6 +708,21 @@ fn d3_dataset_page_shows_every_block_for_a_platform_dataset() {
     }
     // The explorer draws the map: no second map card asks the same reads (as on CKAN).
     assert!(!html.contains("id=\"jc-map-embed\""));
+    // Subscribe sits in the dataset's own title row and shows each feed's https address to copy;
+    // webcal is the secondary link (a browser without a calendar app does nothing with it).
+    let head = &html[html.find("class=\"jc-dataset-head\"").expect("title row")..];
+    let head = &head[..head.find("jc-explorer").unwrap_or(head.len())];
+    assert!(head.contains("<h1>") && head.contains("class=\"jc-subscribe\""));
+    assert!(head.contains(
+        "<textarea id=\"jc-subscribe-cal-1\" class=\"form-control\" rows=\"2\" readonly spellcheck=\"false\">https://x.example/c.ics</textarea>"
+    ));
+    assert!(head.contains("data-jc-copy=\"jc-subscribe-cal-1\""));
+    assert!(head.contains("data-jc-copy=\"jc-subscribe-news-1\""));
+    assert!(head.contains(&format!(
+        "<a href=\"webcal://x.example/c.ics\">{}</a>",
+        esc_t("subscribe_open_app", "en")
+    )));
+    assert_eq!(html.matches("id=\"jc-copy-status\"").count(), 1);
     assert!(
         html.contains("<meta name=\"robots\" content=\"noindex, nofollow\">"),
         "B4 noindex"
@@ -1391,6 +1406,30 @@ fn installation_branding_and_mount_prefix_reach_the_chrome() {
         .lang_options
         .iter()
         .any(|o| o.selected && o.code == "cs" && o.url == "/data/cs/x?q=1"));
+}
+
+#[test]
+fn the_footer_language_switch_hides_its_go_with_script_and_the_corner_stands_before_the_footer() {
+    let html = render_home_page(&cat(), &[], &[], "", "en", NONCE);
+    let corner = html.find("<div class=\"jc-corner\">").expect("the corner");
+    let footer = html
+        .find("<footer class=\"site-footer\">")
+        .expect("the footer");
+    // Sticky in the page's flow before the footer, so it stops above the footer's links.
+    assert!(corner < footer, "the corner comes before the footer");
+    let footer = &html[footer..];
+    assert!(!footer.contains("jc-corner"));
+    // jc-forms.js sends the form on change; `.js .js-hide` hides Go only with script on
+    // (`.d-none` hid it without script too, and lost to `.btn` with it).
+    assert!(footer.contains("<button class=\"btn btn-default js-hide\" type=\"submit\">"));
+    assert!(footer.contains("/util/redirect\" method=\"POST\""));
+    assert!(!footer.contains("d-none"));
+    // One language offered: no switch to show.
+    let mut one = cat();
+    one.languages = vec!["en".into()];
+    let html = render_home_page(&one, &[], &[], "", "en", NONCE);
+    assert!(html.contains("<footer class=\"site-footer\">"));
+    assert!(!html.contains("lang-select"), "no switch with one language");
 }
 
 #[test]

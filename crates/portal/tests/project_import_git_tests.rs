@@ -35,7 +35,9 @@ const SPACE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\
                      name: ovzdusie\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n";
 const APP: &str =
     "apiVersion: joinedcontext.com/v1alpha1\nkind: App\nmetadata:\n  name: air-map\n  \
-                   namespace: ovzdusie\nspec:\n  source:\n    git:\n      url: \
+                   namespace: ovzdusie\nspec:\n  kind: ui\n  build: {}\n  dataNeeds:\n  - contextSpaceRef: ovzdusie\n    \
+                   types: [AirQualityObserved]\n    operations: [queryEntity]\n  \
+                   source:\n    git:\n      url: \
                    https://old.example/bb/ovzdusie_air-map.git\n      ref: main\n";
 
 fn bundle(head: &str) -> Vec<u8> {
@@ -180,7 +182,6 @@ async fn new_repository(server: &MockServer, base: &str, head: &str, files: &[(&
         .and(path(format!(
             "{base}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
         )))
-        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "Sha": format!("tree-{head}"),
             "Truncated": false,
@@ -553,6 +554,65 @@ async fn a_head_that_is_not_the_bundles_removes_what_was_created() {
     assert_eq!(sent(&server, "DELETE", NEW_APP).await.len(), 1);
 }
 
+/// CHG-05, MF-24: a manifest at the pushed head that fails its kind's validation, or carries a
+/// literal secret, refuses the import with each reason named by its file; `main` is never
+/// protected and every repository created goes again.
+#[tokio::test]
+async fn a_head_with_a_refused_manifest_removes_what_was_created() {
+    const BAD_SPACE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\n\
+                             metadata:\n  name: hluk\n  namespace: ovzdusie\nspec:\n  \
+                             isSandbox: perhaps\n";
+    const SECRET: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\n\
+                          metadata:\n  name: heslo\n  namespace: ovzdusie\nspec:\n  \
+                          password: hunter2\n";
+    let (server, state) = world_with(&[
+        ("spaces/hluk/space.yaml", BAD_SPACE),
+        ("spaces/heslo/space.yaml", SECRET),
+    ])
+    .await;
+    let answer = checked_import(&state, &archive(PROJECT, |_| {}), &[]).await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
+    let errors: Value = serde_json::from_str(&answer.text).expect("problem");
+    let named: Vec<(String, String)> = errors["errors"]
+        .as_array()
+        .expect("errors")
+        .iter()
+        .map(|e| {
+            (
+                e["path"].as_str().unwrap_or_default().to_owned(),
+                e["message"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    for (file, reason) in [
+        ("spaces/hluk/space.yaml", "spec is not a valid ContextSpace"),
+        (
+            "spaces/heslo/space.yaml",
+            "literal secret in field 'password'",
+        ),
+    ] {
+        assert!(
+            named.iter().any(|(p, m)| p == file && m.contains(reason)),
+            "{file}: {}",
+            answer.text
+        );
+    }
+    assert!(
+        named.iter().all(|(p, _)| p.starts_with("spaces/h")),
+        "only the two refused files: {}",
+        answer.text
+    );
+    assert!(!answer.text.contains("hunter2"), "{}", answer.text);
+    assert!(sent(&server, "POST", &format!("{NEW}/Shako.Protect"))
+        .await
+        .is_empty());
+    assert_eq!(sent(&server, "DELETE", NEW).await.len(), 1);
+    assert_eq!(
+        sent(&server, "POST", "/odata/CreateRepository").await.len(),
+        sent(&server, "DELETE", NEW).await.len() + sent(&server, "DELETE", NEW_APP).await.len()
+    );
+}
+
 /// MF-45: an organization of layout 1 has no project repositories to land in.
 #[tokio::test]
 async fn layout_one_answers_with_the_zip_import() {
@@ -678,7 +738,9 @@ const ORG_SOURCE: &str = "id: https://bb.sk/stations\nname: stations\nclasses:\n
 const PARKING: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  \
                        name: parking\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: \
                        ovzdusie\n  linkml: ./parking.linkml.yaml\n  version: 1.0.0\n  \
-                       lifecycle: published\n  classes: [ParkingSpot]\n";
+                       lifecycle: published\n  classes: [ParkingSpot]\n  artifacts:\n    \
+                       jsonSchema: ./parking.schema.json\n    context: ./parking.context.jsonld\n    \
+                       docs: ./parking.md\n    example: ./parking.example.json\n";
 const PARKING_SOURCE: &str =
     "id: https://bb.sk/parking\nname: parking\nimports: [linkml:types, org.stations.v1]\n";
 

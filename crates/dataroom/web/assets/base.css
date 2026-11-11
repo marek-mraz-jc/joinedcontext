@@ -19,7 +19,10 @@ img, svg { vertical-align: middle; }
 .list-inline-item { display: inline-block; }
 .list-inline-item:not(:last-child) { margin-right: .5rem; }
 .d-flex { display: flex; }
-.d-none, .js .js-hide { display: none; }
+/* Bootstrap's own .d-none wins over every display rule (.btn comes later at equal weight); the
+   script-on hide stays plain so a no-JS page still shows what it hides. */
+.d-none { display: none !important; }
+.js .js-hide { display: none; }
 .justify-content-center { justify-content: center; }
 .ms-auto { margin-left: auto; }
 .me-2 { margin-right: .5rem; }
