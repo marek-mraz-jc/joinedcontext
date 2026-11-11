@@ -125,7 +125,8 @@ describe("the approvals queue", () => {
     await renderRoute({ path: PATH, pending: true });
     const table = await screen.findByRole("table");
     expect(table).toHaveAttribute("aria-busy", "true");
-    expect(within(table).getByRole("columnheader", { name: en.approvals.summary })).toBeInTheDocument();
+    // A shared-grid header holds its column menu button too (T-6739): the name starts with the label.
+    expect(within(table).getByRole("columnheader", { name: new RegExp(`^${en.approvals.summary}`) })).toBeInTheDocument();
   });
 
   it("survives_0_1_and_500_rows", async () => {
@@ -135,9 +136,11 @@ describe("the approvals queue", () => {
       );
       const { unmount } = await renderRoute({ path: PATH, answer: answering(items) });
       const table = await screen.findByRole("table");
+      // The shared grid (T-6739) draws one page of 25 and counts the whole list in its pager.
       await waitFor(() =>
-        expect(within(table).getAllByRole("row").length).toBe(count === 0 ? 2 : count + 1),
+        expect(within(table).getAllByRole("row").length).toBe(count === 0 ? 2 : Math.min(count, 25) + 1),
       );
+      if (count > 0) expect(screen.getByText(i18n.t("dataGrid.rowCount", { n: String(count) }))).toBeInTheDocument();
       unmount();
       vi.restoreAllMocks();
     }

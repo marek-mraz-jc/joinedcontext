@@ -12415,5 +12415,11 @@
   "hiddenSection": {
     "title": "Dashboardy nejsou součástí této instalace",
     "body": "Otevřená adresa patří dashboardům, které tento Portál nenabízí, proto jste v kontextových prostorech projektu."
+  },
+  "dataGrid": {
+    "searchRows": "Hledat v seznamu",
+    "searchRowsHint": "Napište část libovolné hodnoty, např. název nebo prostor.",
+    "noMatch": "Hledání ani filtrům neodpovídá žádný řádek.",
+    "rowCount": "Řádků: {n}"
   }
 }

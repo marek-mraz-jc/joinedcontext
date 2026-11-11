@@ -41,6 +41,8 @@ map() {
     /^crates\/antares\// { on["antares"] = "true" }
     /^crates\/ekiben\// { on["ekiben"] = "true" }
     /^crates\/portal\/(ui|sdk)\// { on["ui"] = "true" }
+    # The committed explorer bundle is checked against the build of the UI in the ui job (T-6739).
+    /^vendor\/viz\/explorer\// { on["ui"] = "true" }
     /^crates\/portal\/ui\// { next }
     /^crates\/portal\// || /^vendor\// { on["portal"] = "true" }
     # jc links every module, the nested workspaces included, so any other build input reaches it
@@ -184,6 +186,7 @@ if [ "${1:-}" = --selftest ]; then
   check 'crates/portal/Dockerfile' 'root portal dockerfiles'
   check 'crates/portal/builder/Dockerfile' 'root portal dockerfiles'
   check 'vendor/ngsild/x.rs' 'root portal'
+  check 'vendor/viz/explorer/explorer.js' 'root portal ui'
   check 'vendor/joinedcontext-platform/crates/context-gateway/src/lib.rs' 'root portal platform'
   check 'vendor/joinedcontext-platform/crates/assistant/src/lib.rs' 'root portal'
   check 'bins/jc/Dockerfile' 'root image dockerfiles'

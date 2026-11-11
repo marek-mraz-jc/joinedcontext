@@ -2978,3 +2978,92 @@ a.jc-cell--link:focus-visible {
 .jc-dashboard-bar dt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jc-dashboard-bar dd { display: flex; gap: 0.5rem; align-items: center; margin: 0; font-variant-numeric: tabular-nums; }
 .jc-dashboard-bar dd span { block-size: 0.75rem; min-inline-size: 2px; border-radius: 2px; background: var(--jc-color-primary, #2563eb); }
+
+/* The array grid (DataGrid, T-6739): an admin list in the data grid's look. Its Arrange columns
+   panel opens below the toolbar and may be taller than a short list, so the frame does not clip. */
+.jc-data-grid {
+  overflow: visible;
+}
+
+.jc-data-grid-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--jc-space-2, 8px);
+}
+
+.jc-data-grid-search {
+  display: flex;
+  flex: 1 1 16rem;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 28rem;
+}
+
+.jc-data-grid-search-label {
+  font-weight: 600;
+  font-size: var(--jc-font-size-sm, 12px);
+}
+
+.jc-data-grid-search input {
+  min-height: 36px;
+  padding: 0 var(--jc-space-2, 8px);
+  font: inherit;
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-md, 4px);
+}
+
+/* An admin cell holds a link and a line under it (a policy's sentence, a change's id): it wraps,
+   where an entity cell keeps one line. The row's name is a row header drawn as a cell. */
+.jc-data-grid tbody :is(td, th) {
+  padding: var(--jc-grid-cell-padding);
+  border-bottom: 1px solid var(--jc-color-line, #e0e0e0);
+  font-weight: inherit;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  position: static;
+}
+
+.jc-data-grid-skeleton {
+  display: block;
+  height: 0.9em;
+  border-radius: 4px;
+  background: var(--jc-color-line, #e0e0e0);
+  animation: jc-data-grid-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes jc-data-grid-pulse {
+  50% { opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jc-data-grid-skeleton { animation: none; }
+}
+
+.jc-data-grid-nomatch {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--jc-space-2, 8px);
+}
+
+/* On a phone a stacked list draws each row as a card of label and value lines. */
+@media (width <= 640px) {
+  .jc-data-grid--stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+  .jc-data-grid--stack tbody tr { display: block; padding: var(--jc-space-2, 8px) 0; border-bottom: 1px solid var(--jc-color-line, #e0e0e0); }
+  .jc-data-grid--stack :is(table, tbody) { display: block; }
+  .jc-data-grid--stack .jc-grid-scroll { overflow: visible; background: none; }
+  .jc-data-grid--stack tbody tr { padding-inline: var(--jc-space-3, 12px); }
+  .jc-data-grid--stack tbody :is(td, th) { display: block; border: 0; padding-inline: 0; }
+  .jc-data-grid--stack tbody td:empty { display: none; }
+  .jc-data-grid--stack tbody td:not(.jc-grid-empty)[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: var(--jc-font-size-sm, 12px);
+    color: var(--jc-color-muted, #666);
+  }
+}
