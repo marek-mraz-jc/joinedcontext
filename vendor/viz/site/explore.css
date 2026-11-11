@@ -54,7 +54,7 @@ main:has(#data-api-tool) .page-head .actions { display: none; }
 /* A map that could not start (T-6737): its box holds the reason and, where it can help, a retry;
    what only a drawn map explains (points line, Map settings, legend, counts) goes with it. */
 .map-off #map, .map-off .map-from, .map-off #map-panel-open, .map-off #map-panel, .map-off .map-chips, .map-off #map-fallback, .map-off #map-legend, .map-off #map-count, .map-off #map-note { display: none !important; }
-.map-off-box { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 180px; padding: 24px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); color: var(--fg); text-align: center; }
+.map-off-box { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 120px; padding: 20px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); color: var(--fg); text-align: center; }
 .map-off-box[hidden] { display: none; }
 .map-off-box p { margin: 0; max-width: 60ch; font-size: 0.9375rem; line-height: 1.5; }
 @media (max-width: 600px) { #map { height: 380px; } }

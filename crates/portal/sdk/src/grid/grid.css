@@ -2489,7 +2489,7 @@ a.jc-cell--link:focus-visible {
   align-items: center;
   justify-content: center;
   gap: var(--jc-space-3, 12px);
-  min-height: 12rem;
+  min-height: 8rem;
   padding: var(--jc-space-4, 16px);
   border: 1px solid var(--jc-color-line, #e0e0e0);
   border-radius: var(--jc-radius-md, 6px);

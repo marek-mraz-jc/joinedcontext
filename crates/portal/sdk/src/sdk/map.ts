@@ -10,7 +10,7 @@ export type MapFailure = "webgl" | "start" | "lost";
 /** What the box says per failure; never the library's own text, which can carry a URL or a token. */
 export const MAP_FAILED: Record<MapFailure, string> = {
   webgl:
-    "This browser cannot draw the map: it needs WebGL 2, which is switched off or not supported here (often by a setting such as hardware acceleration). The table lists the same rows.",
+    "This browser cannot draw the map: it needs WebGL 2, which is off or not supported here. Turning on hardware acceleration in the browser's settings usually brings it back. The table lists the same rows.",
   start: "The map could not load. The table lists the same rows.",
   lost: "The map stopped drawing because the browser took back its graphics memory. The table lists the same rows.",
 };
