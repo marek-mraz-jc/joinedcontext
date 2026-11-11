@@ -7,7 +7,7 @@
 #![allow(clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
 use antares_ops::policy::{
-    Decision, DecisionFuture, NotifyDecision, Operation, PolicyEngine, Subject,
+    Decision, DecisionFuture, Filter, NotifyDecision, Operation, PolicyEngine, Rule, Subject,
 };
 use antares_ops::test_kit::{AdminAuth, TestBroker};
 use axum::body::Body;
@@ -432,4 +432,231 @@ async fn a_preview_takes_the_feeds_query_and_counts_what_falls_outside_its_windo
     let (status, answer) = send(&app, "POST", PREVIEW, &unknown, true).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
     assert!(answer.contains("does not hold"), "{answer}");
+}
+
+// ---- brief 132 (END-16): a feed address a person builds from their own q ----
+
+/// What the engine narrows Query Entities to: every row and the view's attributes (`Open`), the
+/// rows without `title` and `address` (`Attributes`), or the Zvolen rows by id (`Rows`).
+#[derive(Clone, Copy)]
+enum Narrow {
+    Open,
+    Attributes,
+    Rows,
+}
+
+struct Narrowing(Narrow);
+
+impl PolicyEngine for Narrowing {
+    fn name(&self) -> &'static str {
+        "narrowing"
+    }
+    fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
+        let rule = match self.0 {
+            Narrow::Attributes if op.clause == "5.7.2" => Some(Rule {
+                types: vec!["Event".into()],
+                attributes: vec!["name".into(), "startDate".into()],
+                ..Rule::default()
+            }),
+            Narrow::Rows if op.clause == "5.7.2" => Some(Rule {
+                types: vec!["Event".into()],
+                id_patterns: vec!["urn:ngsi-ld:Event:zv.*".into()],
+                every_attribute: true,
+                ..Rule::default()
+            }),
+            _ => None,
+        };
+        Box::pin(std::future::ready(rule.map_or(Decision::Allow, |r| {
+            Decision::Filter(Arc::new(Filter {
+                rules: vec![r],
+                ..Filter::default()
+            }))
+        })))
+    }
+    fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
+        NotifyDecision::Deliver
+    }
+}
+
+/// The events view under `narrow`, with a second output `zvolen` whose own filter keeps Zvolen.
+async fn narrowed(narrow: Narrow) -> (TestBroker, Router) {
+    let broker = TestBroker::new()
+        .await
+        .expect("broker")
+        .with_policy(Arc::new(Narrowing(narrow)))
+        .with_admin_auth(AdminAuth::new(TOKEN, true).expect("token"));
+    let app = broker.serve(antares_ical::Ical).expect("mounted");
+    let outputs = json!({"ical": [
+        {"name": "events", "sources": [{}]},
+        {"name": "zvolen", "filter": {"q": "address[addressLocality]==\"Zvolen\""}, "sources": [{}]}
+    ]});
+    let (status, body) = put_view(&app, &view(Some(outputs))).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    for e in [
+        event("zv1", "Zvolen", "Jarmok"),
+        event("zv2", "Zvolen", "Koncert"),
+        event("bb1", "Banská Bystrica", "Divadlo"),
+    ] {
+        let (status, body) =
+            send(&app, "POST", "/ngsi-ld/v1/entities", &e.to_string(), false).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+    (broker, app)
+}
+
+/// Status, headers and body of an anonymous GET.
+async fn fetch(app: &Router, uri: &str) -> (StatusCode, axum::http::HeaderMap, String) {
+    let resp = app
+        .clone()
+        .oneshot(Request::get(uri).body(Body::empty()).expect("request"))
+        .await
+        .expect("infallible");
+    let (parts, body) = resp.into_parts();
+    let bytes = body.collect().await.expect("body").to_bytes();
+    (
+        parts.status,
+        parts.headers,
+        String::from_utf8(bytes.to_vec()).expect("utf-8"),
+    )
+}
+
+/// The ids NGSI-LD Query Entities answers the same anonymous `q` with.
+async fn ngsi_ids(app: &Router, q: &str) -> Vec<String> {
+    let uri = format!("/ngsi-ld/v1/entities?type=Event&q={}", encoded(q));
+    let (status, ngsi) = send(app, "GET", &uri, "", false).await;
+    assert_eq!(status, StatusCode::OK, "{ngsi}");
+    let mut ids: Vec<String> = serde_json::from_str::<Vec<Value>>(&ngsi)
+        .expect("entities")
+        .iter()
+        .map(|e| e["id"].as_str().expect("id").to_owned())
+        .collect();
+    ids.sort();
+    ids
+}
+
+#[tokio::test]
+async fn an_anonymous_feed_holds_what_ngsi_ld_answers_the_same_q_under_every_policy() {
+    for narrow in [Narrow::Open, Narrow::Attributes, Narrow::Rows] {
+        let (_broker, app) = narrowed(narrow).await;
+        for q in [
+            r#"name=="Podujatie zv1""#,
+            r#"startDate=="2026-11-02""#,
+            r#"title=="Jarmok"|title=="Divadlo""#,
+            r#"address[addressLocality]=="Banská Bystrica""#,
+        ] {
+            let (status, ics) =
+                send(&app, "GET", &format!("{FEED}?q={}", encoded(q)), "", false).await;
+            assert_eq!(status, StatusCode::OK, "{q}: {ics}");
+            assert_eq!(uids(&ics), ngsi_ids(&app, q).await, "{q}");
+        }
+    }
+    // The fixtures narrow what they say: a withheld attribute selects nothing, a row filter
+    // keeps Zvolen alone.
+    let (_b, app) = narrowed(Narrow::Attributes).await;
+    assert_eq!(
+        ngsi_ids(&app, r#"title=="Jarmok""#).await,
+        Vec::<String>::new()
+    );
+    let (_b, app) = narrowed(Narrow::Rows).await;
+    assert_eq!(
+        ngsi_ids(&app, r#"startDate=="2026-11-02""#).await,
+        ["urn:ngsi-ld:Event:zv1", "urn:ngsi-ld:Event:zv2"]
+    );
+}
+
+#[tokio::test]
+async fn a_q_on_a_withheld_attribute_answers_as_a_q_that_matches_nothing() {
+    let (_broker, app) = narrowed(Narrow::Attributes).await;
+    let withheld = fetch(&app, &format!("{FEED}?q={}", encoded(r#"title=="Jarmok""#))).await;
+    let nothing = fetch(&app, &format!("{FEED}?q={}", encoded(r#"name=="nic""#))).await;
+    assert_eq!(withheld.0, StatusCode::OK, "{}", withheld.2);
+    assert_eq!(withheld.0, nothing.0);
+    assert_eq!(withheld.2, nothing.2, "the same calendar body");
+    let names = |h: &axum::http::HeaderMap| {
+        let mut all: Vec<(String, String)> = h
+            .iter()
+            .filter(|(k, _)| k.as_str() != "date")
+            .map(|(k, v)| (k.as_str().to_owned(), v.to_str().unwrap_or("").to_owned()))
+            .collect();
+        all.sort();
+        all
+    };
+    // ETag included: nothing tells the withheld attribute from an absent value.
+    assert!(withheld.1.contains_key("etag"), "{:?}", withheld.1);
+    assert_eq!(names(&withheld.1), names(&nothing.1));
+    assert!(!withheld.1.contains_key("ngsild-warning"));
+}
+
+#[tokio::test]
+async fn a_callers_q_narrows_an_output_and_never_widens_it() {
+    let (_broker, app) = narrowed(Narrow::Open).await;
+    let zvolen = "/x/views/events/ical/v1/zvolen.ics";
+    let (_, all) = send(&app, "GET", zvolen, "", false).await;
+    assert_eq!(
+        uids(&all),
+        ["urn:ngsi-ld:Event:zv1", "urn:ngsi-ld:Event:zv2"]
+    );
+    // An OR of the caller's stays inside the output's filter: (ours);(theirs), never ours|theirs.
+    let q = encoded(r#"title=="Koncert"|title=="Divadlo""#);
+    let (status, ics) = send(&app, "GET", &format!("{zvolen}?q={q}"), "", false).await;
+    assert_eq!(status, StatusCode::OK, "{ics}");
+    assert_eq!(uids(&ics), ["urn:ngsi-ld:Event:zv2"]);
+    // A q that closes its group to OR past the filter is refused, never joined.
+    let escape = encoded(r#"title=="Koncert")|(title=="Divadlo""#);
+    let (status, body) = send(&app, "GET", &format!("{zvolen}?q={escape}"), "", false).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+#[tokio::test]
+async fn an_over_long_q_is_refused_as_query_entities_refuses_it() {
+    let (_broker, app) = narrowed(Narrow::Open).await;
+    // Past the bound alone: Query Entities and the feed answer the same 403 TooComplexQuery.
+    let long = format!(r#"name=="{}""#, "a".repeat(antares_ql_max()));
+    let (status, ngsi) = send(
+        &app,
+        "GET",
+        &format!("/ngsi-ld/v1/entities?type=Event&q={}", encoded(&long)),
+        "",
+        false,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{ngsi}");
+    assert!(ngsi.contains("TooComplexQuery"), "{ngsi}");
+    let (status, body) = send(
+        &app,
+        "GET",
+        &format!("{FEED}?q={}", encoded(&long)),
+        "",
+        false,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(body.contains("TooComplexQuery"), "{body}");
+    // Under the bound alone, past it once joined with the output's own filter: refused too.
+    let joined = format!(r#"name=="{}""#, "a".repeat(4096 - 9));
+    assert!(joined.len() <= 4096);
+    let (status, ngsi) = send(
+        &app,
+        "GET",
+        &format!("/ngsi-ld/v1/entities?type=Event&q={}", encoded(&joined)),
+        "",
+        false,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "alone it passes: {ngsi}");
+    let (status, body) = send(
+        &app,
+        "GET",
+        &format!("/x/views/events/ical/v1/zvolen.ics?q={}", encoded(&joined)),
+        "",
+        false,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(body.contains("TooComplexQuery"), "{body}");
+}
+
+/// antares-ql's `MAX_Q_BYTES` (4096), not a dependency of this crate's tests.
+fn antares_ql_max() -> usize {
+    4096
 }

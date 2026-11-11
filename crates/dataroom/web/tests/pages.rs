@@ -723,6 +723,9 @@ fn d3_dataset_page_shows_every_block_for_a_platform_dataset() {
         esc_t("subscribe_open_app", "en")
     )));
     assert_eq!(html.matches("id=\"jc-copy-status\"").count(), 1);
+    // The calendar of the table's own rows (END-16) needs an Antares calendar output; this
+    // dataset's .ics is another server's, so the page offers only its fixed address.
+    assert!(!html.contains("class=\"jc-subscribe-query\""));
     assert!(
         html.contains("<meta name=\"robots\" content=\"noindex, nofollow\">"),
         "B4 noindex"
@@ -751,6 +754,52 @@ fn d3_dataset_page_shows_every_block_for_a_platform_dataset() {
         );
     }
     assert!(html.contains("href=\"/m/en/dataset/air/resource/csv\""));
+}
+
+#[test]
+fn d3_dataset_page_offers_a_calendar_of_the_tables_rows_for_an_antares_calendar_output() {
+    let mut c = cat();
+    c.branding = Some(json!({ "domain": DOMAIN }));
+    let feed = ep("ical/v1/vsetky.ics");
+    let ds = with_dists(
+        dataset("events", json!({ "endpointUrl": ep("") })),
+        vec![dist("cal", &feed, json!({ "mediaType": "text/calendar" }))],
+    );
+    let html = render_dataset_page_full(
+        &c,
+        None,
+        &ds,
+        None,
+        &[],
+        &[],
+        false,
+        "sk",
+        true,
+        "/m",
+        NONCE,
+    );
+    assert_safe_page("dataset-calendar-query", &html, "sk");
+    let at = html
+        .find("class=\"jc-subscribe-query\"")
+        .expect("the query calendar");
+    let section = &html[at..at + html[at..].find("</section>").expect("end")];
+    // Hidden without script (jc-viz.js shows it); the feed's address is the page's own.
+    assert!(
+        section.contains(&format!("data-jc-feed=\"{feed}\"")),
+        "{section}"
+    );
+    assert!(html[..at].ends_with("<section ") || html[at - 200..at].contains("<section"));
+    assert!(section.contains(" hidden>"), "{section}");
+    assert!(section.contains("<input id=\"jc-subscribe-q\""));
+    assert!(
+        section.contains("aria-describedby=\"jc-subscribe-q-hint jc-subscribe-preview-status\"")
+    );
+    assert!(section.contains("data-jc-copy=\"jc-subscribe-mine-url\""));
+    assert!(section.contains(&esc_t("subscribe_query_hint", "sk")));
+    assert!(section.contains(&format!(
+        "href=\"{}\"",
+        feed.replace("https://", "webcal://")
+    )));
 }
 
 #[test]
