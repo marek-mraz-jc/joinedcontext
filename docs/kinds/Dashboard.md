@@ -48,12 +48,14 @@ A widget of an analytics page (Architecture/10 §1).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
+| `data` | [VisualizationData](#visualizationdata) | no | The rows a `vega-lite` widget draws: one source of its Endpoint, which the platform reads and fills into the spec's dataset `source` (ADR-N-053 §2.2), never a URL. |
 | `endpointRef` | string | no | The Endpoint it reads through. |
 | `entityId` | string | no | The entity it shows. |
 | `entityType` | string | no | The entity type a `grid` widget shows, the type decides its columns (UI-71), or the type a `bar-chart` or `histogram` counts (UI-93). |
 | `grid` | [GridConfig](#gridconfig) | no | The configuration of a `grid` widget: the same object the explorer and a generated application are configured by, without the source and the type those two fields decide (SDK-30, T-1440). |
 | `property` | string | no | The property it shows. |
 | `q` | string | no | The NGSI-LD `q` a `bar-chart` or `histogram` reads the type with: the explorer's filter when the chart came from there (UI-93). |
+| `spec` | object | no | A `vega-lite` widget's Vega-Lite 5 specification: data, never code. It reads `{"data": {"name": "source"}}` and holds no expression beyond [`EXPRESSION_FUNCTIONS`]. |
 | `widgetType` | string | yes | The widget, e.g. `temporal-chart` or `grid`. |
 
 ## MultiLanguageMap
@@ -61,6 +63,12 @@ A widget of an analytics page (Architecture/10 §1).
 Multi-language map keyed by ISO 639-1 two-letter lowercase language codes
 
 Type: map of string
+
+## VisualizationData
+
+The Endpoint source a visualization reads, never a URL (ADR-N-053 §2.2).
+
+Type: object or object or object or object
 
 ## GridConfig
 
