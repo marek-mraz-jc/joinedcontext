@@ -59,7 +59,7 @@ describe("the controls each role is offered", () => {
         const own = approvalStanding(permissions, `${role}@hel.fi`, change(kind, `${role}@hel.fi`));
         const expected = !ROLES[role].includes("approve")
           ? "needsRole"
-          : isAccessKind(kind)
+          : isAccessKind(kind) || kind === "Policy" || kind === "DelegationPolicy"
             ? "ownAccessChange"
             : kind === "DataModel"
               ? "ownModelChange"
@@ -170,6 +170,24 @@ describe("what approving a change leads to for each role", () => {
       ownAsAdministrator: false,
     });
     expect(approvalStanding(permissions, "admin@hel.fi", change(kind, "other@hel.fi")).block).toBeNull();
+  });
+
+  // P-10 (T-6714): a Policy opens data to whoever it names, so its administrator author waits for a
+  // second person even when it names someone else.
+  it("an administrator's own Policy waits for a second person", () => {
+    for (const kind of ["Policy", "DelegationPolicy"]) {
+      const data: Effective = {
+        bootstrap: false,
+        project: "helsinki",
+        grants: [{ binding: "admins", role: "admin", scope: "organization", rule: { kinds: [kind], verbs: ROLES.admin } as never }],
+      };
+      const permissions = { data, can: (k: string, verb: Verb) => allows(data, k, verb) };
+      expect(approvalStanding(permissions, "admin@hel.fi", change(kind, "admin@hel.fi"))).toEqual({
+        block: "ownAccessChange",
+        ownAsAdministrator: false,
+      });
+      expect(approvalStanding(permissions, "admin@hel.fi", change(kind, "other@hel.fi")).block).toBeNull();
+    }
   });
 
   // T-4830: a data model is approved by a second person too; the approval page says so in words of models.
