@@ -5087,7 +5087,7 @@
           "resources"
         ],
         "summary": "Open A Project",
-        "description": "Opens a project, with the opener's steward binding in the same change; the organization's own setting says who may.",
+        "description": "Opens a project with you as its steward, in an Organization whose own setting lets you.",
         "operationId": "open_project",
         "requestBody": {
           "content": {
@@ -5225,7 +5225,7 @@
           "resources"
         ],
         "summary": "Delete A Project",
-        "description": "Proposes the one red-lane change that removes a project and every space, endpoint, app, service account, role and binding written for it.",
+        "description": "Proposes the red-lane change removing a project and its spaces, endpoints, apps, service accounts, roles and bindings.",
         "operationId": "delete_project",
         "parameters": [
           {
@@ -11800,7 +11800,7 @@
           "resources"
         ],
         "summary": "Export Project",
-        "description": "The project's manifests as one bundle, narrowed to the kinds and names asked for; the whole project is for organization administrators.",
+        "description": "The project's manifests as one bundle, narrowed to the kinds and names asked; the whole one needs an organization admin.",
         "operationId": "export",
         "parameters": [
           {

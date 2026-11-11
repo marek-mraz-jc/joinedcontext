@@ -1523,7 +1523,7 @@ export interface paths {
         put?: never;
         /**
          * Open A Project
-         * @description Opens a project, with the opener's steward binding in the same change; the organization's own setting says who may.
+         * @description Opens a project with you as its steward, in an Organization whose own setting lets you.
          */
         post: operations["open_project"];
         delete?: never;
@@ -1548,7 +1548,7 @@ export interface paths {
         post?: never;
         /**
          * Delete A Project
-         * @description Proposes the one red-lane change that removes a project and every space, endpoint, app, service account, role and binding written for it.
+         * @description Proposes the red-lane change removing a project and its spaces, endpoints, apps, service accounts, roles and bindings.
          */
         delete: operations["delete_project"];
         options?: never;
@@ -2851,7 +2851,7 @@ export interface paths {
         };
         /**
          * Export Project
-         * @description The project's manifests as one bundle, narrowed to the kinds and names asked for; the whole project is for organization administrators.
+         * @description The project's manifests as one bundle, narrowed to the kinds and names asked; the whole one needs an organization admin.
          */
         get: operations["export"];
         put?: never;
