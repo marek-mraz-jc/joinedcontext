@@ -6676,6 +6676,7 @@ output_error{stream="kpi"} 6
             projects: BTreeMap::new(),
             unstaged: Vec::new(),
             refused: Vec::new(),
+            unloaded: Vec::new(),
             listings: BTreeMap::new(),
         };
         let syncer = bare_syncer();
