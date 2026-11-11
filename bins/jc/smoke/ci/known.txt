@@ -5,14 +5,7 @@
 # assistant/*: no line. The assistant is a kept component on dev beside jc (tasks/GOAL-jc-dev.md scope
 # decision); its rehearsal rows are named skips "kept component: assistant" (gate.sh --kept-component).
 
-^endpoints/dataset$  # the Portal publishes no catalogue into dataroom in jc (jc-smoke-endpoints gap 2)
 ^endpoints/anon\.temporal\.last-\d+h$  # the synthetic bundle's DataService rows carry no history in the window (bundle, jc-smoke-gate)
-^endpoints/listing$  # 5 catalog Endpoints of the bundle are not listed by the hub (jc-smoke-endpoints)
-^charts-apps/daiya\.(panel|org)$  # daiya cannot run an NGSI-LD panel; the Portal-made organization is not imported (jc-smoke-charts-apps 1, 4)
-^mcp/hub\.(describe_schema|search)$  # Dataset is not a type the catalog view describes; search over an empty catalogue (jc-smoke-mcp, dataroom gap 2)
-^logs/secrets\.results\d+\.(REPORT\.md|results\.json)\.shapes$  # false positive: a `WWW-Authenticate: Bearer resource_metadata=` challenge in the mcp results (jc-smoke-logs)
-^endpoints/anon\.write-outside$  # 405 from the Antares view (antares-ops Refusal::NotAllowed): no bound Policy grants createEntity, so the view lists it for nobody; dev runs the same code (jc-smoke-gate REPORT)
-^pipelines/(status|history|held)$  # every run RunnerRefused: the runner lacks JC_GATEWAY_URL, JC_TOKEN_URL, JC_CLIENT_SECRET_<PROJECT> (jc hands ekiben only EKIBEN_VAR_*; jc-portal-1 + jc-migrate, jc-smoke-gate REPORT)
-^logs/(metrics\.ekiben\.own|rid\.flow\.ekiben-antares)$  # no stream runs in the rehearsal (the pipelines line above), so ekiben has no series and no write reaches the broker
-^logs/secrets\.log\.shapes$  # false positive: jc's start lists each secret's name and source (`secret="dashboards-password" source="generated"`), no value (jc-smoke-logs)
-^restore/control\.relocatable$  # a restored state dir names the source home: the realm files' $(file:<abs>) secrets (deploy/rehearsal/rehearsal.py:441; kaisatsu resolves only absolute ones, crates/kaisatsu/import/src/lib.rs:372) and the gateway's absolute repo/current link (bins/jc/src/modules/gateway.rs:520); handed to @supervisor (jc-smoke-restore REPORT)
+^charts-apps/daiya\.panel$  # daiya cannot run an NGSI-LD panel (jc-smoke-charts-apps 1)
+^mcp/hub\.search$  # search over an empty catalogue (jc-smoke-mcp, dataroom gap 2)
+^pipelines/(status|history|held)$  # the runner refuses the helsinki streams: cache resource 'helsinki__gtfs' not found, and lstat <rehearsal>/gate/files/proto: no such file (smoke 42952387007; brief 122 jc-gate-rerun owns the pipelines suite)
