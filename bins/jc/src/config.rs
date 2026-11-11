@@ -586,6 +586,10 @@ pub struct IdentitySection {
 #[serde(deny_unknown_fields)]
 pub struct PortalSection {
     pub age_key_file: Option<PathBuf>,
+    /// The share of a project's objects, 1 to 100 percent, one revision may remove before the
+    /// Portal holds its removals for a confirmed destructive Change (T-6708); the Portal's
+    /// default 25 when unset. `JC_PORTAL_REMOVAL_HOLD_PERCENT` in the environment wins.
+    pub removal_hold_percent: Option<u8>,
     /// `[portal.limits]`: the deployment's ceiling on each limit, keyed by the catalog path an
     /// Organization or Project sets it at, e.g. `"spec.projects.quota.apps" = { max = 50 }`
     /// (LIM-01, T-6716). Left out, an entry keeps the built-in ceiling; an Organization's or a
@@ -991,6 +995,7 @@ impl Config {
         let portal = PortalSection {
             age_key_file: cli.portal_age_key_file.or(file.portal.age_key_file),
             limits: file.portal.limits,
+            removal_hold_percent: file.portal.removal_hold_percent,
         };
         let realm = match cli.identity_realm.or(file.identity.realm) {
             Some(name) => crate::setup::Realm::parse(&name).map_err(ConfigError::Realm)?,

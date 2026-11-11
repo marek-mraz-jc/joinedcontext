@@ -1184,6 +1184,12 @@ spec:
         .as_str()
         .unwrap_or_default()
         .contains("Approved in the Portal by"));
+    // The confirmed red-lane merge releases removals the reconciler holds (T-6708).
+    assert!(merge_body["Message"]
+        .as_str()
+        .unwrap_or_default()
+        .lines()
+        .any(|line| line == "Risk: destructive"));
     assert_eq!(merge_body["Style"], "squash");
 }
 

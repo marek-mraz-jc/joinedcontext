@@ -171,6 +171,22 @@ pub(crate) fn organization_vars(
 /// `*.apps.{domain}` (edge-session-design S4a): `{scheme}://{domain}`, and
 /// `JC_PORTAL_SERVE_APP_HOSTS`, since no edge composes the App routes in front of jc. Empty
 /// without one; an environment value still wins.
+/// The removal hold `[portal]` sets (T-6708). The reconciler's state directory is not derived
+/// from `state_dir`, which a cluster mounts as a small memory volume: the deployment names a
+/// directory on its data volume with `JC_PORTAL_RECONCILER_STATE_DIR`.
+pub(crate) fn reconciler_vars(cfg: &crate::config::Config) -> BTreeMap<String, String> {
+    cfg.portal
+        .removal_hold_percent
+        .map(|percent| {
+            (
+                "JC_PORTAL_REMOVAL_HOLD_PERCENT".to_owned(),
+                percent.to_string(),
+            )
+        })
+        .into_iter()
+        .collect()
+}
+
 pub(crate) fn apps_vars(cfg: &crate::config::Config) -> BTreeMap<String, String> {
     cfg.mounts
         .get(&Module::Portal)

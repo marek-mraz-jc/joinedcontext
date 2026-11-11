@@ -256,6 +256,17 @@ pub struct Config {
     /// writable, and `{apps_dir}` need not be. `None` fetches nothing, and an App whose
     /// `status.build` names a build keeps serving the bundle the image ships.
     pub apps_cache_dir: Option<String>,
+    /// The reconciler's persistent directory (`JC_PORTAL_RECONCILER_STATE_DIR`, e.g.
+    /// `/var/lib/jc/reconciler`): the last good render of each project repository and the objects
+    /// the last run applied, so after a restart a project whose repository does not load keeps
+    /// its views, streams and clients, and a mass deletion is still held (T-6708). `None` keeps
+    /// both in a temporary directory of the process.
+    pub reconciler_state_dir: Option<String>,
+    /// The share of a project's objects, in percent from 1 to 100, one revision may remove
+    /// before its removals are held for a confirmed destructive Change
+    /// (`JC_PORTAL_REMOVAL_HOLD_PERCENT`, e.g. `25`, the default). Removing any ContextSpace is
+    /// always held.
+    pub removal_hold_percent: u8,
     /// The apex every App's own origin sits under (`JC_PORTAL_APPS_URL`, e.g. `https://{domain}`;
     /// AP-26, AP-133, ADR-N-037): App `name` is served only on `{name}.apps.{domain}` and
     /// answered with a `308` there on any other host, above all the Portal's own, where it would
@@ -473,6 +484,8 @@ impl std::fmt::Debug for Config {
             .field("grafana", &self.grafana)
             .field("apps_dir", &self.apps_dir)
             .field("apps_cache_dir", &self.apps_cache_dir)
+            .field("reconciler_state_dir", &self.reconciler_state_dir)
+            .field("removal_hold_percent", &self.removal_hold_percent)
             .field("apps_url", &self.apps_url.as_ref().map(Url::as_str))
             .field("serve_app_hosts", &self.serve_app_hosts)
             .field("app_pods", &self.app_pods)
@@ -910,6 +923,22 @@ fn keycloak_admin(
         _ => None,
     };
     Ok(keycloak_admin)
+}
+
+/// `JC_PORTAL_REMOVAL_HOLD_PERCENT`: a whole percent from 1 to 100, the default when unset.
+fn removal_hold_percent(lookup: &impl Fn(&str) -> Option<String>) -> Result<u8, ConfigError> {
+    let Some(raw) = lookup("JC_PORTAL_REMOVAL_HOLD_PERCENT").filter(|v| !v.trim().is_empty())
+    else {
+        return Ok(crate::reconciler::removal_hold::DEFAULT_PERCENT);
+    };
+    raw.trim()
+        .parse::<u8>()
+        .ok()
+        .filter(|percent| (1..=100).contains(percent))
+        .ok_or_else(|| ConfigError::Invalid {
+            var: "JC_PORTAL_REMOVAL_HOLD_PERCENT",
+            reason: format!("`{raw}` is not a whole percent from 1 to 100, e.g. 25"),
+        })
 }
 
 fn apps_url(lookup: &impl Fn(&str) -> Option<String>) -> Result<Option<Url>, ConfigError> {
@@ -2088,6 +2117,9 @@ impl Config {
         }
         let apps_cache_dir =
             lookup("JC_PORTAL_APPS_CACHE_DIR").filter(|dir| !dir.trim().is_empty());
+        let reconciler_state_dir =
+            lookup("JC_PORTAL_RECONCILER_STATE_DIR").filter(|dir| !dir.trim().is_empty());
+        let removal_hold_percent = removal_hold_percent(&lookup)?;
         let apps_url = apps_url(&lookup)?;
         let serve_app_hosts = apps_url.is_some()
             && lookup("JC_PORTAL_SERVE_APP_HOSTS").is_some_and(|v| v.trim() == "true");
@@ -2181,6 +2213,8 @@ impl Config {
             erasure_key,
             mail_from,
             apps_cache_dir,
+            reconciler_state_dir,
+            removal_hold_percent,
             apps_url,
             serve_app_hosts,
             app_pods,
@@ -2271,6 +2305,8 @@ impl Config {
             erasure_key: None,
             mail_from: None,
             apps_cache_dir: None,
+            reconciler_state_dir: None,
+            removal_hold_percent: crate::reconciler::removal_hold::DEFAULT_PERCENT,
             apps_url: None,
             serve_app_hosts: false,
             app_pods: std::collections::BTreeMap::new(),
@@ -2944,6 +2980,35 @@ mod tests {
         assert_eq!(with(""), None);
         assert_eq!(with("  "), None);
         assert_eq!(with("/srv/apps").as_deref(), Some("/srv/apps"));
+    }
+
+    #[test]
+    fn the_removal_hold_is_a_whole_percent_and_the_state_dir_is_read() {
+        let with = |name: &'static str, value: &'static str| {
+            Config::from_vars(move |key| (key == name).then(|| value.to_owned()))
+        };
+        let default = Config::from_vars(|_| None).unwrap();
+        assert_eq!(default.removal_hold_percent, 25);
+        assert_eq!(default.reconciler_state_dir, None);
+        let percent = "JC_PORTAL_REMOVAL_HOLD_PERCENT";
+        assert_eq!(with(percent, " 40 ").unwrap().removal_hold_percent, 40);
+        for refused in ["0", "101", "25.5", "-1", "a quarter"] {
+            assert!(
+                matches!(
+                    with(percent, refused),
+                    Err(ConfigError::Invalid {
+                        var: "JC_PORTAL_REMOVAL_HOLD_PERCENT",
+                        ..
+                    })
+                ),
+                "{refused}"
+            );
+        }
+        let dir = with("JC_PORTAL_RECONCILER_STATE_DIR", "/var/lib/jc/reconciler").unwrap();
+        assert_eq!(
+            dir.reconciler_state_dir.as_deref(),
+            Some("/var/lib/jc/reconciler")
+        );
     }
 
     #[test]
