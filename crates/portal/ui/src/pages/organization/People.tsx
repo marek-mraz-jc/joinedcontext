@@ -499,9 +499,13 @@ export function People(): JSX.Element {
             </Button>
           </form>
 
-          <PendingInvitations people={items} locale={locale} />
-
-          <BulkActions selected={selected} onDone={() => setSelected([])} />
+          {/* Nothing to tick or invite on a failed read: the grid shows the reason and a retry. */}
+          {people.isError ? null : (
+            <>
+              <PendingInvitations people={items} locale={locale} />
+              <BulkActions selected={selected} onDone={() => setSelected([])} />
+            </>
+          )}
 
           {/* The server searches and pages the realm; the grid sorts, filters and arranges this page. */}
           <AdminGrid<Person>

@@ -197,6 +197,7 @@ describe("Organization → People", () => {
     });
     expect(await screen.findByText(/Keycloak did not answer/)).toBeInTheDocument();
     expect(screen.queryByRole("table", { name: P.caption })).toBeNull();
+    expect(screen.queryByText(P.bulk.hint)).toBeNull();
   });
 
   it("fetches nobody for a caller whose role does not read people, and says who can", async () => {
