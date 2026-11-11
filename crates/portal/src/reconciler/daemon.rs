@@ -252,6 +252,8 @@ pub struct Syncer {
     /// Whether the source has loaded once in this process ([`source_loaded`]): until then the
     /// realm syncs remove nothing (Mirror::hold_removals).
     source_loaded: std::sync::atomic::AtomicBool,
+    /// The repositories whose branch rules this process set ([`Self::protect_repositories`]).
+    protected: std::sync::Mutex<std::collections::BTreeSet<String>>,
     /// Each managed roles file the branch was seen holding as compiled, by path, as a hash of
     /// the text, and when: a run read every one from the forge on every sync to find it equal
     /// (jc-smoke-logs: 30 `Shako.File` reads a minute at a 10 s sync). Read again once
@@ -373,6 +375,7 @@ impl Syncer {
             warned_unstaged: Default::default(),
             warned_unbuilt: Default::default(),
             source_loaded: Default::default(),
+            protected: Default::default(),
             roles_held: Default::default(),
             activity: None,
             apps_cache_dir: None,
@@ -1234,6 +1237,11 @@ impl Syncer {
         //       the Portal was down leaves its repository open until an operator archives it.
         self.archive_deleted_projects(&fresh_mirror).await;
         steps.mark("archive");
+        // 5a-rules. Every repository takes this Portal's branch rules once per process: an
+        //       existing project repository gets them on the first run after an upgrade, and a
+        //       failed one is tried again on the next run (T-6706).
+        self.protect_repositories(&fresh_mirror).await;
+        steps.mark("branch_rules");
 
         // 5a'. Resolve what every pipeline's `secretRef`s name and hand the values to the
         //      runner as one Secret (T-0927, PL-15). A pipeline whose reference does not
@@ -1540,9 +1548,27 @@ impl Syncer {
     fn refuse_invalid(&self, repository: Arc<Repository>) -> (Arc<Repository>, Refusals) {
         let mut refusals = Refusals::new();
         for (id, resource) in repository.iter() {
-            let Ok(yaml) = serde_json::to_string(&resource.manifest) else {
+            let Ok(mut manifest) = serde_json::to_value(&resource.manifest) else {
                 continue;
             };
+            // A manifest without a namespace takes the one its path gives (CC-08), as
+            // load_mirror shows it; the kind's check reads that, not the missing field.
+            if let Some(metadata) = manifest
+                .get_mut("metadata")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                let unset = metadata
+                    .get("namespace")
+                    .and_then(serde_json::Value::as_str)
+                    .is_none_or(str::is_empty);
+                if unset {
+                    metadata.insert(
+                        "namespace".to_owned(),
+                        namespace_of(&resource.path.to_string_lossy()).into(),
+                    );
+                }
+            }
+            let yaml = manifest.to_string();
             if let Some(Err(err)) = jc_core::registry::validate_yaml(&resource.manifest.kind, &yaml)
             {
                 refusals.insert(
@@ -1770,6 +1796,44 @@ impl Syncer {
                 }
                 Err(error) => {
                     tracing::warn!(project = %slug, %repository, %error, "a deleted project's repository did not archive")
+                }
+            }
+        }
+    }
+
+    /// Only this Portal merges into a project repository's `main`, and only it writes a Change
+    /// branch of any repository (T-6706). The organization repository's `main` keeps the rules
+    /// its operator set: the Portal does not know that nothing else writes it.
+    async fn protect_repositories(&self, fresh_mirror: &Mirror) {
+        let done = self
+            .protected
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let mut due = Vec::new();
+        if !done.contains(&self.shako.repo) {
+            let reserved = self.shako.reserve_change_branches().await;
+            due.push((self.shako.repo.clone(), reserved));
+        }
+        for (slug, repository) in fresh_mirror.repositories() {
+            if repository == self.shako.repo || done.contains(&repository) {
+                continue;
+            }
+            let protected = self
+                .shako
+                .for_project(repository.as_str(), &slug)
+                .protect_branch("main")
+                .await;
+            due.push((repository, protected));
+        }
+        let mut protected = self.protected.lock().unwrap_or_else(|p| p.into_inner());
+        for (repository, result) in due {
+            match result {
+                Ok(()) => {
+                    protected.insert(repository);
+                }
+                Err(error) => {
+                    tracing::warn!(%repository, %error, "the repository's branch rules were not set; the next run tries again")
                 }
             }
         }
@@ -4106,7 +4170,7 @@ output_error{stream="kpi"} 6
                 json!({
                     "contextSpaceRef": space,
                     "assigner": "did:web:city.example",
-                    "assignee": {"kind": "user", "id": "vendor"},
+                    "assignee": {"kind": "user", "id": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14"},
                     "operations": ["upsertBatch"],
                     "information": [{"entities": [{"type": "Car"}], "propertyNames": ["speed"]}],
                 }),
@@ -5255,7 +5319,7 @@ output_error{stream="kpi"} 6
     }
 
     const ORG_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  name: hel\nspec:\n  domain: hel.fi\n  locales: [en]\n  defaultLocale: en\n";
-    const ROLE_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Role\nmetadata:\n  name: steward\n  namespace: org\nspec:\n  rules:\n    - kinds: [\"*\"]\n      verbs: [propose, approve, delete]\n";
+    const ROLE_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Role\nmetadata:\n  name: steward\n  namespace: org\nspec:\n  rules:\n    - kinds: [Pipeline, Endpoint]\n      verbs: [propose, approve, delete]\n";
     const BINDING_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata:\n  name: stewards\n  namespace: org\nspec:\n  subjects:\n    - group: stewards\n  role: steward\n  scope:\n    organization: hel\n";
 
     /// T-0527: `users/` is compiled into the five managed files, and only the ones whose

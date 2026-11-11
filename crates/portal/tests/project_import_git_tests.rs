@@ -451,13 +451,7 @@ async fn an_export_imports_as_a_new_project() {
     );
     assert_eq!(written["CODEOWNERS"], "* @test-owner/doprava-writers\n");
     for repository in [NEW, NEW_APP] {
-        assert_eq!(
-            sent(&server, "POST", &format!("{repository}/Shako.Protect"))
-                .await
-                .len(),
-            1,
-            "{repository}"
-        );
+        common::assert_portal_branch_rules(&server, repository).await;
     }
 
     let (_, yaml) = common::committed_files(&server, REPO)

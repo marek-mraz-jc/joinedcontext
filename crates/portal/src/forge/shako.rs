@@ -1298,13 +1298,68 @@ impl ShakoClient {
             .map(|_| ())
     }
 
-    /// `POST R/Shako.Protect`: `branch` takes no direct push, so every change reaches it through
-    /// a merged pull request (PF-87).
+    /// `POST R/Shako.Protect`: `branch` takes no direct push, and only this client's own forge
+    /// account merges into it, so every change reaches it through a pull request the Portal
+    /// merged once it was approved, never one a writer merged in shako (PF-87, CHG-12, T-6706).
+    /// The Change branches are reserved to the same account ([`Self::reserve_change_branches`]).
     pub async fn protect_branch(&self, branch: &str) -> Result<(), GitError> {
-        let params = json!({ "Rule": { "rule_name": branch, "enable_push": false } });
-        self.act(self.repo_url(&["Shako.Protect"])?, &params)
-            .await
-            .map(|_| ())
+        let me = self.login().await?;
+        let rule = json!({
+            "rule_name": branch,
+            "enable_push": false,
+            "enable_merge_whitelist": true,
+            "merge_whitelist_usernames": [me],
+            "block_admin_merge_override": true,
+        });
+        self.act(self.repo_url(&["Shako.Protect"])?, &json!({ "Rule": rule }))
+            .await?;
+        self.reserve_as(&me).await
+    }
+
+    /// `POST R/Shako.Protect` for `portal/*` and `workspace/*`: only this client's forge account
+    /// cuts, writes, rewrites or deletes a Change branch, so a Change's head commit, and the
+    /// author it names, is one the Portal wrote for the signed-in proposer, never what another
+    /// pusher's git configured (AUZ-08, CHG-07, T-6706).
+    pub async fn reserve_change_branches(&self) -> Result<(), GitError> {
+        let me = self.login().await?;
+        self.reserve_as(&me).await
+    }
+
+    async fn reserve_as(&self, me: &str) -> Result<(), GitError> {
+        for pattern in ["portal/*", "workspace/*"] {
+            let rule = json!({
+                "rule_name": pattern,
+                "enable_push": true,
+                "enable_push_whitelist": true,
+                "push_whitelist_usernames": [me],
+                "enable_force_push": true,
+                "enable_force_push_allowlist": true,
+                "force_push_allowlist_usernames": [me],
+            });
+            self.act(self.repo_url(&["Shako.Protect"])?, &json!({ "Rule": rule }))
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// `GET Me()`: the forge account this client's token signs in as, the one the branch rules
+    /// name.
+    async fn login(&self) -> Result<String, GitError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct Account {
+            login: String,
+        }
+        let account: Account = self
+            .get_json(self.odata_url(&["Me()"])?, "the forge account")
+            .await?;
+        if account.login.trim().is_empty() {
+            return Err(GitError::Api {
+                status: 200,
+                message: "the forge names no account for the Portal's token".into(),
+            });
+        }
+        Ok(account.login)
     }
 
     /// Every file path of the tree at `git_ref`.

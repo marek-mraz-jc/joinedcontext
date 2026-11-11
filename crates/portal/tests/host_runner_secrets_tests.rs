@@ -81,7 +81,7 @@ fn project(name: &str) -> Vec<(String, String)> {
         ),
         (
             format!("projects/{name}/datasources/feed.yaml"),
-            format!("apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata:\n  name: feed\n  namespace: {name}\nspec:\n  type: mqtt\n  input:\n    urls: [\"tcp://broker.example.fi:1883\"]\n    topics: [\"vehicles/#\"]\n  secrets:\n    - {{ name: golemio, key: password, envVar: GOLEMIO_KEY }}\n"),
+            format!("apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata:\n  name: feed\n  namespace: {name}\nspec:\n  type: kafka\n  input:\n    addresses: [\"broker.example.fi:9092\"]\n    topics: [\"vehicles\"]\n    sasl:\n      password: \"${{GOLEMIO_KEY}}\"\n  secrets:\n    - {{ name: golemio, key: password, envVar: GOLEMIO_KEY }}\n"),
         ),
         (
             format!("projects/{name}/pipelines/vehicles/pipeline.yaml"),
