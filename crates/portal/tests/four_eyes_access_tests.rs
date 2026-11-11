@@ -209,6 +209,7 @@ async fn a_proposer_without_an_email_cannot_approve_their_change_under_another_n
         ORG_NAMESPACE,
         "chg-org-00000001",
         Some("role-x"),
+        None,
         ApprovedBy::Person,
     )
     .await
