@@ -6,6 +6,7 @@
 import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
+import { walkSharedGrid } from "./gridJourney";
 import en from "../src/locales/en.json";
 import { SpaceChecks } from "../src/pages/spaces/SpaceChecks";
 import { expectNoAxeViolations, json, renderPage } from "./page_contract";
@@ -114,6 +115,26 @@ describe("the checks on write of a space (DM-94)", () => {
     expect(within(failing).getByText("60")).toBeInTheDocument();
     expect(within(failing).getByText(/2026/)).toBeInTheDocument();
     expect(within(failing).getByText("pm10")).toBeInTheDocument();
+  });
+
+  it("walks the rules on the shared grid: sorted by pass rate, searched, a column hidden (T-6751)", async () => {
+    renderChecks(
+      answer([
+        row("pm10-plausible", counts(90, 10), counts(900, 40, 60)),
+        row("no2-plausible", counts(50, 50), counts(500, 500)),
+        row("o3-plausible", counts(0), counts(0)),
+      ]),
+    );
+    await walkSharedGrid({
+      caption: en.spaces.quality.checks.caption,
+      sortBy: en.spaces.quality.checks.passDay,
+      // Ascending by the day's pass rate; a rule nothing checked has no rate and sorts last.
+      sorted: ["no2-plausible", "pm10-plausible", "o3-plausible"],
+      search: "no2",
+      matches: ["no2-plausible"],
+      hide: en.spaces.quality.checks.quarantined,
+      name: (tr) => tr.querySelector("code")?.textContent ?? "",
+    });
   });
 
   it("names one start when both windows began together, after a restart", async () => {

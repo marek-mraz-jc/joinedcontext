@@ -9,6 +9,7 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { RunTimeSpent, duration, timeSpent } from "../src/pages/apps/RunTimeSpent";
 import type { RunEvent } from "../src/pages/apps/useAgentRun";
+import { walkSharedGrid } from "./gridJourney";
 
 let seq = 0;
 function event(kind: string, timestamp: string | undefined, payload: Record<string, unknown> = {}): RunEvent {
@@ -92,6 +93,26 @@ describe("RunTimeSpent", () => {
     expect(rows[1]).toHaveTextContent(en.agentRun.timeSpent.modelCallOf.replace("{model}", "google/gemini-3.8-flash"));
     expect(rows[4]).toHaveTextContent("change_resource");
     expect(within(rows[4]).getByText(en.agentRun.timeSpent.failed)).toBeInTheDocument();
+  });
+
+  it("walks the steps on the shared grid: sorted by time taken, searched, a column hidden (T-6751)", async () => {
+    show(RUN);
+    await walkSharedGrid({
+      caption: en.agentRun.timeSpent.caption,
+      sortBy: en.agentRun.timeSpent.took,
+      sorted: [
+        "query_endpoint",
+        "change_resource",
+        en.agentRun.timeSpent.modelCallOf.replace("{model}", "google/gemini-3.8-flash"),
+        en.agentRun.timeSpent.modelCall,
+        en.agentRun.timeSpent.waitingStep,
+      ],
+      search: "change",
+      matches: ["change_resource"],
+      hide: en.agentRun.timeSpent.took,
+      // The step's name, without the "failed" mark beside it.
+      name: (tr) => tr.querySelector("td")?.firstChild?.textContent ?? "",
+    });
   });
 
   it("draws nothing for a run that recorded no timings", () => {

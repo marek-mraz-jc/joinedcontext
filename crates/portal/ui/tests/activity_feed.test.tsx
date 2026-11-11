@@ -18,6 +18,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 import { summarise } from "../src/components/ActivitySummary";
 import type { ActivityEvent } from "../src/api/activity";
+import { walkSharedGrid } from "./gridJourney";
 
 const PROJECT = "helsinki";
 
@@ -137,6 +138,24 @@ describe("the activity feed (UI-31)", () => {
     expect(
       within(shown[0]).getByRole("link", { name: "endpoints/public-air" }),
     ).toHaveAttribute("href", "/projects/helsinki/endpoints/public-air");
+  });
+
+  it("walks the feed on the shared grid: sorted by time, searched, a column hidden (T-6751)", async () => {
+    renderFeed([
+      event({ time: "2026-09-16T16:25:00Z", summary: "The newer one." }),
+      event({ time: "2026-09-16T16:21:03Z", summary: "The older one." }),
+      event({ time: "2026-09-16T16:23:00Z", summary: "The middle one." }),
+    ]);
+    await rows();
+    await walkSharedGrid({
+      caption: en.activity.title,
+      sortBy: en.activity.time,
+      sorted: ["The older one.", "The middle one.", "The newer one."],
+      search: "middle",
+      matches: ["The middle one."],
+      hide: en.activity.source,
+      name: (tr) => tr.querySelector('[data-testid="activity-sentence"]')?.textContent ?? "",
+    });
   });
 
   it("gives the sentence the row's width on a phone: the shared grid stacks each event into a card (T-4165)", async () => {

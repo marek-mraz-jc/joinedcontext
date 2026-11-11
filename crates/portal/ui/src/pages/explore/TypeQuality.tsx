@@ -15,7 +15,6 @@ import {
   PageFailed,
 } from "../../components/ui";
 import { AdminGrid } from "../../components/grid/AdminGrid";
-import type { DataColumn } from "../../components/grid/AdminGrid";
 
 type Report = components["schemas"]["SpaceQuality"];
 type AttributeQuality = NonNullable<Report["types"]>[number]["attributes"][number];

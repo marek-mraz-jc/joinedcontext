@@ -10,6 +10,7 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { byUrgency } from "../src/pages/pipelines/PipelineHealth";
 import { expectAxeClean, jsonResponse, list, problem, renderRoute } from "./pageHarness";
+import { walkSharedGrid } from "./gridJourney";
 
 const PATH = "/projects/helsinki/pipelines";
 
@@ -112,6 +113,20 @@ describe("the source health tab", () => {
     await waitFor(() =>
       expect(calls()).toContain("GET /api/v1/projects/helsinki/pipelines/podujatia-zvolen/runs"),
     );
+  });
+
+  it("walks_the_sources_on_the_shared_grid_sorted_searched_and_a_column_hidden", async () => {
+    // T-6751: the list opens worst first; the grid sorts it by name, searches it and hides a column.
+    await renderRoute({ path: PATH, answer: answering(() => jsonResponse({ items: HEALTH })) });
+    await openHealthTab();
+    await walkSharedGrid({
+      caption: en.pipelines.health.caption,
+      sortBy: en.pipelines.health.source,
+      sorted: ["podujatia-detva", "podujatia-new", "podujatia-revuca", "podujatia-zvolen"],
+      search: "zvolen",
+      matches: ["podujatia-zvolen"],
+      hide: en.pipelines.health.lastLogLine,
+    });
   });
 
   it("flags_a_source_with_dead_links_and_says_how_to_fix_it", async () => {

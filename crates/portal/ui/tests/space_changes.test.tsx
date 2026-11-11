@@ -11,6 +11,7 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { SpaceChanges } from "../src/pages/pipelines/SpaceChanges";
 import { changesOf, countsOf } from "../src/pages/pipelines/spaceChanges";
+import { walkSharedGrid } from "./gridJourney";
 
 const c = en.pipelines.workbench.changes;
 const urn = (n: string) => `urn:ngsi-ld:AirQualityObserved:hel.fi:air:${n}`;
@@ -61,7 +62,8 @@ describe("the comparison in the workbench (PL-70)", () => {
       </I18nextProvider>,
     );
     await userEvent.click(screen.getByRole("button", { name: c.compare }));
-    expect(await screen.findByRole("status")).toHaveTextContent("1 to create, 1 to update, 1 unchanged.");
+    // The grid's row count is a status too; the counts line is the comparison's own.
+    expect(await screen.findByText("1 to create, 1 to update, 1 unchanged.")).toHaveAttribute("role", "status");
     const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
     expect(calls).toHaveLength(1);
     expect(calls[0][1].method).toBe("GET");
@@ -71,6 +73,27 @@ describe("the comparison in the workbench (PL-70)", () => {
     const row = within(screen.getByRole("table")).getByRole("row", { name: new RegExp(urn("moved")) });
     expect(row).toHaveTextContent(c.outcomes.update);
     expect(row).toHaveTextContent("changed pm10.value: 7 → 9");
+  });
+
+  it("walks the changes on the shared grid: sorted by entity, searched, a column hidden (T-6751)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(NOW), { status: 200, headers: { "Content-Type": "application/json" } }))),
+    );
+    render(
+      <I18nextProvider i18n={i18n}>
+        <SpaceChanges space="air" records={RECORDS} />
+      </I18nextProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: c.compare }));
+    await walkSharedGrid({
+      caption: i18n.t("pipelines.workbench.changes.caption", { space: "air" }),
+      sortBy: c.entity,
+      sorted: [urn("moved"), urn("new"), urn("same")],
+      search: "same",
+      matches: [urn("same")],
+      hide: c.what,
+    });
   });
 
   it("says why the space could not be read", async () => {

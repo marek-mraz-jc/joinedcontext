@@ -13,6 +13,7 @@ import i18n from "../src/i18n";
 import { EndpointUsageSection, ProjectUsageSection } from "../src/components/endpoints/UsageSection";
 import { thisMonth } from "../src/api/endpointUsage";
 import { InRouter, expectAxeClean, jsonResponse, problem } from "./pageHarness";
+import { walkSharedGrid } from "./gridJourney";
 
 const PROJECT = "mesto";
 
@@ -139,6 +140,19 @@ describe("ProjectUsageSection (T-5118)", () => {
     await waitFor(() => expect(saved).toHaveLength(1));
     expect(await saved[0]?.text()).toBe("day,endpoint,surface,calls\n2026-10-01,air,ngsi-ld,5\n");
     expect(calls.some((url) => url.pathname.endsWith("/usage/endpoints/export") && url.searchParams.get("month") === "2026-10")).toBe(true);
+  });
+
+  it("walks the Endpoints on the shared grid: sorted by calls, searched, a column hidden (T-6751)", async () => {
+    answer(() => jsonResponse(PROJECT_USAGE));
+    mount(<ProjectUsageSection project={PROJECT} />);
+    await walkSharedGrid({
+      caption: i18n.t("endpointUsage.title"),
+      sortBy: i18n.t("endpointUsage.calls"),
+      sorted: ["quiet", "air"],
+      search: "air",
+      matches: ["air"],
+      hide: i18n.t("endpointUsage.trend"),
+    });
   });
 
   it("tells a person who may read no Endpoint whom to ask", async () => {

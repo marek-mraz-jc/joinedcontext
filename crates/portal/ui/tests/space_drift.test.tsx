@@ -12,6 +12,7 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { App } from "../src/App";
 import { asDriftList } from "../src/pages/spaces/SpaceDrift";
+import { walkSharedGrid } from "./gridJourney";
 
 const IDENTITY = {
   subject: "b7c1e0f4",
@@ -140,6 +141,20 @@ describe("drift on the space page (T-2867)", () => {
     await vi.waitFor(() =>
       expect(calls.filter((call) => call === "GET /api/v1/projects/banskabystrica/drift").length).toBeGreaterThan(1),
     );
+  });
+
+  it("walks the drifted entities on the shared grid: sorted, searched, a column hidden (T-6751)", async () => {
+    const missing = { ...OURS, id: "urn:ngsi-ld:AirQualityObserved:banskabystrica.sk:ovzdusie:station-0", drift: "MISSING", diff: [] };
+    renderSpace({ status: 200, body: list([OURS, missing]) });
+    await section();
+    await walkSharedGrid({
+      caption: "Entities of ovzdusie that differ from the repository",
+      sortBy: en.drift.section.entity,
+      sorted: [missing.id, OURS.id],
+      search: "station-1",
+      matches: [OURS.id],
+      hide: en.drift.section.attributes,
+    });
   });
 
   it("says no scan has run, rather than that nothing drifted", async () => {

@@ -9,6 +9,7 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { SpaceQuality } from "../src/pages/spaces/SpaceQuality";
 import { expectNoAxeViolations, json, renderPage } from "./page_contract";
+import { walkSharedGrid } from "./gridJourney";
 
 const REPORT = {
   observedAt: "2026-09-25T02:00:00Z",
@@ -65,6 +66,18 @@ describe("the Data quality section (DM-74)", () => {
     expect(within(weather).getByText("26 h")).toBeInTheDocument();
     expect(within(freshness).getByText("10 min")).toBeInTheDocument();
     await expectNoAxeViolations(container);
+  });
+
+  it("walks the failing rules on the shared grid: sorted by entities, searched, a column hidden (T-6751)", async () => {
+    renderQuality(() => json(REPORT));
+    await walkSharedGrid({
+      caption: en.spaces.quality.rulesCaption,
+      sortBy: en.spaces.quality.entities,
+      sorted: ["type", "sh:minCount"],
+      search: "minCount",
+      matches: ["sh:minCount"],
+      hide: en.spaces.quality.examples,
+    });
   });
 
   it("before the first run says it has not checked, never that all is valid", async () => {

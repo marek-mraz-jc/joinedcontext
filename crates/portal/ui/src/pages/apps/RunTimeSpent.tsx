@@ -2,7 +2,6 @@ import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import type { RunEvent } from "./useAgentRun";
 import { AdminGrid } from "../../components/grid/AdminGrid";
-import type { DataColumn } from "../../components/grid/AdminGrid";
 
 /** One step of a run that took time: a model call, a tool, or the person answering a question. */
 export interface TimedStep {

@@ -14,6 +14,7 @@ import en from "../src/locales/en.json";
 import { SourceRemovalsPanel, sourceCsv } from "../src/pages/pipelines/PipelineSourceReport";
 import type { components } from "../src/api/schema";
 import { expectAxeClean, jsonResponse, problem, renderRoute } from "./pageHarness";
+import { walkSharedGrid } from "./gridJourney";
 
 type Report = components["schemas"]["PipelineSourceDeletes"];
 
@@ -123,6 +124,20 @@ describe("a snapshot pipeline's source vs space", () => {
     expect(rows).toHaveLength(3);
     expect(within(panel).getByText(id(4))).toBeInTheDocument();
     expect(page.calls()).toContain(`POST ${REPORT}`);
+  });
+
+  it("walks the removals on the shared grid: sorted by entity, searched, a column hidden (T-6751)", async () => {
+    const { answer } = world("snapshot", released);
+    await renderRoute({ path: PAGE, answer, permissions: grants(["read", "approve"]) });
+    await screen.findByTestId("source-report");
+    await walkSharedGrid({
+      caption: S.removed,
+      sortBy: S.entity,
+      sorted: [id(17), id(33), id(4)],
+      search: "ds-33",
+      matches: [id(33)],
+      hide: S.why,
+    });
   });
 
   it("lets a reader see the report but not release or keep the held run", async () => {

@@ -15,7 +15,6 @@ import {
 import { READ_PAGE, changesOf, countsOf } from "./spaceChanges";
 import type { EntityChange } from "./spaceChanges";
 import { AdminGrid } from "../../components/grid/AdminGrid";
-import type { DataColumn } from "../../components/grid/AdminGrid";
 
 const TONE = { create: "success", update: "warning", unchanged: "neutral" } as const;
 

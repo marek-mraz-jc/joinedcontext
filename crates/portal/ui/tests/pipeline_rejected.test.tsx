@@ -13,6 +13,7 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { PipelineRejectedDialog } from "../src/pages/pipelines/PipelineRejected";
 import { expectAxeClean, jsonResponse, list, problem, renderRoute } from "./pageHarness";
+import { walkSharedGrid } from "./gridJourney";
 
 const PATH = "/projects/helsinki/pipelines";
 const REJECTED = "/api/v1/projects/helsinki/pipelines/stations/rejected";
@@ -101,6 +102,29 @@ describe("a pipeline's rejected records", () => {
     expect(within(dialog).queryByRole("button", { name: en.pipelines.rejected.older })).toBeNull();
     await userEvent.click(within(dialog).getByRole("button", { name: en.pipelines.rejected.newest }));
     expect(await within(dialog).findByText("sh:datatype")).toBeInTheDocument();
+  });
+
+  it("walks_the_records_on_the_shared_grid_sorted_by_rule_searched_and_a_column_hidden", async () => {
+    // T-6751: one grid page is one page of the server's list; the grid sorts and searches it.
+    await renderRoute({
+      path: PATH,
+      answer: answering({ retried: [] }, {
+        newest: {
+          items: [record(9), record(8, { rule: "id", path: "" }), record(7, { rule: "sh:closed", path: "colour" })],
+          total: 3,
+        },
+      }),
+    });
+    await openRejected();
+    await walkSharedGrid({
+      caption: en.pipelines.rejected.caption,
+      sortBy: en.pipelines.rejected.rule,
+      sorted: ["id", "sh:closed", "sh:datatype"],
+      search: "closed",
+      matches: ["sh:closed"],
+      hide: en.pipelines.rejected.reason,
+      name: (tr) => tr.querySelectorAll("td")[1]?.querySelector("span")?.textContent ?? "",
+    });
   });
 
   it("opens_the_run_a_record_was_refused_in_with_its_log", async () => {

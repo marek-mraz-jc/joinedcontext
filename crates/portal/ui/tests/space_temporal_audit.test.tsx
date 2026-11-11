@@ -10,6 +10,7 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { SpaceTemporalAudit } from "../src/pages/spaces/SpaceTemporalAudit";
 import { expectNoAxeViolations, json, renderPage } from "./page_contract";
+import { walkSharedGrid } from "./gridJourney";
 
 const URL_PATH = "/api/v1/projects/helsinki/spaces/helsinki/temporal-audit";
 const T = en.spaces.temporal;
@@ -107,6 +108,19 @@ describe("the temporal audit of a space (T-4844)", () => {
     await userEvent.selectOptions(screen.getByLabelText(T.verdictFilter), "duplicates-rows");
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.getByText(T.noMatch)).toBeInTheDocument();
+  });
+
+  it("walks the audit on the shared grid: sorted by attribute, searched, a column hidden (T-6751)", async () => {
+    renderAudit(() => json(AUDIT));
+    await walkSharedGrid({
+      caption: T.caption,
+      sortBy: T.attribute,
+      sorted: ["pm10", "speed", "transportMode"],
+      search: "transport",
+      matches: ["transportMode"],
+      hide: T.kept,
+      name: (tr) => tr.querySelector("th .font-medium")?.textContent ?? "",
+    });
   });
 
   it("says so when no readable pipeline writes the space", async () => {

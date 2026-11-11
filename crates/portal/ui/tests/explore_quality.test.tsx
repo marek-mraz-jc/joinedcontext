@@ -15,6 +15,7 @@ import { queryKeys } from "../src/api/client";
 import en from "../src/locales/en.json";
 import { ExplorePage } from "../src/pages/explore/ExplorePage";
 import { TypeQuality } from "../src/pages/explore/TypeQuality";
+import { walkSharedGrid } from "./gridJourney";
 
 const list = (items: unknown[]) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items });
 const TYPE = "BikeHireDockingStation";
@@ -99,6 +100,18 @@ describe("the quality of one entity type", () => {
     const slots = within(table).getByRole("row", { name: /totalSlotNumber/ });
     expect(slots).not.toHaveTextContent("400");
     expect(slots).toHaveTextContent("1 value");
+  });
+
+  it("walks the attributes on the shared grid: sorted by completeness, searched, a column hidden (T-6751)", async () => {
+    show(REPORT);
+    await walkSharedGrid({
+      caption: i18n.t("explore.quality.attributes", { type: TYPE }),
+      sortBy: en.explore.quality.completeness,
+      sorted: ["name", "totalSlotNumber"],
+      search: "total",
+      matches: ["totalSlotNumber"],
+      hide: en.explore.quality.outliers,
+    });
   });
 
   it("says when the space was not checked yet, and when the run found no entity of the type", async () => {
