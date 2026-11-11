@@ -182,7 +182,7 @@ fn ids(file: &str, body: &str) -> Vec<String> {
 async fn three_formats_list_the_same_entries_newest_first_without_what_the_view_hides() {
     let app = fixture().await;
     let want = ["Event:e2", "Event:e1", "Article:a1"]
-        .map(|id| format!("tag:localhost,2026:city/urn:ngsi-ld:{id}"));
+        .map(|id| format!("urn:ngsi-ld:{id}"));
     let media = [
         "application/atom+xml; charset=utf-8",
         "application/rss+xml; charset=utf-8",
@@ -243,6 +243,24 @@ async fn three_formats_list_the_same_entries_newest_first_without_what_the_view_
     );
 }
 
+/// An entry's id is its Entity's URN (RSS guid, Atom id, JSON Feed id), so a feed read under
+/// another host, an `/{org}/` prefix or an own domain lists the same ids and no reader shows
+/// its entries again (T-6771).
+#[tokio::test]
+async fn an_entry_id_is_the_entity_urn_under_any_host() {
+    let app = fixture().await;
+    for file in FILES {
+        let uri = format!("{ALL}/{file}");
+        let (_, _, one) = call(&app, "GET", &uri, "", &[("Host", "data.example.sk")]).await;
+        let (_, _, two) = call(&app, "GET", &uri, "", &[("Host", "opendata.example.org:8443")]).await;
+        assert_eq!(ids(file, &one), ids(file, &two), "{file}");
+        assert!(
+            ids(file, &one).iter().all(|id| id.starts_with("urn:ngsi-ld:")),
+            "{file}: {one}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn only_a_listed_output_of_a_readable_view_has_a_feed() {
     let app = fixture().await;
@@ -268,7 +286,7 @@ async fn a_filter_only_narrows_and_a_request_cannot_widen_it() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         ids("feed.json", &body),
-        ["tag:localhost,2026:city/urn:ngsi-ld:Event:e2"]
+        ["urn:ngsi-ld:Event:e2"]
     );
     let widen = format!("{sport}?q=name==%22x%22)%7C(category==%22kult%C3%BAra%22");
     let (status, body) = send(&app, "GET", &widen, "").await;
@@ -283,7 +301,7 @@ async fn a_filter_only_narrows_and_a_request_cannot_widen_it() {
     let (status, body) = send(&app, "GET", every, "").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let all = ["Event:e2", "Event:e1", "Article:a1"]
-        .map(|id| format!("tag:localhost,2026:every/urn:ngsi-ld:{id}"));
+        .map(|id| format!("urn:ngsi-ld:{id}"));
     assert_eq!(
         ids("feed.json", &body),
         all,
@@ -316,7 +334,7 @@ async fn a_filter_only_narrows_and_a_request_cannot_widen_it() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         ids("feed.json", &body),
-        ["tag:localhost,2026:city/urn:ngsi-ld:Article:a1"]
+        ["urn:ngsi-ld:Article:a1"]
     );
 }
 
@@ -340,7 +358,7 @@ async fn pages_link_each_other_and_bad_parameters_are_400() {
     .await;
     assert_eq!(
         ids("feed.json", &second),
-        ["tag:localhost,2026:city/urn:ngsi-ld:Article:a1"]
+        ["urn:ngsi-ld:Article:a1"]
     );
     let feed: Value = serde_json::from_str(&second).expect("json");
     assert!(feed.get("next_url").is_none(), "{second}");
