@@ -947,10 +947,19 @@ mod tests {
         };
         let readers = BTreeSet::from(["helsinki-readers".to_owned()]);
         assert_eq!(groups(&reader, Some("hel")), readers);
-        assert_eq!(groups(&reader, Some("helsinki")), BTreeSet::from(["members".to_owned()]));
-        assert!(groups(&reader, None).is_empty(), "no Organization, no group");
+        assert_eq!(
+            groups(&reader, Some("helsinki")),
+            BTreeSet::from(["members".to_owned()])
+        );
+        assert!(
+            groups(&reader, None).is_empty(),
+            "no Organization, no group"
+        );
         let elsewhere = claims(&["/zilina/helsinki-readers"]);
-        assert!(groups(&elsewhere, Some("hel")).is_empty(), "another Organization's group");
+        assert!(
+            groups(&elsewhere, Some("hel")).is_empty(),
+            "another Organization's group"
+        );
         assert!(groups(&claims(&[]), Some("hel")).is_empty(), "no group");
         // A token without `jc_groups` keeps the plain `groups` claim, as before ADR-N-067.
         let plain: Claims = serde_json::from_value(serde_json::json!({

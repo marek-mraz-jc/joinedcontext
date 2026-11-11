@@ -380,7 +380,10 @@ async fn the_hop_carries_only_the_groups_of_the_endpoints_organization() {
         }))
     };
     let cases: [(&[&str], Option<&str>); 3] = [
-        (&["/hel/helsinki-readers", "/helsinki/members"], Some("helsinki-readers")),
+        (
+            &["/hel/helsinki-readers", "/helsinki/members"],
+            Some("helsinki-readers"),
+        ),
         (&["/zilina/helsinki-readers", "/helsinki/members"], None),
         (&[], None),
     ];
