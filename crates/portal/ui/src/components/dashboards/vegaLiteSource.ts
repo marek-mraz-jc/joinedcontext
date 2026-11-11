@@ -114,6 +114,56 @@ async function json(url: string, fetcher: typeof fetch): Promise<unknown> {
   return response.json();
 }
 
+/**
+ * The records of a CSV text (RFC 4180: quoted fields, doubled quotes, CRLF), each a header-keyed
+ * object of strings. d3-dsv, which `vega.read` parses CSV with, builds its row objects with
+ * `new Function`, which the Portal's Content Security Policy refuses (T-6791): every CSV chart
+ * failed. The strings are typed afterwards by `vega.read(records, {type: "json", parse: "auto"})`.
+ */
+export function csvRecords(text: string, max = SOURCE_MAX_ROWS): Record<string, string>[] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (c === '"') {
+        quoted = false;
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      quoted = true;
+    } else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+      if (rows.length > max) break;
+    } else {
+      field += c;
+    }
+  }
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  const [header, ...body] = rows;
+  if (!header) return [];
+  return body
+    .filter((cells) => cells.length > 1 || cells[0] !== "")
+    .slice(0, max)
+    .map((cells) => Object.fromEntries(header.map((name, k) => [name, cells[k] ?? ""])));
+}
+
 /** Reads the source, following next links on the Endpoint up to {@link SOURCE_MAX_ROWS} rows. */
 export async function readSource(slug: string, source: WidgetSource, fetcher: typeof fetch = fetch, now = Date.now()): Promise<SourceRows> {
   const first = sourceUrl(slug, source, now);

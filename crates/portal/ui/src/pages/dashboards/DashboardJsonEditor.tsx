@@ -185,7 +185,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
             <Card padding="sm" className="flex flex-col gap-3">
               <div className="grid gap-3 sm:grid-cols-3">
                 <Field id={ids.type} label={t("dashboards.json.widgetType")} help={t("dashboards.json.widgetTypeHint")}>
-                  <Select value={pickedType} onChange={(e) => setPickedType(e.target.value as PickedWidget)}>
+                  <Select id={ids.type} value={pickedType} onChange={(e) => setPickedType(e.target.value as PickedWidget)}>
                     {PICKED_WIDGETS.map((type) => (
                       <option key={type} value={type}>
                         {t(`dashboards.json.type.${type}`)}
@@ -194,7 +194,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                   </Select>
                 </Field>
                 <Field id={ids.endpoint} label={t("dashboards.json.endpoint")} help={t("dashboards.json.endpointHint")}>
-                  <Select value={endpoint} onChange={(e) => setPickedEndpoint(e.target.value)}>
+                  <Select id={ids.endpoint} value={endpoint} onChange={(e) => setPickedEndpoint(e.target.value)}>
                     {endpointNames.map((e) => (
                       <option key={e} value={e}>
                         {e}
@@ -207,7 +207,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                   label={t("dashboards.json.entityType")}
                   help={entityTypes.length > 0 ? t("dashboards.json.entityTypeHint") : t("dashboards.json.noTypes")}
                 >
-                  <Select value={entityType} disabled={entityTypes.length === 0} onChange={(e) => setPickedEntity(e.target.value)}>
+                  <Select id={ids.entity} value={entityType} disabled={entityTypes.length === 0} onChange={(e) => setPickedEntity(e.target.value)}>
                     {entityTypes.map((type) => (
                       <option key={type} value={type}>
                         {type}
