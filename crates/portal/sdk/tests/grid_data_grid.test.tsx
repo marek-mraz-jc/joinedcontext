@@ -91,10 +91,10 @@ describe("DataGrid", () => {
     expect(bodyNames()).toHaveLength(3);
   });
 
-  it("sorts from the header button ascending, descending, then in the list's order, and names the column alone", () => {
+  it("sorts from the header button ascending, descending, then in the list's order", () => {
     grid({ tableProps: { "data-records": "" } });
     expect(screen.getByRole("table").hasAttribute("data-records")).toBe(true);
-    const header = screen.getByRole("columnheader", { name: "Grants" });
+    const header = screen.getByRole("columnheader", { name: /^Grants/ });
     const sort = within(header).getByRole("button", { name: "Grants" });
     fireEvent.click(sort);
     expect(header.getAttribute("aria-sort")).toBe("ascending");

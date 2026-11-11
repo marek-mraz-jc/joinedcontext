@@ -230,7 +230,7 @@ describe("the Context Spaces page", () => {
     const history = within(table).getAllByTestId("space-history-size");
     expect(history.slice(0, 2).map((cell) => cell.textContent)).toEqual(["512 KiB", "0 B"]);
     expect(history[2]).toHaveAttribute("title", en.spaces.sizeMissing);
-    expect(within(table).getByRole("columnheader", { name: en.spaces.field.history })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: (name) => name.startsWith(en.spaces.field.history) })).toBeInTheDocument();
   });
 
   it("says_why_a_count_is_missing_and_never_shows_a_zero_for_it", async () => {

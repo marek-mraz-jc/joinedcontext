@@ -184,8 +184,6 @@ export function DataGrid<T>({
       <th
         key={col.key}
         scope="col"
-        // The column's name alone: its menu button would read "Column menu: ..." into every cell's header.
-        aria-label={label}
         className={`jc-grid-th${dragOver === col.key ? " jc-grid-th--drop" : ""}${complete(query.filters[col.key]) ? " jc-grid-th--filtered" : ""}`}
         style={col.align === "right" ? { textAlign: "right" } : undefined}
         aria-sort={sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : undefined}

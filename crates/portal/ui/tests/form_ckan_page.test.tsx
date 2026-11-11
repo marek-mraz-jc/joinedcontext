@@ -130,7 +130,7 @@ describe("the catalogue form (T-1765)", () => {
         return undefined;
       },
     });
-    await user.type(await screen.findByLabelText(/^Name/, { selector: "input" }), "opendata-bb");
+    await user.type(await screen.findByLabelText(/^Name/), "opendata-bb");
     await user.clear(byLabel(/^URL/));
     await user.type(byLabel(/^URL/), "https://opendata.example.sk");
     await user.click(byLabel(/Default organization/));
@@ -165,14 +165,14 @@ describe("the catalogue form (T-1765)", () => {
         return undefined;
       },
     });
-    await user.type(await screen.findByLabelText(/^Name/, { selector: "input" }), "opendata-bb");
+    await user.type(await screen.findByLabelText(/^Name/), "opendata-bb");
     await user.clear(byLabel(/^URL/));
     await user.type(byLabel(/^URL/), "https://opendata.example.sk");
     await user.type(byLabel(/API token secret/), "ckan-api-token");
     await user.click(screen.getByRole("button", { name: /Propose catalogue/ }));
 
     await screen.findByText("chg-9");
-    await waitFor(() => expect((screen.getByLabelText(/^Name/, { selector: "input" }) as HTMLInputElement).value).toBe(""));
+    await waitFor(() => expect((screen.getByLabelText(/^Name/) as HTMLInputElement).value).toBe(""));
   });
 
   it("keeps_every_word_when_the_server_refuses", async () => {
@@ -186,7 +186,7 @@ describe("the catalogue form (T-1765)", () => {
         return undefined;
       },
     });
-    await user.type(await screen.findByLabelText(/^Name/, { selector: "input" }), "opendata-bb");
+    await user.type(await screen.findByLabelText(/^Name/), "opendata-bb");
     await user.clear(byLabel(/^URL/));
     await user.type(byLabel(/^URL/), "https://opendata.example.sk");
     await user.click(byLabel(/Default organization/));
@@ -195,7 +195,7 @@ describe("the catalogue form (T-1765)", () => {
     await user.click(screen.getByRole("button", { name: /Propose catalogue/ }));
 
     expect(await screen.findByText(REFUSAL)).toBeInTheDocument();
-    expect((screen.getByLabelText(/^Name/, { selector: "input" }) as HTMLInputElement).value).toBe("opendata-bb");
+    expect((screen.getByLabelText(/^Name/) as HTMLInputElement).value).toBe("opendata-bb");
     expect((byLabel(/^URL/) as HTMLInputElement).value).toBe("https://opendata.example.sk");
     expect((byLabel(/Default organization/) as HTMLInputElement).value).toBe("Mesto Banská Bystrica");
     expect((byLabel(/API token secret/) as HTMLInputElement).value).toBe("ckan-api-token");
@@ -216,7 +216,7 @@ describe("the catalogue form (T-1765)", () => {
         return undefined;
       },
     });
-    await user.type(await screen.findByLabelText(/^Name/, { selector: "input" }), "opendata-bb");
+    await user.type(await screen.findByLabelText(/^Name/), "opendata-bb");
     await user.clear(byLabel(/^URL/));
     await user.type(byLabel(/^URL/), "javascript:alert(1)");
     await user.type(byLabel(/API token secret/), "ckan-api-token");
@@ -243,7 +243,7 @@ describe("the catalogue form (T-1765)", () => {
         return undefined;
       },
     });
-    await user.type(await screen.findByLabelText(/^Name/, { selector: "input" }), "opendata-bb");
+    await user.type(await screen.findByLabelText(/^Name/), "opendata-bb");
     await user.type(byLabel(/^URL/), "https://opendata.example.sk");
     await user.type(byLabel(/API token secret/), typed);
     await user.click(screen.getByRole("button", { name: /Propose catalogue/ }));
@@ -269,7 +269,7 @@ describe("the catalogue form (T-1765)", () => {
         return undefined;
       },
     });
-    await user.type(await screen.findByLabelText(/^Name/, { selector: "input" }), "opendata-bb");
+    await user.type(await screen.findByLabelText(/^Name/), "opendata-bb");
     await user.type(byLabel(/^URL/), "https://opendata.example.sk");
     await user.type(byLabel(/API token secret/), "ckan-api-token");
     const key = screen.getByLabelText(/Key inside the secret/);

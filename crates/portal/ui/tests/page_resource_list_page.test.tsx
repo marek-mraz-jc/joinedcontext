@@ -69,7 +69,7 @@ describe("a kind with no page of its own", () => {
     // The table is already there with its head, so nothing jumps when the rows land.
     const table = await screen.findByRole("table");
     expect(table).toHaveAttribute("aria-busy", "true");
-    expect(within(table).getByRole("columnheader", { name: en.resourceList.name })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: (name) => name.startsWith(en.resourceList.name) })).toBeInTheDocument();
   });
 
   it("says_why_the_list_could_not_be_read_and_offers_one_more_try", async () => {

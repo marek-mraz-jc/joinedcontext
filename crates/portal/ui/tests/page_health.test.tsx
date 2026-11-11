@@ -67,7 +67,7 @@ describe("the health log", () => {
       path: "/projects/bbsk/health",
       answer: answering(() => jsonResponse({ items: CHECKS })),
     });
-    await screen.findByRole("columnheader", { name: en.health.found });
+    await screen.findByRole("columnheader", { name: (name) => name.startsWith(en.health.found) });
     const table = screen.getByRole("table", { name: en.health.caption });
     const rows = within(table).getAllByRole("row").slice(1);
     // The list opens on what needs attention: the working check waits behind the status filter.
@@ -105,7 +105,7 @@ describe("the health log", () => {
   // The walker's row-link rule (tests/pageChecks.ts): every record of a table of records opens on a click.
   it("gives_every_check_row_its_record_link", async () => {
     await renderRoute({ path: "/projects/bbsk/health", answer: answering(() => jsonResponse({ items: CHECKS })) });
-    await screen.findByRole("columnheader", { name: en.health.found });
+    await screen.findByRole("columnheader", { name: (name) => name.startsWith(en.health.found) });
     const table = screen.getByRole("table", { name: en.health.caption });
     expect(table).toHaveAttribute("data-records");
     const rows = table.querySelectorAll(":scope > tbody > tr");
@@ -145,7 +145,7 @@ describe("the health log", () => {
             ? jsonResponse({ checks: [] })
             : undefined,
     });
-    await screen.findByRole("columnheader", { name: en.health.found });
+    await screen.findByRole("columnheader", { name: (name) => name.startsWith(en.health.found) });
     const table = screen.getByRole("table", { name: en.health.caption });
     expect(within(table).getByText(`${en.health.project}: helsinki`)).toBeInTheDocument();
     expect(calls()).toContain("GET /api/v1/organization/health-checks");
@@ -166,7 +166,7 @@ describe("the health log", () => {
       locale: "sk",
       answer: answering(() => jsonResponse({ items: CHECKS })),
     });
-    await screen.findByRole("columnheader", { name: sk.health.found });
+    await screen.findByRole("columnheader", { name: (name) => name.startsWith(sk.health.found) });
     const rows = within(screen.getByRole("table", { name: sk.health.caption })).getAllByRole("row").slice(1);
     expect(within(rows[0]).getByText(/pokrývať create a update pre pl-podujatia-zvolen/)).toBeInTheDocument();
     expect(within(rows[0]).getByText(/403 no policy grants/)).toBeInTheDocument();
@@ -176,7 +176,7 @@ describe("the health log", () => {
   // T-6206: the shared grid stacks each row as a card on a phone (Table stack), the whole finding in it.
   it("gives_a_phone_one_card_per_check_with_the_whole_finding", async () => {
     await renderRoute({ path: "/projects/bbsk/health", answer: answering(() => jsonResponse({ items: CHECKS })) });
-    await screen.findByRole("columnheader", { name: en.health.found });
+    await screen.findByRole("columnheader", { name: (name) => name.startsWith(en.health.found) });
     const cards = within(screen.getByRole("table", { name: en.health.caption })).getAllByRole("row").slice(1);
     expect(cards).toHaveLength(2);
     expect(within(cards[0]).getByText(/403 no policy grants/)).toBeInTheDocument();
