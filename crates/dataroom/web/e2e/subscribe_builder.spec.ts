@@ -55,8 +55,8 @@ async function serve(page: Page, opts: { facets: boolean }) {
     if (url.pathname.endsWith(".ics")) {
       const filter = decodeURIComponent(url.pathname);
       const year = new Date().getFullYear() + 1;
-      const event = filter.includes("Zvolen")
-        ? `BEGIN:VEVENT\r\nDTSTART:${year}0115T180000\r\nSUMMARY:Koncert na námestí vo Zvolene\r\nEND:VEVENT\r\n`
+      const event = filter.includes("Divadlo")
+        ? `BEGIN:VEVENT\r\nDTSTART:${year}0115T180000\r\nSUMMARY:Rozprávka pre deti v Divadle J. G. Tajovského\r\nEND:VEVENT\r\n`
         : `BEGIN:VEVENT\r\nDTSTART:${year}0110\r\nSUMMARY:Jarmok\r\nEND:VEVENT\r\n`;
       return route.fulfill({ contentType: "text/calendar", body: `BEGIN:VCALENDAR\r\n${event}END:VCALENDAR\r\n` });
     }
@@ -64,6 +64,9 @@ async function serve(page: Page, opts: { facets: boolean }) {
   });
   return asked;
 }
+
+// The date fields and the preview's dates read as a Slovak reader's browser shows them.
+test.use({ locale: "sk-SK", timezoneId: "Europe/Bratislava" });
 
 const VIEWPORTS = [
   { width: 1440, height: 1000 },
@@ -97,7 +100,20 @@ for (const viewport of VIEWPORTS) {
       "href",
       "https://calendar.google.com/calendar/r?cid=" + encodeURIComponent(`webcal:${base.slice(6)}/feeds/${segment}/vsetky.ics`),
     );
-    await expect(page.locator("#jc-subscribe-preview")).toContainText("Koncert na námestí vo Zvolene");
+    await expect(page.locator("#jc-subscribe-preview")).toContainText("Rozprávka pre deti");
+    // The menu has no inner scroll: the page scrolls to its link and preview, nothing is cut.
+    expect(await page.locator(".jc-subscribe-menu").evaluate((e) => e.scrollHeight <= e.clientHeight + 1)).toBe(true);
+    // No field of the open menu sits under the closed assistant: it steps aside where they meet.
+    for (const field of [town, genre]) {
+      await field.scrollIntoViewIfNeeded();
+      const id = await field.getAttribute("id");
+      await expect.poll(() => page.evaluate((id) => {
+        const c = document.querySelector(".jc-corner .jc-assistant:not([open]) > summary");
+        if (!c || document.body.classList.contains("jc-corner-aside")) return true;
+        const a = c.getBoundingClientRect(), b = document.getElementById(id)!.getBoundingClientRect();
+        return !(a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom);
+      }, id)).toBe(true);
+    }
     expect(asked).toContain(`/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/feeds/${segment}/vsetky.ics`);
     // The ? form of the same filter is what the gateway forwards: the two links say the same.
     expect(new URLSearchParams(segment).get("q")).toBe(q);
@@ -109,6 +125,7 @@ for (const viewport of VIEWPORTS) {
     await expect(url).not.toHaveValue(/Martin/);
     await expect(page.locator(".jc-subscribe-query > .jc-subscribe-copy")).toBeHidden();
     await expect(page.locator(".jc-subscribe-query > .jc-subscribe-links")).toBeHidden();
+    await expect(page.locator("#jc-subscribe-preview-status")).toContainText("odkaz sa nezobrazí");
     await page.screenshot({ path: `${SHOTS}/builder-refused-${viewport.width}.png`, fullPage: true });
   });
 

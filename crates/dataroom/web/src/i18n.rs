@@ -1313,6 +1313,14 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "„{value}” nincs a listában; válasszon egy értéket belőle, vagy törölje a mezőt.",
     );
     add(
+        "subscribe_link_held",
+        "No link while a field holds a value outside its list: correct or clear the field marked red.",
+        "Kým pole obsahuje hodnotu mimo zoznamu, odkaz sa nezobrazí: opravte alebo vymažte pole označené červenou.",
+        "Dokud pole obsahuje hodnotu mimo seznam, odkaz se nezobrazí: opravte nebo vymažte pole označené červeně.",
+        "Solange ein Feld einen Wert außerhalb seiner Liste enthält, gibt es keinen Link: korrigieren oder leeren Sie das rot markierte Feld.",
+        "Amíg egy mező a listán kívüli értéket tartalmaz, nincs hivatkozás: javítsa vagy törölje a pirossal jelölt mezőt.",
+    );
+    add(
         "subscribe_no_facets",
         "This calendar offers no town or genre lists; narrow it by dates, or subscribe to it whole above.",
         "Tento kalendár neponúka zoznam obcí ani žánrov; zúžte ho dátumami alebo ho vyššie odoberajte celý.",
