@@ -1600,7 +1600,7 @@ async fn a_push_after_the_page_was_read_makes_the_approval_refuse_and_nothing_me
 
     let (status, body) = approve_reviewed(&state, json!({ "reviewed": review })).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert!(body.contains("stale approval"), "{body}");
+    assert!(body.contains("Stale approval"), "{body}");
     assert_eq!(
         merge_message(&server).await,
         None,

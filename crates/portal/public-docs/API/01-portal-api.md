@@ -713,7 +713,7 @@ Approval rules, enforced by the API and not only by the UI:
 - an open change carries `review`: its head commit `headSha` and `planDigest`, `sha256:` and the
   hex SHA-256 of its plan as the page shows it (secret values redacted). The Portal's pages send
   it back as `{"reviewed": {...}}`; when the head commit or the plan moved since, the approval
-  answers `409` "stale approval" and merges nothing, and the person reads the change again. A
+  answers `409` "Stale approval" and merges nothing, and the person reads the change again. A
   merge records both on its `Reviewed-Head:` and `Plan-Digest:` lines (CHG-07, CHG-13);
 - approving answers `202` with the `Change`, its `phase` moved to `Deploying`; the reconciler
   moves it to `Live` when the merge lands on the default branch and the mirror sync observes it.

@@ -321,7 +321,7 @@ impl ChangeReview {
 fn plan_digest(plan: &PlanDiff) -> String {
     use sha2::{Digest, Sha256};
     let shown = PlanDiff {
-        summary: plan.summary.clone(),
+        summary: plan.summary,
         fields: redact(plan.fields.clone()),
     };
     // A PlanDiff of JSON values always serialises.
@@ -332,7 +332,7 @@ fn plan_digest(plan: &PlanDiff) -> String {
 /// The answer to an approval of a change that moved since its page was read (CHG-13, P-9).
 fn stale_approval(id: &str) -> ApiError {
     ApiError::Conflict(format!(
-        "stale approval: change proposal '{id}' has a new commit or a new plan since you opened \
+        "Stale approval: change proposal '{id}' has a new commit or a new plan since you opened \
          it. Open the change again, read what it says now, and approve that (CHG-13)."
     ))
 }

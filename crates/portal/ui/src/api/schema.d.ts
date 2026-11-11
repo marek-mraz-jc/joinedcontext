@@ -8013,6 +8013,7 @@ export interface components {
             confirm?: string | null;
             /** @description Why a change is rejected; written on the merge request beside who rejected it. */
             reason?: string | null;
+            reviewed?: null | components["schemas"]["ChangeReview"];
         };
         /** @description The approver's second look: the subject typed again, never kept. */
         ApproveRequest: {
@@ -8849,6 +8850,7 @@ export interface components {
             kind: string;
             metadata: components["schemas"]["ChangeMeta"];
             planFields?: components["schemas"]["FieldChange"][] | null;
+            review?: null | components["schemas"]["ChangeReview"];
             status: components["schemas"]["ChangeStatus"];
             summary: components["schemas"]["ChangeSummary"];
             /**
@@ -8861,6 +8863,18 @@ export interface components {
              *     copy first, and whose (UI-63, CC-79).
              */
             workspace?: string | null;
+        };
+        /**
+         * @description What an approver reviews of an open change (CHG-07, CHG-13): its head commit and the digest
+         *     of its plan. The approval merges only when both still read the same, so a push or a base
+         *     change between the page and the click is never merged unseen, and the merge commit records
+         *     both.
+         */
+        ChangeReview: {
+            /** @description The merge request's head commit, e.g. `4917dcef8a1b2c3d4e5f60718293a4b5c6d7e8f9`. */
+            headSha: string;
+            /** @description `sha256:` and the hex SHA-256 of the plan as the page shows it, secret values redacted. */
+            planDigest: string;
         };
         /** @description Approval and reconciliation status of a change. */
         ChangeStatus: {

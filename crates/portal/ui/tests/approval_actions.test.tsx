@@ -254,7 +254,7 @@ describe("approval actions", () => {
   it("shows the commit and plan digest it approves, and sends exactly those back (CHG-13)", async () => {
     const fetchMock = renderDetail();
     const note = await screen.findByTestId("approval-reviewing");
-    expect(note).toHaveTextContent("You approve commit 4917dce, plan sha256:1a2b3c4d");
+    expect(note).toHaveTextContent("What you approveCommit 4917dcePlan sha256:1a2b3c4d");
     await userEvent.click(screen.getByRole("button", { name: en.approvals.approve }));
 
     await waitFor(() => expect(posts(fetchMock)).toHaveLength(1));
@@ -494,7 +494,7 @@ describe("approval actions", () => {
 
     await userEvent.click(screen.getByRole("button", { name: en.approvals.approve }));
     await waitFor(() => expect(posts(fetchMock)).toHaveLength(1));
-    await expect(posts(fetchMock)[0].clone().json()).resolves.toEqual({ confirm: "air-quality" });
+    await expect(posts(fetchMock)[0].clone().json()).resolves.toEqual({ confirm: "air-quality", reviewed: proposal().review });
   });
 });
 

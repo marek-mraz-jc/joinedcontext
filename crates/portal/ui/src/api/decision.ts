@@ -22,7 +22,7 @@ type ChangeReview = components["schemas"]["ChangeReview"];
  */
 export interface Approval {
   confirm?: string;
-  reviewed?: ChangeReview;
+  reviewed?: ChangeReview | null;
 }
 
 export function useDecision(project: string, id: string) {
@@ -38,6 +38,12 @@ export function useDecision(project: string, id: string) {
     void queryClient.invalidateQueries({ queryKey: queryKeys.changes(project), exact: true });
   };
   const failed = (err: unknown) => {
+    // A change that moved since the page read it (409, CHG-13) is read again, so the page shows
+    // what is there now and the next approval sends that.
+    if (err instanceof ApiError && err.status === 409) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.change(project, id) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.changes(project), exact: true });
+    }
     if (err instanceof ApiError) setError(err.problem?.detail ?? err.message);
     else if (err instanceof Error) setError(err.message);
     else setError(t("app.error.generic"));

@@ -67,6 +67,7 @@ export function ApprovalDetailPage({
   const permissions = usePermissions(project);
 
   const rejectReasonId = useId();
+  const reviewingId = useId();
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [confirmInput, setConfirmInput] = useState("");
@@ -375,12 +376,20 @@ export function ApprovalDetailPage({
           ) : null}
 
           {proposal.review && isPendingApproval ? (
-            <p role="note" className="text-sm text-fg-muted" data-testid="approval-reviewing">
-              {t("approvals.reviewing", {
-                commit: proposal.review.headSha.slice(0, 7),
-                digest: proposal.review.planDigest.slice(0, 15),
-              })}
-            </p>
+            <div role="note" aria-labelledby={reviewingId} className="flex flex-col gap-1 rounded-md border border-border bg-surface-subtle px-3 py-2 text-sm" data-testid="approval-reviewing">
+              <p id={reviewingId} className="font-medium text-fg">
+                {t("approvals.reviewingTitle")}
+              </p>
+              <p className="flex flex-wrap gap-x-4 gap-y-1 text-fg">
+                <span>
+                  {t("approvals.reviewingCommit")} <code className="font-mono" title={proposal.review.headSha}>{proposal.review.headSha.slice(0, 7)}</code>
+                </span>
+                <span>
+                  {t("approvals.reviewingPlan")} <code className="font-mono" title={proposal.review.planDigest}>{proposal.review.planDigest.slice(0, 15)}</code>
+                </span>
+              </p>
+              <p className="text-fg-muted">{t("approvals.reviewing")}</p>
+            </div>
           ) : null}
 
           <div className="flex flex-wrap items-center gap-3">

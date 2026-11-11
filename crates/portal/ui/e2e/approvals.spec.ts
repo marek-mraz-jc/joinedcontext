@@ -42,6 +42,10 @@ const PROPOSAL = {
     { path: "spec.audience", from: "public", to: "internal" },
     { path: "spec.credentials.token", from: "[REDACTED]", to: "[REDACTED]" },
   ],
+  review: {
+    headSha: "4917dcef8a1b2c3d4e5f60718293a4b5c6d7e8f9",
+    planDigest: "sha256:1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+  },
 };
 
 const APPROVED = {
@@ -114,6 +118,45 @@ test.describe("approvals", () => {
 
     await expect(page.getByText("Deploying")).toBeVisible();
     expect(approvals).toEqual(["/api/v1/projects/helsinki/changes/chg-1a2b3c4d/approve"]);
+  });
+
+  test("an approval of a change that moved since the page was read is refused, at 400 and 1440 px (CHG-13)", async ({ page }) => {
+    await stubApi(page);
+    const sent: unknown[] = [];
+    const reads: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "GET" && request.url().endsWith(`/changes/${PROPOSAL.metadata.name}`)) reads.push(request.url());
+    });
+    await page.route(`**/changes/${PROPOSAL.metadata.name}/approve`, (route) => {
+      sent.push(route.request().postDataJSON());
+      return route.fulfill({
+        status: 409,
+        contentType: "application/problem+json",
+        body: JSON.stringify({
+          type: "https://joinedcontext.com/errors/conflict",
+          title: "Conflict",
+          status: 409,
+          detail:
+            "Stale approval: change proposal 'chg-1a2b3c4d' has a new commit or a new plan since you opened it. Open the change again, read what it says now, and approve that (CHG-13).",
+        }),
+      });
+    });
+    const shot = (name: string) => page.screenshot({ path: test.info().outputPath(name), fullPage: true });
+    for (const width of [1440, 400]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/projects/helsinki/approvals/chg-1a2b3c4d?lang=en");
+      const note = page.getByTestId("approval-reviewing");
+      await expect(note).toContainText("Commit 4917dce");
+      await expect(note).toContainText("Plan sha256:1a2b3c4d");
+      await shot(`approval-reviewing-${width}.png`);
+      await page.getByRole("button", { name: "Approve" }).click();
+      await expect(page.getByRole("alert").filter({ hasText: "Stale approval" })).toBeVisible();
+      await shot(`approval-stale-${width}.png`);
+    }
+    // The refusal reads the change again: the detail is asked once more after each 409.
+    expect(reads.length).toBeGreaterThanOrEqual(4);
+    // The page sends back exactly the commit and digest it showed.
+    expect(sent).toEqual([{ reviewed: PROPOSAL.review }, { reviewed: PROPOSAL.review }]);
   });
 
   test("at 400 px a long merge-request link and file path wrap inside the page (T-4976)", async ({ page }) => {
