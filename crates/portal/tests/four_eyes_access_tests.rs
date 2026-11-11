@@ -84,6 +84,11 @@ fn manifest(kind: &str) -> (String, String) {
 /// A forge holding one proposal of `kind` by PROPOSER, and a mirror where PROPOSER and SECOND
 /// both administer every kind across the organization.
 async fn forge(kind: &str) -> (MockServer, AppState) {
+    forge_by(kind, "jana.kovacova", PROPOSER).await
+}
+
+/// The change of `kind`, proposed by the account named `author` with the e-mail `email`.
+async fn forge_by(kind: &str, author: &str, email: &str) -> (MockServer, AppState) {
     let server = MockServer::start().await;
     let repo = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
     let ok = |body: Value| ResponseTemplate::new(200).set_body_json(body);
@@ -106,8 +111,8 @@ async fn forge(kind: &str) -> (MockServer, AppState) {
         "Base": "main",
         "CreatedAt": "2026-10-20T09:14:22Z",
         "Author": "jana.kovacova",
-        "AuthorName": "jana.kovacova",
-        "AuthorEmail": PROPOSER,
+        "AuthorName": author,
+        "AuthorEmail": email,
         "Mergeable": true,
         "Merged": false
     });
@@ -148,7 +153,7 @@ async fn forge(kind: &str) -> (MockServer, AppState) {
         "RoleBinding",
         "admin-binding",
         json!({
-            "subjects": [{ "user": PROPOSER }, { "user": SECOND }],
+            "subjects": [{ "user": PROPOSER }, { "user": SECOND }, { "user": "jana.kovacova" }],
             "role": "admin-role",
             "scope": { "organization": "bb" }
         }),
@@ -184,6 +189,31 @@ async fn the_proposer_of_an_access_change_cannot_approve_it() {
         assert!(matches!(err, ApiError::SelfApproval(_)), "{kind}: {err:?}");
         assert!(!merged(&server).await, "{kind} merged by its proposer");
     }
+}
+
+/// T-6706: a proposer without an e-mail is the author of what the Portal wrote for them
+/// (`{username}@{project}.local`), whatever display name they carry now: a name changed since
+/// the proposal, or a namesake, never decides who proposed.
+#[tokio::test]
+async fn a_proposer_without_an_email_cannot_approve_their_change_under_another_name() {
+    let (server, state) = forge_by("Role", "Jana Kováčová", "jana.kovacova@org.local").await;
+    let renamed = Identity {
+        email: None,
+        name: Some("Jana Nováková".into()),
+        ..person(PROPOSER)
+    };
+    let err = approve_change_for(
+        &state,
+        &renamed,
+        ORG_NAMESPACE,
+        "chg-org-00000001",
+        Some("role-x"),
+        ApprovedBy::Person,
+    )
+    .await
+    .expect_err("the proposer approves their own access change");
+    assert!(matches!(err, ApiError::SelfApproval(_)), "{err:?}");
+    assert!(!merged(&server).await);
 }
 
 /// Another administrator approves the same change.
