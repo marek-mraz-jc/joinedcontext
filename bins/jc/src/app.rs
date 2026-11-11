@@ -1481,7 +1481,9 @@ mod tests {
             "[portal.limits]\n\"spec.projects.quota.apps\" = { max = 250 }\n",
         );
         let vars = modules::portal::limits_vars(&cfg);
-        let inline = vars.get("JC_PORTAL_ORGANIZATION_BOUNDS").expect("handed over");
+        let inline = vars
+            .get("JC_PORTAL_ORGANIZATION_BOUNDS")
+            .expect("handed over");
         let bounds = joinedcontext_portal::config::organization_bounds(&|key: &str| {
             (key == "JC_PORTAL_ORGANIZATION_BOUNDS").then(|| inline.clone())
         })

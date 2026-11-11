@@ -191,7 +191,6 @@ fn the_operators_bound_replaces_the_built_in_one_and_the_refusal_names_it() {
 }
 
 #[test]
-#[test]
 fn an_operator_file_names_catalogued_entries_and_never_loosens_a_security_one() {
     bounds(&[("spec.limits.edge.requestsPerMinute.web", None, Some(6000))])
         .validate()
