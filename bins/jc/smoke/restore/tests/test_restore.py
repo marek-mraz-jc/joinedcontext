@@ -389,5 +389,5 @@ def test_teardown_removes_the_copys_functions_container_by_name(tmp_path, monkey
     ops = suite.Ops(args(tmp_path, src_pg_port=55460), tmp_path / "rh" / "prod", rhome, tmp_path / "b")
     ops.teardown()
     removed = [c[-1] for c in calls if c[:3] == ["docker", "rm", "-f"]]
-    assert removed == ["rh-pg-prod-restore", "rh-functions-42311"]
+    assert removed == ["rh-pg-prod-restore", "rh-functions-42311", "rh-prom-prod-restore", "rh-promproxy-prod-restore"]
     assert not rhome.exists()

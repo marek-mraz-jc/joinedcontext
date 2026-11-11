@@ -494,8 +494,10 @@ class Ops:
             if pid.exists():
                 subprocess.run([str(REPO / "deploy" / "rehearsal" / "stop-jc.sh"), pid.read_text().strip()],
                                capture_output=True, check=False)
-        # the copy's jc-functions container (apps.sh, named by the copy's public port)
-        for name in (self.dst.container, f"rh-functions-{self.a.restore_port}"):
+        # the copy's jc-functions (apps.sh, named by its public port), Prometheus and label proxy
+        # (prometheus.sh, named by its env)
+        for name in (self.dst.container, f"rh-functions-{self.a.restore_port}", f"rh-prom-{self.rhome.name}",
+                     f"rh-promproxy-{self.rhome.name}"):
             subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
         # pgdata belongs to the container's postgres user: emptied from inside a container
         if (self.rhome / "pgdata").exists():
