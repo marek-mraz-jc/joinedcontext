@@ -240,6 +240,8 @@ describe("the dashboard JSON editor page", () => {
     const refused = await screen.findByText("The server refused it");
     const alert = refused.closest("[role]") ?? refused.parentElement!;
     expect(within(alert as HTMLElement).getByText(/\/spec\/pages\/0\/widgets\/0\/spec\/data\/url/)).toBeInTheDocument();
+    // The refused widget is not drawn in the preview.
+    expect(screen.getByText("This widget is not drawn")).toBeInTheDocument();
 
     manifest.spec.pages[0].widgets[0].spec = { data: { name: "source" }, mark: "bar" } as never;
     fireEvent.change(editor, { target: { value: toText(manifest) } });

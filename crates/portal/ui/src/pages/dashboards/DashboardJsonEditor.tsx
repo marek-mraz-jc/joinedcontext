@@ -10,6 +10,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { api, ApiError, problemLines, queryKeys, unwrap } from "../../api/client";
+import { useIsPhone } from "../../phone";
 import { asManifests, refName } from "../../api/manifest";
 import type { Change, ResourceProposal } from "../../api/manifest";
 import { useProposal } from "../../api/proposal";
@@ -88,6 +89,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
   // The picker: a widget type, an Endpoint the person may read, a type of the Endpoint's model.
   const [pickedType, setPickedType] = useState<PickedWidget>("vega-lite");
   const [inserted, setInserted] = useState(false);
+  const phone = useIsPhone();
   const [pickedEndpoint, setPickedEndpoint] = useState("");
   const [pickedEntity, setPickedEntity] = useState("");
   const endpoint = pickedEndpoint || endpointNames[0] || "";
@@ -111,14 +113,14 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
     const spec = parsed.manifest?.spec;
     return (spec?.pages ?? []).map((page, index) => {
       const refused: string[] = [];
-      const widgets = (Array.isArray(page.widgets) ? page.widgets : []).flatMap((widget) => {
+      const widgets = (Array.isArray(page.widgets) ? page.widgets : []).flatMap((widget, at) => {
         const read = widget?.endpointRef ? byName.get(widget.endpointRef) : undefined;
         const readSpec = (read?.spec ?? {}) as { slug?: string; audience?: string };
         if (spec?.visibility === "public" && readSpec.audience !== "public") {
           refused.push(widget?.endpointRef ?? widget?.widgetType ?? "");
           return [];
         }
-        return widget && typeof widget.widgetType === "string" ? [{ widget, slug: readSpec.slug }] : [];
+        return widget && typeof widget.widgetType === "string" ? [{ widget, slug: readSpec.slug, at: `${index}/${at}` }] : [];
       });
       return { key: `${index}-${page.title ?? ""}`, title: page.title, widgets, refused };
     });
@@ -147,6 +149,13 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
       ? problemLines(check.error.problem).map((line) => ({ level: "error", message: line }))
       : [{ level: "error", message: check.error.message }]
     : (check.data?.verdict?.findings ?? []).filter((f) => f.level === "error" || !f.level);
+  // A widget the server refused is not drawn: the preview shows what would be published.
+  const refusedAt = new Map<string, string>();
+  for (const finding of refusals) {
+    const text = `${finding.path ?? ""} ${finding.message ?? ""}`;
+    const hit = /\/spec\/pages\/(\d+)\/widgets\/(\d+)/.exec(text);
+    if (hit && !refusedAt.has(`${hit[1]}/${hit[2]}`)) refusedAt.set(`${hit[1]}/${hit[2]}`, hit[0]);
+  }
   const checkedGreen = check.isSuccess && check.data?.valid !== false && refusals.length === 0;
 
   const asProposal = (): ResourceProposal | null =>
@@ -255,7 +264,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                   }}
                   schema={editorSchema}
                   ariaLabel={t("dashboards.json.source")}
-                  height="min(50vh, 36rem)"
+                  height={phone ? "18rem" : "min(50vh, 36rem)"}
                 />
               </Suspense>
             </Card>
@@ -299,7 +308,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
               {parsed.error ? (
                 <Alert tone="danger" title={t("dashboards.json.invalid")}>
                   {parsed.error.line
-                    ? t("dashboards.json.invalidAt", { line: parsed.error.line, column: parsed.error.column, message: parsed.error.message })
+                    ? t("dashboards.json.invalidAt", { line: parsed.error.line, column: parsed.error.column })
                     : parsed.error.message}
                 </Alert>
               ) : null}
@@ -350,7 +359,14 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                   {page.refused.length > 0 ? (
                     <Alert tone="warning">{t("dashboards.json.notPublic", { endpoints: page.refused.join(", ") })}</Alert>
                   ) : null}
-                  <DashboardWidgets project={project} widgets={page.widgets} />
+                  {page.widgets
+                    .filter((w) => refusedAt.has(w.at))
+                    .map((w) => (
+                      <Alert key={w.at} tone="danger" title={t("dashboards.json.widgetRefused")}>
+                        {t("dashboards.json.widgetRefusedAt", { path: refusedAt.get(w.at) })}
+                      </Alert>
+                    ))}
+                  <DashboardWidgets project={project} widgets={page.widgets.filter((w) => !refusedAt.has(w.at))} />
                 </div>
               ))
             )}

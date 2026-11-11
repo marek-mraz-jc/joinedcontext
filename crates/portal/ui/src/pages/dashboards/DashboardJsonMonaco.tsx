@@ -77,6 +77,9 @@ export default function DashboardJsonMonaco({
         scrollBeyondLastLine: false,
         wordWrap: "on",
         wrappingIndent: "indent",
+        // Wraps between words, never inside one (a type name stays whole).
+        wrappingStrategy: "advanced",
+        wordBreak: "keepAll",
         fixedOverflowWidgets: true,
         quickSuggestions: { strings: true, other: true, comments: false },
       }}

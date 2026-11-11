@@ -3765,7 +3765,7 @@
       "insert": "Widget einfügen",
       "fixFirst": "Korrigieren Sie zuerst das JSON: ein Widget wird nur einem gültigen Manifest hinzugefügt.",
       "invalid": "Das JSON lässt sich nicht lesen",
-      "invalidAt": "Zeile {line}, Spalte {column}: hier lässt sich das JSON nicht mehr lesen. Suchen Sie ein fehlendes oder überzähliges Komma, Anführungszeichen oder eine Klammer. ({message})",
+      "invalidAt": "Zeile {line}, Spalte {column}: hier lässt sich das JSON nicht mehr lesen. Suchen Sie ein fehlendes oder überzähliges Komma, Anführungszeichen oder eine Klammer.",
       "refused": "Der Server hat es abgelehnt",
       "checked": "Der Server nimmt dieses Dashboard an",
       "check": "Prüfen",
@@ -3787,7 +3787,9 @@
       "nextStep": "Das JSON lässt sich lesen, die Vorschau ist live. Prüfen fragt den Server, ob er das Dashboard annimmt; gespeichert wird erst, wenn Sie es vorschlagen.",
       "previewRefused": "Der Server hat dieses Manifest abgelehnt: die Vorschau zeichnet es, vorgeschlagen werden kann es erst, wenn jedes abgelehnte Feld korrigiert ist.",
       "fixRefused": "Vorschlagen wartet, bis die Prüfung besteht: korrigieren Sie jedes abgelehnte Feld und prüfen Sie erneut.",
-      "nextStepEmpty": "Das JSON lässt sich lesen, zeichnet aber noch nichts: fügen Sie ein Widget ein oder schreiben Sie eines, dann Prüfen."
+      "nextStepEmpty": "Das JSON lässt sich lesen, zeichnet aber noch nichts: fügen Sie ein Widget ein oder schreiben Sie eines, dann Prüfen.",
+      "widgetRefused": "Dieses Widget wird nicht gezeichnet",
+      "widgetRefusedAt": "Der Server hat es bei {path} abgelehnt. Korrigieren Sie dieses Feld im Manifest und prüfen Sie erneut."
     }
   },
   "access": {

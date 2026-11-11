@@ -3765,7 +3765,7 @@
       "insert": "Vložiť widget",
       "fixFirst": "Najprv opravte JSON: widget sa pridá len do platného manifestu.",
       "invalid": "JSON sa nedá prečítať",
-      "invalidAt": "Riadok {line}, stĺpec {column}: tu sa JSON prestáva dať čítať. Hľadajte chýbajúcu alebo nadbytočnú čiarku, úvodzovku či zátvorku. ({message})",
+      "invalidAt": "Riadok {line}, stĺpec {column}: tu sa JSON prestáva dať čítať. Hľadajte chýbajúcu alebo nadbytočnú čiarku, úvodzovku či zátvorku.",
       "refused": "Server ho odmietol",
       "checked": "Server tento dashboard prijíma",
       "check": "Skontrolovať",
@@ -3787,7 +3787,9 @@
       "nextStep": "JSON sa dá prečítať a náhľad je živý. Skontrolovať sa opýta servera, či dashboard prijme; nič sa neuloží, kým ho nenavrhnete.",
       "previewRefused": "Server tento manifest odmietol: náhľad ho kreslí, ale navrhnúť sa dá až po oprave každého odmietnutého poľa.",
       "fixRefused": "Navrhnúť čaká, kým kontrola prejde: opravte každé odmietnuté pole a skontrolujte znova.",
-      "nextStepEmpty": "JSON sa dá prečítať, ale zatiaľ nič nekreslí: vložte widget alebo ho napíšte a skontrolujte."
+      "nextStepEmpty": "JSON sa dá prečítať, ale zatiaľ nič nekreslí: vložte widget alebo ho napíšte a skontrolujte.",
+      "widgetRefused": "Tento widget sa nekreslí",
+      "widgetRefusedAt": "Server ho odmietol na ceste {path}. Opravte toto pole v manifeste a skontrolujte znova."
     }
   },
   "access": {

@@ -48,7 +48,7 @@ const SCHEMA = {
 };
 const CSV = "id,type,name\nurn:ngsi-ld:BikeHireDockingStation:1,BikeHireDockingStation,Kamppi\nurn:ngsi-ld:BikeHireDockingStation:2,BikeHireDockingStation,Töölö\nurn:ngsi-ld:BikeHireDockingStation:3,BikeHireDockingStation,Rautatientori\n";
 
-async function stub(page: Page, refuse: boolean) {
+async function stub(page: Page, refuse: boolean, endpoints: unknown[] = [ENDPOINT]) {
   await page.route("**/api/endpoint/**", (route) => route.fulfill({ contentType: "text/csv", body: CSV }));
   await page.route("**/api/v1/**", (route) => {
     const request = route.request();
@@ -72,7 +72,7 @@ async function stub(page: Page, refuse: boolean) {
     if (url.pathname.endsWith("/auth/me")) return json(IDENTITY);
     if (url.pathname === "/api/v1/projects") return json(list([{ name: "bbsk" }]));
     if (url.pathname.endsWith("/kinds/Dashboard/schema")) return json(SCHEMA);
-    if (url.pathname.endsWith("/endpoints")) return json(list([ENDPOINT]));
+    if (url.pathname.endsWith("/endpoints")) return json(list(endpoints));
     if (url.pathname.endsWith("/spaces")) return json(list([SPACE]));
     if (url.pathname.endsWith("/datamodels")) return json(list([MODEL]));
     return json(list([]));
@@ -89,7 +89,7 @@ for (const width of [1440, 400]) {
     await expect(editor).toBeVisible();
     await expect(page.getByText(/No widget yet/)).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 0));
-    await page.screenshot({ path: `test-results/T-6791/editor-empty-${width}.png`, fullPage: true });
+    await page.screenshot({ path: `test-results/T-6791/editor-starter-${width}.png`, fullPage: true });
     expect(await axeViolations(page)).toEqual([]);
 
     await page.getByRole("button", { name: "Insert widget" }).click();
@@ -109,13 +109,27 @@ for (const width of [1440, 400]) {
     expect(await axeViolations(page)).toEqual([]);
   });
 
+  test(`a project with no Endpoint says where to make one, at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await stub(page, false, []);
+    await page.goto("/projects/bbsk/dashboard-editor?lang=en");
+    await expect(page.getByText("No endpoint to read yet")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Go to endpoints" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Insert widget" })).toHaveCount(0);
+    await page.screenshot({ path: `test-results/T-6791/editor-empty-${width}.png`, fullPage: true });
+    expect(await axeViolations(page)).toEqual([]);
+  });
+
   test(`a refusal names its JSON path, at ${width} px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await stub(page, true);
     await page.goto("/projects/bbsk/dashboard-editor?lang=en");
     await page.getByRole("button", { name: "Insert widget" }).click();
     await page.getByRole("button", { name: "Check" }).click();
-    await expect(page.getByText("/spec/pages/0/widgets/0/endpointRef", { exact: false })).toBeVisible();
+    await expect(page.getByText("/spec/pages/0/widgets/0/endpointRef", { exact: false }).first()).toBeVisible();
+    // The refused widget is not drawn: the preview shows what the server would publish.
+    await expect(page.getByText("This widget is not drawn")).toBeVisible();
+    await expect(page.getByRole("figure")).toHaveCount(0);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/T-6791/editor-refused-${width}.png`, fullPage: true });
   });
