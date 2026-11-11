@@ -27,7 +27,7 @@ export function svgImageUrl(svg: string | undefined): string | undefined {
   return text.startsWith("<svg") ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}` : undefined;
 }
 
-/** A colour square: the colour, the surface when empty, a struck-through red square for a value that is no colour. */
+/** A colour square: the colour, a dashed empty square when unset, a struck-through red square for a value that is no colour. */
 export function Swatch({ colour, className }: { colour?: string; className: string }): JSX.Element {
   const text = colour?.trim() ?? "";
   const valid = HEX.test(text);
@@ -36,7 +36,7 @@ export function Swatch({ colour, className }: { colour?: string; className: stri
     <svg
       aria-hidden="true"
       viewBox="0 0 16 16"
-      className={clsx("shrink-0 rounded border", refused ? "border-danger" : "border-border", className)}
+      className={clsx("shrink-0 rounded border", refused ? "border-danger" : text === "" ? "border-dashed border-fg-muted" : "border-border", className)}
     >
       <rect width="16" height="16" className={valid ? undefined : "fill-surface"} fill={valid ? text : undefined} />
       {refused ? <line x1="0" y1="16" x2="16" y2="0" className="stroke-danger" strokeWidth="1.5" /> : null}

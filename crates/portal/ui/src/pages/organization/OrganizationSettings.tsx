@@ -1,7 +1,6 @@
 import { PageFailed } from "../../components/ui/PageState";
 import { Fragment } from "react";
 import type { JSX, ReactNode } from "react";
-import { clsx } from "clsx";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, queryKeys, unwrap } from "../../api/client";
@@ -117,7 +116,7 @@ function AppearanceSummary({ appearance }: { appearance?: OrganizationSpec["appe
             {row(
               t(`organization.field.appearance.colour.${name}`),
               <span className="inline-flex items-center gap-2">
-                <Swatch colour={value} className={clsx("h-control-xs w-control-xs", !value && "border-dashed border-fg-muted")} />
+                <Swatch colour={value} className="h-control-xs w-control-xs" />
                 {value ?? installation}
               </span>,
             )}
