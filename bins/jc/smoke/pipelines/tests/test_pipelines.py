@@ -412,6 +412,8 @@ def test_a_run_whose_failure_is_filed_after_its_row_appears_is_read_when_it_ende
     """Gate 2026-11-10T203500Z-gc: banskabystrica/kniznice was listed at 0/0/0 and its failure
     filed 120 s later (prod's same runs take 123 s); the suite read the counts after 20 s of no new
     line and failed `log` with 0 lines. The suite now reads the run once the status says it ended."""
+    import suite
+    monkeypatch.setattr(suite, "probe", lambda host, port: None)  # no network in a unit test
     p = manifests.Pipeline("banskabystrica", "kniznice", "p.yaml", {"period": "168h"}, True,
                            source_type="http", source_url=SOURCE, slug="s" * 32, out_type="T")
     rows, took = one_run(monkeypatch, p, ZERO, {**ZERO, "failed": 1}, [TIMEOUT_LINE])
@@ -419,7 +421,6 @@ def test_a_run_whose_failure_is_filed_after_its_row_appears_is_read_when_it_ende
     assert rows["log"]["result"] == "pass" and rows["log"]["actual"] == "200 1 lines", rows["log"]
     assert 150 <= took < 170, took
     # A run listed and never ended is a fail after RUN_TIMEOUT, not a read of half its counts.
-    import suite
     rows, took = one_run(monkeypatch, p, ZERO, ZERO, [], ends_after=10 ** 6)
     assert rows["history"]["result"] == "fail" and "not ended within 900 s" in rows["history"]["actual"]
     assert took < 30 + suite.RUN_TIMEOUT + 20, took
