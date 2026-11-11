@@ -77,7 +77,7 @@
  .inline #title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
  #title { font-size: 1.15rem; margin: 0; }
  #map-title { font-size: 1rem; margin: 16px 0 6px; }
-@@ -33,7 +43,15 @@
+@@ -33,7 +43,21 @@
  .status:empty { display: none; }
  .status.error { padding: 10px 12px; border-radius: 8px; background: var(--err-bg); color: var(--err); }
  #map { height: 420px; border: 1px solid var(--line); border-radius: 8px; }
@@ -90,11 +90,17 @@
 +@keyframes jc-map-spin { to { transform: rotate(360deg); } }
 +@media (prefers-reduced-motion: reduce) { #map[data-loading]::before { animation: none; } }
 +#map-note { margin-top: 8px; }
++/* A map that could not start (T-6737): its box holds the reason and, where it can help, a retry;
++   what only a drawn map explains (points line, Map settings, legend, counts) goes with it. */
++.map-off #map, .map-off .map-from, .map-off #map-panel-open, .map-off #map-panel, .map-off .map-chips, .map-off #map-fallback, .map-off #map-legend, .map-off #map-count, .map-off #map-note { display: none !important; }
++.map-off-box { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 120px; padding: 20px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); color: var(--fg); text-align: center; }
++.map-off-box[hidden] { display: none; }
++.map-off-box p { margin: 0; max-width: 60ch; font-size: 0.9375rem; line-height: 1.5; }
 +@media (max-width: 600px) { #map { height: 380px; } }
  #detail, #embed { max-width: min(40rem, calc(100vw - 32px)); width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); padding: 16px; box-sizing: border-box; }
  #detail::backdrop, #embed::backdrop { background: rgba(15, 23, 42, 0.5); }
  dialog a { color: var(--accent); overflow-wrap: break-word; }
-@@ -95,6 +113,8 @@
+@@ -95,6 +119,8 @@
  /* T-5233: the map's count line, its Mapa panel, the reader's chips and the legend. */
  .map-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin: 16px 0 6px; }
  .map-head #map-title { margin: 0; }
@@ -113,9 +119,19 @@
          <button type="button" id="map-panel-open" class="page-button" data-t="panelOpen" aria-expanded="false" aria-controls="map-panel"></button>
        </div>
        <div id="map-panel" class="map-panel" role="group" aria-labelledby="map-panel-title" hidden>
+@@ -57,7 +58,8 @@
+       <div class="map-chips"><span id="map-chips"></span><button type="button" id="map-reset" class="page-button" data-t="reset" hidden></button></div>
+       <p id="map-fallback" class="hint map-fallback" role="status" hidden></p>
+       <div class="map-box">
+-        <div id="map" role="region" aria-labelledby="map-title" aria-describedby="map-note map-count"></div>
++        <div id="map" tabindex="-1" role="region" aria-labelledby="map-title" aria-describedby="map-note map-count"></div>
++        <div id="map-off" class="map-off-box" hidden><p id="map-off-text" role="status"></p><button type="button" id="map-retry" class="page-button" data-t="mapRetry" hidden></button></div>
+         <p id="map-count" class="map-count" role="status" aria-live="polite" hidden></p>
+       </div>
+       <ul id="map-legend" class="map-legend" hidden></ul>
 --- a/site/explore.js
 +++ site/explore.js
-@@ -7,8 +7,35 @@
+@@ -7,9 +7,66 @@
  (function (root) {
    "use strict";
  
@@ -151,18 +167,53 @@
 +    });
 +  }
    var MAP_DWELL = 500;
++  // A map that cannot start says so in its box (T-6737): no WebGL 2 (hardware acceleration off), a
++  // constructor that throws, a style that does not load, or a graphics context the browser takes
++  // back and does not return within CONTEXT_BACK_MS. `fail` gets only the kind, never the error's text.
++  var CONTEXT_BACK_MS = 5000;
++  function webgl2(doc) {
++    try { return !!doc.createElement("canvas").getContext("webgl2"); } catch (e) { return false; }
++  }
++  function mapStart(maplibre, options, fail) {
++    var map;
++    try { map = new maplibre.Map(options); } catch (e) { fail("start"); return null; }
++    var loaded = false, done = false, lost = null;
++    var stop = function (kind) {
++      if (done) return;
++      done = true;
++      clearTimeout(lost);
++      try { map.remove(); } catch (e) { /* a map that never started has little to remove */ }
++      fail(kind);
++    };
++    map.once("load", function () { loaded = true; });
++    // A tile of one source is a gap in the map; a failure without a source before the first view
++    // (the style, the sprite, the glyphs) leaves nothing drawn.
++    map.on("error", function (e) {
++      if (done) return;
++      if (e && e.sourceId) fail("tiles");
++      else if (!loaded) stop("start");
++    });
++    map.on("webglcontextlost", function () { clearTimeout(lost); lost = setTimeout(function () { stop("lost"); }, CONTEXT_BACK_MS); });
++    map.on("webglcontextrestored", function () { clearTimeout(lost); });
++    return map;
++  }
    var SLUG = /^[a-z0-9]{16,64}$/;
    var NAME = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
-@@ -24,7 +51,7 @@
+   var DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?$/;
+@@ -24,7 +81,11 @@
        timeout: "The data took longer than 15 seconds. Narrow the search or try again.", noAddress: "This page shows the live data of an open-data Endpoint; the address names none.",
        noWidget: "The table could not start. Reload the page; if it stays, the catalogue's administrators can see why in the browser console.",
        mapHint: "Click a point to open its details. The table lists the same entities.", mapCap: "The map shows the first {n} of {total} in view; zoom in for the rest.",
 -      mapNone: "No entity of this query has a location.", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
-+      mapNone: "No entity of this query has a location.", mapLoading: "Loading map…", mapTwoFingers: "Use two fingers to move the map", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
++      mapNone: "No entity of this query has a location.", mapLoading: "Loading map…",
++      mapOff: { webgl: "This browser cannot draw the map: it needs WebGL 2, which is off or not supported here. Turning on hardware acceleration in the browser's settings usually brings it back. The table above lists the same rows.",
++        start: "The map could not load. The table above lists the same rows.",
++        lost: "The map stopped drawing because the browser took back its graphics memory. The table above lists the same rows." },
++      mapRetry: "Try the map again", mapTiles: "Part of the map could not be loaded. The table above lists every row.", mapTwoFingers: "Use two fingers to move the map", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
        viewLink: "This view (type, filter and order)", yes: "yes", no: "no",
        cardYes: "Yes", cardNo: "No", dev: "For developers", onMap: "Show on the map", idLabel: "Identifier", typeLabel: "Type", placeMap: "Location map",
        embed: "Embed", embedLead: "Put this live table on your own website. It keeps reading the current data; nothing is copied.",
-@@ -36,7 +63,7 @@
+@@ -36,7 +97,7 @@
        code: "Code to paste", copy: "Copy code", copied: "Copied. Paste it into your page's HTML.", copySelect: "Selected: press Ctrl+C to copy.", preview: "Open the widget alone",
        invalid: "Check this setting: {why}.", source: "Source", licence: "Licence", licenceSee: "see the dataset", catalogue: "open data catalogue",
        count: "On the map {n} of {total} · {none} without a location", countTiles: " · drawn as tiles", other: "Other",
@@ -171,16 +222,20 @@
        colorLabel: "Colour by", colorNone: "One colour", colorType: "Type", colorHint: "Points take a colour per value, e.g. Status; the legend is under the map.",
        popLabel: "In the bubble", popHint: "What a pointer over a point shows besides the title, e.g. Start and Web.",
        clusterLabel: "Group points", clusterHint: "Above 200 points in view, nearby points merge into a bubble with their count.",
-@@ -49,7 +76,7 @@
+@@ -49,7 +110,11 @@
        timeout: "Dáta sa načítavali dlhšie ako 15 sekúnd. Zúžte hľadanie alebo to skúste znova.", noAddress: "Táto stránka ukazuje živé dáta Endpointu otvorených dát; adresa žiadny neuvádza.",
        noWidget: "Tabuľka sa nespustila. Načítajte stránku znova; ak to pretrváva, správcovia katalógu vidia príčinu v konzole prehliadača.",
        mapHint: "Kliknite na bod a otvorí sa jeho detail. Tabuľka uvádza tie isté entity.", mapCap: "Mapa ukazuje prvých {n} z {total} vo výreze; priblížte pre ďalšie.",
 -      mapNone: "Žiadna entita tohto dopytu nemá polohu.", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
-+      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapLoading: "Načítavam mapu…", mapTwoFingers: "Mapu posuniete dvoma prstami", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
++      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapLoading: "Načítavam mapu…",
++      mapOff: { webgl: "Tento prehliadač nevie nakresliť mapu: potrebuje WebGL 2, ktoré je tu vypnuté alebo nepodporované. Zvyčajne ho vráti zapnutie hardvérovej akcelerácie v nastaveniach prehliadača. Tabuľka vyššie uvádza tie isté riadky.",
++        start: "Mapu sa nepodarilo načítať. Tabuľka vyššie uvádza tie isté riadky.",
++        lost: "Mapa prestala kresliť, lebo prehliadač si vzal späť grafickú pamäť. Tabuľka vyššie uvádza tie isté riadky." },
++      mapRetry: "Skúsiť mapu znova", mapTiles: "Časť mapy sa nepodarilo načítať. Tabuľka vyššie uvádza všetky riadky.", mapTwoFingers: "Mapu posuniete dvoma prstami", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
        viewLink: "Toto zobrazenie (typ, filter a poradie)", yes: "áno", no: "nie",
        cardYes: "Áno", cardNo: "Nie", dev: "Pre vývojárov", onMap: "Zobraziť na mape", idLabel: "Identifikátor", typeLabel: "Typ", placeMap: "Mapa miesta",
        embed: "Vložiť na web", embedLead: "Dajte túto živú tabuľku na svoj web. Stále číta aktuálne dáta; nič sa nekopíruje.",
-@@ -61,7 +88,7 @@
+@@ -61,7 +126,7 @@
        code: "Kód na vloženie", copy: "Kopírovať kód", copied: "Skopírované. Vložte ho do HTML svojej stránky.", copySelect: "Označené: skopírujte stlačením Ctrl+C.", preview: "Otvoriť samotný widget",
        invalid: "Skontrolujte toto nastavenie: {why}.", source: "Zdroj", licence: "Licencia", licenceSee: "pozri dataset", catalogue: "katalóg otvorených dát",
        count: "Na mape {n} z {total} · {none} bez polohy", countTiles: " · kreslené ako dlaždice", other: "Iné",
@@ -189,7 +244,7 @@
        colorLabel: "Farba podľa", colorNone: "Jedna farba", colorType: "Typ", colorHint: "Body dostanú farbu podľa hodnoty, napr. Stav; legenda je pod mapou.",
        popLabel: "V bubline", popHint: "Čo ukáže kurzor nad bodom okrem názvu, napr. Začiatok a Web.",
        clusterLabel: "Zoskupovať body", clusterHint: "Nad 200 bodov vo výreze sa blízke body spoja do bubliny s ich počtom.",
-@@ -123,6 +150,29 @@
+@@ -123,6 +188,29 @@
      return "https://api." + String(hostname).replace(/^viz\./, "") + "/api/endpoint/" + slug + "/";
    }
  
@@ -219,7 +274,7 @@
    function params(map) {
      return Object.keys(map)
        .filter(function (k) { return map[k] !== undefined && map[k] !== null && map[k] !== ""; })
-@@ -399,6 +449,50 @@
+@@ -399,6 +487,50 @@
      return { points: points, shapes: shapes };
    }
  
@@ -270,7 +325,7 @@
    // "Na mape 412 z 1 680 · 96 bez polohy", numbers in the page's language.
    function countLine(t, c) {
      var n = function (v) { return new Intl.NumberFormat(t.locale).format(v); };
-@@ -445,15 +539,35 @@
+@@ -445,15 +577,35 @@
  
      // The catalogue sizes the frame from this message. The content's own box, not the document's:
      // the view's stylesheet makes html as tall as the frame, which would hold the frame at its size.
@@ -308,7 +363,7 @@
        if (typeof d.top !== "number" || typeof d.height !== "number" || !isFinite(d.top) || !isFinite(d.height)) return;
        var top = Math.max(0, Math.min(d.top, document.documentElement.scrollHeight));
        var h = Math.max(120, Math.min(d.height, 4000));
-@@ -471,7 +585,9 @@
+@@ -471,7 +623,9 @@
        $("app").hidden = true;
        return tell(t.noAddress, "error");
      }
@@ -319,21 +374,33 @@
      var state = { types: [], type: where.type, q: where.q || "", sort: where.sort, all: where.all, card: null, map: null, mapData: null, mapAsk: 0, tiled: null, tilesets: {},
        infos: {}, mapping: null, mapRaw: {}, countKey: null, total: null, none: null, inView: null };
      ["geo", "color", "pop", "cluster"].forEach(function (k) { if (where[k] !== null) state.mapRaw[k] = where[k]; });
-@@ -551,11 +667,9 @@
+@@ -542,7 +696,7 @@
+       if (geo) { at = geo.coordinates; while (Array.isArray(at[0])) at = at[0]; }
+       var ok = !!at && typeof at[0] === "number" && typeof at[1] === "number" && Math.abs(at[0]) <= 180 && Math.abs(at[1]) <= 90;
+       box.hidden = !ok;
+-      go.hidden = !ok || $("map-section").hidden || !state.mapLoading;
++      go.hidden = !ok || $("map-section").hidden || !state.mapLoading || !!state.mapFailed;
+       go.onclick = ok ? function () {
+         $("detail").close();
+         $("map-section").scrollIntoView({ block: "center" });
+@@ -551,11 +705,12 @@
          else state.mapAt = [at[0], at[1]];
        } : null;
        if (!ok) return;
 -      import(MAPLIBRE).then(function (maplibre) {
++      if (!webgl2(document)) { box.hidden = true; return; }
 +      maplibreReady().then(function (maplibre) {
          if (box.hidden || !$("detail").open) return;
 -        maplibre.setWorkerUrl(WORKER);
 -        var domain = location.hostname.replace(/^viz\./, "");
 -        var m = new maplibre.Map({ container: box, style: "https://tiles." + domain + "/styles/light-" + (lang === "sk" ? "sk" : "en") + ".json", center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false });
-+        var m = new maplibre.Map({ container: box, style: styleOf(H.tiles, lang), center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false });
++        var m = mapStart(maplibre, { container: box, style: styleOf(H.tiles, lang), center: [at[0], at[1]], zoom: 15, interactive: false, attributionControl: false },
++          function (kind) { if (kind !== "tiles") { box.hidden = true; state.cardMap = null; } });
++        if (!m) return;
          m.addControl(new maplibre.AttributionControl({ compact: true }));
          new maplibre.Marker({ color: COLOUR }).setLngLat([at[0], at[1]]).addTo(m);
          state.cardMap = m;
-@@ -596,17 +710,20 @@
+@@ -596,17 +751,20 @@
        var section = $("map-section");
        var type = state.type;
        var listed = state.types.filter(function (x) { return x.typeName === type; })[0];
@@ -359,7 +426,7 @@
          // Only with the model in hand is a slot the address names known to be wrong: drop it, say so.
          if (card && picked.unknown.length) {
            picked.unknown.forEach(function (k) { delete state.mapRaw[k]; });
-@@ -615,34 +732,73 @@
+@@ -615,34 +773,93 @@
            address();
          }
          panel();
@@ -434,16 +501,36 @@
        seen.observe($("map"));
      }
  
++    // The failed map (mapStart): its box says why and offers a retry where one can help; the points
++    // line, Map settings, legend and counts hide with it (explore.css, .map-off).
++    function mapTrouble(kind) {
++      if (kind === "tiles") { if (state.drawn) $("map-note").textContent = t.mapTiles; return; }
++      if (state.map && root.jcExploreMap === state.map) root.jcExploreMap = null;
++      state.map = null;
++      state.mapFailed = kind;
++      state.mapAsk++;
++      loading(false);
++      if (state.popup) state.popup.remove();
++      $("map-section").classList.add("map-off");
++      $("map-off-text").textContent = t.mapOff[kind] || t.mapOff.start;
++      $("map-retry").hidden = kind === "webgl";
++      $("map-off").hidden = false;
++      // A retry that failed again keeps the reader's focus on the retry.
++      if (state.retried && !$("map-retry").hidden) $("map-retry").focus();
++      height();
++    }
++
      function loadMap() {
 -      import(MAPLIBRE).then(function (maplibre) {
 -        maplibre.setWorkerUrl(WORKER);
++      if (!webgl2(document)) return mapTrouble("webgl");
 +      // The query's rows load beside MapLibre, not after its style.
 +      var first = firstRead();
 +      maplibreReady().then(function (maplibre) {
          if (root.pmtiles) maplibre.addProtocol("pmtiles", new root.pmtiles.Protocol().tile);
          // The Endpoint's vector tiles, read like every other request here: anonymous, no referrer.
          maplibre.addProtocol("jc-tile", function (request, controller) {
-@@ -653,13 +809,17 @@
+@@ -653,13 +870,18 @@
                return r.arrayBuffer().then(function (data) { return { data: data }; });
              });
          });
@@ -452,8 +539,9 @@
 +        // On a touch screen one finger scrolls the page past the map and two move it: a phone map
 +        // fills most of a short screen.
 +        var touch = !!(root.matchMedia && root.matchMedia("(pointer: coarse)").matches);
-+        var map = new maplibre.Map({ container: "map", style: styleOf(H.tiles, lang), attributionControl: false, center: [17.1, 48.15], zoom: 4,
-+          cooperativeGestures: touch, locale: { "CooperativeGesturesHandler.MobileHelpText": t.mapTwoFingers } });
++        var map = mapStart(maplibre, { container: "map", style: styleOf(H.tiles, lang), attributionControl: false, center: [17.1, 48.15], zoom: 4,
++          cooperativeGestures: touch, locale: { "CooperativeGesturesHandler.MobileHelpText": t.mapTwoFingers } }, mapTrouble);
++        if (!map) return;
          state.map = map;
          root.jcExploreMap = map; // for the browser journey
          state.maplibre = maplibre;
@@ -464,7 +552,7 @@
          map.once("load", function () {
            // Lines and areas in "jc", points in "jc-pts", which clusters above CLUSTER_ABOVE in view.
            var empty = { type: "FeatureCollection", features: [] };
-@@ -671,7 +831,13 @@
+@@ -671,7 +893,13 @@
            map.addLayer({ id: "jc-cluster", type: "circle", source: "jc-pts", filter: ["has", "point_count"], paint: { "circle-color": COLOUR, "circle-opacity": 0.85, "circle-radius": ["step", ["get", "point_count"], 14, 50, 18, 200, 24], "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
            // The count on a cluster needs the style's glyphs; the basemap styles have them.
            if (map.getStyle().glyphs) map.addLayer({ id: "jc-cluster-count", type: "symbol", source: "jc-pts", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 }, paint: { "text-color": "#fff" } });
@@ -479,7 +567,7 @@
            ["jc-point", "jc-line", "jc-fill"].forEach(function (layer) {
              map.on("click", layer, function (e) {
                var f = (state.mapData || []).filter(function (x) { return x.id === e.features[0].properties.jcId; })[0];
-@@ -700,29 +866,63 @@
+@@ -700,29 +928,63 @@
              map.on("mouseleave", layer, function () { map.getCanvas().style.cursor = ""; });
            });
            map.on("moveend", mapMoved);
@@ -491,7 +579,7 @@
 +          });
          });
 -      }, function () { $("map-note").textContent = failure(null); });
-+      }, function () { loading(false); $("map-note").textContent = failure(null); });
++      }, function () { mapTrouble("start"); });
      }
  
 -    // The first view: the bounds of the query's first page, so the map opens where the data is.
@@ -561,7 +649,15 @@
      }
  
      // Past MAP_LIMIT and with no filter (a tile takes no query), the map draws the type's vector
-@@ -786,6 +986,7 @@
+@@ -739,6 +1001,7 @@
+       var known = state.tilesets[type] || (state.tilesets[type] = get(at).then(function (a) { return templateOf(a.body, at); }, function () { return null; }));
+       return known.then(function (template) {
+         var map = state.map;
++        if (!map) return false;
+         if (!template || state.type !== type || state.q || geoOf() !== "location" || state.tiled === type) return !!template && state.tiled === type;
+         untile();
+         var is = function (types) { return ["in", ["geometry-type"], ["literal", types]]; };
+@@ -786,6 +1049,7 @@
        var m = state.mapping, map = state.map;
        var c = colourClasses(features, m.choice.color, m.card, t);
        var parts = splitPoints(features.map(function (f, i) { return { type: "Feature", geometry: f.geometry, properties: { jcId: f.id, jcColour: c.colours[i] } }; }));
@@ -569,7 +665,7 @@
        var fc = function (list) { return { type: "FeatureCollection", features: list }; };
        map.getSource("jc").setData(fc(parts.shapes));
        var pts = map.getSource("jc-pts");
-@@ -825,20 +1026,30 @@
+@@ -825,20 +1089,30 @@
  
      function mapMoved() {
        var map = state.map;
@@ -607,7 +703,24 @@
          if (asked !== state.mapAsk) return;
          var features = ((answer.body && answer.body.features) || []).filter(function (f) { return f && f.geometry && typeof f.geometry.type === "string"; });
          state.mapData = features;
-@@ -936,11 +1147,15 @@
+@@ -919,6 +1193,16 @@
+       $("map-panel-open").setAttribute("aria-expanded", String(open));
+       height();
+     });
++    $("map-retry").addEventListener("click", function () {
++      state.mapFailed = null;
++      state.drawn = null;
++      $("map-off").hidden = true;
++      $("map-section").classList.remove("map-off");
++      state.retried = true;
++      loading(true);
++      $("map").focus();
++      loadMap();
++    });
+     $("map-reset").addEventListener("click", function () {
+       state.mapRaw = {};
+       $("map-fallback").hidden = true;
+@@ -936,11 +1220,15 @@
        state.sort = next.sort || null;
        state.all = next.noDefault === true;
        address();
@@ -625,7 +738,7 @@
        $("detail-type").hidden = true;
        $("detail-title").textContent = t.dataApi;
        $("detail-list").textContent = "";
-@@ -950,12 +1165,13 @@
+@@ -950,12 +1238,13 @@
        $("detail-dev").open = true;
        linkList(null);
        placeMap(null);
@@ -642,7 +755,7 @@
        var line = $("attribution");
        var draw = function (title, href, publisher, licence, licenceHref) {
          line.textContent = "";
-@@ -992,8 +1208,9 @@
+@@ -992,8 +1281,9 @@
        $("embed-keep-hint").textContent = words.length ? say(t.keepHint, { view: words.join("; ") }) : t.keepNone;
        $("embed-copied").textContent = "";
        try {
@@ -654,7 +767,7 @@
          $("embed-error").hidden = true;
          $("embed-height").removeAttribute("aria-invalid");
          $("embed-copy").disabled = false;
-@@ -1006,11 +1223,13 @@
+@@ -1006,11 +1296,13 @@
        }
      }
  
@@ -670,7 +783,7 @@
      $("embed-form").addEventListener("input", embedCode);
      $("embed-form").addEventListener("change", embedCode);
      $("embed-form").addEventListener("submit", function (e) { e.preventDefault(); });
-@@ -1022,7 +1241,7 @@
+@@ -1022,7 +1314,7 @@
        else select();
      });
      $("embed-close").addEventListener("click", function () { $("embed").close(); });
@@ -679,7 +792,7 @@
      if (embedded) attribute();
      $("detail-close").addEventListener("click", function () { $("detail").close(); });
      // A click on the backdrop (the dialog box itself, outside its content) closes it, as Esc does.
-@@ -1052,13 +1271,14 @@
+@@ -1052,13 +1344,14 @@
      // The type list only says which types have a location, for the map; the view reads its own.
      get(api + "ngsi-ld/v1/types?details=true").then(function (answer) {
        state.types = (Array.isArray(answer.body) ? answer.body : []).filter(function (x) { return x && NAME.test(x.typeName || ""); });
@@ -695,7 +808,7 @@
          slug: where.slug,
          lang: lang,
          link: { type: where.type || undefined, q: where.q || undefined, sort: where.sort || undefined, noDefault: where.all || undefined },
-@@ -1068,15 +1288,21 @@
+@@ -1068,15 +1361,21 @@
            if (card && card.type === state.type) drawMap();
          },
          onOpenRow: openRow,
@@ -715,7 +828,7 @@
    }
  
 -  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, TEXT: TEXT };
-+  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, stacks: stacks, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, TEXT: TEXT };
++  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, stacks: stacks, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, mapStart: mapStart, TEXT: TEXT };
    if (typeof module === "object" && module.exports) module.exports = root.jcExplore;
    else if (typeof document !== "undefined") main();
  })(typeof self !== "undefined" ? self : this);

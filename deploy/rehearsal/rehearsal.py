@@ -402,7 +402,8 @@ def cmd_synth(a):
     (out / "antares" / "temporal.jsonl").write_text("".join(json.dumps(t) + "\n" for t in temporal))
     manifest = {"env": a.env, "exportedAt": iso(now), "synthetic": True,
                 "source": "joinedcontext-deployment config (synth)", "repos": len(listing),
-                "entities": len(entities), "temporalInstances": len(temporal)}
+                "entities": len(entities), "temporalInstances": len(temporal),
+                "digests": bundle_digests(out)}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
     print(json.dumps(manifest))
 
@@ -1966,6 +1967,46 @@ def bundle_settled(export: Path) -> str:
     return f"written after manifest.json: {newer[:3]}" if newer else ""
 
 
+def bundle_digests(export: Path) -> dict[str, str]:
+    """The sha256 of every file the import reads, by bundle path (P-26): each realm, repository
+    file and dashboard, and the Antares JSONL whole, so one changed byte anywhere changes one
+    digest. manifest.json, which holds them, the root EXPORT.md and the exporter's `.parts` are
+    left out, as bundle_settled leaves them."""
+    out = {}
+    for p in sorted(export.rglob("*")):
+        rel = p.relative_to(export).as_posix()
+        if p.is_file() and ".parts" not in p.parts and rel not in ("manifest.json", "EXPORT.md"):
+            with open(p, "rb") as f:
+                out[rel] = hashlib.file_digest(f, "sha256").hexdigest()
+    return out
+
+
+def stamp_digests(export: Path) -> dict:
+    """Writes the bundle's digests into its manifest.json, written last as the exporter writes it."""
+    manifest = json.loads((export / "manifest.json").read_text())
+    manifest["digests"] = bundle_digests(export)
+    (export / "manifest.json").write_text(json.dumps(manifest, indent=1))
+    return manifest
+
+
+def digest_problems(export: Path, manifest: dict) -> list[str]:
+    """What of the bundle differs from the digests its manifest names: a changed, missing or extra
+    file, or no digests at all (an import takes nothing it cannot check)."""
+    want = manifest.get("digests")
+    if not isinstance(want, dict):
+        return ["manifest.json names no digests: stamp the bundle where it was made "
+                "(rehearsal.py digest --export <dir>, EXPORT.md)"]
+    have = bundle_digests(export)
+    return ([f"{f}: content differs from its digest" for f in sorted(want) if f in have and have[f] != want[f]]
+            + [f"{f}: missing" for f in sorted(set(want) - set(have))]
+            + [f"{f}: not in the digests" for f in sorted(set(have) - set(want))])
+
+
+def cmd_digest(a):
+    manifest = stamp_digests(Path(a.export))
+    print(json.dumps({"export": a.export, "digests": len(manifest["digests"])}))
+
+
 # Measured on the prod import of 2026-11-08: 31.7 GB of pgdata for 1,669,431 entities.
 DB_BYTES_PER_ENTITY = 19_000
 DISK_MARGIN = 1.25
@@ -1987,6 +2028,9 @@ def cmd_import(a):
     export, state = Path(a.export), Path(a.state)
     if why := bundle_settled(export):
         raise SystemExit(f"the bundle is not settled ({why}): import after the exporter finishes")
+    if problems := digest_problems(export, json.loads((export / "manifest.json").read_text())):
+        raise SystemExit(f"not importing: the bundle does not match its manifest's digests ({len(problems)}): "
+                         + "; ".join(problems[:5]))
     if not a.only or "antares" in a.only.split(","):
         with open(export / "antares" / "entities.jsonl", "rb") as f:
             lines = sum(1 for _ in f)
@@ -2718,6 +2762,7 @@ def main(argv=None):
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin"); s.add_argument("--jcctl-bin")
     s.add_argument("--dashboards", help="Grafana provisioning files (rehearsal.py dashboards) instead of the bundle's")
     s.add_argument("--catalogue-url", help="the instance's own catalogue (cluster import): every CkanInstance names it")
+    s = sub.add_parser("digest"); s.add_argument("--export", required=True)
     s = sub.add_parser("dashboards"); s.add_argument("--render", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("retain"); s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", required=True)
     s.add_argument("--user", default="antares"); s.add_argument("--db", default="antares")
@@ -2743,7 +2788,7 @@ def main(argv=None):
     s = sub.add_parser("hub-sources"); s.add_argument("--deployment", required=True)
     s = sub.add_parser("policy-check"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     a = p.parse_args(argv)
-    return {"provisioning": cmd_provisioning, "prometheus-config": cmd_prometheus_config, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import, "aliases": cmd_aliases, "hub-sources": cmd_hub_sources,
+    return {"provisioning": cmd_provisioning, "prometheus-config": cmd_prometheus_config, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import, "digest": cmd_digest, "aliases": cmd_aliases, "hub-sources": cmd_hub_sources,
             "retain": cmd_retain, "smoke": cmd_smoke, "import-runlog": cmd_import_runlog}[a.cmd](a) or 0
 
 

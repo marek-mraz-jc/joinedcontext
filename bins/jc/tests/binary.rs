@@ -8,6 +8,7 @@ use std::time::Duration;
 
 fn jc() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+    cmd.args(["--profile", "development"]);
     // Never inherit a JCBIN_* of the developer's shell.
     for (key, _) in std::env::vars() {
         if key.starts_with("JCBIN_") {
