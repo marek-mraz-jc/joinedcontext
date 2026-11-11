@@ -10,7 +10,7 @@ type Calendar = components["schemas"]["CatalogueCalendar"];
 
 /** The calendar a dataset serves (EP-125): its https address, `null` when it serves none. */
 export function calendarUrl(endpoint: Endpoint): string | null {
-  return endpoint.representations.includes("ical") ? `${endpoint.url}ical/v1/events.ics` : null;
+  return endpoint.representations.includes("ical") ? `${endpoint.url}entities.ics` : null;
 }
 
 /**

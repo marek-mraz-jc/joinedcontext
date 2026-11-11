@@ -941,13 +941,33 @@ fn view_of(
     // the broker serves a calendar only for the outputs listed here (EP-159, T-5208), and the feed
     // outputs as the Endpoint lists them, the broker's `antares-feed` contract (EP-150); a view
     // without a member serves no such format.
+    // A stored preset's `query` (API/02 §4a) reaches the broker as the `filter` it stands for,
+    // so a preset and the output it replaced render the same bytes.
     let mut representations = serde_json::Map::new();
-    let ical = e.spec.ical_outputs();
+    let ical: Vec<_> = e
+        .spec
+        .ical_outputs()
+        .iter()
+        .map(|output| jc_core::kinds::IcalOutput {
+            filter: output.effective_filter(),
+            query: None,
+            ..output.clone()
+        })
+        .collect();
     if !ical.is_empty() {
         let outputs = serde_json::to_value(ical).map_err(|err| err.to_string())?;
         representations.insert("ical".into(), outputs);
     }
-    let feeds = e.spec.feed_outputs();
+    let feeds: Vec<_> = e
+        .spec
+        .feed_outputs()
+        .iter()
+        .map(|output| jc_core::kinds::FeedOutput {
+            filter: output.effective_filter(),
+            query: None,
+            ..output.clone()
+        })
+        .collect();
     if !feeds.is_empty() {
         representations.insert("feed".into(), json!(feeds));
     }
@@ -3877,6 +3897,15 @@ mod tests {
         };
         let view = with(json!(["ngsi-ld", "ical"]), Some(&outputs));
         assert_eq!(view["representations"], json!({ "ical": outputs }));
+        // T-6756: the same output stored as a preset `query` hands the broker the same bytes.
+        let mut preset = outputs.clone();
+        preset[0].as_object_mut().map(|o| o.remove("filter"));
+        preset[0]["query"] = json!("type=Event&q=eventCategory==%22sport%22");
+        let as_preset = with(json!(["ngsi-ld", "ical"]), Some(&preset));
+        assert_eq!(
+            serde_json::to_vec(&as_preset["representations"]).ok(),
+            serde_json::to_vec(&view["representations"]).ok()
+        );
         assert!(with(json!(["ngsi-ld", "ical"]), None)
             .get("representations")
             .is_none());
