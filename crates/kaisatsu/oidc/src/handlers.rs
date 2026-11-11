@@ -231,8 +231,8 @@ pub async fn resolve_or_fetch_client(
         if !existing.enabled {
             return Err(KaisatsuError::invalid_client("client is disabled"));
         }
-        if existing.is_cimd {
-            existing.optional_client_scopes = crate::cimd::cimd_optional_scopes(realm);
+        if existing.is_cimd || crate::cimd::is_allowed_cimd_client_id(realm, client_id) {
+            crate::cimd::apply_cimd_policy(realm, &mut existing);
         }
         return Ok(existing);
     }
