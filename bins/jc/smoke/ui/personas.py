@@ -32,6 +32,18 @@ def _docs(path: Path) -> list[dict]:
         return []
 
 
+def admin_token(h: Http, client_secret: str, realm: str = REALM) -> str:
+    """A portal-reconciler token of `realm` (client credentials), the Admin's bearer."""
+    form = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": "portal-reconciler",
+                                   "client_secret": client_secret}).encode()
+    st, _, raw = h.call("POST", f"/id/realms/{realm}/protocol/openid-connect/token",
+                        headers={"Content-Type": "application/x-www-form-urlencoded"}, body=form)
+    body = as_json(raw)
+    if st != 200 or not isinstance(body, dict) or "access_token" not in body:
+        raise RuntimeError(f"portal-reconciler token: {st}")
+    return body["access_token"]
+
+
 class Admin:
     def __init__(self, h: Http, token: str, realm: str = REALM):
         self.h, self.token, self.realm = h, token, realm
