@@ -3,6 +3,7 @@ import { servedRepresentations } from "../src/components/endpoints/links";
 import {
   checkedRepresentations,
   representationSpec,
+  servesMcp,
   toEnvelope,
   toForm,
 } from "../src/routes/EndpointsPage";
@@ -134,6 +135,15 @@ describe("MCP on a public Endpoint", () => {
     expect(toEnvelope("helsinki", kept, "air", [], undefined, switched).spec).toEqual(switched.spec);
     kept.enabledRepresentations = kept.enabledRepresentations.filter((rep) => rep !== "mcp");
     expect(toEnvelope("helsinki", kept, "air", [], undefined, switched).spec).not.toHaveProperty("mcp");
+  });
+
+  it("says on in the grid's MCP column only where the Endpoint serves it", () => {
+    expect(servesMcp({ audience: "public", enabledRepresentations: ["ngsi-ld", "csv"] })).toBe(false);
+    expect(servesMcp({ audience: "public" })).toBe(false);
+    expect(servesMcp({ audience: "public", mcp: true })).toBe(true);
+    expect(servesMcp({ audience: "public", enabledRepresentations: ["ngsi-ld", "mcp"] })).toBe(true);
+    expect(servesMcp({ audience: "organization" })).toBe(true);
+    expect(servesMcp({ audience: "organization", mcp: false })).toBe(false);
   });
 
   it("keeps an internal Endpoint's mcp: false on save", () => {

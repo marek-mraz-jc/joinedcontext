@@ -42,7 +42,8 @@ export function servedBy(
   const binding = bindingOf(endpoint, project, spaceOf(endpoint), policies, spaces);
   const hidden = new Set(strings((endpoint.spec.projection as { hiddenAttributes?: unknown } | undefined)?.hiddenAttributes));
   const served = new Map<string, Set<string>>();
-  if (binding.kind === "unbound") return served;
+  // An Endpoint naming no Policy binds none (P-18, T-6742).
+  if (binding.kind === "unbound" || binding.kind === "none") return served;
   for (const rule of binding.policies.flatMap(policyRules)) {
     for (const item of records(rule.information)) {
       const types = records(item.entities).flatMap((entity) => strings([entity.type]));

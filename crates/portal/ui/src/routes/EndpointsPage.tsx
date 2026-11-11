@@ -160,6 +160,11 @@ function publishForm(spec: {
   };
 }
 
+/** Whether an Endpoint serves MCP, as the gateway reads it: a public one only when it opts in (T-6761). */
+export function servesMcp(spec: Record<string, unknown>): boolean {
+  return servedRepresentations(spec).includes("mcp");
+}
+
 /**
  * The form's checked standards for a spec: what it serves (EP-104), in the form's order, the
  * always-on ones included so they show checked.
@@ -1607,7 +1612,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
             cell: (row) =>
               row.endpoint ? <RepresentationSummary served={servedRepresentations(row.endpoint.spec as { enabledRepresentations?: string[] })} /> : "—",
           },
-          { id: "mcp", label: t("grid.field.mcp"), field: "mcp", hidden: true, text: (row) => ((row.endpoint?.spec as { mcp?: boolean | null } | undefined)?.mcp === false ? t("grid.off") : t("grid.on")) },
+          { id: "mcp", label: t("grid.field.mcp"), field: "mcp", hidden: true, text: (row) => (row.endpoint && servesMcp(row.endpoint.spec) ? t("grid.on") : t("grid.off")) },
           {
             id: "calls",
             label: t("endpoints.calls.label"),

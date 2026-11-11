@@ -4628,6 +4628,10 @@ mod tests {
         );
         project.metadata.namespace = Some(crate::api::blueprints::ORG_NAMESPACE.into());
         state.mirror.upsert(project);
+        // The space is held: a reference to a space nobody holds is the reference check's (T-6742).
+        state
+            .mirror
+            .upsert(manifest("ContextSpace", "ovzdusie", json!({})));
         state.mirror.upsert(manifest(
             "Policy",
             "public-read",
