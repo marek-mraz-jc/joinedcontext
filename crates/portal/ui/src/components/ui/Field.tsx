@@ -143,7 +143,7 @@ export function Field({
       ) : null}
       {control}
       {help ? (
-        <p id={ids.help} className="text-caption text-fg-muted">
+        <p id={ids.help} className="text-caption text-fg-muted break-words">
           {help}
         </p>
       ) : null}
