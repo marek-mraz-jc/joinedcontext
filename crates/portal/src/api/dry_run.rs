@@ -69,6 +69,11 @@ pub struct DryRunResult {
     /// Group's removal edits. Empty for every write that is not a removal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub goes_with: Vec<Consequence>,
+    /// The Endpoints whose calls a proposed Policy decides once it lands (CHG-11 lite, P-18,
+    /// T-6740): each of its space that names no Policy, and each that lists this one. Empty for
+    /// every other kind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub binds_endpoints: Vec<String>,
 }
 
 /// One thing that leaves with a removed resource (T-3247).
@@ -149,6 +154,7 @@ pub fn refused_check(err: &ApiError, manifest: &serde_json::Value) -> Option<Dry
         findings: Vec::new(),
         awaited: Vec::new(),
         goes_with: Vec::new(),
+        binds_endpoints: Vec::new(),
     })
 }
 

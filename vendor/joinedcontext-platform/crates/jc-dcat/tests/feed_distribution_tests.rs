@@ -48,7 +48,11 @@ fn feed_distributions(record: &Value) -> Vec<&Value> {
         .as_array()
         .expect("distributions")
         .iter()
-        .filter(|d| d["@id"].as_str().is_some_and(|id| id.contains("/feed/v1/")))
+        .filter(|d| {
+            d["@id"]
+                .as_str()
+                .is_some_and(|id| id.contains("/feeds/") && !id.ends_with(".ics"))
+        })
         .collect()
 }
 
@@ -60,16 +64,16 @@ fn each_output_is_one_distribution_per_format() {
         .iter()
         .filter_map(|d| d["dcat:accessURL"].as_str())
         .collect();
-    let root = format!("{BASE}/api/endpoint/podujatia/feed/v1");
+    let root = format!("{BASE}/api/endpoint/podujatia/feeds");
     assert_eq!(
         urls,
         [
-            format!("{root}/kultura/atom.xml"),
-            format!("{root}/kultura/rss.xml"),
-            format!("{root}/kultura/feed.json"),
-            format!("{root}/sport/atom.xml"),
-            format!("{root}/sport/rss.xml"),
-            format!("{root}/sport/feed.json"),
+            format!("{root}/kultura.atom"),
+            format!("{root}/kultura.rss"),
+            format!("{root}/kultura.json"),
+            format!("{root}/sport.atom"),
+            format!("{root}/sport.rss"),
+            format!("{root}/sport.json"),
         ]
     );
     let media: Vec<&str> = feeds
@@ -110,7 +114,7 @@ fn the_page_head_links_each_feed() {
     let head = page.split("</head>").next().unwrap_or_default();
     assert_eq!(head.matches("<link rel=\"alternate\"").count(), 6, "{head}");
     assert!(head.contains(
-        "<link rel=\"alternate\" type=\"application/rss+xml\" title=\"Culture (RSS 2.0)\" href=\"https://data.example.sk/api/endpoint/podujatia/feed/v1/kultura/rss.xml\">"
+        "<link rel=\"alternate\" type=\"application/rss+xml\" title=\"Culture (RSS 2.0)\" href=\"https://data.example.sk/api/endpoint/podujatia/feeds/kultura.rss\">"
     ), "{head}");
     assert!(page.contains(">Culture (JSON Feed)</a>"), "{page}");
 }

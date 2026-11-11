@@ -38,6 +38,8 @@ export interface ResourceFormNotesProps {
   draft: Draft | null;
   verdict: Verdict | null;
   restartsStream: boolean;
+  /** The Endpoints a checked Policy decides the calls of (CHG-11, T-6740). */
+  bindsEndpoints?: string[];
 }
 
 /**
@@ -107,6 +109,19 @@ export function ResourceFormNotes(props: ResourceFormNotesProps): JSX.Element {
       {props.restartsStream ? (
         <Alert role="status" tone="warning">
           {t("form.restartsStream")}
+        </Alert>
+      ) : null}
+
+      {props.bindsEndpoints && props.bindsEndpoints.length > 0 ? (
+        <Alert role="status" tone="info" data-testid="binds-endpoints">
+          <p>{t("form.bindsEndpoints")}</p>
+          <ul className="mt-1 list-disc pl-5">
+            {props.bindsEndpoints.map((name) => (
+              <li key={name} className="break-all">
+                {name}
+              </li>
+            ))}
+          </ul>
         </Alert>
       ) : null}
     </>

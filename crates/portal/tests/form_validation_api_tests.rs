@@ -61,7 +61,8 @@ fn kinds() -> Vec<Kind> {
                     "contextSpaceRef": "air",
                     "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y",
                     "audience": "public",
-                    "enabledRepresentations": ["ngsi-ld"]
+                    "enabledRepresentations": ["ngsi-ld"],
+                    "policyRefs": ["urn:ngsi-ld:Policy:hel.fi:ovzdusie-air:public-read"]
                 }),
             )
         },
@@ -183,7 +184,7 @@ fn steward() -> Identity {
     }
 }
 
-/// The project as the forms find it: the space, endpoint, layer and role the specs name.
+/// The project as the forms find it: the space, endpoint, Policy, layer and role the specs name.
 async fn state() -> AppState {
     let state = common::state_on_forge().await;
     for (kind, name, namespace, spec) in [
@@ -198,6 +199,17 @@ async fn state() -> AppState {
             "air-public",
             PROJECT,
             json!({ "contextSpaceRef": "air", "slug": "k7m2qz4tv6xh3n5jb2ryd3wcfa", "audience": "public", "enabledRepresentations": ["ngsi-ld", "ogc-features"] }),
+        ),
+        (
+            "Policy",
+            "public-read",
+            PROJECT,
+            json!({
+                "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+                "assigner": "did:web:hel.fi",
+                "assignee": { "kind": "role", "id": "public" },
+                "operations": ["retrieveOps"]
+            }),
         ),
         (
             "Layer",

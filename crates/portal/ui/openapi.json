@@ -49162,6 +49162,13 @@
           "plan"
         ],
         "properties": {
+          "bindsEndpoints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The Endpoints whose calls a proposed Policy decides once it lands (CHG-11 lite, P-18,\nT-6740): each of its space that names no Policy, and each that lists this one. Empty for\nevery other kind."
+          },
           "findings": {
             "type": "array",
             "items": {
@@ -56210,6 +56217,14 @@
           {
             "type": "object",
             "properties": {
+              "bundle": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {},
+                "description": "A check only (`dryRun=All`): the other manifests of the import this one is proposed in,\nat most 20, so what they draft counts as the same Change (an Endpoint naming the Policy\ndrafted beside it, T-6740). The import itself is judged again when it is proposed."
+              },
               "draft": {
                 "oneOf": [
                   {
