@@ -5751,6 +5751,8 @@
     "errorDetail": "What the broker said",
     "matching": "matching",
     "noTotal": "the endpoint gives no total for this answer",
+    "rowsShown": "Rows {first}–{last}",
+    "moreNext": "more on the next page",
     "history": "History",
     "areaPick": "Pick area on map",
     "signedOutTitle": "Sign in to see this dataset",

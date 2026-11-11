@@ -63,7 +63,7 @@
       code: "Code to paste", copy: "Copy code", copied: "Copied. Paste it into your page's HTML.", copySelect: "Selected: press Ctrl+C to copy.", preview: "Open the widget alone",
       invalid: "Check this setting: {why}.", source: "Source", licence: "Licence", licenceSee: "see the dataset", catalogue: "open data catalogue",
       count: "On the map {n} of {total} · {none} without a location", countTiles: " · drawn as tiles", other: "Other",
-      panelOpen: "Map settings", panel: "Map settings", geoLabel: "Location from", geoHint: "Which place of the entity the map draws, e.g. Location.",
+      panelOpen: "Map settings", pointsFrom: "Points from: {attr}", panel: "Map settings", geoLabel: "Location from", geoHint: "Which place of the entity the map draws, e.g. Location.",
       colorLabel: "Colour by", colorNone: "One colour", colorType: "Type", colorHint: "Points take a colour per value, e.g. Status; the legend is under the map.",
       popLabel: "In the bubble", popHint: "What a pointer over a point shows besides the title, e.g. Start and Web.",
       clusterLabel: "Group points", clusterHint: "Above 200 points in view, nearby points merge into a bubble with their count.",
@@ -88,7 +88,7 @@
       code: "Kód na vloženie", copy: "Kopírovať kód", copied: "Skopírované. Vložte ho do HTML svojej stránky.", copySelect: "Označené: skopírujte stlačením Ctrl+C.", preview: "Otvoriť samotný widget",
       invalid: "Skontrolujte toto nastavenie: {why}.", source: "Zdroj", licence: "Licencia", licenceSee: "pozri dataset", catalogue: "katalóg otvorených dát",
       count: "Na mape {n} z {total} · {none} bez polohy", countTiles: " · kreslené ako dlaždice", other: "Iné",
-      panelOpen: "Nastaviť mapu", panel: "Nastavenie mapy", geoLabel: "Poloha z", geoHint: "Ktoré miesto entity mapa kreslí, napr. Poloha.",
+      panelOpen: "Nastaviť mapu", pointsFrom: "Body z: {attr}", panel: "Nastavenie mapy", geoLabel: "Poloha z", geoHint: "Ktoré miesto entity mapa kreslí, napr. Poloha.",
       colorLabel: "Farba podľa", colorNone: "Jedna farba", colorType: "Typ", colorHint: "Body dostanú farbu podľa hodnoty, napr. Stav; legenda je pod mapou.",
       popLabel: "V bubline", popHint: "Čo ukáže kurzor nad bodom okrem názvu, napr. Začiatok a Web.",
       clusterLabel: "Zoskupovať body", clusterHint: "Nad 200 bodov vo výreze sa blízke body spoja do bubliny s ich počtom.",
@@ -657,6 +657,8 @@
         var picked = mapChoice(state.mapRaw, o);
         var moved = state.mapping && state.mapping.choice.geo !== picked.choice.geo;
         state.mapping = { options: o, choice: picked.choice, card: card };
+        // Which of the type's GeoProperties the points come from, in sight beside Map settings.
+        $("map-from").textContent = say(t.pointsFrom, { attr: o.labels[picked.choice.geo] || humanise(picked.choice.geo) });
         // Only with the model in hand is a slot the address names known to be wrong: drop it, say so.
         if (card && picked.unknown.length) {
           picked.unknown.forEach(function (k) { delete state.mapRaw[k]; });

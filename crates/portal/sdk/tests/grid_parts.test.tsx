@@ -25,7 +25,7 @@ const { GridDetail, GridCellPanels } = await import("../src/grid/GridDetail");
 const { GridHead, moveTo } = await import("../src/grid/GridHead");
 const { GridMapPanel } = await import("../src/grid/GridMapPanel");
 const { GridNotices, GridStatus, HiddenFields } = await import("../src/grid/GridNotices");
-const { GridPager, pageNumbers } = await import("../src/grid/GridPager");
+const { GridPager, pageNumbers, shownLine } = await import("../src/grid/GridPager");
 const { GridQueryBox } = await import("../src/grid/GridQueryBox");
 const { GridPending, GridReview } = await import("../src/grid/GridReview");
 const { GridRows, GridFooter } = await import("../src/grid/GridRows");
@@ -153,6 +153,16 @@ describe("GridPager", () => {
 
   it("numbers the first, the last and the pages around this one", () => {
     expect(pageNumbers(5, 9)).toEqual([1, null, 4, 5, 6, null, 9]);
+  });
+
+  it("names the rows of a page without a total, and a next page only when this one is full (R22)", () => {
+    expect(shownLine(DEFAULT_LABELS, 0, 20, 20)).toBe("Rows 1–20 · more on the next page");
+    expect(shownLine(DEFAULT_LABELS, 40, 7, 20)).toBe("Rows 41–47");
+    const sk = { ...DEFAULT_LABELS, rowsShown: "Riadky {first}–{last}", moreNext: "ďalšie na nasledujúcej strane" };
+    expect(shownLine(sk, 20, 20, 20)).toBe("Riadky 21–40 · ďalšie na nasledujúcej strane");
+    // An App's labels from before these two words still read.
+    const { rowsShown: _r, moreNext: _m, ...old } = DEFAULT_LABELS;
+    expect(shownLine(old, 0, 5, 20)).toBe("Rows 1–5");
   });
 });
 

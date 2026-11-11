@@ -105,6 +105,8 @@ textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; 
 /* T-5233: the map's count line, its Mapa panel, the reader's chips and the legend. */
 .map-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin: 16px 0 6px; }
 .map-head #map-title { margin: 0; }
+/* The attribute the points come from, beside the title; Map settings keeps the row's right end. */
+.map-head .map-from { margin: 0 auto 0 0; }
 .map-panel { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
 .map-panel h3 { flex-basis: 100%; margin: 0; font-size: 1rem; font-weight: 600; }
 .map-panel .field { flex: 1 1 14rem; min-width: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; border: 0; padding: 0; }
