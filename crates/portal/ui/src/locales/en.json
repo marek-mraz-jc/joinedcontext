@@ -3872,7 +3872,8 @@
       "source": "From",
       "grants": "{count, plural, one {# grant} other {# grants}}",
       "noSource": "a grant of this space",
-      "noSourceHint": "No Policy you can read matches this grant."
+      "noSourceHint": "No Policy you can read matches this grant.",
+      "emptyHint": "Ask a project steward for a Policy that grants you read on a type of this endpoint's space."
     },
     "panel": {
       "title": "Your access",
@@ -4103,7 +4104,8 @@
         "ended": "{grant} ended {when}",
         "starts": "{grant} starts {when}",
         "noGrant": "No grant names it"
-      }
+      },
+      "gatewayOnlyHint": "To let it change Portal resources, grant the account a Portal role under Role bindings."
     },
     "words": {
       "verb": {
@@ -6777,13 +6779,15 @@
       "cancel": "Cancel",
       "yamlError": "Not valid YAML, correct it: {message}",
       "showOperations": "Show its {count} operations",
+      "noOperations": "This profile declares no operations.",
       "profileTitles": {
         "chat": "Assistant conversations",
         "app-builder": "Application builder",
         "app-from-prompt": "An application from a prompt"
       },
       "packageHosts": "packages for building apps",
-      "ids": "Profile {name}, role {role}"
+      "ids": "Profile {name}, role {role}",
+      "noOperationsHint": "The agent profile in the org project lists the operations a run may use; an org steward adds them there."
     },
     "states": {
       "failed": "Did not finish",
@@ -8178,6 +8182,9 @@
       "range": "Allowed range",
       "perProject": "Quota per project",
       "perProjectLead": "Whose quota each project runs on and what it uses; projects you cannot read are not listed.",
+      "noSettings": "No setting in this section.",
+      "noSettingsHint": "Settings appear here once the installation defines them.",
+      "noProjectsHint": "Ask an organization administrator to add you to a project under Access, then Groups.",
       "project": "Project",
       "whose": "Quota from",
       "noProjects": "No project you can read.",
@@ -8534,6 +8541,7 @@
       "allows": "Allows",
       "from": "From",
       "none": "No binding gives you anything here.",
+      "noneHint": "Ask a project administrator to bind you to a role under Members.",
       "binding": "binding {binding}, {scope}",
       "approveOthers": "You approve changes other people propose; your own changes wait for another approver, because you do not also hold delete on these kinds."
     },
@@ -9513,7 +9521,8 @@
       "tokensOut": "Tokens written",
       "duplicate": "Duplicate",
       "duplicateOf": "Duplicate {name}",
-      "noPrivacyContact": "No privacy contact"
+      "noPrivacyContact": "No privacy contact",
+      "noUsageHint": "Each day someone asks the assistant a question shows here as one row."
     },
     "chat": {
       "ask": "Ask",
@@ -9645,7 +9654,8 @@
       "omittedTitle": "{count} Endpoints left out",
       "omitted": "One assistant reads at most 100 Endpoints; narrow the selector or exclude some. Left out: {slugs}",
       "noSources": "No knowledge source: it answers from live data alone.",
-      "sources": "Knowledge sources"
+      "sources": "Knowledge sources",
+      "noEndpointsHint": "Name an Endpoint in the assistant deployment to let it answer from live data too."
     },
     "trySearch": {
       "title": "Try the search",
@@ -10391,7 +10401,8 @@
       "brokerError": "Broker {broker} is in error; open it to read why",
       "unread": "No pipeline reads it",
       "noEndpoint": "No Endpoint {endpoint} in this project",
-      "noPolicy": "No Policy {policy} in this project"
+      "noPolicy": "No Policy {policy} in this project",
+      "emptyHint": "Open a broker and add a device under Connect a device; its path to the Endpoint shows here."
     },
     "capture": {
       "kept": "Keeps the last {count} messages per topic for {window}, for building the mapping."
@@ -10628,7 +10639,8 @@
         "noRightHint": "Ask a steward of project {project} to give you read access to its MQTT brokers, then open this page again.",
         "missing": "No MQTT broker is called {name}",
         "missingHint": "It may have been removed or renamed. Pick a broker from the list."
-      }
+      },
+      "noDevicesHint": "A device account is the service account one group of devices signs in to the broker with."
     },
     "edit": {
       "accessLead": "A device signs in with its service account's token and may use the topics of each role its account holds. Adding an account here grants it the role; the change is proposed with the broker.",
@@ -12119,7 +12131,9 @@
       "published": "Published",
       "signed": "Signed",
       "yes": "Allowed",
-      "no": "Refused"
+      "no": "Refused",
+      "noProtectionHint": "A protected branch takes changes only through a reviewed merge; the repository's owner sets it in the forge.",
+      "noPackagesHint": "A package this repository's build publishes shows here with its version."
     },
     "refused": {
       "list": "The repositories of {project} are not open to you. Whoever manages the project can grant you read access.",

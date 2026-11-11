@@ -3872,7 +3872,8 @@
       "source": "Woher",
       "grants": "{count, plural, one {# Berechtigung} other {# Berechtigungen}}",
       "noSource": "eine Berechtigung dieses Raums",
-      "noSourceHint": "Keine Policy, die Sie lesen dürfen, passt zu dieser Berechtigung."
+      "noSourceHint": "Keine Policy, die Sie lesen dürfen, passt zu dieser Berechtigung.",
+      "emptyHint": "Bitten Sie einen Projektverwalter um eine Policy, die Ihnen Lesen auf einem Typ des Bereichs dieses Endpoints gewährt."
     },
     "panel": {
       "title": "Ihr Zugriff",
@@ -4103,7 +4104,8 @@
         "ended": "{grant} endete {when}",
         "starts": "{grant} beginnt {when}",
         "noGrant": "Keine Berechtigung nennt es"
-      }
+      },
+      "gatewayOnlyHint": "Damit es Portal-Ressourcen ändern kann, geben Sie dem Konto unter Rollenbindungen eine Portal-Rolle."
     },
     "words": {
       "verb": {
@@ -6777,13 +6779,15 @@
       "cancel": "Abbrechen",
       "yamlError": "Kein gültiges YAML, korrigieren Sie es: {message}",
       "showOperations": "Seine {count} Operationen zeigen",
+      "noOperations": "Dieses Profil deklariert keine Operationen.",
       "profileTitles": {
         "chat": "Gespräche mit dem Assistenten",
         "app-builder": "App-Builder",
         "app-from-prompt": "Eine App aus einer Beschreibung"
       },
       "packageHosts": "Pakete zum Bauen von Apps",
-      "ids": "Profil {name}, Rolle {role}"
+      "ids": "Profil {name}, Rolle {role}",
+      "noOperationsHint": "Das Agentenprofil im Org-Projekt listet die Operationen, die ein Lauf nutzen darf; ein Org-Verwalter ergänzt sie dort."
     },
     "states": {
       "failed": "Nicht beendet",
@@ -8178,6 +8182,9 @@
       "range": "Erlaubter Bereich",
       "perProject": "Kontingent pro Projekt",
       "perProjectLead": "Wessen Kontingent jedes Projekt nutzt und was es verbraucht; Projekte, die Sie nicht lesen dürfen, fehlen.",
+      "noSettings": "In diesem Abschnitt gibt es keine Einstellung.",
+      "noSettingsHint": "Einstellungen erscheinen hier, sobald die Installation sie festlegt.",
+      "noProjectsHint": "Bitten Sie eine Organisationsadministration, Sie unter Zugriff, dann Gruppen, zu einem Projekt hinzuzufügen.",
       "project": "Projekt",
       "whose": "Kontingent von",
       "noProjects": "Kein Projekt, das Sie lesen dürfen.",
@@ -8534,6 +8541,7 @@
       "allows": "Erlaubt",
       "from": "Woher",
       "none": "Keine Bindung gibt Ihnen hier etwas.",
+      "noneHint": "Bitten Sie die Projektadministration, Sie unter Mitglieder an eine Rolle zu binden.",
       "binding": "Bindung {binding}, {scope}",
       "approveOthers": "Sie genehmigen Änderungen, die andere vorschlagen; Ihre eigenen warten auf eine andere genehmigende Person, weil Sie für diese Arten nicht auch löschen dürfen."
     },
@@ -9513,7 +9521,8 @@
       "tokensOut": "Geschriebene Tokens",
       "duplicate": "Duplizieren",
       "duplicateOf": "{name} duplizieren",
-      "noPrivacyContact": "Kein Datenschutzkontakt"
+      "noPrivacyContact": "Kein Datenschutzkontakt",
+      "noUsageHint": "Jeder Tag, an dem jemand dem Assistenten eine Frage stellt, erscheint hier als eine Zeile."
     },
     "chat": {
       "ask": "Fragen",
@@ -9645,7 +9654,8 @@
       "omittedTitle": "Ausgelassene Endpoints: {count}",
       "omitted": "Ein Assistent liest höchstens 100 Endpoints; schränken Sie die Auswahl ein oder schließen Sie einige aus. Ausgelassen: {slugs}",
       "noSources": "Keine Wissensquelle: er antwortet nur aus Live-Daten.",
-      "sources": "Wissensquellen"
+      "sources": "Wissensquellen",
+      "noEndpointsHint": "Nennen Sie in der Assistenten-Bereitstellung einen Endpoint, damit er auch aus Live-Daten antwortet."
     },
     "trySearch": {
       "title": "Suche ausprobieren",
@@ -10391,7 +10401,8 @@
       "brokerError": "Broker {broker} ist im Fehlerzustand; öffnen Sie ihn, um den Grund zu lesen",
       "unread": "Keine Pipeline liest sie",
       "noEndpoint": "Kein Endpoint {endpoint} in diesem Projekt",
-      "noPolicy": "Keine Policy {policy} in diesem Projekt"
+      "noPolicy": "Keine Policy {policy} in diesem Projekt",
+      "emptyHint": "Öffnen Sie einen Broker und fügen Sie unter Gerät verbinden ein Gerät hinzu; sein Weg zum Endpoint erscheint hier."
     },
     "capture": {
       "kept": "Behält die letzten {count} Nachrichten je Thema für {window}, um das Mapping zu bauen."
@@ -10628,7 +10639,8 @@
         "noRightHint": "Bitten Sie eine Verwaltung des Projekts {project} um Lesezugriff auf seine MQTT-Broker und öffnen Sie diese Seite dann erneut.",
         "missing": "Kein MQTT-Broker heißt {name}",
         "missingHint": "Er wurde vielleicht entfernt oder umbenannt. Wählen Sie einen Broker aus der Liste."
-      }
+      },
+      "noDevicesHint": "Ein Gerätekonto ist das Dienstkonto, mit dem sich eine Gruppe von Geräten beim Broker anmeldet."
     },
     "edit": {
       "accessLead": "Ein Gerät meldet sich mit dem Token seines Dienstkontos an und darf die Themen jeder Rolle nutzen, die sein Konto hält. Ein hier hinzugefügtes Konto erhält die Rolle; die Änderung wird mit dem Broker vorgeschlagen.",
@@ -12119,7 +12131,9 @@
       "published": "Veröffentlicht",
       "signed": "Signiert",
       "yes": "Erlaubt",
-      "no": "Verweigert"
+      "no": "Verweigert",
+      "noProtectionHint": "Ein geschützter Branch nimmt Änderungen nur über einen geprüften Merge an; der Eigentümer des Repositorys legt ihn in der Forge fest.",
+      "noPackagesHint": "Ein Paket, das der Build dieses Repositorys veröffentlicht, erscheint hier mit seiner Version."
     },
     "refused": {
       "list": "Die Repositories von {project} sind für Sie nicht freigegeben. Wer das Projekt verwaltet, kann Ihnen Lesezugriff geben.",

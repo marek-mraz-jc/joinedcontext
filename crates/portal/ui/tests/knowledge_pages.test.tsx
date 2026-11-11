@@ -487,7 +487,7 @@ describe("finding pages and trying the search (UI-99, T-4659)", () => {
     await userEvent.click(await screen.findByRole("tab", { name: "Documents" }));
     const table = await screen.findByRole("table", { name: "Documents" });
     expect(within(table).getByRole("link", { name: /VZN o odpade/ })).toHaveAttribute("href", "https://www.banskabystrica.sk/vzn.pdf");
-    expect(within(table).getByRole("columnheader", { name: "Last change" })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: /^Last change/ })).toBeInTheDocument();
   });
 });
 

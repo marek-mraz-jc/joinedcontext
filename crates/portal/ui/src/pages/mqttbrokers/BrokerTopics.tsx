@@ -6,6 +6,8 @@ import { api, forPeople, unwrap } from "../../api/client";
 import { usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
 import { RecordLink } from "../../components/RecordLink";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import {
   Alert,
   Badge,
@@ -14,12 +16,6 @@ import {
   ConfirmDialog,
   EmptyState,
   Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
 
 type Binding = components["schemas"]["Binding"];
@@ -117,40 +113,65 @@ function TopicsTable({ project, broker, messages }: { project: string; broker: s
     const newest = filter ? messages?.find((message) => topicMatches(filter, message.topic)) : undefined;
     return newest ? time.format(new Date(newest.receivedAt)) : "—";
   };
+  const hopText = (hop: Hop | null | undefined) =>
+    !hop ? "" : hop.hidden || !hop.name ? t("mqttbrokers.topics.hidden", { kind: hop.kind }) : hop.name;
+  const attributesText = (row: Binding) =>
+    row.attributes
+      ? row.attributes
+          .map((attribute) =>
+            attribute.from ? t("mqttbrokers.topics.mapped", { from: attribute.from, to: attribute.to }) : t("mqttbrokers.topics.computed", { to: attribute.to }),
+          )
+          .join(", ")
+      : row.pipeline?.name && row.endpoint?.name
+        ? t("mqttbrokers.topics.byHand")
+        : "";
+  const columns: DataColumn<Binding>[] = [
+    {
+      key: "filter",
+      label: t("mqttbrokers.topics.filter"),
+      text: (row) => row.topicFilter ?? hopText(row.dataSource),
+      cell: (row) =>
+        row.topicFilter ? <code className="font-mono text-caption">{row.topicFilter}</code> : <HopCell project={project} hop={row.dataSource} />,
+    },
+    {
+      key: "via",
+      label: t("mqttbrokers.topics.via"),
+      text: (row) => (row.topicFilter ? `${hopText(row.dataSource)} ${row.pipeline ? hopText(row.pipeline) : t("mqttbrokers.topics.noPipeline")}` : ""),
+      cell: (row) => <Via project={project} row={row} />,
+    },
+    { key: "type", label: t("mqttbrokers.topics.type"), text: (row) => row.type ?? "" , cell: (row) => row.type ?? "—" },
+    {
+      key: "attributes",
+      label: t("mqttbrokers.topics.attributes"),
+      text: attributesText,
+      cell: (row) => <Attributes row={row} />,
+    },
+    {
+      key: "endpoint",
+      label: t("mqttbrokers.topics.endpoint"),
+      text: (row) => hopText(row.endpoint),
+      cell: (row) => (row.endpoint ? <HopCell project={project} hop={row.endpoint} /> : "—"),
+    },
+    ...(messages
+      ? [{ key: "last", label: t("mqttbrokers.topics.last"), text: (row: Binding) => last(row.topicFilter ?? undefined) }]
+      : []),
+  ];
   return (
     <div className="flex flex-col gap-2" data-topics={rows.length > 0 ? "bound" : "empty"}>
       {heading}
       {rows.length === 0 ? (
         <EmptyState bare title={t("mqttbrokers.topics.empty")} description={t("mqttbrokers.topics.emptyHint", { broker })} />
       ) : (
-        <Table stack caption={t("mqttbrokers.topics.caption", { broker })}>
-          <TableHead>
-            <TableHeaderCell>{t("mqttbrokers.topics.filter")}</TableHeaderCell>
-            <TableHeaderCell>{t("mqttbrokers.topics.via")}</TableHeaderCell>
-            <TableHeaderCell>{t("mqttbrokers.topics.type")}</TableHeaderCell>
-            <TableHeaderCell>{t("mqttbrokers.topics.attributes")}</TableHeaderCell>
-            <TableHeaderCell>{t("mqttbrokers.topics.endpoint")}</TableHeaderCell>
-            {messages ? <TableHeaderCell>{t("mqttbrokers.topics.last")}</TableHeaderCell> : null}
-          </TableHead>
-          <TableBody>
-            {rows.map((row, index) => (
-              <TableRow key={`${row.topicFilter ?? "hidden"}-${row.pipeline?.name ?? ""}-${row.endpoint?.name ?? ""}-${index}`}>
-                <TableCell primary>
-                  {row.topicFilter ? <code className="font-mono text-caption">{row.topicFilter}</code> : <HopCell project={project} hop={row.dataSource} />}
-                </TableCell>
-                <TableCell data-label={t("mqttbrokers.topics.via")}>
-                  <Via project={project} row={row} />
-                </TableCell>
-                <TableCell data-label={t("mqttbrokers.topics.type")}>{row.type ?? "—"}</TableCell>
-                <TableCell data-label={t("mqttbrokers.topics.attributes")}>
-                  <Attributes row={row} />
-                </TableCell>
-                <TableCell data-label={t("mqttbrokers.topics.endpoint")}>{row.endpoint ? <HopCell project={project} hop={row.endpoint} /> : "—"}</TableCell>
-                {messages ? <TableCell data-label={t("mqttbrokers.topics.last")}>{last(row.topicFilter ?? undefined)}</TableCell> : null}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <AdminGrid
+          query={bindings}
+          caption={t("mqttbrokers.topics.caption", { broker })}
+          rows={rows}
+          rowKey={(row) => `${row.topicFilter ?? "hidden"}-${row.pipeline?.name ?? ""}-${row.endpoint?.name ?? ""}-${rows.indexOf(row)}`}
+          columns={columns}
+          storageKey={`${project}:mqtt-topics`}
+          stack
+          empty={<EmptyState bare title={t("mqttbrokers.topics.empty")} description={t("mqttbrokers.topics.emptyHint", { broker })} />}
+        />
       )}
     </div>
   );

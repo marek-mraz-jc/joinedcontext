@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { api, queryKeys, unwrap } from "../../api/client";
 import { asManifests, localized } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import { useProjects } from "../../api/projects";
@@ -20,15 +20,9 @@ import {
   Icon,
   Input,
   Select,
-  Table,
-  TableBody,
-  TableCell,
-  TableEmpty,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableSkeleton,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 
 /** An App name, as the server takes it: a DNS-1123 label of at most 63 characters. */
 const APP_NAME = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
@@ -314,6 +308,75 @@ export function OrganizationApplications(): JSX.Element {
     }
   };
 
+  const columns: DataColumn<(typeof rows)[number]>[] = [
+    {
+      key: "name",
+      label: t("organization.applications.name"),
+      text: ({ app }) => localized(app.metadata.title, locale, "") || app.metadata.name,
+      cell: ({ project, app }) => {
+        const title = localized(app.metadata.title, locale, "");
+        return (
+          <>
+            <Link
+              data-row-link=""
+              to="/projects/$project/$plural"
+              params={{ project, plural: "apps" }}
+              className="focus-ring rounded-sm font-medium text-primary-soft-fg underline underline-offset-2 hover:no-underline"
+            >
+              {title || app.metadata.name}
+            </Link>
+            {title ? <span className="ml-2 text-caption text-fg-muted">{app.metadata.name}</span> : null}
+          </>
+        );
+      },
+    },
+    { key: "project", label: t("organization.projects.name"), text: ({ project }) => project },
+    {
+      key: "lifecycle",
+      label: t("organization.applications.lifecycle"),
+      text: ({ app }) => (app.spec as { lifecycle?: string } | null)?.lifecycle ?? "",
+      cell: ({ app }) => {
+        const lifecycle = (app.spec as { lifecycle?: string } | null)?.lifecycle;
+        return lifecycle ? (
+          <LifecycleBadge kind="appLifecycle" value={lifecycle} />
+        ) : (
+          <span className="text-fg-muted">{t("organization.applications.noLifecycle")}</span>
+        );
+      },
+    },
+    {
+      key: "source",
+      label: t("organization.applications.source"),
+      text: ({ app }) => repositoryOf(app) ?? "",
+      cell: ({ app }) =>
+        repositoryOf(app) ?? <span className="text-fg-muted">{t("organization.applications.noRepository")}</span>,
+    },
+    {
+      key: "actions",
+      label: t("approvals.actions"),
+      actions: true,
+      align: "right",
+      text: () => "",
+      cell: ({ project, app }) => {
+        const name = app.metadata.name;
+        const repository = repositoryOf(app);
+        return (
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-label={t("appExport.labelFor", { name })}
+            loading={exporting === `${project}/${name}`}
+            disabled={repository === null}
+            disabledReason={repository === null ? t("appExport.noRepository") : undefined}
+            onClick={() => void exportOne(project, name)}
+          >
+            {t("appExport.button")}
+          </Button>
+        );
+      },
+    },
+  ];
+
   return (
     <section className="space-y-4" aria-labelledby="organization-applications-heading">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -341,93 +404,30 @@ export function OrganizationApplications(): JSX.Element {
           {refused}
         </Alert>
       ) : null}
-      {projects.isError || failed ? (
-        <Alert tone="danger" role="alert">
-          {(() => {
-            const error = projects.error ?? failed;
-            return error instanceof ApiError
-              ? (error.problem?.detail ?? error.message)
-              : t("app.error.generic");
-          })()}
-        </Alert>
-      ) : (
-        <Table
-          data-records=""
-          caption={t("organization.applications.caption")}
-          status={pending ? t("app.loading") : undefined}
-        >
-          <TableHead>
-            <TableHeaderCell>{t("organization.applications.name")}</TableHeaderCell>
-            <TableHeaderCell>{t("organization.projects.name")}</TableHeaderCell>
-            <TableHeaderCell>{t("organization.applications.lifecycle")}</TableHeaderCell>
-            <TableHeaderCell>{t("organization.applications.source")}</TableHeaderCell>
-            <TableHeaderCell align="right">{t("approvals.actions")}</TableHeaderCell>
-          </TableHead>
-          {pending ? (
-            <TableSkeleton columns={5} />
-          ) : (
-            <TableBody>
-              {rows.length === 0 ? (
-                <TableEmpty columns={5}>
-                  <EmptyState
-                    bare
-                    title={t("organization.applications.empty")}
-                    description={t("organization.applications.emptyHint")}
-                  />
-                </TableEmpty>
-              ) : (
-                rows.map(({ project, app }) => {
-                  const name = app.metadata.name;
-                  const title = localized(app.metadata.title, locale, "");
-                  const repository = repositoryOf(app);
-                  const lifecycle = (app.spec as { lifecycle?: string } | null)?.lifecycle;
-                  return (
-                    <TableRow key={`${project}/${name}`}>
-                      <TableCell primary>
-                        <Link
-                          data-row-link=""
-                          to="/projects/$project/$plural"
-                          params={{ project, plural: "apps" }}
-                          className="focus-ring rounded-sm font-medium text-primary-soft-fg underline underline-offset-2 hover:no-underline"
-                        >
-                          {title || name}
-                        </Link>
-                        {title ? <span className="ml-2 text-caption text-fg-muted">{name}</span> : null}
-                      </TableCell>
-                      <TableCell>{project}</TableCell>
-                      <TableCell>
-                        {lifecycle ? (
-                          <LifecycleBadge kind="appLifecycle" value={lifecycle} />
-                        ) : (
-                          <span className="text-fg-muted">{t("organization.applications.noLifecycle")}</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {repository ?? (
-                          <span className="text-fg-muted">{t("organization.applications.noRepository")}</span>
-                        )}
-                      </TableCell>
-                      <TableCell align="right">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          aria-label={t("appExport.labelFor", { name })}
-                          loading={exporting === `${project}/${name}`}
-                          disabled={repository === null}
-                          disabledReason={repository === null ? t("appExport.noRepository") : undefined}
-                          onClick={() => void exportOne(project, name)}
-                        >
-                          {t("appExport.button")}
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          )}
-        </Table>
-      )}
+      <AdminGrid<(typeof rows)[number]>
+        query={{
+          isPending: pending,
+          isError: projects.isError || failed !== undefined,
+          error: projects.error ?? failed,
+          refetch: () => {
+            void projects.refetch();
+            lists.forEach((list) => void list.refetch());
+          },
+        }}
+        caption={t("organization.applications.caption")}
+        storageKey="organization:applications"
+        rows={rows}
+        rowKey={({ project, app }) => `${project}/${app.metadata.name}`}
+        columns={columns}
+        stack
+        empty={
+          <EmptyState
+            bare
+            title={t("organization.applications.empty")}
+            description={t("organization.applications.emptyHint")}
+          />
+        }
+      />
     </section>
   );
 }

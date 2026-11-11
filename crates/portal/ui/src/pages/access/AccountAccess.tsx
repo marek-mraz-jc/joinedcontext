@@ -10,16 +10,12 @@ import {
   Badge,
   Button,
   ConfirmDialog,
+  EmptyState,
   InlineError,
   Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableRowHeaderCell,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import { PageFailed } from "../../components/ui/PageState";
 
 type AccountAccessAnswer = components["schemas"]["AccountAccess"];
@@ -142,6 +138,47 @@ export function AccountAccess({
   const when = (iso: string | null | undefined) =>
     iso ? new Date(iso).toLocaleString(i18n.language, { dateStyle: "medium", timeStyle: "short" }) : "";
   const heading = `access-${account}`;
+  const cellText = (cell: MatrixCell) =>
+    `${t(cell.allowed ? "access.agent.allowed" : "access.agent.refused")} ${
+      cell.allowed
+        ? cell.sources.join(", ")
+        : t(cell.reason?.key ?? "access.agent.reason.noGrant", {
+            ...cell.reason?.values,
+            when: when(cell.reason?.values?.when),
+          })
+    }`.trim();
+  const columns: DataColumn<(typeof rows)[number]>[] = [
+    {
+      key: "kind",
+      label: t("access.agent.kind"),
+      text: (row) => (row.kind === "*" ? t("access.agent.everyKind") : row.kind),
+    },
+    ...MATRIX_VERBS.map(
+      (verb): DataColumn<(typeof rows)[number]> => ({
+        key: verb,
+        label: t(`access.agent.verb.${verb}`),
+        text: (row) => cellText(row.cells[verb]),
+        cell: (row) => {
+          const cell = row.cells[verb];
+          return (
+            <>
+              <span className={cell.allowed ? "font-medium text-success" : "text-fg-muted"}>
+                {t(cell.allowed ? "access.agent.allowed" : "access.agent.refused")}
+              </span>
+              <span className="block text-caption text-fg-muted">
+                {cell.allowed
+                  ? cell.sources.join(", ")
+                  : t(cell.reason?.key ?? "access.agent.reason.noGrant", {
+                      ...cell.reason?.values,
+                      when: when(cell.reason?.values?.when),
+                    })}
+              </span>
+            </>
+          );
+        },
+      }),
+    ),
+  ];
 
   return (
     <section className="space-y-3" aria-labelledby={heading}>
@@ -182,41 +219,16 @@ export function AccountAccess({
       {rows.length === 0 ? (
         <p className="text-body text-fg-muted">{t("access.agent.gatewayOnly")}</p>
       ) : (
-        <Table caption={t("access.agent.matrix", { account })}>
-            <TableHead>
-              <TableHeaderCell scope="col">{t("access.agent.kind")}</TableHeaderCell>
-              {MATRIX_VERBS.map((verb) => (
-                <TableHeaderCell key={verb} scope="col">
-                  {t(`access.agent.verb.${verb}`)}
-                </TableHeaderCell>
-              ))}
-            </TableHead>
-            <TableBody>
-              {rows.map((row) => (
-                <TableRow key={row.kind}>
-                  <TableRowHeaderCell>{row.kind === "*" ? t("access.agent.everyKind") : row.kind}</TableRowHeaderCell>
-                  {MATRIX_VERBS.map((verb) => {
-                    const cell = row.cells[verb];
-                    return (
-                      <TableCell key={verb}>
-                        <span className={cell.allowed ? "font-medium text-success" : "text-fg-muted"}>
-                          {t(cell.allowed ? "access.agent.allowed" : "access.agent.refused")}
-                        </span>
-                        <span className="block text-caption text-fg-muted">
-                          {cell.allowed
-                            ? cell.sources.join(", ")
-                            : t(cell.reason?.key ?? "access.agent.reason.noGrant", {
-                                ...cell.reason?.values,
-                                when: when(cell.reason?.values?.when),
-                              })}
-                        </span>
-                      </TableCell>
-                    );
-                  })}
-                </TableRow>
-              ))}
-            </TableBody>
-        </Table>
+        <AdminGrid
+          stack
+          storageKey={`${project}:account-access`}
+          query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
+          caption={t("access.agent.matrix", { account })}
+          rows={rows}
+          columns={columns}
+          rowKey={(row) => row.kind}
+          empty={<EmptyState bare title={t("access.agent.gatewayOnly")} description={t("access.agent.gatewayOnlyHint")} />}
+        />
       )}
 
       <ConfirmDialog

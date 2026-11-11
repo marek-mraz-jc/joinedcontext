@@ -6,17 +6,20 @@ import {
   CardHeader,
   PageFailed,
   PageLoading,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
+  EmptyState,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import { bytesText } from "../knowledge/knowledge";
 import { shortSha, useRepositoryRead } from "./api";
 import type { Repository, RepositorySettings } from "./api";
 import { when } from "./CommitsView";
+
+type Rule = RepositorySettings["protection"][number];
+type Package = RepositorySettings["packages"][number];
+
+/** The settings are already read: nothing is loading or failing inside the grids. */
+const LOADED = { isPending: false, isError: false, error: null, refetch: () => undefined };
 
 /**
  * What the repository's administrators read: branch protection, webhooks (their address only,
@@ -31,6 +34,62 @@ export function SettingsView({ project, repository }: { project: string; reposit
   const data = settings.data;
   const language = i18n.resolvedLanguage ?? "en";
   const yes = (value: boolean | undefined) => (value ? t("repositories.settings.yes") : t("repositories.settings.no"));
+  const ruleColumns: DataColumn<Rule>[] = [
+    {
+      key: "pattern",
+      label: t("repositories.settings.pattern"),
+      text: (rule) => rule.pattern ?? "",
+      cell: (rule) => <span className="font-mono">{rule.pattern}</span>,
+    },
+    { key: "push", label: t("repositories.settings.push"), kind: "boolean", text: (rule) => yes(rule.pushAllowed) },
+    {
+      key: "forcePush",
+      label: t("repositories.settings.forcePush"),
+      kind: "boolean",
+      text: (rule) => yes(rule.forcePushAllowed),
+    },
+    {
+      key: "approvals",
+      label: t("repositories.settings.approvals"),
+      kind: "number",
+      text: (rule) => String(rule.requiredApprovals ?? 0),
+    },
+  ];
+  const packageColumns: DataColumn<Package>[] = [
+    {
+      key: "version",
+      label: t("repositories.settings.version"),
+      text: (item) => `${item.name} ${item.version}${item.signed ? ` ${t("repositories.settings.signed")}` : ""}`,
+      cell: (item) => (
+        <span className="font-mono">
+          {item.name} {item.version}
+          {item.signed ? (
+            <Badge tone="success" className="ml-1">
+              {t("repositories.settings.signed")}
+            </Badge>
+          ) : null}
+        </span>
+      ),
+    },
+    { key: "kind", label: t("repositories.settings.kind"), text: (item) => item.type ?? "—" },
+    {
+      key: "digest",
+      label: t("repositories.settings.digest"),
+      text: (item) => `${shortSha(item.digest?.replace(/^sha256:/, ""))} · ${bytesText(item.size, language)}`,
+      cell: (item) => (
+        <span className="font-mono">
+          {shortSha(item.digest?.replace(/^sha256:/, ""))} · {bytesText(item.size, language)}
+        </span>
+      ),
+    },
+    {
+      key: "published",
+      label: t("repositories.settings.published"),
+      kind: "date",
+      text: (item) => item.createdAt ?? "",
+      cell: (item) => when(item.createdAt, language),
+    },
+  ];
   const none = (text: string) => <p className="mt-2 text-caption text-fg-muted">{text}</p>;
   return (
     <div className="space-y-4">
@@ -41,24 +100,16 @@ export function SettingsView({ project, repository }: { project: string; reposit
           none(t("repositories.settings.noProtection"))
         ) : (
           <div className="mt-3">
-            <Table caption={t("repositories.settings.protection")} stack>
-              <TableHead>
-                <TableHeaderCell>{t("repositories.settings.pattern")}</TableHeaderCell>
-                <TableHeaderCell>{t("repositories.settings.push")}</TableHeaderCell>
-                <TableHeaderCell>{t("repositories.settings.forcePush")}</TableHeaderCell>
-                <TableHeaderCell>{t("repositories.settings.approvals")}</TableHeaderCell>
-              </TableHead>
-              <TableBody>
-                {data.protection.map((rule) => (
-                  <TableRow key={rule.pattern}>
-                    <TableCell className="font-mono">{rule.pattern}</TableCell>
-                    <TableCell data-label={t("repositories.settings.push")}>{yes(rule.pushAllowed)}</TableCell>
-                    <TableCell data-label={t("repositories.settings.forcePush")}>{yes(rule.forcePushAllowed)}</TableCell>
-                    <TableCell data-label={t("repositories.settings.approvals")}>{rule.requiredApprovals ?? 0}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <AdminGrid<Rule>
+              query={LOADED}
+              caption={t("repositories.settings.protection")}
+              rows={data.protection}
+              columns={ruleColumns}
+              rowKey={(rule) => rule.pattern ?? ""}
+              storageKey={`${project}:${repository.name}:protection`}
+              stack
+              empty={<EmptyState bare title={t("repositories.settings.noProtection")} description={t("repositories.settings.noProtectionHint")} />}
+            />
           </div>
         )}
       </Card>
@@ -100,33 +151,16 @@ export function SettingsView({ project, repository }: { project: string; reposit
           none(t("repositories.settings.noPackages"))
         ) : (
           <div className="mt-3">
-            <Table caption={t("repositories.settings.packages")} stack>
-              <TableHead>
-                <TableHeaderCell>{t("repositories.settings.version")}</TableHeaderCell>
-                <TableHeaderCell>{t("repositories.settings.kind")}</TableHeaderCell>
-                <TableHeaderCell>{t("repositories.settings.digest")}</TableHeaderCell>
-                <TableHeaderCell>{t("repositories.settings.published")}</TableHeaderCell>
-              </TableHead>
-              <TableBody>
-                {data.packages.map((item) => (
-                  <TableRow key={`${item.name}-${item.version}`}>
-                    <TableCell className="font-mono">
-                      {item.name} {item.version}
-                      {item.signed ? (
-                        <Badge tone="success" className="ml-1">
-                          {t("repositories.settings.signed")}
-                        </Badge>
-                      ) : null}
-                    </TableCell>
-                    <TableCell data-label={t("repositories.settings.kind")}>{item.type ?? "—"}</TableCell>
-                    <TableCell data-label={t("repositories.settings.digest")} className="font-mono">
-                      {shortSha(item.digest?.replace(/^sha256:/, ""))} · {bytesText(item.size, language)}
-                    </TableCell>
-                    <TableCell data-label={t("repositories.settings.published")}>{when(item.createdAt, language)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <AdminGrid<Package>
+              query={LOADED}
+              caption={t("repositories.settings.packages")}
+              rows={data.packages}
+              columns={packageColumns}
+              rowKey={(item) => `${item.name}-${item.version}`}
+              storageKey={`${project}:${repository.name}:packages`}
+              stack
+              empty={<EmptyState bare title={t("repositories.settings.noPackages")} description={t("repositories.settings.noPackagesHint")} />}
+            />
           </div>
         )}
       </Card>

@@ -6,14 +6,11 @@ import { useDebounced } from "../../components/pickers/organizationModels";
 import {
   Alert,
   Badge,
+  EmptyState,
   PageFailed,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import { previewContext } from "./knowledge";
 import type { AssistantContext } from "./knowledge";
 
@@ -52,9 +49,31 @@ export function AssistantContextPreview({ project, manifest }: { project: string
   );
 }
 
+/** The preview's rows are already in hand: nothing is loading or failing inside the grid. */
+const LOADED = { isPending: false, isError: false, error: null, refetch: () => undefined };
+
 /** One resolved context: categories, the Endpoints and the sources, and what is missing. */
 export function ContextView({ context }: { context: AssistantContext }): JSX.Element {
   const { t } = useTranslation();
+  const dash = (items: string[]): string => items.join(", ") || "—";
+  const columns: DataColumn<AssistantContext["endpoints"][number]>[] = [
+    { key: "endpoint", label: t("knowledge.context.endpoint"), text: (e) => e.title ?? e.name },
+    { key: "publisher", label: t("knowledge.context.publisher"), text: (e) => e.project },
+    {
+      key: "categories",
+      label: t("knowledge.context.categories"),
+      text: (e) => dash(e.themes.map((theme) => theme.label)),
+    },
+    { key: "types", label: t("knowledge.context.types"), text: (e) => dash(e.types) },
+    {
+      key: "how",
+      label: t("knowledge.context.how"),
+      text: (e) =>
+        e.tools.length > 0
+          ? t("knowledge.context.connector", { tools: e.tools.join(", ") })
+          : t("knowledge.context.selected"),
+    },
+  ];
   return (
     <div className="space-y-3">
       {context.problems.length > 0 ? (
@@ -79,30 +98,16 @@ export function ContextView({ context }: { context: AssistantContext }): JSX.Ele
       {context.endpoints.length === 0 ? (
         <p>{t("knowledge.context.noEndpoints")}</p>
       ) : (
-        <Table data-records="" caption={t("knowledge.context.endpoints", { count: context.endpoints.length })}>
-          <TableHead>
-            <TableHeaderCell>{t("knowledge.context.endpoint")}</TableHeaderCell>
-            <TableHeaderCell>{t("knowledge.context.publisher")}</TableHeaderCell>
-            <TableHeaderCell>{t("knowledge.context.categories")}</TableHeaderCell>
-            <TableHeaderCell>{t("knowledge.context.types")}</TableHeaderCell>
-            <TableHeaderCell>{t("knowledge.context.how")}</TableHeaderCell>
-          </TableHead>
-          <TableBody>
-            {context.endpoints.map((endpoint) => (
-              <TableRow key={endpoint.slug}>
-                <TableCell>{endpoint.title ?? endpoint.name}</TableCell>
-                <TableCell>{endpoint.project}</TableCell>
-                <TableCell>{endpoint.themes.map((theme) => theme.label).join(", ") || "—"}</TableCell>
-                <TableCell>{endpoint.types.join(", ") || "—"}</TableCell>
-                <TableCell>
-                  {endpoint.tools.length > 0
-                    ? t("knowledge.context.connector", { tools: endpoint.tools.join(", ") })
-                    : t("knowledge.context.selected")}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <AdminGrid<AssistantContext["endpoints"][number]>
+          query={LOADED}
+          caption={t("knowledge.context.endpoints", { count: context.endpoints.length })}
+          rows={context.endpoints}
+          columns={columns}
+          rowKey={(endpoint) => endpoint.slug}
+          storageKey="knowledge:context-endpoints"
+          stack
+          empty={<EmptyState bare title={t("knowledge.context.noEndpoints")} description={t("knowledge.context.noEndpointsHint")} />}
+        />
       )}
       {context.omitted.length > 0 ? (
         <Alert tone="warning" title={t("knowledge.context.omittedTitle", { count: context.omitted.length })}>
