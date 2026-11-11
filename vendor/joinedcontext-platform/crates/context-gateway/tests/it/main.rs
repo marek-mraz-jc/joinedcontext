@@ -190,6 +190,7 @@ mod tenancy_middleware_tests;
 mod token_tests;
 mod type_of_answer_tests;
 mod unit_code_tests;
+mod urn_owner_tests;
 mod usage_caller_tests;
 mod view_geojson_accept_tests;
 mod view_mapping_tests;

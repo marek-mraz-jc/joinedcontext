@@ -18,7 +18,7 @@ const SERVICES: &[&str] = &["context-gateway", "agent-proxy", "functions", "jcct
 
 /// Names the platform writes into a workload rather than reads: the pipeline runner's own
 /// environment. They are documented with the runner, and jcctl only validates them.
-const INJECTED: &[&str] = &["JC_ORG_DOMAIN", "JC_SOURCE_SPACE", "JC_SPACE"];
+const INJECTED: &[&str] = &["JC_ORG_DOMAIN", "JC_ORG_ID", "JC_SOURCE_SPACE", "JC_SPACE"];
 
 /// What a name has to look like to hold a credential rather than an address.
 fn is_secret(name: &str) -> bool {

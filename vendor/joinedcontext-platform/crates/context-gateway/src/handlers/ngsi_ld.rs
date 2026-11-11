@@ -1607,17 +1607,17 @@ mod tests {
     fn one_entity_per_create_refuses_a_batch_where_creates_count() {
         let mut endpoint = crate::mcp::catalog::tests::fixture();
         let mut sent = br#"[{"id":"urn:ngsi-ld:T:1","type":"T"}]"#.to_vec();
-        assert!(one_entity_per_create(&endpoint, Operation::CreateBatch, &mut sent).is_ok());
+        assert!(one_entity_per_create(&endpoint, Operation::CreateBatch, &mut sent, None).is_ok());
         endpoint.creates = Some(jc_core::kinds::Creates {
             mint_ids: true,
             ..Default::default()
         });
-        let refused = one_entity_per_create(&endpoint, Operation::UpsertBatch, &mut sent);
+        let refused = one_entity_per_create(&endpoint, Operation::UpsertBatch, &mut sent, None);
         let refused = refused.err().map(|answer| answer.status());
         assert_eq!(refused, Some(StatusCode::BAD_REQUEST));
 
         let mut one = br#"{"id":"urn:ngsi-ld:T:mine","type":"T"}"#.to_vec();
-        assert!(one_entity_per_create(&endpoint, Operation::CreateEntity, &mut one).is_ok());
+        assert!(one_entity_per_create(&endpoint, Operation::CreateEntity, &mut one, None).is_ok());
         assert!(!String::from_utf8_lossy(&one).contains("mine"));
     }
 
