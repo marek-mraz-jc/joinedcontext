@@ -230,6 +230,15 @@
               </section>
               {% endif %}
 
+              {% if !dashboards.is_empty() %}
+              <section class="jc-dataset-dashboards" aria-labelledby="jc-dashboards-title">
+                <h2 id="jc-dashboards-title">{{ dashboards_title }}</h2>
+                <ul>
+                  {% for link in dashboards %}<li><a href="{{ link.url }}">{{ link.title }}</a></li>{% endfor %}
+                </ul>
+              </section>
+              {% endif %}
+
               {% if !about_rows.is_empty() %}
               <section class="jc-about" aria-labelledby="jc-about-title">
                 <h2 id="jc-about-title">{{ labels.about }}</h2>

@@ -3,6 +3,7 @@
 //! `dataroom`, localized in Slovak (`sk`), Czech (`cs`), English (`en`), Hungarian (`hu`) and
 //! German (`de`).
 
+pub mod dashboards;
 pub mod groups;
 pub mod helpers;
 pub mod i18n;
@@ -750,6 +751,8 @@ pub struct DatasetListPageTemplate {
 #[template(path = "dataset.html")]
 pub struct DatasetPageTemplate {
     pub chrome: PageChrome,
+    pub dashboards: Vec<dashboards::DatasetLink>,
+    pub dashboards_title: String,
     pub lang: String,
     pub catalogue_title: String,
     pub dataset_id: String,
@@ -1452,6 +1455,39 @@ pub fn render_dataset_page_full(
     mount_prefix: &str,
     csp_nonce: &str,
 ) -> String {
+    render_dataset_page_linked(
+        catalogue,
+        installation_branding,
+        dataset,
+        publisher,
+        views,
+        &[],
+        shacl_reports,
+        show_editor_panel,
+        lang,
+        had_url_prefix,
+        mount_prefix,
+        csp_nonce,
+    )
+}
+
+/// [`render_dataset_page_full`] with the dashboards that read the dataset's Endpoint, which the
+/// page links (T-6790).
+#[allow(clippy::too_many_arguments)]
+pub fn render_dataset_page_linked(
+    catalogue: &Catalogue,
+    installation_branding: Option<&BrandingBlock>,
+    dataset: &Dataset,
+    publisher: Option<&Publisher>,
+    views: &[ResourceView],
+    dashboards: &[Dataset],
+    shacl_reports: &[ShaclValidationReport],
+    show_editor_panel: bool,
+    lang: &str,
+    had_url_prefix: bool,
+    mount_prefix: &str,
+    csp_nonce: &str,
+) -> String {
     let stripped = format!("/dataset/{}", dataset.name);
     let chrome = PageChrome::build(
         catalogue,
@@ -1609,7 +1645,17 @@ pub fn render_dataset_page_full(
         &chrome.lang,
     );
 
+    let dashboards = dashboards::dashboard_links(
+        dataset,
+        dashboards,
+        &chrome.lang,
+        &catalogue.default_language,
+        &chrome.lang_prefix,
+    );
+    let dashboards_title = jc_t("dataset_dashboards", &chrome.lang);
     let tpl = DatasetPageTemplate {
+        dashboards,
+        dashboards_title,
         lang: chrome.lang.clone(),
         catalogue_title: chrome.site_title.clone(),
         dataset_id: dataset.id.clone(),

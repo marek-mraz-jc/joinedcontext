@@ -37,14 +37,14 @@ use dataroom_mcp::handle_mcp_jsonrpc;
 use dataroom_rdf::{negotiate_profile, negotiate_rdf_format};
 use dataroom_search::search_datasets;
 use dataroom_shacl::ProfileRegistry;
+use dataroom_web::dashboards::{is_dashboard, render_dashboard_list_page, render_dashboard_page};
 use dataroom_web::helpers::{jc_robots_txt, jc_sitemap_xml};
 use dataroom_web::i18n::{resolve_request_language, LanguageResolution};
 use dataroom_web::{
     csp_header_for_branding, render_about_page, render_assistant_guide_page,
-    render_assistants_page, render_dataset_list_page, render_dataset_page_full,
-    render_home_page_mounted, render_map_page, render_organization_list_page,
-    render_organization_read_page, render_resource_page, render_static_page, JC_ENUMS_JSON,
-    JC_LOGO_SVG, JC_THEME_CSS,
+    render_assistants_page, render_dataset_list_page, render_home_page_mounted, render_map_page,
+    render_organization_list_page, render_organization_read_page, render_resource_page,
+    render_static_page, JC_ENUMS_JSON, JC_LOGO_SVG, JC_THEME_CSS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1190,7 +1190,8 @@ async fn handle_sitemap_xml(State(state): State<DataroomState>, headers: HeaderM
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+    let mut datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+    datasets.retain(|d| !is_dashboard(d));
     let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
     let xml = jc_sitemap_xml(&cat, &datasets, &publishers);
     (
@@ -1396,6 +1397,33 @@ async fn map_shown(state: &DataroomState, ctx: &RequestCtx, cat: &Catalogue, ds:
     ds.state != RecordState::Withdrawn && dataset_shown(state, ctx, cat, ds, pub_rec.as_ref())
 }
 
+fn publisher_of<'a>(publishers: &'a [Publisher], ds: &Dataset) -> Option<&'a Publisher> {
+    publishers
+        .iter()
+        .find(|p| p.id == ds.publisher_id || p.name == ds.publisher_id)
+}
+
+/// The dashboards of the catalogue the reader may see (T-6790).
+async fn shown_dashboards(
+    state: &DataroomState,
+    ctx: &RequestCtx,
+    cat: &Catalogue,
+    publishers: &[Publisher],
+) -> Vec<Dataset> {
+    state
+        .store
+        .list_datasets(ctx)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|d| {
+            is_dashboard(d)
+                && d.state != RecordState::Withdrawn
+                && dataset_shown(state, ctx, cat, d, publisher_of(publishers, d))
+        })
+        .collect()
+}
+
 async fn dispatch_ui_route(
     state: DataroomState,
     headers: HeaderMap,
@@ -1456,7 +1484,8 @@ async fn dispatch_ui_route(
     match segments.as_slice() {
         // D1: Home page (`/`, `/sk/`)
         [] => {
-            let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            let mut datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            datasets.retain(|d| !is_dashboard(d));
             let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
             let q = q_params.get("q").map(String::as_str).unwrap_or("");
             let html = render_home_page_mounted(
@@ -1474,7 +1503,8 @@ async fn dispatch_ui_route(
         }
         // D2: Dataset list & search (`/dataset`, `/dataset/`)
         ["dataset"] => {
-            let all_ds = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            let mut all_ds = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            all_ds.retain(|d| !is_dashboard(d));
             let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
             let pub_map: BTreeMap<String, Publisher> = publishers
                 .iter()
@@ -1676,14 +1706,79 @@ async fn dispatch_ui_route(
             } else {
                 Vec::new()
             };
-            let html = render_dataset_page_full(
+            // ponytail: one catalogue listing per dataset page; a store query by type when
+            // catalogues hold thousands of packages.
+            let dashboards: Vec<Dataset> = state
+                .store
+                .list_datasets(&ctx)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|d| {
+                    is_dashboard(d)
+                        && d.state != RecordState::Withdrawn
+                        && dataset_shown(&state, &ctx, &cat, d, None)
+                })
+                .collect();
+            let html = dataroom_web::render_dataset_page_linked(
                 &cat,
                 Some(state.branding_of(&cat)),
                 &ds,
                 pub_rec.as_ref(),
                 &all_views,
+                &dashboards,
                 &reports,
                 can_edit,
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix(),
+                &nonce,
+            );
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // Dashboards (T-6790): `/dashboards`, `/dashboards/{name}`.
+        ["dashboards"] => {
+            let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
+            let dashboards = shown_dashboards(&state, &ctx, &cat, &publishers).await;
+            let html = render_dashboard_list_page(
+                &cat,
+                Some(state.branding_of(&cat)),
+                &dashboards,
+                &publishers,
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix(),
+                &nonce,
+            );
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        ["dashboards", name] => {
+            let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
+            let found = state.store.get_dataset(&ctx, name).await.ok().flatten();
+            let Some(ds) = found.filter(|d| {
+                is_dashboard(d)
+                    && d.state != RecordState::Withdrawn
+                    && dataset_shown(&state, &ctx, &cat, d, publisher_of(&publishers, d))
+            }) else {
+                return problem_response(DataroomError::NotFound(format!(
+                    "dashboard '{name}' not found"
+                )));
+            };
+            let mut views = Vec::new();
+            for d in &ds.distributions {
+                if let Ok(v) = state.store.list_resource_views(&ctx, &d.id).await {
+                    views.extend(v);
+                }
+            }
+            let mut datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            datasets.retain(|d| !is_dashboard(d));
+            let html = render_dashboard_page(
+                &cat,
+                Some(state.branding_of(&cat)),
+                &ds,
+                &views,
+                &datasets,
+                &publishers,
                 &lang,
                 had_url_prefix,
                 &state.mount_prefix(),
@@ -1731,7 +1826,8 @@ async fn dispatch_ui_route(
         // D5: Publisher list (`/organization`, `/publisher`)
         ["organization"] | ["publisher"] => {
             let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
-            let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            let mut datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            datasets.retain(|d| !is_dashboard(d));
             let q = q_params.get("q").map(String::as_str).unwrap_or("");
             let sort = q_params
                 .get("sort")
@@ -1777,7 +1873,8 @@ async fn dispatch_ui_route(
                     "publisher '{name}' not found"
                 )));
             }
-            let all_ds = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            let mut all_ds = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            all_ds.retain(|d| !is_dashboard(d));
             let visible_ds: Vec<Dataset> = all_ds
                 .into_iter()
                 .filter(|d| !cat.hidden_datasets.contains_key(&d.name))
@@ -1845,7 +1942,8 @@ async fn dispatch_ui_route(
         }
         // G3: Topics (`/group/`), CKAN's group list built from the EU data themes.
         ["group"] => {
-            let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            let mut datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            datasets.retain(|d| !is_dashboard(d));
             let q = q_params.get("q").map(String::as_str).unwrap_or("");
             let sort = q_params
                 .get("sort")
