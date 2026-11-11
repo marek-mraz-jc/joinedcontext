@@ -2167,8 +2167,8 @@ a.jc-cell--link:focus-visible {
    pushed a finger's width from the name and from each other. */
 @media (pointer: coarse) {
   .jc-grid-th :is(.jc-grid-filter-btn, .jc-grid-meta-btn) {
-    min-width: 1.75rem;
-    width: 1.75rem;
+    min-width: 28px;
+    width: 28px;
     margin-left: 0;
     padding-inline: 0;
   }
