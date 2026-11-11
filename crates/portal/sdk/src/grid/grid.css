@@ -2854,7 +2854,7 @@ a.jc-cell--link:focus-visible {
 .jc-data-grid-toolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: var(--jc-space-2, 8px);
 }
@@ -2880,9 +2880,17 @@ a.jc-cell--link:focus-visible {
   border-radius: var(--jc-radius-md, 4px);
 }
 
-.jc-data-grid tbody th {
+/* An admin cell holds a link and a line under it (a policy's sentence, a change's id): it wraps,
+   where an entity cell keeps one line. The row's name is a row header drawn as a cell. */
+.jc-data-grid tbody :is(td, th) {
+  padding: var(--jc-grid-cell-padding);
+  border-bottom: 1px solid var(--jc-color-line, #e0e0e0);
   font-weight: inherit;
   text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  position: static;
 }
 
 .jc-data-grid-skeleton {
@@ -2913,7 +2921,11 @@ a.jc-cell--link:focus-visible {
 @media (width <= 640px) {
   .jc-data-grid--stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
   .jc-data-grid--stack tbody tr { display: block; padding: var(--jc-space-2, 8px) 0; border-bottom: 1px solid var(--jc-color-line, #e0e0e0); }
-  .jc-data-grid--stack tbody :is(td, th) { display: block; border: 0; }
+  .jc-data-grid--stack :is(table, tbody) { display: block; }
+  .jc-data-grid--stack .jc-grid-scroll { overflow: visible; background: none; }
+  .jc-data-grid--stack tbody tr { padding-inline: var(--jc-space-3, 12px); }
+  .jc-data-grid--stack tbody :is(td, th) { display: block; border: 0; padding-inline: 0; }
+  .jc-data-grid--stack tbody td:empty { display: none; }
   .jc-data-grid--stack tbody td:not(.jc-grid-empty)[data-label]::before {
     content: attr(data-label);
     display: block;
