@@ -190,6 +190,7 @@
     "dependency": "Toto pole potrebuje pole, od ktorého závisí",
     "check": "Skontrolovať",
     "restartsStream": "Použitie tejto zmeny reštartuje stream na runneri. Periodický pipeline začne svoj rozvrh odznova, takže ďalší beh je o celú periódu ďalej.",
+    "bindsEndpoints": "Táto politika po schválení rozhoduje o volaniach týchto endpointov:",
     "dns1123": "Iba malé písmená, číslice a spojovníky, začína písmenom alebo číslicou, najviac 63 znakov.",
     "entityType": "Typ NGSI-LD: veľké písmeno, potom písmená a číslice, najviac 64 znakov.",
     "requiredCount": "{filled} z {total} povinných polí vyplnených",
@@ -1567,7 +1568,8 @@
         "datasetQuery": "Zužujúci dotaz",
         "datasetKeywords": "Kľúčové slová",
         "datasetLicense": "Licencia"
-      }
+      },
+      "policyRefs": "Politiky, ktoré obsluhuje"
     },
     "rateClass": {
       "none": "Bez limitu",
@@ -2128,8 +2130,8 @@
         "bad": "Použite 1 až 40 malých písmen, číslic alebo -, na začiatku písmeno alebo číslicu."
       },
       "filterField": {
-        "label": "Len entity, ktoré vyhovujú (nepovinné)",
-        "hint": "Dotaz NGSI-LD, ktorý tento výstup zúži a nikdy nerozšíri, napríklad eventCategory==\"šport\"."
+        "label": "Dotaz predvoľby (nepovinné)",
+        "hint": "q, scopeQ a geodotaz ako jeden reťazec dotazu; predvoľbu zúži, nikdy nerozšíri. Napríklad q=category==\"šport\"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]. V hodnote píšte & ako %26 a % ako %25."
       },
       "sourceAdd": {
         "label": "Pridať ďalší typ",
@@ -2321,7 +2323,13 @@
         "anonymous": "Neprihlásení",
         "unknown": "Zatiaľ nerozlíšené"
       }
-    }
+    },
+    "help": {
+      "policyRefs": "Zaškrtnite politiky, ktorých oprávnenia rozhodujú o volaniach tohto endpointu, napríklad {example}. Zobrazujú sa len politiky jeho priestoru, ktoré smiete čítať; neskôr pridaná politika ho zasiahne až po zaškrtnutí tu.",
+      "policyRefsDrafted": "Politiky na čítanie a zápis navrhnuté s týmto endpointom sú už uvedené; zaškrtnite aj ďalšie politiky jeho priestoru, ktoré má obsluhovať."
+    },
+    "policyRefsNone": "Priestor {space} nemá žiadnu politiku, ktorú smiete čítať, takže tento endpoint by neobsluhoval nikoho. Najprv pridajte politiku pre priestor, potom ju vyberte tu.",
+    "policyRefsAdd": "Otvoriť politiky"
   },
   "datasources": {
     "title": "Zdroje údajov",
@@ -5164,7 +5172,8 @@
       "noOthers": "Túto rolu nemá žiadna iná skupina.",
       "give": "Prideliť rolu skupine",
       "groupsUnreadable": "Vaša rola nezobrazuje skupiny organizácie.",
-      "personHint": "Hľadajte podľa mena alebo e-mailu, napr. Jana Nováková. Skupina si zapíše identifikátor osoby, nie adresu."
+      "personHint": "Hľadajte podľa mena alebo e-mailu, napr. Jana Nováková. Skupina si zapíše identifikátor osoby, nie adresu.",
+      "groupHint": "Jedna zo skupín organizácie. Udelenie roly navrhne schvaľovateľovi zmenu aplikácie."
     },
     "check": {
       "green": "Funguje",

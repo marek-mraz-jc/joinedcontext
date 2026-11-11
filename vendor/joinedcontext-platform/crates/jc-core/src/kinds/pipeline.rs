@@ -1417,6 +1417,7 @@ pub const STEP_VARIABLES: &[&str] = &[
     "JC_GATEWAY_HOST",
     "JC_TOKEN_URL",
     "JC_ORG_DOMAIN",
+    "JC_ORG_ID",
     "JC_CLIENT_ID",
     "JC_CLIENT_SECRET",
 ];
@@ -1443,7 +1444,7 @@ fn validate_runner_reads(field: &'static str, text: &str, own: &[&str]) -> Resul
                 field,
                 value: format!("${{{name}}}"),
                 reason: "a step names no runner variable but JC_GATEWAY_URL, JC_GATEWAY_HOST, \
-                         JC_TOKEN_URL, JC_ORG_DOMAIN, JC_CLIENT_ID, JC_CLIENT_SECRET, the JC_SPACE \
+                         JC_TOKEN_URL, JC_ORG_DOMAIN, JC_ORG_ID, JC_CLIENT_ID, JC_CLIENT_SECRET, the JC_SPACE \
                          names and the envVar of its own pipeline's secretRefs: the rest of the \
                          runner's environment is other projects' credentials (PL-16)",
             });
@@ -1456,6 +1457,8 @@ fn validate_runner_reads(field: &'static str, text: &str, own: &[&str]) -> Resul
 /// The names an author's mapping may read out of the runner (PL-57, PF-84).
 ///
 /// - `JC_ORG_DOMAIN` — the organisation's domain, a variable of the runner's process.
+/// - `JC_ORG_ID` — the organisation's id, its domain reversed (`sk_bbsk`), the owner segment of
+///   every id a mapping mints (ADR-N-068).
 /// - `JC_SPACE`, `JC_SPACE_2`, … — the space segment of each output, which the renderer writes
 ///   into the stream before it reaches the runner.
 /// - `JC_SOURCE_SPACE` — the space an indicator pipeline records its provenance from.
@@ -1463,6 +1466,7 @@ fn validate_runner_reads(field: &'static str, text: &str, own: &[&str]) -> Resul
 /// None of the four names a credential, and everything else in that environment does.
 fn is_injected_env(name: &str) -> bool {
     name == "JC_ORG_DOMAIN"
+        || name == "JC_ORG_ID"
         || name == "JC_SOURCE_SPACE"
         || name == "JC_SPACE"
         || name
@@ -1514,7 +1518,7 @@ pub(crate) fn validate_author_bloblang(field: &'static str, mapping: &str) -> Re
                         field,
                         value: format!("env(\"{name}\")"),
                         reason: "a mapping reads only the variables the platform injects for \
-                                 it: JC_ORG_DOMAIN, JC_SOURCE_SPACE and the JC_SPACE of each \
+                                 it: JC_ORG_DOMAIN, JC_ORG_ID, JC_SOURCE_SPACE and the JC_SPACE of each \
                                  output. The rest of the runner's environment is the project's \
                                  credentials (PL-16, PL-50)",
                     });

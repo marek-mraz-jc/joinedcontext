@@ -47,7 +47,8 @@ fn endpoint() -> Value {
             "contextSpaceRef": "air",
             "slug": "k7m2qz4tv6xh3n5jb2ryd3wcfa",
             "audience": "public",
-            "enabledRepresentations": ["ngsi-ld"]
+            "enabledRepresentations": ["ngsi-ld"],
+            "policyRefs": [format!("urn:ngsi-ld:Policy:hel.fi:{PROJECT}-air:public-read-air")]
         }
     })
 }
@@ -84,6 +85,15 @@ async fn forge_creating_air() -> (MockServer, AppState) {
         .mount(&shako)
         .await;
     let state = common::state_on(&shako);
+    // The Policy each proposed Endpoint names (P-18, T-6740).
+    for space in ["air", "water"] {
+        state.mirror.upsert(common::envelope(
+            "Policy",
+            &format!("public-read-{space}"),
+            PROJECT,
+            json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": space } }),
+        ));
+    }
     (shako, state)
 }
 
@@ -153,6 +163,9 @@ async fn a_reference_nothing_creates_is_refused_naming_the_field() {
     let (_forge, state) = forge_creating_air().await;
     let mut other = endpoint();
     other["spec"]["contextSpaceRef"] = json!("water");
+    other["spec"]["policyRefs"] = json!([format!(
+        "urn:ngsi-ld:Policy:hel.fi:{PROJECT}-water:public-read-water"
+    )]);
     let checked = check(&state, other).await;
     assert_eq!(checked["valid"], false, "{checked}");
     assert_eq!(checked["verdict"]["ok"], false);

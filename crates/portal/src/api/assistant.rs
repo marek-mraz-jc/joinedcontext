@@ -575,6 +575,21 @@ pub fn publisher_domain(state: &AppState, project: &str) -> String {
         .unwrap_or_else(|| org_domain(state, project))
 }
 
+/// `urn:ngsi-ld:Policy:{orgDomain}:{segment}:`, what a policyRef to a Policy of `space` starts
+/// with (EP-117): the share and the assistant name the grants they draft with it (P-18).
+/// The domain is the project's own (its Project's or its Organization's, T-6759), else the
+/// organization's, as the reference check binds it.
+pub(crate) fn policy_urn_prefix(state: &AppState, project: &str, space: &str) -> String {
+    let own = crate::permissions::project_domains(&state.mirror, project);
+    format!(
+        "urn:ngsi-ld:Policy:{}:{}:",
+        own.first()
+            .cloned()
+            .unwrap_or_else(|| org_domain(state, project)),
+        crate::spaces::segment(&state.mirror, project, space)
+    )
+}
+
 /// Executes an endpoint proposal rendering and permission check (EP-72, API/01 §19).
 pub async fn execute_propose_endpoint(
     identity: &crate::auth::session::Identity,
@@ -585,7 +600,8 @@ pub async fn execute_propose_endpoint(
     if !is_dns1123(project) {
         return Err(ApiError::NotFound(format!("project '{project}' not found")));
     }
-    let proposal = share::render(project, &params, &declared_groups(state, project))
+    let prefix = policy_urn_prefix(state, project, params.context_space.trim());
+    let proposal = share::render(project, &params, &declared_groups(state, project), &prefix)
         .map_err(ApiError::BadRequest)?;
     crate::permissions::for_request(state, identity, project).check(
         "Endpoint",

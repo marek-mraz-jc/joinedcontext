@@ -59,6 +59,8 @@ export interface DryRunCheck {
   stoppedMessage: string | null;
   /** Whether the last check said applying this restarts the pipeline's stream (T-1056). */
   restartsStream: boolean;
+  /** The Endpoints whose calls the Policy the last check judged decides (CHG-11, T-6740). */
+  bindsEndpoints: string[];
   /** What the fields say: the browser's own refusals and the server's findings together. */
   shownErrors: ErrorSchema | undefined;
   /** A keystroke makes what the browser refused stale; rjsf's live validation takes over. */
@@ -135,7 +137,11 @@ function checkErrorOf(error: Error | null): string | null {
  * The check a dialog runs for itself: the same dry run the pages with their own `onCheck`
  * send, on the manifest the form holds and the draft the proposal will name (T-0779).
  */
-function useOwnCheck<T>(options: DryRunCheckOptions<T>, setRestartsStream: (restarts: boolean) => void) {
+function useOwnCheck<T>(
+  options: DryRunCheckOptions<T>,
+  setRestartsStream: (restarts: boolean) => void,
+  setBindsEndpoints: (endpoints: string[]) => void,
+) {
   const { updateVerdict } = options;
   return useMutation({
     mutationFn: async (form: T) => {
@@ -155,11 +161,14 @@ function useOwnCheck<T>(options: DryRunCheckOptions<T>, setRestartsStream: (rest
       );
     },
     onSuccess: (result) => {
-      const answer = result as { verdict?: Verdict; restartsStream?: boolean };
+      const answer = result as { verdict?: Verdict; restartsStream?: boolean; bindsEndpoints?: unknown };
       updateVerdict(answer?.verdict ?? null);
       // T-1056, PL-45: the runner restarts a stream whenever its render moves, and a periodic
       // pipeline then starts its schedule over. A person reads that before proposing, not after.
       setRestartsStream(answer?.restartsStream === true);
+      // A Policy decides the calls of every Endpoint that binds it: the reviewer reads which.
+      const binds = answer?.bindsEndpoints;
+      setBindsEndpoints(Array.isArray(binds) ? binds.filter((name): name is string => typeof name === "string") : []);
     },
     // A refused check judged nothing: the chip says "not checked", never "changed since".
     onError: () => {
@@ -245,6 +254,7 @@ export function useDryRunCheck<T>(options: DryRunCheckOptions<T>): DryRunCheck {
   // beside the form, retires it.
   const [stopped, setStopped] = useState<{ message: string; field?: string; form?: T } | null>(null);
   const [restartsStream, setRestartsStream] = useState(false);
+  const [bindsEndpoints, setBindsEndpoints] = useState<string[]>([]);
   /**
    * What the form held when Check was last pressed: a check the server refused outright (an
    * invalid manifest answers with a problem, not a verdict) leaves no verdict, and the chip says
@@ -252,7 +262,7 @@ export function useDryRunCheck<T>(options: DryRunCheckOptions<T>): DryRunCheck {
    */
   const [checkedDigest, setCheckedDigest] = useState<string | null>(null);
 
-  const ownCheck = useOwnCheck(options, setRestartsStream);
+  const ownCheck = useOwnCheck(options, setRestartsStream, setBindsEndpoints);
   const check = options.onCheck ?? ((form: T) => ownCheck.mutate(form));
   const shownErrors = useShownErrors(options.verdict, schema, schemaErrors);
 
@@ -315,8 +325,12 @@ export function useDryRunCheck<T>(options: DryRunCheckOptions<T>): DryRunCheck {
     refusedWith: (pageError) => checkedDigest === currentDigest && Boolean(pageError ?? ownCheck.error),
     stoppedMessage: stopped && stopped.form === formData ? stopped.message : null,
     restartsStream,
+    bindsEndpoints,
     shownErrors,
     clearSchemaErrors: () => setSchemaErrors(undefined),
-    reset: () => setRestartsStream(false),
+    reset: () => {
+      setRestartsStream(false);
+      setBindsEndpoints([]);
+    },
   };
 }

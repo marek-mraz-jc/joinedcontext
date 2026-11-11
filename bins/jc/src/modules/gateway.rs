@@ -855,7 +855,72 @@ pub async fn build(
     if let (Some(bind), Some(internal)) = (config.internal_bind, built.internal) {
         serve_internal(bind, internal).await?;
     }
-    Ok(built.app.layer(axum::middleware::from_fn(opaque_reads)))
+    #[cfg(feature = "portal")]
+    let app = built.app.layer(axum::middleware::from_fn(session_reads));
+    #[cfg(not(feature = "portal"))]
+    let app = built.app;
+    Ok(app.layer(axum::middleware::from_fn(opaque_reads)))
+}
+
+/// A signed-in person's read of an Endpoint from the Portal's own pages (T-6783). jc has no edge
+/// that turns the Portal's session into a bearer, as APISIX's `openid-connect` does on dev, so
+/// such a request reached the gateway anonymous and a closed Endpoint answered 401. Now the
+/// Portal in this process hands over the person's token for that one Endpoint
+/// (`auth::endpoint_token`), and the gateway decides on the person's grants: 200 or 403. Any
+/// other request goes on untouched ([`session_slug`]); without a Portal here, or when the
+/// session names nobody, the read stays anonymous.
+#[cfg(feature = "portal")]
+async fn session_reads(mut req: Request, next: Next) -> Response {
+    let state = super::PORTAL_STATE.get();
+    if let (Some(state), Some(slug)) = (state, session_slug(&req)) {
+        match joinedcontext_portal::auth::endpoint_token(state, req.headers(), &slug).await {
+            Ok(Some(token)) => {
+                if let Ok(mut value) = HeaderValue::from_str(&format!("Bearer {token}")) {
+                    value.set_sensitive(true);
+                    req.headers_mut()
+                        .insert(axum::http::header::AUTHORIZATION, value);
+                }
+            }
+            Ok(None) => {}
+            // The reason carries no token (`exchange_for_endpoint`).
+            Err(reason) => {
+                tracing::info!(slug, %reason, "gateway: no Endpoint token for the Portal session")
+            }
+        }
+    }
+    next.run(req).await
+}
+
+/// The Endpoint a Portal session may read as the person: a `GET` or `HEAD` under
+/// `/api/endpoint/{slug}`, a cookie, no `Authorization` of its own, and `Sec-Fetch-Site:
+/// same-origin`, which the browser alone sets. A write never borrows the session: the cookie is
+/// no credential for changing data. A cross-site form or an App on a sibling host (`same-site`)
+/// gets no token, so the cookie never acts for the person outside the Portal's pages.
+#[cfg(feature = "portal")]
+fn session_slug(req: &Request) -> Option<String> {
+    use axum::http::{Method, header};
+    let headers = req.headers();
+    if !matches!(*req.method(), Method::GET | Method::HEAD)
+        || headers.contains_key(header::AUTHORIZATION)
+        || !headers.contains_key(header::COOKIE)
+        || headers
+            .get("sec-fetch-site")
+            .is_none_or(|site| site != "same-origin")
+    {
+        return None;
+    }
+    let slug = req
+        .uri()
+        .path()
+        .strip_prefix("/api/endpoint/")?
+        .split('/')
+        .next()?;
+    let named = !slug.is_empty()
+        && slug.len() <= 64
+        && slug
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    named.then(|| slug.to_owned())
 }
 
 /// The MQTT brokers' CONNECT and publish checks (`/internal/mqtt/auth`, `/internal/mqtt/acl`) on
@@ -979,6 +1044,72 @@ mod tests {
             let res = send("GET", path).await.unwrap();
             assert_eq!(res.status(), StatusCode::NOT_FOUND, "{path}");
             assert_eq!(text(res).await, "unmounted path", "{path}");
+        }
+    }
+
+    /// T-6783: only a same-origin browser `GET`/`HEAD` under `/api/endpoint/{slug}` with a cookie
+    /// and no credential of its own is read as the Portal session's person; no write is.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn only_a_same_origin_cookie_request_names_an_endpoint_for_the_session() {
+        use axum::http::header;
+        let ask_with = |method: &str, path: &str, site: Option<&str>, cookie: bool, auth: bool| {
+            let mut req = axum::http::Request::builder().method(method).uri(path);
+            if let Some(site) = site {
+                req = req.header("sec-fetch-site", site);
+            }
+            if cookie {
+                req = req.header(header::COOKIE, "__Host-jc_session=s");
+            }
+            if auth {
+                req = req.header(header::AUTHORIZATION, "Bearer t");
+            }
+            session_slug(&req.body(axum::body::Body::empty()).unwrap())
+        };
+        let ask = |path: &str, site: Option<&str>, cookie: bool, auth: bool| {
+            ask_with("GET", path, site, cookie, auth)
+        };
+        let read = "/api/endpoint/3jlwl5dg2oidblwqhc6qdi3zxl/schema/index.json";
+        assert_eq!(
+            ask_with("HEAD", read, Some("same-origin"), true, false).as_deref(),
+            Some("3jlwl5dg2oidblwqhc6qdi3zxl")
+        );
+        // A write never borrows the session, whatever else the request carries.
+        for method in ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"] {
+            for path in [read, "/api/endpoint/3jlwl5dg2oidblwqhc6qdi3zxl/mcp"] {
+                assert_eq!(
+                    ask_with(method, path, Some("same-origin"), true, false),
+                    None,
+                    "{method} {path}"
+                );
+            }
+        }
+        assert_eq!(
+            ask(read, Some("same-origin"), true, false).as_deref(),
+            Some("3jlwl5dg2oidblwqhc6qdi3zxl")
+        );
+        assert_eq!(
+            ask(
+                "/api/endpoint/helsinki-bikes",
+                Some("same-origin"),
+                true,
+                false
+            )
+            .as_deref(),
+            Some("helsinki-bikes")
+        );
+        for site in [None, Some("same-site"), Some("cross-site"), Some("none")] {
+            assert_eq!(ask(read, site, true, false), None, "{site:?}");
+        }
+        assert_eq!(ask(read, Some("same-origin"), false, false), None);
+        assert_eq!(ask(read, Some("same-origin"), true, true), None);
+        for path in [
+            "/api/endpoint/",
+            "/api/endpoint/A%2Fb/x",
+            "/api/endpointx/a",
+            "/api/mcp",
+        ] {
+            assert_eq!(ask(path, Some("same-origin"), true, false), None, "{path}");
         }
     }
 

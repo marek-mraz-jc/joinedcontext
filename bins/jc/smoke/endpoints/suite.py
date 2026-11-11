@@ -147,8 +147,10 @@ class Suite:
             time.sleep(min(float(h["retry-after"]), BUSY_WAIT))
         return self.http.call("GET", path, token=token, headers={"Accept": accept})
 
-    def ok_json(self, id, target, path, token=None, accept=LD, expect=200):
+    def ok_json(self, id, target, path, token=None, accept=LD, expect=200, headers: dict | None = None):
         st, h, raw = self.get(path, token, accept)
+        if headers is not None:
+            headers.update(h)
         body = as_json(raw)
         good = st == expect and body is not None
         busy = f" after {self.busy[path]} busy 503" if path in self.busy else ""
@@ -214,16 +216,67 @@ class Suite:
         else:
             self.write_refused(e, p.token, (403,), "person", sorted(want))
 
+    def live_count(self, e, token, t, id_pattern: str | None = None) -> int | None:
+        path = f"/api/endpoint/{e.slug}/ngsi-ld/v1/entities?type={q(t)}&count=true&limit=0"
+        if id_pattern:
+            path += f"&idPattern={q(id_pattern)}"
+        st, h, _ = self.get(path, token)
+        n = h.get("ngsild-results-count")
+        return int(n) if st == 200 and n is not None and n.isdigit() else None
+
+    def grown(self, e, token, who, want: dict, tenant: dict):
+        """A synthetic bundle's rehearsal runs the imported Pipelines against their live sources
+        (helsinki citybikes-gbfs wrote 455 BikeHireDockingStation rows in smoke 43074228505), so a
+        type may hold more than the bundle. Then the seeded rows (ex.seeded_ids) must count exactly
+        what the bundle holds, and every surface must agree with the live count instead."""
+        for t, count in want.items():
+            if count is None or tenant[t].get("expires"):
+                continue
+            live = self.live_count(e, token, t)
+            if live is None or live <= count:
+                continue
+            seeded = self.live_count(e, token, t, ex.seeded_ids(t))
+            path = f"GET /api/endpoint/{e.slug}/ngsi-ld/v1/entities?type={q(t)}&idPattern={q(ex.seeded_ids(t))}&count=true"
+            self.r.check(f"{who}.count.seeded", f"{e.slug} {t}", path,
+                         f"{count} (the bundle's rows; {live - count} more written by the rehearsal's Pipelines)",
+                         f"count={seeded}", seeded == count)
+            if seeded == count:
+                want[t] = live
+
+    def written(self, e, token, who, grants, extra: list) -> set:
+        """Of the listed types the bundle holds no row of, those a granting Policy names and the
+        Endpoint shows rows of: the rehearsal's Pipelines wrote them (synthetic bundle only)."""
+        sels = e.selectors(grants)
+        ok = set()
+        for t in extra:
+            if sels is not None and not any(s.type in (t, "*") for s in sels):
+                continue
+            n = self.live_count(e, token, t)
+            if n:
+                ok.add(t)
+                self.r.check(f"{who}.types.written", f"{e.slug} {t}",
+                             f"GET /api/endpoint/{e.slug}/ngsi-ld/v1/entities?type={q(t)}&count=true",
+                             "a granted type the bundle holds no row of shows the rows a Pipeline wrote",
+                             f"count={n}", True)
+        return ok
+
     def reads(self, e, token, grants, want: dict, narrowed: str, tenant: dict, who: str):
         base = f"/api/endpoint/{e.slug}"
-        body = self.ok_json(f"{who}.types", e.slug, f"{base}/ngsi-ld/v1/types", token)
+        if self.index.get("synthetic"):
+            self.grown(e, token, who, want, tenant)
+        h: dict = {}
+        body = self.ok_json(f"{who}.types", e.slug, f"{base}/ngsi-ld/v1/types", token, headers=h)
         if body is not None:
             got = set(listed_types(body) or [])
             # A type whose entities all expire (expiresAt) may be gone by now: not missing.
             missing = sorted(t for t in set(want) - got if not tenant[t].get("expires"))
             extra = sorted(got - set(want))
+            if extra and self.index.get("synthetic"):
+                extra = sorted(set(extra) - self.written(e, token, who, grants, extra))
+            # A 199 warning marks a listing the broker cut at its fold ceiling or deadline.
+            partial = f"; warning {h['warning']}" if h.get("warning") else ""
             self.r.check(f"{who}.types.match", e.slug, f"GET {base}/ngsi-ld/v1/types",
-                         f"exactly {sorted(want)}", f"missing {missing}, extra {extra}",
+                         f"exactly {sorted(want)}", f"missing {missing}, extra {extra}{partial}",
                          not missing and not extra,
                          "extra = a type no granting Policy names or the export holds no row of" if extra else "")
         self.ok_json(f"{who}.attributes", e.slug, f"{base}/ngsi-ld/v1/attributes", token)

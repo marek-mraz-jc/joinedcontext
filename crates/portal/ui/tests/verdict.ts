@@ -20,6 +20,8 @@ export async function greenVerdict(
   const body = (await request.clone().json()) as Record<string, unknown>;
   const manifest = { ...body };
   delete manifest.draft;
+  // The server takes a check's bundle out before it judges the manifest (T-6740).
+  delete manifest.bundle;
   return {
     ...extra,
     verdict: {

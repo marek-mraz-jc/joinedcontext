@@ -64,7 +64,7 @@ describe("the KPI mapping (Architecture/08)", () => {
   it("writes an indicator with everything the chapter asks of one", () => {
     expect(mapping).toContain('root.type = "KeyPerformanceIndicator"');
     expect(mapping).toContain(
-      'root.id = "urn:ngsi-ld:KeyPerformanceIndicator:%v:helsinki-kpi:bike-availability".format($domain)',
+      'root.id = "urn:ngsi-ld:KeyPerformanceIndicator:%v:helsinki-kpi:bike-availability".format($owner)',
     );
     expect(mapping).toContain('"unitCode": "C62"');
     expect(mapping).toContain('root.derivedFrom = { "type": "Property", "value"');

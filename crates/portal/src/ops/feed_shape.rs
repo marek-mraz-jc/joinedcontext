@@ -260,7 +260,7 @@ impl Records {
     }
 
     /// The mapping of the drafted Pipeline: one entity per record, its id
-    /// `urn:ngsi-ld:{class}:{org}:{space}:{localId}` built from `env("JC_ORG_DOMAIN")` and
+    /// `urn:ngsi-ld:{class}:{org}:{space}:{localId}` built from `env("JC_ORG_ID")` (the owning Organization, ADR-N-068) and
     /// `env("JC_SPACE")`, so the pipeline mints ids of wherever it runs (PL-57, CC-82), its
     /// `location` a GeoProperty, every other
     /// field a Property (a JsonProperty for an object or a list) under the slot name `slots`
@@ -271,7 +271,7 @@ impl Records {
             .collect::<Vec<_>>()
             .join(".");
         let prefix = format!(
-            "{} + env(\"JC_ORG_DOMAIN\") + \":\" + env(\"JC_SPACE\") + \":\"",
+            "{} + env(\"JC_ORG_ID\") + \":\" + env(\"JC_SPACE\") + \":\"",
             Value::String(format!("urn:ngsi-ld:{class}:"))
         );
         let id = match self.identifier() {
@@ -540,7 +540,7 @@ mod tests {
             "{mapping}"
         );
         assert!(mapping.contains(
-            "\"id\": \"urn:ngsi-ld:BikeHireDockingStation:\" + env(\"JC_ORG_DOMAIN\") + \":\" + env(\"JC_SPACE\") + \":\" + record.station_id.string()"
+            "\"id\": \"urn:ngsi-ld:BikeHireDockingStation:\" + env(\"JC_ORG_ID\") + \":\" + env(\"JC_SPACE\") + \":\" + record.station_id.string()"
         ), "{mapping}");
         // Neither the domain nor the space is typed in (CC-82, PL-57).
         assert!(

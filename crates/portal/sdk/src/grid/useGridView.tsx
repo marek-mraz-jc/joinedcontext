@@ -24,6 +24,19 @@ import { useRowWindow } from "./useRowWindow";
 
 const EMPTY_IDS: readonly string[] = [];
 
+/**
+ * The attributes every loaded row holds with one value (T-6748), as text, the row's label aside: on a
+ * phone they say nothing a row does not, so they leave the columns for the line above the table. A
+ * field empty on every row (value "") leaves too, so the next field with data sits beside the label.
+ */
+function sharedValues(rows: readonly RichRow[], skip: ReadonlySet<string>): { attr: string; value: string }[] {
+  if (rows.length < 2) return [];
+  return Object.keys(rows[0].cells)
+    .filter((attr) => !skip.has(attr))
+    .map((attr) => ({ attr, value: cellText(rows[0].cells[attr]) }))
+    .filter(({ attr, value }) => rows.every((row) => cellText(row.cells[attr]) === value));
+}
+
 function withoutAttrs(config: ResolvedGridConfig, gone: readonly string[]): ResolvedGridConfig {
   if (gone.length === 0) return config;
   const preset = config.filters.preset;
@@ -79,6 +92,7 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
     onFilterColumns,
     rowNumbers,
     typeChoice,
+    compact = false,
     pageSizes,
     onPageSize,
     selected = EMPTY_IDS,
@@ -105,16 +119,30 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
   const accessType = options.config.type;
   const askAccess = options.source.access;
   const { accessRows, unreadable, ownFailed } = useGridAccess(hostAccess, askAccess, accessType);
-  const gridHidden = useMemo(
-    () => (unreadable.length === 0 ? hiddenNow : [...(hiddenNow ?? []), ...unreadable]),
-    [hiddenNow, unreadable],
-  );
+  // A phone's few columns go to what a person reads (T-6748): the id leaves, the label opens the
+  // row, and a Type every row shares (one type asked) or a value every loaded row shares moves to
+  // the line above the table. The shared values come from the last rows read, one render behind.
+  const oneType = !options.config.type.includes(",");
+  const [shared, setShared] = useState<{ attr: string; value: string }[]>([]);
+  const gridHidden = useMemo(() => {
+    const narrow = compact ? ["id", ...(oneType ? ["entity:type"] : []), ...shared.map((each) => each.attr)] : [];
+    const gone = [...narrow, ...unreadable];
+    return gone.length === 0 ? hiddenNow : [...(hiddenNow ?? []), ...gone];
+  }, [hiddenNow, unreadable, compact, oneType, shared]);
   const gridConfig = useMemo(() => withoutAttrs(options.config, unreadable), [options.config, unreadable]);
   const gridQuery = useMemo(
     () => (options.query?.attrs ? { ...options.query, attrs: options.query.attrs.filter((attr) => !unreadable.includes(attr)) } : options.query),
     [options.query, unreadable],
   );
   const grid = useEntityGrid({ ...options, config: gridConfig, query: gridQuery, layout, hidden: gridHidden });
+  const sharedRows = grid.rows;
+  const labelAttr = options.config.columns.find((column) => column.pinned)?.attr;
+  useEffect(() => {
+    // The label, the name and what the host hides never move: the row is told by them.
+    const skip = new Set([...(hiddenNow ?? []), ...(labelAttr ? [labelAttr] : []), "name", "title"]);
+    const next = compact ? sharedValues(sharedRows, skip) : [];
+    setShared((before) => (JSON.stringify(before) === JSON.stringify(next) ? before : next));
+  }, [compact, sharedRows, hiddenNow, labelAttr]);
   const reloadGrid = grid.reload;
   const reloadedFor = useRef(reloadKey);
   useEffect(() => {
@@ -251,6 +279,7 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
   return {
     props,
     options,
+    shared,
     grid,
     labels,
     columns,

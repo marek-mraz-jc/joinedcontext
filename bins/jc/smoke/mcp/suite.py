@@ -314,7 +314,14 @@ class Suite:
         else:
             self.r.skip("hub.query.by-id", t, f"query_entities endpoint={e.slug}", "the exported entity",
                         "the page listed no id, and the export cannot name a readable one (q, scopeQ, validity or expiresAt)")
-        want = types[typ]
+        self.hub_count(e, t, typ, types[typ], slot)
+        a = self.hub.call("describe_schema", {"endpoint": e.slug, "entityType": typ})
+        self.check("hub.describe_schema", t, f"describe_schema endpoint={e.slug} entityType={typ}",
+                   f"a schema naming {typ}", a.brief(100), a.ok and typ in json.dumps(a.result))
+        self.hub_temporal(e, t, types)
+
+    def hub_count(self, e, t, typ, want, slot):
+        """query_entities count=true of `typ` through the hub, against the export's count."""
         a, note = self.hub.query({"endpoint": e.slug, "type": [typ], "count": True, "limit": 1})
         total = total_of(a.data)
         if want is None:
@@ -327,13 +334,18 @@ class Suite:
             self.check("hub.query.count", t, f"query_entities type={typ} count=true",
                        f"<= {want} (the type carries expiresAt)", f"total {total}",
                        a.ok and total is not None and 0 < total <= want)
+        elif a.ok and total is not None and total > want and self.x.index.get("synthetic"):
+            # A synthetic bundle's rehearsal runs the imported Pipelines against their live sources
+            # (helsinki linked-events: Event 23 in smoke 43074228505): the seeded rows count exactly.
+            pattern = ex.seeded_ids(typ)
+            b, _ = self.hub.query({"endpoint": e.slug, "type": [typ], "idPattern": pattern, "count": True, "limit": 1})
+            seeded = total_of(b.data)
+            self.check("hub.query.count", t, f"query_entities type={typ} idPattern={pattern} count=true",
+                       f"total {want} (export; {total - want} more written by the rehearsal's Pipelines)",
+                       f"total {seeded}; {b.brief(80) if seeded is None else ''}", b.ok and seeded == want)
         else:
             self.check("hub.query.count", t, f"query_entities type={typ} count=true", f"total {want} (export)",
                        f"total {total}; {note}{a.brief(80) if total is None else ''}", a.ok and total == want)
-        a = self.hub.call("describe_schema", {"endpoint": e.slug, "entityType": typ})
-        self.check("hub.describe_schema", t, f"describe_schema endpoint={e.slug} entityType={typ}",
-                   f"a schema naming {typ}", a.brief(100), a.ok and typ in json.dumps(a.result))
-        self.hub_temporal(e, t, types)
 
     def hub_temporal(self, e, t, types, door=None, label="hub"):
         door = door or self.hub

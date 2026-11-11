@@ -714,11 +714,12 @@ function buildColumns(
   // order, then the rest as listed.
   const primary = config.columns.find((c) => c.pinned)?.attr;
   const ordered = [...new Set([...(layout.order ?? []).filter((attr) => listed.includes(attr)), ...listed])];
-  const attrList = [
-    ...(listed.includes(NAME_COLUMN) ? [NAME_COLUMN] : []),
-    ...(primary !== undefined && primary !== NAME_COLUMN ? [primary] : []),
-    ...ordered.filter((attr) => attr !== NAME_COLUMN && attr !== primary),
-  ];
+  // Without the id the pinned field is the row's label and leads, ahead of the name (T-6748).
+  const named = listed.includes(NAME_COLUMN) ? [NAME_COLUMN] : [];
+  const pin = primary !== undefined ? [primary] : [];
+  const attrList = [...new Set([...(left.has("id") ? [...pin, ...named] : [...named, ...pin]), ...ordered])];
+  // Without the id the first field shown opens the row, the config's pinned one where it is readable.
+  const lead = left.has("id") ? attrList.find((attr) => !left.has(attr)) : undefined;
   const colMap = new Map<string, GridColumn>();
   for (const c of config.columns) {
     colMap.set(c.attr, c);
@@ -731,7 +732,7 @@ function buildColumns(
     const label = layout.labels?.[attr] ?? gridCol?.label ?? readableName(attr);
     const width = layout.width?.[attr] ?? gridCol?.width;
     const symbol = unitSymbol(unitOfColumn(rows, attr));
-    cols.push({ key: attr, attr, meta: null, label: symbol ? `${label} (${symbol})` : label, pinned: left.has("id") && attr === primary, ...(width ? { width } : {}) });
+    cols.push({ key: attr, attr, meta: null, label: symbol ? `${label} (${symbol})` : label, pinned: attr === lead, ...(width ? { width } : {}) });
 
     const metaKeys = shown[attr] ?? [];
     for (const meta of metaKeys) {

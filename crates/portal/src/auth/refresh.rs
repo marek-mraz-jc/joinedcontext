@@ -66,19 +66,20 @@ pub async fn middleware(State(state): State<AppState>, request: Request, next: N
         return next.run(request).await;
     }
     let refreshed = match state.oidc.as_deref() {
-        Some(client) => client.refresh(&current).await,
+        Some(client) => client.refresh_with_access(&current).await,
         None => Err(ApiError::Unavailable(
             "no identity provider is configured".into(),
         )),
     };
     match refreshed {
-        Ok(fresh) => {
+        Ok((fresh, access)) => {
             let mut request = request;
             request.extensions_mut().insert(fresh.clone());
             let response = next.run(request).await;
             match session::store(jar, &fresh) {
                 Ok(jar) => {
                     state.keep_session_claims(&fresh);
+                    state.keep_access_token(&fresh, access);
                     (jar, response).into_response()
                 }
                 Err(err) => err.into_response(),

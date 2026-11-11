@@ -9654,6 +9654,12 @@ export interface components {
         /** @description Reviewer-facing validation and diff result returned on `?dryRun=All` (MF-13, R17). */
         DryRunResult: {
             /**
+             * @description The Endpoints whose calls a proposed Policy decides once it lands (CHG-11 lite, P-18,
+             *     T-6740): each of its space that names no Policy, and each that lists this one. Empty for
+             *     every other kind.
+             */
+            bindsEndpoints?: string[];
+            /**
              * @description Values the manifest writes out where the loader renders them (CC-83): each names the
              *     path and what to write instead. Nothing here blocks the proposal; a copy of the
              *     manifest into another organization would carry the literal with it.
@@ -12348,6 +12354,12 @@ export interface components {
          *     generated client sends them without a cast (T-1488).
          */
         ResourceProposal: components["schemas"]["ResourceEnvelope"] & {
+            /**
+             * @description A check only (`dryRun=All`): the other manifests of the import this one is proposed in,
+             *     at most 20, so what they draft counts as the same Change (an Endpoint naming the Policy
+             *     drafted beside it, T-6740). The import itself is judged again when it is proposed.
+             */
+            bundle?: unknown[] | null;
             draft?: null | components["schemas"]["DraftRef"];
             /**
              * @description Files beside the manifest, by path relative to its folder, each a text: at most 16 and

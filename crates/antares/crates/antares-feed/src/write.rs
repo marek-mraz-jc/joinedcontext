@@ -65,8 +65,6 @@ pub struct Head {
     pub next: Option<String>,
     /// The publisher: the broker's public host.
     pub author: String,
-    /// The tag URI prefix of each entry: `tag:{host},2026:{view}/`.
-    pub entry_ids: String,
 }
 
 /// XML 1.0 character data: `&`, `<`, `>`, `"` and `'` escaped, the characters XML 1.0 2.2
@@ -94,9 +92,10 @@ fn html_text(text: &str) -> String {
     xml(&xml(text))
 }
 
-/// The entry's id: a tag URI (RFC 4151), the same in every format.
-fn entry_id(head: &Head, entry: &Entry) -> String {
-    format!("{}{}", head.entry_ids, entry.entity)
+/// The entry's id: its Entity's URN, the same in every format and under every host, `/{org}/`
+/// prefix or own domain the feed is read on, so a reader never shows an entry twice (T-6771).
+fn entry_id(entry: &Entry) -> &str {
+    &entry.entity
 }
 
 fn rfc3339(t: DateTime<Utc>) -> String {
@@ -158,7 +157,7 @@ fn atom(head: &Head, entries: &[Entry]) -> String {
         let _ = write!(
             out,
             "\n<entry><id>{}</id><title type=\"text\">{}</title><updated>{}</updated>",
-            xml(&entry_id(head, e)),
+            xml(entry_id(e)),
             xml(&e.title),
             rfc3339(e.updated)
         );
@@ -227,7 +226,7 @@ fn rss(head: &Head, entries: &[Entry]) -> String {
         let _ = write!(
             out,
             "<guid isPermaLink=\"false\">{}</guid><pubDate>{}</pubDate>",
-            xml(&entry_id(head, e)),
+            xml(entry_id(e)),
             rfc822(e.published.unwrap_or(e.updated))
         );
         for a in &e.authors {
@@ -247,7 +246,7 @@ fn json_feed(head: &Head, entries: &[Entry]) -> String {
         .iter()
         .map(|e| {
             let mut item = Map::new();
-            item.insert("id".into(), json!(entry_id(head, e)));
+            item.insert("id".into(), json!(entry_id(e)));
             item.insert("title".into(), json!(e.title));
             let text = e
                 .content
