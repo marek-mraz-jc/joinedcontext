@@ -62,10 +62,15 @@ pub(crate) async fn preset_csv(
         Ok((endpoint, _)) => endpoint,
         Err(problem) => return *problem,
     };
+    // A stored `query` that does not read leaves the output unserved (404), as the view does,
+    // never the whole view (T-6762).
+    let reads = |query: Option<&str>, types: &[&str]| {
+        query.is_none_or(|q| OutputFilter::from_query(q, types).is_ok())
+    };
     let preset = endpoint
         .calendars
         .iter()
-        .find(|o| o.name == output)
+        .find(|o| o.name == output && reads(o.query.as_deref(), &o.types()))
         .map(|o| {
             let types = o.sources.iter().map(|s| s.entity_type.clone());
             (
@@ -74,7 +79,9 @@ pub(crate) async fn preset_csv(
             )
         })
         .or_else(|| {
-            endpoint.feeds.iter().find(|o| o.name == output).map(|o| {
+            let mut feeds = endpoint.feeds.iter();
+            let feed = feeds.find(|o| o.name == output && reads(o.query.as_deref(), &o.types()));
+            feed.map(|o| {
                 let types = o.sources.iter().map(|s| s.entity_type.clone());
                 (types.collect(), o.effective_filter())
             })

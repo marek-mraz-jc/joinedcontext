@@ -2229,8 +2229,10 @@
       "limitField": {
         "label": "Höchstens Einträge (optional)",
         "hint": "1 bis 10000, zum Beispiel 100. Leer behält jeden Termin, den die Abfrage auswählt.",
-        "feedHint": "Einträge pro Seite, 1 bis 200, zum Beispiel 50 (Standard, wenn leer).",
         "bad": "Geben Sie eine ganze Zahl von 1 bis {max} ein."
+      },
+      "feedLimitField": {
+        "hint": "Einträge pro Seite, 1 bis 200, zum Beispiel 50 (Standard, wenn leer)."
       },
       "timezoneField": {
         "label": "Zeitzone",

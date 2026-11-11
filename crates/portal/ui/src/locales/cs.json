@@ -2229,8 +2229,10 @@
       "limitField": {
         "label": "Nejvíce záznamů (nepovinné)",
         "hint": "1 až 10000, například 100. Prázdné ponechá všechny akce, které dotaz vybere.",
-        "feedHint": "Položek na stránku, 1 až 200, například 50 (výchozí, když je prázdné).",
         "bad": "Zadejte celé číslo od 1 do {max}."
+      },
+      "feedLimitField": {
+        "hint": "Položek na stránku, 1 až 200, například 50 (výchozí, když je prázdné)."
       },
       "timezoneField": {
         "label": "Časové pásmo",

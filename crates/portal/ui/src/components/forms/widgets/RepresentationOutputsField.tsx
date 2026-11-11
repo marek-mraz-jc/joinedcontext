@@ -324,7 +324,12 @@ function PresetOptions({ id, format, output, onChange, frozen }: PresetOptionsPr
     <div className="grid gap-4 sm:grid-cols-3">
       {ical ? (
         <Field id={`${id}-sort`} label={t("endpoints.outputs.sortField.label")} help={t("endpoints.outputs.sortField.hint")}>
-          <Select id={`${id}-sort`} value={sort} disabled={frozen} onChange={(event) => onChange(withMember(output, "sort", event.currentTarget.value))}>
+          <Select
+            id={`${id}-sort`}
+            value={sort}
+            disabled={frozen}
+            title={frozen ? t("resourceEdit.readOnlyBadge") : undefined}
+            onChange={(event) => onChange(withMember(output, "sort", event.currentTarget.value))}>
             <option value="">{t("endpoints.outputs.sortField.default")}</option>
             {ICAL_SORTS.map((s) => (
               <option key={s} value={s}>
@@ -337,7 +342,7 @@ function PresetOptions({ id, format, output, onChange, frozen }: PresetOptionsPr
       <Field
         id={`${id}-limit`}
         label={t("endpoints.outputs.limitField.label")}
-        help={t(ical ? "endpoints.outputs.limitField.hint" : "endpoints.outputs.limitField.feedHint")}
+        help={t(ical ? "endpoints.outputs.limitField.hint" : "endpoints.outputs.feedLimitField.hint")}
         errors={limitFits(limit, max) ? [] : [t("endpoints.outputs.limitField.bad", { max })]}
       >
         <Input
@@ -362,6 +367,7 @@ function PresetOptions({ id, format, output, onChange, frozen }: PresetOptionsPr
             id={`${id}-timezone`}
             value={zone || DEFAULT_ZONE}
             disabled={frozen}
+            title={frozen ? t("resourceEdit.readOnlyBadge") : undefined}
             onChange={(event) => {
               const picked = event.currentTarget.value;
               onChange(withMember(output, "timezone", picked === DEFAULT_ZONE ? undefined : picked));

@@ -2229,8 +2229,10 @@
       "limitField": {
         "label": "Most entries (optional)",
         "hint": "1 to 10000, for example 100. Empty keeps every event the query selects.",
-        "feedHint": "Items per page, 1 to 200, for example 50 (the default when empty).",
         "bad": "Enter a whole number from 1 to {max}."
+      },
+      "feedLimitField": {
+        "hint": "Items per page, 1 to 200, for example 50 (the default when empty)."
       },
       "timezoneField": {
         "label": "Time zone",
