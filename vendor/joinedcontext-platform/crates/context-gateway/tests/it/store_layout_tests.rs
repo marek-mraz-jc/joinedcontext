@@ -158,8 +158,9 @@ fn the_reaper_follows_the_registry_and_the_checkouts() {
     assert!(gateway.resolver.resolve(AIR).is_some());
 }
 
-/// CC-86, PF-44: an endpoint slug two projects claim refuses the load, naming the slug and both
-/// projects, and a reaper keeps serving the table it had.
+/// CC-86, PF-44 (T-6709): an endpoint slug two projects claim refuses the project that changed
+/// to claim it, naming the slug and both projects; it keeps its last render, and the project that
+/// holds the slug in its own last render goes on serving it.
 #[test]
 fn an_endpoint_slug_claimed_by_two_projects_is_refused() {
     let (org, checkouts) = organization("clash");
@@ -176,16 +177,84 @@ fn an_endpoint_slug_claimed_by_two_projects_is_refused() {
     let mut reaper = Reaper::new(Arc::clone(&gateway), &org).with_checkouts(checkouts.clone());
 
     project(&checkouts.projects, "doprava", AIR);
-    let clash = store::load_from(&org, Some(&checkouts)).expect_err("one slug, two projects");
-    let message = clash.to_string();
+    let (endpoints, ..) = store::load_from(&org, Some(&checkouts)).expect("the others load");
+    assert_eq!(
+        slugs(&endpoints),
+        [TRAFFIC, AIR],
+        "doprava keeps its last render"
+    );
+    let air: Vec<&str> = endpoints
+        .iter()
+        .filter(|e| e.slug == AIR)
+        .map(|e| e.project.as_str())
+        .collect();
+    assert_eq!(
+        air,
+        ["ovzdusie"],
+        "the slug stays with the project serving it"
+    );
+
+    let refusals = refusals(&org, &checkouts);
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    let (slug, reason) = &refusals[0];
+    assert_eq!(slug, "doprava");
     for name in [AIR, "ovzdusie", "doprava"] {
-        assert!(message.contains(name), "{name} is not in: {message}");
+        assert!(reason.contains(name), "{name} is not in: {reason}");
     }
-    assert!(!reaper.tick(), "a refused load swaps nothing");
+
+    reaper.tick();
+    let served = gateway
+        .resolver
+        .resolve(AIR)
+        .expect("the air endpoint serves");
+    assert_eq!(served.project, "ovzdusie");
     assert!(
         gateway.resolver.resolve(TRAFFIC).is_some(),
-        "the last table keeps serving"
+        "the refused project's last table keeps serving"
     );
+}
+
+/// CC-86, PF-44 (T-6709): with no last render to tell them apart, both projects claiming one
+/// slug are refused and nobody serves it (deny by default).
+#[test]
+fn a_slug_two_new_projects_claim_is_served_by_neither() {
+    let (org, checkouts) = organization("clash-new");
+    project(&checkouts.projects, "doprava", AIR);
+    let (endpoints, ..) = store::load_from(&org, Some(&checkouts)).expect("the load answers");
+    assert!(endpoints.is_empty(), "{:?}", slugs(&endpoints));
+    let refused: Vec<String> = refusals(&org, &checkouts)
+        .into_iter()
+        .map(|(slug, _)| slug)
+        .collect();
+    assert_eq!(refused, ["doprava", "ovzdusie"]);
+}
+
+/// The projects an assembly with the store's last renders refuses, with each reason.
+fn refusals(org: &Path, checkouts: &Checkouts) -> Vec<(String, String)> {
+    use jc_manifest::assemble::{assemble_reusing, Directories};
+    let directories = ["ovzdusie", "doprava"]
+        .into_iter()
+        .map(|slug| (slug.to_owned(), checkouts.projects.join(slug)))
+        .collect();
+    let mut renders = checkouts
+        .renders
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let assembly = assemble_reusing(
+        org,
+        &Directories(directories),
+        &checkouts.assembly,
+        None,
+        &mut renders,
+    )
+    .expect("the assembly answers");
+    let mut refused: Vec<(String, String)> = assembly
+        .entries
+        .iter()
+        .filter_map(|entry| Some((entry.slug.clone(), entry.refused.as_ref()?.reason.clone())))
+        .collect();
+    refused.sort();
+    refused
 }
 
 /// ADR-N-030, AP-97: the Endpoint `app-{name}` of a project that declares the App `{name}` is
