@@ -989,7 +989,27 @@ mod tests {
     #[test]
     fn the_page_reader_names_a_signed_in_member_only() {
         let state = world(None);
-        let member = cookie_of(&state, &admin().0);
+        // pia reads helsinki by a RoleBinding of that project alone.
+        for (kind, spec) in [
+            (
+                "Role",
+                json!({ "rules": [{ "kinds": ["Dashboard"], "verbs": ["read"] }] }),
+            ),
+            (
+                "RoleBinding",
+                json!({ "subjects": [{ "user": "sub-pia" }], "role": "reader",
+                        "scope": { "project": PROJECT } }),
+            ),
+        ] {
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: ObjectMeta::new("reader", ORG_NAMESPACE),
+                spec,
+                status: None,
+            });
+        }
+        let member = cookie_of(&state, &outsider().0);
         assert_eq!(
             page_reader(&state, &member, PROJECT).as_deref(),
             Some("sub-pia")
@@ -1001,7 +1021,16 @@ mod tests {
         );
         assert_eq!(page_reader(&state, &member, "Not A Name"), None);
         assert_eq!(
-            page_reader(&state, &cookie_of(&state, &outsider().0), PROJECT),
+            page_reader(
+                &state,
+                &cookie_of(&state, &{
+                    let mut other = outsider().0;
+                    other.identity.subject = "sub-ola".into();
+                    other.identity.email = None;
+                    other
+                }),
+                PROJECT
+            ),
             None
         );
         assert_eq!(page_reader(&state, &HeaderMap::new(), PROJECT), None);
@@ -1015,7 +1044,7 @@ mod tests {
             None,
             "a credential is not a cookie"
         );
-        let mut spent = admin().0;
+        let mut spent = outsider().0;
         spent.access_expires_at = crate::auth::session::now_unix() - 1;
         assert_eq!(
             page_reader(&state, &cookie_of(&state, &spent), PROJECT),
