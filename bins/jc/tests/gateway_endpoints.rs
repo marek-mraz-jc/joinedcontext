@@ -464,9 +464,10 @@ async fn start_on(
 
 const HEADER: &str = "apiVersion: joinedcontext.com/v1alpha1";
 
-/// The URN of the Policy `name` of `space` in the project, on the default Organization's domain.
+/// The URN of the Policy `name` of `space`, whose `urnSegment` is its name, on the default
+/// Organization's domain.
 fn policy_urn(space: &str, name: &str) -> String {
-    format!("urn:ngsi-ld:Policy:jc.invalid:{PROJECT}-{space}:{name}")
+    format!("urn:ngsi-ld:Policy:jc.invalid:{space}:{name}")
 }
 
 /// The project's manifests at their layout 1 paths in the organization repository.
