@@ -962,7 +962,11 @@ async fn a_person_asks_on_the_endpoint_and_an_owner_approves() {
             .expect("endpoint"),
     )
     .expect("json");
-    let bundle = joinedcontext_portal::access_requests::grant_bundle(&stored, &endpoint);
+    let bundle = joinedcontext_portal::access_requests::grant_bundle(
+        &stored,
+        &endpoint,
+        &["urn:ngsi-ld:Policy:x.org:y:z".to_owned()],
+    );
     assert_eq!(bundle.len(), 1, "{bundle:?}");
     assert_eq!(
         bundle[0]["spec"]["assignee"],

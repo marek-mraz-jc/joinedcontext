@@ -1665,10 +1665,6 @@ async fn check_content(
     }
     crate::judge::manifest(&ground, project, envelope)?;
 
-    // 4b-refs. A new or changed Endpoint names the Policies it serves (P-18, T-6740): judged
-    //     here alone, so `main`'s Endpoints without references load and approve unchanged.
-    check_names_policies(state, identity, project, envelope)?;
-
     // 4d. A projection names only what its model version has (MP-01, T-2558): the same check
     //     `jcctl validate` runs, so the two cannot disagree about what is stale, and every stale
     //     name is listed at once. The model is looked up in this project only, so a model of
@@ -1690,7 +1686,12 @@ async fn check_content(
 
     // 4b-contact. A catalogue record publishes its contact point to everyone, so a person's own
     //       address is refused at every door (EP-80, T-2789).
-    crate::catalog::check_contact(&state.mirror, identity, kind, &envelope.spec)
+    crate::catalog::check_contact(&state.mirror, identity, kind, &envelope.spec)?;
+
+    // 4b-refs. A new or changed Endpoint names the Policies it serves (P-18, T-6740): judged
+    //     here alone, last, so `main`'s Endpoints without references load and approve unchanged
+    //     and a refusal of what the Endpoint serves is heard first.
+    check_names_policies(state, identity, project, envelope)
 }
 
 /// The Keycloak client id `{project}-{name}` derives, when another project's ServiceAccount

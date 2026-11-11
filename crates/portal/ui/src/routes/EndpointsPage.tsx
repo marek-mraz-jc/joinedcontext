@@ -939,23 +939,18 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
   for (const held of editing?.policyRefs ?? []) {
     if (!policyChoices.some((choice) => choice.const === held)) policyChoices.push({ const: held, title: held });
   }
-  // An Endpoint naming no Policy binds every Policy of its space: its edit opens with all of
-  // them ticked, so proposing it keeps what it serves today (T-6740).
-  const bindsAll = !isNew && editing !== null && editing.policyRefs === undefined && policiesQuery.isSuccess && spacesQuery.isSuccess;
-  const allChoices = policyChoices.map((choice) => choice.const).join(" ");
-  // Once per opened Endpoint: YAML pasted without references later stays as it was written.
-  const filledFor = useRef<string | null>(null);
-  const filledName = editing?.name ?? null;
-  useEffect(() => {
-    if (!bindsAll || filledFor.current === filledName) return;
-    filledFor.current = filledName;
-    setEditing((open) => (open ? { ...open, policyRefs: allChoices === "" ? [] : allChoices.split(" ") } : open));
-  }, [bindsAll, allChoices, filledName]);
+  // An Endpoint naming no Policy binds every Policy of its space: its edit shows all of them
+  // ticked, so proposing it keeps what it serves today (T-6740).
+  const served = (form: EndpointForm): EndpointForm =>
+    !isNew && form.policyRefs === undefined && policiesQuery.isSuccess && spacesQuery.isSuccess
+      ? { ...form, policyRefs: policyChoices.map((choice) => choice.const) }
+      : form;
   const projectionNameOf = (form: EndpointForm) =>
     pickerState.projectionName || form.name || "projection";
 
   /** The Endpoint the form stands for: what its draft holds, what is checked, what is proposed. */
-  const endpointOf = (form: EndpointForm) => {
+  const endpointOf = (shown: EndpointForm) => {
+    const form = served(shown);
     const envelope = toEnvelope(
       project,
       form,
@@ -1724,7 +1719,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
         description={t("endpoints.addHint")}
         schema={schema}
         uiSchema={uiSchema}
-        formData={editing ?? undefined}
+        formData={editing ? served(editing) : undefined}
         submitLabel={t("endpoints.propose")}
         submitting={propose.isPending}
         error={formError}
