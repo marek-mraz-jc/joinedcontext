@@ -266,6 +266,51 @@ fn on_change_of_a_place_counts_metres_and_of_a_text_any_change() {
     );
 }
 
+/// jc-memory-peak: the last row of an attribute is remembered by a digest, so a polygon is
+/// judged by any change as before, its key order aside, and never held whole.
+#[test]
+fn on_change_of_a_polygon_judges_any_change_by_digest_and_keeps_none_of_it() {
+    let st = state();
+    let tn = "history-polygon";
+    let t = TenantId::new(tn).expect("tenant");
+    let ty = ["https://x/Zone"];
+    let mode = OnChange {
+        heartbeat: Duration::from_secs(3600),
+        deadband: Some(1.0),
+        min_distance: Some(50.0),
+    };
+    recording(&st, tn, ty[0], &[(PLACE, mode)]);
+    let ring = |x: f64| json!([[[0.0, 0.0], [x, 0.0], [x, 1.0], [0.0, 0.0]]]);
+    let row = |v: serde_json::Value| admits_change(&st, &t, &ty, "urn:z", PLACE, None, &v);
+    assert!(row(
+        json!({"type": "GeoProperty", "observedAt": "2026-01-01T00:00:00Z",
+                      "value": {"type": "Polygon", "coordinates": ring(1.0)}})
+    ));
+    assert!(
+        !row(
+            json!({"value": {"coordinates": ring(1.0), "type": "Polygon"},
+                    "observedAt": "2026-01-01T00:01:00Z", "type": "GeoProperty"})
+        ),
+        "the same polygon, its keys in another order: no row"
+    );
+    assert!(
+        row(
+            json!({"type": "GeoProperty", "observedAt": "2026-01-01T00:02:00Z",
+                   "value": {"type": "Polygon", "coordinates": ring(2.0)}})
+        ),
+        "a moved vertex: a row"
+    );
+    let kept = crate::history::Kept::of(&json!({"type": "GeoProperty",
+        "value": {"type": "Polygon", "coordinates": ring(2.0)}}));
+    assert!(kept.value.is_none(), "a polygon is kept as its digest only");
+    let number = crate::history::Kept::of(&json!({"type": "Property", "value": 4.5}));
+    assert_eq!(
+        number.value,
+        Some(json!(4.5)),
+        "a number is kept for the deadband"
+    );
+}
+
 /// T-5056: under `ANTARES_TEMPORAL_RECORD=ruled` only a type a rule gives a
 /// duration records; the other modes keep recording what no rule names.
 #[test]
