@@ -64,9 +64,14 @@ pub struct IcalOutput {
     pub description: BTreeMap<String, String>,
     /// The model classes the calendar maps, each with its preset or mapping; 1 to 10.
     pub sources: Vec<IcalMapping>,
-    /// A query that narrows the view for this calendar, never widens it.
+    /// A query that narrows the view for this calendar, never widens it (deprecated: `query`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<OutputFilter>,
+    /// The preset's query string over the alias allow-list (API/02 §4a), such as
+    /// `q=eventCategory=="koncert"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]`;
+    /// it narrows the view like `filter`, which it replaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
     /// The language tag (BCP 47) a LanguageProperty is read in when a field names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
@@ -135,11 +140,12 @@ fn ical_outputs<'de, D: serde::Deserializer<'de>>(
 }
 
 /// Each calendar's address under the Endpoint, as a record, a page head and a catalogue list
-/// them: `(output, "ical/v1/{name}.ics")` (API/11 EP-159).
+/// them: `(output, "feeds/{name}.ics")`, the preset path; `ical/v1/{name}.ics` stays its alias
+/// (API/02 §4a, API/11 EP-159).
 pub fn ical_links(outputs: &[IcalOutput]) -> Vec<(&IcalOutput, String)> {
     outputs
         .iter()
-        .map(|output| (output, format!("ical/v1/{}.ics", output.name)))
+        .map(|output| (output, format!("feeds/{}.ics", output.name)))
         .collect()
 }
 
@@ -164,6 +170,7 @@ impl IcalOutput {
                 ..mapping
             }],
             filter: None,
+            query: None,
             lang: None,
             sort: None,
             limit: None,
@@ -202,9 +209,11 @@ impl IcalOutput {
         if self.sources.is_empty() || self.sources.len() > MAX_SOURCES {
             gaps.push(format!("it needs 1 to {MAX_SOURCES} sources"));
         }
-        if let Some(filter) = &self.filter {
-            gaps.extend(filter.gaps());
-        }
+        gaps.extend(query_gaps(
+            self.query.as_deref(),
+            self.filter.as_ref(),
+            &self.types(),
+        ));
         if let Some(lang) = self.lang.as_deref().filter(|l| !is_tag(l)) {
             gaps.push(format!("`lang: {lang}` is not a language tag such as `sk`"));
         }
@@ -248,6 +257,20 @@ impl IcalOutput {
         Ok(gaps)
     }
 
+    /// The NGSI-LD types the output's sources map.
+    pub fn types(&self) -> Vec<&str> {
+        self.sources
+            .iter()
+            .map(|s| s.entity_type.as_str())
+            .collect()
+    }
+
+    /// The filter the broker applies: the preset's `query` read into its members, else the
+    /// deprecated `filter`. `None` also for a query that does not read (the save refuses it).
+    pub fn effective_filter(&self) -> Option<OutputFilter> {
+        effective_filter(self.query.as_deref(), self.filter.as_ref(), &self.types())
+    }
+
     /// A source's sentence (`` `ical` maps no DTSTART ``) or the output's own, with the name.
     fn name_one(&self, gap: String) -> String {
         match gap.strip_prefix("`ical` ") {
@@ -261,7 +284,119 @@ impl IcalOutput {
     }
 }
 
+/// The parameters a preset's `query` may name (API/02 §4a): the members of [`OutputFilter`],
+/// plus `type`, which may only repeat the output's own source types.
+pub const QUERY_PARAMS: [&str; 7] = [
+    "type",
+    "q",
+    "scopeQ",
+    "georel",
+    "geometry",
+    "coordinates",
+    "geoproperty",
+];
+
+/// A preset's `query` or else its deprecated `filter`, as the broker applies it.
+pub(crate) fn effective_filter(
+    query: Option<&str>,
+    filter: Option<&OutputFilter>,
+    types: &[&str],
+) -> Option<OutputFilter> {
+    match query {
+        Some(query) => OutputFilter::from_query(query, types).ok(),
+        None => filter.cloned(),
+    }
+}
+
+/// The gaps of a preset's `query` and `filter`, one sentence each.
+pub(crate) fn query_gaps(
+    query: Option<&str>,
+    filter: Option<&OutputFilter>,
+    types: &[&str],
+) -> Vec<String> {
+    match (query, filter) {
+        (Some(_), Some(_)) => {
+            vec!["names both `query` and `filter`: keep `query` alone".to_owned()]
+        }
+        (Some(query), None) => match OutputFilter::from_query(query, types) {
+            Ok(filter) => filter
+                .gaps()
+                .into_iter()
+                .map(|gap| {
+                    gap.replacen("`filter.", "`query` parameter `", 1)
+                        .replacen("`filter`", "`query`", 1)
+                })
+                .collect(),
+            Err(why) => vec![why],
+        },
+        (None, Some(filter)) => filter.gaps(),
+        (None, None) => Vec::new(),
+    }
+}
+
 impl OutputFilter {
+    /// Reads a preset's `query`, a query string as a URL carries it (`&`-separated, each value
+    /// percent-decoded as the gateway decodes a request's), into the members the broker applies.
+    /// `type` may only list `types`, the output's own sources, and is then dropped.
+    ///
+    /// # Errors
+    /// One sentence naming `query` and the parameter: an unknown or repeated one, an empty
+    /// value, a `type` the sources do not map, a query over 2000 characters or naming nothing.
+    ///
+    /// ```
+    /// use jc_core::kinds::OutputFilter;
+    /// let f = OutputFilter::from_query("type=Event&q=category==%22music%22", &["Event"]).unwrap();
+    /// assert_eq!(f.q.as_deref(), Some("category==\"music\""));
+    /// assert!(OutputFilter::from_query("limit=5", &["Event"]).is_err());
+    /// ```
+    pub fn from_query(query: &str, types: &[&str]) -> Result<Self, String> {
+        if query.trim().is_empty() || !is_plain(query, 2000) {
+            return Err(
+                "`query` must be 1 to 2000 characters without control characters".to_owned(),
+            );
+        }
+        let mut filter = Self::default();
+        let mut seen = BTreeSet::new();
+        for (name, value) in form_urlencoded::parse(query.trim_start_matches('?').as_bytes()) {
+            if !seen.insert(name.to_string()) {
+                return Err(format!("`query` names `{name}` twice"));
+            }
+            if value.is_empty() {
+                return Err(format!("`query` gives `{name}` no value"));
+            }
+            let value = Some(value.into_owned());
+            match name.as_ref() {
+                "type" => {
+                    let listed = value.as_deref().unwrap_or_default();
+                    if let Some(t) = listed.split(',').find(|t| !types.contains(t)) {
+                        return Err(format!(
+                            "`query` names `type={t}`, which the output's sources do not map ({})",
+                            types.join(", ")
+                        ));
+                    }
+                }
+                "q" => filter.q = value,
+                "scopeQ" => filter.scope_q = value,
+                "georel" => filter.georel = value,
+                "geometry" => filter.geometry = value,
+                "coordinates" => filter.coordinates = value,
+                "geoproperty" => filter.geoproperty = value,
+                other => {
+                    return Err(format!(
+                        "`query` names `{other}`, which a preset cannot store; it takes {}",
+                        QUERY_PARAMS.join(", ")
+                    ))
+                }
+            }
+        }
+        if filter.is_empty() {
+            return Err(
+                "`query` narrows nothing: name q, scopeQ or a geo-query, or drop it".to_owned(),
+            );
+        }
+        Ok(filter)
+    }
+
     /// Whether no member is set.
     pub fn is_empty(&self) -> bool {
         self.entries().iter().all(|(_, v)| v.is_none())
@@ -1417,6 +1552,78 @@ mod tests {
             assert!(!is_slug(bad), "{bad}");
         }
         assert!(is_zone("Europe/Bratislava") && is_zone("UTC") && !is_zone("CET; x"));
+    }
+
+    /// T-6756 (API/02 §4a): a preset's `query` reads into the members the broker applies, and
+    /// each of the nine calendars live today hands the broker the same filter as a preset.
+    #[test]
+    fn a_preset_query_reads_into_the_filter_it_replaces() {
+        let events = ["Event"];
+        let read = OutputFilter::from_query(
+            "type=Event&q=category==%22music%22&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]",
+            &events,
+        )
+        .unwrap_or_default();
+        assert_eq!(read.q.as_deref(), Some("category==\"music\""));
+        assert_eq!(read.georel.as_deref(), Some("near;maxDistance==5000"));
+        assert_eq!(read.coordinates.as_deref(), Some("[19.15,48.73]"));
+        assert!(read.gaps().is_empty(), "{:?}", read.gaps());
+        // A value holding `;`, `|`, `(`, `)` and an encoded `&` stays one value.
+        let q = OutputFilter::from_query("q=name==%22a%26b%22|(x==1;y==2)", &events)
+            .unwrap_or_default();
+        assert_eq!(q.q.as_deref(), Some("name==\"a&b\"|(x==1;y==2)"));
+        for (bad, why) in [
+            (
+                "limit=5",
+                "`query` names `limit`, which a preset cannot store",
+            ),
+            ("q=a==1&q=b==2", "`query` names `q` twice"),
+            ("q=", "`query` gives `q` no value"),
+            ("type=Article&q=a==1", "`query` names `type=Article`"),
+            ("type=Event", "`query` narrows nothing"),
+            ("", "`query` must be 1 to 2000 characters"),
+        ] {
+            let got = OutputFilter::from_query(bad, &events).unwrap_err();
+            assert!(got.starts_with(why), "{bad}: {got}");
+        }
+        let output = |filter: Option<&str>, query: Option<&str>| IcalOutput {
+            filter: filter.map(|q| OutputFilter {
+                q: Some(q.to_owned()),
+                ..OutputFilter::default()
+            }),
+            query: query.map(str::to_owned),
+            ..IcalOutput::legacy(IcalMapping::default())
+        };
+        assert_eq!(
+            output(Some("a==1"), Some("q=a==1")).shape_gaps(),
+            ["`ical` output `events`: names both `query` and `filter`: keep `query` alone"]
+        );
+        assert_eq!(
+            output(None, Some("q=a=1")).shape_gaps().len(),
+            1,
+            "a q the broker refuses is refused at save"
+        );
+        assert!(output(None, Some("q=a=1")).shape_gaps()[0]
+            .contains("`query` parameter `q` is no NGSI-LD query"));
+        // The nine calendars of the deployment seeds and the bbsk-podujatia app: six whole
+        // views and three bbsk genres.
+        for q in [
+            None,
+            Some(r#"eventCategory~="(?i)kult|koncert|divadl|výstav|festival|film""#),
+            Some(r#"eventCategory~="(?i)šport|sport|turnaj|beh""#),
+            Some(r#"eventCategory~="(?i)det[ií]|rodin""#),
+        ] {
+            let old = output(q, None);
+            let encoded = q.map(|q| {
+                format!(
+                    "q={}",
+                    form_urlencoded::byte_serialize(q.as_bytes()).collect::<String>()
+                )
+            });
+            let preset = output(None, encoded.as_deref());
+            assert!(preset.shape_gaps().is_empty(), "{:?}", preset.shape_gaps());
+            assert_eq!(preset.effective_filter(), old.effective_filter(), "{q:?}");
+        }
     }
 
     #[test]

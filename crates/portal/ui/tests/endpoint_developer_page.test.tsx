@@ -109,9 +109,9 @@ describe("the samples of a developer page (T-5111)", () => {
       `ngsi-ld ${BASE}ngsi-ld/v1/types`,
       `ogc-features ${BASE}ogc/features/collections`,
       `sta ${BASE}sta/v1.1`,
-      `ical ${BASE}ical/v1/events.ics`,
+      `ical ${BASE}entities.ics`,
     ]);
-    expect(samples[3].tools).toEqual([{ tool: "calendar", url: `webcal://api.dev.example/api/endpoint/${SLUG}/ical/v1/events.ics` }]);
+    expect(samples[3].tools).toEqual([{ tool: "calendar", url: `webcal://api.dev.example/api/endpoint/${SLUG}/entities.ics` }]);
   });
 
   it("quotes an address a shell would otherwise split", () => {

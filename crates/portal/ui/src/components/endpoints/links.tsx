@@ -22,7 +22,8 @@ export const REPRESENTATION_PATHS: Record<string, string> = {
   csv: "/file.csv",
   "ogc-features": "/ogc/features",
   sta: "/sta/v1.1",
-  ical: "/ical/v1/events.ics",
+  // The first stored preset (API/02 §4a), whatever its name.
+  ical: "/entities.ics",
   websocket: "/ws",
 };
 

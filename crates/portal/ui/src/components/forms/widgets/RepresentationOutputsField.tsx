@@ -5,13 +5,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, queryKeys, unwrap, reasonOf } from "../../../api/client";
 import { asManifests, refName } from "../../../api/manifest";
-import { Button, Card, EmptyState, Field, InlineError, Input } from "../../ui";
+import { Button, Card, EmptyState, Field, InlineError, Input, Textarea } from "../../ui";
 import { LIST_BODY, LIST_FIELDSET, ListLegend } from "../theme";
 import { FormDataContext } from "./EntitySelectorField";
 import { ListFailed } from "./ListFailed";
 import { FormProjectContext } from "./ModelWidgets";
 import { FeedSourceEditor, IcalSourceEditor, MapSourceEditor } from "./OutputSourceEditors";
-import { duplicateNames, isSlug, MAX_OUTPUTS, newOutput, outputsOf, withText, written } from "./representationOutputs";
+import { duplicateNames, isSlug, MAX_OUTPUTS, newOutput, outputsOf, queryOf, withQuery, withText, written } from "./representationOutputs";
 import type { FeedOutput, FeedSource, Format, IcalOutput, MapSource, Output, Outputs, WidgetOutput } from "./representationOutputs";
 import type { IcalMapping } from "./icalMapping";
 
@@ -184,8 +184,8 @@ function OutputCard({ id, format, output, duplicate, onChange, onRemove, renderS
     ...(isSlug(output.name) ? [] : [t("endpoints.outputs.nameField.bad")]),
     ...(duplicate ? [t("endpoints.outputs.duplicateOne")] : []),
   ];
-  const address = format === "ical" ? `ical/v1/${output.name}.ics` : format === "feed" ? `feed/v1/${output.name}/atom.xml` : "";
-  const q = output.filter?.q ?? "";
+  const address = format === "ical" ? `feeds/${output.name}.ics` : format === "feed" ? `feeds/${output.name}.atom` : "";
+  const query = queryOf(output);
   const setSource = (index: number, next: AnySource): void =>
     onChange({ ...output, sources: output.sources.map((s, i) => (i === index ? next : s)) });
 
@@ -228,20 +228,16 @@ function OutputCard({ id, format, output, duplicate, onChange, onRemove, renderS
       </div>
       {/* The widget's defaults narrow nothing: a reader's map shows what the table queries. */}
       {format === "widget" ? null : <Field id={`${id}-q`} label={t("endpoints.outputs.filterField.label")} help={t("endpoints.outputs.filterField.hint")}>
-        <Input
+        <Textarea
           id={`${id}-q`}
-          value={q}
+          rows={3}
+          placeholder='q=category=="sport"'
+          value={query}
           readOnly={frozen}
           autoComplete="off"
           spellCheck={false}
           className="font-mono"
-          onChange={(event) => {
-            const value = event.currentTarget.value;
-            const filter = { ...(output.filter ?? {}), q: value || undefined };
-            if (!filter.q) delete filter.q;
-            const { filter: _old, ...rest } = output;
-            onChange(Object.keys(filter).length === 0 ? rest : { ...rest, filter });
-          }}
+          onChange={(event) => onChange(withQuery(output, event.currentTarget.value))}
         />
       </Field>}
       {output.sources.map((source, index) => (

@@ -79,7 +79,8 @@ const FAMILIES: [Family; 7] = [
             json!({
                 "contextSpaceRef": { "kind": "ContextSpace", "name": "helsinki" },
                 "audience": "organization",
-                "enabledRepresentations": ["ngsi-ld", "ogc-features"]
+                "enabledRepresentations": ["ngsi-ld", "ogc-features"],
+                "policyRefs": [format!("urn:ngsi-ld:Policy:hel.fi:{PROJECT}-helsinki:helsinki-read")]
             })
         },
     },
@@ -299,11 +300,11 @@ async fn forge() -> MockServer {
 fn state_with(shako: &MockServer) -> AppState {
     let state = common::state_on(shako);
     // Entity: a pipeline writes only what its proposer may write, the space behind its target
-    // Endpoint (PL-94).
+    // Endpoint (PL-94). Policy: an Endpoint names only Policies its proposer reads (T-6740).
     let kinds: Vec<&str> = FAMILIES
         .iter()
         .map(|family| family.kind)
-        .chain(["Entity"])
+        .chain(["Entity", "Policy"])
         .collect();
     for who in PEOPLE {
         state.mirror.upsert(envelope(
@@ -336,6 +337,13 @@ fn state_with(shako: &MockServer) -> AppState {
         "bikes-team",
         ORG_NAMESPACE,
         json!({ "displayName": "Bikes team" }),
+    ));
+    // The Policy the Endpoint family names (P-18, T-6740).
+    state.mirror.upsert(envelope(
+        "Policy",
+        "helsinki-read",
+        PROJECT,
+        json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "helsinki" } }),
     ));
     // The Endpoint the Pipeline family writes through: without it every Pipeline proposal
     // writes a space nobody can write and is refused (PL-111).

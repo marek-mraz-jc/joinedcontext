@@ -364,13 +364,30 @@ fn preset(file_limits: Option<FileLimits>) -> Endpoint {
     endpoint
 }
 
+/// [`preset`] with its narrowing stored as the preset `query` string (T-6756).
+fn preset_query() -> Endpoint {
+    let mut endpoint = endpoint(vec![Representation::Csv], None);
+    endpoint.calendars = vec![serde_norway::from_str(
+        "name: events\nsources: [{ type: AirQualityObserved }]\nquery: 'q=pm10%3E0&georel=near%3BmaxDistance%3D%3D5000&geometry=Point&coordinates=%5B19.15%2C48.73%5D'\n",
+    )
+    .expect("the output parses")];
+    endpoint
+}
+
 /// API/02 §4a (T-6760): `feeds/{filter}/{output}.csv` and `feeds/{output}.csv?{filter}` are the
 /// output's query narrowed by the filter, never widened: the broker reads the output's type,
 /// its `q` AND-ed with the caller's and its own geo-query, and both forms are one file.
 #[tokio::test]
 async fn a_feeds_csv_is_the_outputs_query_narrowed_by_the_filter() {
+    for stored in [preset(None), preset_query()] {
+        narrowed_by_the_filter(stored).await;
+    }
+}
+
+/// One stored form of the `events` output: its `filter` object or its preset `query` (T-6756).
+async fn narrowed_by_the_filter(stored: Endpoint) {
     let broker = BrokerStub::start(vec![json!([reading(1)]), json!([reading(1)])]).await;
-    let app = gateway(&broker.url, preset(None));
+    let app = gateway(&broker.url, stored);
     let mut answers = Vec::new();
     for path in [
         format!("/api/endpoint/{SLUG}/feeds/q=pm10%3C5/events.csv"),

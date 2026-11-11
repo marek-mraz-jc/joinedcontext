@@ -62,7 +62,7 @@ pub const MAX_AGE: u32 = 300;
 /// `q`, `scopeQ` and `lang` are joined with the output's own.
 const GEO: [&str; 4] = ["georel", "geometry", "coordinates", "geoproperty"];
 
-/// The year of every tag URI (RFC 4151 2.1): fixed, so an id never changes.
+/// The year of the feed's tag URI (RFC 4151 2.1): fixed, so its id never changes.
 const TAG_YEAR: &str = "2026";
 
 /// The feed surface.
@@ -471,7 +471,6 @@ async fn page(
         }),
         next: (after < all.len()).then(|| url_at(&this, &asked.pairs, Some(after))),
         author: host.to_owned(),
-        entry_ids: format!("tag:{host},{TAG_YEAR}:{id}/"),
     };
     Ok(Served {
         format,

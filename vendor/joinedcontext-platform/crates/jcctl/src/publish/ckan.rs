@@ -2136,7 +2136,7 @@ mod tests {
             .filter_map(|r| r["name"].as_str())
             .collect();
         assert_eq!(names, ["Kalendár", "zasadnutia"]);
-        assert_eq!(resources[1]["url"], format!("{url}/ical/v1/zasadnutia.ics"));
+        assert_eq!(resources[1]["url"], format!("{url}/feeds/zasadnutia.ics"));
         assert_eq!(resources[0]["format"], "ICS");
         let said = resources[0]["description"].as_str().unwrap_or_default();
         assert!(said.starts_with("Všetky podujatia\n\n"), "{said}");
@@ -2162,10 +2162,7 @@ mod tests {
             names,
             ["Kultúra (Atom)", "Kultúra (RSS 2.0)", "Kultúra (JSON Feed)"]
         );
-        assert_eq!(
-            resources[1]["url"],
-            format!("{url}/feed/v1/kultura/rss.xml")
-        );
+        assert_eq!(resources[1]["url"], format!("{url}/feeds/kultura.rss"));
         assert_eq!(resources[1]["format"], "RSS");
         assert_eq!(resources[2]["mimetype"], "application/feed+json");
         let said = resources[0]["description"].as_str().unwrap_or_default();

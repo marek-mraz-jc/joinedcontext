@@ -87,6 +87,9 @@ pub struct RealmConfig {
     pub default_groups: Vec<String>,
     pub cimd_allowed_client_domains: Vec<String>,
     pub cimd_allowed_redirect_domains: Vec<String>,
+    /// Optional scopes a CIMD client gets on top of `default_optional_client_scopes`; no other
+    /// client sees this list, so the Portal MCP audience never widens a realm-wide default.
+    pub cimd_optional_client_scopes: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub smtp_server: Option<SmtpServerConfig>,
     pub apply_checksum: Option<String>,
@@ -179,6 +182,7 @@ impl Default for RealmConfig {
                 "localhost".into(),
                 "127.0.0.1".into(),
             ],
+            cimd_optional_client_scopes: vec!["mcp:portal".into(), "offline_access".into()],
             smtp_server: None,
             apply_checksum: None,
         }
