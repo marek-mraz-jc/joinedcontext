@@ -4344,7 +4344,7 @@ mod tests {
         );
         write(
             "projects/city/spaces/air/endpoints/air-public.yaml",
-            &format!("{}  contextSpaceRef: air\n  slug: {SLUG}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n", head("Endpoint", "air-public")),
+            &format!("{}  contextSpaceRef: air\n  slug: {SLUG}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n  policyRefs: ['urn:ngsi-ld:Policy:city.example:city-air:cars']\n", head("Endpoint", "air-public")),
         );
         write(
             "projects/city/spaces/air/policies/cars.yaml",
