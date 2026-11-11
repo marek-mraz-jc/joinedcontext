@@ -24,6 +24,16 @@ async fn stop_signal() {
 }
 
 fn main() -> ExitCode {
+    // `jc validate --as-portal ...`: the Portal's judge over a checkout, offline (P-15), so the
+    // seed CI runs the rules of the image it pins.
+    #[cfg(feature = "portal")]
+    {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if args.first().map(String::as_str) == Some("validate") {
+            let code = joinedcontext_portal::judge::validate_command(&args[1..]);
+            return ExitCode::from(u8::try_from(code).unwrap_or(1));
+        }
+    }
     let cli = jc::Cli::parse();
     let cfg = match jc::Config::resolve(cli) {
         Ok(cfg) => cfg,

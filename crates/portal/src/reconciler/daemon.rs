@@ -855,7 +855,8 @@ impl Syncer {
         let Some((scratch, repository)) = self.staged_apart(&revision).await? else {
             return Ok(());
         };
-        let (repository, refusals) = self.refuse_invalid(&scratch, Arc::new(repository), &revision, &default_branch);
+        let (repository, refusals) =
+            self.refuse_invalid(&scratch, Arc::new(repository), &revision, &default_branch);
         let (fresh_mirror, _) =
             self.load_mirror(&scratch, &repository, &refusals, &revision, &default_branch)?;
         if fresh_mirror.repositories() != self.mirror.repositories() {
@@ -1787,7 +1788,13 @@ impl Syncer {
                 );
             }
         }
-        self.refuse_judged(scratch, &repository, &mut refusals, revision, default_branch);
+        self.refuse_judged(
+            scratch,
+            &repository,
+            &mut refusals,
+            revision,
+            default_branch,
+        );
         let change = self.warned_invalid.cycle(
             refusals
                 .values()
@@ -1796,7 +1803,10 @@ impl Syncer {
         for warning in &change.new {
             tracing::warn!(%warning, standing = change.standing, "manifest fails its kind's validation or the Portal's checks and is refused");
         }
-        cleared("manifests failing their kind's validation or the Portal's checks", &change);
+        cleared(
+            "manifests failing their kind's validation or the Portal's checks",
+            &change,
+        );
         if refusals.is_empty() {
             return (repository, refusals);
         }
@@ -6270,7 +6280,10 @@ output_error{stream="kpi"} 6
 
         spec["audience"] = json!("public");
         let fixed = manifest("Endpoint", "air", spec);
-        assert!(run(&[(path, fixed.clone())], "cccc3333").is_empty(), "a fix clears it");
+        assert!(
+            run(&[(path, fixed.clone())], "cccc3333").is_empty(),
+            "a fix clears it"
+        );
         assert!(run(&[(path, fixed)], "dddd4444").is_empty(), "unchanged");
     }
 

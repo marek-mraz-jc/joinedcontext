@@ -409,7 +409,11 @@ impl AppState {
                 .with_judge_settings(
                     state.config.organization_bounds.clone(),
                     state.config.app_settings.as_ref().map(|s| s.apex.clone()),
-                    state.config.app_settings.as_ref().map(|s| s.org_domain.clone()),
+                    state
+                        .config
+                        .app_settings
+                        .as_ref()
+                        .map(|s| s.org_domain.clone()),
                 )
                 .with_notices(Arc::clone(&state.comments))
                 .with_pipeline_outcomes(

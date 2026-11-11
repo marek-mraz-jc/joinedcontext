@@ -2102,7 +2102,7 @@ async fn approve_every_file(
     project: &str,
     shako: &ShakoClient,
     pr: &PullRequest,
-) -> Result<(Lane, bool, bool, bool, bool, bool), ApiError> {
+) -> Result<(Lane, bool, bool, bool, bool, bool, Vec<ResourceEnvelope>), ApiError> {
     // The caller's grants, per project, computed where each file actually lives (PF-50, T-1682).
     // Asking the project in the *path* once would check a file under `projects/other/` against a
     // binding that never reached it: an organization-scoped grant covers every project and is
@@ -2303,9 +2303,26 @@ async fn approve_every_file(
             change::classify_manifest(envelope, Operation::Create),
         );
     }
-    // Every file meets the one judge again (P-2, CHG-03): the mirror, the operator's bounds
-    // (PF-97) and the public-app policy (PF-103) may have moved since the proposal, and the
-    // change's other files stand as the one bundle they merge as.
+    Ok((
+        lane,
+        deletes_every_kind,
+        changes_access,
+        publishes,
+        grants_approver,
+        grants_access,
+        judged,
+    ))
+}
+
+/// Every file of an approved change meets the one judge again (P-2, CHG-03): the mirror, the
+/// operator's bounds (PF-97) and the public-app policy (PF-103) may have moved since the
+/// proposal, and the change's other files stand as the one bundle they merge as. Run after
+/// every check of who may approve, so a refusal never answers for someone who may not.
+fn judge_at_approval(
+    state: &AppState,
+    project: &str,
+    judged: &[ResourceEnvelope],
+) -> Result<(), ApiError> {
     let ground = crate::judge::Ground::of(state);
     let bundle = judged
         .iter()
@@ -2315,18 +2332,10 @@ async fn approve_every_file(
         .sync_scope(bundle, || {
             judged.iter().try_for_each(|e| {
                 let project = e.metadata.namespace.as_deref().unwrap_or(project);
-                crate::judge::manifest(&ground, project, e)
+                crate::judge::manifest_at_approval(&ground, project, e)
             })
         })
-        .map_err(|e| ApiError::Conflict(crate::judge::reason(&e)))?;
-    Ok((
-        lane,
-        deletes_every_kind,
-        changes_access,
-        publishes,
-        grants_approver,
-        grants_access,
-    ))
+        .map_err(|e| ApiError::Conflict(crate::judge::reason(&e)))
 }
 
 /// Whether this file of a change publishes in the public catalogue (EP-142) or makes an App
@@ -2557,6 +2566,7 @@ pub async fn approve_change_for(
         publishes,
         grants_approver,
         grants_access,
+        judged,
     ) = approve_every_file(state, identity, project, shako, &pr).await?;
     if connector.is_some() && (publishes || grants_access) {
         return Err(ApiError::Denied(
@@ -2637,6 +2647,7 @@ pub async fn approve_change_for(
             data.name
         )));
     }
+    judge_at_approval(state, project, &judged)?;
 
     // The Portal's forge token authored the pull request, and the forge refuses a review from the
     // author (422 "approve your own pull is not allowed"), so the approval is not a forge review:

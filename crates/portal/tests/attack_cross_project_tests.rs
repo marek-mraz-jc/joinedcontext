@@ -40,7 +40,7 @@ const BRANCH: &str = "portal/update-pipeline-aq-1682aaaa";
 fn pipeline_yaml(project: &str, name: &str) -> String {
     format!(
         "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: {name}\n  \
-         namespace: {project}\nspec:\n  contextSpaceRef: air\n  source:\n    kind: http\n"
+         namespace: {project}\nspec:\n  class: resident\n  targetEndpoint: urn:ngsi-ld:Endpoint:bb.sk:ovzdusie:air\n"
     )
 }
 

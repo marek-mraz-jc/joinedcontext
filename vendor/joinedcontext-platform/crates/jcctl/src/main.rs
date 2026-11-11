@@ -1118,8 +1118,8 @@ fn migrate_mqtt_roles(dir: &Path) -> ExitCode {
 
 /// `validate --as-portal --repo-dir <dir> [--project-dir <slug>=<dir>]... [--apex <zone>]`: the
 /// Portal's own judge over the checkout (P-15), which lives in the Portal and is built from its
-/// pinned jc-core, so this runs the Portal binary (`JC_PORTAL_BIN`, else `joinedcontext-portal`
-/// on the PATH) rather than a second copy of its rules. Its exit code is this one's.
+/// pinned jc-core, so this runs the Portal binary (`JC_PORTAL_BIN`, e.g. the platform image's
+/// `jc`, else `joinedcontext-portal` on the PATH) rather than a second copy of its rules. Its exit code is this one's.
 fn validate_as_portal(rest: &[&str]) -> ExitCode {
     let portal = std::env::var_os("JC_PORTAL_BIN")
         .filter(|bin| !bin.is_empty())
@@ -1138,8 +1138,8 @@ fn validate_as_portal(rest: &[&str]) -> ExitCode {
         Err(err) => {
             eprintln!(
                 "validate --as-portal runs the Portal's judge, and '{}' did not start: {err}; \
-                 set JC_PORTAL_BIN to the joinedcontext-portal binary of the Portal release to \
-                 judge as (its image holds it at /usr/local/bin/joinedcontext-portal)",
+                 set JC_PORTAL_BIN to the binary of the Portal release to judge as: \
+                 /usr/local/bin/jc in the platform image, or joinedcontext-portal",
                 std::path::Path::new(&portal).display()
             );
             ExitCode::from(2)

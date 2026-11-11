@@ -32,7 +32,7 @@ async fn main() {
     // a usage or configuration error.
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("validate") {
-        std::process::exit(validate(&args[1..]));
+        std::process::exit(joinedcontext_portal::judge::validate_command(&args[1..]));
     }
 
     let config = match Config::from_env() {
@@ -67,71 +67,5 @@ async fn migrate() -> i32 {
             eprintln!("migrate: {err}");
             1
         }
-    }
-}
-
-/// The exit code of `validate --as-portal`.
-fn validate(args: &[String]) -> i32 {
-    let usage = || {
-        eprintln!(
-            "usage: joinedcontext-portal validate --as-portal --repo-dir <org-dir> \
-             [--project-dir <slug>=<dir>]... [--apex <zone>]"
-        );
-        2
-    };
-    let mut rest: Vec<&str> = args.iter().map(String::as_str).collect();
-    let (Some(&"--as-portal"), Some(&"--repo-dir"), Some(org_dir)) =
-        (rest.first(), rest.get(1), rest.get(2).copied())
-    else {
-        return usage();
-    };
-    rest.drain(..3);
-    let (mut projects, mut apex) = (std::collections::BTreeMap::new(), None);
-    while let [flag, value, tail @ ..] = rest.as_slice() {
-        match *flag {
-            "--project-dir" => match value.split_once('=') {
-                Some((slug, dir)) => {
-                    projects.insert(slug.to_owned(), std::path::PathBuf::from(dir));
-                }
-                None => return usage(),
-            },
-            "--apex" => apex = Some((*value).to_owned()),
-            _ => return usage(),
-        }
-        rest = tail.to_vec();
-    }
-    if !rest.is_empty() {
-        return usage();
-    }
-    let bounds = match joinedcontext_portal::config::organization_bounds(&|key| {
-        std::env::var(key).ok()
-    }) {
-        Ok(bounds) => bounds,
-        Err(err) => {
-            eprintln!("Configuration error: {err}");
-            return 2;
-        }
-    };
-    let report = joinedcontext_portal::judge::validate(
-        std::path::Path::new(org_dir),
-        projects,
-        (&bounds, apex.as_deref(), None),
-    );
-    for finding in &report.findings {
-        eprintln!("{finding}");
-    }
-    for warning in &report.warnings {
-        eprintln!("warning: {warning}");
-    }
-    if report.is_valid() {
-        println!("{} manifests valid", report.checked);
-        0
-    } else {
-        eprintln!(
-            "{} manifests valid, {} invalid",
-            report.checked,
-            report.findings.len()
-        );
-        1
     }
 }

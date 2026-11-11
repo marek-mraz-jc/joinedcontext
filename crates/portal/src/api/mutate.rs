@@ -1614,6 +1614,7 @@ async fn check_content(
         // A deletion is judged on what it leaves: the kind still loads, a write stays made
         // (PL-111) and a public dashboard keeps public Endpoints (UI-19).
         crate::judge::kind(&ground, project, envelope)?;
+        crate::judge::spec(&ground, project, envelope)?;
         check_unmade_writes(&ground, project, operation, envelope)?;
         return crate::dashboards::check(
             &state.mirror,
@@ -2063,13 +2064,12 @@ pub(crate) fn organization_within_bounds(
     let Ok(spec) = serde_json::from_value::<jc_core::kinds::OrganizationSpec>(spec.clone()) else {
         return Ok(());
     };
-    spec.check_limits(bounds)
-        .map_err(|e| {
-            refusal(format!(
-                "{e}; an organization sets a value inside the bound, and the operator moves the \
+    spec.check_limits(bounds).map_err(|e| {
+        refusal(format!(
+            "{e}; an organization sets a value inside the bound, and the operator moves the \
                  bound in the deployment (portal.organizationBounds), never the Portal (PF-97)"
-            ))
-        })
+        ))
+    })
 }
 
 /// Whether the Organization refuses public Apps (`spec.policies.apps.public`, PF-103).
@@ -2219,8 +2219,7 @@ pub(crate) fn check_policy_refs(
             || crate::spaces::segment(mirror, project, space),
             crate::spaces::segment_of,
         );
-    let mirrored = mirror
-        .list(project, "Policy", &crate::store::ListOptions::default());
+    let mirrored = mirror.list(project, "Policy", &crate::store::ListOptions::default());
     let policies: std::collections::BTreeSet<String> = mirrored
         .items
         .into_iter()
@@ -3283,9 +3282,13 @@ mod tests {
                 "projects": { "quota": { "contextSpaces": spaces } }
             })
         };
-        let refused =
-            organization_within_bounds(&state.config.organization_bounds, "Organization", &spec(50), ApiError::Conflict)
-                .expect_err("50 is over the operator's 20");
+        let refused = organization_within_bounds(
+            &state.config.organization_bounds,
+            "Organization",
+            &spec(50),
+            ApiError::Conflict,
+        )
+        .expect_err("50 is over the operator's 20");
         let ApiError::Conflict(message) = refused else {
             panic!("a conflict at approval: {refused:?}");
         };
@@ -3297,14 +3300,20 @@ mod tests {
         ] {
             assert!(message.contains(part), "{part}: {message}");
         }
-        assert!(
-            organization_within_bounds(&state.config.organization_bounds, "Organization", &spec(20), ApiError::Conflict)
-                .is_ok()
-        );
-        assert!(
-            organization_within_bounds(&state.config.organization_bounds, "ContextSpace", &spec(50), ApiError::Conflict)
-                .is_ok()
-        );
+        assert!(organization_within_bounds(
+            &state.config.organization_bounds,
+            "Organization",
+            &spec(20),
+            ApiError::Conflict
+        )
+        .is_ok());
+        assert!(organization_within_bounds(
+            &state.config.organization_bounds,
+            "ContextSpace",
+            &spec(50),
+            ApiError::Conflict
+        )
+        .is_ok());
         // Without an operator file a quota has no ceiling (ADR-N-035: the operator sets one).
         let open = AppState::new(Config::for_tests(), None);
         assert!(organization_within_bounds(
@@ -3345,7 +3354,12 @@ mod tests {
             )
         };
         let check = |envelope: &ResourceEnvelope| {
-            public_app_allowed(&crate::judge::Ground::of(&state), "helsinki", envelope, ApiError::BadRequest)
+            public_app_allowed(
+                &crate::judge::Ground::of(&state),
+                "helsinki",
+                envelope,
+                ApiError::BadRequest,
+            )
         };
 
         // No Organization, or one that says nothing: public Apps are allowed (the default).
@@ -4252,7 +4266,11 @@ mod tests {
             .expect("object")
             .extend(listed.as_object().expect("object").clone());
         let endpoint = manifest("Endpoint", "public-air", spec);
-        let errors = refusal(check_policy_refs(&crate::judge::Ground::of(&state), "ovzdusie", &endpoint));
+        let errors = refusal(check_policy_refs(
+            &crate::judge::Ground::of(&state),
+            "ovzdusie",
+            &endpoint,
+        ));
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(errors[0].starts_with("spec.policyRefs: "), "{errors:?}");
 
@@ -4313,7 +4331,12 @@ mod tests {
         ];
         let result = crate::references::BUNDLE
             .scope(drafts, async {
-                check_unmade_writes(&crate::judge::Ground::of(&state), "ovzdusie", Operation::Create, &writer)
+                check_unmade_writes(
+                    &crate::judge::Ground::of(&state),
+                    "ovzdusie",
+                    Operation::Create,
+                    &writer,
+                )
             })
             .await;
         assert!(refusal(result)[0].contains("sensors-write"));
@@ -4329,7 +4352,9 @@ mod tests {
             json!({ "contextSpaceRef": space, "linkml": "./m.linkml.yaml", "version": "0.1.0",
                     "lifecycle": lifecycle })
         };
-        let check = |name: &str, spec: Value| check_one_model(&crate::judge::Ground::of(&state), "ovzdusie", name, &spec);
+        let check = |name: &str, spec: Value| {
+            check_one_model(&crate::judge::Ground::of(&state), "ovzdusie", name, &spec)
+        };
         check("walk", model("walk", "draft")).expect("the space's first model");
         state
             .mirror
@@ -4364,7 +4389,12 @@ mod tests {
     fn a_write_nobody_can_make_is_refused_naming_what_to_change() {
         let state = narrowed_space();
         let check = |operation, envelope: ResourceEnvelope| {
-            check_unmade_writes(&crate::judge::Ground::of(&state), "ovzdusie", operation, &envelope)
+            check_unmade_writes(
+                &crate::judge::Ground::of(&state),
+                "ovzdusie",
+                operation,
+                &envelope,
+            )
         };
         let writer = || {
             manifest(
@@ -4456,7 +4486,12 @@ mod tests {
             ),
         ));
         let check = |envelope: ResourceEnvelope| {
-            check_unmade_writes(&crate::judge::Ground::of(&state), "ovzdusie", Operation::Create, &envelope)
+            check_unmade_writes(
+                &crate::judge::Ground::of(&state),
+                "ovzdusie",
+                Operation::Create,
+                &envelope,
+            )
         };
         assert!(check(manifest(
             "Policy",
@@ -4546,7 +4581,9 @@ mod tests {
                 }),
             ));
         }
-        let check = |name: &str, spec: Value| check_replace(&crate::judge::Ground::of(&state), "ovzdusie", name, &spec);
+        let check = |name: &str, spec: Value| {
+            check_replace(&crate::judge::Ground::of(&state), "ovzdusie", name, &spec)
+        };
 
         assert!(
             check("stations", pipeline("public-air", "replace")).is_ok(),

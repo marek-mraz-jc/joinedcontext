@@ -539,7 +539,11 @@ pub fn org_domain(state: &AppState, fallback: &str) -> String {
 
 /// [`org_domain`] over `mirror`, with the deployment's domain `configured` when no Organization
 /// names one.
-pub fn org_domain_in(mirror: &crate::store::Mirror, configured: Option<&str>, fallback: &str) -> String {
+pub fn org_domain_in(
+    mirror: &crate::store::Mirror,
+    configured: Option<&str>,
+    fallback: &str,
+) -> String {
     let domain_of =
         |env: crate::resource::ResourceEnvelope| env.spec["domain"].as_str().map(str::to_owned);
     crate::permissions::installation_organization_manifest(mirror)

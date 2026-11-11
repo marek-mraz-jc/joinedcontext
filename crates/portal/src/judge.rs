@@ -50,10 +50,11 @@ type Check = fn(&Ground<'_>, &str, &ResourceEnvelope) -> Result<(), ApiError>;
 
 /// Every check, by name, in the order a proposal meets them. A deletion is never judged here:
 /// the propose door checks what a deletion leaves behind itself.
-pub const CHECKS: [(&str, Check); 16] = [
+pub const CHECKS: [(&str, Check); 17] = [
     ("literal-secret", literal_secret),
     ("kind", kind),
     ("endpoint-representations", endpoint_representations),
+    ("spec", spec),
     ("organization-bounds", organization_bounds),
     ("public-app", public_app),
     ("app-hostnames", app_hostnames),
@@ -80,6 +81,27 @@ pub fn manifest(
         .try_for_each(|(_, check)| check(ground, project, envelope))
 }
 
+/// What approval does not judge again, each refused before and after it: the spec's own parse
+/// (`spec`) reads the same bytes the propose door read, a write nobody can make
+/// (`unmade-writes`, PL-111) and a second model of a space (`one-data-model`, DM-61) are
+/// properties of the whole project once the change merged, read beside Endpoint and model
+/// rights the approval checks itself (PL-94, DM-77). The propose door refuses them before the
+/// Change exists and the reconciler's load refuses them on `main`, whoever pushed to the branch
+/// between, so no path serves them.
+pub const NOT_AT_APPROVAL: [&str; 3] = ["spec", "unmade-writes", "one-data-model"];
+
+/// [`manifest`] at approval: every check but [`NOT_AT_APPROVAL`].
+pub fn manifest_at_approval(
+    ground: &Ground<'_>,
+    project: &str,
+    envelope: &ResourceEnvelope,
+) -> Result<(), ApiError> {
+    CHECKS
+        .iter()
+        .filter(|(name, _)| !NOT_AT_APPROVAL.contains(name))
+        .try_for_each(|(_, check)| check(ground, project, envelope))
+}
+
 /// The words of a refusal, without the HTTP status: what the reconciler and the offline
 /// validation show.
 pub fn reason(err: &ApiError) -> String {
@@ -87,9 +109,7 @@ pub fn reason(err: &ApiError) -> String {
         ApiError::BadRequest(detail) | ApiError::Denied(detail) | ApiError::Conflict(detail) => {
             detail.clone()
         }
-        ApiError::Invalid { detail, .. } | ApiError::Unprocessable { detail, .. } => {
-            detail.clone()
-        }
+        ApiError::Invalid { detail, .. } | ApiError::Unprocessable { detail, .. } => detail.clone(),
         other => other.to_string(),
     }
 }
@@ -173,16 +193,22 @@ fn literal_secret(_: &Ground<'_>, _: &str, envelope: &ResourceEnvelope) -> Resul
     }
 }
 
-/// The kind is one the platform defines, and its spec parses with the kind's invariants
-/// (CC-72, T-0412, CC-08).
+/// The kind is one the platform defines (CC-72, T-0833).
 pub(crate) fn kind(_: &Ground<'_>, _: &str, envelope: &ResourceEnvelope) -> Result<(), ApiError> {
     let kind = &envelope.kind;
-    if jc_core::registry::by_kind(kind).is_none() {
-        return Err(ApiError::BadRequest(format!(
+    match jc_core::registry::by_kind(kind) {
+        Some(_) => Ok(()),
+        None => Err(ApiError::BadRequest(format!(
             "kind '{kind}' is declared but not defined by the platform yet, and a repository \
              holding one stops loading for every component; it cannot be written (CC-72, T-0833)"
-        )));
+        ))),
     }
+}
+
+/// The spec parses with the kind's invariants (T-0412, CC-08), after the representation
+/// outputs, which name the member a form shows the finding beside (EP-159).
+pub(crate) fn spec(_: &Ground<'_>, _: &str, envelope: &ResourceEnvelope) -> Result<(), ApiError> {
+    let kind = &envelope.kind;
     let yaml = serde_json::to_string(envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
     match jc_core::registry::validate_yaml(kind, &yaml) {
         Some(Err(e)) => Err(ApiError::BadRequest(format!(
@@ -219,7 +245,11 @@ fn organization_bounds(
 }
 
 /// A new public App while the organization refuses public Apps (PF-103).
-fn public_app(ground: &Ground<'_>, project: &str, envelope: &ResourceEnvelope) -> Result<(), ApiError> {
+fn public_app(
+    ground: &Ground<'_>,
+    project: &str,
+    envelope: &ResourceEnvelope,
+) -> Result<(), ApiError> {
     mutate::public_app_allowed(ground, project, envelope, ApiError::BadRequest)
 }
 
@@ -397,7 +427,12 @@ pub fn validate(
             else {
                 continue;
             };
-            if envelope.metadata.namespace.as_deref().is_none_or(str::is_empty) {
+            if envelope
+                .metadata
+                .namespace
+                .as_deref()
+                .is_none_or(str::is_empty)
+            {
                 envelope.metadata.namespace = Some(crate::reconciler::staging::namespace_of(
                     &resource.path.to_string_lossy(),
                 ));
@@ -423,6 +458,72 @@ pub fn validate(
         &jcctl::assemble::Directories(projects),
         &judge,
     )
+}
+
+/// `validate --as-portal --repo-dir <org> [--project-dir <slug>=<dir>]... [--apex <zone>]` of the
+/// `joinedcontext-portal` and `jc` binaries, its exit code: 0 valid, 1 a finding, 2 a usage or
+/// configuration error. The operator's bounds come from `JC_PORTAL_ORGANIZATION_BOUNDS_FILE`.
+pub fn validate_command(args: &[String]) -> i32 {
+    let usage = || {
+        eprintln!(
+            "usage: joinedcontext-portal validate --as-portal --repo-dir <org-dir> \
+             [--project-dir <slug>=<dir>]... [--apex <zone>]"
+        );
+        2
+    };
+    let mut rest: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (Some(&"--as-portal"), Some(&"--repo-dir"), Some(org_dir)) =
+        (rest.first(), rest.get(1), rest.get(2).copied())
+    else {
+        return usage();
+    };
+    rest.drain(..3);
+    let (mut projects, mut apex) = (std::collections::BTreeMap::new(), None);
+    while let [flag, value, tail @ ..] = rest.as_slice() {
+        match *flag {
+            "--project-dir" => match value.split_once('=') {
+                Some((slug, dir)) => {
+                    projects.insert(slug.to_owned(), std::path::PathBuf::from(dir));
+                }
+                None => return usage(),
+            },
+            "--apex" => apex = Some((*value).to_owned()),
+            _ => return usage(),
+        }
+        rest = tail.to_vec();
+    }
+    if !rest.is_empty() {
+        return usage();
+    }
+    let bounds = match crate::config::organization_bounds(&|key| std::env::var(key).ok()) {
+        Ok(bounds) => bounds,
+        Err(err) => {
+            eprintln!("Configuration error: {err}");
+            return 2;
+        }
+    };
+    let report = validate(
+        std::path::Path::new(org_dir),
+        projects,
+        (&bounds, apex.as_deref(), None),
+    );
+    for finding in &report.findings {
+        eprintln!("{finding}");
+    }
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
+    }
+    if report.is_valid() {
+        println!("{} manifests valid", report.checked);
+        0
+    } else {
+        eprintln!(
+            "{} manifests valid, {} invalid",
+            report.checked,
+            report.findings.len()
+        );
+        1
+    }
 }
 
 fn key(envelope: &ResourceEnvelope) -> crate::resource::ResourceKey {
@@ -512,14 +613,22 @@ mod tests {
                 envelope("DataSource", "feed", "ovzdusie", json!({ "password": "p" })),
             ),
             "kind" => (vec![], envelope("NoSuchKind", "x", "ovzdusie", json!({}))),
+            "spec" => (
+                vec![],
+                envelope("DataSource", "feed", "ovzdusie", json!({ "notAField": 1 })),
+            ),
             "endpoint-representations" => (
                 vec![],
-                air(endpoint(json!({ "representations": { "notAnOutput": {} } }))),
+                air(endpoint(
+                    json!({ "representations": { "notAnOutput": {} } }),
+                )),
             ),
             "organization-bounds" => (
                 vec![],
-                org(json!({ "domain": "hel.fi", "locales": ["en"], "defaultLocale": "en",
-                            "projects": { "quota": { "contextSpaces": 50 } } })),
+                org(
+                    json!({ "domain": "hel.fi", "locales": ["en"], "defaultLocale": "en",
+                            "projects": { "quota": { "contextSpaces": 50 } } }),
+                ),
             ),
             "public-app" => (
                 vec![org(
@@ -529,7 +638,12 @@ mod tests {
             ),
             "app-hostnames" => (
                 vec![org(json!({ "domain": "hel.fi" }))],
-                envelope("App", "map", "ovzdusie", json!({ "hostnames": ["map.hel.fi"] })),
+                envelope(
+                    "App",
+                    "map",
+                    "ovzdusie",
+                    json!({ "hostnames": ["map.hel.fi"] }),
+                ),
             ),
             "service-account-client-id" => (
                 vec![envelope("ServiceAccount", "c", "a-b", account())],
@@ -643,7 +757,9 @@ mod tests {
             ),
             "catalogue-publication" => (
                 vec![],
-                air(endpoint(json!({ "audience": "organization", "publish": { "ckan": { "instanceRef": "opendata" } } }))),
+                air(endpoint(
+                    json!({ "audience": "organization", "publish": { "ckan": { "instanceRef": "opendata" } } }),
+                )),
             ),
             other => panic!("no fixture for check {other}"),
         }
@@ -751,16 +867,21 @@ mod tests {
         let report = validate(&dir, Default::default(), settings);
         let found: Vec<String> = report.findings.iter().map(ToString::to_string).collect();
         assert!(
-            found.iter().any(|f| f.starts_with("projects/city/spaces/air/endpoints/air.yaml")
-                && f.contains("the Portal refuses it")
-                && f.contains("EP-62")),
+            found.iter().any(
+                |f| f.starts_with("projects/city/spaces/air/endpoints/air.yaml")
+                    && f.contains("the Portal refuses it")
+                    && f.contains("EP-62")
+            ),
             "{found:?}"
         );
 
         write("public");
         let report = validate(&dir, Default::default(), settings);
         assert!(
-            !report.findings.iter().any(|f| f.message.contains("the Portal refuses it")),
+            !report
+                .findings
+                .iter()
+                .any(|f| f.message.contains("the Portal refuses it")),
             "{:?}",
             report.findings
         );
