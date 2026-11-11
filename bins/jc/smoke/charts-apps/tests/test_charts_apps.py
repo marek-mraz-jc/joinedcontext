@@ -105,6 +105,30 @@ def test_a_closed_panel_read_by_a_person_no_policy_names_passes_only_on_the_gate
     assert suite.judge_refused(200, [], "upstream status 500: boom")[0] == suite.FAIL
 
 
+def test_a_closed_panel_gives_one_row_per_person_with_the_answer_it_got():
+    """Run 42969262429 crashed the suite here: each judge's verdict lands in `result`, its text in
+    `actual`, and a person without an edge token is a failing row, never a crash."""
+    from common import Results
+
+    rows = {"reader-token": {"frames": [{"fields": [{"name": "name", "values": ["a", "b"]}]}]},
+            "person-token": {"error": "outbound datasource error: upstream status 404: not found"}}
+
+    class Portal:
+        def json(self, method, path, headers=None):
+            return 200, rows[headers["X-Access-Token"]]
+
+    tokens = {suite.READER: ("reader-token", ""), suite.PERSON: ("person-token", "")}
+    res = Results("charts-apps", "http://127.0.0.1:1")
+    suite.read_closed(Portal(), res, "/api/v1/projects/p/grafana/dashboards/d/panels/4?from=1", "t", tokens.get)
+    assert [(r["id"], r["result"], r["actual"]) for r in res.rows] == [
+        ("portal.panel", suite.PASS, "200, 1 frames, 2 rows"),
+        ("portal.panel.refused", suite.PASS,
+         "200, 0 frames, 0 rows, error: outbound datasource error: upstream status 404: not found")]
+    res = Results("charts-apps", "http://127.0.0.1:1")
+    suite.read_closed(Portal(), res, "/p?x", "t", lambda who: (None, "login of x at edge: 400"))
+    assert [(r["result"], r["reason"]) for r in res.rows] == [(suite.FAIL, "no edge token: login of x at edge: 400")] * 2
+
+
 def test_apps_from_manifests(tmp_path):
     d = tmp_path / "joinedcontext" / "helsinki" / "apps" / "air"
     d.mkdir(parents=True)
