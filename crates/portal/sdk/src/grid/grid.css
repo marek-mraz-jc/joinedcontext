@@ -1618,8 +1618,8 @@ a.jc-cell--link:focus-visible {
 .jc-grid-sort-note { margin: 0; padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px); font-size: 0.8125rem; }
 .jc-grid-error-detail { margin-top: var(--jc-space-2, 8px); font-size: 0.8125rem; color: var(--jc-color-muted, #666); }
 .jc-grid-error-detail summary { cursor: pointer; min-height: 44px; display: inline-flex; align-items: center; gap: var(--jc-space-1, 4px); color: var(--jc-color-ink, var(--jc-color-text, #1a1a1a)); text-decoration: underline; text-underline-offset: 2px; }
-/* inline-flex drops the native triangle: draw it, so the line reads as something to open (T-6781). */
-.jc-grid-error-detail summary::before { content: "▸"; text-decoration: none; display: inline-block; }
+/* inline-flex drops the native triangle: draw it as a border (a glyph would take the underline), so the line reads as something to open (T-6781). */
+.jc-grid-error-detail summary::before { content: ""; border-inline-start: 6px solid currentColor; border-block: 4px solid transparent; transition: transform 0.1s; }
 .jc-grid-error-detail[open] summary::before { transform: rotate(90deg); }
 
 @media (width <= 640px) {
