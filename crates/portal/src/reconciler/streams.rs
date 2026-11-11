@@ -1469,7 +1469,7 @@ fn place(
     match Clock::of(spec.period.as_deref(), spec.schedule.as_deref()) {
         Ok(clock) => {
             own_credential(&mut stream, ns);
-            let stream = run_queue::one_run(&stream);
+            let stream = run_queue::one_run(&stream).to_string();
             let replace = identity::replaces_any(spec);
             queued.insert(
                 (ns.to_owned(), name.clone()),
