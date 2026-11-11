@@ -708,6 +708,21 @@ fn d3_dataset_page_shows_every_block_for_a_platform_dataset() {
     }
     // The explorer draws the map: no second map card asks the same reads (as on CKAN).
     assert!(!html.contains("id=\"jc-map-embed\""));
+    // Subscribe sits in the dataset's own title row and shows each feed's https address to copy;
+    // webcal is the secondary link (a browser without a calendar app does nothing with it).
+    let head = &html[html.find("class=\"jc-dataset-head\"").expect("title row")..];
+    let head = &head[..head.find("jc-explorer").unwrap_or(head.len())];
+    assert!(head.contains("<h1>") && head.contains("class=\"jc-subscribe\""));
+    assert!(head.contains(
+        "<textarea id=\"jc-subscribe-cal-1\" class=\"form-control\" rows=\"2\" readonly spellcheck=\"false\">https://x.example/c.ics</textarea>"
+    ));
+    assert!(head.contains("data-jc-copy=\"jc-subscribe-cal-1\""));
+    assert!(head.contains("data-jc-copy=\"jc-subscribe-news-1\""));
+    assert!(head.contains(&format!(
+        "<a href=\"webcal://x.example/c.ics\">{}</a>",
+        esc_t("subscribe_open_app", "en")
+    )));
+    assert_eq!(html.matches("id=\"jc-copy-status\"").count(), 1);
     assert!(
         html.contains("<meta name=\"robots\" content=\"noindex, nofollow\">"),
         "B4 noindex"
