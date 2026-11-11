@@ -4505,12 +4505,17 @@ mod tests {
 
     /// T-5040: the dry run a person sees answers a red verdict whose finding names the field
     /// (`spec.outputs.0.targetEndpoint`) and says what to change; the form marks that field.
+    /// Since P-18 (T-6736) an Endpoint with a policyRef binds the Pipeline naming it, so the red
+    /// case is a target the project lacks.
     #[tokio::test]
-    async fn a_dry_run_of_a_pipeline_aimed_at_a_policy_ref_endpoint_is_red() {
+    async fn a_dry_run_of_a_pipeline_aimed_at_a_missing_endpoint_is_red() {
         let state = narrowed_space();
-        let payload =
-            serde_json::to_value(manifest("Pipeline", "stations", air_pipeline("public-air")))
-                .expect("a manifest");
+        let payload = serde_json::to_value(manifest(
+            "Pipeline",
+            "stations",
+            air_pipeline("no-such-endpoint"),
+        ))
+        .expect("a manifest");
         let result = propose(
             &dummy_user(),
             &state,
