@@ -6,8 +6,10 @@ import { Link } from "@tanstack/react-router";
 import {
   Alert,
   Button,
+  EmptyState,
   Field,
   Input,
+  PageFailed,
   Select,
 } from "../ui";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "../ui/Table";
@@ -212,12 +214,8 @@ export function ProjectUsageSection({ project }: { project: string }): JSX.Eleme
       </div>
       {failed ? <Alert tone="danger">{t("endpointUsage.failed", { reason: failed })}</Alert> : null}
       {usage.isPending ? <Skeleton className="h-24 w-full" /> : null}
-      {usage.isError ? (
-        <Alert tone="danger">{t("endpointUsage.failed", { reason: usageRefusal(usage.error) })}</Alert>
-      ) : null}
-      {usage.data && endpoints.length === 0 ? (
-        <p className="text-sm text-fg-muted">{t("endpointUsage.noEndpoints")}</p>
-      ) : null}
+      {usage.isError ? <PageFailed error={usage.error} onRetry={() => void usage.refetch()} /> : null}
+      {usage.data && endpoints.length === 0 ? <EmptyState bare title={t("endpointUsage.noEndpoints")} /> : null}
       {endpoints.length > 0 ? (
         <AdminGrid<EndpointTotal>
           caption={t("endpointUsage.title")}

@@ -55,7 +55,7 @@ async function stub(page: Page, mode: Mode): Promise<void> {
     const url = new URL(route.request().url());
     const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
     const failed = () =>
-      route.fulfill({ status: 503, contentType: "application/problem+json", body: JSON.stringify({ type: "about:blank", title: "Unavailable", status: 503, detail: "The Portal store did not answer. Try again in a minute." }) });
+      route.fulfill({ status: 503, contentType: "application/problem+json", body: JSON.stringify({ type: "about:blank", title: "Unavailable", status: 503, detail: "The Portal store did not answer" }) });
     if (url.pathname.endsWith("/auth/me")) return json(IDENTITY);
     if (url.pathname === "/api/v1/projects") return json(PROJECTS);
     if (url.pathname.endsWith("/activity/stream")) return route.fulfill({ status: 204, body: "" });

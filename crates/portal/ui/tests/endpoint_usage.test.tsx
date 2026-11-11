@@ -155,6 +155,20 @@ describe("ProjectUsageSection (T-5118)", () => {
     });
   });
 
+  it("shows the server's reason with a retry when the project's usage cannot be read (T-6751)", async () => {
+    answer(
+      () =>
+        new Response(JSON.stringify({ type: "about:blank", title: "Unavailable", status: 503, detail: "The usage store did not answer" }), {
+          status: 503,
+          headers: { "Content-Type": "application/problem+json" },
+        }),
+    );
+    mount(<ProjectUsageSection project={PROJECT} />);
+    expect(await screen.findByText(/The usage store did not answer/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: i18n.t("app.error.retry") })).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: i18n.t("endpointUsage.title") })).toBeNull();
+  });
+
   it("tells a person who may read no Endpoint whom to ask", async () => {
     answer(() => jsonResponse({ from: "2026-09-23", to: "2026-10-22", endpoints: [] }));
     mount(<ProjectUsageSection project={PROJECT} />);

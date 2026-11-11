@@ -116,7 +116,8 @@ describe("the Activity page", () => {
 
   it("says the feed is loading rather than showing it empty", async () => {
     renderActivity({ pending: true });
-    expect(await screen.findByText(en.app.loading)).toBeInTheDocument();
+    // The shared grid's skeleton, announced in its own words (T-6751).
+    expect(await screen.findByText(en.entityGrid.loading)).toBeInTheDocument();
     expect(screen.queryByText(en.activity.empty)).not.toBeInTheDocument();
   });
 
@@ -152,11 +153,11 @@ describe("the Activity page", () => {
     } else {
       // The feed asks for 50 at a time and draws what it holds: what matters is that one event
       // and five hundred both read as the same page, and that 500 rows are never put in front
-      // of a person at once.
+      // of a person at once. The shared grid (T-6751) shows the first 25 of what the feed holds.
       expect(await screen.findByText("Applied change 0")).toBeInTheDocument();
       const table = await screen.findByRole("table", { name: en.activity.title });
       const drawn = table.querySelectorAll("tbody tr").length;
-      expect(drawn).toBe(Math.min(rows, 50));
+      expect(drawn).toBe(Math.min(rows, 25));
     }
     expectHeadingOutline(container);
   });
