@@ -2364,11 +2364,8 @@ dependencies = [
  "chrono",
  "daiya-model",
  "daiya-store-memory",
- "hex",
- "indexmap 2.14.2",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "thiserror 2.0.21",
  "tokio",
  "url",
@@ -6404,14 +6401,12 @@ name = "jc-router"
 version = "0.1.0"
 dependencies = [
  "axum",
- "http",
  "http-body-util",
  "ipnet",
  "serde",
  "thiserror 2.0.21",
  "tokio",
  "tower",
- "url",
 ]
 
 [[package]]
