@@ -189,6 +189,9 @@ def judge_closed(status: int, frames, error: str) -> tuple[str, str, str]:
 
 # The Portal's answer when it ignored X-Access-Token and read the cookie session instead.
 NO_TOKEN = "does not carry"
+# The Portal's own words for a source answer it does not pass on (crates/portal/src/grafana.rs
+# panel_reason): the gateway's problem body names its type URL, so its 403 or 404 arrives as this.
+SOURCE_SILENT = "the panel's datasource did not answer"
 
 
 def panel_answer(st: int, ans) -> tuple[list, str]:
@@ -210,16 +213,22 @@ def judge_reader(status: int, frames, error: str) -> tuple[str, str, str]:
     return FAIL, actual, "no rows for a person the Policy grants" if status == 200 and not error else ""
 
 
-def judge_refused(status: int, frames, error: str) -> tuple[str, str, str]:
+def judge_refused(status: int, frames, error: str, source_answered: bool = False) -> tuple[str, str, str]:
     """(result, actual, reason) of the same read as a signed-in person the Portal lets open the
     dashboard and the Policy names nowhere: the Portal answers 200 with no frame and the gateway's
-    refusal (403, or the 404 an outsider of the Endpoint's Organization gets, EP-14). A row is a leak."""
+    refusal (403, or the 404 an outsider of the Endpoint's Organization gets, EP-14). A row is a leak.
+    The Portal words the gateway's answer as SOURCE_SILENT; that passes only when the same source
+    answered the reader with rows in this run (`source_answered`), so a source that is down fails."""
     rows = frame_rows(frames)
     actual = f"{status}, {len(frames or [])} frames, {rows} rows" + (f", error: {error}" if error else "")
     if rows or frames:
         return FAIL, actual, "LEAK: data of a closed Endpoint for a person no Policy grants"
     if status == 200 and re.search(r"upstream status 40[134]\b", error or ""):
         return PASS, actual, "refused upstream"
+    if status == 200 and SOURCE_SILENT in (error or ""):
+        if source_answered:
+            return PASS, actual, "refused: the same source answered the reader with rows (portal.panel)"
+        return FAIL, actual, "the source said nothing to anyone: portal.panel did not pass"
     return FAIL, actual, "neither frames nor the gateway's refusal"
 
 
@@ -227,17 +236,21 @@ def read_closed(s, res: Results, path: str, target: str, edge_token) -> None:
     """A closed Endpoint's panel read with the person's own token (the cookie session carries none
     by design): the edge's X-Access-Token, as prod's edge sends it. portal.panel as the reader the
     Policy grants, portal.panel.refused as the suite's person no Policy names."""
-    for check_id, who, judged, want in (
-            ("portal.panel", READER, judge_reader, "200 and rows (the Policy grants the reader's group)"),
-            ("portal.panel.refused", PERSON, judge_refused,
-             "200, no frame, the gateway's refusal (no Policy names this person)")):
+    answered = False
+    for check_id, who, want in (
+            ("portal.panel", READER, "200 and rows (the Policy grants the reader's group)"),
+            ("portal.panel.refused", PERSON, "200, no frame, the gateway's refusal (no Policy names this person)")):
         token, why_not = edge_token(who)
         call = f"GET {path.split('?')[0]} as {who} (X-Access-Token of {EDGE_CLIENT})"
         if not token:
             res.add(check_id, target, call, want, "", FAIL, f"no edge token: {why_not}")
             continue
         st, ans = s.json("GET", path, headers={"X-Access-Token": token})
-        result, actual, reason = judged(st, *panel_answer(st, ans))
+        if who == READER:
+            result, actual, reason = judge_reader(st, *panel_answer(st, ans))
+            answered = result == PASS
+        else:
+            result, actual, reason = judge_refused(st, *panel_answer(st, ans), source_answered=answered)
         res.add(check_id, target, call, want, actual, result, reason)
 
 

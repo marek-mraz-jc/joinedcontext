@@ -1239,6 +1239,24 @@ def test_held_pipelines_start_every_module_but_ekiben():
     assert 'nohup "$jc_bin" --role "$role"' in (HERE / "up.sh").read_text()
 
 
+def test_jc_runs_with_the_images_allocator_settings_unless_the_caller_sets_its_own():
+    """The gate measured RSS on jemalloc's defaults, ~1.5 GiB above the live heap, because up.sh
+    started jc without the image's _RJEM_MALLOC_CONF (jc-memory-peak)."""
+    up = (HERE / "up.sh").read_text()
+    lines = "\n".join(l for l in up.splitlines() if "_RJEM_MALLOC_CONF" in l and not l.startswith("#"))
+    assert up.index("export _RJEM_MALLOC_CONF") < up.index('nohup "$jc_bin"')
+    image = re.search(r"^ENV _RJEM_MALLOC_CONF=(.+)$", (HERE / "../../bins/jc/Dockerfile").read_text(), re.M)[1]
+
+    def conf(**env):
+        script = f"here={HERE}\n{lines}\nprintf '%s' \"$_RJEM_MALLOC_CONF\""
+        return subprocess.run(["bash", "-c", script], env={"PATH": os.environ["PATH"], **env},
+                              capture_output=True, text=True, check=True).stdout
+
+    assert conf() == image and "background_thread:true" in image
+    assert conf(_RJEM_MALLOC_CONF="prof:true") == "prof:true"
+    assert conf(_RJEM_MALLOC_CONF="") == ""
+
+
 def test_every_secret_up_sh_makes_is_long_enough_for_a_jc_token(tmp_path):
     # dataroom refuses a Portal publisher token under 32 printable characters; up.sh's secret()
     # makes every token, so each one it makes has 64.

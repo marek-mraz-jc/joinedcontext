@@ -332,6 +332,11 @@ role=$(jc_role)
 [ "$role" = all ] || echo "$env_name: jc on roles $role"
 # shellcheck source=deploy/rehearsal/apps.sh
 . "$here/apps.sh"  # the Apps: image bundles, apps cache, prod builds, roles person (jc-apps-export)
+# jc's allocator settings as its image sets them (bins/jc/Dockerfile ENV), unless the caller set the
+# variable (empty: jemalloc's defaults). Without them jemalloc keeps freed pages and the gate read
+# RSS ~1.5 GiB above the live heap (jc-memory-peak, gate 2026-11-11T041800Z-gr).
+: "${_RJEM_MALLOC_CONF=$(sed -n 's/^ENV _RJEM_MALLOC_CONF=//p' "$here/../../bins/jc/Dockerfile")}"
+export _RJEM_MALLOC_CONF
 nohup "$jc_bin" --role "$role" --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "${origin#http://}" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/state/realms" \

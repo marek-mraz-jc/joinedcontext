@@ -264,10 +264,7 @@ async fn a_project_is_duplicated_into_a_repository_of_its_own() {
     let slug = endpoint["spec"]["slug"].as_str().unwrap_or_default();
     assert_ne!(slug, SLUG, "the copy does not answer at the origin's URL");
     jc_core::kinds::EndpointSlug::new(slug).expect("an EP-02 slug");
-    assert_eq!(
-        received(&server, "POST", &format!("{COPY}/Shako.Protect")).await[0]["Rule"]["rule_name"],
-        "main"
-    );
+    common::assert_portal_branch_rules(&server, COPY).await;
 
     let (_, yaml) = common::committed_files(&server, REPO)
         .await
