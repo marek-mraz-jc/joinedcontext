@@ -315,10 +315,7 @@ async fn an_administrators_red_lane_removal_lands_with_the_name_typed_back() {
     assert_eq!(change.status.phase, ChangePhase::Deploying);
     let message = merge_message(&server).await.expect("merged at propose");
     // The typed name confirms the removal the reconciler would otherwise hold (T-6708).
-    assert!(
-        message.contains("Risk: destructive"),
-        "{message}"
-    );
+    assert!(message.contains("Risk: destructive"), "{message}");
 }
 
 /// CC-39: without the typed name nothing red is merged; the change waits at its approval page,
