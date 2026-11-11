@@ -135,7 +135,7 @@ fn audience_of(
         project: members.readers.union(&members.writers).count(),
         organization: crate::permissions::organization_people(&state.mirror, now).len(),
         roles,
-        public_allowed: !crate::api::mutate::public_apps_refused(state),
+        public_allowed: !crate::api::mutate::public_apps_refused(&state.mirror),
     })
 }
 

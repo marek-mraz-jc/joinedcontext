@@ -87,6 +87,23 @@ fn environment() -> Option<String> {
 /// A project that cannot be checked out, a literal where a parameter exists and a mapping
 /// reading an undeclared one are findings like any other (CC-83, CC-88).
 pub fn run_assembled(org_dir: &Path, resolver: &dyn Resolver) -> Report {
+    run_assembled_judged(org_dir, resolver, &|_| Vec::new())
+}
+
+/// [`run_assembled`], with the findings of `judge` over the repository the checks read added:
+/// the Portal's own judge of every manifest (`joinedcontext-portal validate --as-portal`, P-15),
+/// so an offline run refuses what the Portal's propose, approve and load would refuse.
+pub fn run_assembled_judged(
+    org_dir: &Path,
+    resolver: &dyn Resolver,
+    judge: &dyn Fn(&Repository) -> Vec<Finding>,
+) -> Report {
+    let judged = |dir: &Path, repository: Repository| {
+        let mut judged = judge(&repository);
+        let mut report = check(dir, repository, true);
+        report.findings.append(&mut judged);
+        report
+    };
     let into = scratch("validate");
     let environment = environment();
     let report = match assemble(
@@ -95,10 +112,13 @@ pub fn run_assembled(org_dir: &Path, resolver: &dyn Resolver) -> Report {
         &into.join("render"),
         environment.as_deref(),
     ) {
-        Ok(assembly) if assembly.layout == 1 => run(org_dir),
+        Ok(assembly) if assembly.layout == 1 => match Repository::load(org_dir) {
+            Ok(repository) => judged(org_dir, repository),
+            Err(err) => refused(err.into()),
+        },
         Ok(assembly) => {
             let mut found = assembly_findings(&assembly, |path| path.to_path_buf());
-            let mut report = check(&into.join("render"), assembly.repository, true);
+            let mut report = judged(&into.join("render"), assembly.repository);
             found.append(&mut report.findings);
             report.findings = found;
             report
@@ -240,7 +260,21 @@ fn assembly_findings(assembly: &Assembly, path: impl Fn(&Path) -> PathBuf) -> Ve
         line: 1,
         message: format!("project `{}`: {}", finding.slug, finding.message),
     });
-    unfetched.chain(found).collect()
+    // A project refused at assembly is left at its last render, which a check never accepts:
+    // its reason is a finding (T-6709).
+    let refused = assembly.entries.iter().filter_map(|entry| {
+        let refusal = entry.refused.as_ref()?;
+        Some(Finding {
+            path: refusal.path.as_ref().map_or_else(
+                || PathBuf::from(format!("projects/{}.yaml", entry.slug)),
+                |file| Path::new("projects").join(&entry.slug).join(file),
+            ),
+            document: 1,
+            line: 1,
+            message: refusal.reason.clone(),
+        })
+    });
+    unfetched.chain(refused).chain(found).collect()
 }
 
 fn refused(err: AssembleError) -> Report {

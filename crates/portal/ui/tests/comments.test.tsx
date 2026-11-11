@@ -198,6 +198,23 @@ describe("notifications", () => {
     expect(navigate).toHaveBeenLastCalledWith({ href: "/projects/helsinki/spaces/" });
   });
 
+  it("tells the proposer their change was refused, with the file and the reason, and opens the project's feed (T-6709)", async () => {
+    const item = { id: 7, kind: "config.refused", project: "ovzdusie", space: "", urn: "badc0de1234", commentId: null, author: "jan@bb.sk", authorName: "jan@bb.sk", excerpt: "spaces/ovzdusie/twice.yaml: duplicate resource identity ContextSpace/ovzdusie/ovzdusie", link: "/projects/ovzdusie/activity?kind=config.refused", createdAt: "2026-11-11T08:00:00Z", read: false };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const request = input as Request;
+      if (request.method === "POST") return json(null, 204);
+      return new URL(request.url).pathname.endsWith("/alerts/notices") ? json({ items: [], unread: 0 }) : json({ items: [item], unread: 1 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    wrap(<NotificationsMenu project="ovzdusie" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Notifications, 1 unread" }));
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Your change badc0de in ovzdusie was refused and is not live.*spaces\/ovzdusie\/twice.yaml: duplicate resource identity/ }),
+    );
+    await waitFor(() => expect(sentTo(fetchMock, "/notifications/7/read").map((r) => r.method)).toEqual(["POST"]));
+    expect(navigate).toHaveBeenCalledWith({ href: "/projects/ovzdusie/activity?kind=config.refused" });
+  });
+
   it("says when there is nothing new", async () => {
     vi.stubGlobal("fetch", vi.fn(() => json({ items: [], unread: 0 })));
     wrap(<NotificationsMenu project="helsinki" />);
