@@ -230,6 +230,33 @@ async fn retrieve_entity_outer(
     params: &HashMap<String, String>,
     headers: &HeaderMap,
 ) -> ApiResult<Response> {
+    let found = retrieve_entity_mapped(st, id, params, headers).await;
+    let absent = match &found {
+        Err(ApiError::Ngsi(NgsiError::ResourceNotFound(_))) => true,
+        Ok(r) => r.status() == StatusCode::NOT_FOUND,
+        Err(_) => false,
+    };
+    // T-6770: an id a remint renamed to its owner prefix reads, for twelve
+    // months, as the Entity under its new id, through the same gate; the
+    // old id's own 404 stands when the new one is not readable either
+    if absent {
+        let tenant = tenant_from(headers)?;
+        if let Some(new_id) = st.store.remapped_id(&tenant, id).await? {
+            let renamed = retrieve_entity_mapped(st, &new_id, params, headers).await;
+            if !matches!(&renamed, Err(ApiError::Ngsi(NgsiError::ResourceNotFound(_)))) {
+                return renamed;
+            }
+        }
+    }
+    found
+}
+
+async fn retrieve_entity_mapped(
+    st: &AppState,
+    id: &str,
+    params: &HashMap<String, String>,
+    headers: &HeaderMap,
+) -> ApiResult<Response> {
     crate::entity_map::retrieve_with_map(st, id, params, headers, false, |map| async move {
         retrieve_entity_inner(st, id, params, headers, map.as_ref()).await
     })

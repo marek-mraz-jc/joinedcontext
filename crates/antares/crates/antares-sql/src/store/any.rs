@@ -800,6 +800,24 @@ impl AnyStore {
         Ok(doc)
     }
 
+    /// The id the Entity once called `id` carries since a remint renamed it
+    /// to its owner prefix (T-6770): a read of the old id answers the Entity
+    /// under the new one for twelve months. The memory arm renames nothing.
+    pub async fn remapped_id(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+    ) -> Result<Option<String>, NgsiError> {
+        match self {
+            AnyStore::Mem(_) => {
+                let _ = (tenant, id);
+                Ok(None)
+            }
+            #[cfg(feature = "postgres")]
+            AnyStore::Pg(p) => p.entities.remapped_id(tenant, id).await.map_err(db),
+        }
+    }
+
     /// [`Self::get`] of several Entities, in one transaction on Postgres
     /// (T-4085); an absent or expired id has no entry.
     pub async fn get_entities(
@@ -1986,6 +2004,9 @@ impl antares_store::CurrentStateDriver for AnyStore {
         ids: &[&str],
     ) -> Result<std::collections::HashMap<String, Value>, NgsiError> {
         AnyStore::get_entities(self, tenant, ids).await
+    }
+    async fn remapped_id(&self, tenant: &TenantId, id: &str) -> Result<Option<String>, NgsiError> {
+        AnyStore::remapped_id(self, tenant, id).await
     }
     async fn delete(&self, tenant: &TenantId, kind: Kind, id: &str) -> Result<bool, NgsiError> {
         AnyStore::delete(self, tenant, kind, id).await
