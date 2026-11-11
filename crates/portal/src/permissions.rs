@@ -506,9 +506,17 @@ impl Effective {
                 }
             }
             let changed = |(pointer, value): &&(String, Value)| {
-                target.and_then(|t| t.pointer(pointer)).unwrap_or(&Value::Null) != value
+                target
+                    .and_then(|t| t.pointer(pointer))
+                    .unwrap_or(&Value::Null)
+                    != value
             };
-            if let Some((pointer, _)) = grant.frozen.iter().find(changed).filter(|_| verb != Verb::Read) {
+            if let Some((pointer, _)) = grant
+                .frozen
+                .iter()
+                .find(changed)
+                .filter(|_| verb != Verb::Read)
+            {
                 violation.get_or_insert_with(|| {
                     format!(
                         "{} is set by the installation's operators, not by role {} (TEN-06)",

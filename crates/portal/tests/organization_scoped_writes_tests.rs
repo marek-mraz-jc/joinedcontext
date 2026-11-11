@@ -74,7 +74,10 @@ fn world() -> AppState {
     let state = AppState::new(Config::for_tests(), None).with_mirror(Arc::new(Mirror::new()));
     let m = &state.mirror;
     for (name, spec) in [
-        ("ops", json!({ "domain": "ops.example", "installation": true })),
+        (
+            "ops",
+            json!({ "domain": "ops.example", "installation": true }),
+        ),
         ("bbsk", bbsk_organization()),
         ("praha", json!({ "domain": "praha.eu" })),
     ] {
@@ -92,15 +95,41 @@ fn world() -> AppState {
     let kinds: Vec<&str> = joinedcontext_portal::resource::kinds()
         .map(|info| info.kind)
         .collect();
-    let every = json!({ "rules": [{ "kinds": kinds, "verbs": ["read", "propose", "approve", "delete"] }] });
+    let every =
+        json!({ "rules": [{ "kinds": kinds, "verbs": ["read", "propose", "approve", "delete"] }] });
     m.upsert(envelope("Role", "org-admin", ORG_NAMESPACE, every.clone()));
     m.upsert(envelope("Role", "steward", ORG_NAMESPACE, every));
     for b in [
-        binding("operators", "operator", "org-admin", json!({ "organization": "ops" })),
-        binding("bbsk-admins", "bbadmin", "org-admin", json!({ "organization": "bbsk" })),
-        binding("bbsk-air-steward", "bbsteward", "steward", json!({ "project": BBSK_PROJECT })),
-        binding("twice-bbsk", "twice", "org-admin", json!({ "organization": "bbsk" })),
-        binding("twice-praha", "twice", "org-admin", json!({ "organization": "praha" })),
+        binding(
+            "operators",
+            "operator",
+            "org-admin",
+            json!({ "organization": "ops" }),
+        ),
+        binding(
+            "bbsk-admins",
+            "bbadmin",
+            "org-admin",
+            json!({ "organization": "bbsk" }),
+        ),
+        binding(
+            "bbsk-air-steward",
+            "bbsteward",
+            "steward",
+            json!({ "project": BBSK_PROJECT }),
+        ),
+        binding(
+            "twice-bbsk",
+            "twice",
+            "org-admin",
+            json!({ "organization": "bbsk" }),
+        ),
+        binding(
+            "twice-praha",
+            "twice",
+            "org-admin",
+            json!({ "organization": "praha" }),
+        ),
     ] {
         m.upsert(envelope(
             "RoleBinding",
@@ -132,7 +161,9 @@ fn input_for(op: &ops::Operation) -> Value {
         "jc_resource_propose" => json!({ "manifest": space }),
         "jc_resource_delete" => json!({ "kind": "ContextSpace", "name": "air", "confirm": "air" }),
         "jc_project_delete" => json!({ "name": PRAHA_PROJECT }),
-        "jc_project_import" => json!({ "bundle": serde_json::to_string(&space).unwrap_or_default(), "conflictPolicy": "fail" }),
+        "jc_project_import" => {
+            json!({ "bundle": serde_json::to_string(&space).unwrap_or_default(), "conflictPolicy": "fail" })
+        }
         _ => ops::example_of(&(op.input)()),
     }
 }
@@ -188,7 +219,10 @@ async fn every_registry_write_is_refused_in_another_organizations_project() {
             )
             .await;
             if !refused(rest.status) {
-                leaks.push(format!("rest {} {}: {} {}", who.username, op.name, rest.status, rest.body));
+                leaks.push(format!(
+                    "rest {} {}: {} {}",
+                    who.username, op.name, rest.status, rest.body
+                ));
             }
         }
     }
@@ -265,9 +299,7 @@ fn a_project_opens_in_the_callers_organization_and_never_in_the_installations() 
 fn an_organization_administrator_leaves_domain_limits_and_catalogue_to_the_operators() {
     let state = world();
     let at_org = for_request(&state, &bbsk_admin(), ORG_NAMESPACE);
-    let manifest = |spec: Value| {
-        json!({ "kind": "Organization", "metadata": { "name": "bbsk", "namespace": ORG_NAMESPACE }, "spec": spec })
-    };
+    let manifest = |spec: Value| json!({ "kind": "Organization", "metadata": { "name": "bbsk", "namespace": ORG_NAMESPACE }, "spec": spec });
     let mut locales = bbsk_organization();
     locales["locales"] = json!(["sk", "en"]);
     assert!(at_org
@@ -287,7 +319,9 @@ fn an_organization_administrator_leaves_domain_limits_and_catalogue_to_the_opera
         assert!(refusal.to_string().contains("operators"), "{refusal}");
     }
     let new = json!({ "kind": "Organization", "metadata": { "name": "kosice", "namespace": ORG_NAMESPACE }, "spec": { "domain": "kosice.sk" } });
-    assert!(at_org.check("Organization", Verb::Propose, Some(&new)).is_err());
+    assert!(at_org
+        .check("Organization", Verb::Propose, Some(&new))
+        .is_err());
     // The operators set them.
     assert!(for_request(&state, &operator(), ORG_NAMESPACE)
         .check("Organization", Verb::Propose, Some(&new))

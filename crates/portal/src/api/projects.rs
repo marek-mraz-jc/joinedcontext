@@ -568,7 +568,9 @@ pub async fn open_project(
     // The organization that lets anyone open a project, on an installation that does not hold
     // every change for a person, has nobody to wait for: the platform merges it and the merge
     // message says so (PF-66, PF-57).
-    if lets_anyone_open(&state, &organization) && state.branding().validation == crate::branding::Validation::Lax {
+    if lets_anyone_open(&state, &organization)
+        && state.branding().validation == crate::branding::Validation::Lax
+    {
         let (_, number) = crate::api::changes::parse_change_ref(&change.metadata.name)?;
         shako
             .merge(
@@ -660,7 +662,11 @@ fn lets_anyone_open(state: &AppState, organization: &str) -> bool {
 fn creation(state: &AppState, organization: &str) -> String {
     state
         .mirror
-        .get(crate::permissions::ORG_NAMESPACE, "Organization", organization)
+        .get(
+            crate::permissions::ORG_NAMESPACE,
+            "Organization",
+            organization,
+        )
         .and_then(|org| {
             org.spec
                 .pointer("/projects/creation")

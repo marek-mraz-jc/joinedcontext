@@ -27323,6 +27323,11 @@
                     "description": "The project slug, a DNS-1123 label",
                     "maxLength": 63,
                     "type": "string"
+                  },
+                  "organization": {
+                    "description": "The Organization it belongs to, e.g. bbsk; needed only when you may open a project in several",
+                    "maxLength": 63,
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -52657,6 +52662,13 @@
           "name": {
             "type": "string",
             "description": "The slug: the `{project}` segment of every path of it (PF-67)."
+          },
+          "organization": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Organization the project belongs to, e.g. `bbsk`: needed only when the caller may open\na project in several; the caller must hold that right there (T-6766)."
           }
         },
         "additionalProperties": false
