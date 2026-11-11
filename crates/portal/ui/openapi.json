@@ -27287,7 +27287,7 @@
     },
     "/api/v1/projects/{project}/ops/jc_project_create": {
       "post": {
-        "description": "Opens a project, with the opener's steward binding in the same change; the organization's own setting says who may",
+        "description": "Opens a project with you as its steward, in an Organization whose own setting lets you",
         "operationId": "jc_project_create",
         "parameters": [
           {
@@ -27310,22 +27310,22 @@
                 "additionalProperties": false,
                 "properties": {
                   "description": {
-                    "description": "One line about what the project is for",
+                    "description": "What it is for, one line",
                     "maxLength": 256,
                     "type": "string"
                   },
                   "displayName": {
-                    "description": "What people call it; the slug when absent",
+                    "description": "Shown name; the slug when absent",
                     "maxLength": 256,
                     "type": "string"
                   },
                   "name": {
-                    "description": "The project slug, a DNS-1123 label",
+                    "description": "Slug, a DNS-1123 label",
                     "maxLength": 63,
                     "type": "string"
                   },
                   "organization": {
-                    "description": "The Organization it belongs to, e.g. bbsk; needed only when you may open a project in several",
+                    "description": "Its Organization, e.g. bbsk; only when you may open projects in several",
                     "maxLength": 63,
                     "type": "string"
                   }
@@ -27522,7 +27522,7 @@
     },
     "/api/v1/projects/{project}/ops/jc_project_delete": {
       "post": {
-        "description": "Proposes the one red-lane change that removes a project and every space, endpoint, app, service account, role and binding written for it",
+        "description": "Proposes the red-lane change removing a project and its spaces, endpoints, apps, service accounts, roles and bindings",
         "operationId": "jc_project_delete",
         "parameters": [
           {
@@ -27742,7 +27742,7 @@
     },
     "/api/v1/projects/{project}/ops/jc_project_export": {
       "post": {
-        "description": "The project's manifests as one bundle, narrowed to the kinds and names asked for; the whole project is for organization administrators",
+        "description": "The project's manifests as one bundle, narrowed to the kinds and names asked; the whole one needs an organization admin",
         "operationId": "jc_project_export",
         "parameters": [
           {
@@ -27763,7 +27763,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "format": {
-                    "description": "The bundle's format; yaml when absent",
+                    "description": "yaml when absent",
                     "enum": [
                       "yaml",
                       "json"
@@ -27776,7 +27776,7 @@
                     "type": "string"
                   },
                   "names": {
-                    "description": "Comma-separated metadata.name values, e.g. doprava",
+                    "description": "Comma-separated names, e.g. doprava",
                     "maxLength": 2048,
                     "type": "string"
                   },
@@ -28055,7 +28055,7 @@
                     "type": "boolean"
                   },
                   "orgDomain": {
-                    "description": "Organisation imported ids are rewritten to; this one when absent",
+                    "description": "Organisation ids are rewritten to; this one when absent",
                     "maxLength": 253,
                     "type": "string"
                   }
