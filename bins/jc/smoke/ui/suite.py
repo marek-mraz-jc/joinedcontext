@@ -298,7 +298,18 @@ def dashboards(w: Walker, page, who: str, project: str):
     for uid in uids[:10]:
         addr = f"/projects/{project}/grafana?dashboard={uid}"
         w.judge(page, who, "daiya", "/projects/$project/grafana", addr, portal=True, viewer=False)
-        w.judge(page, who, "daiya", "/dashboards/d/$uid", f"/dashboards/d/{uid}", portal=False, viewer=False)
+        w.judge(page, who, "daiya", "/dashboards/d/$uid", daiya_page(page, w.base, project, uid), portal=False, viewer=False)
+
+
+def daiya_page(page, base: str, project: str, uid: str) -> str:
+    """The daiya page the Portal links the dashboard to (DashboardPage.tsx: `/dashboards/d/{uid}?orgId=`):
+    daiya answers a dashboard of another organization than the caller's default 404 without it."""
+    r = browser_get(page, f"{base}/api/v1/projects/{project}/grafana/dashboards/{uid}")
+    try:
+        org = r.json().get("orgId") if r.status == 200 else None
+    except Exception:  # noqa: BLE001
+        org = None
+    return f"/dashboards/d/{uid}" + (f"?orgId={org}" if isinstance(org, int) else "")
 
 
 def other_uis(w: Walker, page, who: str, project: str):

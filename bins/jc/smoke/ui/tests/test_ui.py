@@ -186,6 +186,30 @@ def test_the_persona_admin_mints_its_token_in_the_realm_and_names_a_refusal():
         personas.admin_token(H(401, b"{}"), "s3")
 
 
+def test_the_daiya_page_is_opened_in_the_dashboards_own_organization_as_the_portal_links_it():
+    class R:
+        def __init__(self, status, body):
+            self.status, self.body = status, body
+
+        def json(self):
+            return self.body
+
+    class Page:
+        def __init__(self, r):
+            self.r, self.seen = r, []
+            self.context = type("C", (), {"cookies": lambda _self: []})()
+            self.request = self
+
+        def get(self, url, **k):
+            self.seen.append(url)
+            return self.r
+
+    p = Page(R(200, {"uid": "project-helsinki", "orgId": 2}))
+    assert suite.daiya_page(p, "http://127.0.0.1:1", "helsinki", "project-helsinki") == "/dashboards/d/project-helsinki?orgId=2"
+    assert p.seen == ["http://127.0.0.1:1/api/v1/projects/helsinki/grafana/dashboards/project-helsinki"]
+    assert suite.daiya_page(Page(R(404, {})), "http://127.0.0.1:1", "helsinki", "x") == "/dashboards/d/x"
+
+
 def test_the_runner_never_hands_ui_or_charts_apps_jcs_admin_listener_token():
     # The runner's --admin-token-file is jc's admin listener token (logs reads it with --admin-url);
     # the realm refuses it as a bearer (smoke run 42945870109: persona rows "invalid admin bearer token").
