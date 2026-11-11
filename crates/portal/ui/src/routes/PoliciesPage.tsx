@@ -17,7 +17,8 @@ import { usePersonNames } from "../api/personNames";
 import { ChangeNotice } from "../components/ChangeNotice";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
 import { ResourceFormDialog } from "../components/ResourceFormDialog";
-import { ResourceList } from "../components/ResourceList";
+import { AdminGrid } from "../components/grid/AdminGrid";
+import type { DataColumn } from "../components/grid/AdminGrid";
 import { ResourceRowActions } from "../components/ResourceRowActions";
 import { hasPolicyRules, POLICY_RULE_MEMBERS, policySchema, policyUiSchema } from "../schemas/kinds";
 import {
@@ -28,10 +29,6 @@ import {
   Icon,
   Input,
   PageHeader,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
   Term,
 } from "../components/ui";
 import { policyRules } from "../components/endpoints/policyBinding";
@@ -139,7 +136,6 @@ export function fromPolicyEnvelope(manifest: unknown): PolicyForm {
   } as PolicyForm;
 }
 
-const COLUMNS = 6;
 
 /**
  * The policies of one project: what each one grants, to whom, and on which space (R5…R9, UI-01).
@@ -261,6 +257,100 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
     ),
   );
 
+  const grantees = (policy: Manifest) =>
+    policyRules(policy).map((rule) => (rule.assignee ?? {}) as { kind?: string; id?: string });
+  const operations = (policy: Manifest) => [
+    ...new Set(policyRules(policy).flatMap((rule) => (rule.operations as string[] | undefined) ?? [])),
+  ];
+  const columns: DataColumn<Manifest>[] = [
+    {
+      key: "name",
+      label: t("policies.field.name"),
+      text: (policy) => localized(policy.metadata.title, locale, policy.metadata.name),
+      cell: (policy) => (
+        <>
+          <div className="flex items-center gap-2">
+            <RecordLink project={project} plural="policies" name={policy.metadata.name}>
+              {localized(policy.metadata.title, locale, policy.metadata.name)}
+            </RecordLink>
+            {(policy.spec as Record<string, unknown>).effect === "prohibition" ? (
+              <Badge tone="danger">{t("policies.effect.prohibition")}</Badge>
+            ) : null}
+          </div>
+          {/* What the policy grants, as a sentence (T-3276). */}
+          <p className="mt-0.5 line-clamp-2 max-w-prose text-caption text-fg-muted">
+            {policySentence(fromPolicyEnvelope(policy), t, locale, names)}
+          </p>
+        </>
+      ),
+    },
+    {
+      key: "space",
+      label: t("policies.field.space"),
+      heading: <Term name="contextSpace">{t("policies.field.space")}</Term>,
+      text: (policy) => fromPolicyEnvelope(policy).contextSpaceRef ?? "",
+      cell: (policy) => <span className="font-mono text-caption">{fromPolicyEnvelope(policy).contextSpaceRef || "—"}</span>,
+    },
+    {
+      key: "assignee",
+      label: t("policies.field.assignee"),
+      text: (policy) => grantees(policy).map((assignee) => assignee.id ?? "").join(", "),
+      // Every rule's grantee, not only a single-rule Policy's (F-UI3-015).
+      cell: (policy) => (
+        <div className="flex flex-col gap-0.5">
+          {grantees(policy).map((assignee, index) => (
+            <GranteeInWords key={index} kind={assignee.kind ?? "role"} id={assignee.id ?? ""} />
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: "grants",
+      label: t("policies.field.grants"),
+      text: (policy) => operations(policy).join(", "),
+      // The areas first, the CIM 009 names they stand for one click away (T-2282, T-4990).
+      cell: (policy) => <OperationsInWords operations={operations(policy)} />,
+    },
+    {
+      key: "phase",
+      label: t("resourceList.phase"),
+      text: (policy) => policy.status?.phase ?? "",
+      cell: (policy) => <LifecycleBadge kind="phase" value={policy.status?.phase} />,
+    },
+    {
+      key: "actions",
+      label: t("approvals.actions"),
+      text: () => "",
+      actions: true,
+      align: "right",
+      cell: (policy) => {
+        const shape = fromPolicyEnvelope(policy);
+        return (
+          <ResourceRowActions
+            project={project}
+            target={{
+              project,
+              kind: "Policy",
+              plural: "policies",
+              name: policy.metadata.name,
+              label: localized(policy.metadata.title, locale, policy.metadata.name),
+            }}
+            form={{
+              schema: policySchema(t, spaceNames, [], shape.operations, hasPolicyRules(policy.spec as Record<string, unknown>)),
+              uiSchema: policyUiSchema,
+              fromManifest: (manifest) =>
+                fromPolicyEnvelope(manifest) as unknown as Record<string, unknown>,
+              toManifest: (edited, stored) =>
+                toPolicyEnvelope(project, orgDomain, edited as unknown as PolicyForm, stored),
+              // What it allows, in words, before the fields (T-5591).
+              summary: (manifest) => <PolicySummary project={project} policy={fromPolicyEnvelope(manifest)} />,
+            }}
+          />
+        );
+      },
+    },
+  ];
+
   return (
     <div className="flex flex-col gap-section">
       <PageHeader compact title={t("policies.title")} description={t("policies.lead")} actions={addButton} />
@@ -287,24 +377,15 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
         </div>
       ) : null}
 
-      <ResourceList
+      <AdminGrid<Manifest>
         query={list}
         caption={t("policies.title")}
+        storageKey={`${project}:policies`}
         stack
-        head={
-          <TableHead>
-            <TableHeaderCell>{t("policies.field.name")}</TableHeaderCell>
-            <TableHeaderCell>
-              <Term name="contextSpace">{t("policies.field.space")}</Term>
-            </TableHeaderCell>
-            <TableHeaderCell>{t("policies.field.assignee")}</TableHeaderCell>
-            <TableHeaderCell>{t("policies.field.grants")}</TableHeaderCell>
-            <TableHeaderCell>{t("resourceList.phase")}</TableHeaderCell>
-            <TableHeaderCell align="right">{t("approvals.actions")}</TableHeaderCell>
-          </TableHead>
-        }
-        columns={COLUMNS}
-        count={shown.length}
+        noSearch
+        rows={shown}
+        rowKey={(policy) => policy.metadata.name}
+        columns={columns}
         empty={
           words.length > 0 ? (
             <p className="text-body text-fg-muted">{t("policies.filter.none", { query: search.trim() })}</p>
@@ -317,71 +398,7 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
           />
           )
         }
-      >
-        {shown.map((policy: Manifest) => {
-          const spec = policy.spec as Record<string, unknown>;
-          const shape = fromPolicyEnvelope(policy);
-          const title = localized(policy.metadata.title, locale, policy.metadata.name);
-          const target = {
-            project,
-            kind: "Policy",
-            plural: "policies",
-            name: policy.metadata.name,
-            label: title,
-          };
-          return (
-            <TableRow key={policy.metadata.name}>
-              <TableCell primary>
-                <div className="flex items-center gap-2">
-                  <RecordLink project={project} plural="policies" name={policy.metadata.name}>
-                    {title}
-                  </RecordLink>
-                  {spec.effect === "prohibition" ? (
-                    <Badge tone="danger">{t("policies.effect.prohibition")}</Badge>
-                  ) : null}
-                </div>
-                {/* What the policy grants, as a sentence (T-3276). */}
-                <p className="mt-0.5 line-clamp-2 max-w-prose text-caption text-fg-muted">{policySentence(shape, t, locale, names)}</p>
-              </TableCell>
-              <TableCell data-label={t("policies.field.space")}>
-                <span className="font-mono text-caption">{shape.contextSpaceRef || "—"}</span>
-              </TableCell>
-              <TableCell data-label={t("policies.field.assignee")}>
-                {/* Every rule's grantee, not only a single-rule Policy's (F-UI3-015). */}
-                <div className="flex flex-col gap-0.5">
-                  {policyRules(policy).map((rule, index) => {
-                    const assignee = (rule.assignee ?? {}) as { kind?: string; id?: string };
-                    return <GranteeInWords key={index} kind={assignee.kind ?? "role"} id={assignee.id ?? ""} />;
-                  })}
-                </div>
-              </TableCell>
-              <TableCell data-label={t("policies.field.grants")}>
-                {/* The areas first, the CIM 009 names they stand for one click away (T-2282, T-4990). */}
-                <OperationsInWords operations={[...new Set(policyRules(policy).flatMap((rule) => (rule.operations as string[] | undefined) ?? []))]} />
-              </TableCell>
-              <TableCell data-label={t("resourceList.phase")}>
-                <LifecycleBadge kind="phase" value={policy.status?.phase} />
-              </TableCell>
-              <TableCell align="right">
-                <ResourceRowActions
-                  project={project}
-                  target={target}
-                  form={{
-                    schema: policySchema(t, spaceNames, [], shape.operations, hasPolicyRules(policy.spec as Record<string, unknown>)),
-                    uiSchema: policyUiSchema,
-                    fromManifest: (manifest) =>
-                      fromPolicyEnvelope(manifest) as unknown as Record<string, unknown>,
-                    toManifest: (edited, stored) =>
-                      toPolicyEnvelope(project, orgDomain, edited as unknown as PolicyForm, stored),
-                    // What it allows, in words, before the fields (T-5591).
-                    summary: (manifest) => <PolicySummary project={project} policy={fromPolicyEnvelope(manifest)} />,
-                  }}
-                />
-              </TableCell>
-            </TableRow>
-          );
-        })}
-      </ResourceList>
+      />
 
       {/* What the gateway would decide for one person, for organization administrators (EP-103). */}
       <TryAPerson project={project} />
