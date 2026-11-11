@@ -3,7 +3,13 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { Alert, Button, Field, Input, Select } from "../ui";
+import {
+  Alert,
+  Button,
+  Field,
+  Input,
+  Select,
+} from "../ui";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "../ui/Table";
 import { Skeleton } from "../ui/Skeleton";
 import { download } from "../../pages/models/diagramExport";
@@ -17,6 +23,10 @@ import {
   thisMonth,
 } from "../../api/endpointUsage";
 import type { UsageWindow } from "../../api/endpointUsage";
+import { AdminGrid } from "../grid/AdminGrid";
+import type { components } from "../../api/schema";
+
+type EndpointTotal = components["schemas"]["EndpointTotal"];
 
 function useNumber(): (n: number) => string {
   const { i18n } = useTranslation();
@@ -172,7 +182,7 @@ export function ProjectUsageSection({ project }: { project: string }): JSX.Eleme
     }
   };
 
-  const endpoints = usage.data?.endpoints ?? [];
+  const endpoints: EndpointTotal[] = usage.data?.endpoints ?? [];
   return (
     <section className="space-y-3" aria-labelledby="project-usage-title">
       <h2 id="project-usage-title" className="text-title font-semibold text-fg">
@@ -209,36 +219,49 @@ export function ProjectUsageSection({ project }: { project: string }): JSX.Eleme
         <p className="text-sm text-fg-muted">{t("endpointUsage.noEndpoints")}</p>
       ) : null}
       {endpoints.length > 0 ? (
-        <Table caption={t("endpointUsage.title")}>
-          <TableHead>
-              <TableHeaderCell>{t("endpointUsage.endpoint")}</TableHeaderCell>
-              <TableHeaderCell>{t("endpointUsage.calls")}</TableHeaderCell>
-              <TableHeaderCell>{t("endpointUsage.trend")}</TableHeaderCell>
-            </TableHead>
-          <TableBody>
-            {endpoints.map((endpoint) => (
-              <TableRow key={endpoint.name}>
-                <TableCell primary>
-                  <Link to="/projects/$project/$plural/$name" params={{ plural: "endpoints", project, name: endpoint.name }}>
-                    {endpoint.name}
-                  </Link>
-                </TableCell>
-                <TableCell className="tabular-nums">{number(endpoint.total)}</TableCell>
-                <TableCell className="w-40">
-                  {endpoint.total > 0 ? (
-                    <Bars
-                      small
-                      daily={endpoint.daily}
-                      label={t("endpointUsage.chart", { calls: number(endpoint.total), days })}
-                    />
-                  ) : (
-                    <span className="text-caption text-fg-muted">{t("endpointUsage.none")}</span>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <AdminGrid<EndpointTotal>
+          caption={t("endpointUsage.title")}
+          storageKey={`${project}:endpoint-usage`}
+          stack
+          rows={endpoints}
+          rowKey={(endpoint) => endpoint.name}
+          columns={[
+            {
+              key: "endpoint",
+              label: t("endpointUsage.endpoint"),
+              text: (endpoint) => endpoint.name,
+              cell: (endpoint) => (
+                <Link data-row-link="" to="/projects/$project/$plural/$name" params={{ plural: "endpoints", project, name: endpoint.name }}>
+                  {endpoint.name}
+                </Link>
+              ),
+            },
+            {
+              key: "calls",
+              label: t("endpointUsage.calls"),
+              kind: "number",
+              align: "right",
+              text: (endpoint) => String(endpoint.total),
+              cell: (endpoint) => <span className="tabular-nums">{number(endpoint.total)}</span>,
+            },
+            {
+              key: "trend",
+              label: t("endpointUsage.trend"),
+              filter: false,
+              sortable: false,
+              text: () => "",
+              cell: (endpoint) =>
+                endpoint.total > 0 ? (
+                  <span className="block w-40">
+                    <Bars small daily={endpoint.daily} label={t("endpointUsage.chart", { calls: number(endpoint.total), days })} />
+                  </span>
+                ) : (
+                  <span className="text-caption text-fg-muted">{t("endpointUsage.none")}</span>
+                ),
+            },
+          ]}
+          empty={null}
+        />
       ) : null}
       <p className="text-caption text-fg-muted">{t("endpointUsage.privacy")}</p>
     </section>

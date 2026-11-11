@@ -11,19 +11,14 @@ import { deniedOf, useAttributeAccess } from "../../api/access";
 import { EntityFilters } from "../../components/entities/EntityFilters";
 import { fetchEntities, filterSlotsOf, useModelSource } from "../../components/entities/filters";
 import type { Entity, EntityQuery, FilterSlot } from "../../components/entities/filters";
-import { RecordView,
+import {
+  RecordView,
   Alert,
   Button,
   Checkbox,
   Field,
   Input,
   Select,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
   Textarea,
 } from "../../components/ui";
 import { entityTypesOf, pickReadEndpoint, spaceOf } from "../spaces/spaceFacts";
@@ -65,6 +60,8 @@ import { AttributePicker } from "../../components/pickers/AttributePicker";
 import { Combobox } from "../../components/pickers/Combobox";
 import { TypePicker } from "../../components/pickers/TypePicker";
 import { ResourceNamePicker } from "../../components/pickers/ResourceNamePicker";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 
 /** How many rows one sample shows: enough to tick a handful, small enough to read. */
 export const SAMPLE_LIMIT = 20;
@@ -1427,47 +1424,46 @@ export function PipelineStudio({
                 sample.length === 0 ? (
                   <p className="text-caption text-fg-muted">{t("pipelines.studio.noEntities")}</p>
                 ) : (
-                  // `maxHeight`: the sample is up to SAMPLE_LIMIT entities, and a long one
-                  // scrolls in its own frame rather than pushing the rest of the studio down.
-                  <Table
+                  <AdminGrid<SampleRow>
                     caption={t("pipelines.studio.sample")}
-                    zebra={false}
-                    maxHeight="max-h-64"
-                    className="text-caption"
-                  >
-                    <TableHead>
-                      <TableHeaderCell>
-                        <span className="sr-only">{t("pipelines.studio.tick")}</span>
-                      </TableHeaderCell>
-                      <TableHeaderCell>id</TableHeaderCell>
-                      {attributes.slice(0, 4).map((attribute) => (
-                        <TableHeaderCell key={attribute} className="font-mono normal-case">
-                          {attribute}
-                        </TableHeaderCell>
-                      ))}
-                    </TableHead>
-                    <TableBody>
-                      {sample.map((row) => (
-                        <TableRow key={row.id}>
-                          <TableCell>
-                            <Checkbox
-                              label={<span className="sr-only">{row.id}</span>}
-                              checked={ids.includes(row.id)}
-                              onChange={(event) => toggleId(row.id, event.target.checked)}
-                            />
-                          </TableCell>
-                          <TableCell primary className="font-mono">
-                            {row.id}
-                          </TableCell>
-                          {attributes.slice(0, 4).map((attribute) => (
-                            <TableCell key={attribute} className="font-mono">
-                              {attribute in row ? cell(row[attribute]) : ""}
-                            </TableCell>
-                          ))}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                    storageKey={`${project}:pipeline-studio-sample`}
+                    stack
+                    // Ten rows a page: a long sample pages instead of growing the studio (T-1775).
+                    pageSizes={[10, SAMPLE_LIMIT]}
+                    rows={sample}
+                    rowKey={(row) => row.id}
+                    columns={[
+                      {
+                        key: "tick",
+                        label: t("pipelines.studio.tick"),
+                        actions: true,
+                        heading: <span className="sr-only">{t("pipelines.studio.tick")}</span>,
+                        text: () => "",
+                        cell: (row) => (
+                          <Checkbox
+                            label={<span className="sr-only">{row.id}</span>}
+                            checked={ids.includes(row.id)}
+                            onChange={(event) => toggleId(row.id, event.target.checked)}
+                          />
+                        ),
+                      },
+                      {
+                        key: "id",
+                        label: "id",
+                        text: (row) => row.id,
+                        cell: (row) => <span className="font-mono">{row.id}</span>,
+                      },
+                      ...attributes.slice(0, 4).map(
+                        (attribute): DataColumn<SampleRow> => ({
+                          key: `attr:${attribute}`,
+                          label: attribute,
+                          text: (row) => (attribute in row ? cell(row[attribute]) : ""),
+                          cell: (row) => <span className="font-mono">{attribute in row ? cell(row[attribute]) : ""}</span>,
+                        }),
+                      ),
+                    ]}
+                    empty={null}
+                  />
                 )
               ) : null}
               {ids.length > 0 ? (

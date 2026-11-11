@@ -22,18 +22,12 @@ import {
   PageFailed,
   Select,
   Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableSkeleton,
 } from "./ui";
 import { RecordLink } from "./RecordLink";
 import type { BadgeTone } from "./ui";
+import { AdminGrid } from "./grid/AdminGrid";
+import type { DataColumn } from "./grid/AdminGrid";
 
-const COLUMNS = 4;
 
 /**
  * What happened, in words (T-2756): "Catalogue publication", and "Catalogue publication failed"
@@ -208,23 +202,112 @@ export function ActivityFeed({
     [page.data, live, limit],
   );
 
-  const head = (
-    <TableHead>
-      {/* On a phone the time, kind and source are one line above the sentence, so the sentence
-          gets the row's width (T-4165, photo audit T-4157). */}
-      <TableHeaderCell secondary>{t("activity.time")}</TableHeaderCell>
-      <TableHeaderCell secondary>{t("activity.kind")}</TableHeaderCell>
-      <TableHeaderCell>{t("activity.summary")}</TableHeaderCell>
-      <TableHeaderCell secondary>{t("activity.source")}</TableHeaderCell>
-    </TableHead>
-  );
+  const sourceOf = (event: ActivityEvent) => t(`activity.sources.${event.source}`, { defaultValue: event.source });
+  const columns: DataColumn<ActivityRow>[] = [
+    {
+      key: "time",
+      label: t("activity.time"),
+      kind: "date",
+      text: ({ event }) => event.time,
+      cell: ({ event }) => <span className="whitespace-nowrap text-fg-muted">{time.format(new Date(event.time))}</span>,
+    },
+    {
+      key: "kind",
+      label: t("activity.kind"),
+      text: ({ event }) => kindLabel(event, t),
+      cell: ({ event }) => (
+        <Badge tone={SEVERITY_TONE[event.severity] ?? "neutral"} data-testid="activity-kind">
+          {kindLabel(event, t)}
+        </Badge>
+      ),
+    },
+    {
+      key: "summary",
+      label: t("activity.summary"),
+      text: ({ event }) => sentenceOf(event).sentence,
+      cell: ({ event, count, since }) => {
+        const object = objectOf(event);
+        const { sentence, reason } = sentenceOf(event);
+        const change = changeOf(event);
+        return (
+          <>
+          {/* A URL or an id in the sentence breaks where it must: unbroken, it widened the whole
+              table past a phone's edge and cut every row's text (judge, 400 px). */}
+          <span data-testid="activity-sentence" className="[overflow-wrap:anywhere]">
+            {sentence}
+          </span>
+          {reason ? (
+            <details className="mt-0.5 text-caption text-fg-muted">
+              <summary className="cursor-pointer">
+                {t("activity.technical")}
+              </summary>
+              <p
+                className="mt-0.5 break-all font-mono"
+                data-testid="activity-reason"
+              >
+                {reason}
+              </p>
+            </details>
+          ) : null}
+          {count > 1 ? (
+            <div
+              className="mt-0.5 text-caption text-fg-muted"
+              data-testid="activity-repeats"
+            >
+              {t("activity.repeated", {
+                count,
+                since: time.format(new Date(since)),
+              })}
+            </div>
+          ) : null}
+          {object || change ? (
+            <div className="mt-0.5 flex flex-wrap gap-x-3">
+              {object ? (
+                // In the app, not a reload: the live tail and its cache stay (T-6230).
+                <RecordLink
+                  project={project}
+                  plural={object.split("/")[0]}
+                  name={object.split("/")[1]}
+                  className="font-mono text-caption"
+                >
+                  {object}
+                </RecordLink>
+              ) : null}
+              {/* What went live, and who approved it, is on the change's own page (T-3292). */}
+              {change ? (
+                <Link
+                  to="/projects/$project/approvals/$id"
+                  params={{ project, id: change }}
+                  className="focus-ring rounded-sm font-mono text-caption text-primary-soft-fg hover:underline"
+                >
+                  {change}
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
+          </>
+        );
+      },
+    },
+    {
+      key: "source",
+      label: t("activity.source"),
+      text: ({ event }) => sourceOf(event),
+      cell: ({ event }) => <span className="text-fg-muted">{sourceOf(event)}</span>,
+    },
+  ];
 
   if (page.isPending) {
     return (
-      <Table caption={t("activity.title")} status={t("app.loading")}>
-        {head}
-        <TableSkeleton columns={COLUMNS} />
-      </Table>
+      <AdminGrid<ActivityRow>
+        query={page}
+        caption={t("activity.title")}
+        storageKey={`${project}:activity`}
+        rows={[]}
+        rowKey={({ event }) => `${event.time}-${event.kind}-${event.summary}`}
+        columns={columns}
+        empty={null}
+      />
     );
   }
 
@@ -369,103 +452,15 @@ export function ActivityFeed({
           }
         />
       ) : (
-        <Table caption={t("activity.title")}>
-          {head}
-          <TableBody>
-            {groupRepeats(items).map(({ event, count, since }) => {
-              const object = objectOf(event);
-              const { sentence, reason } = sentenceOf(event);
-              const change = changeOf(event);
-              return (
-                <TableRow key={`${event.time}-${event.kind}-${event.summary}`}>
-                  <TableCell secondary className="whitespace-nowrap text-fg-muted">
-                    {time.format(new Date(event.time))}
-                  </TableCell>
-                  <TableCell secondary>
-                    <Badge
-                      tone={SEVERITY_TONE[event.severity] ?? "neutral"}
-                      data-testid="activity-kind"
-                    >
-                      {kindLabel(event, t)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell primary>
-                    <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-fg-muted sm:hidden">
-                      <span>{time.format(new Date(event.time))}</span>
-                      <Badge tone={SEVERITY_TONE[event.severity] ?? "neutral"}>
-                        {kindLabel(event, t)}
-                      </Badge>
-                      <span>
-                        {t(`activity.sources.${event.source}`, {
-                          defaultValue: event.source,
-                        })}
-                      </span>
-                    </div>
-                    {/* A URL or an id in the sentence breaks where it must: unbroken, it widened the whole
-                        table past a phone's edge and cut every row's text (judge, 400 px). */}
-                    <span data-testid="activity-sentence" className="[overflow-wrap:anywhere]">
-                      {sentence}
-                    </span>
-                    {reason ? (
-                      <details className="mt-0.5 text-caption text-fg-muted">
-                        <summary className="cursor-pointer">
-                          {t("activity.technical")}
-                        </summary>
-                        <p
-                          className="mt-0.5 break-all font-mono"
-                          data-testid="activity-reason"
-                        >
-                          {reason}
-                        </p>
-                      </details>
-                    ) : null}
-                    {count > 1 ? (
-                      <div
-                        className="mt-0.5 text-caption text-fg-muted"
-                        data-testid="activity-repeats"
-                      >
-                        {t("activity.repeated", {
-                          count,
-                          since: time.format(new Date(since)),
-                        })}
-                      </div>
-                    ) : null}
-                    {object || change ? (
-                      <div className="mt-0.5 flex flex-wrap gap-x-3">
-                        {object ? (
-                          // In the app, not a reload: the live tail and its cache stay (T-6230).
-                          <RecordLink
-                            project={project}
-                            plural={object.split("/")[0]}
-                            name={object.split("/")[1]}
-                            className="font-mono text-caption"
-                          >
-                            {object}
-                          </RecordLink>
-                        ) : null}
-                        {/* What went live, and who approved it, is on the change's own page (T-3292). */}
-                        {change ? (
-                          <Link
-                            to="/projects/$project/approvals/$id"
-                            params={{ project, id: change }}
-                            className="focus-ring rounded-sm font-mono text-caption text-primary-soft-fg hover:underline"
-                          >
-                            {change}
-                          </Link>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </TableCell>
-                  <TableCell secondary className="text-fg-muted">
-                    {t(`activity.sources.${event.source}`, {
-                      defaultValue: event.source,
-                    })}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+        <AdminGrid<ActivityRow>
+          caption={t("activity.title")}
+          storageKey={`${project}:activity`}
+          stack
+          rows={groupRepeats(items)}
+          rowKey={({ event }) => `${event.time}-${event.kind}-${event.summary}`}
+          columns={columns}
+          empty={null}
+        />
       )}
     </div>
   );

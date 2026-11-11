@@ -10,13 +10,9 @@ import {
   Badge,
   Button,
   PageFailed,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 
 interface DriftList {
   observedAt?: string;
@@ -102,6 +98,48 @@ export function SpaceDrift({ project, space }: { project: string; space: string 
   );
   const items = drift.data.items.filter((entity) => entity.space === space);
   const mayResolve = permissions.can("Entity", "propose");
+  const kindOf = (entity: DriftedEntity) => t(`drift.kind.${entity.drift === "MISSING" ? "missing" : "modified"}`);
+  const attributesOf = (entity: DriftedEntity) =>
+    entity.diff.length > 0 ? entity.diff.map((one) => one.path).join(", ") : t("drift.section.wholeEntity");
+  const columns: DataColumn<DriftedEntity>[] = [
+    {
+      key: "entity",
+      label: t("drift.section.entity"),
+      text: (entity) => entity.id,
+      cell: (entity) => <span className="font-mono text-caption [overflow-wrap:anywhere]">{entity.id}</span>,
+    },
+    {
+      key: "kind",
+      label: t("drift.section.kind"),
+      text: kindOf,
+      cell: (entity) => <Badge tone={entity.drift === "MISSING" ? "warning" : "info"}>{kindOf(entity)}</Badge>,
+    },
+    {
+      key: "attributes",
+      label: t("drift.section.attributes"),
+      text: attributesOf,
+      cell: (entity) => <span className="font-mono text-caption">{attributesOf(entity)}</span>,
+    },
+    {
+      key: "resolution",
+      label: t("drift.section.resolution"),
+      actions: true,
+      text: () => "",
+      cell: (entity) =>
+        mayResolve ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            aria-label={t("drift.section.resolveLabel", { id: entity.id })}
+            onClick={() => setOpen(entity)}
+          >
+            {t("drift.section.resolve")}
+          </Button>
+        ) : (
+          <span className="text-caption text-fg-muted">{t("drift.section.mayNotResolve")}</span>
+        ),
+    },
+  ];
 
   return (
     <div className="space-y-3">
@@ -110,47 +148,15 @@ export function SpaceDrift({ project, space }: { project: string; space: string 
       </p>
       <p className="text-caption text-fg-muted">{t("drift.section.observed", { when })}</p>
       {items.length > 0 ? (
-        <Table caption={t("drift.section.caption", { space })}>
-          <TableHead>
-            <TableHeaderCell>{t("drift.section.entity")}</TableHeaderCell>
-            <TableHeaderCell>{t("drift.section.kind")}</TableHeaderCell>
-            <TableHeaderCell>{t("drift.section.attributes")}</TableHeaderCell>
-            <TableHeaderCell>{t("drift.section.resolution")}</TableHeaderCell>
-          </TableHead>
-          <TableBody>
-            {items.map((entity) => (
-              <TableRow key={entity.id}>
-                <TableCell primary className="font-mono text-caption [overflow-wrap:anywhere]">
-                  {entity.id}
-                </TableCell>
-                <TableCell>
-                  <Badge tone={entity.drift === "MISSING" ? "warning" : "info"}>
-                    {t(`drift.kind.${entity.drift === "MISSING" ? "missing" : "modified"}`)}
-                  </Badge>
-                </TableCell>
-                <TableCell className="font-mono text-caption">
-                  {entity.diff.length > 0
-                    ? entity.diff.map((one) => one.path).join(", ")
-                    : t("drift.section.wholeEntity")}
-                </TableCell>
-                <TableCell>
-                  {mayResolve ? (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      aria-label={t("drift.section.resolveLabel", { id: entity.id })}
-                      onClick={() => setOpen(entity)}
-                    >
-                      {t("drift.section.resolve")}
-                    </Button>
-                  ) : (
-                    <span className="text-caption text-fg-muted">{t("drift.section.mayNotResolve")}</span>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <AdminGrid<DriftedEntity>
+          caption={t("drift.section.caption", { space })}
+          storageKey={`${project}:${space}:drift`}
+          stack
+          rows={items}
+          rowKey={(entity) => entity.id}
+          columns={columns}
+          empty={null}
+        />
       ) : null}
       <DriftResolutionModal
         project={project}

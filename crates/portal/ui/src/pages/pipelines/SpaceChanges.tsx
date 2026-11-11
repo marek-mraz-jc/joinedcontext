@@ -7,9 +7,15 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { originTransport } from "@joinedcontext/sdk";
-import { Alert, Badge, Button, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "../../components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+} from "../../components/ui";
 import { READ_PAGE, changesOf, countsOf } from "./spaceChanges";
 import type { EntityChange } from "./spaceChanges";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 
 const TONE = { create: "success", update: "warning", unchanged: "neutral" } as const;
 
@@ -86,38 +92,49 @@ export function SpaceChanges({ space, records }: { space: string; records: unkno
           <p role="status" className="text-body">
             {t("pipelines.workbench.changes.counts", counts)}
           </p>
-          <Table caption={t("pipelines.workbench.changes.caption", { space })} maxHeight="max-h-80">
-            <TableHead>
-              <TableHeaderCell>{t("pipelines.workbench.changes.entity")}</TableHeaderCell>
-              <TableHeaderCell>{t("pipelines.workbench.changes.outcome")}</TableHeaderCell>
-              <TableHeaderCell>{t("pipelines.workbench.changes.what")}</TableHeaderCell>
-            </TableHead>
-            <TableBody>
-              {changes.map((change) => (
-                <TableRow key={change.id}>
-                  <TableCell className="break-all font-mono text-caption">{change.id}</TableCell>
-                  <TableCell>
-                    <Badge tone={TONE[change.outcome]}>{t(`pipelines.workbench.changes.outcomes.${change.outcome}`)}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    {change.changes.length === 0 ? (
-                      <span className="text-caption text-fg-subtle">—</span>
-                    ) : (
-                      <ul className="flex flex-col gap-0.5 font-mono text-caption">
-                        {change.changes.map((one) => (
-                          <li key={`${one.kind}-${one.path}`}>
-                            {t(`pipelines.debug.kind.${one.kind}`)} {one.path}
-                            {one.kind === "changed" ? `: ${JSON.stringify(one.before)} → ${JSON.stringify(one.after)}` : null}
-                            {one.kind === "added" ? `: ${JSON.stringify(one.after)}` : null}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <AdminGrid<EntityChange>
+            caption={t("pipelines.workbench.changes.caption", { space })}
+            storageKey={`${space}:workbench-changes`}
+            stack
+            rows={changes}
+            rowKey={(change) => change.id}
+            columns={[
+              {
+                key: "entity",
+                label: t("pipelines.workbench.changes.entity"),
+                text: (change) => change.id,
+                cell: (change) => <span className="break-all font-mono text-caption">{change.id}</span>,
+              },
+              {
+                key: "outcome",
+                label: t("pipelines.workbench.changes.outcome"),
+                text: (change) => t(`pipelines.workbench.changes.outcomes.${change.outcome}`),
+                cell: (change) => (
+                  <Badge tone={TONE[change.outcome]}>{t(`pipelines.workbench.changes.outcomes.${change.outcome}`)}</Badge>
+                ),
+              },
+              {
+                key: "what",
+                label: t("pipelines.workbench.changes.what"),
+                text: (change) => change.changes.map((one) => one.path).join(" "),
+                cell: (change) =>
+                  change.changes.length === 0 ? (
+                    <span className="text-caption text-fg-subtle">—</span>
+                  ) : (
+                    <ul className="flex flex-col gap-0.5 font-mono text-caption">
+                      {change.changes.map((one) => (
+                        <li key={`${one.kind}-${one.path}`}>
+                          {t(`pipelines.debug.kind.${one.kind}`)} {one.path}
+                          {one.kind === "changed" ? `: ${JSON.stringify(one.before)} → ${JSON.stringify(one.after)}` : null}
+                          {one.kind === "added" ? `: ${JSON.stringify(one.after)}` : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ),
+              },
+            ]}
+            empty={null}
+          />
         </>
       ) : null}
     </section>

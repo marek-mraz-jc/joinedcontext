@@ -13,10 +13,9 @@ import {
   EmptyState,
   Field,
   PageFailed,
+  Skeleton,
   PageHeader,
   Select,
-  Table,
-  TableSkeleton,
   safeHref,
 } from "../../components/ui";
 
@@ -102,9 +101,12 @@ export function HealthLog({ project }: { project?: string }): JSX.Element {
   }
   if (checks.isPending) {
     return (
-      <Table caption={t("health.caption")} status={t("app.loading")}>
-        <TableSkeleton columns={5} />
-      </Table>
+      // Bars, not a table: the list's grid comes with the checks, so no reader meets an empty table.
+      <div role="status" aria-label={t("app.loading")} className="flex flex-col gap-2">
+        {[0, 1, 2, 3].map((bar) => (
+          <Skeleton key={bar} className="h-10 w-full" />
+        ))}
+      </div>
     );
   }
   const all = checks.data.items;

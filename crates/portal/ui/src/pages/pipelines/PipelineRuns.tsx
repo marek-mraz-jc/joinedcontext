@@ -15,8 +15,6 @@ import {
   Button,
   Dialog,
   EmptyState,
-  Table,
-  TableSkeleton,
 } from "../../components/ui";
 
 type Run = components["schemas"]["PipelineRun"];
@@ -194,11 +192,7 @@ export function PipelineRunsView({
       ) : null}
       {runs.isError ? (
         <PageFailed error={runs.error} onRetry={() => void runs.refetch()} />
-      ) : runs.isPending ? (
-        <Table caption={t("pipelines.runs.caption")} status={t("app.loading")}>
-          <TableSkeleton columns={5} />
-        </Table>
-      ) : items.length === 0 ? (
+      ) : !runs.isPending && items.length === 0 ? (
         <EmptyState
           bare
           icon="pipelines"
@@ -371,11 +365,7 @@ function RunLog({
       <h3 className="text-body font-medium text-fg">{caption}</h3>
       {page.isError ? (
         <PageFailed error={page.error} onRetry={() => void page.refetch()} />
-      ) : page.isPending ? (
-        <Table caption={caption} status={t("app.loading")}>
-          <TableSkeleton columns={4} />
-        </Table>
-      ) : lines.length === 0 ? (
+      ) : !page.isPending && lines.length === 0 ? (
         <p className="text-caption text-fg-subtle">
           {t(empty ? "pipelines.runs.nothingWritten" : "pipelines.runs.noLines")}
         </p>
@@ -435,10 +425,10 @@ function RunLog({
                 {t("pipelines.runs.newest")}
               </Button>
             ) : null}
-            {page.data.next != null ? (
+            {page.data?.next != null ? (
               <Button
                 size="sm"
-                onClick={() => setCursors((current) => [...current, page.data.next ?? undefined])}
+                onClick={() => setCursors((current) => [...current, page.data?.next ?? undefined])}
               >
                 {t("pipelines.runs.older")}
               </Button>

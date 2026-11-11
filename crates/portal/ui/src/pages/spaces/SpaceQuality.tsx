@@ -6,17 +6,15 @@ import type { components } from "../../api/schema";
 import {
   Badge,
   PageFailed,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
 import type { BadgeTone } from "../../components/ui/Badge";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 
 type Report = components["schemas"]["SpaceQuality"];
 type FreshState = components["schemas"]["FreshState"];
+type RuleRow = Report["rules"][number];
+type FreshRow = Report["freshness"][number];
 
 const TONE: Record<FreshState, BadgeTone> = {
   fresh: "success",
@@ -86,6 +84,69 @@ export function SpaceQuality({ project, space }: { project: string; space: strin
     seconds < 7200
       ? t("spaces.quality.minutes", { count: Math.round(seconds / 60) })
       : t("spaces.quality.hours", { count: Math.round(seconds / 3600) });
+  const ruleColumns: DataColumn<RuleRow>[] = [
+    { key: "rule", label: t("spaces.quality.rule"), text: (rule) => rule.rule, cell: (rule) => <code>{rule.rule}</code> },
+    {
+      key: "attribute",
+      label: t("spaces.quality.attribute"),
+      text: (rule) => rule.path || t("spaces.quality.wholeEntity"),
+      cell: (rule) => (rule.path ? <code>{rule.path}</code> : t("spaces.quality.wholeEntity")),
+    },
+    {
+      key: "entities",
+      label: t("spaces.quality.entities"),
+      kind: "number",
+      align: "right",
+      text: (rule) => String(rule.count),
+      cell: (rule) => rule.count.toLocaleString(locale),
+    },
+    {
+      key: "examples",
+      label: t("spaces.quality.examples"),
+      text: (rule) => rule.examples.join(" "),
+      cell: (rule) =>
+        rule.examples.length > 0 ? (
+          <ul className="space-y-0.5">
+            {rule.examples.map((id) => (
+              <li key={id} className="font-mono text-caption [overflow-wrap:anywhere]">
+                {id}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <span className="text-fg-muted">{t("spaces.quality.examplesHidden")}</span>
+        ),
+    },
+  ];
+  const freshColumns: DataColumn<FreshRow>[] = [
+    { key: "pipeline", label: t("spaces.quality.pipeline"), text: (row) => row.pipeline },
+    { key: "type", label: t("spaces.quality.type"), text: (row) => row.type || t("spaces.quality.anyType") },
+    {
+      key: "newest",
+      label: t("spaces.quality.newest"),
+      kind: "date",
+      text: (row) => row.newest ?? "",
+      cell: (row) => (row.newest ? when.format(new Date(row.newest)) : "—"),
+    },
+    {
+      key: "target",
+      label: t("spaces.quality.target"),
+      kind: "number",
+      text: (row) => (row.targetSeconds == null ? "" : String(row.targetSeconds)),
+      cell: (row) => (row.targetSeconds == null ? "—" : duration(row.targetSeconds)),
+    },
+    {
+      key: "state",
+      label: t("spaces.quality.state"),
+      text: (row) => t(`spaces.quality.states.${row.state}`),
+      cell: (row) => (
+        <span className="inline-flex flex-wrap items-center gap-1">
+          <Badge tone={TONE[row.state]}>{t(`spaces.quality.states.${row.state}`)}</Badge>
+          {row.paused ? <Badge tone="warning">{t("spaces.quality.paused")}</Badge> : null}
+        </span>
+      ),
+    },
+  ];
 
   return (
     <div className="space-y-3">
@@ -95,65 +156,26 @@ export function SpaceQuality({ project, space }: { project: string; space: strin
         {report.truncated ? ` ${t("spaces.quality.truncated")}` : ""}
       </p>
       {report.rules.length > 0 ? (
-        <Table caption={t("spaces.quality.rulesCaption")}>
-          <TableHead>
-            <TableHeaderCell>{t("spaces.quality.rule")}</TableHeaderCell>
-            <TableHeaderCell>{t("spaces.quality.attribute")}</TableHeaderCell>
-            <TableHeaderCell align="right">{t("spaces.quality.entities")}</TableHeaderCell>
-            <TableHeaderCell>{t("spaces.quality.examples")}</TableHeaderCell>
-          </TableHead>
-          <TableBody>
-            {report.rules.map((rule) => (
-              <TableRow key={`${rule.rule} ${rule.path}`}>
-                <TableCell>
-                  <code>{rule.rule}</code>
-                </TableCell>
-                <TableCell>{rule.path ? <code>{rule.path}</code> : t("spaces.quality.wholeEntity")}</TableCell>
-                <TableCell align="right">{rule.count.toLocaleString(locale)}</TableCell>
-                <TableCell>
-                  {rule.examples.length > 0 ? (
-                    <ul className="space-y-0.5">
-                      {rule.examples.map((id) => (
-                        <li key={id} className="font-mono text-caption [overflow-wrap:anywhere]">
-                          {id}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <span className="text-fg-muted">{t("spaces.quality.examplesHidden")}</span>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <AdminGrid<RuleRow>
+          caption={t("spaces.quality.rulesCaption")}
+          storageKey={`${project}:${space}:quality-rules`}
+          stack
+          rows={report.rules}
+          rowKey={(rule) => `${rule.rule} ${rule.path}`}
+          columns={ruleColumns}
+          empty={null}
+        />
       ) : null}
       {report.freshness.length > 0 ? (
-        <Table caption={t("spaces.quality.freshnessCaption")}>
-          <TableHead>
-            <TableHeaderCell>{t("spaces.quality.pipeline")}</TableHeaderCell>
-            <TableHeaderCell>{t("spaces.quality.type")}</TableHeaderCell>
-            <TableHeaderCell>{t("spaces.quality.newest")}</TableHeaderCell>
-            <TableHeaderCell>{t("spaces.quality.target")}</TableHeaderCell>
-            <TableHeaderCell>{t("spaces.quality.state")}</TableHeaderCell>
-          </TableHead>
-          <TableBody>
-            {report.freshness.map((row) => (
-              <TableRow key={row.pipeline}>
-                <TableCell primary>{row.pipeline}</TableCell>
-                <TableCell>{row.type || t("spaces.quality.anyType")}</TableCell>
-                <TableCell>{row.newest ? when.format(new Date(row.newest)) : "—"}</TableCell>
-                <TableCell>{row.targetSeconds == null ? "—" : duration(row.targetSeconds)}</TableCell>
-                <TableCell>
-                  <span className="inline-flex flex-wrap items-center gap-1">
-                    <Badge tone={TONE[row.state]}>{t(`spaces.quality.states.${row.state}`)}</Badge>
-                    {row.paused ? <Badge tone="warning">{t("spaces.quality.paused")}</Badge> : null}
-                  </span>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <AdminGrid<FreshRow>
+          caption={t("spaces.quality.freshnessCaption")}
+          storageKey={`${project}:${space}:quality-freshness`}
+          stack
+          rows={report.freshness}
+          rowKey={(row) => row.pipeline}
+          columns={freshColumns}
+          empty={null}
+        />
       ) : null}
     </div>
   );

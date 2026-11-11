@@ -159,7 +159,14 @@ describe("a pipeline's rejected records", () => {
     const ready = within(dialog).getByRole("button", { name: "Retry 2 records after fix" });
     await userEvent.click(ready);
 
-    const status = await within(dialog).findByRole("status");
+    // The grid's row count is a status too: the retry's answer is the one that says what replayed.
+    const status = await waitFor(() => {
+      const answer = within(dialog)
+        .getAllByRole("status")
+        .find((one) => one.textContent?.includes("replayed"));
+      expect(answer).toBeDefined();
+      return answer as HTMLElement;
+    });
     expect(status).toHaveTextContent("1 record was replayed through the current model");
     expect(status).toHaveTextContent("1 record stays on the list");
     await waitFor(() => expect(seen.retried).toEqual([{ ids: [9, 8] }]));

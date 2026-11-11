@@ -10,17 +10,14 @@ import {
   Badge,
   Button,
   EmptyState,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
 import { csvField } from "../explore/exportView";
 import { download } from "../models/diagramExport";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 
 type Report = components["schemas"]["PipelineSourceDeletes"];
+type Removed = Report["removed"][number];
 
 /** One CSV cell: quoted where needed, and an id a spreadsheet would run as a formula kept as text (F-UI3-009). */
 const cell = (text: string): string => csvField(text, ",", false);
@@ -181,25 +178,34 @@ export function PipelineSourceReport({
       {data.idsHidden ? null : data.removed.length === 0 ? (
         <p className="text-sm text-fg-subtle">{t("pipelines.source.noneRemoved", { misses: data.misses })}</p>
       ) : (
-        // The ids keep one line; the Table's own frame scrolls at phone width, by keyboard too.
-        <Table caption={t("pipelines.source.removed")}>
-          <TableHead>
-            <TableHeaderCell>{t("pipelines.source.entity")}</TableHeaderCell>
-            <TableHeaderCell>{t("pipelines.source.when")}</TableHeaderCell>
-            <TableHeaderCell>{t("pipelines.source.why")}</TableHeaderCell>
-          </TableHead>
-          <TableBody>
-            {data.removed.map((r) => (
-              <TableRow key={r.id}>
-                <TableCell className="whitespace-nowrap font-mono">{r.id}</TableCell>
-                <TableCell className="whitespace-nowrap">
-                  <time dateTime={r.at}>{time.format(new Date(r.at))}</time>
-                </TableCell>
-                <TableCell className="whitespace-nowrap">{t("pipelines.source.removedAtSource", { pipeline: r.pipeline, run: r.run })}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <AdminGrid<Removed>
+          caption={t("pipelines.source.removed")}
+          storageKey={`${project}:${name}:source-removed`}
+          stack
+          rows={data.removed}
+          rowKey={(r) => r.id}
+          columns={[
+            {
+              key: "entity",
+              label: t("pipelines.source.entity"),
+              text: (r) => r.id,
+              cell: (r) => <span className="whitespace-nowrap font-mono">{r.id}</span>,
+            },
+            {
+              key: "when",
+              label: t("pipelines.source.when"),
+              kind: "date",
+              text: (r) => r.at,
+              cell: (r) => <time dateTime={r.at} className="whitespace-nowrap">{time.format(new Date(r.at))}</time>,
+            },
+            {
+              key: "why",
+              label: t("pipelines.source.why"),
+              text: (r) => t("pipelines.source.removedAtSource", { pipeline: r.pipeline, run: r.run }),
+            },
+          ]}
+          empty={null}
+        />
       )}
       <div>
         <Button

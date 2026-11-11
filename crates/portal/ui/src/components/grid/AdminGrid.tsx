@@ -25,9 +25,11 @@ export function AdminGrid<T>({
   storageKey,
   stack,
   noSearch,
+  pageSizes,
 }: {
-  /** The list's read: the skeleton while it runs, the API's reason and a retry when it fails. */
-  query: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
+  /** The list's read: the skeleton while it runs, the API's reason and a retry when it fails. Absent
+   * when the page drew its own loading and failure states and hands over rows it already holds. */
+  query?: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
   caption: string;
   rows: readonly T[];
   columns: readonly DataColumn<T>[];
@@ -39,6 +41,8 @@ export function AdminGrid<T>({
   stack?: boolean;
   /** The page searches the list itself, with its own words. */
   noSearch?: boolean;
+  /** One grid page per server page when the list pages on the server too. */
+  pageSizes?: number[];
 }): JSX.Element {
   const { t } = useTranslation();
   const labels = useMemo<DataGridLabels>(
@@ -57,9 +61,9 @@ export function AdminGrid<T>({
       rows={rows}
       columns={columns}
       rowKey={rowKey}
-      loading={query.isPending}
+      loading={query?.isPending}
       error={
-        query.isError ? (
+        query?.isError ? (
           <PageFailed
             error={query.error}
             onRetry={() => {
@@ -73,6 +77,7 @@ export function AdminGrid<T>({
       storageKey={`portal:${storageKey}`}
       stack={stack}
       noSearch={noSearch}
+      pageSizes={pageSizes}
       // A click on a plain cell opens the row's record link, as on every list (T-2875).
       rowProps={() => recordCard}
     />

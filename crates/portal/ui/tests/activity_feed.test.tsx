@@ -139,21 +139,15 @@ describe("the activity feed (UI-31)", () => {
     ).toHaveAttribute("href", "/projects/helsinki/endpoints/public-air");
   });
 
-  it("gives the sentence the row's width on a phone: time, kind and source fold into one line above it (T-4165)", async () => {
+  it("gives the sentence the row's width on a phone: the shared grid stacks each event into a card (T-4165)", async () => {
     renderFeed([event({ time: "2026-09-16T16:25:00Z", summary: "The newer one." })]);
     const [row] = await rows();
-    const cells = within(row).getAllByRole("cell");
-    // Only the sentence's column is there below sm; the other three show from sm up.
-    expect(cells.filter((cell) => !cell.className.includes("hidden sm:table-cell"))).toHaveLength(1);
-    const sentence = cells.find((cell) => !cell.className.includes("hidden"));
+    // Below sm the grid draws each row as a card a phone's width wide, its time, kind and source as labelled lines.
+    expect(screen.getByRole("table").closest(".jc-data-grid")).toHaveClass("jc-data-grid--stack");
     // A URL in the sentence breaks instead of widening the table past a phone's edge.
     expect(within(row).getByTestId("activity-sentence")).toHaveClass("[overflow-wrap:anywhere]");
-    const phoneLine = sentence?.querySelector(".sm\\:hidden");
-    expect(phoneLine).not.toBeNull();
-    expect(phoneLine?.textContent).toContain(within(row).getByTestId("activity-kind").textContent ?? "");
-    for (const header of within(screen.getByRole("table")).getAllByRole("columnheader")) {
-      if (header.textContent !== en.activity.summary) expect(header).toHaveClass("hidden", "sm:table-cell");
-    }
+    const labelled = [...row.querySelectorAll("[data-label]")].map((cell) => cell.getAttribute("data-label"));
+    expect(labelled).toEqual([en.activity.kind, en.activity.summary, en.activity.source]);
   });
 
   it("says a failed publication's sentence and keeps its problem body behind a disclosure (T-4200)", async () => {

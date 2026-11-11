@@ -10,18 +10,14 @@ import {
   Badge,
   Button,
   EmptyState,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableSkeleton,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 
 type Health = components["schemas"]["PipelineHealth"];
 type HealthState = components["schemas"]["PipelineHealthState"];
 type Links = components["schemas"]["PipelineLinks"];
+type HealthRow = Health;
 
 /** The share of asked links that answered, in whole percent; T-5081 asks for 95 % or more. */
 export function answeredShare(links: Links): number | null {
@@ -118,14 +114,173 @@ export function PipelineHealthView({
   });
   const when = (at: string | null | undefined) => (at == null ? t("pipelines.health.never") : time.format(new Date(at)));
 
+  const columns: DataColumn<HealthRow>[] = [
+    {
+      key: "source",
+      label: t("pipelines.health.source"),
+      text: (item) => item.pipeline,
+      cell: (item) => (
+        <>
+        <span className="font-medium">{item.pipeline}</span>
+        </>
+      ),
+    },
+    {
+      key: "state",
+      label: t("pipelines.health.state"),
+      text: (item) => t(`pipelines.health.states.${item.state}`),
+      cell: (item) => (
+        <>
+        <span className="flex flex-col items-start gap-1">
+          <Badge tone={TONE[item.state]}>{t(`pipelines.health.states.${item.state}`)}</Badge>
+          {item.failedRuns > 1 ? (
+            <span className="text-caption text-fg-muted">
+              {t("pipelines.health.failedRuns", { count: item.failedRuns })}
+            </span>
+          ) : null}
+          {item.errors != null && item.errors.errors > 0 ? (
+            <span
+              className={
+                item.state === "failing"
+                  ? "text-caption text-danger tabular-nums"
+                  : "text-caption text-fg-muted tabular-nums"
+              }
+            >
+              {t("pipelines.health.errorRatio", {
+                percent: item.errors.percent.toLocaleString(locale),
+                errors: item.errors.errors.toLocaleString(locale),
+                records: item.errors.records.toLocaleString(locale),
+              })}
+            </span>
+          ) : null}
+          {item.alert ? (
+            <span className="text-caption text-danger">{t("pipelines.health.alerted")}</span>
+          ) : null}
+        </span>
+        </>
+      ),
+    },
+    {
+      key: "lastSuccess",
+      label: t("pipelines.health.lastSuccess"),
+      kind: "date",
+      text: (item) => item.lastSuccessAt ?? "",
+      cell: (item) => (
+        <>
+        {item.lastSuccessAt == null ? (
+          t("pipelines.health.never")
+        ) : (
+          <time dateTime={item.lastSuccessAt} className="whitespace-nowrap tabular-nums">
+            {when(item.lastSuccessAt)}
+          </time>
+        )}
+        </>
+      ),
+    },
+    {
+      key: "lastSent",
+      label: t("pipelines.health.lastSent"),
+      kind: "number",
+      text: (item) => (item.lastSent == null ? "" : String(item.lastSent)),
+      cell: (item) => (
+        <>
+        <span className="tabular-nums">
+          {item.lastSent == null ? "—" : item.lastSent.toLocaleString(locale)}
+        </span>
+        </>
+      ),
+    },
+    {
+      key: "change",
+      label: t("pipelines.health.change"),
+      kind: "number",
+      text: (item) => (item.changePercent == null ? "" : String(item.changePercent)),
+      cell: (item) => (
+        <>
+        {item.changePercent == null ? (
+          "—"
+        ) : (
+          <span
+            className={item.changePercent <= -80 ? "tabular-nums text-danger" : "tabular-nums"}
+          >
+            {item.changePercent > 0 ? "+" : item.changePercent < 0 ? "−" : ""}
+            {Math.abs(item.changePercent)} %
+            <span className="block text-caption text-fg-muted">
+              {t("pipelines.health.median", {
+                median: (item.medianSent ?? 0).toLocaleString(locale),
+              })}
+            </span>
+          </span>
+        )}
+        </>
+      ),
+    },
+    {
+      key: "lastLogLine",
+      label: t("pipelines.health.lastLogLine"),
+      text: (item) => item.lastError ?? "",
+      cell: (item) => (
+        <>
+        {item.lastError == null ? (
+          "—"
+        ) : (
+          <span className="block max-w-md break-words text-caption">
+            {item.lastError}
+            {item.lastErrorAt != null ? (
+              <time dateTime={item.lastErrorAt} className="block text-fg-muted tabular-nums">
+                {when(item.lastErrorAt)}
+              </time>
+            ) : null}
+          </span>
+        )}
+        </>
+      ),
+    },
+    {
+      key: "links",
+      label: t("pipelines.health.links"),
+      filter: false,
+      sortable: false,
+      text: () => "",
+      cell: (item) => (
+        <>
+        <LinksCell links={item.links} when={(at) => when(at)} />
+        </>
+      ),
+    },
+    {
+      key: "runs",
+      label: t("pipelines.runs.log"),
+      actions: true,
+      text: () => "",
+      cell: (item) => (
+        <>
+        <Button
+          size="sm"
+          className="whitespace-nowrap"
+          aria-label={t("pipelines.health.openRuns", { name: item.pipeline })}
+          onClick={() => onOpenRuns(item.pipeline)}
+        >
+          {t("pipelines.runs.open")}
+        </Button>
+        </>
+      ),
+    },
+  ];
   if (health.isError) {
     return <PageFailed error={health.error} onRetry={() => void health.refetch()} />;
   }
   if (health.isPending) {
     return (
-      <Table caption={t("pipelines.health.caption")} status={t("app.loading")}>
-        <TableSkeleton columns={7} />
-      </Table>
+      <AdminGrid<HealthRow>
+        query={health}
+        caption={t("pipelines.health.caption")}
+        storageKey={`${project}:pipeline-health`}
+        rows={[]}
+        rowKey={(item) => item.pipeline}
+        columns={columns}
+        empty={null}
+      />
     );
   }
   const items = byUrgency(health.data.items);
@@ -152,115 +307,15 @@ export function PipelineHealthView({
           {t("pipelines.health.allWell", { total: items.length })}
         </Alert>
       )}
-      <Table caption={t("pipelines.health.caption")}>
-        <TableHead>
-          <TableHeaderCell>{t("pipelines.health.source")}</TableHeaderCell>
-          <TableHeaderCell>{t("pipelines.health.state")}</TableHeaderCell>
-          <TableHeaderCell>{t("pipelines.health.lastSuccess")}</TableHeaderCell>
-          <TableHeaderCell>{t("pipelines.health.lastSent")}</TableHeaderCell>
-          <TableHeaderCell>{t("pipelines.health.change")}</TableHeaderCell>
-          <TableHeaderCell>{t("pipelines.health.lastLogLine")}</TableHeaderCell>
-          <TableHeaderCell>{t("pipelines.health.links")}</TableHeaderCell>
-          <TableHeaderCell>
-            <span className="sr-only">{t("pipelines.runs.log")}</span>
-          </TableHeaderCell>
-        </TableHead>
-        <TableBody>
-          {items.map((item) => (
-            <TableRow key={item.pipeline}>
-              <TableCell>
-                <span className="font-medium">{item.pipeline}</span>
-              </TableCell>
-              <TableCell>
-                <span className="flex flex-col items-start gap-1">
-                  <Badge tone={TONE[item.state]}>{t(`pipelines.health.states.${item.state}`)}</Badge>
-                  {item.failedRuns > 1 ? (
-                    <span className="text-caption text-fg-muted">
-                      {t("pipelines.health.failedRuns", { count: item.failedRuns })}
-                    </span>
-                  ) : null}
-                  {item.errors != null && item.errors.errors > 0 ? (
-                    <span
-                      className={
-                        item.state === "failing"
-                          ? "text-caption text-danger tabular-nums"
-                          : "text-caption text-fg-muted tabular-nums"
-                      }
-                    >
-                      {t("pipelines.health.errorRatio", {
-                        percent: item.errors.percent.toLocaleString(locale),
-                        errors: item.errors.errors.toLocaleString(locale),
-                        records: item.errors.records.toLocaleString(locale),
-                      })}
-                    </span>
-                  ) : null}
-                  {item.alert ? (
-                    <span className="text-caption text-danger">{t("pipelines.health.alerted")}</span>
-                  ) : null}
-                </span>
-              </TableCell>
-              <TableCell>
-                {item.lastSuccessAt == null ? (
-                  t("pipelines.health.never")
-                ) : (
-                  <time dateTime={item.lastSuccessAt} className="whitespace-nowrap tabular-nums">
-                    {when(item.lastSuccessAt)}
-                  </time>
-                )}
-              </TableCell>
-              <TableCell>
-                <span className="tabular-nums">
-                  {item.lastSent == null ? "—" : item.lastSent.toLocaleString(locale)}
-                </span>
-              </TableCell>
-              <TableCell>
-                {item.changePercent == null ? (
-                  "—"
-                ) : (
-                  <span
-                    className={item.changePercent <= -80 ? "tabular-nums text-danger" : "tabular-nums"}
-                  >
-                    {item.changePercent > 0 ? "+" : item.changePercent < 0 ? "−" : ""}
-                    {Math.abs(item.changePercent)} %
-                    <span className="block text-caption text-fg-muted">
-                      {t("pipelines.health.median", {
-                        median: (item.medianSent ?? 0).toLocaleString(locale),
-                      })}
-                    </span>
-                  </span>
-                )}
-              </TableCell>
-              <TableCell>
-                {item.lastError == null ? (
-                  "—"
-                ) : (
-                  <span className="block max-w-md break-words text-caption">
-                    {item.lastError}
-                    {item.lastErrorAt != null ? (
-                      <time dateTime={item.lastErrorAt} className="block text-fg-muted tabular-nums">
-                        {when(item.lastErrorAt)}
-                      </time>
-                    ) : null}
-                  </span>
-                )}
-              </TableCell>
-              <TableCell>
-                <LinksCell links={item.links} when={(at) => when(at)} />
-              </TableCell>
-              <TableCell>
-                <Button
-                  size="sm"
-                  className="whitespace-nowrap"
-                  aria-label={t("pipelines.health.openRuns", { name: item.pipeline })}
-                  onClick={() => onOpenRuns(item.pipeline)}
-                >
-                  {t("pipelines.runs.open")}
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <AdminGrid<HealthRow>
+        caption={t("pipelines.health.caption")}
+        storageKey={`${project}:pipeline-health`}
+        stack
+        rows={items}
+        rowKey={(item) => item.pipeline}
+        columns={columns}
+        empty={null}
+      />
     </div>
   );
 }

@@ -11,19 +11,15 @@ import {
   Field,
   InlineError,
   Select,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableSkeleton,
 } from "../../components/ui";
 import type { BadgeTone } from "../../components/ui";
 import { fromIso, HISTORY_FOREVER, HISTORY_OFF } from "./retention";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 
 type Audit = components["schemas"]["TemporalAudit"];
 type Verdict = components["schemas"]["TemporalVerdict"];
+type AuditRow = NonNullable<Audit["rows"]>[number];
 
 const TONE: Record<Verdict, BadgeTone> = {
   ok: "success",
@@ -55,12 +51,93 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
       ),
   });
 
-  // A skeleton is a <tbody>: it goes inside a Table, never straight into the section.
+  const list = (items: string[]) => (items.length === 0 ? t("spaces.temporal.none") : items.join(", "));
+  // A duration in the Retention tab's words: "30 days", "Off: no history", "Forever".
+  const duration = (iso: string) => {
+    if (iso === HISTORY_OFF) return t("spaces.retention.offShown");
+    if (iso === HISTORY_FOREVER) return t("spaces.retention.forever");
+    const keep = fromIso(iso);
+    return keep === undefined ? iso : t(`spaces.retention.amount.${keep.unit}`, { count: keep.amount });
+  };
+  const ends = (said: string) =>
+    said === "expiresAt in mapping"
+      ? t("spaces.temporal.expiresMapped")
+      : said.startsWith("expiry ")
+        ? t("spaces.temporal.expiry", { after: duration(said.slice(7)) })
+        : duration(said);
+  const columns: DataColumn<AuditRow>[] = [
+    {
+      key: "attribute",
+      label: t("spaces.temporal.attribute"),
+      text: (row) => `${row.attribute} ${row.entityType} ${row.pipeline}`,
+      cell: (row) => (
+        <span className="flex flex-col">
+          <span className="font-medium">{row.attribute}</span>
+          <span className="text-caption text-fg-muted">
+            {t("spaces.temporal.of", { type: row.entityType, pipeline: row.pipeline })}
+          </span>
+        </span>
+      ),
+    },
+    {
+      key: "verdict",
+      label: t("spaces.temporal.verdictColumn"),
+      text: (row) => t(`spaces.temporal.verdict.${row.verdict}`),
+      cell: (row) => (
+        <span className="flex flex-col items-start gap-1">
+          <Badge tone={TONE[row.verdict]}>{t(`spaces.temporal.verdict.${row.verdict}`)}</Badge>
+          {row.verdict !== "ok" && (
+            <span className="text-caption text-fg-muted">{t(`spaces.temporal.fix.${row.verdict}`)}</span>
+          )}
+          {/* Stamped on receipt but no measurement: say why it still matches (T-6089). */}
+          {row.verdict === "ok" && row.record !== "none" && row.observedAt.includes("received") && (
+            <span className="text-caption text-fg-muted">{t("spaces.temporal.receivedOk")}</span>
+          )}
+        </span>
+      ),
+    },
+    {
+      key: "rows",
+      label: t("spaces.temporal.rows"),
+      text: (row) => t(`spaces.temporal.recordMode.${row.record}`, { defaultValue: row.record }),
+      cell: (row) => (
+        <span className="flex flex-col">
+          <span>{t(`spaces.temporal.recordMode.${row.record}`, { defaultValue: row.record })}</span>
+          <span className="text-caption text-fg-muted">
+            {t("spaces.temporal.timeOf", { source: row.observedAt.map((s) => t(`spaces.temporal.source.${s}`)).join(", ") })}
+          </span>
+          <span className="text-caption text-fg-muted">
+            {t("spaces.temporal.unitOf", { unit: list(row.unitCode) })}
+            {row.datasetId.length > 0 && ` · ${t("spaces.temporal.datasets", { n: row.datasetId.length })}`}
+          </span>
+        </span>
+      ),
+    },
+    {
+      key: "kept",
+      label: t("spaces.temporal.kept"),
+      text: (row) => duration(row.history),
+      cell: (row) => (
+        <span className="flex flex-col">
+          <span>{t("spaces.temporal.history", { history: duration(row.history) })}</span>
+          <span className="text-caption text-fg-muted">
+            {t("spaces.temporal.lifetime", { lifetime: list(row.lifetime.map(ends)) })}
+          </span>
+        </span>
+      ),
+    },
+  ];
   if (audit.isPending) {
     return (
-      <Table caption={t("spaces.temporal.title")} status={t("app.loading")}>
-        <TableSkeleton columns={4} rows={4} />
-      </Table>
+      <AdminGrid<AuditRow>
+        query={audit}
+        caption={t("spaces.temporal.title")}
+        storageKey={`${project}:${space}:temporal-audit`}
+        rows={[]}
+        rowKey={(row) => row.attribute}
+        columns={columns}
+        empty={null}
+      />
     );
   }
   if (audit.isError) {
@@ -79,20 +156,6 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
   const shown = rows.filter(
     (row) => (pipeline === ALL || row.pipeline === pipeline) && (verdict === ALL || row.verdict === verdict),
   );
-  const list = (items: string[]) => (items.length === 0 ? t("spaces.temporal.none") : items.join(", "));
-  // A duration in the Retention tab's words: "30 days", "Off: no history", "Forever".
-  const duration = (iso: string) => {
-    if (iso === HISTORY_OFF) return t("spaces.retention.offShown");
-    if (iso === HISTORY_FOREVER) return t("spaces.retention.forever");
-    const keep = fromIso(iso);
-    return keep === undefined ? iso : t(`spaces.retention.amount.${keep.unit}`, { count: keep.amount });
-  };
-  const ends = (said: string) =>
-    said === "expiresAt in mapping"
-      ? t("spaces.temporal.expiresMapped")
-      : said.startsWith("expiry ")
-        ? t("spaces.temporal.expiry", { after: duration(said.slice(7)) })
-        : duration(said);
 
   return (
     <div className="space-y-3">
@@ -132,60 +195,15 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
       {shown.length === 0 ? (
         <EmptyState bare title={t("spaces.temporal.noMatch")} description={t("spaces.temporal.noMatchHint")} />
       ) : (
-        <Table caption={t("spaces.temporal.caption")}>
-          <TableHead>
-            <TableHeaderCell>{t("spaces.temporal.attribute")}</TableHeaderCell>
-            <TableHeaderCell>{t("spaces.temporal.verdictColumn")}</TableHeaderCell>
-            <TableHeaderCell>{t("spaces.temporal.rows")}</TableHeaderCell>
-            <TableHeaderCell>{t("spaces.temporal.kept")}</TableHeaderCell>
-          </TableHead>
-          <TableBody>
-            {shown.map((row) => (
-              <TableRow key={`${row.pipeline}/${row.entityType}/${row.attribute}`}>
-                <TableCell>
-                  <span className="flex flex-col">
-                    <span className="font-medium">{row.attribute}</span>
-                    <span className="text-caption text-fg-muted">
-                      {t("spaces.temporal.of", { type: row.entityType, pipeline: row.pipeline })}
-                    </span>
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <span className="flex flex-col items-start gap-1">
-                    <Badge tone={TONE[row.verdict]}>{t(`spaces.temporal.verdict.${row.verdict}`)}</Badge>
-                    {row.verdict !== "ok" && (
-                      <span className="text-caption text-fg-muted">{t(`spaces.temporal.fix.${row.verdict}`)}</span>
-                    )}
-                    {/* Stamped on receipt but no measurement: say why it still matches (T-6089). */}
-                    {row.verdict === "ok" && row.record !== "none" && row.observedAt.includes("received") && (
-                      <span className="text-caption text-fg-muted">{t("spaces.temporal.receivedOk")}</span>
-                    )}
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <span className="flex flex-col">
-                    <span>{t(`spaces.temporal.recordMode.${row.record}`, { defaultValue: row.record })}</span>
-                    <span className="text-caption text-fg-muted">
-                      {t("spaces.temporal.timeOf", { source: row.observedAt.map((s) => t(`spaces.temporal.source.${s}`)).join(", ") })}
-                    </span>
-                    <span className="text-caption text-fg-muted">
-                      {t("spaces.temporal.unitOf", { unit: list(row.unitCode) })}
-                      {row.datasetId.length > 0 && ` · ${t("spaces.temporal.datasets", { n: row.datasetId.length })}`}
-                    </span>
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <span className="flex flex-col">
-                    <span>{t("spaces.temporal.history", { history: duration(row.history) })}</span>
-                    <span className="text-caption text-fg-muted">
-                      {t("spaces.temporal.lifetime", { lifetime: list(row.lifetime.map(ends)) })}
-                    </span>
-                  </span>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <AdminGrid<AuditRow>
+          caption={t("spaces.temporal.caption")}
+          storageKey={`${project}:${space}:temporal-audit`}
+          stack
+          rows={shown}
+          rowKey={(row) => `${row.pipeline}/${row.entityType}/${row.attribute}`}
+          columns={columns}
+          empty={null}
+        />
       )}
     </div>
   );

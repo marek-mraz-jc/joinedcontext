@@ -13,15 +13,12 @@ import type { components } from "../../api/schema";
 import {
   Badge,
   PageFailed,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 
 type Report = components["schemas"]["SpaceQuality"];
+type AttributeQuality = NonNullable<Report["types"]>[number]["attributes"][number];
 
 function isReport(value: unknown): value is Report {
   return typeof value === "object" && value !== null && "observedAt" in value;
@@ -59,6 +56,10 @@ export function TypeQuality({ project, space, type }: { project: string; space: 
   const pipelines = report.freshness.filter((row) => row.type === type);
   const percent = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 });
   const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 3 });
+  const rangeOf = (attribute: AttributeQuality) =>
+    attribute.min !== undefined && attribute.min !== null && attribute.max !== undefined && attribute.max !== null
+      ? `${number.format(attribute.min)} – ${number.format(attribute.max)}`
+      : "—";
   const when = (at: string | null | undefined) =>
     at ? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(at)) : "—";
 
@@ -73,51 +74,65 @@ export function TypeQuality({ project, space, type }: { project: string; space: 
       ) : (
         <>
           <p className="text-body">{t("explore.quality.summary", { count: own.count, newest: when(own.newest) })}</p>
-          <Table caption={t("explore.quality.attributes", { type })}>
-            <TableHead>
-              <TableHeaderCell>{t("explore.quality.attribute")}</TableHeaderCell>
-              <TableHeaderCell>{t("explore.quality.completeness")}</TableHeaderCell>
-              <TableHeaderCell>{t("explore.quality.range")}</TableHeaderCell>
-              <TableHeaderCell>{t("explore.quality.outliers")}</TableHeaderCell>
-            </TableHead>
-            <TableBody>
-              {own.attributes.map((attribute) => {
-                const share = attribute.present / own.count;
-                return (
-                  <TableRow key={attribute.name}>
-                    <TableCell className="font-mono">{attribute.name}</TableCell>
-                    <TableCell>
+          <AdminGrid<AttributeQuality>
+            caption={t("explore.quality.attributes", { type })}
+            storageKey={`${project}:${space}:${type}:quality`}
+            stack
+            rows={own.attributes}
+            rowKey={(attribute) => attribute.name}
+            columns={[
+              {
+                key: "attribute",
+                label: t("explore.quality.attribute"),
+                text: (attribute) => attribute.name,
+                cell: (attribute) => <span className="font-mono">{attribute.name}</span>,
+              },
+              {
+                key: "completeness",
+                label: t("explore.quality.completeness"),
+                kind: "number",
+                text: (attribute) => String(attribute.present / own.count),
+                cell: (attribute) => {
+                  const share = attribute.present / own.count;
+                  return (
+                    <>
                       <Badge tone={share >= 0.99 ? "success" : share >= 0.8 ? "warning" : "danger"}>
                         {percent.format(share)}
                       </Badge>{" "}
                       <span className="text-caption text-fg-muted">
                         {t("explore.quality.present", { present: attribute.present, count: own.count })}
                       </span>
-                    </TableCell>
-                    <TableCell>
-                      {attribute.min !== undefined && attribute.min !== null && attribute.max !== undefined && attribute.max !== null
-                        ? `${number.format(attribute.min)} – ${number.format(attribute.max)}`
-                        : "—"}
-                    </TableCell>
-                    <TableCell>
-                      {attribute.outliers === 0 ? (
-                        "—"
-                      ) : (
-                        <span className="flex flex-col gap-0.5">
-                          <span>{t("explore.quality.outlierCount", { count: attribute.outliers })}</span>
-                          {attribute.outlierExamples.map((id) => (
-                            <span key={id} className="break-all font-mono text-caption text-fg-muted">
-                              {id}
-                            </span>
-                          ))}
+                    </>
+                  );
+                },
+              },
+              {
+                key: "range",
+                label: t("explore.quality.range"),
+                text: (attribute) => rangeOf(attribute),
+              },
+              {
+                key: "outliers",
+                label: t("explore.quality.outliers"),
+                kind: "number",
+                text: (attribute) => String(attribute.outliers),
+                cell: (attribute) =>
+                  attribute.outliers === 0 ? (
+                    "—"
+                  ) : (
+                    <span className="flex flex-col gap-0.5">
+                      <span>{t("explore.quality.outlierCount", { count: attribute.outliers })}</span>
+                      {attribute.outlierExamples.map((id) => (
+                        <span key={id} className="break-all font-mono text-caption text-fg-muted">
+                          {id}
                         </span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+                      ))}
+                    </span>
+                  ),
+              },
+            ]}
+            empty={null}
+          />
         </>
       )}
       {pipelines.length > 0 ? (

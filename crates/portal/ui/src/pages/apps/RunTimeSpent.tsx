@@ -1,7 +1,8 @@
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import type { RunEvent } from "./useAgentRun";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 
 /** One step of a run that took time: a model call, a tool, or the person answering a question. */
 export interface TimedStep {
@@ -146,27 +147,42 @@ export function RunTimeSpent({ events }: { events: RunEvent[] }): JSX.Element | 
         {t("agentRun.timeSpent.slowest", { step: label(slowest), took: duration(slowest.ms, language) })}
       </p>
       <div className="mt-2">
-        <Table caption={t("agentRun.timeSpent.caption")} maxHeight="max-h-72">
-          <TableHead>
-            <TableHeaderCell>{t("agentRun.timeSpent.started")}</TableHeaderCell>
-            <TableHeaderCell>{t("agentRun.timeSpent.step")}</TableHeaderCell>
-            <TableHeaderCell align="right">{t("agentRun.timeSpent.took")}</TableHeaderCell>
-          </TableHead>
-          <TableBody>
-            {spent.steps.map((step, index) => (
-              <TableRow key={index}>
-                <TableCell className="tabular-nums text-fg-muted">{step.at === null ? "" : started(step.at)}</TableCell>
-                <TableCell>
+        <AdminGrid<{ step: TimedStep; index: number }>
+          caption={t("agentRun.timeSpent.caption")}
+          storageKey="agent-run-time-spent"
+          stack
+          rows={spent.steps.map((step, index) => ({ step, index }))}
+          rowKey={({ index }) => String(index)}
+          columns={[
+            {
+              key: "started",
+              label: t("agentRun.timeSpent.started"),
+              kind: "number",
+              text: ({ step }) => (step.at === null ? "" : String(step.at)),
+              cell: ({ step }) => <span className="tabular-nums text-fg-muted">{step.at === null ? "" : started(step.at)}</span>,
+            },
+            {
+              key: "step",
+              label: t("agentRun.timeSpent.step"),
+              text: ({ step }) => label(step),
+              cell: ({ step }) => (
+                <>
                   {label(step)}
                   {step.failed && <span className="ml-2 text-danger">{t("agentRun.timeSpent.failed")}</span>}
-                </TableCell>
-                <TableCell align="right" className="tabular-nums">
-                  {duration(step.ms, language)}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                </>
+              ),
+            },
+            {
+              key: "took",
+              label: t("agentRun.timeSpent.took"),
+              kind: "number",
+              align: "right",
+              text: ({ step }) => String(step.ms),
+              cell: ({ step }) => <span className="tabular-nums">{duration(step.ms, language)}</span>,
+            },
+          ]}
+          empty={null}
+        />
       </div>
     </section>
   );
