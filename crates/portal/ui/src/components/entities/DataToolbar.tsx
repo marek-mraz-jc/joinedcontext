@@ -6,7 +6,7 @@
  * values a page does not share with the rest of its view.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { JSX } from "react";
+import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { andQ, matchesQ, queryFromGroup, searchQuery } from "@joinedcontext/sdk";
 import type { EnumOption, FilterColumn, FilterGroup, RichRow } from "@joinedcontext/sdk";
@@ -19,6 +19,13 @@ import { ViewOptions } from "./ViewOptions";
 import type { ViewExtras } from "./ViewOptions";
 
 export interface DataToolbarProps {
+  /** The host's own actions, at the end of a phone's one Tools menu (T-6748); a wider screen shows them beside the toolbar. */
+  menuExtra?: ReactNode;
+  /**
+   * The phone's Tools menu opens under its button, not as a sheet at the window's bottom: in a frame
+   * as tall as its rows (the catalogue's live data) that bottom is off screen (T-6748).
+   */
+  anchorMenu?: boolean;
   /** The columns the grid can filter, as it reports them (`onFilterColumns`). */
   filterColumns: FilterColumn[];
   filterTitle: (column: FilterColumn) => string;
@@ -168,7 +175,7 @@ export function DataToolbar(props: DataToolbarProps): JSX.Element {
       type="search"
       aria-label={t("spaces.toolbar.search")}
       placeholder={t("spaces.toolbar.searchPlaceholder")}
-      className="h-control w-full max-sm:order-last sm:w-36"
+      className="h-control min-w-0 flex-1 basis-40 sm:w-36 sm:flex-none sm:basis-auto"
       value={props.searchText}
       onChange={(e) => props.onSearchText(e.target.value)}
     />
@@ -190,10 +197,11 @@ export function DataToolbar(props: DataToolbarProps): JSX.Element {
     const set = tools.reduce((sum, tool) => sum + (tool.count ?? 0), 0);
     return (
       <>
-        <ToolbarPopover label={t("spaces.toolbar.tools")} count={set} outlined tall closeLabel={t("app.close")}>
+        <ToolbarPopover label={t("spaces.toolbar.tools")} count={set} outlined tall anchored={props.anchorMenu} closeLabel={t("app.close")}>
           <div className="flex flex-col gap-1">
             {panels}
             {query}
+            {props.menuExtra}
           </div>
         </ToolbarPopover>
         {search}

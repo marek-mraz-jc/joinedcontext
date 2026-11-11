@@ -79,6 +79,7 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
     onFilterColumns,
     rowNumbers,
     typeChoice,
+    compact = false,
     pageSizes,
     onPageSize,
     selected = EMPTY_IDS,
@@ -105,10 +106,14 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
   const accessType = options.config.type;
   const askAccess = options.source.access;
   const { accessRows, unreadable, ownFailed } = useGridAccess(hostAccess, askAccess, accessType);
-  const gridHidden = useMemo(
-    () => (unreadable.length === 0 ? hiddenNow : [...(hiddenNow ?? []), ...unreadable]),
-    [hiddenNow, unreadable],
-  );
+  // A phone's few columns go to what a person reads (T-6748): the id leaves, the label opens the
+  // row, and a Type every row shares (one type asked) moves to the line above the table.
+  const oneType = !options.config.type.includes(",");
+  const gridHidden = useMemo(() => {
+    const narrow = compact ? ["id", ...(oneType ? ["entity:type"] : [])] : [];
+    const gone = [...narrow, ...unreadable];
+    return gone.length === 0 ? hiddenNow : [...(hiddenNow ?? []), ...gone];
+  }, [hiddenNow, unreadable, compact, oneType]);
   const gridConfig = useMemo(() => withoutAttrs(options.config, unreadable), [options.config, unreadable]);
   const gridQuery = useMemo(
     () => (options.query?.attrs ? { ...options.query, attrs: options.query.attrs.filter((attr) => !unreadable.includes(attr)) } : options.query),

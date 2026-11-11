@@ -332,8 +332,8 @@ function csvHref(origin: string | undefined, slug: string, type: string, q: stri
 /**
  * The view's actions: a host's own (the catalogue's Data API and Embed), compare with the space
  * (only when the endpoint serves one, T-1435), the full window, and the CSV download of the current
- * query. One group in one look (secondary sm): beside the tools on a wide screen, its own row of
- * equal halves on a phone.
+ * query. One group in one look (secondary sm): beside the tools on a wide screen, one action per
+ * line at the end of the phone's Tools menu (T-6748).
  */
 function DataActions({
   actions,
@@ -344,8 +344,11 @@ function DataActions({
   onFull,
   csv,
   csvRefused,
+  stacked = false,
 }: {
   actions?: ReactNode;
+  /** Inside the phone's Tools menu: one action per line; the full window closes the menu as it opens. */
+  stacked?: boolean;
   space?: string;
   comparing: boolean;
   onCompare: () => void;
@@ -359,14 +362,22 @@ function DataActions({
   const csvHint = useId();
   return (
     <>
-      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center [&>:nth-child(odd_of_a,button):nth-last-child(1_of_a,button)]:col-span-2" data-testid="data-actions">
+      <div className={stacked ? "flex flex-col gap-1 [&>*]:justify-start" : "flex flex-wrap items-center gap-2"} data-testid="data-actions">
         {actions}
         {space ? (
           <Button size="sm" variant="secondary" onClick={onCompare}>
             {comparing ? t("endpoints.data.compareClose") : t("endpoints.data.compare")}
           </Button>
         ) : null}
-        <Button size="sm" variant="secondary" aria-pressed={full} onClick={onFull}>
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-pressed={full}
+          onClick={(event) => {
+            if (stacked) event.currentTarget.closest("details")?.removeAttribute("open");
+            onFull();
+          }}
+        >
           {full ? t("endpoints.data.fullLeave") : t("endpoints.data.full")}
         </Button>
         {csvRefused ? (
@@ -424,6 +435,8 @@ export interface EndpointDataViewProps {
   origin?: string;
   /** A host's own actions, shown first in the view's action group in the same look (the catalogue's Data API and Embed). */
   actions?: ReactNode;
+  /** The phone's Tools menu under its button: the host is a frame as tall as its rows (T-6748). */
+  anchorMenu?: boolean;
 }
 
 /** Where the grid opens: the kept or preset view, else the link's query and order; the order as text. */
@@ -781,6 +794,7 @@ export function EndpointDataView({
   csv = false,
   origin,
   actions,
+  anchorMenu,
 }: EndpointDataViewProps): JSX.Element {
   const { t, i18n } = useTranslation();
   const [chosen, setChosen] = useState<string>(link?.type ?? "");
@@ -872,6 +886,19 @@ export function EndpointDataView({
   if (notReady || !type || !config) {
     return notReady ?? <></>;
   }
+  const dataActions = (
+    <DataActions
+      actions={actions}
+      space={space}
+      comparing={comparing}
+      onCompare={() => setComparing((each) => !each)}
+      full={full}
+      onFull={() => setFull((each) => !each)}
+      csv={csv ? csvHref(origin, slug, type.name, allAsked, sortText) : undefined}
+      csvRefused={csvRefused}
+      stacked={phone}
+    />
+  );
 
   return (
     <div {...windowProps(full, t("endpoints.data.title"))}>
@@ -890,23 +917,14 @@ export function EndpointDataView({
             setView({ filterText: opened.filterText, sort: next[0] ?? null });
             tools.setThenBy(next.slice(1));
           }}
+          menuExtra={phone ? dataActions : undefined}
+          anchorMenu={anchorMenu}
         />
         {/* Two doors on the same page of entities: what this endpoint's filter and projection leave
             out is marked on the space's side (T-1435). The CSV is the whole answer of this query as
             one table, built by the endpoint under its own limits and read with the person's own
             session, as the rows are (EP-08, EP-44). */}
-        <div className="basis-full max-sm:order-last sm:ml-auto sm:basis-auto">
-          <DataActions
-            actions={actions}
-            space={space}
-            comparing={comparing}
-            onCompare={() => setComparing((each) => !each)}
-            full={full}
-            onFull={() => setFull((each) => !each)}
-            csv={csv ? csvHref(origin, slug, type.name, allAsked, sortText) : undefined}
-            csvRefused={csvRefused}
-          />
-        </div>
+        {phone ? null : <div className="ml-auto">{dataActions}</div>}
       </div>
       <div className="flex flex-wrap items-center gap-2 empty:hidden">
         {/* The conditions in force stay in sight, as on the space's grid (T-6161). */}
@@ -979,6 +997,7 @@ export function EndpointDataView({
          
           queryBox={tools.showQuery}
           filterRow={!phone}
+          compact={phone}
           onFilterColumns={tools.onFilterColumns}
           {...openRowProps(onOpenRow)}
         />

@@ -26,6 +26,36 @@
   border-bottom: 1px solid var(--jc-color-line, #e0e0e0);
 }
 
+/* A compact grid's label leads at most of a phone's width (T-6748): the row is told by its name. */
+.jc-grid[data-compact] .jc-grid-pinned {
+  min-width: min(14rem, 62vw);
+}
+
+/* A compact grid's shared type, out of its columns (T-6748): one line, the choice beside its word. */
+.jc-grid-typeline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jc-space-2, 8px);
+  margin: 0;
+  padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px);
+}
+
+.jc-grid-typeline .jc-grid-filter-cell {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+/* The filter cell's 8rem cap narrows a column; on its own line the type reads whole, at a thumb's height. */
+.jc-grid-typeline .jc-grid-filter-cell select {
+  max-width: none;
+  min-height: 2.75rem;
+}
+
+.jc-grid-typeline__label {
+  color: var(--jc-color-muted, #5f6368);
+}
+
 .jc-grid-scroll {
   /* The containing block of every absolute child (each empty cell's screen-reader "not set"), so
      the box clips them: without it they sit at their cell's place outside it and widen the page. */
