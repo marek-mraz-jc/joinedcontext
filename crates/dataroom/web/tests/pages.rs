@@ -1394,6 +1394,28 @@ fn installation_branding_and_mount_prefix_reach_the_chrome() {
 }
 
 #[test]
+fn the_footer_language_switch_hides_its_go_with_script_and_the_corner_stands_before_the_footer() {
+    let html = render_home_page(&cat(), &[], &[], "", "en", NONCE);
+    let corner = html.find("<div class=\"jc-corner\">").expect("the corner");
+    let footer = html.find("<footer class=\"site-footer\">").expect("the footer");
+    // Sticky in the page's flow before the footer, so it stops above the footer's links.
+    assert!(corner < footer, "the corner comes before the footer");
+    let footer = &html[footer..];
+    assert!(!footer.contains("jc-corner"));
+    // jc-forms.js sends the form on change; `.js .js-hide` hides Go only with script on
+    // (`.d-none` hid it without script too, and lost to `.btn` with it).
+    assert!(footer.contains("<button class=\"btn btn-default js-hide\" type=\"submit\">"));
+    assert!(footer.contains("/util/redirect\" method=\"POST\""));
+    assert!(!footer.contains("d-none"));
+    // One language offered: no switch to show.
+    let mut one = cat();
+    one.languages = vec!["en".into()];
+    let html = render_home_page(&one, &[], &[], "", "en", NONCE);
+    assert!(html.contains("<footer class=\"site-footer\">"));
+    assert!(!html.contains("lang-select"), "no switch with one language");
+}
+
+#[test]
 fn a_host_widget_replaces_the_domain_widget_and_an_empty_one_shows_no_launcher() {
     let mut inst = BrandingBlock::default();
     inst.apply_override_json(&json!({ "domain": DOMAIN }));
