@@ -286,6 +286,45 @@ async fn a_member_of_another_organization_reads_nothing() -> Res {
     Ok(())
 }
 
+/// A `group` grant of the shape the reconciler compiles from a Policy (jc-panel-grant): the group
+/// the gateway sends from the Endpoint's Organization reads the granted type; the Organization's
+/// other groups, no group, and the name as a path of another Organization read nothing.
+#[tokio::test]
+async fn a_group_grant_reads_only_for_the_named_group() -> Res {
+    let readers = grant(
+        "helsinki/bikes-ops-read",
+        "group",
+        "helsinki-readers",
+        &["5.7.1", "5.7.2"],
+        json!([{"entities": [{"type": "Car"}]}]),
+    );
+    let (st, _) = broker(doc(&[readers])).await?;
+    fleet(&st).await?;
+    let reader = [
+        ("x-jc-subject", "5b1e"),
+        ("x-jc-groups", "helsinki-readers"),
+    ];
+    let (code, list) = send(&st, "GET", "/ngsi-ld/v1/entities?type=Car", &reader, None).await?;
+    assert_eq!(code, StatusCode::OK, "{list}");
+    assert_eq!(ids(&list), car_ids(&[1, 2, 3]));
+    let members = [("x-jc-subject", "5b1e"), ("x-jc-groups", "members")];
+    let pathed = [
+        ("x-jc-subject", "5b1e"),
+        ("x-jc-groups", "zilina%2Fhelsinki-readers"),
+    ];
+    let nobody = [("x-jc-subject", "5b1e")];
+    for who in [&members[..], &pathed[..], &nobody[..]] {
+        assert_eq!(
+            send(&st, "GET", "/ngsi-ld/v1/entities?type=Car", who, None)
+                .await?
+                .0,
+            StatusCode::FORBIDDEN,
+            "{who:?}"
+        );
+    }
+    Ok(())
+}
+
 /// An anonymous caller and a data-space participant hold no Organization, even with an
 /// `x-jc-member: true` beside their headers.
 #[tokio::test]

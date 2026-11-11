@@ -33,6 +33,7 @@ python3 -I rehearsal.py realms --export <export> --out <work>/state/realms \
 - Outputs, beside `--out` (in `<work>/state`):
   - `realm-vars.txt`: every secret name the realm needs;
   - `realm-state-secrets.txt`: the clients jc signs in as (portal-api, portal-reconciler, context-gateway, jc-assistant, agent-proxy), with the state file each one's secret goes to;
+  - an export with `jc-assistant` and no `agent-proxy` (prod's) gets jc's proxy client `agent-proxy` (introspection only: service account, no flow, no role, no redirect, fresh secret `KC_AGENT_PROXY_SECRET`) and one audience mapper `jc-proxy-audience` naming it on `jc-assistant`; without them every assistant model call answers 503 (introspection 401). An existing `agent-proxy` is kept, its secret untouched, and the step stops if it has a flow, a redirect, full scope, token exchange, another authenticator or a role;
   - `realm-pipeline-clients.txt`: each `<project>-pipelines` client and each Pipeline's own client `<project>-pl-<pipeline>`, with its secret name;
   - `realm-<name>-lines.json`: main's lines put in;
   - `realm-<name>-left-out.json`: what kaisatsu refuses.

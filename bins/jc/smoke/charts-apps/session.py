@@ -18,6 +18,10 @@ PERSON = "smoke-charts-apps"
 # The imported realm's rehearsal persons (deploy/rehearsal: rehearsal.py add_tester, apps.py person).
 TESTER = "rehearsal-tester"
 HOLDER = "rehearsal-app-roles"
+# The synthetic bundle's reader of its closed panel (deploy/rehearsal/rehearsal.py READER).
+READER = "rehearsal-panel-reader"
+# The client prod's edge signs a person in with; its token is the X-Access-Token the edge adds.
+EDGE_CLIENT = "edge"
 
 
 class Session:
@@ -198,15 +202,17 @@ class Realm:
         return next((self._read(c.get("value", "")) for c in creds if c.get("type") == "password"), None)
 
 
-def app_token(base: str, realm: Realm, client_id: str, username: str, timeout: float = 60) -> str:
+def app_token(base: str, realm: Realm, client_id: str, username: str, timeout: float = 60,
+              password: str | None = None) -> str:
     """An access token of `client_id` for `username`: the code flow with PKCE the edge runs for an
     App on prod, its redirect read from the Location header and never followed (it names the
-    source environment's host). Raises RuntimeError naming the step that failed."""
+    source environment's host). `password` is the suite's own person's, held in memory; else the
+    realm file's. Raises RuntimeError naming the step that failed."""
     import base64
     import hashlib
 
     secret, redirect = realm.client(client_id)
-    password = realm.password(username)
+    password = password or realm.password(username)
     if not (secret and redirect and password):
         what, whom = ("secret", client_id) if not secret else ("redirect URI", client_id) if not redirect \
             else ("password", username)

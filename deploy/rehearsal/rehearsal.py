@@ -51,9 +51,10 @@ MAX_BATCH_ENTITIES = 500
 # jc's client that administers people in realm jc (bins/jc/src/setup.rs PORTAL_ADMIN_CLIENT).
 PORTAL_ADMIN_CLIENT = "portal-reconciler"
 # jc's state files of the clients an imported realm keeps (bins/jc STATUS.md, jc-realm-name): the
-# cutover writes the export's secret of each into them before every start. jc applies its own
-# realm files (these clients with the state file's secret) beside the imported realm into the same
-# realm, so the realm's secret is the one source: a state file of its own would clash (F5).
+# cutover writes the export's secret of each into them before every start. jc writes nothing into
+# an imported realm (bins/jc kaisatsu.rs), so the realm's secret is the one source: a state file's
+# own value names a secret the realm never held, and the realm answers 401 (F5). A client jc needs
+# and the export lacks (`agent-proxy`, add_agent_proxy) gets a fresh realm secret the same way.
 STATE_CLIENT_SECRETS = {"portal-api": "portal-client-secret", PORTAL_ADMIN_CLIENT: "portal-admin-client-secret",
                         "context-gateway": "gateway-client-secret", "jc-assistant": "assistant-client-secret",
                         "agent-proxy": "proxy-client-secret"}
@@ -488,6 +489,41 @@ def add_tester(realm: dict) -> dict:
     return out
 
 
+# The synthetic bundle's reader of its closed panel (helsinki-bikes-ops, `audience: organization`):
+# a kit person bound `viewer` on project helsinki, so the reconciler puts them into
+# helsinki-readers, the group Policy bikes-ops-read names, as a binding puts a prod reader there.
+# Only for a bundle `synth` made (manifest `synthetic`); never in a dev or prod export, and never
+# made by a suite at run time. A hand-added group member is taken out by the next reconcile.
+READER = "rehearsal-panel-reader"
+READER_ID = "7e5a0126-0000-4000-8000-00000000f126"
+READER_PROJECT = "helsinki"
+READER_BINDING = "users/assignments/rehearsal-panel-reader.yaml"
+
+
+def add_reader(realm: dict) -> dict:
+    """The synthetic bundle's panel reader, its password a secret variable up.sh fills."""
+    out = dict(realm)
+    reader = {"id": READER_ID, "username": READER, "enabled": True, "email": f"{READER}@rehearsal.invalid",
+              "emailVerified": True, "firstName": "Rehearsal", "lastName": "Panel reader",
+              "credentials": [{"type": "password", "value": "$(env:REHEARSAL_READER_PASSWORD)", "temporary": False}]}
+    out["users"] = [u for u in out.get("users") or [] if u.get("username") != READER] + [reader]
+    return out
+
+
+def reader_binding() -> bytes:
+    """The RoleBinding that makes READER a reader of READER_PROJECT, in the configuration repo."""
+    return (f"# The rehearsal kit's panel reader of the synthetic bundle (rehearsal.py READER).\n"
+            f"apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata:\n"
+            f"  name: rehearsal-panel-reader\n  namespace: org\nspec:\n  subjects:\n"
+            f"    - user: {READER_ID} # {READER}\n  role: viewer\n  scope: {{ project: {READER_PROJECT} }}\n").encode()
+
+
+def is_synthetic(export: Path) -> bool:
+    """Whether `export` is a bundle `synth` made, not an export of a running environment."""
+    f = export / "manifest.json"
+    return f.is_file() and json.loads(f.read_text()).get("synthetic") is True
+
+
 def state_client_secrets(realm: dict) -> list[tuple[str, str]]:
     """(jc state file, NAME) for each client of STATE_CLIENT_SECRETS whose secret is `$(env:NAME)`."""
     out = []
@@ -591,6 +627,86 @@ def add_embedder_scope(realm: dict) -> tuple[dict, bool]:
         new_clients.append(c)
     out["clients"] = new_clients
     return out, changed
+
+
+# jc's in-process model proxy introspects the assistant's tokens as `agent-proxy` and admits only a
+# token naming it in its audience (bins/jc/src/setup.rs PROXY_CLIENT, assistant_realm_file). Prod's
+# realm has none: its proxy is `<project>-agent-proxy`, federated-jwt with token exchange.
+PROXY_CLIENT = "agent-proxy"
+PROXY_CLIENT_REP = {
+    "clientId": PROXY_CLIENT, "name": "Model proxy", "enabled": True, "protocol": "openid-connect",
+    "publicClient": False, "clientAuthenticatorType": "client-secret",
+    "secret": "$(env:KC_AGENT_PROXY_SECRET)",
+    "standardFlowEnabled": False, "implicitFlowEnabled": False, "directAccessGrantsEnabled": False,
+    "serviceAccountsEnabled": True, "fullScopeAllowed": False, "redirectUris": [], "webOrigins": [],
+    "defaultClientScopes": ["basic"], "optionalClientScopes": [], "protocolMappers": [],
+}
+# Named apart from prod's `agent-proxy-audience` mapper on jc-assistant, which names helsinki-agent-proxy.
+PROXY_AUDIENCE_MAPPER = {
+    "name": "jc-proxy-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+    "consentRequired": False,
+    "config": {"included.custom.audience": PROXY_CLIENT, "access.token.claim": "true", "id.token.claim": "false"},
+}
+
+
+def unsafe_proxy_client(realm: dict, c: dict) -> list[str]:
+    """What makes an existing `agent-proxy` more than an introspection client (Keycloak's default
+    where a field is absent): a flow, a redirect, full scope, token exchange, another authenticator,
+    a role on its service account."""
+    out = [f for f, default in (("standardFlowEnabled", True), ("implicitFlowEnabled", False),
+                                ("directAccessGrantsEnabled", True), ("fullScopeAllowed", True),
+                                ("publicClient", False)) if c.get(f, default)]
+    out += [f for f in ("redirectUris", "webOrigins") if c.get(f)]
+    out += [f"attributes.{k}" for k, v in (c.get("attributes") or {}).items()
+            if ("token.exchange" in k or "device.authorization" in k or "ciba" in k) and str(v).lower() == "true"]
+    if c.get("clientAuthenticatorType", "client-secret") != "client-secret":
+        out.append("clientAuthenticatorType")
+    for u in realm.get("users") or []:
+        if u.get("serviceAccountClientId") == PROXY_CLIENT:
+            if u.get("clientRoles"):
+                out.append("service account clientRoles")
+            if [r for r in u.get("realmRoles") or [] if not r.startswith("default-roles-")]:
+                out.append("service account realmRoles")
+    return out
+
+
+def add_agent_proxy(realm: dict) -> tuple[dict, list[str]]:
+    """jc's proxy client `agent-proxy` (introspection only: service account, no flow, no role, no
+    redirect, a fresh secret `$(env:KC_AGENT_PROXY_SECRET)` that up.sh, or the deployment's realm
+    secrets, hands to jc's proxy-client-secret state file) and one audience mapper naming it on
+    `jc-assistant`, in a realm with the assistant: jc writes nothing into an imported realm, and
+    without both every model call answers 503 (introspection 401, jc-prod 2026-11-11). An
+    existing `agent-proxy` is kept as it is, its secret never rewritten, unless it is more than an
+    introspection client: then this stops. Answers the realm and what it added."""
+    clients = realm.get("clients") or []
+    if not any(c.get("clientId") == "jc-assistant" for c in clients):
+        return realm, []
+    added = []
+    have = [c for c in clients if c.get("clientId") == PROXY_CLIENT]
+    if len(have) > 1:
+        raise SystemExit(f"realm {realm.get('realm')}: {len(have)} clients {PROXY_CLIENT}")
+    if have:
+        unsafe = unsafe_proxy_client(realm, have[0])
+        if unsafe:
+            raise SystemExit(f"realm {realm.get('realm')}: client {PROXY_CLIENT} exists and is more than "
+                             f"an introspection client: {unsafe}")
+    new_clients = []
+    for c in clients:
+        if c.get("clientId") == "jc-assistant":
+            mappers = list(c.get("protocolMappers") or [])
+            if not any((m.get("config") or {}).get("included.custom.audience") == PROXY_CLIENT for m in mappers):
+                if any(m.get("name") == PROXY_AUDIENCE_MAPPER["name"] for m in mappers):
+                    raise SystemExit(f"realm {realm.get('realm')}: jc-assistant has a mapper "
+                                     f"{PROXY_AUDIENCE_MAPPER['name']} that names another audience")
+                c = dict(c, protocolMappers=mappers + [json.loads(json.dumps(PROXY_AUDIENCE_MAPPER))])
+                added.append("jc-assistant audience agent-proxy")
+        new_clients.append(c)
+    if not have:
+        new_clients.append(json.loads(json.dumps(PROXY_CLIENT_REP)))
+        added.insert(0, f"client {PROXY_CLIENT}")
+    if not added:
+        return realm, []
+    return dict(realm, clients=new_clients), added
 
 
 def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
@@ -938,6 +1054,8 @@ def cmd_realms(a):
             (dst.parent / f"realm-{name}-people.json").write_text(json.dumps(counts))
             print(f"realm {name}: {counts}")
         clean = add_tester(clean)
+        if is_synthetic(Path(a.export)):
+            clean = add_reader(clean)
         clean, by_secret = jc_clients_by_secret(clean)
         if a.public_base:
             clean, twins = add_rehearsal_origin(clean, a.public_base)
@@ -954,6 +1072,9 @@ def cmd_realms(a):
         clean, embedder = add_embedder_scope(clean)
         if embedder:
             print(f"realm {name}: jc-assistant may ask scope embedder (the shared embedder's audience)")
+        clean, proxy = add_agent_proxy(clean)
+        if proxy:
+            print(f"realm {name}: {proxy} (jc's model proxy introspects the assistant's tokens as it)")
         if by_secret:
             print(f"realm {name}: {by_secret} sign in by their secret (federated-jwt has no Kubernetes issuer in jc)")
         if a.kaisatsu_bin:
@@ -1263,6 +1384,7 @@ def cmd_aliases(a):
 
 def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: bytes = REHEARSAL_CATALOGUE):
     auth = {"Authorization": f"token {token}"}
+    synthetic = is_synthetic(export)
     types_of = space_types(export) if (export / "antares" / "entities.jsonl").is_file() else {}
     listing = json.loads((export / "gitea" / "repos.json").read_text())
     rows = []
@@ -1291,6 +1413,9 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
                     report.setdefault("fenced", []).append(f"{owner}/{name}/{rel}")
                 if named != fenced:
                     report.setdefault("renamed", []).append(f"{owner}/{name}/{rel}")
+        if synthetic and (root / "users" / "assignments").is_dir():
+            files[READER_BINDING] = reader_binding()
+            report["reader"] = f"{owner}/{name}/{READER_BINDING}"
         row = {"repo": f"{owner}/{name}", "files": len(files)}
         st, _ = h.json("GET", f"/git/api/v1/projects/{owner}/repositories/{name}", headers=auth)
         if st == 404:

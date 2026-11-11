@@ -52,7 +52,8 @@ import export as ex
 from common import FAIL, PASS, SKIP, Results, loopback_only, read_token, realm_of
 
 import inventory as inv
-from session import HOLDER, TESTER, Realm, Session, admin_token, app_token, make_person, sign_in
+from session import (EDGE_CLIENT, HOLDER, PERSON, READER, TESTER, Realm, Session, admin_token, app_token,
+                     make_person, sign_in)
 from shots import app_host as shots_app_host
 
 APPS_OWNER = "joinedcontext-apps"
@@ -186,6 +187,42 @@ def judge_closed(status: int, frames, error: str) -> tuple[str, str, str]:
     return FAIL, actual, "neither rows nor the gateway's refusal"
 
 
+# The Portal's answer when it ignored X-Access-Token and read the cookie session instead.
+NO_TOKEN = "does not carry"
+
+
+def panel_answer(st: int, ans) -> tuple[list, str]:
+    """(frames, error) of the Portal's panel answer: `error`, `accessDenied`, or a problem's detail."""
+    ans = ans if isinstance(ans, dict) else {"error": str(ans)[:160]}
+    err = ans.get("error") or ans.get("accessDenied") or (ans.get("detail") if st != 200 else "") or ""
+    return ans.get("frames") or [], str(err)[:200]
+
+
+def judge_reader(status: int, frames, error: str) -> tuple[str, str, str]:
+    """(result, actual, reason) of a closed Endpoint's panel read through the Portal as a person
+    the Endpoint's Policy grants, with their edge token: 200 and at least one row, nothing else."""
+    rows = frame_rows(frames)
+    actual = f"{status}, {len(frames or [])} frames, {rows} rows" + (f", error: {error}" if error else "")
+    if status == 200 and not error and rows:
+        return PASS, actual, ""
+    if NO_TOKEN in (error or ""):
+        return FAIL, actual, "the Portal ignored X-Access-Token: is JC_TRUST_EDGE_TOKEN on (deploy/rehearsal/apps.sh)?"
+    return FAIL, actual, "no rows for a person the Policy grants" if status == 200 and not error else ""
+
+
+def judge_refused(status: int, frames, error: str) -> tuple[str, str, str]:
+    """(result, actual, reason) of the same read as a signed-in person the Portal lets open the
+    dashboard and the Policy names nowhere: the Portal answers 200 with no frame and the gateway's
+    refusal (403, or the 404 an outsider of the Endpoint's Organization gets, EP-14). A row is a leak."""
+    rows = frame_rows(frames)
+    actual = f"{status}, {len(frames or [])} frames, {rows} rows" + (f", error: {error}" if error else "")
+    if rows or frames:
+        return FAIL, actual, "LEAK: data of a closed Endpoint for a person no Policy grants"
+    if status == 200 and re.search(r"upstream status 40[134]\b", error or ""):
+        return PASS, actual, "refused upstream"
+    return FAIL, actual, "neither frames nor the gateway's refusal"
+
+
 class Daiya:
     def __init__(self, s: Session, password: str | None):
         self.s = s
@@ -257,7 +294,7 @@ def main(argv=None) -> int:
             f"{since.isoformat(timespec='seconds')} .. {now.isoformat(timespec='seconds')}"}
 
     # ---- the person and the Portal session
-    signed = False
+    signed, own_password = False, None
     realm = realm_of(a.state)
     try:
         tok = read_token(a.realm_token_file) or (admin_token(s, secret("portal-admin-client-secret"), realm)
@@ -266,7 +303,8 @@ def main(argv=None) -> int:
             res.skip("session", "portal", "sign in", "a signed-in platform admin",
                      "no --realm-token-file and no portal-admin-client-secret in --state")
         else:
-            ok, detail = sign_in(s, make_person(s, tok, realm=realm))
+            own_password = make_person(s, tok, realm=realm)
+            ok, detail = sign_in(s, own_password)
             res.check("session", "portal", "GET /api/v1/auth/login (code flow)", "signed in", detail, ok)
             signed = ok
     except RuntimeError as e:
@@ -283,6 +321,19 @@ def main(argv=None) -> int:
     daiya = Daiya(s, secret("dashboards-password"))
     browser = None
     shots_dir = out / "shots"
+    app_realm = Realm(state)
+    edge_tokens: dict = {}
+
+    def edge_token(username: str):
+        """(token, why not) of `username` at the edge client, minted once and held in memory only:
+        prod's edge adds it to every request as X-Access-Token (JC_TRUST_EDGE_TOKEN)."""
+        if username not in edge_tokens:
+            try:
+                pw = own_password if username == PERSON else None
+                edge_tokens[username] = (app_token(a.base_url, app_realm, EDGE_CLIENT, username, a.timeout, pw), "")
+            except RuntimeError as e:
+                edge_tokens[username] = (None, str(e)[:200])
+        return edge_tokens[username]
     counts = {"dashboards": 0, "panels": 0}
 
     for d in dashboards:
@@ -352,10 +403,24 @@ def main(argv=None) -> int:
                 continue
             q = urllib.parse.urlencode(window)
             path = f"/api/v1/projects/{d.project}/grafana/dashboards/{urllib.parse.quote(d.uid)}/panels/{pn.id}?{q}"
+            if (dsrc.get("jsonData") or {}).get("oauthPassThru") and slug in closed:
+                # A closed Endpoint's panel is read with the person's own token (the cookie session
+                # carries none by design): the edge's X-Access-Token, as prod's edge sends it.
+                for check_id, who, judged, want in (
+                        ("portal.panel", READER, judge_reader, "200 and rows (the Policy grants the reader's group)"),
+                        ("portal.panel.refused", PERSON, judge_refused,
+                         "200, no frame, the gateway's refusal (no Policy names this person)")):
+                    token, why_not = edge_token(who)
+                    call = f"GET {path.split('?')[0]} as {who} (X-Access-Token of {EDGE_CLIENT})"
+                    if not token:
+                        res.add(check_id, ptgt, call, want, "", FAIL, f"no edge token: {why_not}")
+                        continue
+                    st, ans = s.json("GET", path, headers={"X-Access-Token": token})
+                    res.add(check_id, ptgt, call, want, *judged(st, *panel_answer(st, ans)))
+                continue
             st, ans = s.json("GET", path)
-            ans = ans if isinstance(ans, dict) else {"error": str(ans)[:160]}
-            err = ans.get("error") or ans.get("accessDenied") or (ans.get("detail") if st != 200 else "") or ""
-            r, act, reason = judge(st, ans.get("frames"), str(err)[:200], expect, why)
+            frames, err = panel_answer(st, ans)
+            r, act, reason = judge(st, frames, err, expect, why)
             res.add("portal.panel", ptgt, f"GET {path.split('?')[0]}", exp_txt, act, r, reason)
         # -- Portal list, page, shots
         if not signed:
@@ -400,7 +465,6 @@ def main(argv=None) -> int:
         shako = secret("shako-token")
         sauth = {"Authorization": f"token {shako}"} if shako else None
         named = {x.git for x in apps}
-        app_realm = Realm(state)
         counts.update(apps=len(apps), appRepos=len(repos))
         for r in repos:
             full = f"{r['owner']}/{r['name']}"
