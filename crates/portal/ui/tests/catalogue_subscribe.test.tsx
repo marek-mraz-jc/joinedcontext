@@ -13,9 +13,9 @@ const FEED = {
   name: "kultura",
   title: { sk: "Kultúra", en: "Culture" },
   links: [
-    { format: "Atom", mediaType: "application/atom+xml", url: `${URL}feed/v1/kultura/atom.xml` },
-    { format: "RSS 2.0", mediaType: "application/rss+xml", url: `${URL}feed/v1/kultura/rss.xml` },
-    { format: "JSON Feed", mediaType: "application/feed+json", url: `${URL}feed/v1/kultura/feed.json` },
+    { format: "Atom", mediaType: "application/atom+xml", url: `${URL}feeds/kultura.atom` },
+    { format: "RSS 2.0", mediaType: "application/rss+xml", url: `${URL}feeds/kultura.rss` },
+    { format: "JSON Feed", mediaType: "application/feed+json", url: `${URL}feeds/kultura.json` },
   ],
 };
 
@@ -43,7 +43,7 @@ describe("SubscribeMenu", () => {
     expect(feedTitle(FEED, "en")).toBe("Culture");
     expect(feedTitle({ ...FEED, title: {} }, "sk")).toBe("kultura");
     expect(calendarUrl({ url: URL, representations: ["ngsi-ld"], feeds: [], calendars: [] })).toBeNull();
-    expect(calendarUrl({ url: URL, representations: ["ical"], feeds: [], calendars: [] })).toBe(`${URL}ical/v1/events.ics`);
+    expect(calendarUrl({ url: URL, representations: ["ical"], feeds: [], calendars: [] })).toBe(`${URL}entities.ics`);
   });
 
   it("shows nothing for a dataset whose items do not appear over time", () => {
@@ -66,7 +66,7 @@ describe("SubscribeMenu", () => {
     expect(screen.getByText("Novinky")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Pridať do kalendára" })).toHaveAttribute(
       "href",
-      `webcal://api.dev.joinedcontext.com/api/endpoint/k7m2qz4tv6xh3n5jb2ryd3wcfa/ical/v1/events.ics`,
+      `webcal://api.dev.joinedcontext.com/api/endpoint/k7m2qz4tv6xh3n5jb2ryd3wcfa/entities.ics`,
     );
     expect(screen.getByRole("menuitem", { name: "Kultúra (RSS 2.0)" })).toHaveAttribute("href", FEED.links[1].url);
     unmount();
@@ -75,8 +75,8 @@ describe("SubscribeMenu", () => {
 
   it("lists each calendar output once by its title, in the menu and in the head (T-5218)", async () => {
     const calendars: Endpoint["calendars"] = [
-      { name: "kalendar", title: { sk: "Kalendár podujatí", en: "Events calendar" }, url: `${URL}ical/v1/kalendar.ics` },
-      { name: "zasadnutia", title: {}, url: `${URL}ical/v1/zasadnutia.ics` },
+      { name: "kalendar", title: { sk: "Kalendár podujatí", en: "Events calendar" }, url: `${URL}feeds/kalendar.ics` },
+      { name: "zasadnutia", title: {}, url: `${URL}feeds/zasadnutia.ics` },
     ];
     const { unmount } = show({ url: URL, representations: ["ngsi-ld", "ical"], feeds: [], calendars });
     const heads = [...document.head.querySelectorAll<HTMLLinkElement>('link[rel="alternate"][data-calendar]')];
@@ -87,7 +87,7 @@ describe("SubscribeMenu", () => {
     await userEvent.click(screen.getByRole("button", { name: "Odoberať" }));
     expect(await screen.findByRole("menuitem", { name: "Pridať do kalendára: Kalendár podujatí" })).toHaveAttribute(
       "href",
-      `webcal://api.dev.joinedcontext.com/api/endpoint/k7m2qz4tv6xh3n5jb2ryd3wcfa/ical/v1/kalendar.ics`,
+      `webcal://api.dev.joinedcontext.com/api/endpoint/k7m2qz4tv6xh3n5jb2ryd3wcfa/feeds/kalendar.ics`,
     );
     expect(screen.getByRole("menuitem", { name: "Stiahnuť zasadnutia (.ics)" })).toHaveAttribute("href", calendars[1]!.url);
     expect(screen.getAllByRole("menuitem")).toHaveLength(4);
