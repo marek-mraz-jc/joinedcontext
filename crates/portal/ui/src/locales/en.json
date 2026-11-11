@@ -2220,6 +2220,49 @@
           "none": "This type has no fields to show; pick a type of the space's data model first.",
           "full": "At most {max} columns; untick one to pick another."
         }
+      },
+      "sortField": {
+        "label": "Order",
+        "hint": "Which events the limit keeps. For example, earliest first keeps the coming events of a 'what's on' calendar.",
+        "default": "Default (earliest first once a limit is set)",
+        "start": "Earliest start first",
+        "latest": "Latest start first"
+      },
+      "limitField": {
+        "label": "Most entries (optional)",
+        "hint": "1 to 10000, for example 100. Empty keeps every event the query selects.",
+        "bad": "Enter a whole number from 1 to {max}."
+      },
+      "feedLimitField": {
+        "hint": "Items per page, 1 to 200, for example 50 (the default when empty)."
+      },
+      "timezoneField": {
+        "label": "Time zone",
+        "hint": "Times without an offset are read in this zone and the calendar shows it, for example Europe/Bratislava.",
+        "default": "{zone} (default)"
+      },
+      "preview": {
+        "label": "Preview this calendar",
+        "loading": "Reading…",
+        "hint": "Shows the first entries this calendar gives with the query, order, limit and zone above, read with your own access. Nothing is saved.",
+        "unsaved": "Save the Endpoint once to preview its calendars.",
+        "counts": "{read} records read, {valid} become calendar entries.",
+        "skipped": "Left out: {reasons}. Check the mapping below.",
+        "none": "No entry: the query keeps no event, or the mapping leaves every one out. Widen the query or check the mapping.",
+        "untitled": "(no title)",
+        "heading": "Preview",
+        "outside": "{outside} fall outside the time window.",
+        "shown": "Showing the first {shown} of {valid}.",
+        "reason": "{n} {reason}",
+        "reasons": {
+          "missing-summary": "without a title (SUMMARY)",
+          "missing-dtstart": "without a start (DTSTART)",
+          "unparsable-date": "with a date that does not read",
+          "unparsable-duration": "with a duration that does not read",
+          "dtend-not-after-dtstart": "ending before they start",
+          "geo-out-of-range": "with a position out of range",
+          "url-not-http": "with a link that is not http(s)"
+        }
       }
     },
     "accessMatrix": {

@@ -861,6 +861,7 @@
         "assistant": "jc_endpoint_propose",
         "routes": [
           "POST /api/v1/projects/{project}/endpoints/{name}/preview",
+          "POST /api/v1/projects/{project}/endpoints/{name}/ical-preview",
           "PUT /api/v1/projects/{project}/{plural}/{name}",
           "PATCH /api/v1/projects/{project}/{plural}/{name}"
         ]

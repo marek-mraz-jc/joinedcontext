@@ -18,7 +18,8 @@
 //! `antares_surface_records_skipped_total{surface="ical",reason}` (EP-126), never served as an
 //! invalid `VEVENT`.
 //!
-//! `POST /x/views/{view}/ical/v1/preview` renders a candidate mapping over the first Entities
+//! `POST /x/views/{view}/ical/v1/preview` renders a candidate mapping, or a whole candidate
+//! output (a preset with its filter, `sort`, `limit` and `timezone`), over the first Entities
 //! the request's subject reads through the view, for the Portal's Endpoint form: only with the
 //! broker's admin bearer token (the Portal's), nothing stored.
 //!
@@ -469,12 +470,17 @@ async fn feed(
     Ok((out, skipped))
 }
 
-/// The body of `POST …/ical/v1/preview`.
+/// The body of `POST …/ical/v1/preview`: `mapping` or `output`, one of them.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreviewBody {
-    /// The candidate `representations.ical`.
-    mapping: Value,
+    /// The candidate `representations.ical` source.
+    #[serde(default)]
+    mapping: Option<Value>,
+    /// A whole candidate output, a stored preset: its filter, `sort`, `limit` and `timezone`
+    /// apply as when it is served (API/02 §4a, T-6762).
+    #[serde(default)]
+    output: Option<Value>,
     /// How many Entities to render, 1 to [`MAX_PREVIEW_LIMIT`] (the default).
     #[serde(default)]
     limit: Option<usize>,
@@ -517,32 +523,63 @@ async fn previewed(
     if !(1..=MAX_PREVIEW_LIMIT).contains(&limit) {
         return Err(bad(format!("limit is 1 to {MAX_PREVIEW_LIMIT}")));
     }
-    let candidate = serde_json::from_value::<IcalMapping>(body.mapping)
-        .map_err(|e| e.to_string())
-        .and_then(|m| Plan::compile(&m))
-        .map_err(|why| bad(format!("the mapping does not hold: {why}")))?;
+    let (plans, filter, zone, order) = match (body.mapping, body.output) {
+        (Some(mapping), None) => {
+            let plan = serde_json::from_value::<IcalMapping>(mapping)
+                .map_err(|e| e.to_string())
+                .and_then(|m| Plan::compile(&m))
+                .map_err(|why| bad(format!("the mapping does not hold: {why}")))?;
+            let zone = plan.zone();
+            (vec![plan], mapping::Filter::default(), zone, None)
+        }
+        (None, Some(output)) => {
+            let compiled = serde_json::from_value::<mapping::Output>(output)
+                .map_err(|e| e.to_string())
+                .and_then(|o| CompiledOutput::compile(&o))
+                .map_err(|why| bad(format!("the output does not hold: {why}")))?;
+            let o = &compiled.output;
+            let order = (o.sort.is_some() || o.limit.is_some()).then_some((
+                compiled.descending,
+                o.limit
+                    .map_or(usize::MAX, |n| usize::try_from(n).unwrap_or(usize::MAX)),
+            ));
+            (compiled.plans, compiled.output.filter, compiled.zone, order)
+        }
+        _ => {
+            return Err(bad(
+                "a preview body names `mapping` or `output`, one of them".into(),
+            ))
+        }
+    };
     let asked = asked(uri)?;
     let view = view_of(ops, id)?;
-    let plan = &candidate;
-    let pushdown = pushdown(&view, &[plan], &mapping::Filter::default(), &asked).await?;
-    let window = Window::read(asked.from, asked.to, plan.zone());
+    let refs: Vec<&Plan> = plans.iter().collect();
+    let pushdown = pushdown(&view, &refs, &filter, &asked).await?;
+    let window = Window::read(asked.from, asked.to, zone);
     let first = Page {
         start: 0,
         size: limit,
         whole: false,
     };
-    let (entities, _) = page(&view, caller, &pushdown, &[plan], first).await?;
+    let (entities, _) = page(&view, caller, &pushdown, &refs, first).await?;
     let now = Utc::now();
     let (mut valid, mut outside) = (0usize, 0usize);
     let mut skipped: BTreeMap<&str, usize> = BTreeMap::new();
     let mut events = Vec::new();
     for entity in &entities {
+        let ty = local(
+            entity
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        );
+        let Some(plan) = plans.iter().find(|p| p.entity_type() == ty) else {
+            continue;
+        };
         match plan.vevent(entity, &window, now) {
             Outcome::Event(text) => {
                 valid = valid.saturating_add(1);
-                if events.len() < PREVIEW_EVENTS {
-                    events.push(text);
-                }
+                events.push((plan.start(entity), text));
             }
             Outcome::Outside => outside = outside.saturating_add(1),
             Outcome::Skipped(reason) => {
@@ -551,6 +588,22 @@ async fn previewed(
             }
         }
     }
+    if let Some((descending, keep)) = order {
+        // as the served calendar orders them: stable, by DTSTART
+        events.sort_by(|a, b| {
+            if descending {
+                b.0.cmp(&a.0)
+            } else {
+                a.0.cmp(&b.0)
+            }
+        });
+        events.truncate(keep);
+    }
+    let events: Vec<String> = events
+        .into_iter()
+        .take(PREVIEW_EVENTS)
+        .map(|(_, text)| text)
+        .collect();
     Ok(json!({
         "read": entities.len(),
         "valid": valid,

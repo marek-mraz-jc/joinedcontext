@@ -2220,6 +2220,49 @@
           "none": "Dieser Typ hat keine Felder zum Anzeigen; wählen Sie zuerst einen Typ aus dem Datenmodell des Bereichs.",
           "full": "Höchstens {max} Spalten; entfernen Sie ein Kreuz, um eine andere zu wählen."
         }
+      },
+      "sortField": {
+        "label": "Reihenfolge",
+        "hint": "Welche Termine das Limit behält. Zum Beispiel behält „früheste zuerst“ die kommenden Termine eines Veranstaltungskalenders.",
+        "default": "Standard (früheste zuerst, sobald ein Limit gesetzt ist)",
+        "start": "Frühester Beginn zuerst",
+        "latest": "Spätester Beginn zuerst"
+      },
+      "limitField": {
+        "label": "Höchstens Einträge (optional)",
+        "hint": "1 bis 10000, zum Beispiel 100. Leer behält jeden Termin, den die Abfrage auswählt.",
+        "bad": "Geben Sie eine ganze Zahl von 1 bis {max} ein."
+      },
+      "feedLimitField": {
+        "hint": "Einträge pro Seite, 1 bis 200, zum Beispiel 50 (Standard, wenn leer)."
+      },
+      "timezoneField": {
+        "label": "Zeitzone",
+        "hint": "Zeiten ohne Versatz werden in dieser Zone gelesen und der Kalender zeigt sie, zum Beispiel Europe/Bratislava.",
+        "default": "{zone} (Standard)"
+      },
+      "preview": {
+        "label": "Kalender-Vorschau",
+        "loading": "Wird gelesen…",
+        "hint": "Zeigt die ersten Einträge, die dieser Kalender mit Abfrage, Reihenfolge, Limit und Zone oben liefert, gelesen mit Ihrem eigenen Zugriff. Nichts wird gespeichert.",
+        "unsaved": "Speichern Sie den Endpoint einmal, um seine Kalender in der Vorschau zu sehen.",
+        "counts": "{read} Datensätze gelesen, {valid} werden Kalendereinträge.",
+        "skipped": "Ausgelassen: {reasons}. Prüfen Sie die Zuordnung unten.",
+        "none": "Kein Eintrag: Die Abfrage behält keinen Termin, oder die Zuordnung lässt jeden aus. Erweitern Sie die Abfrage oder prüfen Sie die Zuordnung.",
+        "untitled": "(ohne Titel)",
+        "heading": "Vorschau",
+        "outside": "{outside} liegen außerhalb des Zeitfensters.",
+        "shown": "Die ersten {shown} von {valid} werden gezeigt.",
+        "reason": "{n} {reason}",
+        "reasons": {
+          "missing-summary": "ohne Titel (SUMMARY)",
+          "missing-dtstart": "ohne Beginn (DTSTART)",
+          "unparsable-date": "mit unlesbarem Datum",
+          "unparsable-duration": "mit unlesbarer Dauer",
+          "dtend-not-after-dtstart": "mit Ende vor Beginn",
+          "geo-out-of-range": "mit Position außerhalb des Bereichs",
+          "url-not-http": "mit Link, der nicht http(s) ist"
+        }
       }
     },
     "accessMatrix": {

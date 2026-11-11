@@ -2220,6 +2220,49 @@
           "none": "Tento typ nemá pole k zobrazení; nejprve vyberte typ z datového modelu prostoru.",
           "full": "Nejvýše {max} sloupců; chcete-li jiný, jeden odškrtněte."
         }
+      },
+      "sortField": {
+        "label": "Pořadí",
+        "hint": "Které akce limit ponechá. Například nejdřívější jako první ponechá nadcházející akce kalendáře „co se děje“.",
+        "default": "Výchozí (nejdřívější jako první, když je nastaven limit)",
+        "start": "Nejdřívější začátek jako první",
+        "latest": "Nejpozdější začátek jako první"
+      },
+      "limitField": {
+        "label": "Nejvíce záznamů (nepovinné)",
+        "hint": "1 až 10000, například 100. Prázdné ponechá všechny akce, které dotaz vybere.",
+        "bad": "Zadejte celé číslo od 1 do {max}."
+      },
+      "feedLimitField": {
+        "hint": "Položek na stránku, 1 až 200, například 50 (výchozí, když je prázdné)."
+      },
+      "timezoneField": {
+        "label": "Časové pásmo",
+        "hint": "Časy bez posunu se čtou v tomto pásmu a kalendář ho zobrazí, například Europe/Bratislava.",
+        "default": "{zone} (výchozí)"
+      },
+      "preview": {
+        "label": "Náhled kalendáře",
+        "loading": "Načítá se…",
+        "hint": "Ukáže první záznamy, které kalendář dá s dotazem, pořadím, limitem a pásmem výše, čtené s vaším vlastním přístupem. Nic se neuloží.",
+        "unsaved": "Uložte Endpoint alespoň jednou, pak můžete kalendáře zobrazit v náhledu.",
+        "counts": "Načtených záznamů: {read}, položek kalendáře: {valid}.",
+        "skipped": "Vynechané: {reasons}. Zkontrolujte mapování níže.",
+        "none": "Žádný záznam: dotaz neponechá žádnou akci nebo mapování vynechá každou. Rozšiřte dotaz nebo zkontrolujte mapování.",
+        "untitled": "(bez názvu)",
+        "heading": "Náhled",
+        "outside": "Mimo časové okno: {outside}.",
+        "shown": "Zobrazeno prvních {shown} z {valid}.",
+        "reason": "{n} {reason}",
+        "reasons": {
+          "missing-summary": "bez názvu (SUMMARY)",
+          "missing-dtstart": "bez začátku (DTSTART)",
+          "unparsable-date": "s nečitelným datem",
+          "unparsable-duration": "s nečitelným trváním",
+          "dtend-not-after-dtstart": "s koncem před začátkem",
+          "geo-out-of-range": "s polohou mimo rozsah",
+          "url-not-http": "s odkazem, který není http(s)"
+        }
       }
     },
     "accessMatrix": {

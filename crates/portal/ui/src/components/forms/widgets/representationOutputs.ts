@@ -263,3 +263,54 @@ export function unmappedRoles(source: FeedSource): string[] {
     .map(({ role }) => role)
     .filter((role) => source.mapping?.[role] === undefined && preset[role] === undefined);
 }
+
+/** A calendar preset's `sort` (jc-core `IcalOutput.sort`): which Events its `limit` keeps. */
+export const ICAL_SORTS = ["start", "-start"] as const;
+
+/** The most Events a calendar keeps, and the largest page a feed answers (jc-core). */
+export const MAX_ICAL_LIMIT = 10000;
+export const MAX_FEED_LIMIT = 200;
+
+/** The zone a calendar reads a time without offset in when it names none (jc-core). */
+export const DEFAULT_ZONE = "Europe/Bratislava";
+
+/** The output with `member` set, or dropped when `value` is empty. */
+export function withMember<O extends object>(output: O, member: string, value: unknown): O {
+  const next = { ...output } as Record<string, unknown>;
+  if (value === undefined || value === "") delete next[member];
+  else next[member] = value;
+  return next as O;
+}
+
+/** Whether a stored limit is a whole number from 1 to `max`; absent is fine. */
+export function limitFits(limit: unknown, max: number): boolean {
+  return limit === undefined || (typeof limit === "number" && Number.isInteger(limit) && limit >= 1 && limit <= max);
+}
+
+/** The IANA zones the browser knows, `UTC` and the default first, with `current` kept even when unknown, for the save to name. */
+export function timeZones(current?: string): string[] {
+  const known = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [];
+  const rest = [...new Set([...known, ...(current ? [current] : [])])].filter((z) => z !== "UTC" && z !== DEFAULT_ZONE).sort();
+  return [DEFAULT_ZONE, "UTC", ...rest];
+}
+
+/** One previewed calendar entry: its SUMMARY and DTSTART, read from the `VEVENT` text (RFC 5545 unfolded). */
+export interface PreviewEntry {
+  summary: string;
+  start: string;
+  /** The DTSTART's `TZID`, when it names one. */
+  zone?: string;
+}
+
+export function entriesOf(vevents: string[]): PreviewEntry[] {
+  return vevents.map((text) => {
+    const lines = text.replace(/\r?\n[ \t]/g, "").split(/\r?\n/);
+    const value = (name: string): string => {
+      const line = lines.find((l) => l.startsWith(`${name}:`) || l.startsWith(`${name};`));
+      const raw = line ? line.slice(line.indexOf(":") + 1) : "";
+      return raw.replace(/\\([,;\\])/g, "$1").replace(/\\n/gi, " ");
+    };
+    const zone = /^DTSTART;(?:[^:]*;)?TZID=([^;:]+)/.exec(lines.find((l) => l.startsWith("DTSTART;")) ?? "")?.[1];
+    return { summary: value("SUMMARY"), start: value("DTSTART"), ...(zone ? { zone } : {}) };
+  });
+}
