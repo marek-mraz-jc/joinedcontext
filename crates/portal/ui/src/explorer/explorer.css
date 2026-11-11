@@ -70,5 +70,11 @@
    reader just used. */
 @media (max-width: 1023px) {
   .jc-explorer .jc-grid { position: relative; }
-  .jc-explorer .jc-grid-inspector { position: absolute; top: 0; bottom: auto; max-height: none; }
+  /* At the top, so the edge and shadow face down, onto the rows it covers. */
+  .jc-explorer .jc-grid-inspector {
+    position: absolute; top: 0; bottom: auto; max-height: none;
+    border-top: 0; border-bottom: 1px solid var(--jc-color-line, #d0d7de);
+    border-radius: 0 0 var(--jc-radius-md, 0.5rem) var(--jc-radius-md, 0.5rem);
+    box-shadow: 0 6px 16px rgb(0 0 0 / 0.18);
+  }
 }
