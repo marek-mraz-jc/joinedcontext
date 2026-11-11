@@ -81,13 +81,15 @@ export function NoChoicesField(props: FieldProps): JSX.Element {
   return (
     <fieldset id={id} className={LIST_FIELDSET} aria-describedby={`${id}__help`}>
       <ListLegend heading={props.schema.title ?? ""} required={props.required} />
-      <div className={clsx(LIST_BODY, "max-w-2xl rounded-md border border-dashed border-fg-muted p-3")}>
-        <p id={`${id}__help`} className="text-body text-fg-muted">
-          {typeof help === "string" ? help : null}
-        </p>
-        <a href="/organization/projects" className={clsx(RECORD_LINK_STYLE, "self-start underline")}>
-          {t("organization.field.appearance.homeWidgetsProjects")}
-        </a>
+      <div className={LIST_BODY}>
+        <div className="flex max-w-2xl flex-col gap-2 rounded-md border border-dashed border-fg-muted p-3">
+          <p id={`${id}__help`} className="text-body text-fg-muted">
+            {typeof help === "string" ? help : null}
+          </p>
+          <a href="/organization/projects" className={clsx(RECORD_LINK_STYLE, "self-start underline")}>
+            {t("organization.field.appearance.homeWidgetsProjects")}
+          </a>
+        </div>
       </div>
     </fieldset>
   );
