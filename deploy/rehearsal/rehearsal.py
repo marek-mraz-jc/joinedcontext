@@ -470,8 +470,11 @@ def jc_clients_by_secret(realm: dict) -> tuple[dict, list[str]]:
     (Keycloak trusts the Kubernetes service account token of the pod), and jc, one process with
     no Kubernetes issuer, signs in as them with the secret of its state file or, for a pipeline,
     of its file in ekiben's client secrets dir (`pipeline_clients`). Name and audience mappers
-    stay: a stream's token opens the Endpoints its pipeline wrote on prod and no other. A
-    pipeline's client without a secret variable gets `$(env:KC_<CLIENT>_SECRET)`. Every other
+    stay: a stream's token opens the Endpoints its pipeline wrote on prod and no other. A changed
+    client without a secret variable gets `$(env:KC_<CLIENT>_SECRET)` (up.sh generates the value
+    and, for a STATE_CLIENT_SECRETS client, installs it in jc's state file): the synthetic realm's
+    federated-jwt clients carry none, and jc then signed in with a secret the realm never held
+    (smoke run 42937877337: "the realm refused the reconciler's client: 401"). Every other
     client keeps its authenticator. Answers the realm and the clients changed."""
     out, changed = dict(realm), []
     clients = []
@@ -480,7 +483,7 @@ def jc_clients_by_secret(realm: dict) -> tuple[dict, list[str]]:
         if (c.get("clientId") in STATE_CLIENT_SECRETS or own) and c.get("clientAuthenticatorType") == "federated-jwt":
             attrs = {k: v for k, v in (c.get("attributes") or {}).items() if not k.startswith("jwt.credential.")}
             c = {**c, "clientAuthenticatorType": "client-secret", "attributes": attrs}
-            if own and not SECRET_VAR.fullmatch(str(c.get("secret", "")).strip()):
+            if not SECRET_VAR.fullmatch(str(c.get("secret", "")).strip()):
                 c["secret"] = f"$(env:KC_{re.sub(r'[^A-Z0-9]', '_', c['clientId'].upper())}_SECRET)"
             changed.append(c["clientId"])
         clients.append(c)
