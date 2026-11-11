@@ -93,11 +93,23 @@ fn answer(caller: &Caller, body: &Value) -> Response {
         CACHE_CONTROL,
         HeaderValue::from_str(&cache).unwrap_or(HeaderValue::from_static("no-store")),
     );
+    // header names are visible ASCII, so the list is a header value; the fallback is never sent
     h.insert(
         VARY,
-        HeaderValue::from_static("Authorization, Cookie, NGSILD-Tenant"),
+        HeaderValue::from_str(&vary(&antares_ops::policy::SUBJECT_HEADERS))
+            .unwrap_or(HeaderValue::from_static("*")),
     );
     reply
+}
+
+/// The request headers an answer differs by: the credentials, the tenant and every policy
+/// subject header, so no cache hands one reader's answer to another.
+fn vary(subject: &[String]) -> String {
+    ["Authorization", "Cookie", "NGSILD-Tenant"]
+        .into_iter()
+        .chain(subject.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn bad(title: impl Into<String>) -> Problem {
@@ -391,6 +403,16 @@ mod tests {
             ]
         );
         assert!(!truncated);
+    }
+
+    #[test]
+    fn the_answer_varies_by_every_policy_subject_header() {
+        let subject = ["x-jc-subject".to_owned(), "x-jc-groups".to_owned()];
+        assert_eq!(
+            vary(&subject),
+            "Authorization, Cookie, NGSILD-Tenant, x-jc-subject, x-jc-groups"
+        );
+        assert_eq!(vary(&[]), "Authorization, Cookie, NGSILD-Tenant");
     }
 
     #[test]
