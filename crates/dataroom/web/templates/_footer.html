@@ -1,20 +1,37 @@
 {# The footer and the bottom-right corner of every catalogue page (old prod: one footer.html for
-   every CKAN page): the site logo and name, the branding lines, the links, the language switch, the
-   assistants chip with the three brand marks inlined (no request to another origin) and the docked
-   assistant. Needs `chrome` and `labels` in the including template. #}
+   every CKAN page). The corner comes first, the assistants chip with the three brand marks inlined
+   (no request to another origin) and the docked assistant: it sticks to the window's bottom edge
+   and stops above the footer, so it never covers a footer link. Then the footer: the site logo,
+   name and tagline, the branding lines, the links and the language switch (left out when the
+   branding offers one language). Needs `chrome` and `labels` in the including template. #}
+{% if chrome.has_mcp || !chrome.assistant_widget_url.is_empty() %}
+<div class="jc-corner">
+  {% if chrome.has_mcp %}
+  <a class="jc-assistants-link" href="{{ chrome.lang_prefix }}/assistants" aria-label="{{ labels.assistants_label }}"><span class="jc-seg jc-seg-claude">{% include "jc/brand-claude.svg" %}</span><span class="jc-seg jc-seg-chatgpt">{% include "jc/brand-chatgpt.svg" %}</span><span class="jc-seg jc-seg-mcp">{% include "jc/brand-mcp.svg" %}</span></a>
+  {% endif %}
+  {% if !chrome.assistant_widget_url.is_empty() %}
+  <details class="jc-assistant" id="jc-assistant">
+    <summary><svg class="jc-assistant-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span>{{ labels.assistant }}</span></summary>
+    <iframe src="{{ chrome.assistant_widget_url }}" title="{{ labels.assistant }}" loading="lazy" referrerpolicy="no-referrer"></iframe>
+  </details>
+  {% endif %}
+</div>
+{% if !chrome.assistant_widget_url.is_empty() %}<script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-assistant.js"></script>{% endif %}
+{% endif %}
 <footer class="site-footer">
   <div class="container">
-    <div class="row gy-4">
-      <div class="col-md-6 jc-footer-lines">
+    <div class="jc-footer-grid">
+      <div class="jc-footer-lines">
         <div class="jc-footer-brand">
           {% if !chrome.footer_logo.is_empty() %}<img src="{{ chrome.footer_logo }}" alt="" />{% endif %}
           <span>{{ chrome.branding.instance_name }}</span>
         </div>
+        {% if !chrome.site_tagline.is_empty() %}<p class="jc-footer-tagline">{{ chrome.site_tagline }}</p>{% endif %}
         {% if !chrome.branding.organisation.is_empty() %}<p>{{ chrome.branding.organisation }}</p>{% endif %}
         {% for line in chrome.branding.footer_lines %}<p>{{ line }}</p>{% endfor %}
         {% if !chrome.branding.contact_email.is_empty() %}<p><a href="mailto:{{ chrome.branding.contact_email }}">{{ chrome.branding.contact_email }}</a></p>{% endif %}
       </div>
-      <nav class="col-md-3 footer-links" aria-label="{{ labels.about_site }}">
+      <nav class="footer-links" aria-label="{{ labels.about_site }}">
         <ul class="list-unstyled">
           <li><a href="{{ chrome.lang_prefix }}/about">{{ labels.about_site }}</a></li>
           {% if !chrome.portal_url.is_empty() %}<li><a href="{{ chrome.portal_url }}">{{ labels.portal }}</a></li>{% endif %}
@@ -24,35 +41,23 @@
           {% endfor %}
         </ul>
       </nav>
-      <div class="col-md-3 attribution">
+      {% if chrome.lang_options.len() > 1 %}
+      <div class="attribution">
         <form class="lang-select" action="{{ chrome.lang_prefix }}/util/redirect" method="POST">
-          <div class="form-group">
-            <label for="field-lang-select">{{ labels.language }}</label>
-            <select id="field-lang-select" name="url">
+          <label for="field-lang-select">{{ labels.language }}</label>
+          <div class="jc-footer-lang">
+            <select id="field-lang-select" class="form-select" name="url">
               {% for opt in chrome.lang_options %}
               <option value="{{ opt.url }}" lang="{{ opt.code }}"{% if opt.selected %} selected="selected"{% endif %}>
                 {{ opt.label }}
               </option>
               {% endfor %}
             </select>
+            <button class="btn btn-default js-hide" type="submit">{{ labels.go }}</button>
           </div>
-          <button class="btn btn-default d-none" type="submit">{{ labels.go }}</button>
         </form>
       </div>
-    </div>
-    {% if chrome.has_mcp || !chrome.assistant_widget_url.is_empty() %}
-    <div class="jc-corner">
-      {% if chrome.has_mcp %}
-      <a class="jc-assistants-link" href="{{ chrome.lang_prefix }}/assistants" aria-label="{{ labels.assistants_label }}"><span class="jc-seg jc-seg-claude">{% include "jc/brand-claude.svg" %}</span><span class="jc-seg jc-seg-chatgpt">{% include "jc/brand-chatgpt.svg" %}</span><span class="jc-seg jc-seg-mcp">{% include "jc/brand-mcp.svg" %}</span></a>
-      {% endif %}
-      {% if !chrome.assistant_widget_url.is_empty() %}
-      <details class="jc-assistant" id="jc-assistant">
-        <summary><svg class="jc-assistant-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span>{{ labels.assistant }}</span></summary>
-        <iframe src="{{ chrome.assistant_widget_url }}" title="{{ labels.assistant }}" loading="lazy" referrerpolicy="no-referrer"></iframe>
-      </details>
       {% endif %}
     </div>
-    {% if !chrome.assistant_widget_url.is_empty() %}<script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-assistant.js"></script>{% endif %}
-    {% endif %}
   </div>
 </footer>
