@@ -158,11 +158,13 @@ class Guard:
             f.write(line + "\n")
         raise Refused(f"jc-smoke live guard refused {what}: {why}")
 
-    def wait(self, bucket: str | None = None, rate: float | None = None) -> None:
+    def wait(self, bucket: str | None = None, rate: float | None = None) -> float:
         """One slot of the shared rate: the bucket file holds the time the next request may go.
         The wait sleeps under the lock and the next slot counts from the wake, not the plan: a
         waiter that wakes late must not leave the next one less than a slot (smoke run
-        42921231590: grants 50 ms apart, requests 19 ms apart)."""
+        42921231590: grants 50 ms apart, requests 19 ms apart). Returns the grant time, read
+        under the lock: a clock read after the return can lag it by a preemption (run
+        42983380153 read two grants 0.35 ms apart)."""
         with open(bucket or self.cfg["bucket"], "a+") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
             f.seek(0)
@@ -171,9 +173,11 @@ class Guard:
             except ValueError:
                 nxt = 0.0
             time.sleep(max(0.0, nxt - time.time()))
+            now = time.time()
             f.seek(0)
             f.truncate()
-            f.write(repr(time.time() + 1 / (rate or self.cfg["rate"])))
+            f.write(repr(now + 1 / (rate or self.cfg["rate"])))
+            return now
 
 
 ACTIVE: Guard | None = None
