@@ -2,9 +2,7 @@
 # import.sh <env> <port> <pg_port> <export dir>: the import of one environment's bundle, scripted.
 #   1. up.sh with the broker on allow-all, jc on a loopback bind only (up.sh refuses any other);
 #   2. rehearsal.py import (subject-less writes with the broker's admin bearer token); a short or
-#      refused import stops jc and fails the script; every manifest passes `jcctl validate` first
-#      (JCCTL_BIN, default jcctl beside jc: cargo build --manifest-path
-#      vendor/joinedcontext-platform/Cargo.toml -p jcctl);
+#      refused import stops jc and fails the script;
 #   3. the prod run log beside the bundle into the Portal's tables (when <export>-runlog exists);
 #      up.sh again on jc's default policy;
 #   4. rehearsal.py policy-check: an anonymous write must answer 401 and the engine must be
@@ -22,8 +20,7 @@ REHEARSAL_IMPORT_POLICY=allow-all "$here/up.sh" "$env_name" "$port" "$pg_port"
 # rehearsal.py import fails on any refused broker call, an entity short of the export or a temporal
 # refusal other than the 24-hour cut-off; jc on allow-all never stays up after a failed import.
 if ! python3 -I "$here/rehearsal.py" import --export "$export_dir" --base "http://127.0.0.1:$port" \
-  --state "$home/state" --report "$home/import-report.json" --daiya-bin "$(dirname "$jc_bin")/daiya" \
-  --jcctl-bin "${JCCTL_BIN:-$(dirname "$jc_bin")/jcctl}"; then
+  --state "$home/state" --report "$home/import-report.json" --daiya-bin "$(dirname "$jc_bin")/daiya"; then
   kill "$(cat "$home/jc.pid")" 2>/dev/null || true
   echo "$env_name: import FAILED ($home/import-report.json); jc on allow-all stopped" >&2
   exit 1

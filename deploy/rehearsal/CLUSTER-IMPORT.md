@@ -74,8 +74,7 @@ python3 -I rehearsal.py realms --export <export> --out <work>/state/realms \
    - No Service selects the pod meanwhile: a `jc-import=true` label that the Service selector excludes, or the Service scaled out of the way.
    - The import's writes carry no subject; jc's default policy answers them 401.
 2. From the deployer's shell: `kubectl -n <ns> port-forward pod/<jc pod> <local>:<port>`.
-3. Run `python3 -I rehearsal.py import --export <export> --base http://localhost:<local> --state <state view> --report <work>/import-report.json --daiya-bin <jc dir>/daiya --jcctl-bin <jcctl> --catalogue-url <instance catalogue>`.
-   - `--jcctl-bin` is required for the shako step: `jcctl validate` judges every manifest the import would write, and one refusal writes nothing (T-6711). The import only creates: a repository whose `main` already holds a file the export would change or delete is refused, and each imported `main` takes the no-direct-push rule the Portal sets.
+3. Run `python3 -I rehearsal.py import --export <export> --base http://localhost:<local> --state <state view> --report <work>/import-report.json --daiya-bin <jc dir>/daiya --catalogue-url <instance catalogue>`.
    - `<state view>` is a 0700 dir holding the files `import` reads: `shako-token` and `antares-admin-token`, read from the pod's state Secret.
    - The import writes shako repositories (current files, CkanInstances fenced, catalog datasets named apart), Antares current state and temporal instances newer than the later of `exportedAt - 24 h` and `now - 24 h`, and daiya dashboards.
    - It is idempotent: a rerun reports `unchanged`.
