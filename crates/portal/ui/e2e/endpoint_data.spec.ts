@@ -58,7 +58,7 @@ function ordered(orderBy: string | null) {
   });
 }
 
-async function stub(page: Page, entities: "rows" | "empty" | "refused" | "values-fail" | "signed-out", asked: URL[]): Promise<void> {
+async function stub(page: Page, entities: "rows" | "empty" | "refused" | "values-fail" | "signed-out" | "busy-once", asked: URL[]): Promise<void> {
   const list = (items: unknown[]) => ({ apiVersion: API, kind: "List", items });
   await page.route("**/api/v1/**", (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -83,6 +83,10 @@ async function stub(page: Page, entities: "rows" | "empty" | "refused" | "values
       expect(route.request().headers().authorization).toBeUndefined();
       // The header filter's value list reads pages of a thousand; this broker is too busy for them.
       if (entities === "values-fail" && url.searchParams.get("limit") === "1000") {
+        return json({ title: "Service Unavailable", detail: "the broker is busy" }, {}, 503);
+      }
+      // The first page read meets a busy broker; the next one answers (T-6781).
+      if (entities === "busy-once" && Number(url.searchParams.get("limit") ?? 25) > 0 && !asked.some((seen) => seen !== url && Number(seen.searchParams.get("limit") ?? 25) > 0)) {
         return json({ title: "Service Unavailable", detail: "the broker is busy" }, {}, 503);
       }
       if (entities === "signed-out") {
@@ -220,6 +224,20 @@ for (const width of [1440, 400]) {
       await page.screenshot({ path: join("test-results", "T-6781", `data-access-${width}.png`) });
     });
   }
+
+  test(`a failed read offers Try again, which reads the rows at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await stub(page, "busy-once", []);
+    await page.goto("/projects/helsinki/endpoints/air?lang=en");
+    const section = page.locator("section", { has: page.getByRole("heading", { name: "Data", exact: true }) });
+    const retry = section.getByRole("button", { name: "Try again" });
+    await expect(retry).toBeVisible();
+    expect((await retry.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await section.screenshot({ path: join("test-results", "T-6781", `data-error-${width}.png`) });
+    await retry.click();
+    await expect(section.getByText("42 matching")).toBeVisible();
+    await expect(retry).toHaveCount(0);
+  });
 
   // T-6328: the owner could not see where to click to filter. A header's funnel opens the column's
   // values over the whole answer; "Only" filters to one of them: two clicks, sent to the endpoint as `q`.

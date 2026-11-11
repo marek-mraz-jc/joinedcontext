@@ -254,8 +254,8 @@
 .jc-grid-error button {
   display: block;
   margin: var(--jc-space-2, 8px) auto 0;
-  min-height: 2.75rem;
-  color: var(--jc-color-text, inherit);
+  min-height: 44px;
+  color: var(--jc-color-ink, var(--jc-color-text, #1a1a1a));
 }
 
 /* It wraps on a phone: centred and on one line it spilled past both edges of the grid. */
