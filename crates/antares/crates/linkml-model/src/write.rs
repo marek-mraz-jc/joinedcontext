@@ -2,7 +2,8 @@
 //! The writers for odata-linkml-mapping.md rows L2 to L6: same model, same
 //! bytes. Maps are printed in key order, lists in schema order. Every name,
 //! IRI and text the schema supplies is quoted and escaped for the format it
-//! lands in, so no value can change a document's structure (threat LK3).
+//! lands in, so no value can change a document's structure (threat LK3); the
+//! YAML leaves a scalar plain only when it reads back as the same string.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -47,13 +48,42 @@ fn yaml_quote(text: &str) -> String {
     out
 }
 
+/// Whether `text` reads back from a plain YAML scalar as itself, as a string
+/// (T-6747): letters, digits and `_ - . / : , ; ( ) ' + @ % = ~ #` and inner
+/// spaces, starting with a letter, `_` or `/`, with no `: `, no ` #` and no
+/// trailing `:`, and no word YAML 1.1 reads as a boolean or null. Anything else is
+/// double-quoted.
+fn plain(text: &str) -> bool {
+    const WORDS: [&str; 11] = [
+        "y", "n", "yes", "no", "true", "false", "on", "off", "null", "nan", "inf",
+    ];
+    let first = text.chars().next();
+    first.is_some_and(|c| c.is_alphabetic() || c == '_' || c == '/')
+        && text
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == ' ' || "_-./:,;()'+@%=~#".contains(c))
+        && !text.ends_with([':', ' '])
+        && !text.contains(": ")
+        && !text.contains(" #")
+        && !WORDS.contains(&text.to_ascii_lowercase().as_str())
+}
+
+/// `text` as a YAML scalar: plain when [`plain`], else [`yaml_quote`]d.
+fn scalar(text: &str) -> String {
+    if plain(text) {
+        text.to_owned()
+    } else {
+        yaml_quote(text)
+    }
+}
+
 fn render(out: &mut String, indent: usize, map: &[(String, Node)]) {
     let pad = " ".repeat(indent);
     for (key, node) in map {
-        let _ = write!(out, "{pad}{}:", yaml_quote(key));
+        let _ = write!(out, "{pad}{}:", scalar(key));
         match node {
             Node::Str(s) => {
-                let _ = writeln!(out, " {}", yaml_quote(s));
+                let _ = writeln!(out, " {}", scalar(s));
             }
             Node::Bool(b) => {
                 let _ = writeln!(out, " {b}");
@@ -64,7 +94,7 @@ fn render(out: &mut String, indent: usize, map: &[(String, Node)]) {
             Node::List(items) => {
                 out.push('\n');
                 for item in items {
-                    let _ = writeln!(out, "{pad}  - {}", yaml_quote(item));
+                    let _ = writeln!(out, "{pad}  - {}", scalar(item));
                 }
             }
             Node::Map(m) if m.is_empty() => out.push_str(" {}\n"),
@@ -89,28 +119,59 @@ fn flag(map: &mut Vec<(String, Node)>, key: &str, value: Option<bool>) {
     }
 }
 
-/// `annotations:` in LinkML's expanded `tag`/`value` form, when there are any.
+/// A value that is the JSON text of a map of strings (a language map of
+/// labels) as that map, in key order.
+fn text_map(value: &str) -> Option<Node> {
+    let Ok(Value::Object(m)) = serde_json::from_str::<Value>(value) else {
+        return None;
+    };
+    m.into_iter()
+        .map(|(k, v)| match v {
+            Value::String(s) => Some((k, Node::Str(s))),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .filter(|m| !m.is_empty())
+        .map(Node::Map)
+}
+
+/// `annotations:` as a person writes them: `tag: value`, or the expanded
+/// `tag`/`value` form with the value as a map when it is a language map.
 fn annotations(map: &mut Vec<(String, Node)>, tagged: &BTreeMap<String, Annotation>) {
     if tagged.is_empty() {
         return;
     }
     let body = tagged
         .iter()
-        .map(|(k, a)| {
-            let pair = vec![
-                ("tag".to_owned(), Node::Str(a.tag.clone())),
-                ("value".to_owned(), Node::Str(a.value.clone())),
-            ];
-            (k.clone(), Node::Map(pair))
+        .map(|(k, a)| match text_map(&a.value) {
+            None if *k == a.tag => (k.clone(), Node::Str(a.value.clone())),
+            value => {
+                let pair = vec![
+                    ("tag".to_owned(), Node::Str(a.tag.clone())),
+                    (
+                        "value".to_owned(),
+                        value.unwrap_or_else(|| Node::Str(a.value.clone())),
+                    ),
+                ];
+                (k.clone(), Node::Map(pair))
+            }
         })
         .collect();
     map.push(("annotations".to_owned(), Node::Map(body)));
+}
+
+/// `exact_mappings:` when there are any.
+fn mappings(map: &mut Vec<(String, Node)>, iris: &[String]) {
+    if !iris.is_empty() {
+        map.push(("exact_mappings".to_owned(), Node::List(iris.to_vec())));
+    }
 }
 
 fn slot_node(slot: &Slot) -> Node {
     let mut m = Vec::new();
     opt(&mut m, "name", slot.name.as_ref());
     opt(&mut m, "slot_uri", slot.slot_uri.as_ref());
+    mappings(&mut m, &slot.exact_mappings);
     opt(&mut m, "range", slot.range.as_ref());
     flag(&mut m, "required", slot.required);
     flag(&mut m, "multivalued", slot.multivalued);
@@ -138,9 +199,10 @@ fn slot_node(slot: &Slot) -> Node {
     Node::Map(m)
 }
 
-/// The LinkML YAML of the model (row L2), in LinkML's expanded forms
-/// (`prefix_prefix`/`prefix_reference`, `tag`/`value`), every key and every
-/// string double-quoted.
+/// The LinkML YAML of the model (row L2) as a person writes it (T-6747):
+/// `prefix: IRI`, `tag: value`, metaslots in a fixed order, members in key
+/// order, and a key or string double-quoted only when a plain scalar would
+/// read back as something else.
 ///
 /// ```
 /// # let m = linkml_model::Model::read(br#"{"id": "https://e.org/s", "name": "a: b\n- c"}"#,
@@ -148,8 +210,8 @@ fn slot_node(slot: &Slot) -> Node {
 /// # assert!(m.is_err(), "a newline in a name is refused at load");
 /// let m = linkml_model::Model::read(br#"{"id": "https://e.org/s", "name": "a: b #c"}"#,
 ///     &linkml_model::Limits { max_bytes: 999, max_depth: 4, max_elements: 9 }).unwrap();
-/// assert_eq!(linkml_model::yaml(&m), "\"id\": \"https://e.org/s\"\n\"name\": \"a: b #c\"\n\
-///     \"imports\":\n  - \"linkml:types\"\n\"default_range\": \"string\"\n");
+/// assert_eq!(linkml_model::yaml(&m), "id: https://e.org/s\nname: \"a: b #c\"\n\
+///     default_range: string\nimports:\n  - linkml:types\n");
 /// ```
 #[must_use]
 pub fn yaml(model: &Model) -> String {
@@ -158,34 +220,25 @@ pub fn yaml(model: &Model) -> String {
         ("id".to_owned(), Node::Str(s.id.clone())),
         ("name".to_owned(), Node::Str(s.name.clone())),
     ];
+    opt(&mut top, "title", s.title.as_ref());
+    opt(&mut top, "description", s.description.as_ref());
+    opt(&mut top, "license", s.license.as_ref());
     opt(&mut top, "version", s.version.as_ref());
-    // what the subset implies, declared for every LinkML reader
-    top.push(("imports".to_owned(), Node::List(vec![IMPORTS.to_owned()])));
-    top.push((
-        "default_range".to_owned(),
-        Node::Str(DEFAULT_RANGE.to_owned()),
-    ));
     if !s.prefixes.is_empty() {
         let prefixes = s
             .prefixes
             .iter()
-            .map(|(k, p)| {
-                let body = vec![
-                    (
-                        "prefix_prefix".to_owned(),
-                        Node::Str(p.prefix_prefix.clone()),
-                    ),
-                    (
-                        "prefix_reference".to_owned(),
-                        Node::Str(p.prefix_reference.clone()),
-                    ),
-                ];
-                (k.clone(), Node::Map(body))
-            })
+            .map(|(k, p)| (k.clone(), Node::Str(p.prefix_reference.clone())))
             .collect();
         top.push(("prefixes".to_owned(), Node::Map(prefixes)));
     }
     opt(&mut top, "default_prefix", s.default_prefix.as_ref());
+    // what the subset implies, declared for every LinkML reader
+    top.push((
+        "default_range".to_owned(),
+        Node::Str(DEFAULT_RANGE.to_owned()),
+    ));
+    top.push(("imports".to_owned(), Node::List(vec![IMPORTS.to_owned()])));
     if !s.classes.is_empty() {
         let classes = s
             .classes
@@ -194,6 +247,7 @@ pub fn yaml(model: &Model) -> String {
                 let mut m = Vec::new();
                 opt(&mut m, "name", c.name.as_ref());
                 opt(&mut m, "class_uri", c.class_uri.as_ref());
+                mappings(&mut m, &c.exact_mappings);
                 opt(&mut m, "is_a", c.is_a.as_ref());
                 if !c.slots.is_empty() {
                     m.push(("slots".to_owned(), Node::List(c.slots.clone())));
