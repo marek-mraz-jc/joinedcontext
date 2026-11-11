@@ -185,7 +185,7 @@ test.describe("map dashboard", () => {
         if (state === "filled") {
           await expect(figure.getByRole("img", { name: "PM10 by district" }).locator("canvas")).toBeVisible();
         } else {
-          await expect(figure.getByText("This chart's source holds no rows.", { exact: false })).toBeVisible();
+          await expect(figure.getByText("No rows to draw", { exact: false })).toBeVisible();
         }
         await figure.scrollIntoViewIfNeeded();
         await page.screenshot({ path: `test-results/T-6786/vega-lite-${state}-${width}.png`, fullPage: true });

@@ -105,6 +105,8 @@ describe("the source a vega-lite widget reads", () => {
     expect(drawn.height).toBe(220);
     expect(withRows({ ...SPEC, height: 120 }, []).height).toBe(120);
     expect(drawn.title).toBeUndefined();
+    expect((drawn.config as { font: string }).font).toBeTruthy();
+    expect((withRows({ ...SPEC, config: { font: "Serif" } }, []).config as { font: string }).font).toBe("Serif");
   });
 });
 
@@ -139,6 +141,7 @@ describe("the vega-lite widget", () => {
     answering(() => json({ value: [] }));
     const { unmount } = show(<VegaLiteWidget slug="air-ops" source={{ source: "odata", entitySet: "Air" }} spec={{ ...SPEC, title: undefined }} fallbackTitle="Chart of Air" />);
     expect(await screen.findByText(W.vegaNoRows)).toBeInTheDocument();
+    expect(screen.getByText(W.vegaNoRowsTitle)).toBeInTheDocument();
     expect(screen.getByText("Chart of Air")).toBeInTheDocument();
     unmount();
 

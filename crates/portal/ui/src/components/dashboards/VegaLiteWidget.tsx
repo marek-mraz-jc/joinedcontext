@@ -9,10 +9,10 @@ import { useQuery } from "@tanstack/react-query";
 import type { JSX } from "react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Card, Skeleton } from "../ui";
+import { Card, EmptyState, Skeleton } from "../ui";
 import { PageFailed } from "../ui/PageState";
-import { VegaChart, loadVega } from "../panels/VegaChart";
-import type { Spec } from "../panels/specs";
+import { VegaChart, chartTheme, loadVega } from "../panels/VegaChart";
+import type { ChartTheme, Spec } from "../panels/specs";
 import { readSource } from "./vegaLiteSource";
 import type { WidgetSource } from "./vegaLiteSource";
 
@@ -29,7 +29,7 @@ export function specTitle(spec: Spec): string | null {
 }
 
 /** The spec with the rows as its dataset `source`, sized to the card unless it says otherwise. */
-export function withRows(spec: Spec, rows: Record<string, unknown>[]): Spec {
+export function withRows(spec: Spec, rows: Record<string, unknown>[], theme: ChartTheme = chartTheme()): Spec {
   const { title: _title, ...rest } = spec;
   return {
     width: "container",
@@ -37,6 +37,13 @@ export function withRows(spec: Spec, rows: Record<string, unknown>[]): Spec {
     height: PLOT_HEIGHT,
     autosize: { type: "fit", contains: "padding" },
     ...rest,
+    // The Portal's type and colours, under whatever the author configured.
+    config: {
+      font: theme.font,
+      axis: { labelColor: theme.muted, titleColor: theme.text, titleFontWeight: "normal", gridColor: theme.grid },
+      legend: { labelColor: theme.muted, titleColor: theme.text },
+      ...((spec.config as Record<string, unknown>) ?? {}),
+    },
     datasets: { ...((spec.datasets as Record<string, unknown>) ?? {}), source: rows },
   };
 }
@@ -78,9 +85,7 @@ export function VegaLiteWidget({
       ) : read.isError ? (
         <PageFailed error={read.error} onRetry={() => void read.refetch()} />
       ) : read.data.rows.length === 0 ? (
-        <p role="status" className="text-caption text-fg-muted">
-          {t("dashboards.widget.vegaNoRows")}
-        </p>
+        <EmptyState bare icon="dashboards" title={t("dashboards.widget.vegaNoRowsTitle")} description={t("dashboards.widget.vegaNoRows")} />
       ) : (
         <>
           <VegaChart spec={drawn ?? spec} label={title} height={height} />

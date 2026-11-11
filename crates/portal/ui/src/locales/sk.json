@@ -3722,6 +3722,7 @@
     "widget": {
       "temporalChart": "{property} v čase",
       "unsupported": "Táto stránka má prvok {type}, ktorý Portál zatiaľ nekreslí.",
+      "vegaNoRowsTitle": "Žiadne riadky na kreslenie",
       "vegaNoRows": "Zdroj tohto grafu nemá žiadne riadky. Zmeňte filter zdroja alebo overte, či endpoint tento typ zverejňuje.",
       "vegaCut": "Graf kreslí iba prvých {count} riadkov.",
       "vegaTitle": "Graf typu {type}",

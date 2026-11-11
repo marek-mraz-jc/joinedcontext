@@ -3722,6 +3722,7 @@
     "widget": {
       "temporalChart": "{property} over time",
       "unsupported": "This page has a {type} widget the Portal does not draw yet.",
+      "vegaNoRowsTitle": "No rows to draw",
       "vegaNoRows": "This chart's source holds no rows. Change the source's filter, or check that the Endpoint publishes this type.",
       "vegaCut": "The chart draws the first {count} rows only.",
       "vegaTitle": "Chart of {type}",

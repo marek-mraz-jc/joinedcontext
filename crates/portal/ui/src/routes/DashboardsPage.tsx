@@ -602,7 +602,7 @@ export function DashboardsPage({ project }: { project: string }): JSX.Element {
       </Card>
 
       {widgets.length > 0 ? (
-        <div aria-label={t("dashboards.widgets")} className="grid gap-3 md:grid-cols-2">
+        <div aria-label={t("dashboards.widgets")} className={widgets.length === 1 ? "grid gap-3" : "grid gap-3 md:grid-cols-2"}>
           {widgets.map(({ widget, slug }, index) =>
             widget.widgetType === "grid" && slug && widget.entityType ? (
               // The same grid the explorer renders, configured by the manifest (UI-71, SDK-30):

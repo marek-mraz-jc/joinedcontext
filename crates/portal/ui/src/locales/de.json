@@ -3722,6 +3722,7 @@
     "widget": {
       "temporalChart": "{property} im Zeitverlauf",
       "unsupported": "Diese Seite hat ein {type}-Widget, das das Portal noch nicht zeichnet.",
+      "vegaNoRowsTitle": "Keine Zeilen zum Zeichnen",
       "vegaNoRows": "Die Quelle dieses Diagramms enthält keine Zeilen. Ändern Sie den Filter der Quelle oder prüfen Sie, ob der Endpunkt diesen Typ veröffentlicht.",
       "vegaCut": "Das Diagramm zeigt nur die ersten {count} Zeilen.",
       "vegaTitle": "Diagramm von {type}",
