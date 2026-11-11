@@ -187,7 +187,7 @@ fn literal_secret(_: &Ground<'_>, _: &str, envelope: &ResourceEnvelope) -> Resul
     let value = serde_json::to_value(envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
     match mutate::find_literal_secret(&value) {
         Some(key) => Err(ApiError::BadRequest(format!(
-            "literal secret in field '{key}' is forbidden; use secretRef instead (MF-24)"
+            "literal secret in field {key} is forbidden; use secretRef instead (MF-24)"
         ))),
         None => Ok(()),
     }
@@ -793,6 +793,44 @@ mod tests {
         }
         let names: std::collections::BTreeSet<&str> = CHECKS.iter().map(|(n, _)| *n).collect();
         assert_eq!(names.len(), CHECKS.len(), "one entry per check");
+    }
+
+    /// P-19 (T-6713): one credential typed under a name that does not say so (an API key in a
+    /// DataSource's query) is refused at propose, at approval and at load, each naming the
+    /// field path and the rule and never the value.
+    #[test]
+    fn a_credential_shaped_value_is_refused_at_every_door() {
+        let token = format!("ghp_{}", "a1B2c3D4".repeat(5));
+        let feed = envelope(
+            "DataSource",
+            "feed",
+            "ovzdusie",
+            json!({ "input": { "query": token.clone() } }),
+        );
+        let bounds = OrganizationBounds::default();
+        let mirror = Mirror::new();
+        let ground = Ground {
+            mirror: &mirror,
+            bounds: &bounds,
+            apex: None,
+            domain: None,
+        };
+        let said = |refusal: &str| {
+            assert!(
+                refusal.contains("'spec.input.query' (a credential-shaped value)")
+                    && !refusal.contains(&token),
+                "{refusal}"
+            );
+        };
+        said(&reason(
+            &manifest(&ground, "ovzdusie", &feed).expect_err("propose refuses it"),
+        ));
+        said(&reason(
+            &manifest_at_approval(&ground, "ovzdusie", &feed).expect_err("approval refuses it"),
+        ));
+        let refused = replay(&Mirror::new(), (&bounds, None, None), vec![feed]);
+        assert_eq!(refused.len(), 1, "load refuses it: {refused:?}");
+        said(&refused[0].1);
     }
 
     /// P-2: what reaches `main` past the propose door is judged as its proposals would be: of

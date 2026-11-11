@@ -161,7 +161,7 @@ async fn literal_secret_refused_at_put() {
         .await
         .expect_err("literal secret must be refused");
     match err {
-        DraftError::Secret(field) => assert_eq!(field, "password"),
+        DraftError::Secret(field) => assert_eq!(field.path, "spec.password"),
         other => panic!("expected DraftError::Secret, got {other:?}"),
     }
 

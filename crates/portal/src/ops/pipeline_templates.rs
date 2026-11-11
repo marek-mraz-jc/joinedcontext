@@ -67,7 +67,7 @@ pub fn template_spec(manifest: &Value) -> Result<Value, TemplateError> {
     }
     if let Some(key) = crate::api::mutate::find_literal_secret(manifest) {
         return Err(TemplateError::Invalid(format!(
-            "the manifest holds a credential written out in `{key}`; reference it with a secretRef"
+            "the manifest holds a credential written out in {key}; reference it with a secretRef"
         )));
     }
     let Some(Value::Object(spec)) = manifest.get("spec") else {
