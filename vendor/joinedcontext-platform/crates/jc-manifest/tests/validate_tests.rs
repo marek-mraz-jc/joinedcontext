@@ -2275,8 +2275,9 @@ fn a_write_rule_no_endpoint_binds_is_refused_by_its_rule_name() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// PL-111, T-5035: a Pipeline writes as `pl-{pipeline}` under a Policy derived for it (PL-20), which an
-/// Endpoint with a `policyRef` never binds, so every upsert of the pipeline answered 404.
+/// PL-111, T-5035: a Pipeline writes as `pl-{pipeline}` under a Policy derived for it (PL-20). Since
+/// P-18 (T-6736) that grant binds the Endpoint the Pipeline names whatever its `policyRef`, so only
+/// a target the project lacks is refused.
 #[test]
 fn a_pipeline_whose_target_does_not_bind_its_write_is_refused() {
     let dir = valid_repo("adr57-pipeline-target");
@@ -2300,14 +2301,7 @@ fn a_pipeline_whose_target_does_not_bind_its_write_is_refused() {
 
     let report = validate::run(&dir);
     let found = citing(&report, "ADR-N-057");
-    assert_eq!(found.len(), 2, "{:?}", report.findings);
-    assert!(
-        found.iter().any(
-            |f| f.contains("Pipeline stations output 1 writes as pl-stations")
-                && f.contains("public-air binds only its policyRef")
-        ),
-        "{found:?}"
-    );
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
     assert!(
         found.iter().any(|f| f.contains("Pipeline lost output 1")
             && f.contains("project ovzdusie declares no Endpoint no-such-endpoint")),

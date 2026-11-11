@@ -75,7 +75,7 @@ describe("the health log", () => {
     expect(screen.getByRole("combobox", { name: en.health.statusFilter })).toHaveValue("attention");
     expect(within(rows[0]).getByText(en.health.broken)).toBeInTheDocument();
     expect(within(rows[0]).getByText(/403 no policy grants/)).toBeInTheDocument();
-    expect(within(rows[0]).getByText(/pl-podujatia-zvolen create and update/)).toBeInTheDocument();
+    expect(within(rows[0]).getByText(/create and update for pl-podujatia-zvolen/)).toBeInTheDocument();
     expect(within(rows[0]).queryByText(/English from the server/)).toBeNull();
     expect(within(rows[0]).getByRole("link", { name: "podujatia-zvolen" })).toHaveAttribute(
       "href",
@@ -168,7 +168,7 @@ describe("the health log", () => {
     });
     await screen.findByRole("columnheader", { name: sk.health.found });
     const rows = within(screen.getByRole("table", { name: sk.health.caption })).getAllByRole("row").slice(1);
-    expect(within(rows[0]).getByText(/Policy cieľového Endpointu musí dať pl-podujatia-zvolen/)).toBeInTheDocument();
+    expect(within(rows[0]).getByText(/pokrývať create a update pre pl-podujatia-zvolen/)).toBeInTheDocument();
     expect(within(rows[0]).getByText(/403 no policy grants/)).toBeInTheDocument();
     expect(within(rows[1]).getByText(sk.health.say.waitingApproval)).toBeInTheDocument();
   });
@@ -180,7 +180,7 @@ describe("the health log", () => {
     const cards = within(screen.getByRole("table", { name: en.health.caption })).getAllByRole("row").slice(1);
     expect(cards).toHaveLength(2);
     expect(within(cards[0]).getByText(/403 no policy grants/)).toBeInTheDocument();
-    expect(within(cards[0]).getByText(/pl-podujatia-zvolen create and update/)).toBeInTheDocument();
+    expect(within(cards[0]).getByText(/create and update for pl-podujatia-zvolen/)).toBeInTheDocument();
   });
 
   it("names_every_message_the_server_sends_in_every_locale", () => {

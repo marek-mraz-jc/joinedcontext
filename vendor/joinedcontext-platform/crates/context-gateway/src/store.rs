@@ -756,6 +756,9 @@ fn endpoints_from(repo: &Repository, root: Option<&Path>, models: &ModelSet) -> 
     let ModelSet { models, declared } = models;
     let publishers = publishers_of(repo);
     let policies = policies_by_space(repo);
+    let doors = jc_manifest::pipeline_identity::endpoint_grants(
+        &jc_manifest::pipeline_identity::derived(repo),
+    );
     let views = view_mappings(repo, root);
     let projections = projections(repo);
     // ponytail: the installation's catalogue is the Portal's setting, unknown here; a project
@@ -780,12 +783,23 @@ fn endpoints_from(repo: &Repository, root: Option<&Path>, models: &ModelSet) -> 
         let named = policies.get(&key).map(Vec::as_slice).unwrap_or_default();
         let app_client = app_of(repo, &project, &id.name);
         let mut bound = match spec.policy_refs() {
-            Some(refs) => bound_policies(
-                &id.name,
-                refs,
-                (policy_domains.get(&project), repo.org_domain(), &space),
-                named,
-            ),
+            Some(refs) => {
+                let mut bound = bound_policies(
+                    &id.name,
+                    refs,
+                    (policy_domains.get(&project), repo.org_domain(), &space),
+                    named,
+                );
+                // A Pipeline's grant on the Endpoint its manifest names binds it beside the
+                // listed Policies (P-18, T-6736).
+                let door = doors.get(&(project.clone(), id.name.clone()));
+                for (name, grant) in door.into_iter().flatten() {
+                    if !bound.iter().any(|(bound, _)| bound == name) {
+                        bound.push((name.clone(), of_own_project(grant.clone(), &project)));
+                    }
+                }
+                bound
+            }
             None => named.to_vec(),
         };
         // An App's generated Endpoint evaluates its own grants and the space's prohibitions
@@ -1535,6 +1549,81 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+
+    /// P-18 (T-6736): an Endpoint with policyRefs binds the Policies it lists and the grant of
+    /// a Pipeline naming it as its targetEndpoint; a Policy added for Endpoint A opens no
+    /// Endpoint B of the same space, and the Pipeline's write opens no Endpoint it does not name.
+    #[test]
+    fn policy_refs_bind_the_listed_policies_and_the_pipeline_naming_the_endpoint() {
+        let dir = std::env::temp_dir().join(format!(
+            "gw-p18-doors-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a repository");
+        let header = "apiVersion: joinedcontext.com/v1alpha1\nkind:";
+        let endpoint = |name: &str, slug: &str, policy: &str| {
+            format!(
+                "{header} Endpoint\nmetadata:\n  name: {name}\n  namespace: helsinki\nspec:\n  \
+                 contextSpaceRef: events\n  slug: {slug}\n  audience: public\n  \
+                 policyRefs: [urn:ngsi-ld:Policy:hel.fi:events:{policy}]\n  \
+                 enabledRepresentations: [ngsi-ld]\n"
+            )
+        };
+        let policy = |name: &str| {
+            format!(
+                "{header} Policy\nmetadata:\n  name: {name}\n  namespace: helsinki\nspec:\n  \
+                 contextSpaceRef: {{ kind: ContextSpace, name: events }}\n  assigner: did:web:hel.fi\n  \
+                 assignee: {{ kind: role, id: public }}\n  operations: [retrieveOps]\n  \
+                 information: [{{ entities: [{{ type: Event }}] }}]\n"
+            )
+        };
+        for (file, body) in [
+            (
+                "space.yaml",
+                format!(
+                    "{header} ContextSpace\nmetadata:\n  name: events\n  namespace: helsinki\n\
+                     spec:\n  isSandbox: false\n  urnSegment: events\n"
+                ),
+            ),
+            (
+                "a.yaml",
+                endpoint("events-a", "aaaaaaaaaaaaaaaaaaaaaaaaaa", "a-read"),
+            ),
+            (
+                "b.yaml",
+                endpoint("events-b", "bbbbbbbbbbbbbbbbbbbbbbbbbb", "b-read"),
+            ),
+            ("a-read.yaml", policy("a-read")),
+            ("b-read.yaml", policy("b-read")),
+            (
+                "pipeline.yaml",
+                format!(
+                    "{header} Pipeline\nmetadata:\n  name: load\n  namespace: helsinki\nspec:\n  \
+                     class: auto\n  period: 30m\n  source:\n    \
+                     dataSourceRef: {{ kind: DataSource, name: feed }}\n  \
+                     targetEndpoint: urn:ngsi-ld:Endpoint:hel.fi:events:events-a\n  \
+                     output:\n    type: Event\n    mode: upsert\n"
+                ),
+            ),
+        ] {
+            std::fs::write(dir.join(file), body).expect("a manifest");
+        }
+        let (endpoints, ..) = super::load(&dir).expect("the repository loads");
+        let _ = std::fs::remove_dir_all(&dir);
+        let names = |name: &str| {
+            let endpoint = endpoints
+                .iter()
+                .find(|endpoint| endpoint.manifest_name == name)
+                .expect("the endpoint is in the table");
+            let mut names = endpoint.policy_names.clone();
+            names.sort();
+            names
+        };
+        assert_eq!(names("events-a"), ["a-read", "pl-load-w-1"]);
+        assert_eq!(names("events-b"), ["b-read"]);
+    }
 
     /// T-6569: a public Endpoint publishing to its project's CkanInstance gets that dataset's
     /// page on the open data portal; an internal one, one opting out, or one naming an instance

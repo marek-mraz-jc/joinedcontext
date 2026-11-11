@@ -7,7 +7,7 @@
 
 use crate::loader::Repository;
 use jc_core::kinds::pipeline_identity::{derive, Derived};
-use jc_core::kinds::{EndpointSpec, PipelineSpec};
+use jc_core::kinds::{EndpointSpec, PipelineSpec, PolicySpec};
 use std::collections::BTreeMap;
 
 /// The runner's namespace, where every pipeline's Kubernetes ServiceAccount lives.
@@ -43,4 +43,25 @@ pub fn derived(repo: &Repository) -> Vec<(String, Derived)> {
             Some((project, derived))
         })
         .collect()
+}
+
+/// The Policies each Pipeline of `derived` grants on an Endpoint it names, by project and
+/// Endpoint name: its write on each `targetEndpoint`, its read on each `endpointRef` source.
+/// Such a grant binds the Endpoint it was derived for whatever `policyRefs` the Endpoint lists:
+/// the Pipeline's manifest names that door, so it opens no other one (P-18, T-6736).
+pub fn endpoint_grants(
+    derived: &[(String, Derived)],
+) -> BTreeMap<(String, String), Vec<(String, PolicySpec)>> {
+    let mut grants: BTreeMap<(String, String), Vec<(String, PolicySpec)>> = BTreeMap::new();
+    for (project, derived) in derived {
+        for (name, spec) in &derived.policies {
+            if let Some(endpoint) = derived.endpoints.get(name) {
+                grants
+                    .entry((project.clone(), endpoint.clone()))
+                    .or_default()
+                    .push((name.clone(), spec.clone()));
+            }
+        }
+    }
+    grants
 }
