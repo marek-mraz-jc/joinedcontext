@@ -45,7 +45,7 @@ export function kindLabel(
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string {
   const what = t(`activity.kinds.${event.kind}`, { defaultValue: event.kind });
-  const namesFailure = /\.(error|denied)$/.test(event.kind);
+  const namesFailure = /\.(error|denied|refused)$/.test(event.kind);
   return event.severity === "error" && !namesFailure
     ? t("activity.failed", { what })
     : what;

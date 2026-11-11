@@ -26,6 +26,15 @@ async fn main() {
         std::process::exit(migrate().await);
     }
 
+    // `joinedcontext-portal validate --as-portal --repo-dir <org> [--project-dir <slug>=<dir>]...
+    // [--apex <zone>]`: judge a checkout offline as this Portal's load would (P-15), with the
+    // operator's bounds from `JC_PORTAL_ORGANIZATION_BOUNDS_FILE`. Exit 1 on any finding, 2 on
+    // a usage or configuration error.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("validate") {
+        std::process::exit(joinedcontext_portal::judge::validate_command(&args[1..]));
+    }
+
     let config = match Config::from_env() {
         Ok(cfg) => cfg,
         Err(err) => {

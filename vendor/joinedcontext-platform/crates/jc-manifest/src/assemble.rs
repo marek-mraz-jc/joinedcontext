@@ -15,7 +15,7 @@ use crate::loader::{
 };
 use jc_core::kinds::{Project, ProjectSpec};
 use jc_core::project::{self, LiteralParameter, Parameters, RepositoryRole};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use walkdir::WalkDir;
@@ -57,6 +57,109 @@ pub struct EntryStatus {
     /// Whether its render was taken from the last assembly, its linked tree and its registry
     /// entry unchanged (T-4460).
     pub reused: bool,
+    /// Why the project's own render was refused this run; it then renders as the last assembly
+    /// left it, or not at all when there was none, and the other projects go on (T-6709).
+    pub refused: Option<Refusal>,
+}
+
+/// Why a project's render was refused (T-6709).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    /// The file, relative to the project repository, when the error names one.
+    pub path: Option<PathBuf>,
+    /// The error, as the whole assembly would have refused with it.
+    pub reason: String,
+}
+
+impl Refusal {
+    fn of(slug: &str, err: &AssembleError) -> Self {
+        let prefix = Path::new("projects").join(slug);
+        let named = paths_of(err)
+            .into_iter()
+            .find_map(|path| path.strip_prefix(&prefix).ok().map(Path::to_path_buf));
+        let mounted = match err {
+            AssembleError::Refused { path, .. } => {
+                // `{slug}: {file}`, with ` (document {n})` after a file of many documents.
+                path.strip_prefix(&format!("{slug}: "))
+                    .and_then(|file| file.split(" (document ").next())
+                    .map(PathBuf::from)
+            }
+            _ => None,
+        };
+        Self {
+            path: named.or(mounted),
+            reason: err.to_string(),
+        }
+    }
+}
+
+/// The repository paths a load error names, the duplicate before the first declaration.
+fn paths_of(err: &AssembleError) -> Vec<&Path> {
+    let AssembleError::Load(err) = err else {
+        return Vec::new();
+    };
+    match err {
+        LoadError::DuplicateIdentity { first, second, .. } => vec![second, first],
+        LoadError::PathEscapesRepository { path }
+        | LoadError::ApiVersion { path, .. }
+        | LoadError::UnknownKind { path, .. }
+        | LoadError::Io { path, .. }
+        | LoadError::Parse { path, .. }
+        | LoadError::Overlay { path, .. } => vec![path],
+        _ => Vec::new(),
+    }
+    .into_iter()
+    .map(PathBuf::as_path)
+    .collect()
+}
+
+/// The projects an assembly error is in: the ones a conflict names, or the project whose
+/// directory holds a file the error names (T-6709).
+fn blamed(err: &AssembleError) -> BTreeSet<String> {
+    match err {
+        AssembleError::Conflict { first, second, .. } => [first.clone(), second.clone()].into(),
+        AssembleError::Derived { projects, .. } => projects.iter().cloned().collect(),
+        _ => paths_of(err)
+            .into_iter()
+            .filter_map(|path| {
+                let mut parts = path.strip_prefix("projects").ok()?.components();
+                let slug = parts.next()?;
+                parts.next()?;
+                Some(slug.as_os_str().to_string_lossy().into_owned())
+            })
+            .collect(),
+    }
+}
+
+/// Whether `documents` are the manifests the last assembly rendered for `slug`.
+fn unchanged(into: &Path, slug: &str, documents: &[LoadedResource]) -> bool {
+    let last = into.join("projects").join(slug);
+    let key = |doc: &LoadedResource| (doc.path.clone(), doc.document);
+    let Ok(mut before) = read_documents(into, &last) else {
+        return false;
+    };
+    let mut now = documents.to_vec();
+    before.sort_by_key(key);
+    now.sort_by_key(key);
+    last.is_dir() && before == now
+}
+
+/// Puts the last render of `slug` back at `target`, its manifests into `projects`; `false` when
+/// the last assembly had none.
+fn last_render(
+    next: &Path,
+    last: &Path,
+    target: &Path,
+    slug: &str,
+    projects: &mut BTreeMap<String, Vec<LoadedResource>>,
+) -> Result<bool, AssembleError> {
+    remove(target)?;
+    if !last.is_dir() {
+        return Ok(false);
+    }
+    copy_tree(last, target, &|_| false, &mut copy_file)?;
+    projects.insert(slug.to_owned(), read_documents(next, target)?);
+    Ok(true)
 }
 
 /// A finding in a project repository: where, and what.
@@ -123,6 +226,8 @@ pub enum AssembleError {
         first: String,
         /// The other.
         second: String,
+        /// The projects of the first and the other object.
+        projects: Box<[String; 2]>,
     },
     /// The assembled tree does not load.
     #[error(transparent)]
@@ -231,13 +336,17 @@ pub fn assemble_reusing(
     )?;
     // The organization's own manifests, read before any project is mounted beside them; each
     // project's are kept as the mount renders them, never read back (T-4457).
-    let mut documents = read_documents(&next, &next)?;
+    let organization = read_documents(&next, &next)?;
 
-    let mut entries = Vec::new();
+    let mut entries: Vec<EntryStatus> = Vec::new();
     let mut findings = Vec::new();
     let mut kept = BTreeMap::new();
     // Renders moved whole out of `into`, each put back when this assembly is refused.
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    // Each project's manifests, and the projects rendered anew this run: a project refused here
+    // falls back to its last render, a render that was the last one already leaves (T-6709).
+    let mut projects: BTreeMap<String, Vec<LoadedResource>> = BTreeMap::new();
+    let mut fresh: BTreeSet<String> = BTreeSet::new();
     let loaded = (|| {
         for (slug, entry) in &registry {
             let git_ref = entry.spec.git_ref.clone().unwrap_or_default();
@@ -255,29 +364,42 @@ pub fn assemble_reusing(
                         Some(render) => {
                             std::fs::create_dir_all(next.join("projects")).map_err(io(&next))?;
                             std::fs::rename(&last, &target).map_err(io(&last))?;
-                            moved.push((target, last));
-                            render.clone()
+                            moved.push((target.clone(), last.clone()));
+                            Ok(render.clone())
                         }
                         None => {
                             let (mut own, mut found) = (Vec::new(), Vec::new());
-                            mount_project(
-                                slug,
-                                &entry.spec,
-                                &checkout,
-                                &next,
-                                &mut own,
-                                &mut found,
-                            )?;
-                            Render {
-                                tree: PathBuf::new(),
-                                entry: entry.spec.clone(),
-                                documents: own.into(),
-                                findings: found.into(),
-                            }
+                            mount_project(slug, &entry.spec, &checkout, &next, &mut own, &mut found)
+                                .map(|()| Render {
+                                    tree: PathBuf::new(),
+                                    entry: entry.spec.clone(),
+                                    documents: own.into(),
+                                    findings: found.into(),
+                                })
                         }
                     };
-                    documents.extend(render.documents.iter().cloned());
+                    let render = match render {
+                        Ok(render) => render,
+                        Err(err) => {
+                            // The project's own error stays in the project: its last render
+                            // serves and the other projects go on (T-6709).
+                            let rendered = last_render(&next, &last, &target, slug, &mut projects)?;
+                            entries.push(EntryStatus {
+                                slug: slug.clone(),
+                                git_ref,
+                                error: None,
+                                rendered,
+                                reused: false,
+                                refused: Some(Refusal::of(slug, &err)),
+                            });
+                            continue;
+                        }
+                    };
+                    projects.insert(slug.clone(), render.documents.to_vec());
                     findings.extend(render.findings.iter().cloned());
+                    if reused.is_none() {
+                        fresh.insert(slug.clone());
+                    }
                     if let Some(tree) = tree {
                         kept.insert(slug.clone(), Render { tree, ..render });
                     }
@@ -287,28 +409,92 @@ pub fn assemble_reusing(
                         error: None,
                         rendered: true,
                         reused: reused.is_some(),
+                        refused: None,
                     });
                 }
                 Err(error) => {
-                    let rendered = last.is_dir();
-                    if rendered {
-                        copy_tree(&last, &target, &|_| false, &mut copy_file)?;
-                        documents.extend(read_documents(&next, &target)?);
-                    }
+                    let rendered = last_render(&next, &last, &target, slug, &mut projects)?;
                     entries.push(EntryStatus {
                         slug: slug.clone(),
                         git_ref,
                         error: Some(error),
                         rendered,
                         reused: false,
+                        refused: None,
                     });
                 }
             }
         }
-        let loaded =
-            Repository::from_documents(&next, std::mem::take(&mut documents), environment)?;
-        unique_across_projects(&loaded)?;
-        Ok(loaded)
+        // A load error a project's manifests cause refuses that project, never the
+        // organization: each project it names and rendered anew falls back to its last render,
+        // one already on its last render leaves. Each round takes a project out of `fresh` or
+        // out of `projects`, so the rounds end; an error naming no project refuses the whole.
+        loop {
+            // ponytail: the documents are cloned per round so a refused round can be retried;
+            // build from references if a 10,000-manifest load shows it.
+            let documents = organization
+                .iter()
+                .chain(projects.values().flatten())
+                .cloned()
+                .collect();
+            let err = match Repository::from_documents(&next, documents, environment)
+                .map_err(AssembleError::from)
+                .and_then(|loaded| unique_across_projects(&loaded).map(|()| loaded))
+            {
+                Ok(loaded) => return Ok(loaded),
+                Err(err) => err,
+            };
+            let named: BTreeSet<String> = blamed(&err)
+                .into_iter()
+                .filter(|slug| projects.contains_key(slug))
+                .collect();
+            if named.is_empty() {
+                return Err(err);
+            }
+            let anew: BTreeSet<String> = named
+                .iter()
+                .filter(|slug| fresh.contains(*slug))
+                .cloned()
+                .collect();
+            // Of two projects a conflict names, the one that still renders as it did last time
+            // is not what changed: the other is refused alone, so a project cannot take a name
+            // another one serves by claiming it, nor be blamed for a claim made against it.
+            let changed: BTreeSet<String> = anew
+                .iter()
+                .filter(|slug| !unchanged(into, slug, &projects[*slug]))
+                .cloned()
+                .collect();
+            let refusing = if !changed.is_empty() {
+                changed
+            } else if !anew.is_empty() {
+                anew
+            } else {
+                named
+            };
+            for slug in refusing {
+                let target = next.join("projects").join(&slug);
+                let last = into.join("projects").join(&slug);
+                projects.remove(&slug);
+                kept.remove(&slug);
+                let was_fresh = fresh.remove(&slug);
+                // A reused render is the last one, moved here: back to `into` it goes.
+                if let Some(at) = moved.iter().position(|(from, _)| from == &target) {
+                    let (from, back) = moved.remove(at);
+                    std::fs::rename(&from, &back).map_err(io(&from))?;
+                }
+                let rendered = if was_fresh {
+                    last_render(&next, &last, &target, &slug, &mut projects)?
+                } else {
+                    remove(&target)?;
+                    false
+                };
+                if let Some(status) = entries.iter_mut().find(|status| status.slug == slug) {
+                    status.rendered = rendered;
+                    status.reused = false;
+                    status.refused = Some(Refusal::of(&slug, &err));
+                }
+            }
+        }
     })();
     let loaded = match loaded {
         Ok(repository) => repository,
@@ -581,7 +767,7 @@ fn unique_identities(repository: &Repository) -> Result<(), AssembleError> {
     use jc_core::kinds::{app_identity, mqtt_broker, pipeline_identity};
     const CLIENT: &str = "the Keycloak client";
     const ACCOUNT: &str = "the Kubernetes ServiceAccount";
-    let mut seen: BTreeMap<(&'static str, String), String> = BTreeMap::new();
+    let mut seen: BTreeMap<(&'static str, String), (String, String)> = BTreeMap::new();
     for (id, _) in repository.iter() {
         let project = id.namespace.as_deref().unwrap_or_default();
         let name = id.name.as_str();
@@ -621,11 +807,12 @@ fn unique_identities(repository: &Repository) -> Result<(), AssembleError> {
                 return Err(AssembleError::Derived {
                     what,
                     value,
-                    first: first.clone(),
+                    first: first.0.clone(),
                     second: owner,
+                    projects: Box::new([first.1.clone(), project.to_owned()]),
                 });
             }
-            seen.insert((what, value), owner.clone());
+            seen.insert((what, value), (owner.clone(), project.to_owned()));
         }
     }
     Ok(())

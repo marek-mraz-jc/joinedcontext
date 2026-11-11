@@ -242,7 +242,7 @@
     "needsRole": "Na schválenie treba priradenú rolu s právom `approve` v tomto projekte.",
     "needsPublisher": "Sprístupnenie endpointu verejnosti si vyžaduje rolu `publisher`; samotný steward to nemôže.",
     "ownProposal": "Nemôžete schváliť ani zamietnuť vlastný návrh.",
-    "ownAccessChange": "Zmeny prístupu schvaľuje druhá osoba: vlastnú zmenu rolí, skupín či servisných účtov schváli iný administrátor.",
+    "ownAccessChange": "Zmeny prístupu schvaľuje druhá osoba: vlastnú zmenu rolí, skupín, servisných účtov či politík schváli iný administrátor.",
     "ownModelChange": "Zmenu dátového modelu schvaľuje druhá osoba: vlastnú zmenu modelu schváli iný administrátor.",
     "confirmPrompt": "Na potvrdenie napíšte tento názov:",
     "confirmLabel": "Na potvrdenie napíšte názov",
@@ -6915,7 +6915,8 @@
       "config": {
         "planned": "Zmena naplánovaná",
         "applied": "Konfigurácia použitá",
-        "drifted": "Odchýlka od repozitára"
+        "drifted": "Odchýlka od repozitára",
+        "refused": "Zmena odmietnutá"
       },
       "change": {
         "merged": "Zmena zlúčená",
@@ -9737,7 +9738,8 @@
     "mentioned": "{name} vás spomenul(a) v {space}",
     "changeOpened": "{name} otvoril(a) zmenu {change} v {project} cez konektor {connector}: schváľte ju alebo zamietnite",
     "connectorPending": "{name} žiada o konektor {connector} nad stropom organizácie: schváľte ho alebo odmietnite",
-    "connectorExpiring": "Váš konektor {connector} skončí do 7 dní: predĺžte ho alebo vytvorte nový"
+    "connectorExpiring": "Váš konektor {connector} skončí do 7 dní: predĺžte ho alebo vytvorte nový",
+    "configRefused": "Vaša zmena {change} v {project} bola odmietnutá a nie je nasadená. Opravte ju novou zmenou; posledná verzia, ktorá sa načítala, ďalej slúži."
   },
   "problem": {
     "bad-request": "Opravte požiadavku podľa popisu a pošlite ju znova.",

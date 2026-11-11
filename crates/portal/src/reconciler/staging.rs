@@ -133,7 +133,7 @@ pub(super) fn stageable(content: &str) -> Result<Option<String>, serde_norway::E
 }
 
 /// The project a manifest without a namespace belongs to, taken from where it lies (CC-08).
-pub(super) fn namespace_of(path: &str) -> String {
+pub(crate) fn namespace_of(path: &str) -> String {
     let clean = path.trim_start_matches('/');
     match clean.split('/').collect::<Vec<_>>().as_slice() {
         ["projects", project, ..] if !project.is_empty() => (*project).to_owned(),
