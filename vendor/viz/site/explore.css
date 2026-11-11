@@ -23,6 +23,16 @@ main { padding: 12px 16px 16px; }
   .page-head .actions { flex: 1 1 100%; flex-wrap: nowrap; gap: 8px; }
   .page-head .actions .page-button { flex: 1 1 0; min-width: 0; }
 }
+/* The owner (2026-11-11): Data API and Embed sit in the view's action group (explorer/explorer.js
+   draws them as its secondary sm buttons) beside Full window and the CSV. While the group shows
+   them, the page's own pair is gone; refused or not ready, the pair stays as the way to the API. */
+main:has(#data-api-tool) .page-head .actions { display: none; }
+.inline main:has(#data-api-tool) .page-head { display: none; }
+/* The page's own pair and Map settings in the view's secondary sm look; dialog buttons keep theirs.
+   44 px only for a finger, as the view's buttons. */
+.page-head .actions .page-button, #map-panel-open { min-height: 0; height: var(--portal-control, 2rem); padding: 0 10px; font-size: var(--portal-text-caption, 0.8125rem); font-weight: 500; border-radius: var(--portal-radius-md, 6px); border-color: var(--portal-border, var(--line)); background: var(--portal-surface, var(--bg)); color: var(--portal-fg, var(--fg)); box-shadow: var(--portal-shadow-1, none); }
+.page-head .actions .page-button:hover, #map-panel-open:hover { background: var(--portal-surface-subtle, var(--soft)); }
+@media (pointer: coarse) { .page-head .actions .page-button, #map-panel-open { height: auto; min-height: 44px; } }
 .inline #title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 #title { font-size: 1.15rem; margin: 0; }
 #map-title { font-size: 1rem; margin: 16px 0 6px; }
@@ -95,6 +105,8 @@ textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; 
 /* T-5233: the map's count line, its Mapa panel, the reader's chips and the legend. */
 .map-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin: 16px 0 6px; }
 .map-head #map-title { margin: 0; }
+/* The attribute the points come from, beside the title; Map settings keeps the row's right end. */
+.map-head .map-from { margin: 0 auto 0 0; }
 .map-panel { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
 .map-panel h3 { flex-basis: 100%; margin: 0; font-size: 1rem; font-weight: 600; }
 .map-panel .field { flex: 1 1 14rem; min-width: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; border: 0; padding: 0; }

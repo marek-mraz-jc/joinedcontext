@@ -110,6 +110,10 @@ export interface GridLabels {
   matching: string;
   /** Beside the loaded rows when the endpoint's answer carries no total (R22, T-4885). */
   noTotal: string;
+  /** The pager's rows of this page when the answer carries no total: `{first}` and `{last}`, e.g. "Rows 21–40". */
+  rowsShown?: string;
+  /** After `rowsShown` when the page is full: more may follow, which only the next page tells; never a guessed count (R22). */
+  moreNext?: string;
   /** The entry that opens one attribute's history, and the panel's own labels (T-1431). */
   history: string;
   /** A geo column's filter cell: draw an area on the map, and take it away again. */
@@ -346,6 +350,8 @@ export const DEFAULT_LABELS: GridLabels = {
   errorDetail: "What the broker said",
   matching: "matching",
   noTotal: "the endpoint gives no total for this answer",
+  rowsShown: "Rows {first}–{last}",
+  moreNext: "more may follow",
   history: "History",
   areaPick: "Pick area on map",
   rowsPerPage: "Rows per page",

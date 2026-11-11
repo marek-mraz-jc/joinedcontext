@@ -14,6 +14,7 @@ import i18n from "./i18n";
 import "../index.css";
 import "./explorer.css";
 import { EndpointDataView } from "../components/entities/EndpointDataView";
+import { Button } from "../components/ui";
 import type { DataLink, RowCard } from "../components/entities/EndpointDataView";
 
 export interface MountOptions {
@@ -31,6 +32,18 @@ export interface MountOptions {
   onOpenRow?: (id: string) => void;
   /** The endpoint serves `file.csv`. */
   csv?: boolean;
+  /** The page's own actions (Data API, Embed), drawn first in the view's action group in its look;
+   * the click hands over the button, where the page returns focus when its dialog closes. */
+  actions?: PageAction[];
+}
+
+export interface PageAction {
+  /** The button's id, unique on the page. */
+  id: string;
+  label: string;
+  onClick: (button: HTMLButtonElement) => void;
+  /** The button opens a dialog. */
+  hasPopup?: boolean;
 }
 
 const SLUG = /^[a-z0-9-]{1,64}$/;
@@ -59,6 +72,18 @@ export function mount(element: Element, options: MountOptions): Root {
               onCard={options.onCard}
               onOpenRow={options.onOpenRow}
               csv={options.csv ?? true}
+              actions={options.actions?.map((action) => (
+                <Button
+                  key={action.id}
+                  id={action.id}
+                  size="sm"
+                  variant="secondary"
+                  aria-haspopup={action.hasPopup ? "dialog" : undefined}
+                  onClick={(event) => action.onClick(event.currentTarget)}
+                >
+                  {action.label}
+                </Button>
+              ))}
             />
           </div>
         </QueryClientProvider>

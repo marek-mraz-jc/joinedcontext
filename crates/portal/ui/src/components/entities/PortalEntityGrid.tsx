@@ -158,6 +158,8 @@ export function gridLabels(t: (key: string, values?: Record<string, string>) => 
     errorDetail: t("entityGrid.errorDetail"),
     matching: t("entityGrid.matching", { n: "{n}" }),
     noTotal: t("entityGrid.noTotal"),
+    rowsShown: t("entityGrid.rowsShown", { first: "{first}", last: "{last}" }),
+    moreNext: t("entityGrid.moreNext"),
     history: t("entityGrid.history"),
     areaPick: t("entityGrid.areaPick"),
     signedOutTitle: t("entityGrid.signedOutTitle"),

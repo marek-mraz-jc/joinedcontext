@@ -5,6 +5,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { mount } from "../src/explorer/main";
 import i18n from "../src/explorer/i18n";
@@ -45,6 +46,37 @@ describe("the catalogue widget's mount", () => {
       const root = mount(document.createElement("div"), { origin, slug: "air" });
       root.unmount();
     }
+    vi.unstubAllGlobals();
+  });
+
+  it("draws the page's actions as the view's buttons and hands the pressed one to the page", async () => {
+    const answer = (url: URL): Response | undefined => {
+      if (url.pathname.endsWith("/schema/index.json")) return Response.json({ models: [{ name: "air", version: 1 }] });
+      if (url.pathname.endsWith("/schema/v1/json-schema")) return Response.json({ $defs: { Air: { properties: { co2: {} } } } });
+      if (url.pathname.endsWith("/access/attributes")) return Response.json({ type: "Air", attributes: [{ name: "co2", read: true, write: false, delete: false, reason: "" }] });
+      if (url.pathname.includes("/ngsi-ld/v1/")) return Response.json([]);
+      return undefined;
+    };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(answer(new URL(input instanceof Request ? input.url : String(input))) ?? new Response("{}", { status: 404 }))));
+    const element = document.createElement("div");
+    document.body.append(element);
+    const pressed: HTMLElement[] = [];
+    const root = mount(element, {
+      origin: "https://api.example.test",
+      slug: "air",
+      actions: [
+        { id: "data-api-tool", label: "Data API", onClick: (button) => pressed.push(button) },
+        { id: "embed-tool", label: "Embed", onClick: (button) => pressed.push(button), hasPopup: true },
+      ],
+    });
+    await waitFor(() => expect(element.querySelector("#embed-tool")).not.toBeNull(), { timeout: 5000 });
+    const embed = element.querySelector<HTMLButtonElement>("#embed-tool")!;
+    expect(embed).toHaveAttribute("aria-haspopup", "dialog");
+    expect(element.querySelector("#data-api-tool")).not.toHaveAttribute("aria-haspopup");
+    embed.click();
+    expect(pressed).toEqual([embed]);
+    root.unmount();
+    element.remove();
     vi.unstubAllGlobals();
   });
 
