@@ -36,6 +36,8 @@ pub struct Double {
     tenant_probes: AtomicUsize,
     wedged: AtomicBool,
     size_scan_fails: AtomicBool,
+    /// Each `query_entities` probing this type waits this long.
+    slow_type: Option<(String, std::time::Duration)>,
 }
 
 impl Double {
@@ -60,6 +62,7 @@ impl Double {
             tenant_probes: AtomicUsize::new(0),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
+            slow_type: None,
         }
     }
 
@@ -85,6 +88,7 @@ impl Double {
             tenant_probes: AtomicUsize::new(0),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
+            slow_type: None,
         }
     }
 
@@ -110,6 +114,7 @@ impl Double {
             tenant_probes: AtomicUsize::new(0),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
+            slow_type: None,
         }
     }
 
@@ -137,6 +142,7 @@ impl Double {
             tenant_probes: AtomicUsize::new(0),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
+            slow_type: None,
         }
     }
 
@@ -176,6 +182,7 @@ impl Double {
             tenant_probes: AtomicUsize::new(0),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
+            slow_type: None,
         }
     }
 
@@ -201,6 +208,7 @@ impl Double {
             tenant_probes: AtomicUsize::new(0),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
+            slow_type: None,
         }
     }
 
@@ -226,6 +234,7 @@ impl Double {
             tenant_probes: AtomicUsize::new(0),
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
+            slow_type: None,
         }
     }
 
@@ -233,6 +242,20 @@ impl Double {
     /// a bound is asserted from.
     pub fn passthrough(inner: Arc<dyn CurrentStateDriver>) -> Self {
         Self::flaky_list(inner, 0)
+    }
+
+    /// Delegates everything; a `query_entities` whose type group leads with
+    /// `type_iri` (a discovery probe of that type) answers after `delay`, as
+    /// a Postgres walk of a large type does (T-6785).
+    pub fn slowing_type(
+        inner: Arc<dyn CurrentStateDriver>,
+        type_iri: &str,
+        delay: std::time::Duration,
+    ) -> Self {
+        Self {
+            slow_type: Some((type_iri.to_owned(), delay)),
+            ..Self::passthrough(inner)
+        }
     }
 
     /// From now on the store reports itself wedged, as a Postgres store does
@@ -463,6 +486,11 @@ impl CurrentStateDriver for Double {
         f: &antares_store::filter::EntityFilter<'_>,
     ) -> Result<antares_store::filter::QueryOutcome, NgsiError> {
         self.saw_query(f)?;
+        if let Some((slow, delay)) = &self.slow_type {
+            if f.types.is_some_and(|g| g.iter().any(|t| t.first() == Some(slow))) {
+                tokio::time::sleep(*delay).await;
+            }
+        }
         let out = self.inner.query_entities(tenant, f).await?;
         self.rows_read.fetch_add(out.rows.len(), Ordering::SeqCst);
         Ok(out)
