@@ -110,6 +110,21 @@
                     <summary class="btn btn-default">{{ labels.subscribe }}</summary>
                     <div class="jc-subscribe-menu">
                       <p class="jc-subscribe-lead">{{ labels.subscribe_hint }}</p>
+                      {% if !subscriptions.calendar.is_empty() %}
+                      <p class="jc-subscribe-group" id="jc-subscribe-calendar">{{ labels.subscribe_calendar }}</p>
+                      <ul aria-labelledby="jc-subscribe-calendar">
+                        {% for (c_name, c_url, c_webcal, c_mime) in subscriptions.calendar %}
+                        <li class="jc-subscribe-feed">
+                          <label for="jc-subscribe-cal-{{ loop.index }}">{{ c_name }}</label>
+                          <div class="jc-subscribe-copy">
+                            <textarea id="jc-subscribe-cal-{{ loop.index }}" class="form-control" rows="2" readonly spellcheck="false">{{ c_url }}</textarea>
+                            <button type="button" class="btn btn-default" data-jc-copy="jc-subscribe-cal-{{ loop.index }}" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ c_name }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button>
+                          </div>
+                          <p class="jc-subscribe-links"><a href="{{ c_webcal }}">{{ labels.subscribe_open_app }}</a><a href="{{ c_url }}" type="{{ c_mime }}">{{ labels.subscribe_download }}</a></p>
+                        </li>
+                        {% endfor %}
+                      </ul>
+                      {% endif %}
                       {% if explorer.is_some() %}{% if let Some(cal) = subscriptions.calendar.first() %}{% if cal.1.contains("/ical/v1/") %}
                       <section class="jc-subscribe-query" aria-labelledby="jc-subscribe-mine" data-jc-feed="{{ cal.1 }}" data-jc-none="{{ labels.subscribe_preview_none }}" data-jc-failed="{{ labels.subscribe_preview_failed }}" data-jc-loading="{{ labels.subscribe_preview_loading }}" data-jc-lang="{{ chrome.lang }}" hidden>
                         <p class="jc-subscribe-group" id="jc-subscribe-mine">{{ labels.subscribe_mine }}</p>
@@ -129,21 +144,6 @@
                         </div>
                       </section>
                       {% endif %}{% endif %}{% endif %}
-                      {% if !subscriptions.calendar.is_empty() %}
-                      <p class="jc-subscribe-group" id="jc-subscribe-calendar">{{ labels.subscribe_calendar }}</p>
-                      <ul aria-labelledby="jc-subscribe-calendar">
-                        {% for (c_name, c_url, c_webcal, c_mime) in subscriptions.calendar %}
-                        <li class="jc-subscribe-feed">
-                          <label for="jc-subscribe-cal-{{ loop.index }}">{{ c_name }}</label>
-                          <div class="jc-subscribe-copy">
-                            <textarea id="jc-subscribe-cal-{{ loop.index }}" class="form-control" rows="2" readonly spellcheck="false">{{ c_url }}</textarea>
-                            <button type="button" class="btn btn-default" data-jc-copy="jc-subscribe-cal-{{ loop.index }}" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ c_name }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button>
-                          </div>
-                          <p class="jc-subscribe-links"><a href="{{ c_webcal }}">{{ labels.subscribe_open_app }}</a><a href="{{ c_url }}" type="{{ c_mime }}">{{ labels.subscribe_download }}</a></p>
-                        </li>
-                        {% endfor %}
-                      </ul>
-                      {% endif %}
                       {% if !subscriptions.news.is_empty() %}
                       <p class="jc-subscribe-group" id="jc-subscribe-news">{{ labels.subscribe_news }}</p>
                       <ul aria-labelledby="jc-subscribe-news">
