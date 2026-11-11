@@ -92,6 +92,27 @@ test.describe("footer", () => {
     });
   }
 
+  // T-6748: the owner's phone shot had the corner over the live table's last rows and pager. While
+  // it would sit over a frame it steps aside (jc-viz.js), so a tap there reaches the frame.
+  test("the assistant corner steps aside over the live data frame at 400px", async ({ page }) => {
+    await page.setViewportSize({ width: 400, height: 844 });
+    await page.goto(`/sk/dataset/${DATASET}`);
+    const frame = page.locator("iframe[data-jc-viz]").first();
+    await expect(frame).toBeVisible();
+    await expect.poll(async () => (await frame.boundingBox())?.height ?? 0, { timeout: 20000 }).toBeGreaterThan(500);
+    // The frame's end (the table's pager) at the window's bottom edge, where the corner sits.
+    await frame.evaluate((el) => window.scrollTo(0, window.scrollY + el.getBoundingClientRect().bottom - window.innerHeight + 8));
+    await expect(page.locator("body")).toHaveClass(/(^|\s)jc-corner-aside(\s|$)/);
+    const summary = page.locator(".jc-assistant > summary");
+    await expect(summary).toHaveCSS("opacity", "0");
+    const box = (await summary.boundingBox())!;
+    expect(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName, [box.x + box.width / 2, box.y + box.height / 2])).toBe("IFRAME");
+    // Past the frame it is back.
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await expect(page.locator("body")).not.toHaveClass(/(^|\s)jc-corner-aside(\s|$)/);
+    await expect(summary).not.toHaveCSS("opacity", "0");
+  });
+
   test("the language Go button shows and works without script", async ({ browser }) => {
     const context = await browser.newContext({ javaScriptEnabled: false });
     const page = await context.newPage();
