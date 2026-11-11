@@ -1587,8 +1587,14 @@ mod tests {
                      spec:\n  isSandbox: false\n  urnSegment: events\n"
                 ),
             ),
-            ("a.yaml", endpoint("events-a", "aaaaaaaaaaaaaaaaaaaaaaaaaa", "a-read")),
-            ("b.yaml", endpoint("events-b", "bbbbbbbbbbbbbbbbbbbbbbbbbb", "b-read")),
+            (
+                "a.yaml",
+                endpoint("events-a", "aaaaaaaaaaaaaaaaaaaaaaaaaa", "a-read"),
+            ),
+            (
+                "b.yaml",
+                endpoint("events-b", "bbbbbbbbbbbbbbbbbbbbbbbbbb", "b-read"),
+            ),
             ("a-read.yaml", policy("a-read")),
             ("b-read.yaml", policy("b-read")),
             (

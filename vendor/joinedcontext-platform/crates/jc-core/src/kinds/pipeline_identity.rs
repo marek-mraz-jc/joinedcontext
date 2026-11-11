@@ -20,8 +20,8 @@ use crate::kinds::service_account::{
     Credential, CredentialKind, KubernetesBinding, Owner, RoleBinding, RoleScope,
     ServiceAccountSpec, Workload,
 };
-use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 /// The name prefix of a derived account: no ServiceAccount manifest may take it (PL-19).
 pub const ACCOUNT_PREFIX: &str = "pl-";

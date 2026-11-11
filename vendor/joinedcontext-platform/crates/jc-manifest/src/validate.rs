@@ -1419,7 +1419,9 @@ impl<'a> WriteBindings<'a> {
                             .policies
                             .iter()
                             .find(|(policy, _)| *policy == name)
-                            .and_then(|(name, policy)| self.refusal(&key, endpoint, name, policy, true))
+                            .and_then(|(name, policy)| {
+                                self.refusal(&key, endpoint, name, policy, true)
+                            })
                             .map(|why| format!("{target} {why}"))
                     }
                 };

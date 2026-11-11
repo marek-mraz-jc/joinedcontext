@@ -1193,7 +1193,10 @@ async fn a_linkml_file_alone_drafts_the_model_the_space_and_its_grants() {
     // P-18 (T-6736): the project's read of the type is the one grant the Endpoint names.
     let read = &body["drafts"][2]["manifest"];
     assert_eq!(read["metadata"]["name"], "room-bookings-all-read");
-    assert_eq!(read["spec"]["assignee"], json!({ "kind": "group", "id": "helsinki" }));
+    assert_eq!(
+        read["spec"]["assignee"],
+        json!({ "kind": "group", "id": "helsinki" })
+    );
     let endpoint = &body["drafts"][3]["manifest"]["spec"];
     let refs = endpoint["policyRefs"].as_array().expect("policyRefs");
     assert!(

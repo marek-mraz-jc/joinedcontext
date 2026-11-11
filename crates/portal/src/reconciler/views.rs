@@ -3640,9 +3640,15 @@ mod tests {
             )
         };
         let names = |e: &EndpointSource| -> Vec<String> {
-            s.bound(e).into_iter().map(|(name, _)| name.to_owned()).collect()
+            s.bound(e)
+                .into_iter()
+                .map(|(name, _)| name.to_owned())
+                .collect()
         };
-        assert_eq!(names(&listing("air-a", "a-read")), ["a-read", "pl-load-w-1"]);
+        assert_eq!(
+            names(&listing("air-a", "a-read")),
+            ["a-read", "pl-load-w-1"]
+        );
         assert_eq!(names(&listing("air-b", "b-read")), ["b-read"]);
     }
 
