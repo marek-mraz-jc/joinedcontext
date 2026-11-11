@@ -361,6 +361,10 @@ def test_a_restart_signs_jc_in_with_the_realms_secret_of_each_of_its_clients(tmp
             old[client] = (rs / "secrets" / "realm" / var).read_text().strip()
             assert (rs / "state" / files[client]).read_text().strip() == old[client], client
             assert grant(base, "rsrealm", client, old[client]) == 200, client
+        # The realms step adds jc's proxy client with a fresh realm secret, handed to its state file.
+        proxy = (rs / "secrets" / "realm" / "KC_AGENT_PROXY_SECRET").read_text().strip()
+        assert (rs / "state" / files["agent-proxy"]).read_text().strip() == proxy
+        assert grant(base, "rsrealm", "agent-proxy", proxy) == 200
         # The realm's value changes (a rotated export): the next start signs every client in with it.
         (rs / "secrets" / "realm" / JC_CLIENTS["jc-assistant"]).write_text("rotated-" + old["jc-assistant"][:8])
         subprocess.run(up, env=run_env, check=True, timeout=900)
@@ -1210,6 +1214,11 @@ def test_an_imported_realm_hands_its_client_secrets_to_jcs_state_files():
         ("portal-admin-client-secret", "KC_PORTAL_RECONCILER_SECRET"),
         ("portal-client-secret", "KC_PORTAL_API_SECRET"),
         ("proxy-client-secret", "KC_AGENT_PROXY_SECRET")]
+    # prod's realm has no agent-proxy (jc-prod 2026-11-11): the realms step adds it with a fresh
+    # realm secret, so jc's proxy-client-secret takes the realm's value too.
+    prod = {"clients": [c for c in realm["clients"] if c["clientId"] != "agent-proxy"]}
+    assert ("proxy-client-secret", "KC_AGENT_PROXY_SECRET") not in rh.state_client_secrets(prod)
+    assert ("proxy-client-secret", "KC_AGENT_PROXY_SECRET") in rh.state_client_secrets(rh.add_agent_proxy(prod)[0])
 
 
 def test_the_rehearsal_signs_in_at_the_realm_of_the_export(tmp_path):
@@ -1267,10 +1276,16 @@ def test_only_the_clients_jc_signs_in_as_trade_federated_jwt_for_their_secret():
         {"clientId": "context-gateway", "clientAuthenticatorType": "federated-jwt", "attributes": dict(k8s)},
         {"clientId": "pl-zilina-osm", "clientAuthenticatorType": "federated-jwt", "attributes": dict(k8s)},
         {"clientId": "praha-pipelines", "clientAuthenticatorType": "client-secret"},
+        # prod's own proxy: token exchange over the Endpoints; jc never signs in as it.
+        {"clientId": "helsinki-agent-proxy", "clientAuthenticatorType": "federated-jwt",
+         "attributes": {**k8s, "standard.token.exchange.enabled": "true"}},
     ]}
     out, changed = rh.jc_clients_by_secret(realm)
     by = {c["clientId"]: c for c in out["clients"]}
     assert changed == ["context-gateway", "portal-api"]
+    assert by["helsinki-agent-proxy"] == realm["clients"][4]
+    with_assistant = {"clients": out["clients"] + [{"clientId": "jc-assistant"}]}
+    assert rh.add_agent_proxy(with_assistant)[0]["clients"][4] == realm["clients"][4]
     assert by["portal-api"]["clientAuthenticatorType"] == "client-secret"
     assert by["portal-api"]["attributes"] == {"post.logout.redirect.uris": "+"}
     assert by["portal-api"]["secret"] == "$(env:A)"
@@ -1297,6 +1312,87 @@ def test_the_assistants_client_may_ask_the_shared_embedders_scope_and_nothing_el
     # A second pass, and a realm without the assistant, change nothing.
     assert rh.add_embedder_scope(out) == (out, False)
     assert rh.add_embedder_scope({"clients": [{"clientId": "portal-api"}]})[1] is False
+
+
+def prod_shaped_assistant_realm():
+    """jc-prod's smartcity realm as far as the proxy goes (prod-final export, names only)."""
+    aud = lambda name, a: {"name": name, "protocolMapper": "oidc-audience-mapper",
+                           "config": {"included.custom.audience": a, "access.token.claim": "true"}}
+    return {"realm": "smartcity", "clients": [
+        {"clientId": "jc-assistant", "clientAuthenticatorType": "client-secret", "secret": "$(env:KC_JC_ASSISTANT_SECRET)",
+         "protocolMappers": [aud("agent-proxy-audience", "helsinki-agent-proxy"), aud("functions-audience", "jc-functions")]},
+        {"clientId": "helsinki-agent-proxy", "clientAuthenticatorType": "federated-jwt",
+         "attributes": {"standard.token.exchange.enabled": "true"}, "protocolMappers": [aud("context-gateway-audience", "context-gateway")]},
+        {"clientId": "portal-api", "secret": "$(env:KC_PORTAL_API_SECRET)"},
+    ], "clientScopes": [{"name": "basic"}], "users": [{"serviceAccountClientId": "portal-api", "clientRoles": {"x": ["y"]}}]}
+
+
+def test_the_assistants_proxy_client_comes_into_an_imported_realm_and_nothing_else_moves():
+    realm = prod_shaped_assistant_realm()
+    before = json.loads(json.dumps(realm))
+    out, added = rh.add_agent_proxy(realm)
+    assert added == ["client agent-proxy", "jc-assistant audience agent-proxy"]
+    assert realm == before, "the input is not changed"
+    by = {c["clientId"]: c for c in out["clients"]}
+    assert set(by) == {"jc-assistant", "helsinki-agent-proxy", "portal-api", "agent-proxy"}
+    # Exactly jc's own proxy client (bins/jc/src/setup.rs assistant_realm_file), a fresh secret variable.
+    assert by["agent-proxy"] == {
+        "clientId": "agent-proxy", "name": "Model proxy", "enabled": True, "protocol": "openid-connect",
+        "publicClient": False, "clientAuthenticatorType": "client-secret", "secret": "$(env:KC_AGENT_PROXY_SECRET)",
+        "standardFlowEnabled": False, "implicitFlowEnabled": False, "directAccessGrantsEnabled": False,
+        "serviceAccountsEnabled": True, "fullScopeAllowed": False, "redirectUris": [], "webOrigins": [],
+        "defaultClientScopes": ["basic"], "optionalClientScopes": [], "protocolMappers": []}
+    assert rh.unsafe_proxy_client(out, by["agent-proxy"]) == []
+    # One mapper more on jc-assistant itself: the old audiences stay, agent-proxy joins them.
+    auds = lambda c: sorted(m["config"]["included.custom.audience"] for m in c["protocolMappers"])
+    assert auds(by["jc-assistant"]) == sorted(auds(before["clients"][0]) + ["agent-proxy"])
+    assert by["jc-assistant"]["protocolMappers"][:2] == before["clients"][0]["protocolMappers"]
+    assert {k: v for k, v in by["jc-assistant"].items() if k != "protocolMappers"} == \
+        {k: v for k, v in before["clients"][0].items() if k != "protocolMappers"}
+    # helsinki-agent-proxy stays federated-jwt with its exchange; scopes, users, other clients unmoved.
+    assert by["helsinki-agent-proxy"] == before["clients"][1] and by["portal-api"] == before["clients"][2]
+    assert {k: v for k, v in out.items() if k != "clients"} == {k: v for k, v in before.items() if k != "clients"}
+    # jc's state file takes the realm's fresh secret (no state value of jc's own, F5).
+    assert ("proxy-client-secret", "KC_AGENT_PROXY_SECRET") in rh.state_client_secrets(out)
+    assert "KC_AGENT_PROXY_SECRET" in rh.SECRET_VAR.findall(json.dumps(out))
+    assert rh.add_agent_proxy(out) == (out, [])
+    assert rh.add_agent_proxy({"clients": [{"clientId": "portal-api"}]}) == ({"clients": [{"clientId": "portal-api"}]}, [])
+
+
+def test_an_existing_proxy_client_is_kept_with_its_secret_or_refused_when_it_is_more_than_introspection():
+    safe = {**rh.PROXY_CLIENT_REP, "secret": "$(env:KC_THEIRS)"}
+    realm = prod_shaped_assistant_realm()
+    realm["clients"].append(safe)
+    out, added = rh.add_agent_proxy(realm)
+    assert added == ["jc-assistant audience agent-proxy"]
+    assert [c for c in out["clients"] if c["clientId"] == "agent-proxy"] == [safe], "its secret is never rewritten"
+    for field, value in [("standardFlowEnabled", True), ("implicitFlowEnabled", True), ("directAccessGrantsEnabled", True),
+                         ("fullScopeAllowed", True), ("publicClient", True), ("redirectUris", ["https://x/*"]),
+                         ("webOrigins", ["+"]), ("clientAuthenticatorType", "federated-jwt"),
+                         ("attributes", {"standard.token.exchange.enabled": "true"})]:
+        bad = prod_shaped_assistant_realm()
+        bad["clients"].append({**safe, field: value})
+        with pytest.raises(SystemExit, match=field.split(".")[0]):
+            rh.add_agent_proxy(bad)
+    for roles in [{"clientRoles": {"realm-management": ["view-users"]}}, {"realmRoles": ["admin"]}]:
+        bad = prod_shaped_assistant_realm()
+        bad["clients"].append(safe)
+        bad["users"].append({"serviceAccountClientId": "agent-proxy", **roles})
+        with pytest.raises(SystemExit, match="service account"):
+            rh.add_agent_proxy(bad)
+    ok = prod_shaped_assistant_realm()
+    ok["clients"].append(safe)
+    ok["users"].append({"serviceAccountClientId": "agent-proxy", "realmRoles": ["default-roles-smartcity"]})
+    assert rh.add_agent_proxy(ok)[1] == ["jc-assistant audience agent-proxy"]
+    # Absent fields read as Keycloak's defaults: a bare client has the standard flow and full scope.
+    bare = prod_shaped_assistant_realm()
+    bare["clients"].append({"clientId": "agent-proxy"})
+    with pytest.raises(SystemExit, match="standardFlowEnabled"):
+        rh.add_agent_proxy(bare)
+    twice = prod_shaped_assistant_realm()
+    twice["clients"] += [safe, safe]
+    with pytest.raises(SystemExit, match="2 clients"):
+        rh.add_agent_proxy(twice)
 
 
 def test_each_pipelines_own_client_trades_federated_jwt_for_its_secret_and_keeps_its_audience():

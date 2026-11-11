@@ -256,6 +256,57 @@ async fn the_assistant_reaches_the_completion_endpoints_alone() {
     assert_eq!(reached(&provider).await, 0);
 }
 
+/// AG-109: a realm that refuses the proxy's own client at introspection (401, as an imported
+/// realm without `agent-proxy` answers, jc-prod 2026-11-11) judges nothing: the call is refused
+/// and the provider never asked.
+#[tokio::test]
+async fn a_realm_that_refuses_the_proxys_client_buys_no_model_time() {
+    let (realm, provider) = (MockServer::start().await, provider().await);
+    Mock::given(method("POST"))
+        .and(path(INTROSPECT_PATH))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({"error": "invalid_client"})))
+        .mount(&realm)
+        .await;
+    let response = proxy(&realm, &provider)
+        .oneshot(call(
+            ASSISTANT_TOKEN,
+            Some("bb/public"),
+            Some("1000"),
+            "v1/chat/completions",
+        ))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(realm.received_requests().await.unwrap_or_default().len(), 1);
+    assert_eq!(reached(&provider).await, 0);
+}
+
+/// AG-109: the assistant's service-account token is served only when its audience names the
+/// proxy's client; an active token for another audience buys nothing.
+#[tokio::test]
+async fn an_assistant_token_without_the_proxys_audience_is_refused() {
+    let (realm, provider) = (MockServer::start().await, provider().await);
+    Mock::given(method("POST"))
+        .and(path(INTROSPECT_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "active": true, "azp": "jc-assistant", "username": "service-account-jc-assistant",
+            "aud": ["helsinki-agent-proxy", "jc-functions"],
+        })))
+        .mount(&realm)
+        .await;
+    let response = proxy(&realm, &provider)
+        .oneshot(call(
+            ASSISTANT_TOKEN,
+            Some("bb/public"),
+            Some("1000"),
+            "v1/chat/completions",
+        ))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(reached(&provider).await, 0);
+}
+
 /// AG-109: naming a deployment does not let a run spend its day: the run's ticket is not the
 /// assistant's token.
 #[tokio::test]
