@@ -4416,23 +4416,21 @@ mod tests {
             "{errors:?}"
         );
 
-        let errors = refusal(check(
+        // P-18 (T-6736): the Pipeline names public-air, so its derived write binds it beside
+        // the policyRef; only an Endpoint the project lacks is refused.
+        assert!(check(
             Operation::Create,
-            manifest("Pipeline", "stations", air_pipeline("public-air")),
-        ));
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(
-            errors[0].starts_with(
-                "spec.targetEndpoint: Pipeline stations output 1 writes as pl-stations"
-            ) && errors[0].contains("aim it at an Endpoint of the space without policyRef"),
-            "{errors:?}"
-        );
+            manifest("Pipeline", "stations", air_pipeline("public-air"))
+        )
+        .is_ok());
         let errors = refusal(check(
             Operation::Create,
             manifest("Pipeline", "lost", air_pipeline("no-such-endpoint")),
         ));
         assert!(
-            errors[0].contains("declares no Endpoint no-such-endpoint"),
+            errors[0].starts_with("spec.targetEndpoint: Pipeline lost output 1 writes as pl-lost")
+                && errors[0].contains("declares no Endpoint no-such-endpoint")
+                && errors[0].contains("aim it at an Endpoint of the space it writes"),
             "{errors:?}"
         );
 

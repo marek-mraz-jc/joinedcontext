@@ -875,6 +875,31 @@ async fn a_drafted_space_carries_the_write_and_the_read_its_endpoint_needs() {
         .filter(|d| d["kind"] == "Policy")
         .collect();
     assert_eq!(policies.len(), 3, "one write, the two reads: {body}");
+    // P-18 (T-6736): the Endpoint names exactly the grants drafted with it, so a Policy added to
+    // the space later opens it only when someone lists it.
+    let endpoint = body["drafts"]
+        .as_array()
+        .expect("drafts")
+        .iter()
+        .find(|d| d["kind"] == "Endpoint")
+        .expect("an Endpoint draft");
+    let listed: Vec<&str> = endpoint["manifest"]["spec"]["policyRefs"]
+        .as_array()
+        .expect("policyRefs")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let drafted: Vec<String> = policies
+        .iter()
+        .map(|p| format!(":{}", p["name"].as_str().expect("a name")))
+        .collect();
+    assert_eq!(listed.len(), drafted.len(), "{listed:?}");
+    for (urn, name) in listed.iter().zip(&drafted) {
+        assert!(
+            urn.starts_with("urn:ngsi-ld:Policy:") && urn.ends_with(name.as_str()),
+            "{urn} {name}"
+        );
+    }
 
     let write = policies
         .iter()
@@ -1160,8 +1185,24 @@ async fn a_linkml_file_alone_drafts_the_model_the_space_and_its_grants() {
         .iter()
         .filter_map(|d| d["kind"].as_str())
         .collect();
-    assert_eq!(kinds, ["DataModel", "ContextSpace", "Endpoint"], "{body}");
-    let endpoint = &body["drafts"][2]["manifest"]["spec"];
+    assert_eq!(
+        kinds,
+        ["DataModel", "ContextSpace", "Policy", "Endpoint"],
+        "{body}"
+    );
+    // P-18 (T-6736): the project's read of the type is the one grant the Endpoint names.
+    let read = &body["drafts"][2]["manifest"];
+    assert_eq!(read["metadata"]["name"], "room-bookings-all-read");
+    assert_eq!(read["spec"]["assignee"], json!({ "kind": "group", "id": "helsinki" }));
+    let endpoint = &body["drafts"][3]["manifest"]["spec"];
+    let refs = endpoint["policyRefs"].as_array().expect("policyRefs");
+    assert!(
+        refs.len() == 1
+            && refs[0]
+                .as_str()
+                .is_some_and(|urn| urn.ends_with(":room-bookings-all-read")),
+        "{endpoint}"
+    );
     assert_eq!(endpoint["audience"], "project-list", "{endpoint}");
     assert_eq!(
         endpoint["allowedProjects"],
@@ -1203,6 +1244,15 @@ async fn an_uploaded_csv_drafts_the_endpoint_and_the_persons_write_grant() {
     };
     let endpoint = &named("room-bookings-all")["manifest"]["spec"];
     assert_eq!(endpoint["audience"], "organization", "{endpoint}");
+    // P-18 (T-6736): the person's upload grant is among the Policies the Endpoint names.
+    assert!(
+        endpoint["policyRefs"]
+            .as_array()
+            .is_some_and(|refs| refs.iter().any(|urn| urn
+                .as_str()
+                .is_some_and(|urn| urn.ends_with(":room-bookings-upload")))),
+        "{endpoint}"
+    );
     assert_eq!(endpoint.get("projection"), None, "{endpoint}");
     assert_eq!(
         named("room-bookings-all-read")["manifest"]["spec"]["information"],

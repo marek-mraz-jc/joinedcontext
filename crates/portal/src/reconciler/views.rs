@@ -204,6 +204,9 @@ pub struct Sources {
     /// Every Policy by `(project, space)` with its manifest name, each Pipeline's derived ones
     /// included (PL-20): they reach the broker through the same Endpoints.
     pub policies: BTreeMap<(String, String), Vec<(String, PolicySpec)>>,
+    /// Each Pipeline's derived Policies by `(project, endpoint)`: the Endpoint its manifest
+    /// names binds them whatever `policyRefs` it lists (P-18, T-6736).
+    pub doors: BTreeMap<(String, String), Vec<(String, PolicySpec)>>,
     /// Every `ModelProjection` by `(project, name)`.
     pub projections: BTreeMap<(String, String), ModelProjectionSpec>,
     /// The classes of each space's own data models by `(project, space)`; a mirrored model is
@@ -463,7 +466,9 @@ impl Sources {
             }
         }
         sources.fold_history(repo);
-        for (project, derived) in jcctl::pipeline_identity::derived(repo) {
+        let derived = jcctl::pipeline_identity::derived(repo);
+        sources.doors = jcctl::pipeline_identity::endpoint_grants(&derived);
+        for (project, derived) in derived {
             for (name, spec) in derived.policies {
                 let space = spec.context_space_ref.name().to_owned();
                 sources
@@ -511,12 +516,19 @@ impl Sources {
     }
 
     /// The Policies an Endpoint evaluates, as the gateway binds them (`store.rs`
-    /// `endpoints_with_models`): with `policyRefs` (or `policyRef`) the listed Policies of its
-    /// space, else every Policy of its space; an App's Endpoint keeps the App's own grants and the prohibitions.
+    /// `endpoints_from`): with `policyRefs` (or `policyRef`) the listed Policies of its space
+    /// and the grants of each Pipeline naming it, else every Policy of its space; an App's
+    /// Endpoint keeps the App's own grants and the prohibitions.
     fn bound<'s>(&'s self, e: &EndpointSource) -> Vec<(&'s str, &'s PolicySpec)> {
         let space = e.spec.context_space_ref.name();
         let app = self.is_app(e);
-        self.policies_of(&e.project, space)
+        let door = self
+            .doors
+            .get(&(e.project.clone(), e.name.clone()))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let listed = self
+            .policies_of(&e.project, space)
             .iter()
             .filter(|(name, _)| match e.spec.policy_refs() {
                 Some(refs) => refs.iter().any(|reference| {
@@ -524,7 +536,17 @@ impl Sources {
                         && PolicySpec::policy_of(name) == reference.local_id()
                 }),
                 None => true,
-            })
+            });
+        let mut bound: Vec<&'s (String, PolicySpec)> = listed.collect();
+        if e.spec.policy_refs().is_some() {
+            for grant in door {
+                if !bound.iter().any(|(name, _)| *name == grant.0) {
+                    bound.push(grant);
+                }
+            }
+        }
+        bound
+            .into_iter()
             .filter(|(_, policy)| {
                 !app || policy.effect.is_prohibition() || own_grant(policy, &e.project, &e.name)
             })
@@ -3599,6 +3621,29 @@ mod tests {
             view_of(&s, &listed).expect("a view")["selector"],
             json!(["Bus", "Stop"])
         );
+    }
+
+    /// P-18 (T-6736): a Policy added for Endpoint A opens no Endpoint B that lists its own, and
+    /// a Pipeline's grant binds the Endpoint it names beside the listed Policies, no other one.
+    #[test]
+    fn a_policy_for_one_endpoint_opens_no_other_and_a_pipeline_binds_the_one_it_names() {
+        let typed = |class: &str| policy(json!({"information": [{"entities": [{"type": class}]}]}));
+        let mut s = sources(vec![("a-read", typed("Bus")), ("b-read", typed("Stop"))]);
+        s.doors.insert(
+            ("city".into(), "air-a".into()),
+            vec![("pl-load-w-1".into(), cars())],
+        );
+        let listing = |name: &str, policy: &str| {
+            endpoint_named(
+                name,
+                json!({"policyRefs": [format!("urn:ngsi-ld:Policy:city.example:city-air:{policy}")]}),
+            )
+        };
+        let names = |e: &EndpointSource| -> Vec<String> {
+            s.bound(e).into_iter().map(|(name, _)| name.to_owned()).collect()
+        };
+        assert_eq!(names(&listing("air-a", "a-read")), ["a-read", "pl-load-w-1"]);
+        assert_eq!(names(&listing("air-b", "b-read")), ["b-read"]);
     }
 
     /// T-3702: the rule document lists, per Endpoint view that binds fewer than all the

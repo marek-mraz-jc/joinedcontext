@@ -20,6 +20,7 @@ use crate::kinds::service_account::{
     Credential, CredentialKind, KubernetesBinding, Owner, RoleBinding, RoleScope,
     ServiceAccountSpec, Workload,
 };
+use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 /// The name prefix of a derived account: no ServiceAccount manifest may take it (PL-19).
@@ -78,6 +79,10 @@ pub struct Derived {
     pub account: ServiceAccountSpec,
     /// The Policies, by name, each on one space.
     pub policies: Vec<(String, PolicySpec)>,
+    /// The Endpoint each Policy of `policies` was derived for, by the Policy's name: the
+    /// output's `targetEndpoint` or the source's `endpointRef`. The Pipeline names that door,
+    /// so the grant binds it whatever `policyRefs` the Endpoint lists (P-18, T-6736).
+    pub endpoints: BTreeMap<String, String>,
 }
 
 /// The principal and Policies of the pipeline `name` of `project` (PL-19, PL-20).
@@ -97,11 +102,13 @@ pub fn derive(
     let assignee = Principal::new(PrincipalKind::ServiceAccount, account.clone());
     let assigner = format!("did:web:{org_domain}");
     let mut policies = Vec::new();
+    let mut endpoints = BTreeMap::new();
     let mut spaces: Vec<String> = Vec::new();
 
     for (index, output) in spec.outputs().iter().enumerate() {
         // `urn:ngsi-ld:Endpoint:{org}:{space}:{name}`: the Endpoint's own name is the local id.
-        let Some(space) = space_of_endpoint(output.target_endpoint.local_id()) else {
+        let target = output.target_endpoint.local_id();
+        let Some(space) = space_of_endpoint(target) else {
             continue;
         };
         let mut operations = vec![
@@ -120,8 +127,10 @@ pub fn derive(
         if spec.expiry.is_some() || deletes {
             operations.push(OperationRef::Single(Operation::DeleteBatch));
         }
+        let name = bounded(&format!("{account}-w-{}", index + 1));
+        endpoints.insert(name.clone(), target.to_owned());
         policies.push((
-            bounded(&format!("{account}-w-{}", index + 1)),
+            name,
             policy(
                 &space,
                 &assigner,
@@ -136,10 +145,9 @@ pub fn derive(
     // Either shape's sources (PL-54): `v1alpha1`'s one `source`, `v1alpha2`'s `sources`, of which
     // a `kpi` step reads 2 to 5 (PL-102). The first keeps the name `-r` it always had.
     for (index, source) in spec.sources().iter().enumerate() {
-        if let Some(space) = source
-            .endpoint_ref
-            .as_ref()
-            .and_then(|endpoint| space_of_endpoint(endpoint.name()))
+        let endpoint = source.endpoint_ref.as_ref().map(|endpoint| endpoint.name());
+        if let Some((endpoint, space)) =
+            endpoint.and_then(|endpoint| Some((endpoint, space_of_endpoint(endpoint)?)))
         {
             let entity_type = source
                 .query
@@ -149,8 +157,10 @@ pub fn derive(
                 0 => format!("{account}-r"),
                 n => format!("{account}-r-{}", n + 1),
             };
+            let name = bounded(&name);
+            endpoints.insert(name.clone(), endpoint.to_owned());
             policies.push((
-                bounded(&name),
+                name,
                 policy(
                     &space,
                     &assigner,
@@ -204,6 +214,7 @@ pub fn derive(
         },
         name: account,
         policies,
+        endpoints,
     }
 }
 

@@ -750,8 +750,8 @@ pub async fn run(
 
     // 4b. A type an App needs and no feed fills, described by its LinkML alone (T-3608, AP-22):
     // the space gets an Endpoint the app builder reads the type's schema through, for the
-    // project only. No grant is drafted: nothing loads it, and the App's own Endpoint and Policy
-    // come with the App from its dataNeeds (AP-05).
+    // project only, with the project's read as its one named grant (P-18); no write is drafted:
+    // nothing loads it, and the App's own Endpoint and Policy come with the App (AP-05).
     let mut app_endpoint = false;
     if pipeline_manifest.is_none()
         && endpoint_manifest.is_none()
@@ -877,12 +877,13 @@ pub async fn run(
     }
 
     // Save Endpoint draft
-    if let Some(m) = endpoint_manifest {
+    let mut upload_drafted = false;
+    if let Some(mut m) = endpoint_manifest {
         // A new endpoint on a new space is a door nobody may pass yet: without a Policy the
         // pipeline's upsert is refused and the space answers no read tool, so the space the
         // agent just made holds nothing and shows nothing (T-0908). Two grants, no more: the
         // service account that loads it writes, and the endpoint's own audience reads.
-        if inferred_endpoint {
+        if inferred_endpoint || app_endpoint {
             let audience = m
                 .pointer("/spec/audience")
                 .and_then(Value::as_str)
@@ -893,15 +894,40 @@ pub async fn run(
                 .and_then(Value::as_str)
                 .unwrap_or("endpoint")
                 .to_owned();
-            for policy in policies_for(
-                state,
-                project,
-                &space_name,
-                &name,
-                &class_name,
-                &audience,
-                &caller.identity.subject,
-            ) {
+            let mut grants = match app_endpoint {
+                // 4b: the project's read of the type, the audience the Endpoint declares; no
+                // write, nothing loads it (AP-05).
+                true => vec![reader_policy(project, &space_name, &name, &class_name)],
+                false => policies_for(
+                    state,
+                    project,
+                    &space_name,
+                    &name,
+                    &class_name,
+                    &audience,
+                    &caller.identity.subject,
+                ),
+            };
+            if input.upload && sample_bytes.is_some() {
+                grants.push(upload_policy(
+                    project,
+                    &space_name,
+                    &class_name,
+                    &caller.identity.subject,
+                ));
+                upload_drafted = true;
+            }
+            // The Endpoint names the grants drafted with it and binds no other Policy of the
+            // space (P-18, T-6736).
+            let org = crate::api::assistant::org_domain(state, project);
+            let segment = crate::spaces::segment(&state.mirror, project, &space_name);
+            m["spec"]["policyRefs"] = grants
+                .iter()
+                .filter(|grant| grant["kind"] == "Policy")
+                .filter_map(|grant| grant.pointer("/metadata/name").and_then(Value::as_str))
+                .map(|policy| Value::String(format!("urn:ngsi-ld:Policy:{org}:{segment}:{policy}")))
+                .collect();
+            for policy in grants {
                 // The Endpoint below binds these grants in the same Change (PL-111).
                 let mut bundle = bundle_of(&drafts);
                 bundle.push(m.clone());
@@ -920,7 +946,7 @@ pub async fn run(
         .await?;
         drafts.push(checked);
     }
-    if input.upload && sample_bytes.is_some() {
+    if input.upload && sample_bytes.is_some() && !upload_drafted {
         let grant = upload_policy(project, &space_name, &class_name, &caller.identity.subject);
         let checked =
             checked_draft(caller, state, project, grant, true, bundle_of(&drafts)).await?;
@@ -1687,6 +1713,27 @@ fn policies_for(
         ));
     }
     drafted
+}
+
+/// The project's read of `class` through `endpoint`, the one grant an Endpoint drafted for an
+/// App's type carries: its audience is the project (EP-14, AP-05).
+fn reader_policy(project: &str, space: &str, endpoint: &str, class: &str) -> Value {
+    json!({
+        "apiVersion": API_VERSION,
+        "kind": "Policy",
+        "metadata": {
+            "name": format!("{endpoint}-read"),
+            "namespace": project,
+            "title": { "en": format!("Read {space} through {endpoint}") }
+        },
+        "spec": {
+            "contextSpaceRef": { "kind": "ContextSpace", "name": space },
+            "assigner": "did:web:{orgDomain}",
+            "assignee": { "kind": "group", "id": project },
+            "operations": ["retrieveOps"],
+            "information": [{ "entities": [{ "type": class }] }]
+        }
+    })
 }
 
 /// The person's grant to write the uploaded type into the space by batch (DM-81, T-3840): upsert,
