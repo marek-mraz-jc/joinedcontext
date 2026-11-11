@@ -782,10 +782,22 @@ body.jc-corner-compact .jc-assistant:not([open]) > summary > .jc-assistant-icon 
 .jc-subscribe-links a { display: inline-flex; align-items: center; min-height: 2rem; }
 .jc-subscribe-group { margin: .25rem 0 0; font-size: .8125rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--jc-ink); }
 .jc-subscribe-lead { margin: 0 0 .5rem; font-size: .9375rem; color: var(--jc-ink); }
+.jc-subscribe-query { margin: 0 0 1rem; padding: .75rem 1rem 1rem; border: 1px solid var(--jc-border); border-radius: var(--jc-radius); background: var(--jc-n50); }
+.jc-subscribe-query > label { display: block; font-weight: 600; margin: .5rem 0 .25rem; }
+.jc-subscribe-query > .form-control { font-family: var(--bs-font-monospace, monospace); font-size: .8125rem; min-height: 2.75rem; }
+.jc-subscribe-query .jc-subscribe-copy { margin-top: .5rem; }
+.jc-subscribe-note { margin: .25rem 0 0; font-size: .875rem; color: var(--jc-muted); }
+.jc-subscribe-preview { margin-top: .75rem; }
+.jc-subscribe-preview ol { margin: .25rem 0 0; padding-left: 1.25rem; }
+.jc-subscribe-preview li { padding: .125rem 0; overflow-wrap: anywhere; }
+.jc-subscribe-query[data-jc-refused] > .jc-subscribe-copy, .jc-subscribe-query[data-jc-refused] > .jc-subscribe-links, .jc-subscribe-query[data-jc-refused] #jc-subscribe-preview-title { display: none; }
+.jc-subscribe-query[data-jc-refused] > .form-control { border-color: #b42318; box-shadow: 0 0 0 1px #b42318; }
+.jc-subscribe-query[data-jc-refused] #jc-subscribe-preview-status { color: #b42318; font-weight: 600; }
+.jc-subscribe-preview time { font-weight: 600; font-variant-numeric: tabular-nums; }
 @media (max-width: 40rem) {
   .jc-dataset-actions, .jc-subscribe, .jc-subscribe > summary { width: 100%; }
   .jc-subscribe > summary { justify-content: center; }
-  .jc-subscribe-menu { position: static; width: 100%; margin-top: .5rem; padding: 1rem; box-shadow: none; }
+  .jc-subscribe-menu { position: static; width: 100%; margin-top: .5rem; padding: 1rem 1rem 4.5rem; box-shadow: none; }
   .jc-subscribe-copy { flex-direction: column; align-items: stretch; }
   .jc-subscribe-links { flex-direction: column; gap: 0; }
   .jc-subscribe-links a { min-height: 2.75rem; }

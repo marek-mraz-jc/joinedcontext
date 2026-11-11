@@ -110,6 +110,25 @@
                     <summary class="btn btn-default">{{ labels.subscribe }}</summary>
                     <div class="jc-subscribe-menu">
                       <p class="jc-subscribe-lead">{{ labels.subscribe_hint }}</p>
+                      {% if explorer.is_some() %}{% if let Some(cal) = subscriptions.calendar.first() %}{% if cal.1.contains("/ical/v1/") %}
+                      <section class="jc-subscribe-query" aria-labelledby="jc-subscribe-mine" data-jc-feed="{{ cal.1 }}" data-jc-none="{{ labels.subscribe_preview_none }}" data-jc-failed="{{ labels.subscribe_preview_failed }}" data-jc-loading="{{ labels.subscribe_preview_loading }}" data-jc-lang="{{ chrome.lang }}" hidden>
+                        <p class="jc-subscribe-group" id="jc-subscribe-mine">{{ labels.subscribe_mine }}</p>
+                        <p class="jc-subscribe-note">{{ labels.subscribe_mine_lead }}</p>
+                        <label for="jc-subscribe-q">{{ labels.subscribe_query }}</label>
+                        <input id="jc-subscribe-q" class="form-control" type="text" spellcheck="false" autocomplete="off" maxlength="2000" aria-describedby="jc-subscribe-q-hint jc-subscribe-preview-status">
+                        <p class="jc-subscribe-note" id="jc-subscribe-q-hint">{{ labels.subscribe_query_hint }}</p>
+                        <div class="jc-subscribe-copy">
+                          <textarea id="jc-subscribe-mine-url" class="form-control" rows="2" readonly spellcheck="false" aria-label="{{ labels.subscribe_mine }}">{{ cal.1 }}</textarea>
+                          <button type="button" class="btn btn-default" data-jc-copy="jc-subscribe-mine-url" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.subscribe_mine }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button>
+                        </div>
+                        <p class="jc-subscribe-links"><a id="jc-subscribe-mine-webcal" href="{{ cal.2 }}">{{ labels.subscribe_open_app }}</a><a id="jc-subscribe-mine-ics" href="{{ cal.1 }}" type="text/calendar">{{ labels.subscribe_download }}</a></p>
+                        <div class="jc-subscribe-preview">
+                          <p class="jc-subscribe-group" id="jc-subscribe-preview-title">{{ labels.subscribe_preview }}</p>
+                          <ol id="jc-subscribe-preview" aria-labelledby="jc-subscribe-preview-title"></ol>
+                          <p id="jc-subscribe-preview-status" class="jc-subscribe-note" role="status" aria-live="polite"></p>
+                        </div>
+                      </section>
+                      {% endif %}{% endif %}{% endif %}
                       {% if !subscriptions.calendar.is_empty() %}
                       <p class="jc-subscribe-group" id="jc-subscribe-calendar">{{ labels.subscribe_calendar }}</p>
                       <ul aria-labelledby="jc-subscribe-calendar">

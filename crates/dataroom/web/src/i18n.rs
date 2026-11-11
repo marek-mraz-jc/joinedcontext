@@ -1246,6 +1246,70 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "Hírcsatorna megnyitása",
     );
     add(
+        "subscribe_mine",
+        "Your calendar from these rows",
+        "Váš kalendár z týchto riadkov",
+        "Váš kalendář z těchto řádků",
+        "Ihr Kalender aus diesen Zeilen",
+        "Saját naptár ezekből a sorokból",
+    );
+    add(
+        "subscribe_mine_lead",
+        "The table's filter and search become the calendar's query: only matching events arrive.",
+        "Filter a hľadanie tabuľky sa stanú dopytom kalendára: prídu len zodpovedajúce podujatia.",
+        "Filtr a hledání tabulky se stanou dotazem kalendáře: přijdou jen odpovídající akce.",
+        "Filter und Suche der Tabelle werden zur Abfrage des Kalenders: nur passende Termine kommen an.",
+        "A táblázat szűrője és keresése lesz a naptár lekérdezése: csak az egyező események érkeznek.",
+    );
+    add(
+        "subscribe_query",
+        "Query (NGSI-LD q)",
+        "Dopyt (NGSI-LD q)",
+        "Dotaz (NGSI-LD q)",
+        "Abfrage (NGSI-LD q)",
+        "Lekérdezés (NGSI-LD q)",
+    );
+    add(
+        "subscribe_query_hint",
+        "For example name~=\"(?i).*concert.*\"; leave it empty for every event of the feed.",
+        "Napríklad name~=\"(?i).*koncert.*\"; prázdne pre všetky podujatia kanála.",
+        "Například name~=\"(?i).*koncert.*\"; prázdné pro všechny akce kanálu.",
+        "Zum Beispiel name~=\"(?i).*konzert.*\"; leer für alle Termine des Feeds.",
+        "Például name~=\"(?i).*koncert.*\"; üresen a csatorna összes eseménye.",
+    );
+    add(
+        "subscribe_preview",
+        "Next 5 events",
+        "Najbližších 5 podujatí",
+        "Nejbližších 5 akcí",
+        "Nächste 5 Termine",
+        "A következő 5 esemény",
+    );
+    add(
+        "subscribe_preview_none",
+        "No upcoming event matches this query.",
+        "Tomuto dopytu nezodpovedá žiadne nadchádzajúce podujatie.",
+        "Tomuto dotazu neodpovídá žádná nadcházející akce.",
+        "Kein kommender Termin passt zu dieser Abfrage.",
+        "Egyetlen közelgő esemény sem felel meg a lekérdezésnek.",
+    );
+    add(
+        "subscribe_preview_loading",
+        "Loading the calendar…",
+        "Načítavam kalendár…",
+        "Načítám kalendář…",
+        "Kalender wird geladen…",
+        "A naptár betöltése…",
+    );
+    add(
+        "subscribe_preview_failed",
+        "The calendar refused this query (HTTP {status}): {detail}",
+        "Kalendár tento dopyt odmietol (HTTP {status}): {detail}",
+        "Kalendář tento dotaz odmítl (HTTP {status}): {detail}",
+        "Der Kalender hat diese Abfrage abgelehnt (HTTP {status}): {detail}",
+        "A naptár elutasította a lekérdezést (HTTP {status}): {detail}",
+    );
+    add(
         "search_publishers",
         "Search publishers…",
         "Hľadať vydavateľov…",
