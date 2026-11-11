@@ -16,9 +16,8 @@ import type { ChartTheme, Spec } from "../panels/specs";
 import { readSource } from "./vegaLiteSource";
 import type { WidgetSource } from "./vegaLiteSource";
 
-/** The chart's height when its spec names none, and the plot's inside it (axes take the rest). */
-const HEIGHT = 280;
-const PLOT_HEIGHT = 220;
+/** The chart's height when its spec names none; `autosize: fit` keeps the axes inside it. */
+const PLOT_HEIGHT = 240;
 
 /** The spec's own title, when it gives one as text. */
 export function specTitle(spec: Spec): string | null {
@@ -42,6 +41,8 @@ export function withRows(spec: Spec, rows: Record<string, unknown>[], theme: Cha
       font: theme.font,
       axis: { labelColor: theme.muted, titleColor: theme.text, titleFontWeight: "normal", gridColor: theme.grid },
       legend: { labelColor: theme.muted, titleColor: theme.text },
+      // A wide card would otherwise number every unit of a short range.
+      axisQuantitative: { tickCount: 6 },
       ...((spec.config as Record<string, unknown>) ?? {}),
     },
     datasets: { ...((spec.datasets as Record<string, unknown>) ?? {}), source: rows },
@@ -73,7 +74,7 @@ export function VegaLiteWidget({
     },
   });
   const drawn = useMemo(() => (read.data ? withRows(spec, read.data.rows) : null), [spec, read.data]);
-  const height = typeof spec.height === "number" ? spec.height + HEIGHT - PLOT_HEIGHT : HEIGHT;
+  const height = typeof spec.height === "number" ? spec.height : PLOT_HEIGHT;
 
   return (
     <Card as="figure" padding="sm" className="flex flex-col gap-2">
