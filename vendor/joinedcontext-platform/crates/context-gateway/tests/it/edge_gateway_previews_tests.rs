@@ -614,13 +614,18 @@ fn id_of(user: &str) -> String {
 /// Endpoint `public-air`.
 fn public_branch() -> BTreeMap<String, String> {
     files(&[
+        // The domain the preview renders the Endpoint's policyRefs under (CC-78).
+        (
+            "org.yaml",
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  name: helsinki\n  namespace: org\nspec:\n  domain: hel.fi\n  locales: [\"en\"]\n  defaultLocale: en\n",
+        ),
         (
             "space.yaml",
             "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: air\n  namespace: helsinki\nspec:\n  isSandbox: false\n",
         ),
         (
             "endpoints/public-air.yaml",
-            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: helsinki\nspec:\n  contextSpaceRef: air\n  slug: {PUBLIC_SLUG}\n  audience: public\n  enabledRepresentations: [\"ngsi-ld\"]\n"),
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: helsinki\nspec:\n  contextSpaceRef: air\n  slug: {PUBLIC_SLUG}\n  audience: public\n  enabledRepresentations: [\"ngsi-ld\"]\n  policyRefs: [urn:ngsi-ld:Policy:hel.fi:helsinki-air:everyone]\n"),
         ),
         (
             "policies/everyone.yaml",

@@ -36,7 +36,7 @@ describe("whether an endpoint admits a person", () => {
 });
 
 describe("the endpoint a space is read through", () => {
-  const closed = endpoint("closed", { audience: "project-list" }, "bbsk");
+  const closed = endpoint("closed", { audience: "project-list", policyRefs: ["urn:a", "urn:b"] }, "bbsk");
   const open = endpoint("open", { audience: "public", policyRef: { name: "p" } }, "bbsk");
 
   it("skips an endpoint that would refuse the person", () => {

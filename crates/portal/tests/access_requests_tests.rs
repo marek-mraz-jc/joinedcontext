@@ -277,8 +277,12 @@ async fn a_request_is_approved_in_the_owning_project_and_revoked_there() {
             .expect("there");
     let endpoint =
         json!({ "spec": { "audience": "project-list", "allowedProjects": ["traffic"] } });
-    let policy =
-        joinedcontext_portal::access_requests::grant_bundle(&request, &endpoint)[1].clone();
+    let policy = joinedcontext_portal::access_requests::grant_bundle(
+        &request,
+        &endpoint,
+        &["urn:ngsi-ld:Policy:x.org:y:z".to_owned()],
+    )[1]
+    .clone();
     state
         .mirror
         .upsert(serde_json::from_value(policy).expect("an envelope"));
@@ -478,8 +482,12 @@ async fn two_revokes_at_once_open_one_change() {
             .expect("there");
     let endpoint =
         json!({ "spec": { "audience": "project-list", "allowedProjects": ["traffic"] } });
-    let policy =
-        joinedcontext_portal::access_requests::grant_bundle(&request, &endpoint)[1].clone();
+    let policy = joinedcontext_portal::access_requests::grant_bundle(
+        &request,
+        &endpoint,
+        &["urn:ngsi-ld:Policy:x.org:y:z".to_owned()],
+    )[1]
+    .clone();
     state
         .mirror
         .upsert(serde_json::from_value(policy).expect("an envelope"));
@@ -954,14 +962,18 @@ async fn a_person_asks_on_the_endpoint_and_an_owner_approves() {
             .expect("endpoint"),
     )
     .expect("json");
-    let bundle = joinedcontext_portal::access_requests::grant_bundle(&stored, &endpoint);
-    assert_eq!(bundle.len(), 1, "{bundle:?}");
+    let bundle = joinedcontext_portal::access_requests::grant_bundle(
+        &stored,
+        &endpoint,
+        &["urn:ngsi-ld:Policy:x.org:y:z".to_owned()],
+    );
+    assert_eq!(bundle.len(), 2, "{bundle:?}");
     assert_eq!(
-        bundle[0]["spec"]["assignee"],
+        bundle[1]["spec"]["assignee"],
         json!({ "kind": "user", "id": id_of("eve") })
     );
     assert_eq!(
-        bundle[0]["spec"]["information"],
+        bundle[1]["spec"]["information"],
         json!([{ "entities": [{ "type": "AirQualityObserved" }] }])
     );
 
@@ -1071,7 +1083,9 @@ async fn a_persons_request_is_refused_field_by_field() {
             hidden.text
         );
     }
-    // An Endpoint serving only the Policies it names cannot carry a new grant: said, not stored.
+    // An Endpoint serving only the Policies it names takes the grant into its list when the
+    // request is approved (P-18, T-6740): it is no longer refused up front, so this Portal
+    // without a database answers that it keeps no requests.
     state.mirror.upsert(common::envelope(
         "Endpoint",
         "air-quality",
@@ -1086,8 +1100,13 @@ async fn a_persons_request_is_refused_field_by_field() {
         Some(person_ask(&["AirQualityObserved"])),
     )
     .await;
-    assert_eq!(fixed.status, StatusCode::CONFLICT, "{}", fixed.text);
-    assert!(fixed.text.contains("policy list"), "{}", fixed.text);
+    assert_eq!(
+        fixed.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        fixed.text
+    );
+    assert!(!fixed.text.contains("policy list"), "{}", fixed.text);
 }
 
 /// T-5567, AUT-2: approving, declining and revoking an access request are decisions; an owner

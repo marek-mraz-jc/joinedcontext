@@ -1,8 +1,8 @@
 //! An App's generated Endpoint evaluates the grants of its own roles and every prohibition of
 //! the space, nothing else (AP-139, T-2938).
 //!
-//! A Policy names a space, not an endpoint, and an Endpoint without `policyRef` evaluates every
-//! Policy of its space (EP-14). For a hand-written endpoint that is the point; for the Endpoint
+//! A Policy names a space, not an endpoint, and an Endpoint without `policyRef` used to evaluate
+//! every Policy of its space (EP-14; since P-18, T-6742, it binds none). For a hand-written endpoint that is the point; for the Endpoint
 //! the Portal generates for an App it made every sibling grant, the space's open-data `public`
 //! grant and a steward's personal write grant included, reach the App's surface, its `/access`
 //! document and its schema. Here one space carries both kinds of endpoint. These tests hold the
@@ -214,18 +214,13 @@ fn the_apps_endpoint_keeps_its_own_grants_and_every_prohibition_and_nothing_else
     );
 }
 
+/// P-18 (T-6742): a hand-written Endpoint naming no Policy binds none, not even the space's
+/// prohibitions an App's Endpoint keeps.
 #[test]
-fn a_hand_written_endpoint_still_evaluates_every_policy_of_its_space() {
+fn a_hand_written_endpoint_naming_no_policy_binds_none() {
     let endpoints = loaded("hand");
-    let everything = [
-        "!Event",
-        "Alert",
-        "BikeHireDockingStation",
-        "Event",
-        "EventDraft",
-        "Vehicle",
-    ];
-    assert_eq!(marked(by_slug(&endpoints, ALL_SLUG)), everything);
-    // Its name is not what makes an endpoint an App's: no App `lookalike` exists.
-    assert_eq!(marked(by_slug(&endpoints, LOOKALIKE_SLUG)), everything);
+    assert!(marked(by_slug(&endpoints, ALL_SLUG)).is_empty());
+    // Its name is not what makes an endpoint an App's: no App `lookalike` exists, so it does not
+    // keep the App rule's prohibitions either.
+    assert!(marked(by_slug(&endpoints, LOOKALIKE_SLUG)).is_empty());
 }

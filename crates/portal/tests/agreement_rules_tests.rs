@@ -32,7 +32,7 @@ fn repository(dir: &Path, agreement_state: &str) -> jcctl::loader::Repository {
     );
     write(
         "projects/city/spaces/air/endpoints/air-public.yaml",
-        format!("{}  contextSpaceRef: air\n  slug: {SLUG}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n", head("Endpoint", "air-public")),
+        format!("{}  contextSpaceRef: air\n  slug: {SLUG}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n  policyRefs: [urn:ngsi-ld:Policy:city.example:city-air:cars, urn:ngsi-ld:Policy:city.example:city-air:pipeline-writes]\n", head("Endpoint", "air-public")),
     );
     write(
         "projects/city/spaces/air/policies/cars.yaml",
@@ -55,6 +55,11 @@ fn repository(dir: &Path, agreement_state: &str) -> jcctl::loader::Repository {
 
 /// Every rule of every document the broker was given, as JSON.
 async fn rules_written(state: &str) -> Vec<Value> {
+    written(state).await.0
+}
+
+/// Every rule of every document the broker was given, and each rule document's `views`.
+async fn written(state: &str) -> (Vec<Value>, Vec<Value>) {
     let broker = MockServer::start().await;
     for list in ["/q/views", "/q/policy", "/q/schemas"] {
         Mock::given(method("GET"))
@@ -81,6 +86,7 @@ async fn rules_written(state: &str) -> Vec<Value> {
     std::fs::write(&token, "an-admin-token-of-at-least-32-bytes!\n").expect("the token");
     ViewSync::new(broker.uri(), &token).converge(&repo).await;
     let mut rules = Vec::new();
+    let mut views = Vec::new();
     for request in broker.received_requests().await.unwrap_or_default() {
         if request.method.as_str() != "PUT" {
             continue;
@@ -89,8 +95,11 @@ async fn rules_written(state: &str) -> Vec<Value> {
             continue;
         };
         collect(&body, &mut rules);
+        if let Some(listed) = body.get("views") {
+            views.push(listed.clone());
+        }
     }
-    rules
+    (rules, views)
 }
 
 /// The objects anywhere in `value` that carry an `assignee`.
@@ -116,13 +125,22 @@ fn for_did(rules: &[Value]) -> Vec<&Value> {
 
 #[tokio::test]
 async fn the_partner_reads_what_its_agreement_grants_and_writes_nothing() {
-    let rules = rules_written("finalized").await;
+    let (rules, views) = written("finalized").await;
     assert!(
         rules.iter().any(|r| r.to_string().contains("air-pipeline")),
         "the space's own rules are written too: {rules:#?}"
     );
     let partner = for_did(&rules);
     assert_eq!(partner.len(), 1, "one rule for the DID: {rules:#?}");
+    // The offered Endpoint names only the space's Policies; the agreement's rule binds it
+    // beside them, as a Pipeline's grant binds the Endpoint it names (P-18, T-6742).
+    let id = partner[0]["id"].as_str().expect("the rule's id");
+    assert!(
+        views.iter().any(|listed| listed[SLUG]
+            .as_array()
+            .is_some_and(|ids| ids.iter().any(|i| i == id))),
+        "the offered Endpoint's view lists {id}: {views:#?}"
+    );
     let by_id = |id: &str| {
         rules
             .iter()

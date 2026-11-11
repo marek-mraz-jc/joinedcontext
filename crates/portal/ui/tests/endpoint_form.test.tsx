@@ -134,6 +134,21 @@ const EXISTING = {
   ],
 };
 
+/** The space's one Policy, which the person reads (P-18, T-6740). */
+const POLICIES = {
+  apiVersion: "joinedcontext.com/v1alpha1",
+  kind: "List",
+  items: [
+    {
+      apiVersion: "joinedcontext.com/v1alpha1",
+      kind: "Policy",
+      metadata: { name: "air-read", namespace: "banskabystrica" },
+      spec: { contextSpaceRef: { kind: "ContextSpace", name: "ovzdusie" }, operations: ["retrieveOps"] },
+    },
+  ],
+};
+const AIR_READ = "urn:ngsi-ld:Policy:hel.fi:banskabystrica-ovzdusie:air-read";
+
 function setupTest(endpoints: unknown = { apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: [] }) {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const request = input as Request;
@@ -150,6 +165,7 @@ function setupTest(endpoints: unknown = { apiVersion: "joinedcontext.com/v1alpha
     if (url.pathname.endsWith("/organizations")) return json(ORG);
     if (url.pathname.endsWith("/spaces")) return json(SPACES);
     if (url.pathname.endsWith("/datamodels")) return json(DATAMODELS);
+    if (url.pathname.endsWith("/policies")) return json(POLICIES);
     if (url.pathname.endsWith("/projections")) return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: [] });
     if (url.pathname.endsWith("/import")) {
       // The import door refuses a name the project already holds unless the caller says what to
@@ -500,9 +516,11 @@ describe("endpoint form with ModelPicker (T-0564)", () => {
     await waitFor(() => expect(writes(fetchMock)).toHaveLength(1));
     const [check] = writes(fetchMock);
     expect(check.line).toBe("POST /api/v1/projects/banskabystrica/endpoints?dryRun=All");
+    // Naming no Policy it bound every Policy of its space: the edit keeps exactly those (T-6740).
+    expect(within(dialog).getByRole("checkbox", { name: "air-read" })).toBeChecked();
     await expect(check.request.clone().json()).resolves.toMatchObject({
       draft: { kind: "Endpoint", name: "vehicles-live" },
-      spec: { projectionRef: { kind: "ModelProjection", name: "vehicles" } },
+      spec: { projectionRef: { kind: "ModelProjection", name: "vehicles" }, policyRefs: [AIR_READ] },
     });
 
     await userEvent.click(within(dialog).getByRole("button", { name: en.endpoints.propose }));
@@ -583,9 +601,22 @@ describe("endpoint form with ModelPicker (T-0564)", () => {
     const [bundle, endpoint] = writes(fetchMock);
     expect(bundle.line).toBe("POST /api/v1/projects/banskabystrica/import?dryRun=All");
     expect(endpoint.line).toBe("POST /api/v1/projects/banskabystrica/endpoints?dryRun=All");
-    await expect(endpoint.request.clone().json()).resolves.toMatchObject({
+    // The Endpoint names the read Policy drafted beside it, and its check carries that Policy as
+    // the bundle the import proposes it in, so the reference counts as the same Change (T-6740).
+    const checked = (await endpoint.request.clone().json()) as {
+      spec: { policyRefs?: string[] };
+      bundle?: { kind: string; metadata: { name: string } }[];
+    };
+    expect(checked).toMatchObject({
       draft: { kind: "Endpoint", name: "public-vehicles" },
       spec: { projectionRef: { kind: "ModelProjection", name: "public-vehicles" } },
     });
+    expect(checked.spec.policyRefs).toEqual(["urn:ngsi-ld:Policy:hel.fi:banskabystrica-ovzdusie:public-vehicles-read"]);
+    expect(checked.bundle?.map((m) => `${m.kind}/${m.metadata.name}`)).toEqual([
+      "ModelProjection/public-vehicles",
+      "Policy/public-vehicles-read",
+    ]);
+    const proposed = (await bundle.request.clone().json()) as { manifests: { kind: string; spec: { policyRefs?: string[] } }[] };
+    expect(proposed.manifests.find((m) => m.kind === "Endpoint")?.spec.policyRefs).toEqual(checked.spec.policyRefs);
   });
 });

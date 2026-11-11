@@ -32,7 +32,8 @@ fn endpoint(name: &str, slug: &str, extra: &str) -> String {
     format!(
         "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: {name}\n  \
          namespace: helsinki\nspec:\n  contextSpaceRef: helsinki\n  slug: {slug}\n  \
-         audience: public\n{extra}"
+         audience: public\n  policyRefs: [urn:ngsi-ld:Policy:hel.fi:helsinki:public, \
+         urn:ngsi-ld:Policy:hel.fi:helsinki:public-writes]\n{extra}"
     )
 }
 

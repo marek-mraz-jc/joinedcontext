@@ -670,7 +670,11 @@ pub(crate) async fn approve_request(
         &state,
         &user,
         &project,
-        requests::grant_bundle(&request, &endpoint),
+        requests::grant_bundle(
+            &request,
+            &endpoint,
+            &served_with(&state, &project, &request, &endpoint),
+        ),
     )
     .await
     {
@@ -939,17 +943,38 @@ pub(crate) fn served_types(
         .collect()
 }
 
-/// Why a new Policy on the space would not reach `endpoint`, so a request could never be granted:
-/// it names its Policies, or it is an App's own Endpoint (AP-139).
-fn fixed_grants(state: &AppState, project: &str, endpoint: &Value) -> Option<String> {
+/// The policyRefs `endpoint` lists once `request`'s grant lands (P-18, T-6740): the ones it names,
+/// or, naming none, every Policy of its space it binds today, and the new grant's.
+fn served_with(
+    state: &AppState,
+    project: &str,
+    request: &AccessRequest,
+    endpoint: &Value,
+) -> Vec<String> {
+    let ground = crate::judge::Ground::of(state);
     let spec = &endpoint["spec"];
-    if !spec["policyRef"].is_null() || !spec["policyRefs"].is_null() {
-        return Some(
-            "this endpoint serves only the policies it names, so a new grant would not reach it; \
-             ask its owners to add one to its policy list"
-                .into(),
-        );
+    let named: Vec<String> = match (&spec["policyRef"], &spec["policyRefs"]) {
+        (Value::String(one), _) => vec![one.clone()],
+        (_, Value::Array(list)) => list
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
+        _ => crate::api::mutate::bound_today(&ground, project, &request.space),
+    };
+    let grant =
+        crate::api::mutate::policy_urn(&ground, project, &request.space, &request.policy_name());
+    let mut refs = named;
+    if !refs.contains(&grant) {
+        refs.push(grant);
     }
+    refs
+}
+
+/// Why a new Policy on the space would not reach `endpoint`, so a request could never be granted:
+/// it is an App's own Endpoint (AP-139). An Endpoint naming its Policies gets the grant added to
+/// its list in the same Change ([`served_with`]).
+fn fixed_grants(state: &AppState, project: &str, endpoint: &Value) -> Option<String> {
     let name = endpoint["metadata"]["name"].as_str().unwrap_or_default();
     name.strip_prefix("app-")
         .filter(|app| state.mirror.get(project, "App", app).is_some())

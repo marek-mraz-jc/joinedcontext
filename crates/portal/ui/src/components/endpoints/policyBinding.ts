@@ -6,10 +6,11 @@
  * which manifest it stood for. The gateway does know, and its rule is short enough to hold in
  * one function (`context-gateway/src/store.rs`, `bound_policies`):
  *
- * - without `spec.policyRefs` or `spec.policyRef`, every Policy of the endpoint's space applies — except one assigned
- *   to another Endpoint's role (`endpoint:{project}/{name}[/{role}]`): the gateway drops such a
- *   role from every token and gives a caller only the roles of the Endpoint it came through
- *   (`jc_core::kinds::endpoint_role`, AP-96, AP-97), so another App's grant never applies here;
+ * - without `spec.policyRefs` or `spec.policyRef`, an endpoint binds no Policy and grants nothing (P-18
+ *   deny by default, T-6742); an App's own endpoint keeps every Policy of its space except one
+ *   assigned to another Endpoint's role (`endpoint:{project}/{name}[/{role}]`): the gateway drops
+ *   such a role from every token and gives a caller only the roles of the Endpoint it came through
+ *   (`jc_core::kinds::endpoint_role`, AP-96, AP-97), so another App's grant never applies there;
  * - with references, each Policy of that space whose **manifest name** equals a URN's local id,
  *   where that URN's space segment is the endpoint's own space segment;
  * - a URN that matches none binds nothing at all — the endpoint grants nothing — which the page
@@ -21,6 +22,7 @@
  */
 import { refName } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
+import { isAppEndpoint } from "../../pages/spaces/spaceFacts";
 
 /** The `{space}` segment of every URN minted for this space. */
 export function spaceSegment(project: string, space: string, spaces: Manifest[]): string {
@@ -74,6 +76,8 @@ function reachable(policy: Manifest, project: string, endpoint: string): boolean
 export type Binding =
   | { kind: "all"; policies: Manifest[] }
   | { kind: "bound"; policies: Manifest[] }
+  /** It names no Policy and is no App's own endpoint: it grants nothing (T-6742). */
+  | { kind: "none"; endpoint: string }
   /** The reference names no Policy of this space: the endpoint grants nothing. */
   | { kind: "unbound"; urn: string };
 
@@ -97,7 +101,7 @@ export function bindingOf(
   );
   const references = policyRefsOf(endpoint);
   if (references === undefined) {
-    return { kind: "all", policies: ofSpace };
+    return isAppEndpoint(endpoint) ? { kind: "all", policies: ofSpace } : { kind: "none", endpoint: endpoint.metadata.name };
   }
   const segment = space === undefined ? undefined : spaceSegment(project, space, spaces);
   const named = references
@@ -112,8 +116,8 @@ export function bindingOf(
 
 /**
  * The Policy URNs an endpoint names: `spec.policyRefs`, or `spec.policyRef` as a list of one
- * (ADR-N-057 decision 2, `EndpointSpec::policy_refs`); nothing when it names none and so answers
- * by every Policy of its space.
+ * (ADR-N-057 decision 2, `EndpointSpec::policy_refs`); nothing when it names none, so it binds
+ * none unless it is an App's own.
  */
 export function policyRefsOf(endpoint: Manifest): string[] | undefined {
   const spec = endpoint.spec as { policyRef?: unknown; policyRefs?: unknown };

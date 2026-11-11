@@ -11,7 +11,7 @@ import { importManifests, proposeChecked } from "../api/proposal";
 import { asManifests, isChange, localized, overlay, plainTitle, refName } from "../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../api/manifest";
 import type { Verdict } from "../api/drafts";
-import { useProjectOrganization, useProjects } from "../api/projects";
+import { useOrgDomain, useProjectOrganization, useProjects } from "../api/projects";
 import { takePrefill } from "../assistant/state";
 import { useProjectUsage } from "../components/ProjectQuota";
 import { PermissionGuard } from "../components/ui/PermissionGuard";
@@ -60,7 +60,7 @@ import type { JsonSchema } from "../components/forms/types";
 import { ModelPicker } from "../pages/endpoints/ModelPicker";
 import { FilterProof, classesWithSlots } from "../pages/endpoints/FilterProof";
 import type { FilterDraft } from "../pages/endpoints/FilterProof";
-import { spaceSegment } from "../components/endpoints/policyBinding";
+import { policyRefsOf, spaceSegment } from "../components/endpoints/policyBinding";
 import { catalogForm, catalogOf, prefillFromOrganization } from "../pages/endpoints/catalog";
 import type { CatalogForm, CatalogManifest } from "../pages/endpoints/catalog";
 import { useModelSource } from "../components/entities/filters";
@@ -88,6 +88,8 @@ interface EndpointForm {
   audience: string;
   enabledRepresentations: string[];
   allowedProjects?: string[];
+  /** The Policies the Endpoint serves, as URNs (P-18, T-6740); none means every Policy of its space. */
+  policyRefs?: string[];
   rateLimits?: { requestsPerMinute?: number; burst?: number };
   caching?: { maxAgeSeconds?: number };
   /** The open-data publication; the catalogue's name is what turns it on (EP-62). */
@@ -223,6 +225,7 @@ function toSpec(
 ) {
   const {
     allowedProjects,
+    policyRefs,
     rateLimits,
     caching,
     publish,
@@ -245,6 +248,7 @@ function toSpec(
     ...(form.audience === "project-list" && allowedProjects && allowedProjects.length > 0
       ? { allowedProjects }
       : {}),
+    ...(policyRefs && policyRefs.length > 0 ? { policyRefs } : {}),
     ...(typeof rateLimits?.requestsPerMinute === "number"
       ? {
           rateLimits: {
@@ -272,6 +276,8 @@ const OWNED_SPEC = [
   "disabledRepresentations",
   "mcp",
   "allowedProjects",
+  "policyRef",
+  "policyRefs",
   "rateLimits",
   "caching",
   "projection",
@@ -340,6 +346,7 @@ export function toForm(endpoint: Manifest): EndpointForm {
     representations?: Record<string, unknown>;
   };
   const catalog = catalogForm(spec.catalog);
+  const policyRefs = policyRefsOf(endpoint);
   return {
     name: endpoint.metadata.name,
     title: plainTitle(endpoint.metadata.title),
@@ -348,6 +355,7 @@ export function toForm(endpoint: Manifest): EndpointForm {
     audience: spec.audience ?? "project-list",
     enabledRepresentations: checkedRepresentations(spec),
     allowedProjects: spec.allowedProjects ?? [],
+    ...(policyRefs ? { policyRefs } : {}),
     rateLimits: spec.rateLimits,
     caching: spec.caching,
     publish: publishForm(spec),
@@ -805,6 +813,19 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
   // What only the form reads waits for the form: the list shows none of it (F-R2UI4-012). A form
   // address (`/endpoints/new`, `?edit=`) counts as open, so its prefill and pickers load at once.
   const formOpen = editing !== null || Boolean(formRoute?.form) || edit !== undefined;
+  // The Policies an Endpoint may name (P-18, T-6740): the list answers only those this person
+  // reads, and propose checks each named one again (403 on spec.policyRefs).
+  const policiesQuery = useQuery({
+    queryKey: queryKeys.list(project, "policies"),
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/api/v1/projects/{project}/{plural}", {
+          params: { path: { project, plural: "policies" } },
+        }),
+      ),
+    enabled: formOpen,
+  });
+  const orgDomain = useOrgDomain(project);
   // The Organization, whose name, domain and open-data desk a new endpoint's catalogue starts
   // from (EP-78, EP-80), and the pipelines a catalogue may name as the data's origin.
   // The project's own Organization: with several, the first of the list is another body's.
@@ -917,12 +938,34 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
   // proposed alone, with the projection it already names.
   const projecting =
     spaceHasModel && !pickerState.selectedProjectionRef && (isNew || tickedClassNames.length > 0);
+  /** `urn:ngsi-ld:Policy:{orgDomain}:{segment}:{name}`, the reference the gateway binds (EP-117). */
+  const policyUrn = (space: string, name: string) =>
+    `urn:ngsi-ld:Policy:${orgDomain}:${spaceSegment(project, space, asManifests(spacesQuery.data?.items ?? []))}:${name}`;
+  // The space's Policies as choices, and a reference the Endpoint already names that the list
+  // does not hold kept as one, so an edit never drops it.
+  const policyChoices: { const: string; title: string }[] = editedSpace
+    ? [
+        ...asManifests(policiesQuery.data?.items ?? [])
+          .filter((policy) => refName(policy.spec.contextSpaceRef) === editedSpace)
+          .map((policy) => ({ const: policyUrn(editedSpace, policy.metadata.name), title: policy.metadata.name })),
+      ]
+    : [];
+  for (const held of editing?.policyRefs ?? []) {
+    if (!policyChoices.some((choice) => choice.const === held)) policyChoices.push({ const: held, title: held });
+  }
+  // An Endpoint naming no Policy binds every Policy of its space: its edit shows all of them
+  // ticked, so proposing it keeps what it serves today (T-6740).
+  const served = (form: EndpointForm): EndpointForm =>
+    !isNew && form.policyRefs === undefined && policiesQuery.isSuccess && spacesQuery.isSuccess
+      ? { ...form, policyRefs: policyChoices.map((choice) => choice.const) }
+      : form;
   const projectionNameOf = (form: EndpointForm) =>
     pickerState.projectionName || form.name || "projection";
 
   /** The Endpoint the form stands for: what its draft holds, what is checked, what is proposed. */
-  const endpointOf = (form: EndpointForm) =>
-    toEnvelope(
+  const endpointOf = (shown: EndpointForm) => {
+    const form = served(shown);
+    const envelope = toEnvelope(
       project,
       form,
       activeSlug,
@@ -931,6 +974,16 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
       base ?? undefined,
       language,
     );
+    if (projecting) {
+      // The Endpoint serves the grants drafted with it, beside any the person picked (P-18).
+      const writes = tickedClassNames.some((c) => pickerState.classes[c]?.writable);
+      const drafted = [`${form.name}-read`, ...(writes ? [`${form.name}-write`] : [])];
+      (envelope.spec as Record<string, unknown>).policyRefs = [
+        ...new Set([...(form.policyRefs ?? []), ...drafted.map((name) => policyUrn(form.contextSpaceRef, name))]),
+      ];
+    }
+    return envelope;
+  };
 
   /**
    * The filter this form stands for, as the proof previews it: the ticked classes and their slots
@@ -1040,12 +1093,20 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
   const check = useMutation({
     mutationFn: async (form: EndpointForm) => {
       setFormError(null);
+      // A projecting form proposes its Endpoint in one import with the Policies it names: the
+      // Endpoint's own check carries the rest of that import as its bundle (T-6740).
+      const manifests = projecting ? buildManifests(form) : [];
       if (projecting) {
         await importBundle(form, true);
       }
       const envelope = endpointOf(form);
+      const bundle = manifests.filter((manifest) => manifest.kind !== "Endpoint");
       const draftRef = form.name ? { kind: "Endpoint", name: form.name } : undefined;
-      const body = (draftRef ? { ...envelope, draft: draftRef } : envelope);
+      const body = {
+        ...envelope,
+        ...(draftRef ? { draft: draftRef } : {}),
+        ...(bundle.length > 0 ? { bundle } : {}),
+      };
       return unwrap(
         await api.POST("/api/v1/projects/{project}/{plural}", {
           params: { path: { project, plural: "endpoints" }, query: { dryRun: "All" } },
@@ -1288,8 +1349,24 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     pipelineNames,
     datasetTypes,
   );
+  // The Policies it serves: a choice of the space's, offered once a space is picked (T-6740).
+  const servedSchema: JsonSchema =
+    editedSpace && policyChoices.length > 0
+      ? {
+          ...baseSchema,
+          properties: {
+            ...baseSchema.properties,
+            policyRefs: {
+              type: "array",
+              title: t("endpoints.field.policyRefs"),
+              items: { type: "string", oneOf: policyChoices },
+              uniqueItems: true,
+            },
+          },
+        }
+      : baseSchema;
   const audienceSchema =
-    editing?.audience === "project-list" ? baseSchema : withoutAllowedProjects(baseSchema);
+    editing?.audience === "project-list" ? servedSchema : withoutAllowedProjects(servedSchema);
   // A burst is part of a limit: without a rate per minute there is nothing for it to exceed,
   // and a burst alone is dropped on the way out, so the field shows once a limit is picked.
   const schema =
@@ -1308,6 +1385,13 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     },
     rateLimits: { requestsPerMinute: { "ui:options": { emptyLabel: t("endpoints.rateClass.none") } } },
     ...(pickable.length > 0 ? { allowedProjects: { "ui:widget": "checkboxes" } } : {}),
+    policyRefs: {
+      "ui:widget": "checkboxes",
+      "ui:help": t(projecting ? "endpoints.help.policyRefsDrafted" : "endpoints.help.policyRefs", {
+        // The example names a Policy the list offers when there is one.
+        example: policyChoices[0]?.title ?? `${editing?.name || "air-quality"}-read`,
+      }),
+    },
   };
 
   // Rebuilt on every render: a handful of small objects, and no hook after the early returns.
@@ -1650,7 +1734,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
         description={t("endpoints.addHint")}
         schema={schema}
         uiSchema={uiSchema}
-        formData={editing ?? undefined}
+        formData={editing ? served(editing) : undefined}
         submitLabel={t("endpoints.propose")}
         submitting={propose.isPending}
         error={formError}
@@ -1680,6 +1764,17 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
             {editing?.audience === "public" ? (
               <Alert role="note" tone="warning">
                 {t("endpoints.publicNotice")}
+              </Alert>
+            ) : null}
+
+            {/* An Endpoint names the Policies it serves (P-18): with none in the space the person
+                reads, the form says where one comes from instead of an empty list. */}
+            {editedSpace && policiesQuery.isSuccess && policyChoices.length === 0 && !projecting ? (
+              <Alert role="note" tone="info" data-testid="no-policies">
+                <p>{t("endpoints.policyRefsNone", { space: editedSpace })}</p>
+                <Link to="/projects/$project/$plural" params={{ project, plural: "policies" }} className="underline">
+                  {t("endpoints.policyRefsAdd")}
+                </Link>
               </Alert>
             ) : null}
 

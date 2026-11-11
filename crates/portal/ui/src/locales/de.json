@@ -190,6 +190,7 @@
     "dependency": "Dieses Feld braucht das Feld, von dem es abhängt",
     "check": "Prüfen",
     "restartsStream": "Diese Änderung startet den Stream auf dem Runner neu. Eine periodische Pipeline beginnt ihren Zeitplan von vorn, der nächste Lauf ist also eine ganze Periode entfernt.",
+    "bindsEndpoints": "Diese Richtlinie entscheidet nach der Freigabe über die Aufrufe dieser Endpunkte:",
     "dns1123": "Nur Kleinbuchstaben, Ziffern und Bindestriche, beginnend mit einem Buchstaben oder einer Ziffer, höchstens 63 Zeichen.",
     "entityType": "Ein NGSI-LD-Typ: ein Großbuchstabe, dann Buchstaben und Ziffern, höchstens 64 Zeichen.",
     "requiredCount": "{filled} von {total} Pflichtfeldern ausgefüllt",
@@ -1544,7 +1545,8 @@
         "datasetQuery": "Eingrenzende Abfrage",
         "datasetKeywords": "Schlagwörter",
         "datasetLicense": "Lizenz"
-      }
+      },
+      "policyRefs": "Bediente Richtlinien"
     },
     "rateClass": {
       "none": "Kein Limit",
@@ -1744,6 +1746,9 @@
       "noPolicy": "Keine eigene Richtlinie: wer hier lesen darf, entscheiden die Berechtigungen des Raums.",
       "policyBound": "Eigene Richtlinie: {name}",
       "policyUnbound": "Der Richtlinienverweis benennt keine Richtlinie dieses Raums, deshalb gewährt dieser Endpunkt nichts, bis der Verweis berichtigt ist: {urn}",
+      "policyNoneTitle": "Gewährt nichts",
+      "policyNone": "Dieser Endpunkt benennt keine Richtlinie, deshalb darf ihn niemand aufrufen. Haken Sie in seinen Einstellungen die Richtlinien an, die er bedient, zum Beispiel das öffentliche Lesen des Raums.",
+      "policyNoneAction": "Richtlinien wählen",
       "policyAssignee": "Gewährt an",
       "policyGrants": "Darf",
       "grantChanges": {
@@ -2323,7 +2328,13 @@
         "anonymous": "Nicht angemeldet",
         "unknown": "Noch nicht unterschieden"
       }
-    }
+    },
+    "help": {
+      "policyRefs": "Kreuzen Sie die Richtlinien an, deren Berechtigungen über die Aufrufe dieses Endpunkts entscheiden, z. B. {example}. Aufgeführt sind nur Richtlinien seines Raums, die Sie lesen dürfen; eine später hinzugefügte Richtlinie gilt erst, wenn sie hier angekreuzt ist.",
+      "policyRefsDrafted": "Die mit diesem Endpunkt entworfenen Lese- und Schreibrichtlinien sind bereits eingetragen; kreuzen Sie weitere Richtlinien seines Raums an, die er bedienen soll."
+    },
+    "policyRefsNone": "Der Raum {space} enthält keine Richtlinie, die Sie lesen dürfen, daher würde dieser Endpunkt niemanden bedienen. Fügen Sie zuerst eine Richtlinie für den Raum hinzu und wählen Sie sie dann hier.",
+    "policyRefsAdd": "Richtlinien öffnen"
   },
   "datasources": {
     "title": "Datenquellen",

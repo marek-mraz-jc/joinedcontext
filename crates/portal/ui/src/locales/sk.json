@@ -190,6 +190,7 @@
     "dependency": "Toto pole potrebuje pole, od ktorého závisí",
     "check": "Skontrolovať",
     "restartsStream": "Použitie tejto zmeny reštartuje stream na runneri. Periodický pipeline začne svoj rozvrh odznova, takže ďalší beh je o celú periódu ďalej.",
+    "bindsEndpoints": "Táto politika po schválení rozhoduje o volaniach týchto endpointov:",
     "dns1123": "Iba malé písmená, číslice a spojovníky, začína písmenom alebo číslicou, najviac 63 znakov.",
     "entityType": "Typ NGSI-LD: veľké písmeno, potom písmená a číslice, najviac 64 znakov.",
     "requiredCount": "{filled} z {total} povinných polí vyplnených",
@@ -1567,7 +1568,8 @@
         "datasetQuery": "Zužujúci dotaz",
         "datasetKeywords": "Kľúčové slová",
         "datasetLicense": "Licencia"
-      }
+      },
+      "policyRefs": "Politiky, ktoré obsluhuje"
     },
     "rateClass": {
       "none": "Bez limitu",
@@ -1744,6 +1746,9 @@
       "noPolicy": "Bez vlastnej politiky: kto tu smie čítať, rozhodujú oprávnenia priestoru.",
       "policyBound": "Vlastná politika: {name}",
       "policyUnbound": "Odkaz na politiku nepomenúva žiadnu politiku tohto priestoru, takže tento endpoint neudeľuje nič, kým sa odkaz neopraví: {urn}",
+      "policyNoneTitle": "Neudeľuje nič",
+      "policyNone": "Tento endpoint nepomenúva žiadnu politiku, takže ho nikto nemôže volať. V jeho nastaveniach zaškrtnite politiky, ktoré obsluhuje, napríklad verejné čítanie priestoru.",
+      "policyNoneAction": "Vybrať jeho politiky",
       "policyAssignee": "Udelené komu",
       "policyGrants": "Môže",
       "grantChanges": {
@@ -2323,7 +2328,13 @@
         "anonymous": "Neprihlásení",
         "unknown": "Zatiaľ nerozlíšené"
       }
-    }
+    },
+    "help": {
+      "policyRefs": "Zaškrtnite politiky, ktorých oprávnenia rozhodujú o volaniach tohto endpointu, napríklad {example}. Zobrazujú sa len politiky jeho priestoru, ktoré smiete čítať; neskôr pridaná politika ho zasiahne až po zaškrtnutí tu.",
+      "policyRefsDrafted": "Politiky na čítanie a zápis navrhnuté s týmto endpointom sú už uvedené; zaškrtnite aj ďalšie politiky jeho priestoru, ktoré má obsluhovať."
+    },
+    "policyRefsNone": "Priestor {space} nemá žiadnu politiku, ktorú smiete čítať, takže tento endpoint by neobsluhoval nikoho. Najprv pridajte politiku pre priestor, potom ju vyberte tu.",
+    "policyRefsAdd": "Otvoriť politiky"
   },
   "datasources": {
     "title": "Zdroje údajov",

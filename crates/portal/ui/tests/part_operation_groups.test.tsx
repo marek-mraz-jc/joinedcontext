@@ -37,6 +37,12 @@ const NAME = "ovzdusie-public";
 const SLUG = "k7m2qz4tv6xh3n5jb2ryd3wcfa";
 const URN = "urn:ngsi-ld:Policy:banskabystrica.sk:ovzdusie:readers";
 
+/** The endpoint as the App reconciler generates it, which keeps the App rule (AP-139). */
+const appOwn = (endpoint: Manifest): Manifest => ({
+  ...endpoint,
+  metadata: { ...endpoint.metadata, annotations: { "joinedcontext.com/generated-by": "portal/app-reconciler" } },
+});
+
 /** CIM 009 Table 4.20-2, written out. */
 const TABLE: Record<string, { writes: boolean; operations: string[] }> = {
   retrieveOps: { writes: false, operations: ["retrieveEntity", "queryEntity"] },
@@ -239,12 +245,14 @@ describe("which policies decide an endpoint's calls", () => {
     expect(spaceSegment(PROJECT, "doprava", [SPACE])).toBe("banskabystrica-doprava");
   });
 
-  it("binds the one policy the reference names, and every policy of the space without one", () => {
+  it("binds the one policy the reference names, none without one, and an App's every policy of the space", () => {
     const bound = bindingOf(ENDPOINT, PROJECT, "ovzdusie", [READERS, WRITERS], [SPACE]);
     expect(bound).toEqual({ kind: "bound", policies: [READERS] });
 
+    // T-6742: a policy added for another endpoint of the space never opens one naming none.
     const noRef = manifest("Endpoint", NAME, { contextSpaceRef: "ovzdusie", slug: SLUG });
-    const all = bindingOf(noRef, PROJECT, "ovzdusie", [READERS, WRITERS], [SPACE]);
+    expect(bindingOf(noRef, PROJECT, "ovzdusie", [READERS, WRITERS], [SPACE])).toEqual({ kind: "none", endpoint: NAME });
+    const all = bindingOf(appOwn(noRef), PROJECT, "ovzdusie", [READERS, WRITERS], [SPACE]);
     expect(all).toEqual({ kind: "all", policies: [READERS, WRITERS] });
   });
 
@@ -259,7 +267,7 @@ describe("which policies decide an endpoint's calls", () => {
     const otherRole = app("other-steward", `endpoint:${PROJECT}/app-hsl-transport/steward`);
     const prefix = app("prefix", `endpoint:${PROJECT}/${NAME}-v2`);
     const noRef = manifest("Endpoint", NAME, { contextSpaceRef: "ovzdusie", slug: SLUG });
-    const all = bindingOf(noRef, PROJECT, "ovzdusie", [READERS, own, ownRole, other, otherRole, prefix], [SPACE]);
+    const all = bindingOf(appOwn(noRef), PROJECT, "ovzdusie", [READERS, own, ownRole, other, otherRole, prefix], [SPACE]);
     expect(all).toEqual({ kind: "all", policies: [READERS, own, ownRole] });
   });
 
@@ -269,7 +277,7 @@ describe("which policies decide an endpoint's calls", () => {
     const elsewhere = rules("elsewhere", [`endpoint:${PROJECT}/app-hsl-transport`, `endpoint:${PROJECT}/app-hsl-transport/steward`]);
     const mixed = rules("mixed", [`endpoint:${PROJECT}/app-hsl-transport`, `endpoint:${PROJECT}/${NAME}`]);
     const noRef = manifest("Endpoint", NAME, { contextSpaceRef: "ovzdusie", slug: SLUG });
-    expect(bindingOf(noRef, PROJECT, "ovzdusie", [READERS, elsewhere, mixed], [SPACE])).toEqual({ kind: "all", policies: [READERS, mixed] });
+    expect(bindingOf(appOwn(noRef), PROJECT, "ovzdusie", [READERS, elsewhere, mixed], [SPACE])).toEqual({ kind: "all", policies: [READERS, mixed] });
   });
 
   it("binds nothing when the reference names a policy of another space, as the gateway does", () => {
@@ -364,8 +372,9 @@ describe("what the endpoint page says about who may call it", () => {
         operations: ["retrieveOps", "createSubscription", "deleteSubscription"],
       }),
     );
-    // No policyRef: every policy of the space applies, the shape a busy space has (T-5015).
-    show({ endpoint: manifest("Endpoint", NAME, { contextSpaceRef: "ovzdusie", slug: SLUG }), policies });
+    // Every policy of the space listed, the shape a busy space has (T-5015).
+    const policyRefs = policies.map((policy) => `urn:ngsi-ld:Policy:banskabystrica.sk:ovzdusie:${policy.metadata.name}`);
+    show({ endpoint: manifest("Endpoint", NAME, { contextSpaceRef: "ovzdusie", slug: SLUG, policyRefs }), policies });
     const section = await grants();
     expect(within(section).getAllByRole("listitem")).toHaveLength(5);
     const more = within(section).getByRole("button", { name: "Show all 7 policies" });
@@ -383,10 +392,22 @@ describe("what the endpoint page says about who may call it", () => {
       assignee: { kind: "role", id: `endpoint:${PROJECT}/app-hsl-transport` },
       operations: ["queryEntity"],
     });
-    show({ endpoint: noRef, policies: [READERS, other] });
+    show({ endpoint: appOwn(noRef), policies: [READERS, other] });
     const section = await grants();
     expect(within(section).getByRole("link", { name: "readers" })).toBeInTheDocument();
     expect(within(section).queryByRole("link", { name: "app-hsl-transport-1" })).toBeNull();
+  });
+
+  // T-6742: an endpoint naming no policy binds none, whatever its space holds.
+  it("says an endpoint naming no policy grants nothing and how to fix it", async () => {
+    show({ endpoint: manifest("Endpoint", NAME, { contextSpaceRef: "ovzdusie", slug: SLUG }), policies: [READERS, WRITERS] });
+    const section = await grants();
+    expect(within(section).getByText(en.endpoints.page.policyNone)).toBeInTheDocument();
+    expect(within(section).getByRole("link", { name: en.endpoints.page.policyNoneAction })).toHaveAttribute(
+      "href",
+      `/projects/${PROJECT}/endpoints/${NAME}/edit`,
+    );
+    expect(within(section).queryByRole("link", { name: "readers" })).toBeNull();
   });
 
   it("says an endpoint grants nothing when its reference resolves to no policy", async () => {
