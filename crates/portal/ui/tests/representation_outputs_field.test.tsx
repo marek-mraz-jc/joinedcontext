@@ -218,7 +218,7 @@ describe("a preset's order, limit, zone and preview (T-6762)", () => {
     const seen = show({ feed: [news] });
     expect(screen.queryByLabelText(o.sortField.label)).toBeNull();
     expect(screen.queryByLabelText(o.timezoneField.label)).toBeNull();
-    expect(screen.getByText(o.limitField.feedHint)).toBeInTheDocument();
+    expect(screen.getByText(o.feedLimitField.hint)).toBeInTheDocument();
     const limit = screen.getByLabelText(o.limitField.label);
     await userEvent.type(limit, "50");
     expect(seen.at(-1)).toEqual({ feed: [{ ...news, limit: 50 }] });
