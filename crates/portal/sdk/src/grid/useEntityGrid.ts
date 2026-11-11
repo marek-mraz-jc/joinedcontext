@@ -101,6 +101,8 @@ export interface GridLabels {
    * are never rendered, the line says they exist. `{count}` is how many are not shown.
    */
   notReadable: string;
+  /** `notReadable` when exactly one attribute is not shown. */
+  notReadableOne: string;
   /** Before the problem's title when the broker refused the grid's query (a 400). */
   queryRefused: string;
   /** The disclosure holding the broker's own sentence about a refused query. */
@@ -367,6 +369,7 @@ export const DEFAULT_LABELS: GridLabels = {
   sortAll: "Sort all rows by",
   sortedLoaded: "Sorted within the {count} loaded rows: this view also reads other brokers, which do not sort.",
   notReadable: "{count} more fields are not shown: your access does not include them.",
+  notReadableOne: "1 more field is not shown: your access does not include it.",
   queryRefused: "The broker refused this query",
   errorDetail: "What the broker said",
   matching: "matching",

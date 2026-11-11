@@ -168,8 +168,9 @@ function GridCell({ view, row, rowIndex, col, colIndex, tone }: { view: GridView
     {colIndex === 0 && tone ? (
       <span className={`jc-grid-tone jc-grid-tone--${tone.tone}`} role="img" aria-label={tone.label} title={tone.label} />
     ) : null}
-    {/* A phone's label is the row's way in alone (T-6748): its width goes to the name. */}
-    {inspects(col) && !(props.compact && col.pinned) ? (
+    {/* A phone draws no "i" in its cells (T-6781): a tap opens the row on the attribute, and the
+        column's menu holds the access panel, so no button covers the text. */}
+    {inspects(col) && !props.compact ? (
       <button
         type="button"
         className="jc-grid-info"

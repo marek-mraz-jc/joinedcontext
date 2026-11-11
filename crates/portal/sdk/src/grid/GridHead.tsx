@@ -56,7 +56,7 @@ export function GridHead({ view }: { view: GridView }): React.JSX.Element {
 }
 
 function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleColumn; index: number }): React.JSX.Element {
-  const { grid, labels, kindOf, order, asText, filterable, dragOver, setDragOver, layout, setLayout, sortLabel, where, openFilter, closeFilter, focusFilter, loadValues, locks, openMenu, toggleMenu, menuRef, closeMenu, hideColumn, widen, startResize, historyOn } = view;
+  const { grid, labels, kindOf, order, asText, filterable, dragOver, setDragOver, layout, setLayout, sortLabel, where, openFilter, closeFilter, focusFilter, loadValues, locks, openMenu, toggleMenu, menuRef, closeMenu, hideColumn, widen, startResize, historyOn, inspects, setInspected, inspectorLabels } = view;
   const { state, setFilter, setSort, getHeaderProps } = grid;
   const kind = kindOf.get(col.key) ?? "text";
   const kindLabel = labels[KIND_LABEL[kind]] as string;
@@ -148,6 +148,8 @@ function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleCol
         onFilter={headerFilter ? () => focusFilter(col.key) : undefined}
         onHide={col.pinned || fixed ? undefined : () => hideColumn(own)}
         onHistory={historyOn ? () => openHistory(view, col) : undefined}
+        // A phone's way to the access panel its cells no longer carry (T-6781).
+        onInspect={view.props.compact && inspects(col) ? { label: inspectorLabels.title, open: () => { closeMenu(); setInspected({ attr: own, label: col.label }); } } : undefined}
         onClose={closeMenu}
       />
     )}

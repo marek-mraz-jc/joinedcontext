@@ -69,10 +69,13 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(names[0]).toMatch(/^Title/);
     expect(names.some((name) => /^ID|^Type/.test(name))).toBe(false);
     expect(container.querySelector("tbody")?.textContent).not.toContain("00313271");
-    // The label is the row's way in alone: no inspector "i" beside the name.
-    expect(container.querySelectorAll("tbody td.jc-grid-pinned .jc-grid-info")).toHaveLength(0);
-    // The other cells keep theirs: what the person may do with a value stays one tap away.
-    expect(screen.getAllByRole("button", { name: "Your access: Category" }).length).toBeGreaterThan(0);
+    // No cell carries an inspector "i" on a phone (T-6781): it covered the text in every cell.
+    expect(container.querySelectorAll("tbody .jc-grid-info")).toHaveLength(0);
+    expect(screen.queryAllByRole("button", { name: /^Your access:/ })).toHaveLength(0);
+    // What the person may do with a field stays in reach: the column's menu opens the same panel.
+    fireEvent.click(screen.getByRole("button", { name: "Column options: Category" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Your access" }));
+    expect(await screen.findByRole("heading", { name: /Category/ })).toBeInTheDocument();
     // The type left the columns, and the choice of another stays on the line above.
     const select = screen.getByRole("combobox", { name: "Type" });
     expect(container.querySelector(".jc-grid-typeline")).toContainElement(select);
@@ -90,5 +93,13 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(names[0]).toMatch(/^ID/);
     expect(names[1]).toMatch(/^Type/);
     expect(container.querySelector(".jc-grid-typeline")).toBeNull();
+  });
+
+  it("keeps the cell's \"i\" and no access item in the column menu on a wide screen (T-6781)", async () => {
+    render(<EntityGrid config={config} source={fixtureSource(entities)} access={access} />);
+    await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
+    expect(screen.getAllByRole("button", { name: "Your access: Category" }).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Column options: Category" }));
+    expect(screen.queryByRole("menuitem", { name: "Your access" })).toBeNull();
   });
 });

@@ -2162,6 +2162,17 @@ a.jc-cell--link:focus-visible {
 @media (pointer: coarse), (width <= 640px) {
   .jc-grid-col-menu button.jc-grid-meta-item { min-height: 2.75rem; }
 }
+/* A header's filter and menu glyphs sit beside its label (T-6781): a touch screen keeps their
+   44 px height, the width is 28 px (over WCAG 2.5.8's 24) with no margin, so the glyphs are not
+   pushed a finger's width from the name and from each other. */
+@media (pointer: coarse) {
+  .jc-grid-th :is(.jc-grid-filter-btn, .jc-grid-meta-btn) {
+    min-width: 1.75rem;
+    width: 1.75rem;
+    margin-left: 0;
+    padding-inline: 0;
+  }
+}
 
 /* The toolbar: the host's tools, then Arrange columns at the end (T-6738). */
 .jc-grid-toolbar {
