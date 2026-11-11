@@ -136,6 +136,15 @@ fn row(envelope: &ResourceEnvelope) -> Value {
     }) {
         row["notServing"] = json!(unserved.message);
     }
+    // `main` holds a revision its kind refuses: what serves, if anything, is older (CHG-05).
+    if let Some(refused) = status.and_then(|status| {
+        status
+            .conditions
+            .iter()
+            .find(|held| held.r#type == "Accepted" && held.status == "False")
+    }) {
+        row["refused"] = json!(refused.message);
+    }
     row
 }
 
@@ -358,6 +367,8 @@ fn readable_in(
                 .list(home, info.kind, &ListOptions::default())
                 .items
                 .into_iter()
+                // A manifest `main` holds and its kind refuses is listed with its reason (CHG-05).
+                .chain(state.mirror.refused_of(home, info.kind))
                 .filter(move |envelope| effective.may_read_envelope(info.kind, envelope))
         })
         .collect()
@@ -449,6 +460,12 @@ async fn get(
     // What a grant bound to one context space may not read is not there, and is no name the
     // caller is told about either (PF-59, R20, T-5698).
     let effective = crate::permissions::for_request(state, &caller.identity, project);
+    let refused = || {
+        state
+            .mirror
+            .refused(project, info.kind, &input.name)
+            .filter(|envelope| effective.may_read_envelope(info.kind, envelope))
+    };
     match state
         .mirror
         .get(project, info.kind, &input.name)
@@ -467,6 +484,10 @@ async fn get(
         }
         Some(envelope) => held(state, project, info, &envelope),
         None => {
+            // A refused manifest serves nothing, so it has no access to describe (CHG-05).
+            if let Some(envelope) = refused() {
+                return held(state, project, info, &envelope);
+            }
             // The names it could have been are every name of every place this kind lives in,
             // so a caller who asked in the project is told about the organization's too.
             let mut names: Vec<String> =

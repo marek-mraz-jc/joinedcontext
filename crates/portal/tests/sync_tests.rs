@@ -82,7 +82,7 @@ async fn sync_fills_mirror_from_tree_with_live_status_and_observed_revision() {
         .mount(&server)
         .await;
 
-    let endpoint_yaml = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: ovzdusie\nspec:\n  audience: public\n";
+    let endpoint_yaml = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: mobility\n  slug: aaaaaaaaaaaaaaaaaaaaaaaaaa\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n";
     let endpoint_b64 = STANDARD.encode(endpoint_yaml.as_bytes());
 
     Mock::given(method("GET"))
@@ -494,7 +494,7 @@ async fn sync_loads_the_groups_of_users_groups_into_the_mirror() {
         .await;
 
     // The seed's own file (deployment components/shako/apps/helsinki-alerts/grants/).
-    let group = "apiVersion: joinedcontext.com/v1alpha1\nkind: Group\nmetadata:\n  name: helsinki-alerts-steward\n  namespace: org\n  annotations:\n    joinedcontext.com/app: helsinki/helsinki-alerts\nspec:\n  description: The stewards of helsinki-alerts, its default group (AP-118).\n  members:\n  - user: demo.steward@hel.fi\n";
+    let group = "apiVersion: joinedcontext.com/v1alpha1\nkind: Group\nmetadata:\n  name: helsinki-alerts-steward\n  namespace: org\n  annotations:\n    joinedcontext.com/app: helsinki/helsinki-alerts\nspec:\n  description: The stewards of helsinki-alerts, its default group (AP-118).\n  members:\n  - user: 3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14\n";
     Mock::given(method("GET"))
         .and(path(
             "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
@@ -522,6 +522,6 @@ async fn sync_loads_the_groups_of_users_groups_into_the_mirror() {
         .expect("the Group is in the mirror");
     assert_eq!(
         held.spec["members"],
-        json!([{ "user": "demo.steward@hel.fi" }])
+        json!([{ "user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14" }])
     );
 }

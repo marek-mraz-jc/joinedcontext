@@ -1074,6 +1074,20 @@ impl Repository {
         self.resources.get(id)
     }
 
+    /// Puts `last_good` in place of the resource `id`, or drops it when there is none: what a
+    /// reconciler does with a manifest its kind's validation refuses (CHG-04, CHG-05). The
+    /// findings computed at load (references, domains, agreement ids) are left as they were.
+    pub fn refuse(&mut self, id: &ResourceId, last_good: Option<LoadedResource>) {
+        match last_good {
+            Some(resource) => {
+                self.resources.insert(id.clone(), resource);
+            }
+            None => {
+                self.resources.remove(id);
+            }
+        }
+    }
+
     /// The `{space}` segment of the Context Space `name` of `project` (PF-84).
     ///
     /// A space the repository does not hold, or cannot parse, renders without a pin: an id

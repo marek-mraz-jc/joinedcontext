@@ -697,6 +697,95 @@ async fn listing_and_reading_answer_by_kind_and_space_and_an_unknown_name_gets_t
     );
 }
 
+/// CHG-05 (T-6707): a manifest `main` holds and its kind refuses is listed and read with its
+/// reason through the route and the operations alike, never dropped, and only by a caller who
+/// may read its kind.
+#[tokio::test]
+async fn a_refused_manifest_is_listed_and_read_with_its_reason_by_whoever_may_read_its_kind() {
+    let state = AppState::new(Config::for_tests(), None);
+    let mut refused = envelope("Endpoint", "broken-air", "helsinki", json!({ "slug": 7 }));
+    refused.status = Some(joinedcontext_portal::resource::Status {
+        phase: joinedcontext_portal::resource::Phase::Error,
+        observed_revision: Some("bbbb2222".into()),
+        source_url: None,
+        conditions: vec![joinedcontext_portal::resource::Condition {
+            r#type: "Accepted".into(),
+            status: "False".into(),
+            reason: Some("Refused".into()),
+            message: Some("revision bbbb2222 fails this kind's validation: slug".into()),
+            last_transition_time: None,
+        }],
+        build: None,
+        shard: None,
+        domain_verification: None,
+        jobs: Vec::new(),
+        notifications: None,
+    });
+    state.mirror.refuse(refused);
+    assert!(
+        state.mirror.matching(|_| true).is_empty(),
+        "no reader of the mirror sees it"
+    );
+
+    let (status, read) = send_once(
+        &state,
+        steward(),
+        "GET",
+        "/api/v1/projects/helsinki/endpoints/broken-air",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(read["status"]["phase"], json!("Error"));
+    assert_eq!(read["status"]["conditions"][0]["reason"], json!("Refused"));
+    let (status, listed) = send_once(
+        &state,
+        steward(),
+        "GET",
+        "/api/v1/projects/helsinki/endpoints",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["items"][0]["metadata"]["name"], json!("broken-air"));
+
+    let (status, listed) = op(
+        &state,
+        steward(),
+        "helsinki",
+        "jc_resource_list",
+        json!({ "kind": "Endpoint" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert!(
+        listed["items"][0]["refused"]
+            .as_str()
+            .is_some_and(|why| why.contains("validation")),
+        "{listed}"
+    );
+    let (status, read) = op(
+        &state,
+        steward(),
+        "helsinki",
+        "jc_resource_get",
+        json!({ "kind": "Endpoint", "name": "broken-air" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(read["status"]["conditions"][0]["reason"], json!("Refused"));
+
+    let (status, _) = send_once(
+        &state,
+        identity("outsider", &[]),
+        "GET",
+        "/api/v1/projects/helsinki/endpoints/broken-air",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "existence is not disclosed");
+}
+
 /// PF-59, T-0840: an organization-level kind lives in `org`, and the operations find it there
 /// without the caller naming another project.
 #[tokio::test]

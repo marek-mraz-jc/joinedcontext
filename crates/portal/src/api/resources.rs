@@ -169,7 +169,27 @@ pub async fn list(
         (None, Some(revision)) => mirror_at(&state, &project, revision, not_found)
             .await?
             .list(&project, kind_info.kind, &opts),
-        (None, None) => state.mirror.list(&project, kind_info.kind, &opts),
+        (None, None) => {
+            // A manifest `main` holds and its kind refuses (CHG-05) is listed with its reason,
+            // never dropped, where the run did not serve a last good revision of it instead.
+            let mut page = state.mirror.list(&project, kind_info.kind, &opts);
+            page.items.extend(
+                state
+                    .mirror
+                    .refused_of(&project, kind_info.kind)
+                    .into_iter()
+                    .filter(|env| {
+                        opts.label_selector
+                            .as_ref()
+                            .is_none_or(|ls| ls.matches(&env.metadata.labels))
+                            && opts
+                                .field_selector
+                                .as_ref()
+                                .is_none_or(|fs| fs.matches(env))
+                    }),
+            );
+            page
+        }
     };
     // Item by item: a grant bound to one context space reads that space's manifests alone, and
     // one narrowed to an Organization's own settings its own (ADR-N-058 section 2.4, T-5698).
@@ -358,7 +378,10 @@ pub async fn get_resource(
             kind_info.kind,
             &name,
         ),
-        (None, None) => state.mirror.get(&project, kind_info.kind, &name),
+        (None, None) => state
+            .mirror
+            .get(&project, kind_info.kind, &name)
+            .or_else(|| state.mirror.refused(&project, kind_info.kind, &name)),
     }
     .ok_or_else(not_found)?;
     // A grant bound to one context space, or narrowed to one Organization's own settings, reads
