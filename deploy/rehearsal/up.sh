@@ -294,7 +294,8 @@ portal_mounts='[mounts.portal]\npath_prefix = ""\n'
 if [ "${REHEARSAL_APP_HOSTS:-on}" = on ]; then
   portal_mounts="[[mounts.portal]]\npath_prefix = \"\"\n\n[[mounts.portal]]\nhost = \"*.apps.localhost:$port\"\n"
 fi
-printf "$portal_mounts"'%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_config" > "$home/jc.toml"
+# jc refuses a jc.toml that names no profile (P-29); a rehearsal is no production install.
+printf 'profile = "development"\n\n'"$portal_mounts"'%s\n%s\n\n%s\n' "$db_config" "$realm_config" "$alias_config" > "$home/jc.toml"
 # prod's publish-gate hidden list ([dataroom.hidden]): dataroom leaves those datasets out of search
 # and DCAT as prod's catalogue does (jc-catalogue-parity).
 cat "$here/../../bins/jc/docs/catalogue-hidden.toml" >> "$home/jc.toml"

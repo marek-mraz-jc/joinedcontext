@@ -1589,6 +1589,42 @@ impl ViewSync {
         sources
     }
 
+    /// What the last run read, if one did.
+    pub fn last_sources(&self) -> Option<Arc<Sources>> {
+        lock(&self.last).clone()
+    }
+
+    /// Purges every entity, history instance and document of `tenant` on broker `broker` (a
+    /// removed Context Space's data once its grace ends, T-6717). A broker this Portal cannot
+    /// reach, or `""`, held nothing written by it: nothing to purge there.
+    pub async fn purge_tenant(&self, broker: &str, tenant: &str) -> Result<(), String> {
+        if broker.is_empty() {
+            return Ok(());
+        }
+        let Some(base) = self.address(broker) else {
+            return Ok(());
+        };
+        let token = std::fs::read_to_string(&self.token_file).map_err(|error| {
+            format!(
+                "the broker token {} is unreadable: {error}",
+                self.token_file.display()
+            )
+        })?;
+        // The segment comes from a repository: a purge goes to that one tenant or nowhere.
+        if tenant.is_empty()
+            || tenant.contains("..")
+            || !tenant
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+        {
+            return Err(format!(
+                "the tenant {tenant:?} is no broker tenant name; nothing purged"
+            ));
+        }
+        self.delete(&base, token.trim(), &format!("/q/tenants/{tenant}"))
+            .await
+    }
+
     /// What a pipeline's write through the Endpoint `name` of `project` meets (T-4840): its space
     /// and tenant, the Policies bound to it with `derived` (the pipeline's own, from its draft) in
     /// place of what the last run derived for `account` (`None` keeps the account's Policies, the
@@ -2833,6 +2869,35 @@ mod tests {
 
         let (s, e) = windowed(vec![("cars", cars())], "timerel=after;timeAt=P-1M");
         assert!(view_of(&s, &e).is_err(), "months have no fixed length");
+    }
+
+    /// T-6717 (P-21): a removed space's purge is one admin DELETE of its tenant on its own
+    /// broker; a tenant name that would reach another path is refused, and a space on no
+    /// broker purges nothing.
+    #[tokio::test]
+    async fn a_purge_deletes_only_the_removed_spaces_tenant() {
+        let broker = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/q/tenants/org-p-air"))
+            .and(header("authorization", "Bearer admin-token"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&broker)
+            .await;
+        let token = std::env::temp_dir().join(format!("t6717-{}.token", std::process::id()));
+        std::fs::write(&token, "admin-token\n").expect("write the token");
+        let sync = ViewSync::new(broker.uri(), &token);
+        let purged = sync.purge_tenant("main", "org-p-air").await;
+        let traversal = sync.purge_tenant("main", "../views/x").await;
+        let nowhere = sync.purge_tenant("", "org-p-air").await;
+        let _ = std::fs::remove_file(&token);
+        assert_eq!(purged, Ok(()));
+        assert!(traversal.is_err(), "{traversal:?}");
+        assert_eq!(nowhere, Ok(()));
+        assert_eq!(
+            broker.received_requests().await.unwrap_or_default().len(),
+            1
+        );
     }
 
     /// A writer holding `s` as its last run, which a draft compiles against (T-3802).

@@ -210,6 +210,7 @@ async fn start_placed_once(placement: Placement, realm: &'static str) -> Option<
     let given = dir.path().join("given");
     std::fs::create_dir(&given).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+    cmd.args(["--profile", "development"]);
     for (name, flag) in [
         ("shako-token", "--shako-token-file"),
         ("ekiben-token", "--ekiben-token-file"),

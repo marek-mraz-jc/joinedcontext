@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const file = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../vendor/viz/site/explore.js");
 type Feature = { type: "Feature"; geometry: { type: string; coordinates: unknown } | null; properties?: object };
@@ -15,6 +15,7 @@ interface Explore {
   viewPlan(held: Feature[] | null, lastUrl: string | null, url: string, box: number[]): { local?: number; skip?: boolean; read?: string };
   countLine(t: object, c: { inView: number; total: number; none: number; tiled?: boolean }): string;
   stacks(points: Feature[]): Feature[];
+  mapStart(maplibre: { Map: new (o: object) => FakeMap }, options: object, fail: (kind: string) => void): FakeMap | null;
   TEXT: Record<string, object>;
 }
 function load(): Explore {
@@ -23,6 +24,21 @@ function load(): Explore {
   return module.exports;
 }
 const X = load();
+
+// MapLibre's Map as far as mapStart touches it: events by name, `remove` counted.
+class FakeMap {
+  handlers: Record<string, Array<(e?: object) => void>> = {};
+  removed = 0;
+  on(name: string, f: (e?: object) => void) { (this.handlers[name] ||= []).push(f); }
+  once(name: string, f: (e?: object) => void) { this.on(name, f); }
+  fire(name: string, e?: object) { (this.handlers[name] || []).forEach((f) => f(e)); }
+  remove() { this.removed++; }
+}
+const start = (Map: new (o: object) => FakeMap) => {
+  const kinds: string[] = [];
+  const map = X.mapStart({ Map }, { container: "map" }, (k) => kinds.push(k));
+  return { map, kinds };
+};
 const point = (lon: number, lat: number): Feature => ({ type: "Feature", geometry: { type: "Point", coordinates: [lon, lat] } });
 const none: Feature = { type: "Feature", geometry: null };
 
@@ -66,5 +82,61 @@ describe("explore.js map view", () => {
     const at = (lon: number, lat: number, n: number) => Array.from({ length: n }, () => point(lon, lat));
     const out = X.stacks([...at(17.1, 48.14, 20), ...at(17.11, 48.15, 9), point(19, 48.5)]);
     expect(out.map((p) => (p.properties as { jcStack: number }).jcStack)).toEqual([...Array(20).fill(20), ...Array(9).fill(9), 1]);
+  });
+});
+
+describe("explore.js map start (T-6737)", () => {
+  it("says the map cannot start when its constructor throws, and throws nothing itself", () => {
+    const Map = class { constructor() { throw new Error("WebGL2 is required to display this map https://x?token=s3cret"); } } as unknown as new (o: object) => FakeMap;
+    const { map, kinds } = start(Map);
+    expect(map).toBeNull();
+    // Only the kind leaves mapStart: no URL, token or stack text from the error.
+    expect(kinds).toEqual(["start"]);
+  });
+
+  it("ends a map whose style does not load, once", () => {
+    const { map, kinds } = start(FakeMap);
+    map!.fire("error", { error: new Error("HTTP 503") });
+    map!.fire("error", { error: new Error("HTTP 503") });
+    expect(kinds).toEqual(["start"]);
+    expect(map!.removed).toBe(1);
+  });
+
+  it("keeps a drawn map when one source's tiles fail, and says so", () => {
+    const { map, kinds } = start(FakeMap);
+    map!.fire("load");
+    map!.fire("error", { sourceId: "jc-tiles", error: new Error("HTTP 500") });
+    map!.fire("error", { error: new Error("late") });
+    expect(kinds).toEqual(["tiles"]);
+    expect(map!.removed).toBe(0);
+  });
+
+  it("ends a map whose graphics context does not come back, and keeps one that does", () => {
+    vi.useFakeTimers();
+    try {
+      const back = start(FakeMap);
+      back.map!.fire("load");
+      back.map!.fire("webglcontextlost");
+      back.map!.fire("webglcontextrestored");
+      vi.advanceTimersByTime(10_000);
+      expect(back.kinds).toEqual([]);
+      const gone = start(FakeMap);
+      gone.map!.fire("load");
+      gone.map!.fire("webglcontextlost");
+      vi.advanceTimersByTime(10_000);
+      expect(gone.kinds).toEqual(["lost"]);
+      expect(gone.map!.removed).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("words every failed state in each locale the page speaks, with no address in it", () => {
+    for (const lang of Object.keys(X.TEXT)) {
+      const t = X.TEXT[lang] as { mapOff: Record<string, string>; mapRetry: string; mapTiles: string };
+      for (const kind of ["webgl", "start", "lost"]) expect(t.mapOff[kind], `${lang}.${kind}`).toMatch(/\S.{20,}/);
+      expect(t.mapRetry).toBeTruthy();
+      expect(Object.values(t.mapOff).concat(t.mapTiles).join(" ")).not.toMatch(/https?:|\{/);
+    }
   });
 });
