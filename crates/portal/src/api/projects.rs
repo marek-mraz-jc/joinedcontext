@@ -265,18 +265,33 @@ pub fn router() -> Router<AppState> {
 // Opening a project (PF-65, PF-66, PF-67, T-0869)
 // ---------------------------------------------------------------------------
 
-/// What the organization's own manifest says about who may open a project (PF-65).
+/// What an Organization's own manifest says about who may open a project in it (PF-65).
 ///
-/// `anyone` is every signed-in person, `group:<name>` the members of one `Group`, and
-/// `org-admin` — the default — whoever holds `propose` on `Project`. The setting is read
-/// before a `Change` exists, because a person who may not open a project must not be able to
-/// open a merge request that says they did (PF-65).
-pub fn may_open(
+/// `anyone` is every signed-in person (with several Organizations, every member of this one),
+/// `group:<name>` the members of one `Group`, and `org-admin` — the default — whoever holds
+/// `propose` on `Project` there. The setting is read before a `Change` exists, because a person
+/// who may not open a project must not be able to open a merge request that says they did (PF-65).
+fn may_open_in(
     state: &AppState,
     identity: &crate::auth::session::Identity,
+    organization: &str,
 ) -> Result<(), ApiError> {
-    match creation(state).as_str() {
-        "anyone" => Ok(()),
+    let several = crate::permissions::several_organizations(&state.mirror);
+    match creation(state, organization).as_str() {
+        "anyone"
+            if !several
+                || crate::permissions::belongs_to_organization(
+                    &state.mirror,
+                    &state.config.bootstrap_admins,
+                    identity,
+                    organization,
+                ) =>
+        {
+            Ok(())
+        }
+        "anyone" => Err(ApiError::Denied(format!(
+            "opening a project in Organization '{organization}' is for its members (PF-65)"
+        ))),
         group if group.starts_with("group:") => {
             let name = group.trim_start_matches("group:");
             if in_group(state, identity, name) {
@@ -284,6 +299,25 @@ pub fn may_open(
             } else {
                 Err(ApiError::Denied(format!(
                     "opening a project here is for the members of group '{name}' (PF-65)"
+                )))
+            }
+        }
+        _ if several => {
+            let project = json!({ "kind": "Project", "spec": { "organizationRef": organization } });
+            if crate::permissions::holds_at_organization(
+                state,
+                identity,
+                organization,
+                "Project",
+                jc_core::kinds::Verb::Propose,
+                Some(&project),
+            ) {
+                Ok(())
+            } else {
+                Err(ApiError::Denied(format!(
+                    "opening a project in Organization '{organization}' needs propose on \
+                     Project from a binding of that Organization, which its org-admin holds \
+                     (PF-65, T-6766)"
                 )))
             }
         }
@@ -296,6 +330,94 @@ pub fn may_open(
                         .to_owned(),
                 )
             }),
+    }
+}
+
+/// The Organization a project the caller opens belongs to (PF-65, ADR-N-058 section 2.2,
+/// T-6766). With one Organization it is that one. With several it is one the caller holds the
+/// right to open a project in, never the installation's, which holds no data projects: the one
+/// `requested` names, or the only one the caller may open in. Nothing here is read from a URN,
+/// a host name or the request without checking the caller's own right there.
+pub fn opening_organization(
+    state: &AppState,
+    identity: &crate::auth::session::Identity,
+    requested: Option<&str>,
+) -> Result<String, ApiError> {
+    let mirror = &state.mirror;
+    let installation = crate::permissions::installation_organization(mirror);
+    if !crate::permissions::several_organizations(mirror) {
+        let organization = installation.ok_or_else(|| {
+            ApiError::Unavailable(
+                "the organization's own manifest is not in the mirror yet; a project belongs to \
+                 one (PF-66)"
+                    .to_owned(),
+            )
+        })?;
+        if let Some(asked) = requested.filter(|asked| *asked != organization) {
+            return Err(unknown_organization(asked));
+        }
+        may_open_in(state, identity, &organization)?;
+        return Ok(organization);
+    }
+    // On an Organization's own Portal host only that Organization exists (organization_host).
+    let pin = crate::organization_host::organization();
+    let candidates: Vec<String> = crate::permissions::organizations(mirror)
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| installation.as_deref() != Some(name.as_str()))
+        .filter(|name| pin.as_deref().is_none_or(|pinned| pinned == name))
+        .collect();
+    if let Some(asked) = requested {
+        if installation.as_deref() == Some(asked) {
+            return Err(ApiError::Denied(format!(
+                "Organization '{asked}' is the installation's and holds no projects; name the \
+                 Organization the project belongs to in 'organization' (TEN-06, T-6766)"
+            )));
+        }
+        if !candidates.iter().any(|name| name == asked) {
+            return Err(unknown_organization(asked));
+        }
+        may_open_in(state, identity, asked)?;
+        return Ok(asked.to_owned());
+    }
+    let open: Vec<String> = candidates
+        .into_iter()
+        .filter(|name| may_open_in(state, identity, name).is_ok())
+        .collect();
+    match open.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err(ApiError::Denied(
+            "opening a project needs the right to open one in an Organization, which its \
+             org-admin holds; the installation's Organization holds no projects (PF-65, T-6766)"
+                .to_owned(),
+        )),
+        several => Err(ApiError::Unprocessable {
+            detail: "you may open a project in several Organizations: name one in \
+                     'organization' (T-6766)"
+                .to_owned(),
+            errors: vec![format!("/organization: one of {}", several.join(", "))],
+        }),
+    }
+}
+
+/// The answer to an `organization` the caller cannot name a project into: the same 404 whether
+/// it does not exist or is another Host's, so nothing is learnt about other Organizations.
+fn unknown_organization(asked: &str) -> ApiError {
+    ApiError::NotFound(format!(
+        "organization '{asked}' not found; 'organization' names one you may open a project in \
+         (T-6766)"
+    ))
+}
+
+/// Whether the caller may open a project in some Organization: [`opening_organization`] without
+/// a name, where one that must still be named counts as allowed.
+pub fn may_open(
+    state: &AppState,
+    identity: &crate::auth::session::Identity,
+) -> Result<(), ApiError> {
+    match opening_organization(state, identity, None) {
+        Ok(_) | Err(ApiError::Unprocessable { .. }) => Ok(()),
+        Err(err) => Err(err),
     }
 }
 
@@ -353,6 +475,10 @@ pub struct OpenProject {
     pub display_name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// The Organization the project belongs to, e.g. `bbsk`: needed only when the caller may open
+    /// a project in several; the caller must hold that right there (T-6766).
+    #[serde(default)]
+    pub organization: Option<String>,
 }
 
 /// `POST /api/v1/projects`: opens a project, with the opener's steward binding in the same
@@ -382,7 +508,7 @@ pub async fn open_project(
     Json(request): Json<OpenProject>,
 ) -> Result<(StatusCode, Json<Change>), ApiError> {
     let identity = &user.0.identity;
-    may_open(&state, identity)?;
+    let organization = opening_organization(&state, identity, request.organization.as_deref())?;
 
     let name = request.name.trim().to_owned();
     let shako = state
@@ -391,7 +517,7 @@ pub async fn open_project(
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
     new_project_name(&state, shako, &name).await?;
 
-    let mut files = open_project_files(&state, identity, &request, &name)?;
+    let mut files = open_project_files(identity, &request, &name, &organization)?;
     // Layout 2 (CC-85, PF-86): the project gets a repository of its own, seeded here, and the
     // organization's Change carries its registry entry in place of the project's own file.
     let own_repository = if state.mirror.layout() == 2 {
@@ -439,7 +565,7 @@ pub async fn open_project(
     // The organization that lets anyone open a project, on an installation that does not hold
     // every change for a person, has nobody to wait for: the platform merges it and the merge
     // message says so (PF-66, PF-57).
-    if lets_anyone_open(&state) && state.branding().validation == crate::branding::Validation::Lax {
+    if lets_anyone_open(&state, &organization) && state.branding().validation == crate::branding::Validation::Lax {
         let (_, number) = crate::api::changes::parse_change_ref(&change.metadata.name)?;
         shako
             .merge(
@@ -521,15 +647,17 @@ pub(crate) async fn new_project_name(
     Ok(())
 }
 
-fn lets_anyone_open(state: &AppState) -> bool {
-    creation(state) == "anyone"
+fn lets_anyone_open(state: &AppState, organization: &str) -> bool {
+    creation(state, organization) == "anyone"
 }
 
-/// Who may open a project: the installation Organization's `projects.creation`, which a new
-/// project belongs to (ADR-N-058 section 2.2); another Organization's setting opens nothing
-/// here. `org-admin` when it sets none.
-fn creation(state: &AppState) -> String {
-    crate::permissions::installation_organization_manifest(&state.mirror)
+/// Who may open a project in `organization`: its own `projects.creation`, since a new project
+/// belongs to it (ADR-N-058 section 2.2, T-6766); another Organization's setting opens nothing
+/// there. `org-admin` when it sets none.
+fn creation(state: &AppState, organization: &str) -> String {
+    state
+        .mirror
+        .get(crate::permissions::ORG_NAMESPACE, "Organization", organization)
         .and_then(|org| {
             org.spec
                 .pointer("/projects/creation")
@@ -542,22 +670,11 @@ fn creation(state: &AppState) -> String {
 /// The two files a new project is: its manifest, and the binding that makes its opener the
 /// steward of it and of nothing else (PF-66).
 pub(crate) fn open_project_files(
-    state: &AppState,
     identity: &crate::auth::session::Identity,
     request: &OpenProject,
     name: &str,
+    organization: &str,
 ) -> Result<Vec<(String, String)>, ApiError> {
-    // A new project belongs to the installation's Organization (ADR-N-058 section 2.2); moving
-    // it to another is a change of its `organizationRef`.
-    let organization =
-        crate::permissions::installation_organization(&state.mirror).ok_or_else(|| {
-            ApiError::Unavailable(
-                "the organization's own manifest is not in the mirror yet; a project belongs to \
-                 one (PF-66)"
-                    .to_owned(),
-            )
-        })?;
-
     let mut metadata = json!({ "name": name, "namespace": crate::permissions::ORG_NAMESPACE });
     if let Some(title) = request
         .display_name
@@ -770,7 +887,12 @@ pub async fn duplicate_project(
     if !crate::permissions::for_request(&state, identity, &origin).may_read_project() {
         return Err(ApiError::NotFound(format!("project '{origin}' not found")));
     }
-    may_open(&state, identity)?;
+    // The copy belongs to the origin's Organization, and its opener holds that right there.
+    let organization = opening_organization(
+        &state,
+        identity,
+        crate::permissions::organization_of(&state.mirror, &origin).as_deref(),
+    )?;
     if state.mirror.layout() != 2 {
         return Err(ApiError::Conflict(
             "a project of layout 1 has no repository of its own to copy; import its export \
@@ -791,14 +913,15 @@ pub async fn duplicate_project(
 
     let source = shako.for_project(&origin_repo, &origin);
     let mut files = open_project_files(
-        &state,
         identity,
         &OpenProject {
             name: name.clone(),
             display_name: request.display_name.clone(),
             description: None,
+            organization: None,
         },
         &name,
+        &organization,
     )?;
     into_registry_entry(&mut files, &name, &name, Some(&request.parameters))?;
     check_parameters(&source, &origin, &name, &files).await?;
@@ -1730,8 +1853,9 @@ mod tests {
         }
     }
 
-    /// F-R2POR3-004: who opens a project is the installation Organization's to say; a second
-    /// Organization's `anyone` opens nothing and merges nothing.
+    /// F-R2POR3-004, T-6766: who opens a project is the Organization's it lands in to say, and
+    /// the installation's holds none: a second Organization's `anyone` opens nothing for a person
+    /// who is not its member.
     #[test]
     fn only_the_installation_organization_says_who_opens_a_project() {
         let state = AppState::new(crate::config::Config::for_tests(), None);
@@ -1745,8 +1869,8 @@ mod tests {
             "bb",
             json!({ "domain": "bb.sk", "installation": true, "projects": { "creation": "org-admin" } }),
         ));
-        assert_eq!(creation(&state), "org-admin");
-        assert!(!lets_anyone_open(&state));
+        assert_eq!(creation(&state, "bb"), "org-admin");
+        assert!(!lets_anyone_open(&state, "bb"));
         assert!(may_open(&state, &person("sub-jana")).is_err());
     }
 
