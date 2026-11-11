@@ -2117,6 +2117,7 @@ async fn approve_every_file(
     let mut grants_approver = false;
     let mut grants_access = false;
     let mut files = Vec::new();
+    let mut judged: Vec<ResourceEnvelope> = Vec::new();
     for file in shako.pull_request_files(pr.number).await? {
         let git_ref = if file.deleted {
             pr.base_ref()
@@ -2293,25 +2294,31 @@ async fn approve_every_file(
             &manifest,
             jc_core::kinds::Verb::Approve,
         )?;
-        // The bounds are the operator's and may have tightened since the proposal (PF-97).
-        crate::api::mutate::organization_within_bounds(
-            state,
-            &envelope.kind,
-            &envelope.spec,
-            ApiError::Conflict,
-        )?;
-        // And the public-app policy may have been set since (PF-103).
-        crate::api::mutate::public_app_allowed(
-            state,
-            envelope.metadata.namespace.as_deref().unwrap_or_default(),
-            envelope,
-            ApiError::Conflict,
-        )?;
+        // Judged again after the loop, against the mirror, bounds and policy in force now.
+        let mut judged_one = envelope.clone();
+        judged_one.metadata.namespace = Some(namespace.to_owned());
+        judged.push(judged_one);
         lane = crate::api::import::riskiest(
             lane,
             change::classify_manifest(envelope, Operation::Create),
         );
     }
+    // Every file meets the one judge again (P-2, CHG-03): the mirror, the operator's bounds
+    // (PF-97) and the public-app policy (PF-103) may have moved since the proposal, and the
+    // change's other files stand as the one bundle they merge as.
+    let ground = crate::judge::Ground::of(state);
+    let bundle = judged
+        .iter()
+        .filter_map(|e| serde_json::to_value(e).ok())
+        .collect();
+    crate::references::BUNDLE
+        .sync_scope(bundle, || {
+            judged.iter().try_for_each(|e| {
+                let project = e.metadata.namespace.as_deref().unwrap_or(project);
+                crate::judge::manifest(&ground, project, e)
+            })
+        })
+        .map_err(|e| ApiError::Conflict(crate::judge::reason(&e)))?;
     Ok((
         lane,
         deletes_every_kind,
