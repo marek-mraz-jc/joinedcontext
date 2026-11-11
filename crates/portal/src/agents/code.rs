@@ -468,7 +468,10 @@ mod tests {
         let api = super::for_apps(super::SDK_API);
         let exports = super::for_apps(super::SDK_EXPORTS);
         assert!(super::SDK_API.contains("function DataGrid"));
-        assert!(!api.contains("DataGrid") && !api.contains("portal-only"), "{api}");
+        assert!(
+            !api.contains("DataGrid") && !api.contains("portal-only"),
+            "{api}"
+        );
         assert!(!exports.contains("DataGrid") && !exports.contains("portal-only"));
         assert!(api.contains("function endpointSource") && exports.contains("EntityGrid"));
     }
