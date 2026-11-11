@@ -228,7 +228,8 @@
     "mapLanguage": "Jazyk",
     "mapAddLanguage": "Přidat jazyk",
     "advancedFields": "Rozšířené",
-    "advancedFieldsHint": "Nastavení spouštěče, která většina zdrojů nechává výchozí."
+    "advancedFieldsHint": "Nastavení spouštěče, která většina zdrojů nechává výchozí.",
+    "chosenOf": "Vybráno: {chosen} z {max}"
   },
   "approvals": {
     "lead": "Každá změna projektu je zde návrhem, dokud ji schvalovatel nesloučí.",
@@ -7603,7 +7604,7 @@
           "text": "Text"
         },
         "homeWidgets": "Nástěnky na domovské stránce",
-        "homeWidgetsNone": "Zatím není nástěnka na výběr: nejprve vytvořte nástěnku v projektu této organizace."
+        "homeWidgetsNone": "Zatím není nástěnka na výběr. Otevřete projekt této organizace, přejděte na Nástěnky a vytvořte ji; příště se nabídne zde."
       }
     },
     "contactRole": {

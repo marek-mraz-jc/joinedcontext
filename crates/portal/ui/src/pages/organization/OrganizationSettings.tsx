@@ -189,6 +189,7 @@ export function OrganizationSettings(): JSX.Element {
   });
   const widgets = (widgetOptions.data?.options ?? []).map((option) => ({
     reference: option.reference,
+    // The title a person knows it by, and the `project/name` a refusal names it by.
     label: `${localized(option.title as string | Record<string, string> | null, i18n.language, option.name)} (${option.reference})`,
   }));
   const form: EditableForm = {
@@ -200,7 +201,7 @@ export function OrganizationSettings(): JSX.Element {
       appearance: {
         homeWidgets:
           widgets.length > 0
-            ? { "ui:widget": "checkboxes" }
+            ? { "ui:widget": "checkboxes", "ui:options": { stacked: true } }
             : { "ui:help": t("organization.field.appearance.homeWidgetsNone"), "ui:options": { addable: false } },
       },
     },

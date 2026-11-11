@@ -228,7 +228,8 @@
     "mapLanguage": "Language",
     "mapAddLanguage": "Add a language",
     "advancedFields": "Advanced",
-    "advancedFieldsHint": "Runner settings most sources leave at their defaults."
+    "advancedFieldsHint": "Runner settings most sources leave at their defaults.",
+    "chosenOf": "{chosen} of {max} chosen"
   },
   "approvals": {
     "lead": "Every change to the project is a proposal here until an approver merges it.",
@@ -7603,7 +7604,7 @@
           "text": "Text"
         },
         "homeWidgets": "Home page dashboards",
-        "homeWidgetsNone": "No dashboard to offer yet: make one in a project of this organization first."
+        "homeWidgetsNone": "No dashboard to offer yet. Open a project of this organization, go to Dashboards and make one; it is offered here next time."
       }
     },
     "contactRole": {

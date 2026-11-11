@@ -129,6 +129,7 @@ test.describe("an Organization's home page dashboards", () => {
       await expect(field.getByRole("checkbox")).toHaveCount(2);
       await field.getByRole("checkbox", { name: "Air quality overview (ovzdusie/prehlad)" }).check();
       await expect(page.getByText(/each person sees the ones they may open/)).toBeVisible();
+      await expect(field).toContainText("1 of 6 chosen");
       await field.scrollIntoViewIfNeeded();
       await page.screenshot({ path: process.env.JC_EVIDENCE_DIR ? join(process.env.JC_EVIDENCE_DIR, `widgets-form-${width}.png`) : undefined });
       await page.getByRole("button", { name: "Propose change" }).click();
@@ -159,10 +160,10 @@ test.describe("an Organization's home page dashboards", () => {
       await page.setViewportSize({ width, height: 900 });
       await stubApi(page, { proposed: [], options: [] });
       await openWidgets(page);
-      await expect(page.getByText("No dashboard to offer yet: make one in a project of this organization first.")).toBeVisible();
+      await expect(page.getByText("No dashboard to offer yet. Open a project of this organization, go to Dashboards and make one; it is offered here next time.")).toBeVisible();
       // Nothing to add by hand: a typed name would only be refused.
       await expect(page.locator("#root_appearance_homeWidgets").getByRole("button", { name: /Add/ })).toHaveCount(0);
-      await page.getByText("No dashboard to offer yet").scrollIntoViewIfNeeded();
+      await page.getByText(/No dashboard to offer yet/).scrollIntoViewIfNeeded();
       await page.screenshot({ path: process.env.JC_EVIDENCE_DIR ? join(process.env.JC_EVIDENCE_DIR, `widgets-empty-${width}.png`) : undefined });
     });
   }
