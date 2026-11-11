@@ -6357,6 +6357,7 @@ output_error{stream="kpi"} 6
             _staged: Vec::new(),
             projects: BTreeMap::new(),
             unstaged: Vec::new(),
+            unloaded: Vec::new(),
             listings: BTreeMap::new(),
         };
         let invalid = |name: &str| format!("{}  notAField: 1\n", PIPELINE.replace("NAME", name));
