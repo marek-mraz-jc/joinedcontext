@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { EntityGrid } from "../src/grid/EntityGrid";
 import { parseGridConfig } from "../src/grid/config";
-import { fixtureSource } from "../src/grid/source";
+import { failureOf } from "../src/grid/useEntityGrid";
+import { SourceError, fixtureSource } from "../src/grid/source";
 
 const entities = ["Kamppi", "Kallio"].map((title, i) => ({
   id: `urn:ngsi-ld:PointOfInterest:00313271${i}`,
@@ -60,6 +61,30 @@ describe("EntityGrid compact (T-6748)", () => {
     fireEvent.click(retry);
     await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
+  it("says a busy source in its own words, the source's sentence under the disclosure, and no count over the error (T-6781)", async () => {
+    const real = fixtureSource(entities);
+    const busy = {
+      ...real,
+      query: (q: Parameters<typeof real.query>[0], page: Parameters<typeof real.query>[1]) =>
+        page.limit > 0 ? Promise.reject(new SourceError(503, "the broker is busy")) : Promise.resolve({ rows: [], total: 161 }),
+    };
+    const { container } = render(<EntityGrid config={config} source={busy} compact filterRow={false} />);
+    await screen.findByRole("button", { name: "Try again" });
+    const line = container.querySelector(".jc-grid-error")!;
+    expect(line).toHaveTextContent("the data source is busy right now");
+    expect(line.querySelector("details")).toHaveTextContent("the broker is busy");
+    expect(line.firstChild?.textContent).not.toContain("the broker is busy");
+    expect(container.querySelector(".jc-grid-total")).toBeNull();
+    expect(container.querySelector(".jc-grid-pages")).toBeNull();
+    expect(container).not.toHaveTextContent("161");
+  });
+
+  it("says a timed-out source in its own words (T-6781)", () => {
+    const labels = { busy: "busy", timedOut: "slow" };
+    expect(failureOf(new SourceError(504, "upstream timeout"), labels)).toEqual({ error: "slow", detail: "upstream timeout" });
+    expect(failureOf(new SourceError(500, "boom"), labels)).toEqual({ error: "boom", detail: null });
   });
 
   it("keeps a column whose rows differ", async () => {

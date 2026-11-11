@@ -5725,6 +5725,8 @@
     "showMetadata": "Zobraziť metadáta pre",
     "error": "Nenačítané, skúste znova",
     "retry": "Skúsiť znova",
+    "busy": "zdroj údajov je práve zaneprázdnený",
+    "timedOut": "zdroj údajov neodpovedal včas",
     "filter": "Filter",
     "noFilter": "Ľubovoľné",
     "ops": {

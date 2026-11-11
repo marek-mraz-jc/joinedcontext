@@ -5725,6 +5725,8 @@
     "showMetadata": "Show metadata for",
     "error": "Not loaded, try again",
     "retry": "Try again",
+    "busy": "the data source is busy right now",
+    "timedOut": "the data source took too long to answer",
     "filter": "Filter",
     "noFilter": "Any",
     "ops": {

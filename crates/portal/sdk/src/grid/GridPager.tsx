@@ -23,8 +23,11 @@ export function GridPager({ view, mode }: { view: GridView; mode?: "status" | "p
   const { rows, state, setOffset } = grid;
   const { classNames, pageSizes, onPageSize } = props;
   const pageSize = options.config.pageSize;
+  // A failed read shows no rows: the count read beside it (T-6541) may still have answered, and a
+  // total or numbered pages over an error line would promise rows that are not there.
+  const total = grid.error ? undefined : grid.total;
   // Without a total the pager cannot know the last page: it shows only next and previous.
-  const totalPages = grid.total !== undefined ? Math.max(1, Math.ceil(grid.total / pageSize)) : undefined;
+  const totalPages = total !== undefined ? Math.max(1, Math.ceil(total / pageSize)) : undefined;
   const currentPage = Math.floor(state.offset / pageSize) + 1;
   if ((mode ?? (options.virtual === true && !options.paged ? "status" : "paged")) === "status") {
     return (
@@ -34,8 +37,8 @@ export function GridPager({ view, mode }: { view: GridView; mode?: "status" | "p
         <span className="jc-grid-total">
           {grid.loading && rows.length === 0
             ? labels.loading
-            : grid.total !== undefined
-              ? `${rows.length} ${labels.of} ${grid.total} ${labels.loaded}`
+            : total !== undefined
+              ? `${rows.length} ${labels.of} ${total} ${labels.loaded}`
               : `${rows.length} ${labels.loaded} · ${labels.noTotal}`}
         </span>
         {grid.loadingMore && <span className="jc-grid-loading-more">{labels.loading}</span>}
@@ -79,8 +82,8 @@ export function GridPager({ view, mode }: { view: GridView; mode?: "status" | "p
       )}
       {/* The endpoint's own count, not the page's: an answer the gateway narrowed carries none,
           and then the footer says nothing rather than a number it guessed (R22). */}
-      {grid.total !== undefined ? (
-        <span className="jc-grid-total">{labels.matching.includes("{n}") ? labels.matching.replace("{n}", String(grid.total)) : `${grid.total} ${labels.matching}`}</span>
+      {total !== undefined ? (
+        <span className="jc-grid-total">{labels.matching.includes("{n}") ? labels.matching.replace("{n}", String(total)) : `${total} ${labels.matching}`}</span>
       ) : rows.length > 0 ? (
         // No total (R22): which rows this page holds, and that more may follow when it is full.
         <span className="jc-grid-total">{shownLine(labels, state.offset, rows.length, pageSize)}</span>

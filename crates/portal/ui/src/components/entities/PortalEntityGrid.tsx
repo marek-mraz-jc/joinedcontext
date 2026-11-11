@@ -115,6 +115,8 @@ export function gridLabels(t: (key: string, values?: Record<string, string>) => 
     showMetadata: t("entityGrid.showMetadata"),
     error: t("entityGrid.error"),
     retry: t("entityGrid.retry"),
+    busy: t("entityGrid.busy"),
+    timedOut: t("entityGrid.timedOut"),
     filter: t("entityGrid.filter"),
     noFilter: t("entityGrid.noFilter"),
     filterHintText: t("entityGrid.hint.filterText"),

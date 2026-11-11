@@ -5725,6 +5725,8 @@
     "showMetadata": "Metadaten anzeigen für",
     "error": "Nicht geladen, versuchen Sie es erneut",
     "retry": "Erneut versuchen",
+    "busy": "die Datenquelle ist gerade ausgelastet",
+    "timedOut": "die Datenquelle hat zu lange nicht geantwortet",
     "filter": "Filter",
     "noFilter": "Beliebig",
     "ops": {
