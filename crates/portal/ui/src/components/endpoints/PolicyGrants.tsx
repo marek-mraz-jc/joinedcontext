@@ -15,7 +15,7 @@ import { ORG_NAMESPACE, asManifests, localized } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
 import { useReadableList } from "../../api/permissions";
 import { granteeName, operationAreas } from "../AccessWords";
-import { Alert, Badge, Button } from "../ui";
+import { Alert, Badge, Button, buttonClass } from "../ui";
 import { PageFailed } from "../ui/PageState";
 import { expandOperations, grantChanges, groupOf } from "./operationGroups";
 import { policyRules } from "./policyBinding";
@@ -98,7 +98,7 @@ export function PolicyGrants({
           <Link
             to="/projects/$project/$plural/$name/edit"
             params={{ project, plural: "endpoints", name: binding.endpoint }}
-            className="focus-ring rounded-sm font-medium text-fg underline underline-offset-2"
+            className={buttonClass("primary", "md")}
           >
             {t("endpoints.page.policyNoneAction")}
           </Link>

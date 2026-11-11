@@ -364,10 +364,9 @@ fn writable(manifest: &Value) -> Value {
 /// What approving `request` proposes (PL-91): the Endpoint admitting the requesting project when
 /// its audience is a list, and the Policy granting exactly what was asked to the pipeline's
 /// account until the request's end.
-/// A person's grant is the Policy alone: the person reads the Endpoint in its own project already.
-/// An Endpoint that names its Policies, and one the grant changes anyway, lists `refs` (P-18,
-/// T-6740): what it binds with the new grant, so the grant reaches it and nothing it served is
-/// dropped.
+/// A person's grant changes no audience: the person reads the Endpoint in its own project already.
+/// The Endpoint always lists `refs` (P-18, T-6740, T-6742): what it binds with the new grant, so
+/// the grant reaches it and nothing it served is dropped; one naming no Policy binds none.
 pub fn grant_bundle(request: &AccessRequest, endpoint: &Value, refs: &[String]) -> Vec<Value> {
     let mut manifests = Vec::with_capacity(2);
     let audience = endpoint["spec"]["audience"].as_str().unwrap_or("project");
@@ -376,18 +375,12 @@ pub fn grant_bundle(request: &AccessRequest, endpoint: &Value, refs: &[String]) 
         Requester::Person(_) => ("user", true),
     };
     let admits = !person && audience != "organization" && audience != "public";
-    let names =
-        !endpoint["spec"]["policyRef"].is_null() || !endpoint["spec"]["policyRefs"].is_null();
-    if admits || names {
-        let mut updated = writable(endpoint);
-        if let Some(spec) = updated["spec"].as_object_mut() {
-            spec.remove("policyRef");
-            spec.insert("policyRefs".into(), json!(refs));
-        }
-        manifests.push(updated);
+    let mut updated = writable(endpoint);
+    if let Some(spec) = updated["spec"].as_object_mut() {
+        spec.remove("policyRef");
+        spec.insert("policyRefs".into(), json!(refs));
     }
     if admits {
-        let updated = manifests.last_mut().expect("pushed above");
         let mut allowed: Vec<String> = updated["spec"]["allowedProjects"]
             .as_array()
             .map(|list| {
@@ -403,6 +396,7 @@ pub fn grant_bundle(request: &AccessRequest, endpoint: &Value, refs: &[String]) 
         updated["spec"]["audience"] = json!("project-list");
         updated["spec"]["allowedProjects"] = json!(allowed);
     }
+    manifests.push(updated);
     let information: Vec<Value> = request
         .types
         .iter()
@@ -908,10 +902,13 @@ mod tests {
         assert_eq!(policy["spec"]["validity"]["to"], "2027-01-31T23:59:59Z");
         assert_eq!(policy["spec"]["contextSpaceRef"]["name"], "air");
 
-        // An organization-wide Endpoint keeps its audience: only the Policy is proposed.
+        // An organization-wide Endpoint keeps its audience; naming no Policy, it lists the
+        // grant, since one naming none binds none (P-18, T-6742).
         let open = grant_bundle(&request(), &endpoint("organization", &[]), &refs());
-        assert_eq!(open.len(), 1);
-        assert_eq!(open[0]["kind"], "Policy");
+        assert_eq!(open.len(), 2);
+        assert_eq!(open[0]["spec"]["audience"], "organization");
+        assert_eq!(open[0]["spec"]["policyRefs"], json!(refs()));
+        assert_eq!(open[1]["kind"], "Policy");
 
         // One naming its Policies lists the grant too, or the grant would not reach it (P-18,
         // T-6740); `refs` is what it named and the new grant.
@@ -1012,7 +1009,7 @@ mod tests {
     #[test]
     fn a_grant_already_held_makes_the_request_pointless() {
         let request = request();
-        let policy = grant_bundle(&request, &endpoint("organization", &[]), &refs())[0].clone();
+        let policy = grant_bundle(&request, &endpoint("organization", &[]), &refs())[1].clone();
         let mut open = policy.clone();
         open["spec"].as_object_mut().map(|s| s.remove("validity"));
         assert!(already_granted(
@@ -1078,8 +1075,9 @@ mod tests {
     fn a_persons_approval_proposes_one_policy_for_that_person() {
         let request = person_request();
         let bundle = grant_bundle(&request, &endpoint("project-list", &["traffic"]), &refs());
-        assert_eq!(bundle.len(), 1, "{bundle:?}");
-        let policy = &bundle[0];
+        assert_eq!(bundle.len(), 2, "{bundle:?}");
+        assert_eq!(bundle[0]["spec"]["allowedProjects"], json!(["traffic"]));
+        let policy = &bundle[1];
         assert_eq!(policy["kind"], "Policy");
         assert_eq!(policy["metadata"]["name"], "air-quality-ar-0a1b2c3d4e5f");
         assert_eq!(policy["metadata"]["namespace"], "helsinki");
@@ -1106,7 +1104,7 @@ mod tests {
     fn a_persons_revoke_ends_only_the_policy() {
         let request = person_request();
         let policy =
-            grant_bundle(&request, &endpoint("project-list", &["helsinki"]), &refs())[0].clone();
+            grant_bundle(&request, &endpoint("project-list", &["helsinki"]), &refs())[1].clone();
         let now = time::macros::datetime!(2026-11-01 10:00 UTC);
         let ended = revoke_bundle(
             &request,

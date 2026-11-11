@@ -967,13 +967,13 @@ async fn a_person_asks_on_the_endpoint_and_an_owner_approves() {
         &endpoint,
         &["urn:ngsi-ld:Policy:x.org:y:z".to_owned()],
     );
-    assert_eq!(bundle.len(), 1, "{bundle:?}");
+    assert_eq!(bundle.len(), 2, "{bundle:?}");
     assert_eq!(
-        bundle[0]["spec"]["assignee"],
+        bundle[1]["spec"]["assignee"],
         json!({ "kind": "user", "id": id_of("eve") })
     );
     assert_eq!(
-        bundle[0]["spec"]["information"],
+        bundle[1]["spec"]["information"],
         json!([{ "entities": [{ "type": "AirQualityObserved" }] }])
     );
 
