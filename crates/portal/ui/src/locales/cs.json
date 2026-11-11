@@ -5176,7 +5176,8 @@
       "noOthers": "Tuto roli nemá žádná jiná skupina.",
       "give": "Přidělit roli skupině",
       "groupsUnreadable": "Vaše role nezobrazuje skupiny organizace.",
-      "personHint": "Hledejte podle jména nebo e-mailu, např. Jana Nováková. Skupina si zapíše identifikátor osoby, ne adresu."
+      "personHint": "Hledejte podle jména nebo e-mailu, např. Jana Nováková. Skupina si zapíše identifikátor osoby, ne adresu.",
+      "groupHint": "Jedna ze skupin organizace. Udělení role navrhne schvalovateli změnu aplikace."
     },
     "check": {
       "green": "Funguje",

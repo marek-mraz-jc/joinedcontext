@@ -186,6 +186,19 @@ async fn an_attr_not_listed_unknown_or_hidden_is_one_400() -> Result<(), String>
 }
 
 #[tokio::test]
+async fn without_attr_the_answer_is_the_closed_list() -> Result<(), String> {
+    let (_broker, app) = fixture(None).await?;
+    let a = get(&app, FACETS).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+    let body: Value = serde_json::from_str(&a.text).map_err(|e| e.to_string())?;
+    assert_eq!(
+        body,
+        json!({"facets": ["category", "address.addressLocality"]})
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn only_an_anonymous_answer_is_shared_and_a_write_is_refused() -> Result<(), String> {
     let (_broker, app) = fixture(None).await?;
     let uri = format!("{FACETS}?attr=category");
@@ -194,6 +207,9 @@ async fn only_an_anonymous_answer_is_shared_and_a_write_is_refused() -> Result<(
         anonymous.header("cache-control").as_deref(),
         Some("public, max-age=300")
     );
+    assert!(anonymous
+        .header("vary")
+        .is_some_and(|v| v.starts_with("Authorization, Cookie, NGSILD-Tenant")));
     for (name, value) in [("Authorization", "Bearer x"), ("Cookie", "s=1")] {
         let a = send(&app, Method::GET, &uri, &[(name, value)], None).await;
         assert_eq!(

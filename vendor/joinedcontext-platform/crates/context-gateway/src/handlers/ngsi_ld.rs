@@ -19,9 +19,9 @@ use crate::handlers::respond::json_response;
 use crate::handlers::schema;
 use crate::handlers::writes::{
     accepted_payload, batch_entry_id, batch_result, body_length, empty_space, filled_units,
-    hidden_refusal, judge_write, merged_batch, names_no_tenant, owned_guarded, quality_judged,
-    refusal_entries, refused, unsupported_media_type, with_filled_units, write_share, HeldDelete,
-    HeldWrite, Judged, Refused,
+    hidden_refusal, judge_write, merged_batch, names_no_tenant, owned_guarded, owner_refusal,
+    quality_judged, refusal_entries, refused, unsupported_media_type, with_filled_units,
+    write_share, HeldDelete, HeldWrite, Judged, Refused,
 };
 use crate::middleware::response::RESULTS_RESTRICTED;
 use crate::pdp::evaluator::Constraints;
@@ -1188,11 +1188,24 @@ pub(crate) async fn view_payload(
         };
     }
     let before = sent.len();
-    one_entity_per_create(endpoint, operation, sent)?;
+    // The Organization owning the space, when its URNs must name it (ADR-N-068).
+    let owner = gateway.urn_owner(&endpoint.project);
+    let owner_id = owner.as_deref().map(jc_core::names::org_id);
+    one_entity_per_create(endpoint, operation, sent, owner_id.as_deref())?;
     if operation.is_write() {
         // A caller the Endpoint's Policy refuses learns that alone, not why the body would be
-        // refused (DM-61's model, a hidden attribute), as `model_judged` answers too.
-        if let Err(answer) = endpoint_held(endpoint, path, operation, sent, divided) {
+        // refused (DM-61's model, a hidden attribute, another owner's URN), as `model_judged`
+        // answers too.
+        let held = endpoint_held(endpoint, path, operation, sent, divided).and_then(|()| {
+            match owner.as_deref().and_then(|domain| owner_refusal(sent, operation, domain)) {
+                Some(problem) => {
+                    tracing::info!(slug = %endpoint.slug, "write refused: the URN names another owner");
+                    Err(Box::new(problem.into_response()))
+                }
+                None => Ok(()),
+            }
+        });
+        if let Err(answer) = held {
             let requested = query::requested(params);
             if gateway
                 .pdp
@@ -1289,13 +1302,14 @@ fn one_entity_per_create(
     endpoint: &Endpoint,
     operation: Operation,
     sent: &mut Vec<u8>,
+    owner: Option<&str>,
 ) -> Result<(), Box<Response<Body>>> {
     let Some(creates) = &endpoint.creates else {
         return Ok(());
     };
     match operation {
         Operation::CreateEntity if creates.mint_ids && !sent.is_empty() => {
-            *sent = crate::creates::minted(sent)
+            *sent = crate::creates::minted(sent, owner)
                 .map_err(|problem| Box::new(problem.into_response()))?;
         }
         Operation::CreateBatch | Operation::UpsertBatch | Operation::UpsertTemporal => {
@@ -1593,17 +1607,17 @@ mod tests {
     fn one_entity_per_create_refuses_a_batch_where_creates_count() {
         let mut endpoint = crate::mcp::catalog::tests::fixture();
         let mut sent = br#"[{"id":"urn:ngsi-ld:T:1","type":"T"}]"#.to_vec();
-        assert!(one_entity_per_create(&endpoint, Operation::CreateBatch, &mut sent).is_ok());
+        assert!(one_entity_per_create(&endpoint, Operation::CreateBatch, &mut sent, None).is_ok());
         endpoint.creates = Some(jc_core::kinds::Creates {
             mint_ids: true,
             ..Default::default()
         });
-        let refused = one_entity_per_create(&endpoint, Operation::UpsertBatch, &mut sent);
+        let refused = one_entity_per_create(&endpoint, Operation::UpsertBatch, &mut sent, None);
         let refused = refused.err().map(|answer| answer.status());
         assert_eq!(refused, Some(StatusCode::BAD_REQUEST));
 
         let mut one = br#"{"id":"urn:ngsi-ld:T:mine","type":"T"}"#.to_vec();
-        assert!(one_entity_per_create(&endpoint, Operation::CreateEntity, &mut one).is_ok());
+        assert!(one_entity_per_create(&endpoint, Operation::CreateEntity, &mut one, None).is_ok());
         assert!(!String::from_utf8_lossy(&one).contains("mine"));
     }
 

@@ -210,3 +210,20 @@ def test_anonymous_runs_part_one_alone_and_names_parts_two_to_four_skipped():
     skips = {r["id"]: r for r in s.r.rows}
     assert set(skips) == {"door", "portal", "portal.personas", "connector"}
     assert all(r["result"] == "skip" and "--anonymous" in r["reason"] for r in skips.values())
+
+
+@pytest.mark.parametrize("synthetic,seeded,result", [
+    (True, 2, "pass"),    # smoke 43074228505: linked-events wrote 21 Events past the bundle's 2
+    (True, 1, "fail"),    # a seeded row went missing under the Pipeline's rows
+    (False, 2, "fail")])  # an export of a live installation grows nothing
+def test_a_count_grown_by_the_rehearsal_pipelines_counts_the_seeded_rows(synthetic, seeded, result):
+    from types import SimpleNamespace as NS
+
+    def query(args):
+        n = seeded if "rehearsal-" in args.get("idPattern", "") else 23
+        return answer({"jsonrpc": "2.0", "id": 1, "result": {"structuredContent": {"entities": [], "total": n}}}), ""
+
+    s = object.__new__(suite.Suite)
+    s.x, s.hub, s.r = NS(index={"synthetic": synthetic}), NS(query=query), suite.Results("mcp", "http://localhost")
+    s.hub_count(NS(slug="e"), "hub p/e", "Event", 2, {"count": 2})
+    assert [(r["id"], r["result"]) for r in s.r.rows] == [("hub.query.count", result)]

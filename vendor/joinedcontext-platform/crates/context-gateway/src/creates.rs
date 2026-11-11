@@ -9,11 +9,13 @@ use std::sync::Mutex;
 
 const DAY: u64 = 86_400;
 
-/// The body of a create with its `id` replaced by `urn:ngsi-ld:{Type}:{uuid}`.
+/// The body of a create with its `id` replaced by `urn:ngsi-ld:{Type}:{uuid}`, or
+/// `urn:ngsi-ld:{Type}:{owner}:{uuid}` when the space's Organization id `owner` is given
+/// (ADR-N-068).
 ///
 /// The type is read from the body; an IRI or CURIE gives its local name, the part the URN's
 /// type segment holds. A body that is not one entity with a string `type` is refused.
-pub fn minted(sent: &[u8]) -> Result<Vec<u8>, Box<ProblemDetails>> {
+pub fn minted(sent: &[u8], owner: Option<&str>) -> Result<Vec<u8>, Box<ProblemDetails>> {
     let refused =
         |detail: &str| Box::new(ProblemDetails::bad_request().with_detail(detail.to_owned()));
     let mut entity: Value =
@@ -28,7 +30,8 @@ pub fn minted(sent: &[u8]) -> Result<Vec<u8>, Box<ProblemDetails>> {
         .filter(|t| !t.is_empty())
         .ok_or_else(|| refused("the entity names no type"))?
         .to_owned();
-    let id = format!("urn:ngsi-ld:{entity_type}:{}", uuid_v4()?);
+    let owner = owner.map(|owner| format!("{owner}:")).unwrap_or_default();
+    let id = format!("urn:ngsi-ld:{entity_type}:{owner}{}", uuid_v4()?);
     object.insert("id".to_owned(), Value::String(id));
     serde_json::to_vec(&entity).map_err(|_| Box::new(ProblemDetails::internal()))
 }
@@ -161,13 +164,28 @@ mod tests {
     fn minted_replaces_the_callers_id() {
         let body =
             br#"{"id":"urn:ngsi-ld:Report:mine","type":"https://uri.fiware.org/ns/Report","x":1}"#;
-        let out: Value = serde_json::from_slice(&minted(body).expect("minted")).expect("json");
+        let out: Value =
+            serde_json::from_slice(&minted(body, None).expect("minted")).expect("json");
         let id = out["id"].as_str().expect("id");
         assert!(id.starts_with("urn:ngsi-ld:Report:"), "{id}");
         assert_ne!(id, "urn:ngsi-ld:Report:mine");
         assert_eq!(id.len(), "urn:ngsi-ld:Report:".len() + 36);
         assert_eq!(out["x"], 1);
-        assert_ne!(minted(body).expect("again"), minted(body).expect("again"));
+        assert_ne!(
+            minted(body, None).expect("again"),
+            minted(body, None).expect("again")
+        );
+    }
+
+    /// T-6769: a form's id carries the space's Organization id when the owner check runs.
+    #[test]
+    fn minted_carries_the_owner_when_one_is_given() {
+        let body = br#"{"type":"KeyPerformanceIndicator"}"#;
+        let out: Value =
+            serde_json::from_slice(&minted(body, Some("sk_bbsk")).expect("minted")).expect("json");
+        let id = out["id"].as_str().expect("id");
+        let urn: jc_core::Urn = id.parse().expect("a URN");
+        assert_eq!(urn.owner(), Some("sk_bbsk"), "{id}");
     }
 
     #[test]
@@ -179,7 +197,7 @@ mod tests {
             br#"{"type":"x:"}"#,
             b"nope",
         ] {
-            assert_eq!(minted(body).expect_err("refused").status, 400);
+            assert_eq!(minted(body, None).expect_err("refused").status, 400);
         }
     }
 

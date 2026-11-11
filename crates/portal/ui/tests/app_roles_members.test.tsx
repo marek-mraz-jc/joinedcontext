@@ -180,6 +180,8 @@ describe("an application's roles and members", () => {
     const { sent } = renderSection();
     const steward = await role("Steward");
     const picker = within(steward).getByLabelText(en.apps.roles.group);
+    // The smoke ui walker's field-hint check: the picker carries a hint with an example.
+    expect(picker).toHaveAccessibleDescription(en.apps.roles.groupHint);
     await vi.waitFor(() => expect(within(picker).getByRole("option", { name: "alert-editors" })).toBeInTheDocument());
     await user.selectOptions(picker, "alert-editors");
     await user.click(within(steward).getByRole("button", { name: en.apps.roles.give }));

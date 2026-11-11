@@ -77,7 +77,7 @@ pub mod policy {
     pub use antares_api::policy::metadata::STRIPPED as METADATA_STRIPPED;
     pub use antares_api::policy::{
         Decision, DecisionFuture, Filter, Metadata, NotifyDecision, Operation, PolicyEngine, Rule,
-        Subject,
+        Subject, SUBJECT_HEADERS,
     };
 }
 
