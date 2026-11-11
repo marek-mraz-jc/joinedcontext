@@ -656,6 +656,55 @@ def add_rehearsal_origin(realm: dict, base: str) -> tuple[dict, int]:
 PORTAL_CALLBACK = "/api/v1/auth/callback"
 
 
+SSO_CHECK_DONE = "/api/v1/auth/sso-check/done"
+ORG_HOST = re.compile(r"(127\.0\.0\.1|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+localhost)(?::\d{1,5})?")
+
+
+def organization_portals(toml_file: str) -> list[str]:
+    """The `portal` host of each [[organizations]] in a jc.toml fragment (REHEARSAL_JC_TOML_EXTRA)."""
+    import tomllib
+    orgs = tomllib.loads(Path(toml_file).read_text()).get("organizations", [])
+    return [str((o.get("hosts") or {}).get("portal") or "").strip().lower() for o in orgs]
+
+
+def add_organization_portals(realm: dict, base: str, hosts: list[str]) -> tuple[dict, list[str]]:
+    """Each [[organizations]] Portal host of a host-mode rehearsal gets, in `portal-api`, its exact
+    callback http://<host>/api/v1/auth/callback, its web origin and (when the client lists logout
+    targets) http://<host>/, and in `portal-ui` its exact sso-check callback and web origin: the
+    entries the loopback base gets, for a realm the deployment owns (jc writes org-host redirects only
+    into a realm it owns, bins/jc/src/setup.rs portal_realm_files). Only on an http loopback base;
+    a host that is not 127.0.0.1 or under .localhost is refused (SystemExit), never a wildcard.
+    Answers the realm and the URLs added."""
+    b = urllib.parse.urlsplit(base or "")
+    if b.scheme != "http" or b.hostname not in ("127.0.0.1", "localhost") or not hosts:
+        return realm, []
+    bad = [h for h in hosts if not ORG_HOST.fullmatch(h)]
+    if bad:
+        raise SystemExit(f"[[organizations]] portal hosts {bad}: a rehearsal names only 127.0.0.1 or *.localhost hosts")
+    want = {"portal-api": PORTAL_CALLBACK, "portal-ui": SSO_CHECK_DONE}
+    added, clients = [], []
+    for c in realm.get("clients", []):
+        path = want.get(c.get("clientId"))
+        if path and c.get("redirectUris"):
+            c = dict(c, redirectUris=list(c["redirectUris"]), webOrigins=list(c.get("webOrigins") or []))
+            attrs = dict(c.get("attributes") or {})
+            logout = attrs.get("post.logout.redirect.uris")
+            for h in hosts:
+                for key, url in (("redirectUris", f"http://{h}{path}"), ("webOrigins", f"http://{h}")):
+                    if url not in c[key]:
+                        c[key].append(url)
+                        added.append(url)
+                if c.get("clientId") == "portal-api" and logout not in (None, "", "+"):
+                    targets = logout.split("##")
+                    if f"http://{h}/" not in targets:
+                        logout = "##".join([*targets, f"http://{h}/"])
+                        added.append(f"http://{h}/")
+            if logout not in (None, "", "+"):
+                c["attributes"] = {**attrs, "post.logout.redirect.uris": logout}
+        clients.append(c)
+    return {**realm, "clients": clients}, added
+
+
 def add_loopback_callback(realm: dict, base: str) -> tuple[dict, str | None]:
     """`portal-api` gets the port-less loopback twin `http://<base host>/api/v1/auth/callback` of
     its one exact callback, when the base is http on 127.0.0.1 or localhost: kaisatsu admits any
@@ -896,6 +945,9 @@ def cmd_realms(a):
             clean, callback = add_loopback_callback(clean, a.public_base)
             if callback:
                 print(f"realm {name}: portal-api signs in on any loopback port ({callback})")
+            if a.organizations:
+                clean, urls = add_organization_portals(clean, a.public_base, organization_portals(a.organizations))
+                print(f"realm {name}: {len(urls)} Portal URLs of the [[organizations]] hosts put in ({a.organizations})")
         clean, accounts = add_service_accounts(clean, json.loads(SHIPPED_REALM.read_text()))
         if accounts:
             print(f"realm {name}: service accounts of {accounts} taken from jc's shipped realm (the export has none)")
@@ -2402,6 +2454,8 @@ def main(argv=None):
     s = sub.add_parser("realms"); s.add_argument("--export", required=True); s.add_argument("--out", required=True)
     s.add_argument("--kaisatsu-bin", help="leave out the mappers this kaisatsu refuses (named in the report)")
     s.add_argument("--public-base", help="the rehearsal's own address: a twin of each client URL on the source host")
+    s.add_argument("--organizations", help="a jc.toml fragment (REHEARSAL_JC_TOML_EXTRA): each [[organizations]] "
+                   "portal host gets the Portal's exact callbacks, on a loopback --public-base only")
     s.add_argument("--people", help="a 0700 dir holding users-<realm>.jsonl (dev only): people without credentials")
     s.add_argument("--demo-users", help="the deployment's demo-users.yaml: the personas that keep e-mail and names")
     s.add_argument("--secrets-dir", help="kaisatsu's import secrets dir: write each secret as $(file:NAME), read under it")

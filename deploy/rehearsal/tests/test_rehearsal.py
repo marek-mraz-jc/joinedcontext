@@ -1397,6 +1397,55 @@ def test_portal_api_gets_one_port_less_loopback_callback_and_nothing_else():
     assert rh.add_loopback_callback({"clients": [{"clientId": "portal-api"}]}, "http://127.0.0.1:1")[1] is None
 
 
+def org_realm():
+    p = "https://portal.dev.joinedcontext.com"
+    return {"clients": [
+        {"clientId": "portal-api", "rootUrl": p, "redirectUris": [f"{p}/api/v1/auth/callback"], "webOrigins": [p],
+         "attributes": {"post.logout.redirect.uris": f"{p}/"}},
+        {"clientId": "portal-ui", "redirectUris": [f"{p}/*"], "webOrigins": [p]},
+        {"clientId": "edge", "redirectUris": [f"{p}/*"], "webOrigins": [p]},
+    ]}
+
+
+def test_an_organization_localhost_portal_host_gets_its_exact_callbacks(tmp_path):
+    """Gate 2026-11-11T041800Z-gr, multiorg host mode: the imported dev realm is the deployment's,
+    so jc writes no redirect for portal.barcelona.localhost:23000 and kaisatsu answered the
+    sign-in 400. Each [[organizations]] Portal host gets the exact portal-api callback, web origin
+    and logout target and the exact portal-ui sso-check callback; no wildcard, no other client."""
+    extra = tmp_path / "orgs.toml"
+    extra.write_text('[[organizations]]\nname = "hel"\ncatalogue_id = "00000000-0000-7000-8000-0000000000a1"\n'
+                     'hosts = { portal = "portal.hel.localhost:23000", opendata = "opendata.hel.localhost:23000", '
+                     'api = "api.hel.localhost:23000", mcp = "mcp.hel.localhost:23000" }\n')
+    hosts = rh.organization_portals(str(extra))
+    assert hosts == ["portal.hel.localhost:23000"]
+    realm = org_realm()
+    out, added = rh.add_organization_portals(realm, "http://127.0.0.1:23000", hosts)
+    by = {c["clientId"]: c for c in out["clients"]}
+    h = "http://portal.hel.localhost:23000"
+    assert by["portal-api"]["redirectUris"][-1] == f"{h}/api/v1/auth/callback"
+    assert by["portal-api"]["webOrigins"][-1] == h
+    assert by["portal-api"]["attributes"]["post.logout.redirect.uris"].split("##")[-1] == f"{h}/"
+    assert by["portal-ui"]["redirectUris"][-1] == f"{h}/api/v1/auth/sso-check/done"
+    assert by["edge"] == realm["clients"][2]
+    assert sorted(added) == sorted([f"{h}/api/v1/auth/callback", h, f"{h}/", f"{h}/api/v1/auth/sso-check/done", h])
+    assert not any("*" in u for u in added)
+    # idempotent
+    assert rh.add_organization_portals(out, "http://127.0.0.1:23000", hosts) == (out, [])
+
+
+@pytest.mark.parametrize("host", ["portal.hel.example.com:23000", "portal.hel.localhost.evil.example",
+                                  "127.0.0.1.evil.example", "10.0.0.5:23000", "*.localhost:23000", "localhost"])
+def test_a_non_loopback_organization_portal_host_is_refused(host):
+    with pytest.raises(SystemExit):
+        rh.add_organization_portals(org_realm(), "http://127.0.0.1:23000", ["portal.hel.localhost:23000", host])
+
+
+def test_a_non_loopback_base_adds_no_organization_portal_url():
+    realm = org_realm()
+    for base in ("https://127.0.0.1:23000", "http://10.0.0.5:23000", "http://portal.smartcity.joinedcontext.com", None):
+        assert rh.add_organization_portals(realm, base, ["portal.hel.localhost:23000"]) == (realm, [])
+
+
 def test_the_port_less_callback_comes_only_with_the_rehearsal_base():
     """`realms` adds the twin only beside --public-base, which up.sh alone passes (the cluster
     import of CLUSTER-IMPORT.md and the prod export never do)."""
