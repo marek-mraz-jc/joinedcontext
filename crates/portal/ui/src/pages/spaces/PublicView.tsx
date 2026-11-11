@@ -15,6 +15,7 @@ import {
   Button,
 } from "../../components/ui";
 import { LazyAdminGrid } from "../../components/grid/LazyAdminGrid";
+import { useIsPhone } from "../../phone";
 
 /** The rows a published view shows. */
 export const PUBLIC_ROWS = 100;
@@ -167,6 +168,7 @@ export function PublicViewPage({ slug }: { slug: string }): JSX.Element {
     [rows.data],
   );
   const locale = i18n.language;
+  const phone = useIsPhone();
   const typeLabel = (name: string) => columnLabel(undefined, name, locale);
   const name = inLanguage(entry.data?.["dct:title"], locale);
   const title = name ?? (type ? typeLabel(type) : t("spaces.share.heading"));
@@ -224,8 +226,10 @@ export function PublicViewPage({ slug }: { slug: string }): JSX.Element {
                   </span>
                 ),
               },
-              ...columns.map((column) => ({
+              ...columns.map((column, at) => ({
                 key: `field:${column}`,
+                // A phone shows the id and the first two fields; Arrange columns shows the rest.
+                hidden: phone && at >= 2,
                 label: columnLabel(undefined, column, locale),
                 text: (row: Record<string, unknown>) => textOf(row[column]),
                 cell: (row: Record<string, unknown>) => <span className="break-words">{textOf(row[column])}</span>,
