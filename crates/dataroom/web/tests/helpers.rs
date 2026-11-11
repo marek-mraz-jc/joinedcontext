@@ -226,7 +226,7 @@ fn a_viz_frame_on_the_portals_origin_asks_for_no_origin() {
     let ex = jc_explorer(&ds, None, &b, "sk", "/o").expect("explorer");
     assert_eq!(
         ex.sandbox,
-        "allow-scripts allow-popups allow-popups-to-escape-sandbox"
+        "allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox"
     );
     assert_eq!(ex.origin, "null");
     let views = [view("c1", "jc_visualization", "Air")];
@@ -238,7 +238,7 @@ fn a_viz_frame_on_the_portals_origin_asks_for_no_origin() {
     let ex = jc_explorer(&live_ds(&ep("")), None, &branding(), "sk", "/o").expect("explorer");
     assert_eq!(
         ex.sandbox,
-        "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        "allow-scripts allow-same-origin allow-downloads allow-popups allow-popups-to-escape-sandbox"
     );
     let c = &jc_visualizations(&ds, &views, &branding(), "sk", "")[0];
     assert_eq!(c.sandbox, "allow-scripts allow-same-origin allow-downloads");

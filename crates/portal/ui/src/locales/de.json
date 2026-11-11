@@ -5751,6 +5751,8 @@
     "errorDetail": "Was der Broker gemeldet hat",
     "matching": "passend",
     "noTotal": "der Endpoint nennt für diese Antwort keine Gesamtzahl",
+    "rowsShown": "Zeilen {first}–{last}",
+    "moreNext": "weitere können folgen",
     "history": "Verlauf",
     "areaPick": "Gebiet auf der Karte wählen",
     "signedOutTitle": "Melden Sie sich an, um diesen Datensatz zu sehen",

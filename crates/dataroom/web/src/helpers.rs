@@ -1339,10 +1339,12 @@ pub fn jc_explorer(
     let live = jc_live(ds, branding)?;
     let slug = api_endpoint_slug(&live.url, branding)?;
     let viz = branding.address(Address::Viz)?;
+    // allow-downloads: the grid's "Download these rows as CSV" link, which Chrome refuses in a
+    // sandboxed frame without it (as the chart frames below have it).
     let (sandbox, origin) = viz_frame(
         &viz,
         branding,
-        "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox",
+        "allow-scripts allow-same-origin allow-downloads allow-popups allow-popups-to-escape-sandbox",
     );
     let code = normalize_lang_code(lang);
     let mut src = format!("{viz}/explore.html#{slug}&inline&lang={code}&theme=light");

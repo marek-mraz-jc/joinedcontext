@@ -132,6 +132,16 @@ for (const width of [1440, 400]) {
 
     const csv = section.getByRole("link", { name: "Download these rows as CSV" });
     expect(await csv.getAttribute("href")).toBe(`/api/endpoint/${SLUG}/file.csv?type=AirQualityObserved&orderBy=pm10%3Bdesc`);
+    // The owner (2026-11-11): the actions are one group in one look: one height and one top on a
+    // wide screen, and nothing past the section's edge on a phone.
+    const actions = await section.getByTestId("data-actions").locator(":scope > button, :scope > a").all();
+    const boxes = await Promise.all(actions.map(async (each) => (await each.boundingBox())!));
+    expect(boxes.length).toBeGreaterThanOrEqual(2);
+    const edge = (await section.boundingBox())!;
+    for (const box of boxes) {
+      if (width === 1440) expect([box.height, box.y]).toEqual([boxes[0].height, boxes[0].y]);
+      else expect(box.x + box.width).toBeLessThanOrEqual(edge.x + edge.width + 0.5);
+    }
 
     // The space grid's own toolbar (T-6303): Hide fields names each column as the header does.
     const toolbar = section.getByTestId("grid-toolbar");

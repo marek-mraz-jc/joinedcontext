@@ -276,6 +276,19 @@ describe("the data section of an endpoint", () => {
     const href = new URL(link.getAttribute("href") ?? "", "http://portal.test");
     expect(href.pathname).toBe("/api/endpoint/air-quality/file.csv");
     expect(Object.fromEntries(href.searchParams)).toEqual({ type: "AirQualityObserved", q: "co2>400", orderBy: "co2;desc" });
+    // A button in look, a link in role, its hint the description and tooltip instead of a line under the row (owner 2026-11-11).
+    expect(link).toHaveAttribute("download");
+    expect(link).toHaveAccessibleDescription(en.endpoints.data.csvHelp);
+    expect(link).toHaveAttribute("title", en.endpoints.data.csvHelp);
+    expect(link.className).toContain("border-border");
+  });
+
+  it("puts a host's own actions first in the one action group, beside Full window and the CSV", async () => {
+    show({ csv: true, actions: <button type="button">Data API</button> });
+    const group = await screen.findByTestId("data-actions");
+    await waitFor(() => expect(group.querySelector("a[download]")).not.toBeNull());
+    const names = [...group.querySelectorAll("button, a")].map((each) => each.textContent);
+    expect(names).toEqual(["Data API", en.endpoints.data.full, en.endpoints.data.csv]);
   });
 
   it("offers no CSV, and says why, when the person may not read a shown column or the access is unknown (T-5530)", async () => {

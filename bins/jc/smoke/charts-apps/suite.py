@@ -223,6 +223,24 @@ def judge_refused(status: int, frames, error: str) -> tuple[str, str, str]:
     return FAIL, actual, "neither frames nor the gateway's refusal"
 
 
+def read_closed(s, res: Results, path: str, target: str, edge_token) -> None:
+    """A closed Endpoint's panel read with the person's own token (the cookie session carries none
+    by design): the edge's X-Access-Token, as prod's edge sends it. portal.panel as the reader the
+    Policy grants, portal.panel.refused as the suite's person no Policy names."""
+    for check_id, who, judged, want in (
+            ("portal.panel", READER, judge_reader, "200 and rows (the Policy grants the reader's group)"),
+            ("portal.panel.refused", PERSON, judge_refused,
+             "200, no frame, the gateway's refusal (no Policy names this person)")):
+        token, why_not = edge_token(who)
+        call = f"GET {path.split('?')[0]} as {who} (X-Access-Token of {EDGE_CLIENT})"
+        if not token:
+            res.add(check_id, target, call, want, "", FAIL, f"no edge token: {why_not}")
+            continue
+        st, ans = s.json("GET", path, headers={"X-Access-Token": token})
+        result, actual, reason = judged(st, *panel_answer(st, ans))
+        res.add(check_id, target, call, want, actual, result, reason)
+
+
 class Daiya:
     def __init__(self, s: Session, password: str | None):
         self.s = s
@@ -404,19 +422,7 @@ def main(argv=None) -> int:
             q = urllib.parse.urlencode(window)
             path = f"/api/v1/projects/{d.project}/grafana/dashboards/{urllib.parse.quote(d.uid)}/panels/{pn.id}?{q}"
             if (dsrc.get("jsonData") or {}).get("oauthPassThru") and slug in closed:
-                # A closed Endpoint's panel is read with the person's own token (the cookie session
-                # carries none by design): the edge's X-Access-Token, as prod's edge sends it.
-                for check_id, who, judged, want in (
-                        ("portal.panel", READER, judge_reader, "200 and rows (the Policy grants the reader's group)"),
-                        ("portal.panel.refused", PERSON, judge_refused,
-                         "200, no frame, the gateway's refusal (no Policy names this person)")):
-                    token, why_not = edge_token(who)
-                    call = f"GET {path.split('?')[0]} as {who} (X-Access-Token of {EDGE_CLIENT})"
-                    if not token:
-                        res.add(check_id, ptgt, call, want, "", FAIL, f"no edge token: {why_not}")
-                        continue
-                    st, ans = s.json("GET", path, headers={"X-Access-Token": token})
-                    res.add(check_id, ptgt, call, want, *judged(st, *panel_answer(st, ans)))
+                read_closed(s, res, path, ptgt, edge_token)
                 continue
             st, ans = s.json("GET", path)
             frames, err = panel_answer(st, ans)
