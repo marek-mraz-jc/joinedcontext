@@ -272,14 +272,19 @@ def layout2(seed: dict[str, str], org: str, repo: str):
 
 def synth_entities(repos, now: dt.datetime):
     """A few entities per space, of the classes its data models name, with history inside the
-    window and one instance outside it (which the importer must refuse)."""
+    window and one instance outside it (which the importer must refuse). The tenant is the space's
+    urnSegment (space.yaml), as the import names it: `<repo>-<space dir>` named no space for a dir
+    already carrying the project (zilina/zilina-verejne), and the bundle's slice dropped it."""
+    import yaml
+
     entities, temporal = [], []
     for (_, name), files in sorted(repos.items()):
         for path, text in sorted(files.items()):
             m = re.fullmatch(r"spaces/([a-z0-9-]+)/datamodels/[^/]+\.linkml\.yaml", path)
             if not m:
                 continue
-            tenant = f"{name}-{m.group(1)}"
+            space = yaml.safe_load(files.get(f"spaces/{m.group(1)}/space.yaml") or "{}") or {}
+            tenant = (space.get("spec") or {}).get("urnSegment") or f"{name}-{m.group(1)}"
             classes = re.findall(r"(?m)^  ([A-Z][A-Za-z0-9]+):\s*$", text.split("\nclasses:", 1)[-1])
             for cls in classes[:3]:
                 for n in range(2):

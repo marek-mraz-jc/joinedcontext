@@ -1602,3 +1602,16 @@ def test_the_kit_runs_under_the_old_deployments_org_domain():
     assert re.search(r'^org_domain=\$\{REHEARSAL_ORG_DOMAIN:-hel\.fi\}$', up, re.M), "up.sh sets no org domain"
     for key in ("JC_PORTAL_ORG_DOMAIN", "JC_GATEWAY_ORG_DOMAIN", "JC_ASSISTANT_ORG_DOMAIN"):
         assert f'{key}="$org_domain"' in up, f"up.sh exports no {key}"
+
+
+def test_synthetic_entities_land_in_the_tenant_the_space_pins():
+    model = "classes:\n  GtfsStop:\n    is_a: Thing\n"
+    repos = {("joinedcontext", "zilina"): {
+        "spaces/zilina-verejne/space.yaml": "kind: ContextSpace\nspec:\n  urnSegment: zilina-verejne\n",
+        "spaces/zilina-verejne/datamodels/zilina-verejne.linkml.yaml": model,
+        "spaces/catalog/space.yaml": "kind: ContextSpace\nspec:\n  urnSegment: zilina-catalog\n",
+        "spaces/catalog/datamodels/catalog.linkml.yaml": "classes:\n  Dataset:\n    is_a: Thing\n"}}
+    entities, temporal = rh.synth_entities(repos, rh.utcnow())
+    assert {(e["tenant"], e["entity"]["type"]) for e in entities} == {
+        ("zilina-verejne", "GtfsStop"), ("zilina-catalog", "Dataset")}
+    assert {t["tenant"] for t in temporal} == {"zilina-verejne", "zilina-catalog"}
