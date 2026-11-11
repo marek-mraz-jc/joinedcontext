@@ -5172,7 +5172,8 @@
       "noOthers": "Tuto roli nemá žádná jiná skupina.",
       "give": "Přidělit roli skupině",
       "groupsUnreadable": "Vaše role nezobrazuje skupiny organizace.",
-      "personHint": "Hledejte podle jména nebo e-mailu, např. Jana Nováková. Skupina si zapíše identifikátor osoby, ne adresu."
+      "personHint": "Hledejte podle jména nebo e-mailu, např. Jana Nováková. Skupina si zapíše identifikátor osoby, ne adresu.",
+      "groupHint": "Jedna ze skupin organizace. Udělení role navrhne schvalovateli změnu aplikace."
     },
     "check": {
       "green": "Funguje",
@@ -5724,6 +5725,9 @@
     "page": "Strana",
     "showMetadata": "Zobrazit metadata pro",
     "error": "Nenačteno, zkuste znovu",
+    "retry": "Zkusit znovu",
+    "busy": "zdroj dat je právě zaneprázdněný",
+    "timedOut": "zdroj dat neodpověděl včas",
     "filter": "Filtr",
     "noFilter": "Libovolné",
     "ops": {
@@ -5755,6 +5759,7 @@
     "sortAll": "Seřadit všechny řádky podle",
     "sortedLoaded": "Seřazeno v rámci {count} načtených řádků: tento pohled čte i další brokery, které neřadí.",
     "notReadable": "Další pole ({count}) se nezobrazují: váš přístup je nezahrnuje.",
+    "notReadableOne": "Další pole (1) se nezobrazuje: váš přístup ho nezahrnuje.",
     "queryRefused": "Broker tento dotaz odmítl",
     "errorDetail": "Co broker odpověděl",
     "matching": "Odpovídá: {n}",

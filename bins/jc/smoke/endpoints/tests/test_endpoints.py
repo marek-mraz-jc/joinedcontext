@@ -49,7 +49,7 @@ spec:
 {pattern}"""
 
 
-def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z") -> Path:
+def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z", synthetic: bool = False) -> Path:
     files = tmp / "gitea" / "files" / "org" / "city" / "spaces" / "air"
     (files / "endpoints").mkdir(parents=True)
     (files / "policies").mkdir()
@@ -62,7 +62,8 @@ def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z") -> Path:
     (files / "endpoints" / "closed.yaml").write_text(ENDPOINT.format(
         name="closed", slug=CLOSED, audience="organization", extra=""))
     (files / "policies" / "public-read.yaml").write_text(POLICY.format(
-        name="public-read", assignee="{kind: role, id: public}", pattern="          idPattern: ':north-'\n"))
+        name="public-read", assignee="{kind: role, id: public}", pattern="          idPattern: ':north-'\n"
+        + ("        - type: WaterQualityObserved\n" if synthetic else "")))
     (files / "policies" / "staff-read.yaml").write_text(POLICY.format(
         name="staff-read", assignee="{kind: group, id: staff}", pattern=""))
     (tmp / "antares").mkdir()
@@ -76,7 +77,8 @@ def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z") -> Path:
     (tmp / "antares" / "temporal.jsonl").write_text(json.dumps({
         "tenant": "city-air-pinned", "id": "urn:ngsi-ld:AirQualityObserved:north-0", "type": DC + "AirQualityObserved",
         "attr": DC + "pm10", "instance": {"type": "Property", "value": 3, "observedAt": now}}) + "\n")
-    (tmp / "manifest.json").write_text(json.dumps({"exportedAt": now, "temporalCutoff": "2026-11-07T12:00:00Z"}))
+    (tmp / "manifest.json").write_text(json.dumps({"exportedAt": now, "temporalCutoff": "2026-11-07T12:00:00Z",
+                                                       **({"synthetic": True} if synthetic else {})}))
     return tmp
 
 
@@ -132,7 +134,8 @@ class Fake:
         if method == "POST":
             return (201, {}, {}) if self.broken == "write-open" else (401, {}, {"title": "no"})
         if rest == "ngsi-ld/v1/types":
-            types = ["AirQualityObserved"] + (["Road"] if self.broken == "extra-type" else [])
+            types = ["AirQualityObserved"] + (["Road"] if self.broken == "extra-type" else []) \
+                + (["WaterQualityObserved"] if self.broken.startswith("grown") else [])
             return 200, {}, {"typeList": types}
         if rest.startswith("ngsi-ld/v1/types/") or rest == "ngsi-ld/v1/attributes":
             return 200, {}, {"attributeNames": ["pm10"]}
@@ -148,6 +151,11 @@ class Fake:
             return 200, {}, {"id": "x", "pm10": old}
         if rest == "ngsi-ld/v1/entities" and "count" in qs:
             n = 3 if self.broken == "count" else 2
+            if self.broken.startswith("grown"):
+                # a rehearsal Pipeline wrote 3 rows of the granted type and 4 of one the bundle lacks
+                seeded = "rehearsal-" in (qs.get("idPattern") or [""])[0]
+                n = 4 if qs.get("type") == ["WaterQualityObserved"] else \
+                    (1 if self.broken == "grown-lost" else 2) if seeded else 5
             return 200, {"NGSILD-Results-Count": str(n)}, []
         if rest == "ngsi-ld/v1/entities":
             return 200, {}, {"type": "FeatureCollection", "features": []}
@@ -172,7 +180,7 @@ class Fake:
         if rest.endswith("/items") and qs.get("f") == ["csv"]:
             if self.broken == "no-files":
                 return 400, {}, {"title": "unknown parameter f"}
-            rows = 3 if self.broken == "csv-rows" else 2
+            rows = 3 if self.broken == "csv-rows" else 5 if self.broken.startswith("grown") else 2
             # A polygon of a few thousand points is one cell past csv's default 128 KiB field.
             shape = "[0,0]," * 30_000 if self.broken == "wide-cell" else ""
             body = "id,geometry\n" + "".join(f'urn:x:{i},"{{""type"":""Point"",""c"":[{shape}0]}}"\n'
@@ -186,11 +194,12 @@ class Fake:
                 return 400, {}, {"title": "unknown parameter f"}
             return 200, {"Content-Type": "application/vnd.apache.parquet"}, b"PAR1" + b"\0" * 8 + b"PAR1"
         if rest.startswith("ogc/features/collections/"):
-            return 200, {}, {"type": "FeatureCollection", "numberMatched": 2, "features": []}
+            n = 5 if self.broken.startswith("grown") else 2
+            return 200, {}, {"type": "FeatureCollection", "numberMatched": n, "features": []}
         if rest == "odata/v4/$metadata":
             return 200, {"Content-Type": "application/xml"}, b'<EntitySet Name="AirQualityObserved"/>'
         if rest.startswith("odata/v4/"):
-            return 200, {}, {"@odata.count": 2, "value": []}
+            return 200, {}, {"@odata.count": 5 if self.broken.startswith("grown") else 2, "value": []}
         if rest.startswith("ical/v1/") and self.broken == "feed-413":
             return 413, {"Content-Type": "application/problem+json"}, {
                 "status": 413, "title": "the query selects as many events as one feed reads or more: narrow it with q"}
@@ -234,8 +243,8 @@ def serve():
         s.shutdown()
 
 
-def run(tmp_path, base, now):
-    b = bundle(tmp_path / "x", now)
+def run(tmp_path, base, now, synthetic=False):
+    b = bundle(tmp_path / "x", now, synthetic)
     out = tmp_path / "out"
     code = suite.main(["--base-url", base, "--export", str(b), "--out", str(out), "--workers", "1"])
     return code, json.loads((out / "results.json").read_text())
@@ -263,6 +272,28 @@ def test_a_healthy_gateway_is_green(tmp_path, serve):
     ("csv-rows", "anon.ogc.csv"), ("busy", "anon.ogc.parquet")])
 def test_each_broken_rule_turns_its_check_red(tmp_path, serve, broken, check):
     code, res = run(tmp_path, serve(Fake(broken)), now_iso())
+    red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
+    assert code == 1 and check in red, red
+
+
+def test_a_synthetic_bundle_grown_by_its_pipelines_counts_the_seeded_rows(tmp_path, serve):
+    # smoke 43074228505: the rehearsal's citybikes-gbfs wrote 455 stations past the bundle's 2.
+    code, res = run(tmp_path, serve(Fake("grown")), now_iso(), synthetic=True)
+    fails = [r for r in res["checks"] if r["result"] == "fail"]
+    assert code == 0 and not fails, fails
+    by = {r["id"]: r for r in res["checks"]}
+    assert by["anon.count.seeded"]["actual"] == "count=2"
+    assert by["anon.types.written"]["target"].endswith("WaterQualityObserved")
+    assert "numberMatched=5" in by["anon.ogc.items"]["actual"]
+
+
+@pytest.mark.parametrize("broken,synthetic,check", [
+    ("grown-lost", True, "anon.count.seeded"),   # a seeded row went missing under the Pipeline's rows
+    ("grown", False, "anon.count"),             # an export of a live installation grows nothing
+    ("grown", False, "anon.types.match"),
+    ("extra-type", True, "anon.types.match")])  # a type no granting Policy names stays a leak
+def test_growth_counts_only_on_a_synthetic_bundle_and_only_granted(tmp_path, serve, broken, synthetic, check):
+    code, res = run(tmp_path, serve(Fake(broken)), now_iso(), synthetic)
     red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
     assert code == 1 and check in red, red
 

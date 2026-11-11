@@ -24,6 +24,8 @@ export interface ColumnMenuProps {
   onHide?: () => void;
   /** Absent where the source keeps no history. */
   onHistory?: () => void;
+  /** The column's access panel and its item's words; only a phone's grid, whose cells carry no "i" (T-6781). */
+  onInspect?: { label: string; open: () => void };
   onClose: () => void;
 }
 
@@ -87,7 +89,7 @@ export function usePlaceAtCell(): React.MutableRefObject<HTMLDivElement | null> 
 export const WIDTH_STEP = 40;
 
 export const ColumnMenu = React.forwardRef<HTMLDivElement, ColumnMenuProps>(function ColumnMenu(
-  { label, kind, labels, sorted, onSort, onFilter, onHide, onHistory, onClose },
+  { label, kind, labels, sorted, onSort, onFilter, onHide, onHistory, onInspect, onClose },
   ref,
 ) {
   const box = usePlaceAtCell();
@@ -142,10 +144,11 @@ export const ColumnMenu = React.forwardRef<HTMLDivElement, ColumnMenuProps>(func
     >
       {item(asc, "↑", () => onSort("asc"), sorted === "asc")}
       {item(desc, "↓", () => onSort("desc"), sorted === "desc")}
-      {(onFilter || onHide || onHistory) && <hr className="jc-grid-menu-sep" role="separator" />}
+      {(onFilter || onHide || onHistory || onInspect) && <hr className="jc-grid-menu-sep" role="separator" />}
       {onFilter && item(labels.filterColumn, <span className="jc-grid-funnel" />, onFilter)}
       {onHide && item(labels.hideColumn, "⊘", onHide)}
       {onHistory && item(labels.history, "◷", onHistory)}
+      {onInspect && item(onInspect.label, "ⓘ", onInspect.open)}
     </div>
   );
 });

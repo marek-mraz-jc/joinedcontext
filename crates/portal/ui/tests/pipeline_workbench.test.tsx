@@ -292,7 +292,8 @@ describe("the pipeline workbench", () => {
     await userEvent.selectOptions(screen.getByLabelText(en.pipelines.workbench.source.pick), "datasource:shmu-csv");
     const mapping = screen.getByLabelText(en.pipelines.field.bloblang) as HTMLTextAreaElement;
     await waitFor(() => expect(mapping.value).toContain('root.type = "AirQualityObserved"'));
-    expect(mapping.value).toContain('"urn:ngsi-ld:%v:%v:%v:%v".format("AirQualityObserved", $domain, "ovzdusie", this.station.string())');
+    expect(mapping.value).toContain('let owner = env("JC_ORG_ID")');
+    expect(mapping.value).toContain('"urn:ngsi-ld:%v:%v:%v:%v".format("AirQualityObserved", $owner, "ovzdusie", this.station.string())');
     expect(mapping.value).toContain('root.pm10 = { "type": "Property", "value": this.pm10.number().catch(this.pm10) }');
     // The drafted mapping is tried like a typed one.
     await waitFor(() => expect(seen.ops.map((op) => op.name)).toContain("jc_pipeline_try_mapping"));

@@ -371,6 +371,12 @@ fn rows() -> Vec<Row> {
         ),
         row(
             "ANY",
+            "/api/endpoint/{slug}/facets",
+            get(ep("/facets?attr=category")),
+            DATA,
+        ),
+        row(
+            "ANY",
             "/api/endpoint/{slug}/entities.ics",
             get(ep("/entities.ics")),
             DATA,

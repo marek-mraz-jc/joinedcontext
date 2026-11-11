@@ -5172,7 +5172,8 @@
       "noOthers": "Keine andere Gruppe hat diese Rolle.",
       "give": "Rolle einer Gruppe geben",
       "groupsUnreadable": "Ihre Rolle zeigt die Gruppen der Organisation nicht an.",
-      "personHint": "Suchen Sie nach Name oder E-Mail, z. B. Jana Nováková. Die Gruppe speichert die Kennung der Person, nicht die Adresse."
+      "personHint": "Suchen Sie nach Name oder E-Mail, z. B. Jana Nováková. Die Gruppe speichert die Kennung der Person, nicht die Adresse.",
+      "groupHint": "Eine der Gruppen der Organisation. Die Rolle zu vergeben schlägt einer prüfenden Person eine Änderung der Anwendung vor."
     },
     "check": {
       "green": "Funktioniert",
@@ -5724,6 +5725,9 @@
     "page": "Seite",
     "showMetadata": "Metadaten anzeigen für",
     "error": "Nicht geladen, versuchen Sie es erneut",
+    "retry": "Erneut versuchen",
+    "busy": "die Datenquelle ist gerade ausgelastet",
+    "timedOut": "die Datenquelle hat zu lange nicht geantwortet",
     "filter": "Filter",
     "noFilter": "Beliebig",
     "ops": {
@@ -5755,6 +5759,7 @@
     "sortAll": "Alle Zeilen sortieren nach",
     "sortedLoaded": "Sortiert innerhalb der {count} geladenen Zeilen: Diese Ansicht liest auch andere Broker, die nicht sortieren.",
     "notReadable": "{count} weitere Felder werden nicht angezeigt: Ihr Zugriff umfasst sie nicht.",
+    "notReadableOne": "1 weiteres Feld wird nicht angezeigt: Ihr Zugriff umfasst es nicht.",
     "queryRefused": "Der Broker hat diese Abfrage abgelehnt",
     "errorDetail": "Was der Broker gemeldet hat",
     "matching": "passend",

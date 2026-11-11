@@ -285,7 +285,7 @@ def build_index(export: Path, patterns: dict) -> dict:
 def load_index(export: Path, endpoints, cache_dir: Path, log=print) -> dict:
     manifest = json.loads((export / "manifest.json").read_text())
     patterns = patterns_needed(endpoints)
-    key = hashlib.sha256(json.dumps(["index-v3", manifest.get("exportedAt"), str(export.resolve()),
+    key = hashlib.sha256(json.dumps(["index-v4", manifest.get("exportedAt"), str(export.resolve()),
                                      sorted((list(k), v) for k, v in patterns.items())]).encode()).hexdigest()[:16]
     cache = cache_dir / f"index-{key}.json"
     if cache.exists():
@@ -293,6 +293,7 @@ def load_index(export: Path, endpoints, cache_dir: Path, log=print) -> dict:
     log(f"indexing {export}/antares (once; cached as {cache})")
     index = build_index(export, patterns)
     index["exportedAt"] = manifest.get("exportedAt")
+    index["synthetic"] = bool(manifest.get("synthetic"))
     index["cutoff"] = manifest.get("temporalCutoff") or (manifest.get("counts", {}).get("antares") or {}).get("cutoff")
     cache_dir.mkdir(parents=True, exist_ok=True)
     tmp = cache.with_suffix(".tmp")
@@ -325,6 +326,14 @@ def expected_types(e: Endpoint, grants, tenant_types: dict) -> tuple[dict, str]:
     if narrowed:
         out = {k: None for k in out}
     return out, narrowed
+
+
+def seeded_ids(t: str) -> str:
+    """The idPattern of the rows a synthetic bundle holds of `t` (`rehearsal.py synth` names them
+    urn:ngsi-ld:<type>:rehearsal-<n>). On a rehearsal of a synthetic bundle the Portal runs the
+    imported Pipelines against their live sources, so a type grows past the bundle by rows those
+    Pipelines wrote; the seeded rows still count exactly."""
+    return f"^urn:ngsi-ld:{re.escape(t)}:rehearsal-[0-9]+$"
 
 
 def parse_time(s: str) -> dt.datetime:

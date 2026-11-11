@@ -101,10 +101,18 @@ export interface GridLabels {
    * are never rendered, the line says they exist. `{count}` is how many are not shown.
    */
   notReadable: string;
+  /** `notReadable` when exactly one attribute is not shown. */
+  notReadableOne: string;
   /** Before the problem's title when the broker refused the grid's query (a 400). */
   queryRefused: string;
   /** The disclosure holding the broker's own sentence about a refused query. */
   errorDetail: string;
+  /** The button under a failed read that reads the rows again. */
+  retry: string;
+  /** In place of the source's own words when it answered busy (429, 503); those go under `errorDetail`. */
+  busy: string;
+  /** In place of the source's own words when its answer timed out (408, 504). */
+  timedOut: string;
   /** What the footer calls the endpoint's own count of matching entities: a word after the number, or a
    *  text holding `{n}` where the number goes, for a language whose word agrees with it (sk "Vyhovuje: {n}"). */
   matching: string;
@@ -367,8 +375,12 @@ export const DEFAULT_LABELS: GridLabels = {
   sortAll: "Sort all rows by",
   sortedLoaded: "Sorted within the {count} loaded rows: this view also reads other brokers, which do not sort.",
   notReadable: "{count} more fields are not shown: your access does not include them.",
+  notReadableOne: "1 more field is not shown: your access does not include it.",
   queryRefused: "The broker refused this query",
   errorDetail: "What the broker said",
+  retry: "Try again",
+  busy: "the data source is busy right now",
+  timedOut: "the data source took too long to answer",
   matching: "matching",
   noTotal: "the endpoint gives no total for this answer",
   rowsShown: "Rows {first}–{last}",
@@ -668,6 +680,18 @@ export function refusalOf(err: unknown): GridRefusal | null {
   return null;
 }
 
+/**
+ * The line under a failed read: a busy or timed-out source is said in the grid's language, its own
+ * sentence (often English) only under the "What the broker said" disclosure.
+ */
+export function failureOf(err: unknown, labels: Pick<GridLabels, "busy" | "timedOut">): { error: string; detail: string | null } {
+  const said = err instanceof Error ? err.message : String(err);
+  if (!(err instanceof SourceError)) return { error: said, detail: null };
+  if (err.status === 429 || err.status === 503) return { error: labels.busy, detail: said };
+  if (err.status === 408 || err.status === 504) return { error: labels.timedOut, detail: said };
+  return { error: said, detail: null };
+}
+
 function mergeLabels(base: GridLabels, partial?: GridLabelsInput): GridLabels {
   if (!partial) return base;
   // The operator names are a group of their own: a caller that translates two of them keeps the
@@ -907,6 +931,8 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
   // The list by content, so a host that builds a new array each render does not rebuild columns.
   const hiddenKey = (hidden ?? []).join("\u0000");
   const labels = useMemo(() => mergeLabels(DEFAULT_LABELS, labelsPartial), [labelsPartial]);
+  // The reads depend on these strings, not on `labels`: an inline labels prop is a new object each render.
+  const { queryRefused, busy, timedOut } = labels;
 
   // Internal state (uncontrolled)
   const [internalOffset, setInternalOffset] = useState(0);
@@ -1186,14 +1212,16 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
         }
         if (err instanceof SourceError && err.status === 400 && err.problem) {
           // The broker's sentence quotes clauses and parameters: plain words first, its own under a disclosure.
-          setError(err.problem.title ? `${labels.queryRefused}: ${err.problem.title}` : labels.queryRefused);
+          setError(err.problem.title ? `${queryRefused}: ${err.problem.title}` : queryRefused);
           setErrorDetail(err.problem.detail ?? null);
         } else {
-          setError(err instanceof Error ? err.message : String(err));
+          const failed = failureOf(err, { busy, timedOut });
+          setError(failed.error);
+          setErrorDetail(failed.detail);
         }
         setLoading(false);
       });
-  }, [source, config.pageSize, offset, gridQueryKey, virtual, paged, labels.queryRefused]);
+  }, [source, config.pageSize, offset, gridQueryKey, virtual, paged, queryRefused, busy, timedOut]);
 
   /**
    * The next page of a scrolling grid, appended to what is loaded. An answer to an older question
@@ -1228,12 +1256,14 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
           setRefusalDetail(refused === "noAccess" && err instanceof Error ? err.message : null);
           return;
         }
-        setError(err instanceof Error ? err.message : String(err));
+        const failed = failureOf(err, { busy, timedOut });
+        setError(failed.error);
+        setErrorDetail(failed.detail);
       })
       .finally(() => {
         if (nonceRef.current === nonce) setLoadingMore(false);
       });
-  }, [virtual, paged, more, loadingMore, loading, rows.length, source, gridQueryKey, config.pageSize]);
+  }, [virtual, paged, more, loadingMore, loading, rows.length, source, gridQueryKey, config.pageSize, busy, timedOut]);
 
   useEffect(() => {
     fetchData();

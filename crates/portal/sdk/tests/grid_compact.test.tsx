@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { EntityGrid } from "../src/grid/EntityGrid";
 import { parseGridConfig } from "../src/grid/config";
-import { fixtureSource } from "../src/grid/source";
+import { failureOf } from "../src/grid/useEntityGrid";
+import { SourceError, fixtureSource } from "../src/grid/source";
 
 const entities = ["Kamppi", "Kallio"].map((title, i) => ({
   id: `urn:ngsi-ld:PointOfInterest:00313271${i}`,
@@ -51,6 +52,70 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(container.querySelector(".jc-grid-typeline")).not.toHaveTextContent("Category");
   });
 
+  it("reads the source once when the labels prop is an inline literal (T-6781)", async () => {
+    const real = fixtureSource(entities);
+    let reads = 0;
+    const counted = { ...real, query: (q: Parameters<typeof real.query>[0], page: Parameters<typeof real.query>[1]) => (page.limit > 0 && reads++, real.query(q, page)) };
+    const grid = () => <EntityGrid config={config} source={counted} labels={{ next: "Ďalej" }} compact filterRow={false} />;
+    const { rerender } = render(grid());
+    await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
+    // A host that renders again hands the grid a new labels object each time.
+    for (let i = 0; i < 3; i++) rerender(grid());
+    await new Promise((settle) => setTimeout(settle, 100));
+    expect(reads).toBe(1);
+  });
+
+  it("offers Try again under a failed read, and the press reads the rows again (T-6781)", async () => {
+    const real = fixtureSource(entities);
+    let calls = 0;
+    const flaky = { ...real, query: (q: Parameters<typeof real.query>[0], page: Parameters<typeof real.query>[1]) => (page.limit > 0 && ++calls === 1 ? Promise.reject(new Error("timeout")) : real.query(q, page)) };
+    render(<EntityGrid config={config} source={flaky} compact filterRow={false} />);
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
+  it("says a busy source in its own words, the source's sentence under the disclosure, and no count over the error (T-6781)", async () => {
+    const real = fixtureSource(entities);
+    const busy = {
+      ...real,
+      query: (_q: Parameters<typeof real.query>[0], page: Parameters<typeof real.query>[1]) =>
+        page.limit > 0 ? Promise.reject(new SourceError(503, "the broker is busy")) : Promise.resolve({ rows: [], total: 161 }),
+    };
+    const { container } = render(<EntityGrid config={config} source={busy} compact filterRow={false} />);
+    await screen.findByRole("button", { name: "Try again" });
+    const line = container.querySelector(".jc-grid-error")!;
+    expect(line).toHaveTextContent("the data source is busy right now");
+    expect(line.querySelector("details")).toHaveTextContent("the broker is busy");
+    expect(line.firstChild?.textContent).not.toContain("the broker is busy");
+    expect(container.querySelector(".jc-grid-total")).toBeNull();
+    expect(container.querySelector(".jc-grid-pages")).toBeNull();
+    expect(container).not.toHaveTextContent("161");
+    expect(container.querySelector(".jc-grid-pager")).toBeNull();
+  });
+
+  it("keeps the rows, the header and the pager when a later read fails (T-6781)", async () => {
+    const real = fixtureSource(entities);
+    let fail = false;
+    const flaky = { ...real, query: (q: Parameters<typeof real.query>[0], page: Parameters<typeof real.query>[1]) => (fail && page.limit > 0 ? Promise.reject(new SourceError(503, "the broker is busy")) : real.query(q, page)) };
+    const { container, rerender } = render(<EntityGrid config={config} source={flaky} compact filterRow={false} reloadKey={0} />);
+    await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
+    const before = heads(container);
+    fail = true;
+    rerender(<EntityGrid config={config} source={flaky} compact filterRow={false} reloadKey={1} />);
+    await screen.findByRole("button", { name: "Try again" });
+    expect(screen.getByText("Kallio")).toBeInTheDocument();
+    expect(container.querySelector(".jc-grid-pager")).not.toBeNull();
+    expect(heads(container)).toEqual(before);
+  });
+
+  it("says a timed-out source in its own words (T-6781)", () => {
+    const labels = { busy: "busy", timedOut: "slow" };
+    expect(failureOf(new SourceError(504, "upstream timeout"), labels)).toEqual({ error: "slow", detail: "upstream timeout" });
+    expect(failureOf(new SourceError(500, "boom"), labels)).toEqual({ error: "boom", detail: null });
+  });
+
   it("keeps a column whose rows differ", async () => {
     const { container } = render(<EntityGrid config={config} source={fixtureSource(entities)} compact filterRow={false} />);
     await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
@@ -69,10 +134,13 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(names[0]).toMatch(/^Title/);
     expect(names.some((name) => /^ID|^Type/.test(name))).toBe(false);
     expect(container.querySelector("tbody")?.textContent).not.toContain("00313271");
-    // The label is the row's way in alone: no inspector "i" beside the name.
-    expect(container.querySelectorAll("tbody td.jc-grid-pinned .jc-grid-info")).toHaveLength(0);
-    // The other cells keep theirs: what the person may do with a value stays one tap away.
-    expect(screen.getAllByRole("button", { name: "Your access: Category" }).length).toBeGreaterThan(0);
+    // No cell carries an inspector "i" on a phone (T-6781): it covered the text in every cell.
+    expect(container.querySelectorAll("tbody .jc-grid-info")).toHaveLength(0);
+    expect(screen.queryAllByRole("button", { name: /^Your access:/ })).toHaveLength(0);
+    // What the person may do with a field stays in reach: the column's menu opens the same panel.
+    fireEvent.click(screen.getByRole("button", { name: "Column options: Category" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Your access" }));
+    expect(await screen.findByRole("heading", { name: /Category/ })).toBeInTheDocument();
     // The type left the columns, and the choice of another stays on the line above.
     const select = screen.getByRole("combobox", { name: "Type" });
     expect(container.querySelector(".jc-grid-typeline")).toContainElement(select);
@@ -90,5 +158,13 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(names[0]).toMatch(/^ID/);
     expect(names[1]).toMatch(/^Type/);
     expect(container.querySelector(".jc-grid-typeline")).toBeNull();
+  });
+
+  it("keeps the cell's \"i\" and no access item in the column menu on a wide screen (T-6781)", async () => {
+    render(<EntityGrid config={config} source={fixtureSource(entities)} access={access} />);
+    await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
+    expect(screen.getAllByRole("button", { name: "Your access: Category" }).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Column options: Category" }));
+    expect(screen.queryByRole("menuitem", { name: "Your access" })).toBeNull();
   });
 });

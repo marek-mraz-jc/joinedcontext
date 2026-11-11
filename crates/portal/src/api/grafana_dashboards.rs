@@ -135,6 +135,15 @@ fn member(state: &AppState, identity: &Identity, project: &str) -> Result<Effect
     Ok(effective)
 }
 
+/// The Keycloak subject of the person signed in to this Portal by its cookie, when they may read
+/// `project`'s dashboards as these routes decide it: daiya's dashboard page beside the Portal
+/// in one `jc` opens for them (daiya keeps no sessions, PORTAL-CALLS.md G-5, T-6784).
+pub fn page_reader(state: &AppState, headers: &HeaderMap, project: &str) -> Option<String> {
+    let session = crate::auth::session::cookie_person(headers, state)?;
+    member(state, &session.identity, project).ok()?;
+    Some(session.identity.subject)
+}
+
 pub(crate) fn client(state: &AppState) -> Result<Client<'_>, ApiError> {
     state
         .config
@@ -606,19 +615,14 @@ pub(crate) async fn person_for(
             ))
         }
     };
-    let token = crate::agents::identity::persons_token(headers, state.config.trust_edge_token)
-        .ok_or(
-            "this panel is read with your own access token, which this session does not carry; \
-             sign in through the platform's address",
-        )?;
-    let oidc = state
-        .oidc
-        .as_ref()
-        .ok_or("this Portal has no Keycloak client to read the panel with")?;
-    oidc.exchange_for_endpoint(token, slug)
-        .await
+    crate::auth::endpoint_token(state, headers, slug)
+        .await?
         .map(Some)
-        .map_err(|err| err.to_string())
+        .ok_or_else(|| {
+            "this panel is read with your own access token, which this session does not carry; \
+             sign in again"
+                .to_owned()
+        })
 }
 
 /// The `from`, `to`, `maxDataPoints` and `var-<name>` pairs asked, each checked against the
@@ -955,6 +959,100 @@ mod tests {
         state
     }
 
+    /// The `Cookie` header a browser sends after this Portal stored `session`.
+    fn cookie_of(state: &AppState, session: &Session) -> HeaderMap {
+        use axum::response::IntoResponse;
+        let jar =
+            axum_extra::extract::cookie::PrivateCookieJar::new(state.config.cookie_key.clone());
+        let jar = crate::auth::session::store(jar, session).expect("store");
+        let response = (jar, axum::http::StatusCode::OK).into_response();
+        let mut headers = HeaderMap::new();
+        for value in response.headers().get_all(axum::http::header::SET_COOKIE) {
+            let pair = value
+                .to_str()
+                .expect("ascii")
+                .split(';')
+                .next()
+                .unwrap_or_default();
+            headers.append(axum::http::header::COOKIE, pair.parse().expect("cookie"));
+        }
+        headers
+    }
+
+    /// daiya's page beside the Portal opens for the person the cookie names, in a project they
+    /// may read, and for nobody else (T-6784).
+    #[test]
+    fn the_page_reader_names_a_signed_in_member_only() {
+        let state = world(None);
+        // pia reads helsinki by a RoleBinding of that project alone.
+        for (kind, spec) in [
+            (
+                "Role",
+                json!({ "rules": [{ "kinds": ["Dashboard"], "verbs": ["read"] }] }),
+            ),
+            (
+                "RoleBinding",
+                json!({ "subjects": [{ "user": "sub-pia" }], "role": "reader",
+                        "scope": { "project": PROJECT } }),
+            ),
+        ] {
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: ObjectMeta::new("reader", ORG_NAMESPACE),
+                spec,
+                status: None,
+            });
+        }
+        let member = cookie_of(&state, &outsider().0);
+        assert_eq!(
+            page_reader(&state, &member, PROJECT).as_deref(),
+            Some("sub-pia")
+        );
+        assert_eq!(
+            page_reader(&state, &member, "bbsk"),
+            None,
+            "another project"
+        );
+        assert_eq!(page_reader(&state, &member, "Not A Name"), None);
+        assert_eq!(
+            page_reader(
+                &state,
+                &cookie_of(&state, &{
+                    let mut other = outsider().0;
+                    other.identity.subject = "sub-ola".into();
+                    other.identity.email = None;
+                    other
+                }),
+                PROJECT
+            ),
+            None
+        );
+        assert_eq!(page_reader(&state, &HeaderMap::new(), PROJECT), None);
+        let mut bearer = member.clone();
+        bearer.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer x".parse().expect("header"),
+        );
+        assert_eq!(
+            page_reader(&state, &bearer, PROJECT),
+            None,
+            "a credential is not a cookie"
+        );
+        let mut spent = outsider().0;
+        spent.access_expires_at = crate::auth::session::now_unix() - 1;
+        assert_eq!(
+            page_reader(&state, &cookie_of(&state, &spent), PROJECT),
+            None,
+            "expired"
+        );
+        let forged = HeaderMap::from_iter([(
+            axum::http::header::COOKIE,
+            "__Host-jc_session=forged".parse().expect("cookie"),
+        )]);
+        assert_eq!(page_reader(&state, &forged, PROJECT), None, "forged");
+    }
+
     fn board() -> Value {
         json!({
             "uid": "live", "title": "Helsinki live", "time": { "from": "now-7d", "to": "now" },
@@ -1208,8 +1306,26 @@ mod tests {
         assert_eq!(person_headers(&requests), [None]);
     }
 
+    /// T-6783: a Portal cookie session reads a members-only panel with its kept access token
+    /// exchanged for the Endpoint, as a bearer caller does ("Helsinki live"'s City bikes).
     #[tokio::test]
-    async fn a_cookie_session_reads_no_members_only_panel_and_says_where_to_sign_in() {
+    async fn a_cookie_session_reads_a_members_only_panel_with_its_exchanged_token() {
+        use crate::auth::endpoint_token::tests::{cookie_session, signed_in, KEPT};
+        let server = service("grafana").await;
+        render_answering(&server).await;
+        let mut state = world(Some(&server));
+        let _realm = exchanging(&mut state).await;
+        let headers = cookie_session(&state, &signed_in(), Some(KEPT));
+        let data = panel_with(admin(), &state, 3, &[], headers)
+            .await
+            .expect("frames");
+        assert!(data.error.is_none(), "{data:?}");
+        let requests = server.received_requests().await.expect("recorded");
+        assert_eq!(person_headers(&requests), [Some(EXCHANGED.to_owned())]);
+    }
+
+    #[tokio::test]
+    async fn a_cookie_session_without_a_kept_token_reads_no_members_only_panel_and_says_sign_in() {
         let server = service("grafana").await;
         Mock::given(method("GET"))
             .and(path("/api/dashboards/live/render"))
@@ -1221,10 +1337,7 @@ mod tests {
         let _realm = exchanging(&mut state).await;
         let data = panel(admin(), &state, 3, &[]).await.expect("an answer");
         let error = data.error.expect("the panel's error line");
-        assert!(
-            error.contains("sign in through the platform's address"),
-            "{error}"
-        );
+        assert!(error.contains("sign in again"), "{error}");
     }
 
     #[tokio::test]

@@ -831,6 +831,9 @@ async fn purge_tenant_empties_every_tenant_table() {
         // seeded by hand, as the cut-over will fill it.
         for stmt in [
             "INSERT INTO iri_ids (tenant_id, iri) VALUES ($1, 'urn:x:1') ON CONFLICT DO NOTHING",
+            // written only by the deployer's remint (0033)
+            "INSERT INTO entity_id_remap (tenant_id, old_id, new_id)
+             VALUES ($1, 'urn:x:old:1', 'urn:x:1')",
             "INSERT INTO attr_rows (tenant_id, entity_no, attr_no, instance_no, observed_at,
                                     created_at, modified_at, data)
              VALUES ($1, iri_no($1, 'urn:x:1'), 1, gen_random_uuid(), now(), now(), now(), '{}')",
@@ -842,7 +845,7 @@ async fn purge_tenant_empties_every_tenant_table() {
                 .expect(stmt);
         }
     }
-    const TABLES: [&str; 20] = [
+    const TABLES: [&str; 21] = [
         "entities",
         "entity_values",
         "entity_types",
@@ -855,6 +858,7 @@ async fn purge_tenant_empties_every_tenant_table() {
         "outbox",
         "snapshots",
         "entity_map_docs",
+        "entity_id_remap",
         "dist_subs",
         "dead_letters",
         "views",

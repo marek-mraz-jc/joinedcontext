@@ -11,7 +11,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use daiya_model::{
-    Action, CrError, DashboardDocument, ObjectTarget, PanelSpec, validation::html_escape,
+    Action, Authorizer, CrError, DashboardDocument, Decision, ObjectTarget, OrgId, PanelSpec,
+    RequestCtx, Subject, validation::html_escape,
 };
 use serde::Deserialize;
 
@@ -96,8 +97,68 @@ fn refused(err: &CrError) -> Response {
     )
 }
 
+/// Actor id prefix of the person a host's [`crate::PageReader`] names: never a principal a
+/// binding grants, nor the server administrator.
+const PAGE_READER_PREFIX: &str = "page-reader:";
+
+/// Read on the dashboards and datasources of the one organization the host's session lets the
+/// person read, for that person, read-only; every other check goes to `inner`. Only the page
+/// route installs it, so the person reads saved panels and runs no query of their own.
+struct PageReaderAuthorizer {
+    org_id: OrgId,
+    actor: String,
+    inner: std::sync::Arc<dyn Authorizer>,
+}
+
+impl Authorizer for PageReaderAuthorizer {
+    fn check(&self, ctx: &RequestCtx, action: Action, object: &ObjectTarget) -> Decision {
+        let reader = action == Action::Read
+            && ctx.subject.read_only
+            && ctx.subject.actor_id.as_deref() == Some(self.actor.as_str())
+            && ctx.org_id == self.org_id
+            && object.org_id() == self.org_id
+            && ctx.subject.is_member_of(self.org_id);
+        if reader {
+            Decision::allow("signed-in reader of the organization's dashboards")
+        } else {
+            self.inner.check(ctx, action, object)
+        }
+    }
+}
+
+/// The caller as the host's page reader names them, for a request without a credential:
+/// a read-only member of `ctx`'s organization alone, and the state that lets them read it.
+fn page_reader(
+    state: &DaiyaState,
+    headers: &HeaderMap,
+    ctx: &RequestCtx,
+) -> Option<(Subject, DaiyaState)> {
+    let reader = state.page_reader.as_ref()?;
+    if ctx.subject.actor_id.is_some() || headers.contains_key(header::AUTHORIZATION) {
+        return None;
+    }
+    let (num, name) = state
+        .org_registry
+        .read()
+        .by_num
+        .iter()
+        .find(|(_, (_, org))| *org == ctx.org_id)
+        .map(|(num, (name, _))| (*num, name.clone()))?;
+    let person = reader(headers, num, &name).filter(|p| !p.is_empty())?;
+    let actor = format!("{PAGE_READER_PREFIX}{person}");
+    let mut subject = Subject::authenticated(actor.clone(), vec![ctx.org_id], Vec::new());
+    subject.read_only = true;
+    let mut scoped = state.clone();
+    scoped.authorizer = std::sync::Arc::new(PageReaderAuthorizer {
+        org_id: ctx.org_id,
+        actor,
+        inner: state.authorizer.clone(),
+    });
+    Some((subject, scoped))
+}
+
 async fn dashboard_page(
-    state: DaiyaState,
+    mut state: DaiyaState,
     headers: HeaderMap,
     uid: String,
     params: PageParams,
@@ -114,6 +175,10 @@ async fn dashboard_page(
             return refused(&CrError::NotFound("organization".into()));
         };
         ctx.org_id = org;
+    }
+    if let Some((subject, scoped)) = page_reader(&state, &headers, &ctx) {
+        ctx.subject = subject;
+        state = scoped;
     }
     let record = match state.store.get_dashboard(ctx.org_id, &uid).await {
         Ok(Some(record)) => record,
