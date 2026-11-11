@@ -3,20 +3,16 @@
 //! staying their default for every member the Organization leaves out.
 //!
 //! ponytail: polled every [`FOLLOW_EVERY`] from the one Portal of this process (as
-//! [`super::PORTAL_INTERNAL`]); a dataroom or kaisatsu in a container without the Portal keeps
+//! [`super::PORTAL_STATE`]); a dataroom or kaisatsu in a container without the Portal keeps
 //! jc's config. Upgrade path: the Portal answers the appearance on its internal listener.
 
 use jc_core::kinds::OrganizationAppearance;
 use joinedcontext_portal::store::Mirror;
 use std::collections::BTreeMap;
 use std::future::Future;
-use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
-
-/// The Portal's mirror once its state is built (`portal::build`).
-pub(crate) static PORTAL_MIRROR: OnceLock<Arc<Mirror>> = OnceLock::new();
 
 /// How soon a saved appearance reaches the open data portal and the sign-in pages.
 pub(crate) const FOLLOW_EVERY: Duration = Duration::from_secs(30);
@@ -66,7 +62,9 @@ pub(crate) fn follow<F, Fut>(
         let mut seen: BTreeMap<String, Option<OrganizationAppearance>> = BTreeMap::new();
         loop {
             for name in &names {
-                let now = PORTAL_MIRROR.get().and_then(|m| in_mirror(m, name));
+                let now = super::PORTAL_STATE
+                    .get()
+                    .and_then(|state| in_mirror(&state.mirror, name));
                 if seen.get(name) != Some(&now) {
                     apply(name.clone(), now.clone()).await;
                     seen.insert(name.clone(), now);

@@ -113,8 +113,8 @@ describe("the mapping a sample drafts (PL-44)", () => {
 
   it("mints the id under the organization's domain and the target space", () => {
     expect(draft).not.toBeNull();
-    expect(draft?.bloblang).toContain('let domain = env("JC_ORG_DOMAIN")');
-    expect(draft?.bloblang).toContain('"urn:ngsi-ld:%v:%v:%v:%v".format("AirQuality", $domain, "ovzdusie", this.station_id.string())');
+    expect(draft?.bloblang).toContain('let owner = env("JC_ORG_ID")');
+    expect(draft?.bloblang).toContain('"urn:ngsi-ld:%v:%v:%v:%v".format("AirQuality", $owner, "ovzdusie", this.station_id.string())');
     expect(draft?.type).toBe("AirQuality");
     expect(draft?.idColumn).toBe("station_id");
   });
@@ -146,7 +146,7 @@ describe("the mapping a sample drafts (PL-44)", () => {
       "AirQualityObserved",
     );
     expect(drafted?.bloblang).toContain('root.type = "AirQualityObserved"');
-    expect(drafted?.bloblang).toContain('.format("AirQualityObserved", $domain, "ovzdusie", this.id.string())');
+    expect(drafted?.bloblang).toContain('.format("AirQualityObserved", $owner, "ovzdusie", this.id.string())');
     expect(drafted?.bloblang).not.toContain("root.type = { ");
     expect(drafted?.bloblang).not.toContain("@context");
     expect(drafted?.columns).toEqual(["id", "type", "pm10"]);

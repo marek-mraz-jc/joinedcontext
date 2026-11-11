@@ -119,6 +119,9 @@ pub struct Gateway {
     pub public_max_age: u32,
     /// Whether a write waits for the Organization's verified domain (PF-41, T-2572).
     pub domain_gate: Arc<crate::domain_gate::DomainGate>,
+    /// Whether a create or upsert on a deployment of one Organization must name it in its URN
+    /// (`JC_GATEWAY_URN_OWNER_PREFIX`, ADR-N-068); with several the check always runs.
+    pub urn_owner_prefix: bool,
     /// Where a person's own connectors are read, `/api/mcp/me/{name}` (EP-123); `None` serves
     /// no personal address.
     pub personal: Option<Arc<crate::mcp::personal::Personal>>,
@@ -223,6 +226,7 @@ impl Gateway {
             domain_gate: Arc::new(crate::domain_gate::DomainGate::new(
                 crate::domain_gate::Mode::Report,
             )),
+            urn_owner_prefix: false,
             personal: None,
             documents: None,
             personal_keys: None,
@@ -448,6 +452,23 @@ impl Gateway {
     /// Whether the Endpoint `slug` keeps an audit trail of its writes (DM-136).
     pub(crate) fn audited(&self, slug: &str) -> bool {
         self.provenance.load().audited.contains(slug)
+    }
+
+    /// The domain of the Organization owning `project`'s spaces when its writes must name that
+    /// Organization in their URNs (ADR-N-068): always on a deployment of several Organizations,
+    /// on one Organization unless the operator switched the check off. A project naming no
+    /// Organization the repository has is the installation's.
+    pub(crate) fn urn_owner(&self, project: &str) -> Option<String> {
+        let provenance = self.provenance.load();
+        if !self.urn_owner_prefix && provenance.domains.len() < 2 {
+            return None;
+        }
+        let domain = provenance
+            .organizations
+            .get(project)
+            .and_then(|organization| provenance.domains.get(organization))
+            .unwrap_or(&self.org_domain);
+        Some(domain.clone())
     }
 
     /// The publisher of `project`'s catalogue, when the project names one (EP-127).

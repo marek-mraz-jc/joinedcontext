@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: MIT
-//! [`table_router`]: any [`Table`] served read-only, with the service and metadata documents.
+//! [`table_router`]: any [`Table`] served with the service and metadata documents: reads, and
+//! the updates and deletes its rules offer, through the same filter and scope (T-6659).
 
 use std::sync::Arc;
 
 use axum::extract::{FromRef, FromRequestParts, State};
 use axum::http::header::{CONTENT_TYPE, ETAG};
+use axum::http::Method;
 use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use odata_json::{Ctx, EntityValue, Page, Resource};
 use odata_table::{
-    allowed, export, key_options, query, Answer, Decision, Operation, Scope, Table, TableError,
-    Value,
+    allowed, export, key_options, query, write as written_rows, Answer, Change, Decision,
+    Operation, Scope, Table, TableError, Value,
 };
 use odata_url::{EdmModel, Key, KeyValue, Literal, ODataUri, QueryOptions, Segment};
 
@@ -39,6 +41,14 @@ impl FromRef<Tables> for Arc<ODataState> {
 /// `GET /{set}/$export` (every matching row as a plain JSON array, at most `100 * max_page`) and
 /// `GET /{set}/$allowed?op=<operation>&key=<key>` (the decision the call would run, as JSON).
 /// The model of `state` holds every set.
+///
+/// A set whose rules offer update or delete and whose source writes also takes
+/// `PATCH /{set}?$filter=...` (a JSON object of the properties to set) and
+/// `DELETE /{set}?$filter=...`, or the same on `/{set}('key')`: the rows are matched by the read
+/// path within the scope, each checked against what the caller may change, and changed all or
+/// none; `dryRun=true` answers the same rows and changes nothing. The answer is
+/// `{"dryRun", "changed", "keys", "value"}`, `value` holding each row after an update or before
+/// a delete. At most `100 * max_page` rows change in one call.
 ///
 /// A request reads the [`Scope`] its caller's middleware put in the request extensions
 /// (`axum::Extension(scope)`), applied before `$filter`; a request without one is refused 403,
@@ -86,7 +96,10 @@ pub fn table_router(state: Arc<ODataState>, tables: Vec<Arc<dyn Table>>, max_pag
     };
     metadata_router(state).merge(
         Router::new()
-            .route("/{*rest}", get(dispatch).fallback(written))
+            .route(
+                "/{*rest}",
+                get(dispatch).patch(change).delete(change).fallback(written),
+            )
             .with_state(served),
     )
 }
@@ -244,6 +257,12 @@ fn refused(e: TableError) -> ODataErrorResponse {
         TableError::BadRequest(why) => {
             ODataErrorResponse::new(StatusCode::BAD_REQUEST, "BadRequest", &why)
         }
+        TableError::Forbidden(why) => {
+            ODataErrorResponse::new(StatusCode::FORBIDDEN, "Forbidden", &why)
+        }
+        TableError::Conflict(why) => {
+            ODataErrorResponse::new(StatusCode::CONFLICT, "Conflict", &why)
+        }
         // the source's text stays out of the answer: it can name tables, paths or hosts
         TableError::Source(_) => ODataErrorResponse::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -384,6 +403,152 @@ fn integer_key(table: &dyn Table) -> bool {
                 "Edm.Int64" | "Edm.Int32" | "Edm.Int16" | "Edm.Byte" | "Edm.SByte"
             )
         })
+}
+
+/// A JSON body is read up to this many bytes.
+const MAX_BODY: usize = 1 << 20;
+
+/// `PATCH` or `DELETE` on `/{set}` (with `$filter`) or `/{set}('key')`, `dryRun=true` for a
+/// dry run: the matched rows changed all or none, answered as JSON.
+async fn change(
+    State(served): State<Tables>,
+    request: axum::extract::Request,
+) -> Result<Response, ODataErrorResponse> {
+    let (mut parts, body) = request.into_parts();
+    let dry_run = dry_run_taken(&mut parts.uri)?;
+    let request = ODataRequest::from_request_parts(&mut parts, &served).await?;
+    let version = request.version;
+    let fail = |e: ODataErrorResponse| e.with_version(version);
+    let Some(scope) = parts.extensions.get::<Scope>() else {
+        return Err(fail(ODataErrorResponse::new(
+            StatusCode::FORBIDDEN,
+            "Forbidden",
+            "this request carries no read scope",
+        )));
+    };
+    let ODataUri::Resource { path, options } = &request.uri else {
+        return Err(fail(unsupported("this resource")));
+    };
+    let Some((Segment::EntitySet(set), rest)) = path.split_first() else {
+        return Err(fail(unsupported("this resource path")));
+    };
+    let Some(table) = served.sets.iter().find(|t| t.info().set == *set) else {
+        return Err(fail(not_found()));
+    };
+    let (options, key) = target(table.as_ref(), options, rest).map_err(fail)?;
+    let operation = if parts.method == Method::DELETE {
+        Operation::Delete
+    } else {
+        Operation::Update
+    };
+    // the decision before the body: a caller without the right learns that first
+    decided(table.as_ref(), scope, operation, key.as_ref())
+        .await
+        .map_err(fail)?;
+    let change = if operation == Operation::Delete {
+        Change::Delete
+    } else {
+        patched(body).await.map_err(fail)?
+    };
+    let max_rows = usize::try_from(served.max_page.saturating_mul(100)).unwrap_or(usize::MAX);
+    let done = written_rows(table.as_ref(), &options, scope, change, dry_run, max_rows)
+        .await
+        .map_err(|e| fail(refused(e)))?;
+    if key.is_some() && done.keys.is_empty() {
+        return Err(fail(not_found()));
+    }
+    let body = serde_json::json!({
+        "dryRun": done.dry_run,
+        "changed": done.keys.len(),
+        "keys": done.keys,
+        "value": done.rows,
+    });
+    let mut response = (StatusCode::OK, body.to_string()).into_response();
+    let headers = response.headers_mut();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert("odata-version", HeaderValue::from_static(version.as_str()));
+    if let Some(tag) = table
+        .etag()
+        .and_then(|t| HeaderValue::from_str(&format!("\"{t}\"")).ok())
+    {
+        headers.insert(ETAG, tag);
+    }
+    Ok(response)
+}
+
+fn bad(message: &str) -> ODataErrorResponse {
+    ODataErrorResponse::new(StatusCode::BAD_REQUEST, "BadRequest", message)
+}
+
+/// `dryRun` taken out of `uri` (it is ours, outside the OData grammar) before the URL is parsed.
+fn dry_run_taken(uri: &mut axum::http::Uri) -> Result<bool, ODataErrorResponse> {
+    let mut dry_run = false;
+    let mut kept = Vec::new();
+    for pair in uri
+        .query()
+        .unwrap_or("")
+        .split('&')
+        .filter(|p| !p.is_empty())
+    {
+        match pair.split_once('=').unwrap_or((pair, "")) {
+            ("dryRun", "true") => dry_run = true,
+            ("dryRun", "false") => dry_run = false,
+            ("dryRun", _) => return Err(bad("dryRun is true or false")),
+            _ => kept.push(pair),
+        }
+    }
+    let path_and_query = if kept.is_empty() {
+        uri.path().to_owned()
+    } else {
+        format!("{}?{}", uri.path(), kept.join("&"))
+    };
+    *uri = path_and_query
+        .parse()
+        .map_err(|_| bad("the address is not valid"))?;
+    Ok(dry_run)
+}
+
+/// The rows a write names: the set's `$filter`, or one key (and then no query option).
+fn target(
+    table: &dyn Table,
+    options: &QueryOptions,
+    rest: &[Segment],
+) -> Result<(QueryOptions, Option<Value>), ODataErrorResponse> {
+    match rest {
+        [] => Ok((options.clone(), None)),
+        [Segment::Key(Key::Single(KeyValue::Literal(key)))] => {
+            let key = key_value(key)?;
+            if *options != QueryOptions::default() {
+                return Err(bad(
+                    "a write to one entity takes no query option but dryRun",
+                ));
+            }
+            let filter = key_options(table.info(), &key, None)
+                .map_err(refused)?
+                .filter;
+            Ok((
+                QueryOptions {
+                    filter,
+                    ..QueryOptions::default()
+                },
+                Some(key),
+            ))
+        }
+        _ => Err(unsupported("this resource path")),
+    }
+}
+
+/// The update a `PATCH` body asks for: a JSON object of at most [`MAX_BODY`] bytes.
+async fn patched(body: axum::body::Body) -> Result<Change, ODataErrorResponse> {
+    let bytes = axum::body::to_bytes(body, MAX_BODY)
+        .await
+        .map_err(|_| bad("the body is over 1 MiB or was cut off"))?;
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(Value::Object(patch)) => Ok(Change::Update(patch)),
+        _ => Err(bad(
+            "the body is a JSON object of the properties to set, e.g. {\"name\": \"x\"}",
+        )),
+    }
 }
 
 /// `GET /{set}/$export?$filter=...`: every matching row as a plain JSON array.
