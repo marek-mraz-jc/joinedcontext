@@ -4683,6 +4683,9 @@ mod tests {
         state
             .mirror
             .upsert(organization("city", json!({ "domain": "hel.fi" })));
+        state
+            .mirror
+            .upsert(organization("region", json!({ "domain": "uusimaa.fi" })));
         state.mirror.upsert(manifest(
             "Policy",
             "public-read",
