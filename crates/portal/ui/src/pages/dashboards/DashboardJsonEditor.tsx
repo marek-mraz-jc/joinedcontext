@@ -165,6 +165,68 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
     parsed.manifest ? (parsed.manifest as unknown as ResourceProposal) : null;
   const loading = dashboards.isPending || endpoints.isPending;
 
+  const actions = (
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="secondary"
+          disabled={!parsed.manifest || check.isPending}
+          aria-describedby={`${ids.editor}-next ${ids.editor}-state`}
+          onClick={() => {
+            const body = asProposal();
+            setInserted(false);
+            if (body) check.mutate(body);
+          }}
+        >
+          {t("dashboards.json.check")}
+        </Button>
+        <Button
+          variant="primary"
+          disabled={!parsed.manifest || refusals.length > 0 || proposal.mutation.isPending}
+          aria-describedby={`${ids.editor}-next ${ids.editor}-state`}
+          onClick={() => {
+            const body = asProposal();
+            if (body) proposal.mutation.mutate({ body, create: !existing });
+          }}
+        >
+          {t("dashboards.propose")}
+        </Button>
+        <span id={`${ids.editor}-next`} className="text-caption text-fg-muted">
+          {!parsed.manifest
+            ? t("dashboards.json.fixJson")
+            : refusals.length > 0
+              ? t("dashboards.json.fixRefused")
+              : checkedGreen
+                ? null
+                : pages.every((page) => page.widgets.length === 0 && page.refused.length === 0)
+                  ? t("dashboards.json.nextStepEmpty")
+                  : t("dashboards.json.nextStep")}
+        </span>
+      </div>
+      <div id={`${ids.editor}-state`} className="flex flex-col gap-3 empty:hidden">
+        {refusals.length > 0 ? (
+          <Alert tone="danger" title={t("dashboards.json.refused")}>
+            <p>{t("dashboards.json.refusedHint")}</p>
+            <ul className="list-disc pl-5">
+              {refusals.map((finding, index) => (
+                <li key={`${finding.path ?? ""}-${index}`}>
+                  {finding.path ? <code>{finding.path}</code> : null}
+                  {finding.path ? ": " : null}
+                  {finding.message}
+                </li>
+              ))}
+            </ul>
+          </Alert>
+        ) : checkedGreen ? (
+          <Alert tone="success" title={t("dashboards.json.checked")}>
+            {t("dashboards.addHint")}
+          </Alert>
+        ) : null}
+        {proposal.error ? <Alert tone="danger">{proposal.error}</Alert> : null}
+      </div>
+    </>
+  );
+
   const picker = (
     <>
       <div className="grid gap-3 sm:grid-cols-3">
@@ -330,63 +392,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                 </span>
               </InlineError>
             ) : null}
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="secondary"
-                disabled={!parsed.manifest || check.isPending}
-                aria-describedby={`${ids.editor}-next ${ids.editor}-state`}
-                onClick={() => {
-                  const body = asProposal();
-                  setInserted(false);
-                  if (body) check.mutate(body);
-                }}
-              >
-                {t("dashboards.json.check")}
-              </Button>
-              <Button
-                variant="primary"
-                disabled={!parsed.manifest || refusals.length > 0 || proposal.mutation.isPending}
-                aria-describedby={`${ids.editor}-next ${ids.editor}-state`}
-                onClick={() => {
-                  const body = asProposal();
-                  if (body) proposal.mutation.mutate({ body, create: !existing });
-                }}
-              >
-                {t("dashboards.propose")}
-              </Button>
-              <span id={`${ids.editor}-next`} className="text-caption text-fg-muted">
-                {!parsed.manifest
-                  ? t("dashboards.json.fixJson")
-                  : refusals.length > 0
-                    ? t("dashboards.json.fixRefused")
-                    : checkedGreen
-                      ? null
-                      : pages.every((page) => page.widgets.length === 0 && page.refused.length === 0)
-                        ? t("dashboards.json.nextStepEmpty")
-                        : t("dashboards.json.nextStep")}
-              </span>
-            </div>
-            <div id={`${ids.editor}-state`} className="flex flex-col gap-3 empty:hidden">
-              {refusals.length > 0 ? (
-                <Alert tone="danger" title={t("dashboards.json.refused")}>
-                  <p>{t("dashboards.json.refusedHint")}</p>
-                  <ul className="list-disc pl-5">
-                    {refusals.map((finding, index) => (
-                      <li key={`${finding.path ?? ""}-${index}`}>
-                        {finding.path ? <code>{finding.path}</code> : null}
-                        {finding.path ? ": " : null}
-                        {finding.message}
-                      </li>
-                    ))}
-                  </ul>
-                </Alert>
-              ) : checkedGreen ? (
-                <Alert tone="success" title={t("dashboards.json.checked")}>
-                  {t("dashboards.addHint")}
-                </Alert>
-              ) : null}
-              {proposal.error ? <Alert tone="danger">{proposal.error}</Alert> : null}
-            </div>
+            {phone ? null : actions}
           </section>
           <section
             {...(phone ? tabPanelProps(ids.view, "preview") : { "aria-labelledby": `${ids.editor}-preview` })}
@@ -433,6 +439,8 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
               ))
             )}
           </section>
+          {/* On a phone the check, its answer and Propose sit under both tabs. */}
+          {phone ? <div className="flex flex-col gap-3">{actions}</div> : null}
         </div>
       )}
     </div>

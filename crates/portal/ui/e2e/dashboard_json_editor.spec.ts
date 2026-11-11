@@ -104,7 +104,11 @@ for (const width of [1440, 400]) {
     if (width < 640) await page.getByText("Insert a widget", { exact: true }).click();
     await page.getByRole("button", { name: "Insert widget" }).click();
     // On a phone the preview is its own tab.
-    if (width < 640) await openTab(page, "Preview");
+    if (width < 640) {
+      await openTab(page, "Preview");
+      // The check and Propose stay at hand on the preview tab.
+      await expect(page.getByRole("button", { name: "Check" })).toBeVisible();
+    }
     const figure = page.getByRole("figure").filter({ hasText: "BikeHireDockingStation by type" });
     await expect(figure.locator("canvas")).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 0));
