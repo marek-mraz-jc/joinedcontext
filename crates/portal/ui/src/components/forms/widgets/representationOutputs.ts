@@ -9,10 +9,34 @@ import type { IcalMapping } from "./icalMapping";
 
 export type Format = "ical" | "feed" | "widget";
 
-/** An output's query on top of the view: it narrows, never widens (EP-157). */
+/** An output's query on top of the view: it narrows, never widens (EP-157); deprecated by `query`. */
 export interface OutputFilter {
   q?: string;
   scopeQ?: string;
+  georel?: string;
+  geometry?: string;
+  coordinates?: string;
+  geoproperty?: string;
+}
+
+const FILTER_PARAMS = ["q", "scopeQ", "georel", "geometry", "coordinates", "geoproperty"] as const;
+
+/** A value as a preset's query string carries it: the characters the server's decoding reads (`%`, `&`, `+`, `#`) escaped, the rest kept readable. */
+function queryValue(value: string): string {
+  return value.replace(/[%&+#]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+/** A preset's query string (API/02 §4a): its `query`, else its older `filter` written as one. */
+export function queryOf(output: { query?: unknown; filter?: OutputFilter }): string {
+  if (typeof output.query === "string") return output.query;
+  const filter = output.filter ?? {};
+  return FILTER_PARAMS.flatMap((name) => (filter[name] ? [`${name}=${queryValue(filter[name])}`] : [])).join("&");
+}
+
+/** The output with `text` as its preset query; the older `filter` goes, and an empty text drops both. */
+export function withQuery<O extends { query?: unknown; filter?: OutputFilter }>(output: O, text: string): O {
+  const { filter: _filter, query: _query, ...rest } = output;
+  return (text.trim() ? { ...rest, query: text } : rest) as O;
 }
 
 export interface FeedSource {

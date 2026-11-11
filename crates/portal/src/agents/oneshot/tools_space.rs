@@ -620,9 +620,14 @@ impl Driver {
             &self.project,
             params.context_space.trim(),
         );
-        match share::check_types(&params, &classes)
-            .and_then(|()| share::render(&self.project, &params, &known))
-        {
+        match share::check_types(&params, &classes).and_then(|()| {
+            let prefix = crate::api::assistant::policy_urn_prefix(
+                &self.state,
+                &self.project,
+                params.context_space.trim(),
+            );
+            share::render(&self.project, &params, &known, &prefix)
+        }) {
             Ok(proposal) => {
                 let output = serde_json::to_value(&proposal).unwrap_or(Value::Null);
                 self.event(

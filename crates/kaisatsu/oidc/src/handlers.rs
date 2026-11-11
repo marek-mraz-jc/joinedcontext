@@ -223,13 +223,16 @@ pub async fn resolve_or_fetch_client(
     if client_id.starts_with("https://") && realm.cimd_allowed_client_domains.is_empty() {
         return Err(KaisatsuError::invalid_client("unknown client_id"));
     }
-    if let Some(existing) = state
+    if let Some(mut existing) = state
         .store
         .get_client_by_client_id(&realm.id, client_id)
         .await?
     {
         if !existing.enabled {
             return Err(KaisatsuError::invalid_client("client is disabled"));
+        }
+        if existing.is_cimd {
+            existing.optional_client_scopes = crate::cimd::cimd_optional_scopes(realm);
         }
         return Ok(existing);
     }

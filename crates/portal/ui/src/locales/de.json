@@ -190,6 +190,7 @@
     "dependency": "Dieses Feld braucht das Feld, von dem es abhängt",
     "check": "Prüfen",
     "restartsStream": "Diese Änderung startet den Stream auf dem Runner neu. Eine periodische Pipeline beginnt ihren Zeitplan von vorn, der nächste Lauf ist also eine ganze Periode entfernt.",
+    "bindsEndpoints": "Diese Richtlinie entscheidet nach der Freigabe über die Aufrufe dieser Endpunkte:",
     "dns1123": "Nur Kleinbuchstaben, Ziffern und Bindestriche, beginnend mit einem Buchstaben oder einer Ziffer, höchstens 63 Zeichen.",
     "entityType": "Ein NGSI-LD-Typ: ein Großbuchstabe, dann Buchstaben und Ziffern, höchstens 64 Zeichen.",
     "requiredCount": "{filled} von {total} Pflichtfeldern ausgefüllt",
@@ -1544,7 +1545,8 @@
         "datasetQuery": "Eingrenzende Abfrage",
         "datasetKeywords": "Schlagwörter",
         "datasetLicense": "Lizenz"
-      }
+      },
+      "policyRefs": "Bediente Richtlinien"
     },
     "rateClass": {
       "none": "Kein Limit",
@@ -2128,8 +2130,8 @@
         "bad": "Verwenden Sie 1 bis 40 Kleinbuchstaben, Ziffern oder -, beginnend mit Buchstabe oder Ziffer."
       },
       "filterField": {
-        "label": "Nur passende Entitäten (optional)",
-        "hint": "Eine NGSI-LD-Abfrage, die diese Ausgabe eingrenzt und nie erweitert, zum Beispiel eventCategory==\"sport\"."
+        "label": "Abfrage der Vorlage (optional)",
+        "hint": "q, scopeQ und eine Geo-Abfrage als eine Abfragezeichenkette; sie grenzt diese Vorlage ein, erweitert sie nie. Zum Beispiel q=category==\"sport\"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]. In einem Wert & als %26 und % als %25 schreiben."
       },
       "sourceAdd": {
         "label": "Weiteren Typ hinzufügen",
@@ -2321,7 +2323,13 @@
         "anonymous": "Nicht angemeldet",
         "unknown": "Noch nicht unterschieden"
       }
-    }
+    },
+    "help": {
+      "policyRefs": "Kreuzen Sie die Richtlinien an, deren Berechtigungen über die Aufrufe dieses Endpunkts entscheiden, z. B. {example}. Aufgeführt sind nur Richtlinien seines Raums, die Sie lesen dürfen; eine später hinzugefügte Richtlinie gilt erst, wenn sie hier angekreuzt ist.",
+      "policyRefsDrafted": "Die mit diesem Endpunkt entworfenen Lese- und Schreibrichtlinien sind bereits eingetragen; kreuzen Sie weitere Richtlinien seines Raums an, die er bedienen soll."
+    },
+    "policyRefsNone": "Der Raum {space} enthält keine Richtlinie, die Sie lesen dürfen, daher würde dieser Endpunkt niemanden bedienen. Fügen Sie zuerst eine Richtlinie für den Raum hinzu und wählen Sie sie dann hier.",
+    "policyRefsAdd": "Richtlinien öffnen"
   },
   "datasources": {
     "title": "Datenquellen",

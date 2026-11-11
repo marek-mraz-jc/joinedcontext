@@ -405,6 +405,8 @@ fn seed_project(mirror: &Mirror, project: &str, catalogue: &str) {
             "contextSpaceRef": "doprava",
             "audience": "public",
             "enabledRepresentations": ["ngsi-ld"],
+            // The space's one Policy, named (P-18, T-6740).
+            "policyRefs": [format!("urn:ngsi-ld:Policy:hel.fi:{project}-doprava:public-read")],
             "display": { "BikeCounter": { "fields": ["name", "count"] } }
         }),
     ));
@@ -3942,6 +3944,11 @@ async fn a_schema_example_plans_as_a_create() {
         let name = manifest["metadata"]["name"].clone();
         if manifest["spec"].get("contextSpaceRef").is_some() {
             manifest["spec"]["contextSpaceRef"] = json!("doprava");
+        }
+        if manifest["spec"].get("policyRefs").is_some() {
+            manifest["spec"]["policyRefs"] = json!([format!(
+                "urn:ngsi-ld:Policy:hel.fi:{own}-doprava:public-read"
+            )]);
         }
         if let Some(need) = manifest.pointer_mut("/spec/dataNeeds/0/contextSpaceRef") {
             *need = json!("doprava");

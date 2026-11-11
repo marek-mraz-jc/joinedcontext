@@ -187,12 +187,13 @@ pub struct Missing {
 tokio::task_local! {
     /// The manifests proposed in one Change with the manifest under check: a reference to one of
     /// them resolves when that Change merges (T-5109), and a write one of them binds is made
-    /// (PL-111). Only `jc_space_complete` sets it, around the check of each draft of the bundle it
-    /// commits whole.
+    /// (PL-111). `jc_space_complete` sets it around the check of each draft of the bundle it
+    /// commits whole, and a form's check around the manifest its import proposes with others
+    /// (`bundle` of a dry run, T-6740).
     pub static BUNDLE: Vec<Value>;
 }
 
-/// The manifests of the Change being checked ([`BUNDLE`]); empty outside `jc_space_complete`.
+/// The manifests of the Change being checked ([`BUNDLE`]); empty outside a bundled check.
 pub fn bundled() -> Vec<Value> {
     BUNDLE.try_with(Clone::clone).unwrap_or_default()
 }

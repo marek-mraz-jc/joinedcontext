@@ -60,8 +60,8 @@ fn each_calendar_output_is_one_distribution_titled_by_the_output() {
     assert_eq!(
         calendar_urls(&record),
         vec![
-            format!("{BASE}/api/endpoint/podujatia/ical/v1/kalendar.ics"),
-            format!("{BASE}/api/endpoint/podujatia/ical/v1/zasadnutia.ics"),
+            format!("{BASE}/api/endpoint/podujatia/feeds/kalendar.ics"),
+            format!("{BASE}/api/endpoint/podujatia/feeds/zasadnutia.ics"),
         ]
     );
     let first = record["dcat:distribution"]
@@ -96,7 +96,7 @@ fn the_record_page_names_each_calendar_as_an_alternate() {
     let page = with_subject(&outputs, |s| dataset_html(s, &json!({}), BASE));
     for name in ["kalendar", "zasadnutia"] {
         let link = format!(
-            "type=\"text/calendar\" title=\"{}\" href=\"{BASE}/api/endpoint/podujatia/ical/v1/{name}.ics\"",
+            "type=\"text/calendar\" title=\"{}\" href=\"{BASE}/api/endpoint/podujatia/feeds/{name}.ics\"",
             if name == "kalendar" { "Calendar" } else { "zasadnutia" }
         );
         assert!(page.contains(&link), "{link} missing in {page}");

@@ -101,7 +101,7 @@ export function samplesOf(input: SampleInput): SurfaceSamples[] {
     out.push({ surface: "csv", url, code: read(url, "text/csv", "data.csv"), tools: [] });
   }
   if (serves("ical")) {
-    const url = `${base}ical/v1/events.ics`;
+    const url = `${base}entities.ics`;
     out.push({ surface: "ical", url, code: read(url, "text/calendar", "events.ics"), tools: [{ tool: "calendar", url: url.replace(/^https?:\/\//, "webcal://") }] });
   }
   if (serves("websocket")) {
