@@ -692,7 +692,10 @@ mod tests {
                 ),
             ),
             "endpoint-policy-refs" => (
-                vec![org(json!({ "domain": "hel.fi", "installation": true }))],
+                vec![
+                    org(json!({ "domain": "hel.fi", "installation": true })),
+                    envelope("ContextSpace", "ovzdusie", "ovzdusie", json!({})),
+                ],
                 air(endpoint(
                     json!({ "policyRef": "urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:nobody" }),
                 )),

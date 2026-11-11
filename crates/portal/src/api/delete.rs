@@ -568,6 +568,7 @@ pub async fn delete_with_identity(
             findings: Vec::new(),
             awaited: Vec::new(),
             goes_with: goes_with(state, project, kind_info.kind, name, &cleanup).await,
+            binds_endpoints: Vec::new(),
         }));
     }
 

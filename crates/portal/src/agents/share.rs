@@ -258,6 +258,7 @@ pub fn render(
     project: &str,
     params: &ProposeEndpoint,
     known_groups: &[String],
+    policy_prefix: &str,
 ) -> Result<Proposal, String> {
     let name = params.name.trim();
     let space = params.context_space.trim();
@@ -459,7 +460,7 @@ pub fn render(
     {
         metadata["title"] = json!({ "en": title });
     }
-    let endpoint = json!({
+    let mut endpoint = json!({
         "apiVersion": API_VERSION,
         "kind": "Endpoint",
         "metadata": metadata,
@@ -549,6 +550,17 @@ pub fn render(
             .collect()
     };
 
+    // The Endpoint serves the grants drafted with it and no other Policy of the space (P-18,
+    // T-6740). A read preset drafts none: an App's own Endpoint keeps the App rule.
+    let refs: Vec<String> = policies
+        .iter()
+        .filter_map(|policy| policy["metadata"]["name"].as_str())
+        .map(|policy| format!("{policy_prefix}{policy}"))
+        .collect();
+    if !refs.is_empty() {
+        endpoint["spec"]["policyRefs"] = json!(refs);
+    }
+
     // A Policy that names a group the repository does not declare does not validate, and the
     // share is refused for something the person cannot fix from the chat. The missing groups
     // are drafted empty beside it (T-1042, PF-62).
@@ -584,6 +596,9 @@ pub fn render(
         "hiddenAttributes": params.hidden_attributes,
         "entityTypes": params.entity_types,
     });
+    if let Some(refs) = endpoint["spec"].get("policyRefs") {
+        prefill["policyRefs"] = refs.clone();
+    }
     if let Some(title) = endpoint["metadata"].get("title") {
         // Flattened, the same way `form_values` does it below (T-1221): a manifest carries the
         // title as a language map and the form's `title` is one string. Handing the map over
@@ -949,6 +964,8 @@ mod tests {
     use jc_core::kinds::Representation;
     use serde_json::json;
 
+    const PREFIX: &str = "urn:ngsi-ld:Policy:hel.fi:helsinki-air:";
+
     fn request() -> ProposeEndpoint {
         ProposeEndpoint {
             context_space: "helsinki".into(),
@@ -973,7 +990,7 @@ mod tests {
 
     #[test]
     fn the_defaults_are_project_list_ngsi_ld_and_csv_and_the_lane_is_yellow() {
-        let proposal = render("helsinki", &request(), &[]).expect("renders");
+        let proposal = render("helsinki", &request(), &[], PREFIX).expect("renders");
         assert_eq!(proposal.lane, Lane::Yellow);
         let spec = &proposal.endpoint["spec"];
         assert_eq!(spec["audience"], "project-list");
@@ -986,6 +1003,12 @@ mod tests {
         assert_eq!(spec["slug"].as_str().map(str::len), Some(26));
         assert_eq!(proposal.endpoint["metadata"]["namespace"], "helsinki");
         assert_eq!(proposal.policies.len(), 1);
+        // The Endpoint serves the grant drafted with it and no other Policy (P-18, T-6740).
+        let urn = json!([
+            "urn:ngsi-ld:Policy:hel.fi:helsinki-air:bikes-regional-transport-regional-transport"
+        ]);
+        assert_eq!(spec["policyRefs"], urn);
+        assert_eq!(proposal.prefill["policyRefs"], urn);
         let policy = &proposal.policies[0]["spec"];
         assert_eq!(
             policy["assignee"],
@@ -1015,7 +1038,7 @@ mod tests {
         let mut params = request();
         params.audience = Some("public".into());
         params.allowed_projects.clear();
-        let proposal = render("helsinki", &params, &[]).expect("renders");
+        let proposal = render("helsinki", &params, &[], PREFIX).expect("renders");
         assert_eq!(proposal.lane, Lane::Red);
         assert!(proposal.endpoint["spec"].get("allowedProjects").is_none());
         assert_eq!(
@@ -1028,27 +1051,27 @@ mod tests {
     fn what_cannot_be_rendered_is_named() {
         let mut params = request();
         params.allowed_projects.clear();
-        assert!(render("helsinki", &params, &[])
+        assert!(render("helsinki", &params, &[], PREFIX)
             .unwrap_err()
             .contains("allowedProjects"));
         let mut params = request();
         params.audience = Some("everyone".into());
-        assert!(render("helsinki", &params, &[])
+        assert!(render("helsinki", &params, &[], PREFIX)
             .unwrap_err()
             .contains("audience"));
         let mut params = request();
         params.name = "Bikes!".into();
-        assert!(render("helsinki", &params, &[])
+        assert!(render("helsinki", &params, &[], PREFIX)
             .unwrap_err()
             .contains("DNS-1123"));
         let mut params = request();
         params.representations = vec!["pdf".into()];
-        assert!(render("helsinki", &params, &[])
+        assert!(render("helsinki", &params, &[], PREFIX)
             .unwrap_err()
             .contains("representation"));
         let mut params = request();
         params.hidden_attributes = vec!["<script>".into()];
-        assert!(render("helsinki", &params, &[])
+        assert!(render("helsinki", &params, &[], PREFIX)
             .unwrap_err()
             .contains("hiddenAttributes"));
     }
@@ -1167,7 +1190,7 @@ mod tests {
             let mut params = request();
             params.entity_types = vec!["Event".to_owned()];
             params.representations = vec![name.to_owned()];
-            match render("helsinki", &params, &[]) {
+            match render("helsinki", &params, &[], PREFIX) {
                 Ok(rendered) => {
                     let spec: jc_core::kinds::EndpointSpec =
                         serde_json::from_value(rendered.endpoint["spec"].clone())
@@ -1188,7 +1211,7 @@ mod tests {
         for bad in ["xlsx", "parquet", "zip", "json", "ODATA", "ical/v1", ""] {
             let mut params = request();
             params.representations = vec![bad.to_owned()];
-            let refused = render("helsinki", &params, &[]).expect_err(bad);
+            let refused = render("helsinki", &params, &[], PREFIX).expect_err(bad);
             assert!(refused.contains("is not one of"), "{refused}");
         }
     }
@@ -1200,7 +1223,7 @@ mod tests {
         params.representations = ["ngsi-ld", "odata", "geojson", "ogc-features"]
             .map(str::to_owned)
             .to_vec();
-        let rendered = render("helsinki", &params, &[]).expect("renders");
+        let rendered = render("helsinki", &params, &[], PREFIX).expect("renders");
         assert_eq!(
             rendered.endpoint["spec"]["enabledRepresentations"],
             json!(["ngsi-ld", "odata", "ogc-features"])
@@ -1214,7 +1237,7 @@ mod tests {
             let mut params = request();
             params.representations = vec!["ngsi-ld".to_owned(), "ical".to_owned()];
             params.entity_types = types.iter().map(|t| (*t).to_owned()).collect();
-            render("helsinki", &params, &[])
+            render("helsinki", &params, &[], PREFIX)
         };
         let event = draft(&["Event", "Place"]).expect("renders");
         assert_eq!(
@@ -1224,7 +1247,7 @@ mod tests {
         let refused = draft(&["BikeCounter"]).expect_err("no preset maps it");
         assert!(refused.contains("BikeCounter"), "{refused}");
         assert!(refused.contains("endpoint form"), "{refused}");
-        let plain = render("helsinki", &request(), &[]).expect("renders");
+        let plain = render("helsinki", &request(), &[], PREFIX).expect("renders");
         assert!(plain.endpoint["spec"].get("representations").is_none());
     }
 
@@ -1403,7 +1426,7 @@ mod tests {
         params.audience = Some("project-list".to_owned());
         params.allowed_projects = vec!["helsinki-mobility".to_owned(), "espoo".to_owned()];
 
-        let proposal = render("helsinki", &params, &["espoo".to_owned()]).expect("renders");
+        let proposal = render("helsinki", &params, &["espoo".to_owned()], PREFIX).expect("renders");
         let drafted: Vec<&str> = proposal
             .groups
             .iter()
@@ -1424,7 +1447,7 @@ mod tests {
 
         // Every named group already declared: nothing to draft.
         let known = vec!["helsinki-mobility".to_owned(), "espoo".to_owned()];
-        assert!(render("helsinki", &params, &known)
+        assert!(render("helsinki", &params, &known, PREFIX)
             .expect("renders")
             .groups
             .is_empty());
@@ -1437,7 +1460,7 @@ mod tests {
         let mut params = request();
         params.audience = Some("organization".to_owned());
         params.allowed_projects = Vec::new();
-        let proposal = render("helsinki", &params, &[]).expect("renders");
+        let proposal = render("helsinki", &params, &[], PREFIX).expect("renders");
         let assignees: Vec<&serde_json::Value> = proposal
             .policies
             .iter()
@@ -1460,7 +1483,7 @@ mod tests {
             params.audience = Some(audience.to_owned());
             params.allowed_projects = Vec::new();
             assert!(
-                render("helsinki", &params, &[])
+                render("helsinki", &params, &[], PREFIX)
                     .expect("renders")
                     .groups
                     .is_empty(),
@@ -1516,7 +1539,7 @@ mod tests {
     #[test]
     fn a_public_form_grants_anyone_the_create_of_its_one_type_alone() {
         let form = public_form();
-        let proposal = render("helsinki", &form, &[]).expect("renders");
+        let proposal = render("helsinki", &form, &[], PREFIX).expect("renders");
         assert_eq!(proposal.lane, Lane::Red);
         let [policy] = proposal.policies.as_slice() else {
             panic!("one policy: {:?}", proposal.policies);
@@ -1551,20 +1574,20 @@ mod tests {
     fn a_public_form_names_its_daily_count_within_bounds() {
         let mut form = public_form();
         form.creates_per_day = Some(25);
-        let proposal = render("helsinki", &form, &[]).expect("renders");
+        let proposal = render("helsinki", &form, &[], PREFIX).expect("renders");
         assert_eq!(proposal.endpoint["spec"]["creates"]["perDay"], 25);
         for bad in [0, 10_001] {
             form.creates_per_day = Some(bad);
-            assert!(render("helsinki", &form, &[])
+            assert!(render("helsinki", &form, &[], PREFIX)
                 .expect_err("out of bounds")
                 .contains("createsPerDay"));
         }
         let mut not_a_form = app_endpoint(Preset::Full);
         not_a_form.creates_per_day = Some(25);
-        assert!(render("helsinki", &not_a_form, &[])
+        assert!(render("helsinki", &not_a_form, &[], PREFIX)
             .expect_err("not a form")
             .contains("public form"));
-        let read = render("helsinki", &app_endpoint(Preset::Read), &[]).expect("read");
+        let read = render("helsinki", &app_endpoint(Preset::Read), &[], PREFIX).expect("read");
         assert!(read.endpoint["spec"].get("creates").is_none());
     }
 
@@ -1573,12 +1596,12 @@ mod tests {
     #[test]
     fn a_public_form_names_the_sites_that_may_frame_it() {
         let mut form = public_form();
-        let plain = render("helsinki", &form, &[]).expect("renders");
+        let plain = render("helsinki", &form, &[], PREFIX).expect("renders");
         assert!(plain.endpoint["spec"]["creates"]
             .get("embedOrigins")
             .is_none());
         form.embed_origins = vec!["https://www.hel.fi".into()];
-        let framed = render("helsinki", &form, &[]).expect("renders");
+        let framed = render("helsinki", &form, &[], PREFIX).expect("renders");
         assert_eq!(
             framed.endpoint["spec"]["creates"]["embedOrigins"],
             json!(["https://www.hel.fi"])
@@ -1592,13 +1615,13 @@ mod tests {
             "https://www.hel.fi/form",
         ] {
             form.embed_origins = vec![bad.into()];
-            assert!(render("helsinki", &form, &[])
+            assert!(render("helsinki", &form, &[], PREFIX)
                 .expect_err(bad)
                 .contains("embedOrigins"));
         }
         let mut not_a_form = app_endpoint(Preset::Full);
         not_a_form.embed_origins = vec!["https://www.hel.fi".into()];
-        assert!(render("helsinki", &not_a_form, &[])
+        assert!(render("helsinki", &not_a_form, &[], PREFIX)
             .expect_err("not a form")
             .contains("public form"));
     }
@@ -1610,17 +1633,17 @@ mod tests {
         let mut no_fields = public_form();
         no_fields.write_attributes.clear();
         no_fields.write_relationships.clear();
-        assert!(render("helsinki", &no_fields, &[])
+        assert!(render("helsinki", &no_fields, &[], PREFIX)
             .expect_err("no fields")
             .contains("writeAttributes"));
         let mut bad = public_form();
         bad.write_attributes.push("not a name".into());
-        assert!(render("helsinki", &bad, &[])
+        assert!(render("helsinki", &bad, &[], PREFIX)
             .expect_err("bad field")
             .contains("'not a name'"));
         let mut not_a_form = app_endpoint(Preset::Full);
         not_a_form.write_attributes = vec!["name".into()];
-        assert!(render("helsinki", &not_a_form, &[])
+        assert!(render("helsinki", &not_a_form, &[], PREFIX)
             .expect_err("not a form")
             .contains("public form"));
     }
@@ -1630,13 +1653,13 @@ mod tests {
     #[test]
     fn a_public_form_that_is_not_public_or_not_one_type_is_refused() {
         let not_public = app_endpoint(Preset::Create);
-        assert!(render("helsinki", &not_public, &[])
+        assert!(render("helsinki", &not_public, &[], PREFIX)
             .expect_err("project-list")
             .contains("audience public"));
         for types in [vec![], vec!["A".to_owned(), "B".to_owned()]] {
             let mut form = public_form();
             form.entity_types = types;
-            assert!(render("helsinki", &form, &[])
+            assert!(render("helsinki", &form, &[], PREFIX)
                 .expect_err("one type")
                 .contains("exactly one entity type"));
         }
@@ -1645,7 +1668,8 @@ mod tests {
     /// A read preset grants nothing: the endpoint alone, read with the grants already held.
     #[test]
     fn a_read_preset_is_the_endpoint_alone_for_this_project() {
-        let proposal = render("helsinki", &app_endpoint(Preset::Read), &[]).expect("renders");
+        let proposal =
+            render("helsinki", &app_endpoint(Preset::Read), &[], PREFIX).expect("renders");
         assert_eq!(proposal.lane, Lane::Yellow);
         assert!(proposal.policies.is_empty(), "{:?}", proposal.policies);
         assert!(proposal.groups.is_empty(), "{:?}", proposal.groups);
@@ -1658,7 +1682,7 @@ mod tests {
     #[test]
     fn a_write_preset_grants_its_operations_on_the_named_types_in_the_red_lane() {
         for preset in [Preset::Update, Preset::Full] {
-            let proposal = render("helsinki", &app_endpoint(preset), &[]).expect("renders");
+            let proposal = render("helsinki", &app_endpoint(preset), &[], PREFIX).expect("renders");
             assert_eq!(proposal.lane, Lane::Red, "{preset:?}");
             assert_eq!(proposal.policies.len(), 1, "{preset:?}");
             let policy = &proposal.policies[0];
@@ -1685,7 +1709,7 @@ mod tests {
         let mut both = app_endpoint(Preset::Read);
         both.allowed_projects = vec!["helsinki".into(), "espoo".into()];
         for params in [elsewhere, public, both] {
-            let refusal = render("helsinki", &params, &[]).expect_err("refused");
+            let refusal = render("helsinki", &params, &[], PREFIX).expect_err("refused");
             assert!(
                 refusal.contains("allowedProjects ['helsinki'] alone"),
                 "{refusal}"
@@ -1693,11 +1717,11 @@ mod tests {
         }
         let mut untyped = app_endpoint(Preset::Full);
         untyped.entity_types.clear();
-        let refusal = render("helsinki", &untyped, &[]).expect_err("refused");
+        let refusal = render("helsinki", &untyped, &[], PREFIX).expect_err("refused");
         assert!(refusal.contains("needs entityTypes"), "{refusal}");
         // Reading needs no type: the builder narrows what the app reads.
         let mut read = app_endpoint(Preset::Read);
         read.entity_types.clear();
-        assert!(render("helsinki", &read, &[]).is_ok());
+        assert!(render("helsinki", &read, &[], PREFIX).is_ok());
     }
 }
