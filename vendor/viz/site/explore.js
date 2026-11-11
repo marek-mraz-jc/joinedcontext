@@ -1128,6 +1128,9 @@
       state.sort = next.sort || null;
       state.all = next.noDefault === true;
       address();
+      // The catalogue's Subscribe menu builds a calendar of these rows (brief 132, END-16): the
+      // type and q go to the catalogue's origin alone, never to any page that frames this one.
+      if (window.parent !== window && H.catalogue) window.parent.postMessage({ type: "jc-viz-query", entityType: state.type || "", q: state.q }, H.catalogue);
       if (moved) drawMap();
     }
 
