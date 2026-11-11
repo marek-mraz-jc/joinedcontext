@@ -420,10 +420,7 @@ async fn the_news_preset_is_an_rss_channel_of_articles_with_an_etag() {
         channel.matches("<item>").count(),
         channel.matches("</item>").count()
     );
-    assert_eq!(
-        ids("rss.xml", &body),
-        ["tag:localhost,2026:city/urn:ngsi-ld:Article:a1"]
-    );
+    assert_eq!(ids("rss.xml", &body), ["urn:ngsi-ld:Article:a1"]);
     assert!(body.trim_end().ends_with("</rss>"), "{body}");
     let etag = headers["etag"].to_str().expect("etag").to_owned();
     let (status, _, body) = call(&app, "GET", uri, "", &[("If-None-Match", etag.as_str())]).await;
