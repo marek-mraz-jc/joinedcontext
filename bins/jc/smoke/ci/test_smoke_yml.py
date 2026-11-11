@@ -28,6 +28,15 @@ def test_run_all_takes_the_bundles_image_the_buildx_step_loads():
     ).read_text()
 
 
+def test_jcctl_is_built_beside_jc_before_the_import_validates_with_it():
+    """import.sh refuses to import without JCCTL_BIN, default `jcctl` beside jc (target/debug)."""
+    runs = [s.get("run", "") for s in steps()]
+    jcctl = next(i for i, r in enumerate(runs) if "-p jcctl" in r)
+    assert "vendor/joinedcontext-platform/Cargo.toml" in runs[jcctl] and "--target-dir target" in runs[jcctl]
+    assert jcctl < [s.get("name") for s in steps()].index("run all")
+    assert "JCCTL_BIN" not in str(steps())
+
+
 def test_the_gate_never_turns_the_apps_off():
     doc = yaml.safe_load(workflow.read_text())
     job = doc["jobs"]["all"]

@@ -528,9 +528,145 @@ def test_the_import_bounds_the_spaces_of_every_repository_not_only_the_first(tmp
             return 500, {}
 
     report = {}
-    rh.import_shako(Refusing(), "token", export, report)
+    rh.import_shako(Refusing(), "token", export, report, validate=lambda _: [])
     assert report["retentionBounded"] == ["joinedcontext/a/spaces/first/space.yaml",
                                           "joinedcontext/b/spaces/second/space.yaml"]
+
+class Forge:
+    """A stub shako: `held` maps repository -> {path: content} already on main; records each call."""
+
+    def __init__(self, held=None):
+        self.held, self.calls = held or {}, []
+
+    def json(self, verb, url, headers=None, body=None):
+        self.calls.append((verb, url, body))
+        repo = re.search(r"/(?:projects|repos)/([^/]+)/(?:repositories/)?([^/?]+)", url)
+        key = f"{repo.group(1)}/{repo.group(2)}" if repo else ""
+        if verb == "GET" and "/git/trees/" in url:
+            if key not in self.held:
+                return 404, {}
+            return 200, {"tree": [{"path": p, "type": "blob", "sha": rh.git_blob_sha(d)}
+                                  for p, d in self.held[key].items()]}
+        if verb == "GET" and "/branch_protections/" in url:
+            return 404, {}
+        if verb == "GET":
+            return (200, {}) if key in self.held else (404, {})
+        return 201, {}
+
+    def writes(self):
+        return [c for c in self.calls if c[0] != "GET"]
+
+
+def one_repo_export(tmp_path, files):
+    root = tmp_path / "gitea" / "files" / "joinedcontext" / "helsinki"
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+    (tmp_path / "gitea" / "repos.json").write_text(json.dumps([{"owner": "joinedcontext", "name": "helsinki"}]))
+
+
+SPACE_FILE = "kind: ContextSpace\nmetadata:\n  name: helsinki\nspec: {}\n"
+
+
+def test_an_import_with_a_refused_manifest_writes_nothing_and_fails(tmp_path):
+    one_repo_export(tmp_path, {"project.yaml": "kind: Project\n"})
+    forge, report = Forge(), {}
+    rh.import_shako(forge, "token", tmp_path, report,
+                    validate=lambda prepared: ["helsinki/project.yaml: spec is missing"])
+    assert forge.writes() == []
+    assert report["manifestRefusals"] == ["helsinki/project.yaml: spec is missing"]
+    assert any("manifest refusal" in p for p in report["problems"])
+
+
+def test_an_import_into_a_repository_whose_main_holds_other_files_is_refused(tmp_path):
+    one_repo_export(tmp_path, {"spaces/helsinki/space.yaml": SPACE_FILE})
+    for held in ({"spaces/helsinki/space.yaml": "kind: ContextSpace\nmetadata:\n  name: edited\n"},
+                 {"spaces/helsinki/space.yaml": SPACE_FILE, "notes.yaml": "kept: true\n"}):
+        forge, report = Forge({"joinedcontext/helsinki": {k: v.encode() for k, v in held.items()}}), {}
+        rh.import_shako(forge, "token", tmp_path, report, validate=lambda _: [])
+        assert forge.writes() == [], "main was overwritten"
+        assert report["shako"][0]["result"] == "refused", report
+        assert any("only creates" in p for p in report["problems"])
+
+
+def test_a_rerun_over_an_imported_repository_changes_nothing(tmp_path):
+    one_repo_export(tmp_path, {"spaces/helsinki/space.yaml": SPACE_FILE})
+    forge, report = Forge({"joinedcontext/helsinki": {"spaces/helsinki/space.yaml": SPACE_FILE.encode()}}), {}
+    rh.import_shako(forge, "token", tmp_path, report, validate=lambda _: [])
+    assert report["shako"][0]["result"] == "unchanged" and "problems" not in report
+    assert [c[0] for c in forge.writes()] == ["POST"] and "branch_protections" in forge.writes()[0][1]
+
+
+def test_an_imported_main_takes_the_portals_branch_rule(tmp_path):
+    one_repo_export(tmp_path, {"spaces/helsinki/space.yaml": SPACE_FILE})
+    forge, report = Forge(), {}
+    rh.import_shako(forge, "token", tmp_path, report, validate=lambda _: [])
+    assert report["shako"][0]["result"] == "imported", report
+    verbs = [(v, u.rsplit("/", 1)[-1]) for v, u, _ in forge.writes()]
+    assert verbs == [("POST", "repositories"), ("POST", "contents"), ("POST", "branch_protections")]
+    assert forge.writes()[-1][2] == {"rule_name": "main", "enable_push": False}
+
+
+def test_jcctl_judges_the_organization_and_each_project_never_an_apps_source(tmp_path):
+    seen = tmp_path / "seen"
+    jcctl = tmp_path / "jcctl"
+    jcctl.write_text(f"#!/bin/sh\necho \"$@\" > {seen}\necho \"$5: spec is missing\" >&2\nexit 1\n")
+    jcctl.chmod(0o755)
+    prepared = [({}, "joinedcontext", "configuration", "main", {"organizations/hel.yaml": b"kind: Organization\n"}),
+                ({}, "joinedcontext", "helsinki", "main", {"project.yaml": b"kind: Project\n"}),
+                ({}, rh.APPS_OWNER, "helsinki_air-quality", "main", {"chart.yaml": b"kind: Deployment\n"})]
+    refused = rh.jcctl_refusals(str(jcctl), prepared)
+    args = seen.read_text().split()
+    assert args[:2] == ["validate", "--repo-dir"] and args[2].endswith("joinedcontext/configuration")
+    assert args[3] == "--project-dir" and args[4].startswith("helsinki=") and len(args) == 5
+    assert refused == ["helsinki=joinedcontext/helsinki: spec is missing"]
+    ok = tmp_path / "ok"
+    ok.write_text("#!/bin/sh\nexit 0\n")
+    ok.chmod(0o755)
+    assert rh.jcctl_refusals(str(ok), prepared) == []
+    assert rh.jcctl_refusals(str(ok), prepared[1:]) != []
+
+
+def test_the_import_refuses_to_start_without_a_validator(tmp_path):
+    (tmp_path / "manifest.json").write_text(json.dumps({"env": "unit"}))
+    with pytest.raises(SystemExit, match="jcctl"):
+        rh.main(["import", "--export", str(tmp_path), "--base", "http://127.0.0.1:9", "--state", str(tmp_path),
+                 "--report", str(tmp_path / "r.json"), "--only", "shako"])
+
+
+def test_a_change_lands_on_main_through_a_merged_pull_request_never_a_direct_commit():
+    calls = []
+
+    def send(method, path, body):
+        calls.append((method, path, body))
+        return (201, {"number": 7}) if path.endswith("/pulls") else (200, {})
+
+    ops = [{"operation": "create", "path": "users/assignments/x.yaml", "content": "eA=="}]
+    rh.merge_change(send, "joinedcontext", "configuration", ops, "smoke: bind x")
+    base = "/projects/joinedcontext/repositories/configuration"
+    assert [(m, p) for m, p, _ in calls] == [("POST", f"{base}/branches"), ("POST", f"{base}/contents"),
+                                             ("POST", f"{base}/pulls"), ("POST", f"{base}/pulls/7/merge")]
+    branch = calls[0][2]["new_branch_name"]
+    assert branch.startswith("rehearsal/") and calls[0][2]["old_branch_name"] == "main"
+    assert calls[1][2] == {"branch": branch, "files": ops, "message": "smoke: bind x"}
+    assert calls[2][2]["head"] == branch and calls[2][2]["base"] == "main"
+    assert calls[3][2]["Do"] == "squash"
+    assert all(c[2].get("branch") != "main" for c in calls)
+
+
+def test_a_refused_step_of_a_change_names_the_call_and_stops():
+    calls = []
+
+    def send(method, path, body):
+        calls.append(path)
+        return (403, {"message": "protected"}) if path.endswith("/merge") else (201, {"number": 3})
+
+    with pytest.raises(RuntimeError, match=r"pulls/3/merge for 'm': 403"):
+        rh.merge_change(send, "o", "r", [], "m")
+    assert len(calls) == 4
+    with pytest.raises(RuntimeError, match="no pull number"):
+        rh.merge_change(lambda m, p, b: (201, {}), "o", "r", [], "m")
+
 
 def test_the_import_leaves_out_a_role_binding_whose_people_the_export_removed(tmp_path):
     """prod-final-20261109T1958Z holds 6 RoleBindings with `subjects:` empty: jc-core refuses each,
@@ -550,7 +686,7 @@ def test_the_import_leaves_out_a_role_binding_whose_people_the_export_removed(tm
             return 500, {}
 
     report = {}
-    rh.import_shako(Refusing(), "token", tmp_path, report)
+    rh.import_shako(Refusing(), "token", tmp_path, report, validate=lambda _: [])
     assert report["bindingsWithoutPeople"] == ["joinedcontext/configuration/users/assignments/approvers.yaml"]
     assert rh.binding_without_people(empty.encode()) and not rh.binding_without_people(held.encode())
     assert not rh.binding_without_people(b"kind: Role\nspec: {subjects: []}\n")
@@ -572,7 +708,7 @@ def test_only_a_synthetic_bundle_gets_the_kits_panel_reader_and_its_binding(tmp_
     for synthetic in (False, True):
         (tmp_path / "manifest.json").write_text(json.dumps({"synthetic": synthetic} if synthetic else {"env": "dev"}))
         report = {}
-        rh.import_shako(Refusing(), "token", tmp_path, report)
+        rh.import_shako(Refusing(), "token", tmp_path, report, validate=lambda _: [])
         assert rh.is_synthetic(tmp_path) is synthetic
         assert ("reader" in report) is synthetic, report
     binding = yaml.safe_load(rh.reader_binding())
@@ -1873,3 +2009,15 @@ def test_a_sample_apps_manifest_goes_into_the_projects_repository_naming_its_sou
     held = out[("joinedcontext", "helsinki")]["apps/air-quality/app.yaml"]
     assert "      url: https://dev.example/git/joinedcontext-apps/helsinki_air-quality.git\n" in held
     assert "      ref: main\n" in held
+
+
+def test_a_sample_apps_grants_go_where_the_bootstrap_commits_them():
+    """users/... into the organization's repository, the rest into the project's without its
+    projects/<p>/ prefix; the source repository keeps none (jcctl PF-62 on the synth bundle)."""
+    files = {"app.yaml": "kind: App\n", "src/main.rs": "fn main() {}",
+             "grants/users/groups/air-quality-viewer.yaml": "kind: Group\n",
+             "grants/projects/helsinki/spaces/helsinki/endpoints/app-air-quality.yaml": "kind: Endpoint\n"}
+    out = rh.sample_apps({"air-quality": files}, "joinedcontext-apps", "helsinki", "joinedcontext", None, "configuration")
+    assert out[("joinedcontext-apps", "helsinki_air-quality")] == {"src/main.rs": "fn main() {}"}
+    assert out[("joinedcontext", "configuration")] == {"users/groups/air-quality-viewer.yaml": "kind: Group\n"}
+    assert out[("joinedcontext", "helsinki")]["spaces/helsinki/endpoints/app-air-quality.yaml"] == "kind: Endpoint\n"

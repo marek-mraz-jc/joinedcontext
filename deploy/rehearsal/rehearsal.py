@@ -28,6 +28,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import tempfile
 import threading
 import sys
 import time
@@ -245,16 +246,24 @@ def apps_owner_of(job_text: str, org: str) -> str:
 
 
 def sample_apps(apps: dict[str, dict[str, str]], apps_owner: str, project: str, org: str,
-                public_base: str | None) -> dict[tuple[str, str], dict[str, str]]:
+                public_base: str | None, config_repo: str = "configuration") -> dict[tuple[str, str], dict[str, str]]:
     """The sample Apps as the forge bootstrap writes them (layout 2, job step 5d): each App's
     source in `<apps owner>/<project>_<app>` without its manifest, and the manifest in the
     project's repository at `apps/<app>/app.yaml`, its `url:` naming that source repository.
     The Portal lists an App from the project's repository only (smoke run 42952957041:
-    charts-apps app.portal 404 for helsinki/air-quality)."""
+    charts-apps app.portal 404 for helsinki/air-quality). Its `grants/` files (Endpoint, Policies,
+    default Groups) go where the bootstrap commits them: `users/...` into the organization's
+    repository, the rest into the project's, `projects/<project>/` cut off; none stays in the
+    source repository (jcctl validate: PF-62 for the Groups an App names and no repository held)."""
     out: dict[tuple[str, str], dict[str, str]] = {}
     for app, files in apps.items():
         repo = f"{project}_{app}"
-        out[(apps_owner, repo)] = {k: v for k, v in files.items() if k != "app.yaml"}
+        out[(apps_owner, repo)] = {k: v for k, v in files.items() if k != "app.yaml" and not k.startswith("grants/")}
+        for key, text in files.items():
+            if key.startswith("grants/"):
+                path = key.removeprefix("grants/")
+                home = (org, config_repo) if path.startswith("users/") else (org, project)
+                out.setdefault(home, {})[path.removeprefix(f"projects/{project}/")] = text
         if "app.yaml" in files:
             manifest = files["app.yaml"]
             if public_base:
@@ -368,7 +377,7 @@ def cmd_synth(a):
             apps[n.removeprefix("gitea-sample-apps-")] = {k.replace("__", "/"): v for k, v in data.items()}
     repos = layout2(seed, org, repo)
     apps_base = _env_value(job, "APPS_PUBLIC_BASE")
-    for (owner, name), files in sample_apps(apps, apps_owner, apps_project, org, apps_base).items():
+    for (owner, name), files in sample_apps(apps, apps_owner, apps_project, org, apps_base, repo).items():
         repos.setdefault((owner, name), {}).update(files)
     gitea = out / "gitea"
     listing = []
@@ -1382,12 +1391,50 @@ def cmd_aliases(a):
     return 0
 
 
-def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: bytes = REHEARSAL_CATALOGUE):
+APPS_OWNER = "joinedcontext-apps"  # an App's source repository: code, no manifests
+ORG_REPOSITORY = "configuration"  # the organization's repository; every other one is a project
+
+
+def jcctl_refusals(jcctl_bin: str, prepared: list) -> list[str]:
+    """What `jcctl validate --repo-dir` refuses in the files the import would write: the
+    organization's repository and every project's, assembled as the reconciler reads them. An App's
+    source repository holds no manifests and is not judged."""
+    with tempfile.TemporaryDirectory(prefix="rehearsal-validate-") as tmp:
+        org, projects = None, []
+        for _, owner, name, _, files in prepared:
+            if owner == APPS_OWNER:
+                continue
+            root = Path(tmp) / owner / name
+            for rel, data in files.items():
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_bytes(data)
+            root.mkdir(parents=True, exist_ok=True)
+            if name == ORG_REPOSITORY:
+                org = root
+            else:
+                projects += ["--project-dir", f"{name}={root}"]
+        if org is None:
+            return [f"the export holds no {ORG_REPOSITORY} repository to validate the projects against"]
+        r = subprocess.run([jcctl_bin, "validate", "--repo-dir", str(org), *projects],
+                           capture_output=True, text=True, timeout=600, check=False)
+    if r.returncode == 0:
+        return []
+    lines = [line.replace(tmp + "/", "") for line in (r.stdout + r.stderr).splitlines() if line.strip()]
+    return lines or [f"jcctl validate exited {r.returncode} and said nothing"]
+
+
+def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: bytes = REHEARSAL_CATALOGUE,
+                 *, validate):
+    """Creates each repository of the export and commits its files, after `validate` (the
+    prepared repositories -> refusals) found nothing to refuse; a refusal writes nothing. A
+    repository whose `main` already holds a file the export would change or delete is refused, not
+    overwritten (a rerun only adds what a failed run left out), and every imported `main` takes
+    the branch rule a Portal-made repository has: no direct push (PF-87)."""
     auth = {"Authorization": f"token {token}"}
     synthetic = is_synthetic(export)
     types_of = space_types(export) if (export / "antares" / "entities.jsonl").is_file() else {}
     listing = json.loads((export / "gitea" / "repos.json").read_text())
-    rows = []
+    prepared = []
     for r in listing:
         owner, name, branch = r["owner"], r["name"], r.get("defaultBranch") or "main"
         root = export / "gitea" / "files" / owner / name
@@ -1416,6 +1463,16 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
         if synthetic and (root / "users" / "assignments").is_dir():
             files[READER_BINDING] = reader_binding()
             report["reader"] = f"{owner}/{name}/{READER_BINDING}"
+        prepared.append((r, owner, name, branch, files))
+    refused = validate(prepared)
+    if refused:
+        report["manifestRefusals"] = refused
+        report.setdefault("problems", []).append(
+            f"shako: {len(refused)} manifest refusal(s), nothing written (manifestRefusals)")
+        report["shako"] = []
+        return
+    rows = []
+    for r, owner, name, branch, files in prepared:
         row = {"repo": f"{owner}/{name}", "files": len(files)}
         st, _ = h.json("GET", f"/git/api/v1/projects/{owner}/repositories/{name}", headers=auth)
         if st == 404:
@@ -1448,8 +1505,14 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
             if path in held:
                 op["sha"] = held[path]
             ops.append(op)
-        for path in sorted(set(held) - set(files)):
-            ops.append({"operation": "delete", "path": path, "sha": held[path]})
+        overwritten = sorted({op["path"] for op in ops if op["operation"] == "update"} | (set(held) - set(files)))
+        if overwritten:
+            row.update(result="refused", overwrite=overwritten[:20],
+                       detail=f"main already holds {len(overwritten)} file(s) this import would change or delete; "
+                              "a rehearsal import only creates: import into a fresh stack")
+            report.setdefault("problems", []).append(f"shako: {owner}/{name}: {row['detail']}")
+            rows.append(row)
+            continue
         commits, failed = 0, None
         batch, size = [], 0
         for op in ops + [None]:
@@ -1468,12 +1531,56 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
                 commits += 1
             batch, size = ([op], len(op.get("content", ""))) if op else ([], 0)
         row.update(changed=len(ops), commits=commits)
+        if not failed:
+            failed = protect_main(h, auth, owner, name, branch)
         if failed:
             row.update(result="refused", **failed)
+            report.setdefault("problems", []).append(f"shako: {owner}/{name}: {failed['call']} answered {failed['status']}")
         else:
             row["result"] = "imported" if ops else "unchanged"
         rows.append(row)
     report["shako"] = rows
+
+
+def protect_main(h: Http, auth: dict, owner: str, name: str, branch: str) -> dict | None:
+    """The rule the Portal's protect_branch sets on every repository it makes: `branch` takes no
+    direct push. None once it holds, else the failed call."""
+    rule = f"/git/api/v1/repos/{owner}/{name}/branch_protections"
+    st, held = h.json("GET", f"{rule}/{branch}", headers=auth)
+    if st == 200 and isinstance(held, dict) and held.get("enable_push") is False:
+        return None
+    if st == 200:
+        st, body = h.json("PATCH", f"{rule}/{branch}", headers=auth, body={"enable_push": False})
+        call = f"PATCH {rule}/{branch}"
+    else:
+        st, body = h.json("POST", rule, headers=auth, body={"rule_name": branch, "enable_push": False})
+        call = f"POST {rule}"
+    return None if st in (200, 201) else {"call": call, "status": st, "detail": body}
+
+
+def merge_change(send, owner: str, repo: str, files: list, message: str) -> None:
+    """Lands shako contents operations `files` on `owner/repo`'s main the way a Portal Change
+    lands: a branch of their own cut from main, the commit there, a pull request into main, merged
+    (squash). An imported main takes no direct push (protect_main); a merge it takes.
+    `send(method, path, body)` answers (status, JSON body) for a path under /git/api/v1. Raises
+    RuntimeError naming the call that was refused."""
+    base = f"/projects/{owner}/repositories/{repo}"
+    branch = f"rehearsal/{secrets.token_hex(6)}"
+
+    def step(method, path, body):
+        st, out = send(method, f"{base}{path}", body)
+        if st not in (200, 201, 204):
+            raise RuntimeError(f"{method} {owner}/{repo}{path} for '{message}': {st} {str(out)[:200]}")
+        return out
+
+    step("POST", "/branches", {"new_branch_name": branch, "old_branch_name": "main"})
+    step("POST", "/contents", {"branch": branch, "files": files, "message": message})
+    pull = step("POST", "/pulls", {"head": branch, "base": "main", "title": message})
+    number = pull.get("number") if isinstance(pull, dict) else None
+    if not number:
+        raise RuntimeError(f"POST {owner}/{repo}/pulls for '{message}' answered no pull number")
+    step("POST", f"/pulls/{number}/merge", {"Do": "squash", "merge_message_field": message,
+                                            "delete_branch_after_merge": True})
 
 
 # Types whose whole history is kept (supervisor 2026-11-09 20:1xZ, GOAL-prod-decommission.md): a
@@ -1648,7 +1755,7 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, adm
         for f in [pool.submit(temporal, job) for job in sorted(grouped.items())]:
             f.result()
     report["antares"] = out
-    report["problems"] = antares_problems(out)
+    report.setdefault("problems", []).extend(antares_problems(out))
 
 
 def _daiya_kind(name: str) -> str:
@@ -1883,8 +1990,13 @@ def cmd_import(a):
     h = Http(a.base)
     steps = a.only.split(",") if a.only else ["shako", "antares", "daiya"]
     if "shako" in steps:
+        if not (a.jcctl_bin and os.access(a.jcctl_bin, os.X_OK)):
+            raise SystemExit(f"not importing: --jcctl-bin {a.jcctl_bin or '(unset)'} is no executable; every "
+                             "manifest is validated before it is written (build it: cargo build --manifest-path "
+                             "vendor/joinedcontext-platform/Cargo.toml -p jcctl)")
         import_shako(h, read_secret(state, "shako-token"), export, report,
-                     catalogue_url(a.catalogue_url) if a.catalogue_url else REHEARSAL_CATALOGUE)
+                     catalogue_url(a.catalogue_url) if a.catalogue_url else REHEARSAL_CATALOGUE,
+                     validate=lambda prepared: jcctl_refusals(a.jcctl_bin, prepared))
     if "antares" in steps:
         import_antares(h, export, cutoff, report, read_secret(state, "antares-admin-token"))
     if "daiya" in steps:
@@ -2588,7 +2700,7 @@ def main(argv=None):
     s.add_argument("--lines-to", help="main's rendered keycloak-config values: its realm lines go over the export")
     s = sub.add_parser("import"); s.add_argument("--export", required=True); s.add_argument("--base", required=True)
     s.add_argument("--state", required=True); s.add_argument("--report", required=True)
-    s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin")
+    s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin"); s.add_argument("--jcctl-bin")
     s.add_argument("--dashboards", help="Grafana provisioning files (rehearsal.py dashboards) instead of the bundle's")
     s.add_argument("--catalogue-url", help="the instance's own catalogue (cluster import): every CkanInstance names it")
     s = sub.add_parser("dashboards"); s.add_argument("--render", required=True); s.add_argument("--out", required=True)
