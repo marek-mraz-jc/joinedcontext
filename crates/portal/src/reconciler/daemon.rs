@@ -18,7 +18,7 @@
 //! the projects and a new pod of a rolling update is ready while the old one holds the lock
 //! (OPS-51).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -246,8 +246,21 @@ pub struct Syncer {
     /// last good revision or left out: where the next run finds the last good revision of an
     /// object whose new one its kind refuses (CHG-04). Per process; empty after a restart.
     accepted: std::sync::Mutex<Option<Arc<Repository>>>,
+    /// The deployment's settings the Portal's judge reads at load: the operator's bounds on an
+    /// Organization, the apex of the installation's App hosts and its organization domain.
+    judge_settings: (
+        jc_core::kinds::OrganizationBounds,
+        Option<String>,
+        Option<String>,
+    ),
     warned_members: super::warned::Warned,
     warned_unstaged: super::warned::Warned,
+    warned_refused: super::warned::Warned,
+    /// The project refusals already told, by project and reason: one activity row and one
+    /// notice per refusal, not one per run (T-6709).
+    told_refused: std::sync::Mutex<BTreeSet<(String, String)>>,
+    /// Where the proposer of a refused change is told (T-6709): the Portal's notifications.
+    notices: Option<Arc<crate::entity_comments::CommentStore>>,
     warned_unbuilt: super::warned::Warned,
     /// Whether the source has loaded once in this process ([`source_loaded`]): until then the
     /// realm syncs remove nothing (Mirror::hold_removals).
@@ -371,8 +384,12 @@ impl Syncer {
             warned_misplaced: Default::default(),
             warned_invalid: Default::default(),
             accepted: Default::default(),
+            judge_settings: Default::default(),
             warned_members: Default::default(),
             warned_unstaged: Default::default(),
+            warned_refused: Default::default(),
+            told_refused: Default::default(),
+            notices: None,
             warned_unbuilt: Default::default(),
             source_loaded: Default::default(),
             protected: Default::default(),
@@ -481,8 +498,27 @@ impl Syncer {
     }
 
     /// Makes each run tell the activity feed what it applied (OPS-48, UI-31).
+    /// The deployment's settings the Portal's judge reads when it judges what `main` holds
+    /// (P-2): the bounds on an Organization's limits, the App host apex and the organization
+    /// domain, as the propose door reads them from the configuration.
+    pub fn with_judge_settings(
+        mut self,
+        bounds: jc_core::kinds::OrganizationBounds,
+        apex: Option<String>,
+        domain: Option<String>,
+    ) -> Self {
+        self.judge_settings = (bounds, apex, domain);
+        self
+    }
+
     pub fn with_activity(mut self, activity: ActivityStore) -> Self {
         self.activity = Some(activity);
+        self
+    }
+
+    /// Tells the proposer of a change whose project the assembly refused (T-6709).
+    pub fn with_notices(mut self, notices: Arc<crate::entity_comments::CommentStore>) -> Self {
+        self.notices = Some(notices);
         self
     }
 
@@ -819,7 +855,8 @@ impl Syncer {
         let Some((scratch, repository)) = self.staged_apart(&revision).await? else {
             return Ok(());
         };
-        let (repository, refusals) = self.refuse_invalid(Arc::new(repository));
+        let (repository, refusals) =
+            self.refuse_invalid(&scratch, Arc::new(repository), &revision, &default_branch);
         let (fresh_mirror, _) =
             self.load_mirror(&scratch, &repository, &refusals, &revision, &default_branch)?;
         if fresh_mirror.repositories() != self.mirror.repositories() {
@@ -920,6 +957,139 @@ impl Syncer {
             })
             .collect();
         self.record(events).await;
+    }
+
+    /// Tells each project the assembly refused, once per reason (T-6709, CHG-09): one
+    /// `config.refused` row in that project's feed only, and a notice to the person who proposed
+    /// the commit that last touched the file (its approver too), or to the project's approvers
+    /// when the commit names nobody. A forge that does not answer is asked again next run.
+    async fn tell_refused(&self, scratch: &Render) {
+        let current: BTreeSet<(String, String)> = scratch
+            .refused
+            .iter()
+            .map(|refusal| (refusal.slug.clone(), refusal.reason.clone()))
+            .collect();
+        let told = {
+            let mut told = self.told_refused.lock().unwrap_or_else(|p| p.into_inner());
+            told.retain(|key| current.contains(key));
+            told.clone()
+        };
+        for refusal in &scratch.refused {
+            let key = (refusal.slug.clone(), refusal.reason.clone());
+            if told.contains(&key) {
+                continue;
+            }
+            let Some((forge, git_ref)) = scratch.projects.get(&refusal.slug) else {
+                continue;
+            };
+            // The project's own client has no mount: the path is the project repository's, and
+            // none is its whole history.
+            let file = refusal
+                .path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default();
+            let commit = match forge.list_commits(git_ref, &file, 1).await {
+                Ok(commits) => commits.into_iter().next(),
+                Err(error) => {
+                    tracing::warn!(project = %refusal.slug, %error, "who changed the refused project is not known yet: told next run");
+                    continue;
+                }
+            };
+            let (sha, authors) = match &commit {
+                Some(commit) => match forge.commit_message(&commit.sha).await {
+                    Ok(message) => (
+                        commit.sha.clone(),
+                        super::pipeline_authors::Authors::of_message(&message),
+                    ),
+                    Err(error) => {
+                        tracing::warn!(project = %refusal.slug, %error, "who changed the refused project is not known yet: told next run");
+                        continue;
+                    }
+                },
+                None => (git_ref.clone(), Default::default()),
+            };
+            self.tell_refusal(refusal, &sha, &authors).await;
+            self.told_refused
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(key);
+        }
+    }
+
+    async fn tell_refusal(
+        &self,
+        refusal: &ProjectRefusal,
+        sha: &str,
+        authors: &super::pipeline_authors::Authors,
+    ) {
+        let project = refusal.slug.as_str();
+        let file = refusal.path.as_ref().map_or_else(
+            || "project.yaml".to_owned(),
+            |path| path.display().to_string(),
+        );
+        // A parse error can quote the line it stopped at: one that reads like a credential is
+        // not repeated into a feed or a notice.
+        let reason = if crate::secret_scan::quoted_secret(&refusal.reason) {
+            format!("{file} does not load; open it in the repository to see where")
+        } else {
+            refusal.reason.clone()
+        };
+        let short: String = sha.chars().take(7).collect();
+        let proposer = authors
+            .proposer
+            .as_ref()
+            .map(|who| who.to_ascii_lowercase());
+        self.record(vec![ActivityEvent {
+            time: chrono::Utc::now(),
+            project: project.to_owned(),
+            space: None,
+            kind: "config.refused".to_owned(),
+            source: "reconciler".to_owned(),
+            summary: format!(
+                "Commit {short} was refused: {reason}. The last version that loaded keeps serving."
+            ),
+            severity: "error".to_owned(),
+            correlation_id: Some(sha.to_owned()),
+            details: serde_json::json!({
+                "revision": sha,
+                "path": file,
+                "reason": reason,
+                "proposer": proposer,
+            }),
+        }])
+        .await;
+        let Some(notices) = self.notices.as_ref() else {
+            return;
+        };
+        let mut recipients: Vec<String> = [&authors.proposer, &authors.approver]
+            .into_iter()
+            .flatten()
+            .map(|who| who.to_ascii_lowercase())
+            .filter(|who| !who.starts_with('@'))
+            .collect();
+        recipients.dedup();
+        if recipients.is_empty() {
+            recipients.push(crate::entity_comments::approvers_of(project));
+        }
+        let excerpt: String = format!("{file}: {reason}").chars().take(300).collect();
+        let link = format!("/projects/{project}/activity?kind=config.refused");
+        let key = format!("config.refused:{project}/{short}/{file}");
+        for recipient in recipients {
+            let notice = crate::entity_comments::Notice {
+                kind: "config.refused",
+                project,
+                about: sha,
+                author: proposer.as_deref().unwrap_or("reconciler"),
+                author_name: proposer.as_deref().unwrap_or("reconciler"),
+                connector: &excerpt,
+                link: &link,
+                key: &key,
+            };
+            if let Err(error) = notices.notify(&recipient, notice).await {
+                tracing::warn!(project, %error, "the proposer of a refused change is not notified");
+            }
+        }
     }
 
     /// A run that could not load the repository: the mirror keeps the last revision that did,
@@ -1093,6 +1263,7 @@ impl Syncer {
                     _staged: vec![org],
                     projects: BTreeMap::new(),
                     unstaged: Vec::new(),
+                    refused: Vec::new(),
                     listings,
                 },
                 repository,
@@ -1152,6 +1323,31 @@ impl Syncer {
         for finding in &assembly.findings {
             tracing::warn!(project = %finding.slug, path = %finding.path.display(), message = %finding.message, "a project repository's finding");
         }
+        // A project whose own manifests do not load is refused alone (T-6709): it stays at its
+        // last render, and every step that removes what the mirror lacks waits for it as for a
+        // project that did not stage.
+        let refused: Vec<ProjectRefusal> = assembly
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let refusal = entry.refused.as_ref()?;
+                Some(ProjectRefusal {
+                    slug: entry.slug.clone(),
+                    path: refusal.path.clone(),
+                    reason: refusal.reason.clone(),
+                })
+            })
+            .collect();
+        unstaged.extend(refused.iter().map(|refusal| refusal.slug.clone()));
+        let change = self.warned_refused.cycle(
+            refused
+                .iter()
+                .map(|refusal| format!("{}: {}", refusal.slug, refusal.reason)),
+        );
+        for warning in &change.new {
+            tracing::warn!(%warning, standing = change.standing, "the project's manifests do not load; its last render stays and the other projects go on");
+        }
+        cleared("projects whose manifests do not load", &change);
         staged.push(org);
         staged.extend(into);
         Ok((
@@ -1161,6 +1357,7 @@ impl Syncer {
                 _staged: staged,
                 projects,
                 unstaged,
+                refused,
                 listings,
             },
             assembly.repository,
@@ -1178,9 +1375,13 @@ impl Syncer {
         //       with every registered project mounted at `projects/{slug}/` (CC-86).
         // 4. Load and validate the whole repository the way `jcctl plan` does (CC-08, MF-05).
         let (scratch, repository) = self.stage_and_load(&revision).await?;
+        if leader {
+            self.tell_refused(&scratch).await;
+        }
         // 4a. A manifest its kind refuses is never served (CHG-05): its last good revision
         //     serves in its place, or nothing does (CHG-04).
-        let (repository, refusals) = self.refuse_invalid(repository);
+        let (repository, refusals) =
+            self.refuse_invalid(&scratch, repository, &revision, &default_branch);
         *self.accepted.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(&repository));
         steps.mark("stage");
 
@@ -1545,7 +1746,13 @@ impl Syncer {
     /// validate` runs, T-0412) taken out: the last good revision the previous whole run served
     /// stands in its place, or nothing does (CHG-04, CHG-05). A manifest that reached `main`
     /// without the Portal's write-time checks is shown with its reason and never converged.
-    fn refuse_invalid(&self, repository: Arc<Repository>) -> (Arc<Repository>, Refusals) {
+    fn refuse_invalid(
+        &self,
+        scratch: &Render,
+        repository: Arc<Repository>,
+        revision: &str,
+        default_branch: &str,
+    ) -> (Arc<Repository>, Refusals) {
         let mut refusals = Refusals::new();
         for (id, resource) in repository.iter() {
             let Ok(mut manifest) = serde_json::to_value(&resource.manifest) else {
@@ -1581,15 +1788,25 @@ impl Syncer {
                 );
             }
         }
+        self.refuse_judged(
+            scratch,
+            &repository,
+            &mut refusals,
+            revision,
+            default_branch,
+        );
         let change = self.warned_invalid.cycle(
             refusals
                 .values()
                 .map(|refusal| format!("{}: {}", refusal.resource.path.display(), refusal.reason)),
         );
         for warning in &change.new {
-            tracing::warn!(%warning, standing = change.standing, "manifest fails its kind's validation and is refused");
+            tracing::warn!(%warning, standing = change.standing, "manifest fails its kind's validation or the Portal's checks and is refused");
         }
-        cleared("manifests failing their kind's validation", &change);
+        cleared(
+            "manifests failing their kind's validation or the Portal's checks",
+            &change,
+        );
         if refusals.is_empty() {
             return (repository, refusals);
         }
@@ -1608,6 +1825,88 @@ impl Syncer {
             served.refuse(id, last_good);
         }
         (Arc::new(served), refusals)
+    }
+
+    /// Adds to `refusals` each manifest `main` changed since the last good run that the
+    /// Portal's judge refuses (P-2, CHG-03): the checks a proposal meets, run on what reached
+    /// `main` by any door, each changed manifest judged as its proposal onto what serves now
+    /// ([`crate::judge::replay`]). An unchanged manifest was judged when it changed.
+    fn refuse_judged(
+        &self,
+        scratch: &Render,
+        repository: &Repository,
+        refusals: &mut Refusals,
+        revision: &str,
+        default_branch: &str,
+    ) {
+        let accepted = self
+            .accepted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let mut ids = BTreeMap::new();
+        let mut held = std::collections::BTreeSet::new();
+        let mut changed = Vec::new();
+        for (id, resource) in repository.iter() {
+            let Some(mut envelope) = self.envelope_of(scratch, resource, revision, default_branch)
+            else {
+                continue;
+            };
+            // The status is the Portal's computation, never the manifest's (MF-04).
+            envelope.status = None;
+            let key = crate::resource::ResourceKey {
+                namespace: envelope.metadata.namespace.clone().unwrap_or_default(),
+                kind: envelope.kind.clone(),
+                name: envelope.metadata.name.clone(),
+            };
+            held.insert(key.clone());
+            let unchanged = accepted
+                .as_deref()
+                .and_then(|accepted| accepted.get(id))
+                .is_some_and(|last| last.manifest == resource.manifest);
+            if unchanged || refusals.contains_key(id) {
+                continue;
+            }
+            ids.insert(key, (id.clone(), resource.clone()));
+            changed.push(envelope);
+        }
+        if changed.is_empty() {
+            return;
+        }
+        // What serves now, less what `main` no longer holds.
+        let base = self.mirror.snapshot();
+        for gone in base.matching(|envelope| {
+            !held.contains(&crate::resource::ResourceKey {
+                namespace: envelope.metadata.namespace.clone().unwrap_or_default(),
+                kind: envelope.kind.clone(),
+                name: envelope.metadata.name.clone(),
+            })
+        }) {
+            base.remove(&crate::resource::ResourceKey {
+                namespace: gone.metadata.namespace.unwrap_or_default(),
+                kind: gone.kind,
+                name: gone.metadata.name,
+            });
+        }
+        let (bounds, apex, domain) = &self.judge_settings;
+        let settings = (bounds, apex.as_deref(), domain.as_deref());
+        for (envelope, reason) in crate::judge::replay(&base, settings, changed) {
+            let key = crate::resource::ResourceKey {
+                namespace: envelope.metadata.namespace.unwrap_or_default(),
+                kind: envelope.kind,
+                name: envelope.metadata.name,
+            };
+            if let Some((id, resource)) = ids.remove(&key) {
+                refusals.insert(
+                    id,
+                    Refusal {
+                        resource,
+                        reason,
+                        serving: false,
+                    },
+                );
+            }
+        }
     }
 
     /// The mirror this run builds: every resource the repository loaded, with the status the
@@ -3234,9 +3533,20 @@ struct Render {
     /// holds of them is the last render, or nothing on a replica's first run, so a step that
     /// removes what the mirror lacks waits for a run where this is empty.
     unstaged: Vec<String>,
+    /// The registered projects whose own manifests did not load in this run, each also in
+    /// `unstaged`: the mirror holds their last render, or nothing (T-6709).
+    refused: Vec<ProjectRefusal>,
     /// What each repository listed when this render staged it: the organization under `""`,
     /// each staged project under its slug.
     listings: BTreeMap<String, Listing>,
+}
+
+/// A registered project the assembly refused this run (T-6709).
+struct ProjectRefusal {
+    slug: String,
+    /// The file, relative to the project's repository, when the error names one.
+    path: Option<PathBuf>,
+    reason: String,
 }
 
 impl Render {
@@ -3247,7 +3557,13 @@ impl Render {
         let same = |slug: &str, now: &Listing| {
             self.listings.get(slug) == Some(now) && now.iter().all(|(_, sha)| !sha.is_empty())
         };
-        if !self.unstaged.is_empty() || !same("", org) {
+        // A refused project staged, and a listing that did not move refuses it again: only a
+        // project that did not stage is asked for once more.
+        let restage = self
+            .unstaged
+            .iter()
+            .any(|slug| !self.refused.iter().any(|refusal| &refusal.slug == slug));
+        if restage || !same("", org) {
             return false;
         }
         for (slug, (client, git_ref)) in &self.projects {
@@ -5853,6 +6169,7 @@ output_error{stream="kpi"} 6
             _staged: Vec::new(),
             projects: BTreeMap::new(),
             unstaged: Vec::new(),
+            refused: Vec::new(),
             listings: BTreeMap::new(),
         };
         let syncer = bare_syncer();
@@ -5901,6 +6218,75 @@ output_error{stream="kpi"} 6
         ));
     }
 
+    /// P-2, CHG-03: a manifest committed straight to `main` meets the Portal's judge at load,
+    /// with the words the propose door gives: an Endpoint published to CKAN while it is not
+    /// public is refused, its last good revision keeps serving, and an unchanged one is not
+    /// judged again.
+    #[test]
+    fn a_manifest_the_propose_door_refuses_is_refused_at_load_in_the_same_words() {
+        let render = |root: &Path| Render {
+            layout: 1,
+            root: root.to_path_buf(),
+            _staged: Vec::new(),
+            projects: BTreeMap::new(),
+            unstaged: Vec::new(),
+            refused: Vec::new(),
+            listings: BTreeMap::new(),
+        };
+        let syncer = bare_syncer();
+        let run = |files: &[(&str, String)], revision: &str| {
+            let dir = Scratch::new("t6712").expect("a scratch directory");
+            let files: Vec<(&str, &str)> = files.iter().map(|(p, c)| (*p, c.as_str())).collect();
+            write_tree(dir.path(), &files);
+            let loaded = Repository::load(dir.path()).expect("the repository loads");
+            let (served, refusals) =
+                syncer.refuse_invalid(&render(dir.path()), Arc::new(loaded), revision, "main");
+            *syncer.accepted.lock().expect("lock") = Some(Arc::clone(&served));
+            let (fresh, _) = syncer
+                .load_mirror(&render(dir.path()), &served, &refusals, revision, "main")
+                .unwrap_or_else(|e| {
+                    let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
+                    panic!("the mirror loads: {e:?} {reasons:?}")
+                });
+            syncer.mirror.replace_all(&fresh);
+            refusals
+        };
+        let (path, good) = space_endpoint(
+            "projects/city/spaces/air/endpoints/air.yaml",
+            "air",
+            "dddddddddddddddddddddddddd",
+        );
+        assert!(run(&[(path, good)], "aaaa1111").is_empty());
+
+        let mut spec: serde_json::Value = json!({
+            "contextSpaceRef": "air",
+            "slug": "dddddddddddddddddddddddddd",
+            "audience": "organization",
+            "enabledRepresentations": ["ngsi-ld"],
+            "publish": { "ckan": { "instanceRef": "opendata" } },
+        });
+        let bad = manifest("Endpoint", "air", spec.clone());
+        let refusals = run(&[(path, bad)], "bbbb2222");
+        let refusal = refusals.values().next().expect("the Endpoint is refused");
+        let door = crate::catalog::check_publication("Endpoint", &spec)
+            .expect_err("the propose door refuses it");
+        assert_eq!(refusal.reason, crate::judge::reason(&door));
+        assert!(refusal.serving, "the last good revision keeps serving");
+        let served = syncer
+            .mirror
+            .get("city", "Endpoint", "air")
+            .expect("the last good one is shown");
+        assert_eq!(served.spec["audience"], "public");
+
+        spec["audience"] = json!("public");
+        let fixed = manifest("Endpoint", "air", spec);
+        assert!(
+            run(&[(path, fixed.clone())], "cccc3333").is_empty(),
+            "a fix clears it"
+        );
+        assert!(run(&[(path, fixed)], "dddd4444").is_empty(), "unchanged");
+    }
+
     /// CHG-04, CHG-05: a manifest its kind refuses is never what a converge step reads. The
     /// last good revision serves in its place with the reason beside it; a new one is listed
     /// apart and served nowhere; a valid fix clears both.
@@ -5912,19 +6298,29 @@ output_error{stream="kpi"} 6
             _staged: Vec::new(),
             projects: BTreeMap::new(),
             unstaged: Vec::new(),
+            refused: Vec::new(),
             listings: BTreeMap::new(),
         };
         let invalid = |name: &str| format!("{}  notAField: 1\n", PIPELINE.replace("NAME", name));
         let syncer = bare_syncer();
+        // The Endpoint the Pipelines write through, so the Portal's judge has nothing else to
+        // say of them (PL-20).
+        let all = r#"{"apiVersion":"joinedcontext.com/v1alpha1","kind":"Endpoint","metadata":{"name":"all","namespace":"ovzdusie"},"spec":{"contextSpaceRef":"ovzdusie","slug":"dddddddddddddddddddddddddd","audience":"public","enabledRepresentations":["ngsi-ld"]}}"#;
         let run = |files: &[(&str, &str)], revision: &str| {
             let dir = Scratch::new("t6707").expect("a scratch directory");
-            write_tree(dir.path(), files);
+            let mut files = files.to_vec();
+            files.push(("projects/ovzdusie/spaces/ovzdusie/endpoints/all.yaml", all));
+            write_tree(dir.path(), &files);
             let loaded = Repository::load(dir.path()).expect("the repository loads");
-            let (served, refusals) = syncer.refuse_invalid(Arc::new(loaded));
+            let (served, refusals) =
+                syncer.refuse_invalid(&render(dir.path()), Arc::new(loaded), revision, "main");
             *syncer.accepted.lock().expect("lock") = Some(Arc::clone(&served));
             let (fresh, _) = syncer
                 .load_mirror(&render(dir.path()), &served, &refusals, revision, "main")
-                .expect("the mirror loads");
+                .unwrap_or_else(|e| {
+                    let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
+                    panic!("the mirror loads: {e:?} {reasons:?}")
+                });
             syncer.mirror.replace_all(&fresh);
             (served, refusals)
         };

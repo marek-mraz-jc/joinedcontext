@@ -35,7 +35,7 @@ const MANIFEST_PATH: &str = "projects/ovzdusie/pipelines/aq/pipeline.yaml";
 fn pipeline_yaml(body: &str) -> String {
     format!(
         "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: aq\n  \
-         namespace: {PROJECT}\nspec:\n  contextSpaceRef: air\n  source:\n    kind: http\n{body}"
+         namespace: {PROJECT}\nspec:\n  class: resident\n{body}  targetEndpoint: urn:ngsi-ld:Endpoint:bb.sk:ovzdusie:air\n"
     )
 }
 
@@ -86,7 +86,7 @@ async fn forge_at(merge_status: u16) -> MockServer {
         .and(query_param("@r", format!("'{}'", REVIEWED)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "Sha": "blob-reviewed",
-            "Content": common::encode(&pipeline_yaml("  rate: 60\n"))
+            "Content": common::encode(&pipeline_yaml("  enabled: true\n"))
         })))
         .mount(&shako)
         .await;
@@ -96,7 +96,7 @@ async fn forge_at(merge_status: u16) -> MockServer {
         .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "Sha": "blob-base",
-            "Content": common::encode(&pipeline_yaml("  rate: 30\n"))
+            "Content": common::encode(&pipeline_yaml("  enabled: false\n"))
         })))
         .mount(&shako)
         .await;
@@ -233,7 +233,7 @@ async fn every_file_of_the_review_is_read_at_that_same_commit() {
         answer.text
     );
     assert!(
-        answer.text.contains("spec.rate"),
+        answer.text.contains("spec.enabled"),
         "the diff of the reviewed commit is what the page shows: {}",
         answer.text
     );

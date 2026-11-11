@@ -75,6 +75,11 @@ async fn forge(files: &[(String, String)]) -> MockServer {
 /// pipeline reading it.
 fn project(name: &str) -> Vec<(String, String)> {
     vec![
+        // The Endpoint the pipeline writes through, so the Portal's judge passes it (PL-20).
+        (
+            format!("projects/{name}/spaces/mobility/endpoints/vehicles-in.yaml"),
+            format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: vehicles-in\n  namespace: {name}\nspec:\n  contextSpaceRef: mobility\n  slug: {}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n", name.chars().filter(char::is_ascii_lowercase).chain(std::iter::repeat('a')).take(26).collect::<String>()),
+        ),
         (
             format!("projects/{name}/spaces/mobility/space.yaml"),
             format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: mobility\n  namespace: {name}\nspec:\n  isSandbox: true\n"),

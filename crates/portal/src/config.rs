@@ -1606,7 +1606,7 @@ fn app_pods(
 /// cannot be read, is no map of catalog paths, holds a range upside down or loosens a security
 /// bound stops the start: a Portal holding organizations to bounds nobody meant is worse than one
 /// that says why it did not start.
-fn organization_bounds(
+pub fn organization_bounds(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<jc_core::kinds::OrganizationBounds, ConfigError> {
     const VAR: &str = "JC_PORTAL_ORGANIZATION_BOUNDS_FILE";
