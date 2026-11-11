@@ -529,7 +529,8 @@ async fn a_policy_for_someone_else_waits_for_a_second_person() {
         .expect_err("approved by its author");
     assert!(matches!(err, ApiError::SelfApproval(_)), "{err:?}");
     assert!(
-        err.to_string().contains("a change to Policy is approved by a second administrator"),
+        err.to_string()
+            .contains("a change to Policy is approved by a second administrator"),
         "{err}"
     );
     assert!(!merged(&shako).await, "merged by its author");
