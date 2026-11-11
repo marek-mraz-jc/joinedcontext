@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 // T-6758: the Subscribe menu's calendar builder through the real jc-viz.js, on the page the
 // `pages` test renders, with the Endpoint's facets and calendar answered here. By hand:
-//   DATAROOM_PAGE_OUT=<dir> cargo test -p dataroom-web --test pages d3_dataset_page_builds_a
-//   DATAROOM_PAGE_OUT=<dir> node <portal ui>/node_modules/@playwright/test/cli.js test \
+//   cargo test -p dataroom-web --test pages d3_dataset_page_builds_a   (writes $CARGO_TARGET_DIR/tmp/builder.html)
+//   DATAROOM_PAGE_OUT=$CARGO_TARGET_DIR/tmp node <portal ui>/node_modules/@playwright/test/cli.js test \
 //     -c crates/dataroom/web/e2e subscribe_builder
 const PAGE = join(process.env.DATAROOM_PAGE_OUT ?? "test-results", "builder.html");
 const ASSETS = join(__dirname, "..", "assets");

@@ -3937,7 +3937,10 @@ mod tests {
             endpoint_view(&s, &endpoint(spec)).unwrap_or_else(|why| panic!("a view: {why}"))
         };
         let listed = json!(["eventCategory", "address.addressLocality"]);
-        assert_eq!(with(Some(listed.clone()))["representations"], json!({ "facets": listed }));
+        assert_eq!(
+            with(Some(listed.clone()))["representations"],
+            json!({ "facets": listed })
+        );
         assert!(with(None).get("representations").is_none());
     }
 

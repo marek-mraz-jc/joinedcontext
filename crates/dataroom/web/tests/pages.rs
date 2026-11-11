@@ -801,12 +801,22 @@ fn d3_dataset_page_builds_a_calendar_from_choices_on_its_own_endpoints_output() 
         )],
     );
     let html = render_dataset_page_full(
-        &c, None, &ds, None, &[], &[], false, "sk", true, "/m", NONCE,
+        &c,
+        None,
+        &ds,
+        None,
+        &[],
+        &[],
+        false,
+        "sk",
+        true,
+        "/m",
+        NONCE,
     );
     assert_safe_page("dataset-calendar-builder", &html, "sk");
-    if let Ok(dir) = std::env::var("DATAROOM_PAGE_OUT") {
-        std::fs::write(format!("{dir}/builder.html"), &html).expect("the page written");
-    }
+    // e2e/subscribe_builder.spec.ts drives this page through the real jc-viz.js.
+    std::fs::write(concat!(env!("CARGO_TARGET_TMPDIR"), "/builder.html"), &html)
+        .expect("the page written");
     assert!(!html.contains("<b>\";|()"), "the title is escaped");
     let escaped = "Kultúra &quot;&lt;b&gt;&quot;;|() &amp; viac";
     assert!(
@@ -828,11 +838,18 @@ fn d3_dataset_page_builds_a_calendar_from_choices_on_its_own_endpoints_output() 
     let base = ep("");
     let base = base.trim_end_matches('/');
     // Hidden without script (jc-viz.js shows it); the builder narrows the dataset's own output.
-    assert!(section.contains(&format!("data-jc-base=\"{base}\" data-jc-output=\"vsetky\"")));
+    assert!(section.contains(&format!(
+        "data-jc-base=\"{base}\" data-jc-output=\"vsetky\""
+    )));
     assert!(section.contains(" hidden>"), "{section}");
     assert!(!section.contains("data-jc-feeds"), "no feed, no RSS ending");
     assert!(!section.contains("jc-subscribe-mine-rss"));
-    for id in ["jc-subscribe-from", "jc-subscribe-to", "jc-subscribe-mine-csv", "jc-subscribe-mine-google"] {
+    for id in [
+        "jc-subscribe-from",
+        "jc-subscribe-to",
+        "jc-subscribe-mine-csv",
+        "jc-subscribe-mine-google",
+    ] {
         assert!(section.contains(&format!("id=\"{id}\"")), "{id}");
     }
     assert!(section.contains("aria-describedby=\"jc-subscribe-dates-hint\""));
@@ -856,7 +873,17 @@ fn d3_dataset_page_builds_no_calendar_for_another_servers_feed() {
             vec![dist("cal", &feed, json!({ "mediaType": "text/calendar" }))],
         );
         let html = render_dataset_page_full(
-            &c, None, &ds, None, &[], &[], false, "sk", true, "/m", NONCE,
+            &c,
+            None,
+            &ds,
+            None,
+            &[],
+            &[],
+            false,
+            "sk",
+            true,
+            "/m",
+            NONCE,
         );
         assert!(!html.contains("class=\"jc-subscribe-query\""), "{feed}");
     }

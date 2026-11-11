@@ -238,9 +238,15 @@ async fn facets_forward_to_the_view_as_sent() {
     let hops = hops.lock().expect("the hop log").clone();
     let path = format!("/x/views/{SLUG}/facets");
     assert_eq!(hops.len(), 2);
-    assert_eq!((hops[0].0.as_str(), hops[0].1.as_deref()), (path.as_str(), Some(query)));
+    assert_eq!(
+        (hops[0].0.as_str(), hops[0].1.as_deref()),
+        (path.as_str(), Some(query))
+    );
     assert_eq!(hops[0].2["ngsild-tenant"], SPACE);
-    assert_eq!((hops[1].0.as_str(), hops[1].1.as_deref()), (path.as_str(), None));
+    assert_eq!(
+        (hops[1].0.as_str(), hops[1].1.as_deref()),
+        (path.as_str(), None)
+    );
 }
 
 /// The owner's test link (T-6755): `feeds/{filter}/events.ics` is `ical/v1/events.ics?{filter}`

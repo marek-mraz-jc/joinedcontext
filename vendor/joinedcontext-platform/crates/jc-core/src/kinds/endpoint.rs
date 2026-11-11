@@ -1279,7 +1279,10 @@ mod tests {
     #[test]
     fn facets_take_names_and_one_member_at_most_ten_once_each() {
         let list = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
-        assert_eq!(facets_gap(&list(&["eventCategory", "address.addressLocality"])), None);
+        assert_eq!(
+            facets_gap(&list(&["eventCategory", "address.addressLocality"])),
+            None
+        );
         assert_eq!(facets_gap(&[]), None);
         for bad in [&["a.b.c"][..], &["q;x"], &["1a"], &["a."], &["a", "a"]] {
             assert!(facets_gap(&list(bad)).is_some(), "{bad:?}");

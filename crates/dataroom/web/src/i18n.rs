@@ -1285,14 +1285,7 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "Kalender-Apps laden einen abonnierten Kalender alle paar Stunden neu, daher erscheint ein neuer Termin dort später als hier.",
         "A naptáralkalmazások néhány óránként töltik be újra a feliratkozott naptárat, így egy új esemény ott később jelenik meg, mint itt.",
     );
-    add(
-        "subscribe_town",
-        "Town",
-        "Obec",
-        "Obec",
-        "Ort",
-        "Település",
-    );
+    add("subscribe_town", "Town", "Obec", "Obec", "Ort", "Település");
     add(
         "subscribe_genre",
         "Genre",
@@ -1301,22 +1294,8 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "Genre",
         "Műfaj",
     );
-    add(
-        "subscribe_from",
-        "From",
-        "Od",
-        "Od",
-        "Von",
-        "Ettől",
-    );
-    add(
-        "subscribe_to",
-        "To",
-        "Do",
-        "Do",
-        "Bis",
-        "Eddig",
-    );
+    add("subscribe_from", "From", "Od", "Od", "Von", "Ettől");
+    add("subscribe_to", "To", "Do", "Do", "Bis", "Eddig");
     add(
         "subscribe_dates_hint",
         "The day an event starts, for example 2026-12-01; leave both empty for every date.",

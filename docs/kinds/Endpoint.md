@@ -27,6 +27,7 @@ Desired specification of an `Endpoint` resource (EP-01..EP-28).
 | `disabledRepresentations` | list of [Representation](#representation) | no | Representations an Endpoint without `enabledRepresentations` does not serve (EP-104). |
 | `display` | map of [Display](#display) | no | Per entity type, the slots this Endpoint's tables, popups and CKAN columns show and its key attributes, reordering and narrowing the model's display order (EP-135, DM-98). |
 | `enabledRepresentations` | list of [Representation](#representation) | no | The representations this Endpoint serves, listed (EP-05). Omitted: every one but `sta`, less `disabledRepresentations` (EP-104); see [`EndpointSpec::served_representations`]. |
+| `facets` | list of string | no | The attributes a reader may list distinct values of at `/facets` (EP-178), at most [`MAX_FACETS`]: an attribute name or `name.member`, e.g. `address.addressLocality`. |
 | `fileLimits` | [FileLimits](#filelimits) | no | Optional ceiling on one `file.*` download (EP-44). |
 | `mcp` | boolean | no | `false` turns the Endpoint's MCP instance off. Every Endpoint serves `mcp` without listing it, public or internal, gated by its own Policy (EP-24, T-2901); see [`EndpointSpec::served_representations`]. |
 | `policyRef` | [Urn](#urn) | no | Optional NGSI-LD Policy URN attached to this endpoint; means `policyRefs: [it]`. Written `urn:ngsi-ld:Policy:{orgDomain}:{space}:{name}`, where `{space}` is the rendered segment of the space: its `urnSegment`, else `{project}-{name}`, never the bare space name (EP-117). |

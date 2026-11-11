@@ -429,7 +429,10 @@ mod tests {
                 .and_then(|uri| asked(&uri).ok())
         };
         assert!(read("attr=category&limit=20&type=Event&q=a%3D%3D1").is_some());
-        assert!(read("").is_some_and(|a| a.attr.is_none()), "no attr lists the facets");
+        assert!(
+            read("").is_some_and(|a| a.attr.is_none()),
+            "no attr lists the facets"
+        );
         for q in [
             "attr=a&attr=b",
             "attr=a&limit=0",
