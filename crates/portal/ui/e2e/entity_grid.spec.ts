@@ -219,10 +219,10 @@ async function stubApi(page: Page, options: { write?: boolean } = {}): Promise<S
   return { writes, reads };
 }
 
-/** Opens a column's menu and its settings, where History and the metadata columns are (T-4827). */
+/** Opens the toolbar's Arrange columns panel on a column's metadata (T-6738). */
 async function openColumnDetails(page: Page, column: string): Promise<void> {
-  await page.getByRole("button", { name: `Column options: ${column}` }).click();
-  await page.getByRole("dialog", { name: `Column options: ${column}` }).getByText("Column settings").click();
+  await page.getByRole("button", { name: "Arrange columns" }).click();
+  await page.getByRole("combobox", { name: "Details for" }).selectOption(column);
 }
 
 /**
@@ -289,10 +289,10 @@ test.describe("the entity grid", () => {
       .poll(() => reads.filter((search) => search.includes("availableBikeNumber%3D%3D0")).length)
       .toBeGreaterThan(0);
 
-    // When the value was observed is metadata of the same column, switched on from its menu.
-    // The attribute's metadata sits under Details in the column's own menu (T-4827).
+    // When the value was observed is metadata of the same column, switched on in the toolbar's
+    // Arrange columns panel (T-6738).
     await openColumnDetails(page, "availableBikeNumber");
-    await page.getByRole("checkbox", { name: "Observed" }).check();
+    await page.getByRole("checkbox", { name: /^Observed/ }).check();
     await expect(
       page.getByRole("columnheader", { name: "availableBikeNumber · Observed" }),
     ).toBeVisible();
@@ -356,9 +356,9 @@ test.describe("the entity grid", () => {
     await page.goto(`${EXPLORE}?endpoint=helsinki-bikes&type=${TYPE}&lang=en`);
     await expect(page.getByRole("button", { name: "Open: Rautatientori" }).first()).toBeVisible();
 
-    // The attribute's metadata sits under Details in the column's own menu (T-4827).
-    await openColumnDetails(page, "availableBikeNumber");
-    await page.getByRole("button", { name: "History" }).click();
+    // History is a quick action of the column's own menu (T-6738).
+    await page.getByRole("button", { name: "Column options: availableBikeNumber" }).click();
+    await page.getByRole("menuitem", { name: "History" }).click();
 
     const history = page.getByRole("dialog").or(page.getByRole("region", { name: "History" }));
     // The panel writes the time in the page's language (T-2991); the instant is its `datetime`.

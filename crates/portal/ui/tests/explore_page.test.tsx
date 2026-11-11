@@ -479,8 +479,13 @@ it("shows what a value is measured in, and when it was observed", async () => {
   expect(within(detail).getAllByText("5").length).toBeGreaterThan(0);
   expect(detail.textContent).not.toContain("{\n");
   await userEvent.keyboard("{Escape}");
-  await userEvent.click(screen.getByLabelText(`${en.entityGrid.columnMenu}: availableBikeNumber`));
-  await userEvent.click(screen.getByLabelText(en.entityGrid.observedAt));
+  // The metadata columns sit in the toolbar's Arrange columns panel (T-6738), not the header menu.
+  await userEvent.click(screen.getByRole("button", { name: en.entityGrid.arrangeColumns }));
+  const extra = within(screen.getByRole("dialog", { name: en.entityGrid.arrangeColumns })).getByRole("group", {
+    name: en.entityGrid.metaHeading,
+  });
+  await userEvent.selectOptions(within(extra).getByRole("combobox", { name: en.entityGrid.metaFor }), "availableBikeNumber");
+  await userEvent.click(within(extra).getByRole("checkbox", { name: new RegExp(`^${en.entityGrid.observedAt}`) }));
   await waitFor(() =>
     expect(screen.getAllByText(/Sep 19, 2026/).length).toBeGreaterThan(0),
   );
