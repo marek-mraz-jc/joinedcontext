@@ -2080,6 +2080,43 @@ fn well_formed(incoming: &[Incoming], apps_dir: Option<&str>) -> Result<(), ApiE
     Ok(())
 }
 
+/// Every refusal of the gates above over files read from a repository, `(path, text)`, each
+/// named with its file: what a git import lands is judged as an upload is (MF-24, CC-08), and a
+/// person gets the whole list at once.
+pub(crate) fn judge_files(files: &[(String, String)], apps_dir: Option<&str>) -> Vec<String> {
+    let reason = |err: ApiError| match err {
+        ApiError::BadRequest(message) => message,
+        other => other.to_string(),
+    };
+    let mut refused = Vec::new();
+    for (path, text) in files {
+        let incoming = match parse_text(text, Some(path)) {
+            Ok(incoming) => incoming,
+            Err(err) => {
+                refused.push(format!("{path}: {}", reason(err)));
+                continue;
+            }
+        };
+        for item in incoming {
+            let Some(envelope) = &item.envelope else {
+                continue;
+            };
+            match serde_json::to_value(envelope) {
+                Ok(raw) => refused.extend(
+                    refusals(envelope, &raw)
+                        .into_iter()
+                        .map(|refusal| format!("{path}: {refusal}")),
+                ),
+                Err(err) => refused.push(format!("{path}: manifest did not serialise: {err}")),
+            }
+            if let Err(err) = well_formed(std::slice::from_ref(&item), apps_dir) {
+                refused.push(reason(err));
+            }
+        }
+    }
+    refused
+}
+
 /// The kind a native file belongs to: the plural directory after `projects/{project}/`, or
 /// after `spaces/{space}/` for the kinds that live under a space.
 /// The context space a repository path lies in: `projects/{project}/spaces/{space}/…`.

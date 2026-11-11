@@ -2570,15 +2570,16 @@ pub async fn approve_change_for(
         Err(GitError::NotFound) => poster(&pr),
         read => read?,
     };
-    let is_author = match (&author.email, &identity.email) {
-        (Some(pr_email), Some(user_email)) if !pr_email.trim().is_empty() => {
-            pr_email.eq_ignore_ascii_case(user_email.trim())
+    // The e-mail the Portal writes into the approver's own commits (theirs, or
+    // `{username}@{project}.local` without one) against the head commit's: never a display name,
+    // which a namesake shares and a rename changes. A head that names no e-mail cannot be told
+    // apart from the approver's own, so it counts as theirs (T-6706).
+    let (_, approver_email) = crate::api::mutate::author_credentials(identity, project);
+    let is_author = match author.email.as_deref().map(str::trim) {
+        Some(pr_email) if !pr_email.is_empty() => {
+            pr_email.eq_ignore_ascii_case(approver_email.trim())
         }
-        _ => {
-            let user_name = identity.name.as_deref().unwrap_or(&identity.username);
-            author.name.eq_ignore_ascii_case(user_name)
-                || author.name.eq_ignore_ascii_case(&identity.username)
-        }
+        _ => true,
     };
 
     // Nobody grants themselves access alone: a Policy naming its author, a Group they are in or
@@ -2674,7 +2675,16 @@ pub async fn approve_change_for(
     } else {
         merge_msg
     };
-    merge_when_ready(shako, pr_number, &merge_msg, &pr.head_sha, id).await?;
+    let (merger_name, merger_email) = crate::api::mutate::author_credentials(identity, project);
+    merge_when_ready(
+        shako,
+        pr_number,
+        &merge_msg,
+        &pr.head_sha,
+        id,
+        Some((&merger_name, &merger_email)),
+    )
+    .await?;
     say_merged(state, project, id, &data, approver, connector).await;
 
     // A published application's own repository merges once its Change has (AP-77).
@@ -2843,12 +2853,13 @@ async fn merge_when_ready(
     message: &str,
     head_sha: &str,
     id: &str,
+    author: Option<(&str, &str)>,
 ) -> Result<(), ApiError> {
     let mut head = head_sha.to_owned();
     let mut attempt = 0;
     loop {
         match shako
-            .merge(pr_number, MergeStyle::Squash, message, Some(&head))
+            .merge(pr_number, MergeStyle::Squash, message, Some(&head), author)
             .await
         {
             Err(err) if behind_base(&err) && attempt < 15 => {
@@ -2982,7 +2993,7 @@ pub(crate) async fn merge_if_only(
         tracing::warn!(change = %id, "the change carries a file the Portal did not check and waits for a person");
         return change;
     }
-    if let Err(err) = merge_when_ready(shako, pr.number, message, &pr.head_sha, &id).await {
+    if let Err(err) = merge_when_ready(shako, pr.number, message, &pr.head_sha, &id, None).await {
         tracing::warn!(change = %id, error = %err, "the change waits for a person: the forge did not merge it");
         return change;
     }

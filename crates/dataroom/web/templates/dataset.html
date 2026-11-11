@@ -94,32 +94,6 @@
             </div>
           </section>
         </div>
-        {% if !subscriptions.is_empty() %}
-        <div class="col-12">
-          <details class="jc-subscribe">
-            <summary class="btn btn-default">{{ labels.subscribe }}</summary>
-            <div class="jc-subscribe-menu">
-              {% if !subscriptions.calendar.is_empty() %}
-              <p class="jc-subscribe-group" id="jc-subscribe-calendar">{{ labels.subscribe_calendar }}</p>
-              <ul aria-labelledby="jc-subscribe-calendar">
-                {% for (c_name, c_url, c_webcal, c_mime) in subscriptions.calendar %}
-                <li><a href="{{ c_webcal }}">{{ c_name }}</a> · <a href="{{ c_url }}" type="{{ c_mime }}">.ics</a></li>
-                {% endfor %}
-              </ul>
-              {% endif %}
-              {% if !subscriptions.news.is_empty() %}
-              <p class="jc-subscribe-group" id="jc-subscribe-news">{{ labels.subscribe_news }}</p>
-              <ul aria-labelledby="jc-subscribe-news">
-                {% for (n_name, n_url, n_mime) in subscriptions.news %}
-                <li><a href="{{ n_url }}" type="{{ n_mime }}">{{ n_name }}</a></li>
-                {% endfor %}
-              </ul>
-              {% endif %}
-              <p class="jc-subscribe-hint">{{ labels.subscribe_hint }}</p>
-            </div>
-          </details>
-        </div>
-        {% endif %}
         <div class="primary col-12" role="main">
           <article class="module">
             <header class="module-content page-header">
@@ -128,7 +102,49 @@
               </ul>
             </header>
             <div class="module-content">
-              <h1>{{ dataset_title }}</h1>
+              <div class="jc-dataset-head">
+                <h1>{{ dataset_title }}</h1>
+                {% if !subscriptions.is_empty() %}
+                <div class="jc-dataset-actions">
+                  <details class="jc-subscribe">
+                    <summary class="btn btn-default">{{ labels.subscribe }}</summary>
+                    <div class="jc-subscribe-menu">
+                      <p class="jc-subscribe-lead">{{ labels.subscribe_hint }}</p>
+                      {% if !subscriptions.calendar.is_empty() %}
+                      <p class="jc-subscribe-group" id="jc-subscribe-calendar">{{ labels.subscribe_calendar }}</p>
+                      <ul aria-labelledby="jc-subscribe-calendar">
+                        {% for (c_name, c_url, c_webcal, c_mime) in subscriptions.calendar %}
+                        <li class="jc-subscribe-feed">
+                          <label for="jc-subscribe-cal-{{ loop.index }}">{{ c_name }}</label>
+                          <div class="jc-subscribe-copy">
+                            <textarea id="jc-subscribe-cal-{{ loop.index }}" class="form-control" rows="2" readonly spellcheck="false">{{ c_url }}</textarea>
+                            <button type="button" class="btn btn-default" data-jc-copy="jc-subscribe-cal-{{ loop.index }}" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ c_name }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button>
+                          </div>
+                          <p class="jc-subscribe-links"><a href="{{ c_webcal }}">{{ labels.subscribe_open_app }}</a><a href="{{ c_url }}" type="{{ c_mime }}">{{ labels.subscribe_download }}</a></p>
+                        </li>
+                        {% endfor %}
+                      </ul>
+                      {% endif %}
+                      {% if !subscriptions.news.is_empty() %}
+                      <p class="jc-subscribe-group" id="jc-subscribe-news">{{ labels.subscribe_news }}</p>
+                      <ul aria-labelledby="jc-subscribe-news">
+                        {% for (n_name, n_url, n_mime) in subscriptions.news %}
+                        <li class="jc-subscribe-feed">
+                          <label for="jc-subscribe-news-{{ loop.index }}">{{ n_name }}</label>
+                          <div class="jc-subscribe-copy">
+                            <textarea id="jc-subscribe-news-{{ loop.index }}" class="form-control" rows="2" readonly spellcheck="false">{{ n_url }}</textarea>
+                            <button type="button" class="btn btn-default" data-jc-copy="jc-subscribe-news-{{ loop.index }}" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ n_name }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button>
+                          </div>
+                          <p class="jc-subscribe-links"><a href="{{ n_url }}" type="{{ n_mime }}">{{ labels.subscribe_open_feed }}</a></p>
+                        </li>
+                        {% endfor %}
+                      </ul>
+                      {% endif %}
+                    </div>
+                  </details>
+                </div>
+                {% endif %}
+              </div>
               {% if !dataset_description.is_empty() %}
               <div class="notes embedded-content">
                 <p>{{ dataset_description }}</p>
@@ -229,7 +245,6 @@
                 </div>
                 <p class="jc-example-label" id="jc-example-label">{{ labels.example }}</p>
                 <pre aria-labelledby="jc-example-label"><code>{{ lv.example_breakable|safe }}</code></pre>
-                <p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>
               </section>
               {% endif %}
 
@@ -367,6 +382,7 @@
                 </div>
               </section>
               {% endif %}
+              <p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>
             </div>
           </article>
         </div>

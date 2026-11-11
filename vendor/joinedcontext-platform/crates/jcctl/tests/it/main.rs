@@ -40,6 +40,7 @@ mod portal_client_tests;
 mod preview_render_tests;
 mod publish_ckan_tests;
 mod rebuild_tests;
+mod reviewed_tests;
 mod roles_tests;
 mod seed_entities_tests;
 mod seed_replay_tests;
