@@ -490,7 +490,7 @@ pub struct OpenProject {
     post,
     path = "/api/v1/projects",
     summary = "Open A Project",
-    description = "Opens a project, with the opener's steward binding in the same change; the organization's own setting says who may.",
+    description = "Opens a project with you as its steward, in an Organization whose own setting lets you.",
     tag = "resources",
     request_body(
         content = OpenProject,
@@ -1706,7 +1706,7 @@ async fn reserved_until(
     delete,
     path = "/api/v1/projects/{project}",
     summary = "Delete A Project",
-    description = "Proposes the one red-lane change that removes a project and every space, endpoint, app, service account, role and binding written for it.",
+    description = "Proposes the red-lane change removing a project and its spaces, endpoints, apps, service accounts, roles and bindings.",
     tag = "resources",
     params(("project" = String, Path, description = "The project to delete")),
     responses(
