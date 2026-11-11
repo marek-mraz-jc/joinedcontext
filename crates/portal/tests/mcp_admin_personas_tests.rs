@@ -606,7 +606,10 @@ async fn data_path(who: &Identity, state: &AppState, project: &str, domain: &str
     approved(state, &policy);
     let policy_ref = format!(
         "urn:ngsi-ld:Policy:{}:{}:air-read",
-        joinedcontext_portal::api::assistant::org_domain(state, project),
+        joinedcontext_portal::permissions::project_domains(&state.mirror, project)
+            .first()
+            .cloned()
+            .unwrap_or_else(|| joinedcontext_portal::api::assistant::org_domain(state, project)),
         joinedcontext_portal::spaces::segment(&state.mirror, project, "air"),
     );
 
