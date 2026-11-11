@@ -183,9 +183,16 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
           title={t("dashboards.json.noEndpoints")}
           description={t("dashboards.json.noEndpointsHint")}
           action={
-            <Link to="/projects/$project/$plural" params={{ project, plural: "endpoints" }} className={buttonClass("primary")}>
-              {t("dashboards.json.toEndpoints")}
-            </Link>
+            <div className="flex flex-col items-center gap-4">
+              <ol className="flex max-w-md list-decimal flex-col gap-1 pl-5 text-left text-body text-fg-muted">
+                <li>{t("dashboards.json.step1")}</li>
+                <li>{t("dashboards.json.step2")}</li>
+                <li>{t("dashboards.json.step3")}</li>
+              </ol>
+              <Link to="/projects/$project/$plural" params={{ project, plural: "endpoints" }} className={buttonClass("primary")}>
+                {t("dashboards.json.toEndpoints")}
+              </Link>
+            </div>
           }
         />
       ) : (

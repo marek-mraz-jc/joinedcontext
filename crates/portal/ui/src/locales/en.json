@@ -3791,7 +3791,10 @@
       "widgetRefusedAt": "The server refused it at {path}: {reason}. Fix that field and Check again.",
       "views": "Manifest or preview",
       "previewNeedsFix": "Preview (fix the manifest)",
-      "toManifest": "Show the manifest"
+      "toManifest": "Show the manifest",
+      "step1": "Create an endpoint over a context space, for example bikes over mobility.",
+      "step2": "Come back here and insert a chart or a grid of one of its entity types.",
+      "step3": "Check the manifest with the server, then propose it as a change."
     }
   },
   "access": {

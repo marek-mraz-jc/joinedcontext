@@ -3791,7 +3791,10 @@
       "widgetRefusedAt": "Der Server hat es bei {path} abgelehnt: {reason}. Korrigieren Sie dieses Feld und prüfen Sie erneut.",
       "views": "Manifest oder Vorschau",
       "previewNeedsFix": "Vorschau (Manifest korrigieren)",
-      "toManifest": "Manifest zeigen"
+      "toManifest": "Manifest zeigen",
+      "step1": "Legen Sie einen Endpoint über einem Kontextraum an, zum Beispiel bikes über mobility.",
+      "step2": "Kommen Sie hierher zurück und fügen Sie ein Diagramm oder ein Raster eines seiner Entitätstypen ein.",
+      "step3": "Prüfen Sie das Manifest mit dem Server und schlagen Sie es dann als Änderung vor."
     }
   },
   "access": {

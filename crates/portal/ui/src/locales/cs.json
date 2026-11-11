@@ -3791,7 +3791,10 @@
       "widgetRefusedAt": "Server jej odmítl na cestě {path}: {reason}. Opravte toto pole a zkontrolujte znovu.",
       "views": "Manifest nebo náhled",
       "previewNeedsFix": "Náhled (opravte manifest)",
-      "toManifest": "Ukázat manifest"
+      "toManifest": "Ukázat manifest",
+      "step1": "Vytvořte endpoint nad kontextovým prostorem, například bikes nad mobility.",
+      "step2": "Vraťte se sem a vložte graf nebo tabulku jednoho z jeho typů entit.",
+      "step3": "Zkontrolujte manifest se serverem a navrhněte jej jako změnu."
     }
   },
   "access": {
